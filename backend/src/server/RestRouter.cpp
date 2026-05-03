@@ -1,5 +1,4 @@
 #include "RestRouter.h"
-#include <QJsonDocument>
 
 HttpResponse HttpResponse::json(const QJsonObject& obj, int status)
 {
@@ -53,7 +52,6 @@ HttpResponse RestRouter::dispatch(const HttpRequest& request) const
     if (m_Routes.contains(key))
         return m_Routes[key](request);
 
-    // Try exact path match first, then fallback
     for (auto it = m_Routes.cbegin(); it != m_Routes.cend(); ++it) {
         if (it.key().startsWith(request.method + ":")) {
             QString pattern = it.key().mid(request.method.length() + 1);

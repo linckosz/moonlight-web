@@ -2,7 +2,7 @@
 
 #include <QObject>
 #include <QMap>
-#include "RestRouter.h"
+#include "common/Types.h"
 
 class StaticFileHandler : public QObject
 {

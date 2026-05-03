@@ -1,8 +1,11 @@
-QT += core network websockets
+QT += core network
+# Phase 5+: add websockets for WebSocket streaming
 CONFIG += c++17 console
 TEMPLATE = app
 
 TARGET = mw-server
+
+INCLUDEPATH += src
 
 SOURCES += \
     src/main.cpp \
@@ -15,7 +18,8 @@ HEADERS += \
     src/server/HttpServer.h \
     src/server/StaticFileHandler.h \
     src/server/RestRouter.h \
-    src/common/Logger.h
+    src/common/Logger.h \
+    src/common/Types.h
 
 # Frontend directory (served as static files)
 DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"

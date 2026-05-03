@@ -2,27 +2,8 @@
 
 #include <QObject>
 #include <QMap>
-#include <QJsonObject>
 #include <functional>
-
-struct HttpRequest {
-    QString method;
-    QString path;
-    QMap<QString, QString> headers;
-    QMap<QString, QString> queryParams;
-    QByteArray body;
-};
-
-struct HttpResponse {
-    int statusCode = 200;
-    QString contentType;
-    QMap<QString, QString> headers;
-    QByteArray body;
-
-    static HttpResponse json(const QJsonObject& obj, int status = 200);
-    static HttpResponse text(const QString& text, int status = 200);
-    static HttpResponse error(int status, const QString& message);
-};
+#include "common/Types.h"
 
 using RouteHandler = std::function<HttpResponse(const HttpRequest&)>;
 

@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include "common/Types.h"
 
 class RestRouter;
 class StaticFileHandler;
