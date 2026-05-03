@@ -1,0 +1,154 @@
+/* Moonlight-Web — Main Stylesheet */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-card: #0f3460;
+    --text-primary: #e0e0e0;
+    --text-secondary: #a0a0b0;
+    --accent: #e94560;
+    --accent-hover: #ff6b81;
+    --success: #4caf50;
+    --warning: #ff9800;
+    --error: #f44336;
+    --border: #2a2a4a;
+}
+
+html, body {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+                 Ubuntu, Cantarell, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* Header */
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.version {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* Main content */
+
+#main-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+/* Views */
+
+.view {
+    display: none;
+}
+
+.view.active {
+    display: block;
+}
+
+/* Welcome card */
+
+.welcome-card {
+    text-align: center;
+    background-color: var(--bg-card);
+    border-radius: 12px;
+    padding: 48px 64px;
+    border: 1px solid var(--border);
+    max-width: 480px;
+}
+
+.server-icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+}
+
+.welcome-card h2 {
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.welcome-card p {
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot.online { background-color: var(--success); }
+.status-dot.offline { background-color: var(--error); }
+.status-dot.locked { background-color: var(--warning); }
+
+/* Footer */
+
+.app-footer {
+    text-align: center;
+    padding: 8px 24px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border);
+    background-color: var(--bg-secondary);
+}
+
+/* Responsive */
+
+@media (max-width: 600px) {
+    .welcome-card {
+        padding: 32px 24px;
+        margin: 0 16px;
+    }
+
+    .app-header {
+        padding: 10px 16px;
+    }
+}

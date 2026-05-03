@@ -1,0 +1,34 @@
+# Qt/C++ build artifacts
+build/
+build-*/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+Makefile
+*.pro.user
+*.autosave
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+*.log
+/tmp/
+
+# Certificates (generated at runtime)
+backend/certs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
