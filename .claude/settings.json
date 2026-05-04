@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -f backend/Makefile*)"
+    ]
+  }
+}

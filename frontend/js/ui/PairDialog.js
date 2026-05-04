@@ -1,0 +1,157 @@
+/**
+ * Moonlight-Web — Pairing dialog
+ *
+ * Flow:
+ *   1. GET /api/hosts/:id/pair → backend does stage 1, returns PIN
+ *   2. Dialog displays PIN, auto-polls POST /api/hosts/:id/pair (stages 2-5)
+ *   3. User enters PIN in Sunshine → next POST poll succeeds → paired
+ */
+import { BackendClient } from '../api/BackendClient.js';
+
+export class PairDialog {
+    constructor(host) {
+        this.host = host;
+        this.overlay = null;
+        this.pin = null;
+        this.pollTimer = null;
+        this.onComplete = null;
+        this.onCancel = null;
+    }
+
+    show() {
+        this.render();
+        document.body.appendChild(this.overlay);
+        this.bindEvents();
+        this.startPairing();
+    }
+
+    close() {
+        this.stopPolling();
+        if (this.overlay) {
+            this.overlay.remove();
+            this.overlay = null;
+        }
+    }
+
+    stopPolling() {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+    }
+
+    async startPairing() {
+        const statusEl = this.overlay.querySelector('.pairing-status-text');
+        const pinEl = this.overlay.querySelector('.pairing-pin-display');
+
+        try {
+            const result = await BackendClient.getPairState(this.host.uuid);
+
+            if (result.status === 'initiated' && result.pin) {
+                this.pin = result.pin;
+                pinEl.textContent = this.pin;
+                pinEl.classList.add('visible');
+                statusEl.textContent = 'Enter this PIN in Sunshine (Web UI or stdin on the host)';
+                statusEl.className = 'pairing-status-text pairing-info';
+
+                // Auto-poll for completion
+                this.pollPairing();
+            } else if (result.status === 'error') {
+                statusEl.textContent = result.message;
+                statusEl.className = 'pairing-status-text pairing-error';
+            } else {
+                statusEl.textContent = 'Unexpected response from server.';
+                statusEl.className = 'pairing-status-text pairing-error';
+            }
+        } catch (err) {
+            statusEl.textContent = 'Failed to contact server: ' + err.message;
+            statusEl.className = 'pairing-status-text pairing-error';
+        }
+    }
+
+    pollPairing() {
+        // Stage 1 blocks up to 60s — schedule next poll only after previous completes
+        const tick = async () => {
+            if (!this.overlay) return; // dialog closed
+            await this.tryComplete();
+            if (!this.overlay) return;
+            this.pollTimer = setTimeout(tick, 5000);
+        };
+        this.pollTimer = setTimeout(tick, 5000);
+    }
+
+    stopPolling() {
+        if (this.pollTimer) {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = null;
+        }
+    }
+
+    async tryComplete() {
+        const statusEl = this.overlay.querySelector('.pairing-status-text');
+
+        try {
+            const result = await BackendClient.confirmPairing(this.host.uuid);
+
+            if (result.status === 'paired') {
+                this.stopPolling();
+                statusEl.textContent = 'Paired successfully!';
+                statusEl.className = 'pairing-status-text pairing-success';
+                if (this.onComplete)
+                    this.onComplete();
+                setTimeout(() => this.close(), 1500);
+            } else if (result.status === 'awaiting_pin') {
+                // Still waiting — keep polling, keep the PIN displayed
+            } else if (result.status === 'error') {
+                this.stopPolling();
+                statusEl.textContent = result.message;
+                statusEl.className = 'pairing-status-text pairing-error';
+            }
+        } catch (err) {
+            // Network error — keep polling
+        }
+    }
+
+    render() {
+        this.overlay = document.createElement('div');
+        this.overlay.className = 'pairing-overlay';
+        this.overlay.innerHTML = `
+            <div class="pairing-dialog">
+                <h3>Pair with ${this.esc(this.host.displayName)}</h3>
+                <p class="pairing-instruction">
+                    Enter this PIN in Sunshine to authorize the client:
+                </p>
+                <div class="pairing-status">
+                    <div class="pairing-pin-display">----</div>
+                    <p class="pairing-status-text pairing-info">Contacting host...</p>
+                </div>
+                <div class="pairing-actions">
+                    <button class="btn btn-secondary btn-pair-cancel">Cancel</button>
+                </div>
+            </div>
+        `;
+    }
+
+    bindEvents() {
+        this.overlay.querySelector('.btn-pair-cancel')
+            .addEventListener('click', () => {
+                this.close();
+                if (this.onCancel)
+                    this.onCancel();
+            });
+
+        this.overlay.addEventListener('click', (e) => {
+            if (e.target === this.overlay) {
+                this.close();
+                if (this.onCancel)
+                    this.onCancel();
+            }
+        });
+    }
+
+    esc(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+}

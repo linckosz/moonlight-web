@@ -5,36 +5,28 @@
  *   LOADING -> HOST_LIST -> APP_LIST -> STREAMING
  *                        \-> PAIRING -/
  */
+import { HostListView } from './ui/HostListView.js';
+import { BackendClient } from './api/BackendClient.js';
 
 const MoonlightApp = {
     state: 'loading',
-    hosts: [],
+    hostListView: null,
 
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
-        this.checkServerHealth();
-        this.showView('welcome');
-        console.log('[MW] Ready. State:', this.state);
-    },
 
-    async checkServerHealth() {
         try {
-            const resp = await fetch('/api/health');
-            if (resp.ok) {
-                const data = await resp.json();
-                console.log('[MW] Server health:', data);
-            }
+            const health = await BackendClient.get('/api/health');
+            console.log('[MW] Server:', health);
         } catch (err) {
             console.warn('[MW] Server health check failed:', err);
         }
-    },
 
-    showView(viewName) {
-        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-        const view = document.getElementById(`view-${viewName}`);
-        if (view) {
-            view.classList.add('active');
-        }
+        this.transition('host_list');
+
+        const main = document.getElementById('main-content');
+        this.hostListView = new HostListView(main);
+        this.hostListView.start();
     },
 
     transition(newState) {
