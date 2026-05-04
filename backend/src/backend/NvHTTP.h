@@ -1,0 +1,54 @@
+#pragma once
+
+#include <QObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QUrl>
+#include <QXmlStreamReader>
+
+#include "NvAddress.h"
+
+struct NvDisplayMode {
+    int width = 0;
+    int height = 0;
+    int refreshRate = 0;
+
+    bool operator==(const NvDisplayMode& other) const
+    {
+        return width == other.width && height == other.height
+            && refreshRate == other.refreshRate;
+    }
+};
+
+class NvHTTP : public QObject
+{
+    Q_OBJECT
+
+public:
+    static constexpr int FAST_FAIL_TIMEOUT_MS = 2000;
+    static constexpr int REQUEST_TIMEOUT_MS   = 5000;
+
+    explicit NvHTTP(QNetworkAccessManager* nam, QObject* parent = nullptr);
+
+    // Async server info fetch — caller owns the returned QNetworkReply
+    QNetworkReply* getServerInfoAsync(const NvAddress& address, const QString& uniqueId);
+
+    // HTTPS variant for paired hosts (port 47990) — returns real PairStatus
+    QNetworkReply* getServerInfoAsyncHttps(const NvAddress& address, const QString& uniqueId,
+                                            const QByteArray& clientCertPem,
+                                            const QByteArray& clientKeyPem);
+
+    // Static XML helpers
+    static void verifyResponseStatus(const QString& xml);
+    static QString getXmlString(const QString& xml, const QString& tagName);
+    static QByteArray getXmlStringFromHex(const QString& xml, const QString& tagName);
+    static QVector<NvDisplayMode> getDisplayModeList(const QString& serverInfo);
+    static int getCurrentGame(const QString& serverInfo);
+    static QVector<int> parseQuad(const QString& quad);
+
+private:
+    QUrl buildUrl(const NvAddress& address, const QString& command,
+                  const QString& uniqueId, const QString& arguments = QString()) const;
+
+    QNetworkAccessManager* m_Nam;
+};

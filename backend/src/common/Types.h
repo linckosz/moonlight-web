@@ -11,6 +11,7 @@ struct HttpRequest {
     QString path;
     QMap<QString, QString> headers;
     QMap<QString, QString> queryParams;
+    QMap<QString, QString> pathParams;
     QByteArray body;
 };
 

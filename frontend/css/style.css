@@ -64,70 +64,201 @@ html, body {
 
 #main-content {
     flex: 1;
-    display: flex;
+    padding: 24px;
+    max-width: 960px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* Buttons */
+
+.btn {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: 8px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    background-color: var(--accent);
+    color: #fff;
+    transition: background-color 0.15s, opacity 0.15s;
 }
 
-/* Views */
+.btn:hover { background-color: var(--accent-hover); }
+.btn:disabled { opacity: 0.5; cursor: default; }
 
-.view {
-    display: none;
-}
-
-.view.active {
-    display: block;
-}
-
-/* Welcome card */
-
-.welcome-card {
-    text-align: center;
+.btn-secondary {
     background-color: var(--bg-card);
-    border-radius: 12px;
-    padding: 48px 64px;
     border: 1px solid var(--border);
-    max-width: 480px;
+    color: var(--text-primary);
 }
 
-.server-icon {
-    font-size: 3rem;
-    margin-bottom: 16px;
+.btn-secondary:hover { background-color: var(--border); }
+
+/* Hosts View */
+
+.hosts-view {
+    width: 100%;
 }
 
-.welcome-card h2 {
-    margin-bottom: 12px;
+.hosts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.hosts-header h2 {
+    font-size: 1.25rem;
     font-weight: 600;
 }
 
-.welcome-card p {
-    color: var(--text-secondary);
-    margin-bottom: 8px;
+.hosts-actions {
+    display: flex;
+    gap: 8px;
 }
 
-.status-bar {
+/* Host cards */
+
+.hosts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.hosts-empty,
+.hosts-error {
+    text-align: center;
+    padding: 64px 24px;
+    color: var(--text-secondary);
+    background-color: var(--bg-secondary);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.empty-icon {
+    display: block;
+    font-size: 2.5rem;
+    margin-bottom: 12px;
+}
+
+.hint {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-top: 8px;
+}
+
+.host-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    transition: border-color 0.2s;
+}
+
+.host-card:hover {
+    border-color: var(--accent);
+}
+
+.host-card.offline {
+    opacity: 0.55;
+}
+
+.host-card-icon {
+    flex-shrink: 0;
+}
+
+.status-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    margin-top: 24px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    font-size: 0.9rem;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    font-size: 1.25rem;
+    background-color: var(--bg-card);
+}
+
+.status-icon.ready   { color: var(--success); }
+.status-icon.locked  { color: var(--warning); }
+.status-icon.offline { color: var(--error); }
+
+.host-card-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.host-name {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.host-address {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.host-gpu {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.host-resolution {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 1px;
+}
+
+.host-card-status {
+    flex-shrink: 0;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.status-badge.ready   { background-color: rgba(76, 175, 80, 0.15); color: var(--success); }
+.status-badge.locked  { background-color: rgba(255, 152, 0, 0.15); color: var(--warning); }
+.status-badge.offline { background-color: rgba(244, 67, 54, 0.15); color: var(--error); }
+
+.host-card-actions {
+    flex-shrink: 0;
+}
+
+.btn-launch {
+    background-color: var(--success);
+    font-weight: 600;
+}
+
+.btn-launch:hover {
+    background-color: #43a047;
+}
+
+.btn-pair {
+    font-size: 0.8rem;
+    padding: 6px 14px;
+}
+
+.host-unreachable {
+    font-size: 0.8rem;
     color: var(--text-secondary);
 }
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-}
-
-.status-dot.online { background-color: var(--success); }
-.status-dot.offline { background-color: var(--error); }
-.status-dot.locked { background-color: var(--warning); }
 
 /* Footer */
 
@@ -143,12 +274,120 @@ html, body {
 /* Responsive */
 
 @media (max-width: 600px) {
-    .welcome-card {
-        padding: 32px 24px;
-        margin: 0 16px;
+    #main-content {
+        padding: 12px;
     }
 
     .app-header {
         padding: 10px 16px;
     }
+
+    .host-card {
+        flex-wrap: wrap;
+        padding: 12px 14px;
+        gap: 10px;
+    }
+
+    .host-card-actions {
+        width: 100%;
+    }
+
+    .host-card-actions .btn {
+        width: 100%;
+    }
 }
+
+/* ========================================================================
+   Pairing Dialog
+   ======================================================================== */
+
+.pairing-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.pairing-dialog {
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px 28px;
+    max-width: 380px;
+    width: 90%;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.pairing-dialog h3 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    color: var(--text-primary);
+}
+
+.pairing-instruction {
+    margin: 0 0 20px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.pairing-status-text {
+    font-size: 13px;
+    margin: 0 0 14px 0;
+    min-height: 18px;
+}
+
+.pairing-info {
+    color: var(--text-secondary);
+}
+
+.pairing-error {
+    color: #f87171;
+}
+
+.pairing-success {
+    color: #4ade80;
+}
+
+.pairing-pin-display {
+    font-size: 42px;
+    font-family: monospace;
+    letter-spacing: 12px;
+    color: var(--btn-primary);
+    background-color: var(--bg-secondary);
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 0 auto 14px auto;
+    width: fit-content;
+    min-width: 160px;
+    user-select: all;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.pairing-pin-display.visible {
+    opacity: 1;
+}
+
+.pairing-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.pairing-actions .btn {
+    min-width: 100px;
+}
+

@@ -488,23 +488,43 @@ via l'API REST. Le frontend affiche la liste des hôtes.
 ## Dépendances — Submodules Git
 
 ```bash
-git submodule add https://github.com/moonlight-stream/moonlight-common-c \
-    backend/third_party/moonlight-common-c
-git submodule add https://github.com/moonlight-stream/qmdnsengine \
+# Phase 2: mDNS discovery
+git submodule add https://github.com/cgutman/qmdnsengine.git \
     backend/third_party/qmdnsengine
+
+# Phase 5: Streaming protocol + H.264 parsing
+git submodule add https://github.com/moonlight-stream/moonlight-common-c.git \
+    backend/third_party/moonlight-common-c
+git submodule add https://github.com/aizvorski/h264bitstream.git \
+    backend/third_party/h264bitstream
 ```
+
+### Fichiers wrapper nécessaires à la racine de chaque submodule
+
+Moonlight-qt utilise une structure "wrapper" : un dossier externe avec un `.pro`
+contient le submodule Git. Les fichiers suivants doivent être créés manuellement
+car ils ne font pas partie des submodules upstream :
+
+**qmdnsengine** — Fichier à créer à la racine du submodule :
+- `qmdnsengine_export.h` — Macro `QMDNSENGINE_EXPORT` (vide pour build statique)
+
+**moonlight-common-c** (Phase 5) :
+- Pas de fichier wrapper nécessaire ; le `.pro` référence directement les sources
+
+**h264bitstream** (Phase 5) :
+- Pas de fichier wrapper nécessaire ; le `.pro` référence directement les sources
+
+### Approche d'intégration
+
+Pour éviter la complexité des subdirs Qt, les sources des bibliothèques tierces
+sont compilées **directement dans le projet backend** (ajoutées dans `backend.pro`).
+Ceci garantit la compatibilité ABI (même compilateur, mêmes flags) et simplifie
+le build (pas de projet séparé à configurer).
 
 ## Build des dépendances (Windows)
 
-```batch
-cd backend\third_party\moonlight-common-c
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-
-cd ..\qmdnsengine
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-```
+Aucun build séparé n'est nécessaire. Toutes les sources tierces sont compilées
+directement par `backend.pro`. Voir la section Configuration build Qt ci-dessous.
 
 ---
 

@@ -33,30 +33,89 @@ RestRouter::RestRouter(QObject* parent)
 
 void RestRouter::get(const QString& path, RouteHandler handler)
 {
-    m_Routes[routeKey("GET", path)] = std::move(handler);
+    if (path.contains(':')) {
+        ParamRoute r;
+        r.method = "GET";
+        r.segments = path.split('/', Qt::SkipEmptyParts);
+        r.handler = std::move(handler);
+        m_ParamRoutes.append(std::move(r));
+    } else {
+        m_Routes[routeKey("GET", path)] = std::move(handler);
+    }
 }
 
 void RestRouter::post(const QString& path, RouteHandler handler)
 {
-    m_Routes[routeKey("POST", path)] = std::move(handler);
+    if (path.contains(':')) {
+        ParamRoute r;
+        r.method = "POST";
+        r.segments = path.split('/', Qt::SkipEmptyParts);
+        r.handler = std::move(handler);
+        m_ParamRoutes.append(std::move(r));
+    } else {
+        m_Routes[routeKey("POST", path)] = std::move(handler);
+    }
 }
 
 void RestRouter::del(const QString& path, RouteHandler handler)
 {
-    m_Routes[routeKey("DELETE", path)] = std::move(handler);
+    if (path.contains(':')) {
+        ParamRoute r;
+        r.method = "DELETE";
+        r.segments = path.split('/', Qt::SkipEmptyParts);
+        r.handler = std::move(handler);
+        m_ParamRoutes.append(std::move(r));
+    } else {
+        m_Routes[routeKey("DELETE", path)] = std::move(handler);
+    }
+}
+
+bool RestRouter::matchParamRoute(const QStringList& pathSegments,
+                                  const ParamRoute& route,
+                                  QMap<QString, QString>& outParams) const
+{
+    if (pathSegments.size() != route.segments.size())
+        return false;
+
+    QMap<QString, QString> params;
+
+    for (int i = 0; i < pathSegments.size(); ++i) {
+        const QString& pattern = route.segments[i];
+        const QString& actual = pathSegments[i];
+
+        if (pattern.startsWith(':')) {
+            QString key = pattern.mid(1);
+            if (actual.isEmpty())
+                return false;
+            params[key] = actual;
+        } else if (pattern != actual) {
+            return false;
+        }
+    }
+
+    outParams = params;
+    return true;
 }
 
 HttpResponse RestRouter::dispatch(const HttpRequest& request) const
 {
+    // Fast path: exact match
     QString key = routeKey(request.method, request.path);
     if (m_Routes.contains(key))
         return m_Routes[key](request);
 
-    for (auto it = m_Routes.cbegin(); it != m_Routes.cend(); ++it) {
-        if (it.key().startsWith(request.method + ":")) {
-            QString pattern = it.key().mid(request.method.length() + 1);
-            if (pattern == request.path)
-                return it.value()(request);
+    // Slow path: parameterized routes
+    QStringList pathSegments = request.path.split('/', Qt::SkipEmptyParts);
+
+    for (const auto& route : m_ParamRoutes) {
+        if (route.method != request.method)
+            continue;
+
+        QMap<QString, QString> params;
+        if (matchParamRoute(pathSegments, route, params)) {
+            HttpRequest reqCopy = request;
+            reqCopy.pathParams = params;
+            return route.handler(reqCopy);
         }
     }
 
@@ -65,7 +124,18 @@ HttpResponse RestRouter::dispatch(const HttpRequest& request) const
 
 bool RestRouter::hasRoute(const QString& method, const QString& path) const
 {
-    return m_Routes.contains(routeKey(method, path));
+    if (m_Routes.contains(routeKey(method, path)))
+        return true;
+
+    QStringList segments = path.split('/', Qt::SkipEmptyParts);
+    for (const auto& route : m_ParamRoutes) {
+        if (route.method != method)
+            continue;
+        QMap<QString, QString> params;
+        if (matchParamRoute(segments, route, params))
+            return true;
+    }
+    return false;
 }
 
 QString RestRouter::routeKey(const QString& method, const QString& path) const
