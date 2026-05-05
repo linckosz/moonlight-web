@@ -3,6 +3,7 @@
 #include "StaticFileHandler.h"
 #include "common/Logger.h"
 
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -93,6 +94,7 @@ void HttpServer::onDisconnected()
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (socket) {
         m_Buffers.remove(socket);
+        m_PendingAsyncSockets.remove(socket);
         socket->deleteLater();
     }
 }
@@ -101,16 +103,30 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = parseRequest(requestData);
 
-    HttpResponse resp;
-
-    // Check if it's an API route or static file
-    if (req.path.startsWith("/api/")) {
-        resp = m_Router->dispatch(req);
-    } else {
-        resp = m_StaticFiles->serveFile(req.path);
+    // Static files are always served synchronously
+    if (!req.path.startsWith("/api/")) {
+        HttpResponse resp = m_StaticFiles->serveFile(req.path);
+        sendResponse(socket, resp);
+        return;
     }
 
-    sendResponse(socket, resp);
+    // Track socket for async response
+    m_PendingAsyncSockets.insert(socket);
+
+    // Auto-timeout: abort if no response within ASYNC_TIMEOUT_MS
+    QTimer::singleShot(ASYNC_TIMEOUT_MS, socket, [this, socket]() {
+        if (m_PendingAsyncSockets.contains(socket)) {
+            m_PendingAsyncSockets.remove(socket);
+            sendResponse(socket, HttpResponse::error(504, "Gateway Timeout"));
+        }
+    });
+
+    m_Router->dispatchAsync(req, [this, socket](HttpResponse resp) {
+        if (m_PendingAsyncSockets.contains(socket)) {
+            m_PendingAsyncSockets.remove(socket);
+            sendResponse(socket, resp);
+        }
+    });
 }
 
 HttpRequest HttpServer::parseRequest(const QByteArray& raw) const

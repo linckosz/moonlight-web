@@ -2,10 +2,20 @@
  * Moonlight-Web — REST API client
  */
 export class BackendClient {
+    static async _handleError(resp) {
+        let msg = '';
+        try {
+            const body = await resp.json();
+            msg = body.message || body.error || '';
+        } catch (_) {
+            // Response body is not JSON or empty
+        }
+        throw new Error(msg || `Request failed (${resp.status})`);
+    }
+
     static async get(path) {
         const resp = await fetch(path);
-        if (!resp.ok)
-            throw new Error(`GET ${path} failed: ${resp.status}`);
+        if (!resp.ok) return this._handleError(resp);
         return resp.json();
     }
 
@@ -15,14 +25,21 @@ export class BackendClient {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
-        if (!resp.ok)
-            throw new Error(`POST ${path} failed: ${resp.status}`);
+        if (!resp.ok) return this._handleError(resp);
+        return resp.json();
+    }
+
+    static async del(path) {
+        const resp = await fetch(path, { method: 'DELETE' });
+        if (!resp.ok) return this._handleError(resp);
         return resp.json();
     }
 
     static async getHosts()       { return this.get('/api/hosts'); }
     static async scanHosts()      { return this.post('/api/hosts/scan'); }
     static async addManualHost(address) { return this.post('/api/hosts/manual', { address }); }
+    static async removeHost(uuid) { return this.del(`/api/hosts/${uuid}`); }
     static async getPairState(hostId)     { return this.get(`/api/hosts/${hostId}/pair`); }
     static async confirmPairing(hostId)   { return this.post(`/api/hosts/${hostId}/pair`); }
+    static async getAppList(hostId)       { return this.get(`/api/hosts/${hostId}/apps`); }
 }

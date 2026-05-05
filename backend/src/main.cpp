@@ -75,11 +75,17 @@ int main(int argc, char* argv[])
         if (address.isEmpty())
             return HttpResponse::error(400, "Missing 'address' field");
 
-        computerManager.handleAddManualHost(address);
+        auto [status, result] = computerManager.handleAddManualHost(address);
+        return HttpResponse::json(result, status);
+    });
 
-        QJsonObject obj;
-        obj["status"] = "adding";
-        return HttpResponse::json(obj);
+    server.router()->del("/api/hosts/:id", [&computerManager](const HttpRequest& req) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty())
+            return HttpResponse::error(400, "Missing host ID");
+
+        auto [status, result] = computerManager.handleDeleteHost(uuid);
+        return HttpResponse::json(result, status);
     });
 
     // Phase 3: Pairing routes
@@ -98,6 +104,36 @@ int main(int argc, char* argv[])
 
         auto [status, result] = computerManager.handleSubmitPin(uuid);
         return HttpResponse::json(result, status);
+    });
+
+    // Phase 4: App list (async — fetches from Sunshine via HTTPS)
+    server.router()->getAsync("/api/hosts/:id/apps",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) {
+            respond(HttpResponse::error(400, "Missing host ID"));
+            return;
+        }
+        computerManager.handleGetAppList(uuid, std::move(respond));
+    });
+
+    // Phase 4: App asset proxy — PNG (async, fetches on demand if not cached)
+    server.router()->getAsync("/api/hosts/:id/appasset",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) {
+            respond(HttpResponse::error(400, "Missing host ID"));
+            return;
+        }
+
+        bool ok;
+        int appId = req.queryParams.value("appid").toInt(&ok);
+        if (!ok || appId <= 0) {
+            respond(HttpResponse::error(400, "Missing or invalid appid parameter"));
+            return;
+        }
+
+        computerManager.handleGetBoxArt(uuid, appId, std::move(respond));
     });
 
     if (!server.start())

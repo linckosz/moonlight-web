@@ -42,4 +42,8 @@ private:
 
     // Per-connection read buffers
     QMap<QTcpSocket*, QByteArray> m_Buffers;
+
+    // Sockets waiting for async route response
+    QSet<QTcpSocket*> m_PendingAsyncSockets;
+    static constexpr int ASYNC_TIMEOUT_MS = 30000;  // 30s
 };

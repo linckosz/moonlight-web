@@ -90,6 +90,8 @@ NvComputer::NvComputer(QSettings& settings)
     serverCertPem = settings.value("serverCert").toByteArray();
     activeHttpsPort = static_cast<quint16>(
         settings.value("httpsPort", MW_HTTPS_PORT).toUInt());
+
+    pairState = pairStateFromString(settings.value("pairState").toString());
 }
 
 // --- Serialization ----------------------------------------------------------
@@ -107,6 +109,7 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("manualport", manualAddress.port());
     settings.setValue("serverCert", serverCertPem);
     settings.setValue("httpsPort", static_cast<quint32>(activeHttpsPort));
+    settings.setValue("pairState", pairStateToString(pairState));
 }
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
@@ -245,8 +248,9 @@ QJsonObject NvComputer::toJson() const
 
 NvComputer::PairState NvComputer::pairStateFromString(const QString& s)
 {
-    if (s == "1") return PS_PAIRED;
-    if (s == "0") return PS_NOT_PAIRED;
+    // Accept both XML numeric values ("1"/"0") and persisted strings
+    if (s == "1" || s == "paired") return PS_PAIRED;
+    if (s == "0" || s == "not_paired") return PS_NOT_PAIRED;
     return PS_UNKNOWN;
 }
 

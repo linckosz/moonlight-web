@@ -46,6 +46,8 @@ public:
 
     // — Ephemeral traits (from polling) —
     ComputerState state = CS_UNKNOWN;
+
+    // — Persisted pairing state —
     PairState pairState = PS_UNKNOWN;
     NvAddress activeAddress;
     int currentGameId = 0;

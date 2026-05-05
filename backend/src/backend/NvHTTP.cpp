@@ -53,8 +53,6 @@ QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const Q
                               QUuid::createUuid().toString(QUuid::WithoutBraces));
     QUrl url(urlStr);
 
-    qInfo() << "[MW] HTTPS URL:" << url.toString();
-
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
@@ -156,6 +154,60 @@ int NvHTTP::getCurrentGame(const QString& serverInfo)
     if (!state.isEmpty() && state.endsWith("_SERVER_BUSY"))
         return getXmlString(serverInfo, "currentgame").toInt();
     return 0;
+}
+
+QNetworkReply* NvHTTP::getAppListAsync(const NvAddress& address, quint16 httpsPort,
+                                           const QByteArray& clientCertPem,
+                                           const QByteArray& clientKeyPem)
+{
+    QUrl url(QString("https://%1:%2/applist")
+                 .arg(address.address())
+                 .arg(httpsPort));
+
+    QNetworkRequest req(url);
+    req.setTransferTimeout(REQUEST_TIMEOUT_MS);
+    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+
+    QSslConfiguration sslConfig = req.sslConfiguration();
+    sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
+    sslConfig.setPrivateKey(QSslKey(clientKeyPem, QSsl::Rsa, QSsl::Pem));
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    req.setSslConfiguration(sslConfig);
+
+    return m_Nam->get(req);
+}
+
+QVector<NvApp> NvHTTP::parseAppList(const QString& xml)
+{
+    QVector<NvApp> apps;
+    QXmlStreamReader reader(xml);
+
+    while (!reader.atEnd()) {
+        if (reader.readNextStartElement()) {
+            if (reader.name().toString() == "App") {
+                int id = 0;
+                QString name;
+                bool hdrSupported = false;
+
+                while (!(reader.isEndElement() && reader.name().toString() == "App")) {
+                    reader.readNext();
+                    if (reader.isStartElement()) {
+                        if (reader.name().toString() == "ID")
+                            id = reader.readElementText().toInt();
+                        else if (reader.name().toString() == "AppTitle")
+                            name = reader.readElementText();
+                        else if (reader.name().toString() == "IsHdrSupported")
+                            hdrSupported = reader.readElementText() == "1";
+                    }
+                }
+
+                if (id != 0 && !name.isEmpty())
+                    apps.append(NvApp(id, name, hdrSupported));
+            }
+        }
+    }
+
+    return apps;
 }
 
 QVector<int> NvHTTP::parseQuad(const QString& quad)
