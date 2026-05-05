@@ -7,6 +7,7 @@
 #include <QXmlStreamReader>
 
 #include "NvAddress.h"
+#include "NvApp.h"
 
 struct NvDisplayMode {
     int width = 0;
@@ -38,12 +39,18 @@ public:
                                             const QByteArray& clientCertPem,
                                             const QByteArray& clientKeyPem);
 
+    // App list (HTTPS, requires client cert, async)
+    QNetworkReply* getAppListAsync(const NvAddress& address, quint16 httpsPort,
+                                   const QByteArray& clientCertPem,
+                                   const QByteArray& clientKeyPem);
+
     // Static XML helpers
     static void verifyResponseStatus(const QString& xml);
     static QString getXmlString(const QString& xml, const QString& tagName);
     static QByteArray getXmlStringFromHex(const QString& xml, const QString& tagName);
     static QVector<NvDisplayMode> getDisplayModeList(const QString& serverInfo);
     static int getCurrentGame(const QString& serverInfo);
+    static QVector<NvApp> parseAppList(const QString& xml);
     static QVector<int> parseQuad(const QString& quad);
 
 private:

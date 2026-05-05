@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(rm -f backend/Makefile*)"
+      "Bash(rm -f backend/Makefile*)",
+      "Read(//d/Code/Sunshine/src/**)",
+      "Bash(ls backend/src/backend/*.tmp*)",
+      "Bash(ls *.bat)"
     ]
   }
 }

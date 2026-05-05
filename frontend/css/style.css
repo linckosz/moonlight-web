@@ -90,6 +90,31 @@ html, body {
 .btn:hover { background-color: var(--accent-hover); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 
+.btn-loading,
+.btn-loading:hover {
+    opacity: 0.55;
+    cursor: wait;
+    pointer-events: none;
+    position: relative;
+}
+
+.btn-loading::after {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-left: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: btnSpin 0.6s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes btnSpin {
+    to { transform: rotate(360deg); }
+}
+
 .btn-secondary {
     background-color: var(--bg-card);
     border: 1px solid var(--border);
@@ -97,6 +122,13 @@ html, body {
 }
 
 .btn-secondary:hover { background-color: var(--border); }
+
+.btn-neutral {
+    background-color: #1565c0;
+    color: #fff;
+}
+
+.btn-neutral:hover { background-color: #1976d2; }
 
 /* Hosts View */
 
@@ -241,12 +273,12 @@ html, body {
     flex-shrink: 0;
 }
 
-.btn-launch {
+.btn-open {
     background-color: var(--success);
     font-weight: 600;
 }
 
-.btn-launch:hover {
+.btn-open:hover {
     background-color: #43a047;
 }
 
@@ -389,5 +421,217 @@ html, body {
 
 .pairing-actions .btn {
     min-width: 100px;
+}
+
+/* ========================================================================
+   App List View
+   ======================================================================== */
+
+.apps-view {
+    width: 100%;
+}
+
+.apps-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.apps-host-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.apps-host-name {
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.apps-host-addr {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.apps-spacer {
+    width: 100px;  /* Balance the back button */
+}
+
+.apps-loading,
+.apps-error,
+.apps-empty {
+    text-align: center;
+    padding: 64px 24px;
+    color: var(--text-secondary);
+    background-color: var(--bg-secondary);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+/* App grid */
+
+.apps-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+}
+
+.app-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 16px;
+    text-align: center;
+    transition: border-color 0.2s, transform 0.15s;
+    cursor: pointer;
+}
+
+.app-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+
+.app-card-image {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    border-radius: 8px;
+    background-color: var(--bg-card);
+    margin-bottom: 2px;
+}
+
+.app-card-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.app-card-image .app-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    font-size: 2rem;
+}
+
+.app-card-name {
+    font-weight: 500;
+    font-size: 0.9rem;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.app-card-actions {
+    margin-top: 4px;
+}
+
+/* ========================================================================
+   Toast Notifications
+   ======================================================================== */
+
+#toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 380px;
+    pointer-events: none;
+}
+
+.toast {
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.4;
+    color: #fff;
+    cursor: pointer;
+    pointer-events: auto;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+
+    /* Slide in from right */
+    animation: toastSlideIn 0.3s ease forwards;
+}
+
+.toast-exit {
+    animation: toastFadeOut 0.3s ease forwards;
+}
+
+.toast-success {
+    background-color: #2e7d32;
+    border: 1px solid #4caf50;
+}
+
+.toast-error {
+    background-color: #b71c1c;
+    border: 1px solid #f44336;
+}
+
+.toast-warning {
+    background-color: #e65100;
+    border: 1px solid #ff9800;
+}
+
+.toast-info {
+    background-color: #0d47a1;
+    border: 1px solid #2196f3;
+}
+
+@keyframes toastSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(60px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes toastFadeOut {
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(40px);
+    }
+}
+
+/* Responsive grid adjustments */
+
+@media (max-width: 600px) {
+    #toast-container {
+        bottom: 12px;
+        right: 12px;
+        left: 12px;
+        max-width: none;
+    }
+
+    .apps-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 10px;
+    }
+
+    .apps-header {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .apps-spacer {
+        display: none;
+    }
 }
 

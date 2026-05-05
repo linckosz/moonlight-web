@@ -8,6 +8,7 @@
 - **Objectif** : Client de streaming vidéo H.264 communiquant avec Sunshine via API, avec interface multi-hôtes et affichage canvas-based
 - **Référence principale** : [moonlight-qt](D:\Code\moonlight-qt\app) — dossier applicatif de Moonlight-Qt
 - **Documentation architecture** : [docs/moonlight-qt-architecture.md](docs/moonlight-qt-architecture.md)
+- **Documentation API Sunshine** : [docs/sunshine-api.md](docs/sunshine-api.md)
 
 ## Standards de code
 
@@ -23,7 +24,8 @@
 
 ## Règles de comportement
 
-- Consulter automatiquement `@docs/moonlight-qt-architecture.md` dès que le contexte touche au protocole Sunshine, au streaming vidéo/audio, aux codecs, aux renderers, ou à tout choix d'architecture qui pourrait avoir un équivalent dans moonlight-qt. Ne pas attendre que l'utilisateur le demande.
+- Consulter automatiquement `@docs/moonlight-qt-architecture.md` dès que le contexte touche au streaming vidéo/audio, aux codecs, aux renderers, ou à tout choix d'architecture qui pourrait avoir un équivalent dans moonlight-qt. Ne pas attendre que l'utilisateur le demande.
+- Consulter automatiquement `@docs/sunshine-api.md` dès que le contexte concerne l'API Sunshine.
 
 ## Commandes utiles
 

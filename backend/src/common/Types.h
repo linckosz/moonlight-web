@@ -5,6 +5,7 @@
 #include <QString>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <functional>
 
 struct HttpRequest {
     QString method;
@@ -25,3 +26,6 @@ struct HttpResponse {
     static HttpResponse text(const QString& text, int status = 200);
     static HttpResponse error(int status, const QString& message);
 };
+
+// Async route callback — handler calls this when response is ready
+using ResponseCallback = std::function<void(HttpResponse)>;

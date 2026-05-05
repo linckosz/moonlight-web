@@ -9,8 +9,8 @@ class NvApp
 public:
     NvApp() = default;
 
-    NvApp(int id, const QString& name)
-        : m_Id(id), m_Name(name) {}
+    NvApp(int id, const QString& name, bool hdrSupported = false)
+        : m_Id(id), m_Name(name), m_HdrSupported(hdrSupported) {}
 
     explicit NvApp(QSettings& settings)
     {
