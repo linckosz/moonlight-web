@@ -210,6 +210,68 @@ QVector<NvApp> NvHTTP::parseAppList(const QString& xml)
     return apps;
 }
 
+QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPort,
+                                               int appId, const QString& uniqueId,
+                                               const QByteArray& rikey, int rikeyid,
+                                               int width, int height, int fps, int bitrate,
+                                               const QByteArray& clientCertPem,
+                                               const QByteArray& clientKeyPem)
+{
+    Q_UNUSED(bitrate)  // sent via RTSP ANNOUNCE, not /launch
+    QString mode = QString("%1x%2x%3").arg(width).arg(height).arg(fps);
+    QString query = QString("appid=%1&uniqueid=%2&mode=%3&rikey=%4&rikeyid=%5"
+                            "&localAudioPlayMode=0&sops=1&surroundAudioInfo=196610"
+                            "&gcmap=0&hdrMode=0&corever=0")
+                        .arg(appId)
+                        .arg(uniqueId)
+                        .arg(mode)
+                        .arg(QString::fromLatin1(rikey.toHex()))
+                        .arg(rikeyid);
+
+    QUrl url(QString("https://%1:%2/launch?%3")
+                 .arg(address.address())
+                 .arg(httpsPort)
+                 .arg(query));
+
+    QNetworkRequest req(url);
+    req.setTransferTimeout(30000);  // launch can take a few seconds
+    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+
+    QSslConfiguration sslConfig = req.sslConfiguration();
+    sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
+    sslConfig.setPrivateKey(QSslKey(clientKeyPem, QSsl::Rsa, QSsl::Pem));
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    req.setSslConfiguration(sslConfig);
+
+    return m_Nam->get(req);
+}
+
+QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
+                                     const QByteArray& clientCertPem,
+                                     const QByteArray& clientKeyPem)
+{
+    QUrl url(QString("https://%1:%2/cancel")
+                 .arg(address.address())
+                 .arg(httpsPort));
+
+    QNetworkRequest req(url);
+    req.setTransferTimeout(REQUEST_TIMEOUT_MS);
+    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+
+    QSslConfiguration sslConfig = req.sslConfiguration();
+    sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
+    sslConfig.setPrivateKey(QSslKey(clientKeyPem, QSsl::Rsa, QSsl::Pem));
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    req.setSslConfiguration(sslConfig);
+
+    return m_Nam->get(req);
+}
+
+QString NvHTTP::parseSessionUrl(const QString& launchXml)
+{
+    return getXmlString(launchXml, "sessionUrl0");
+}
+
 QVector<int> NvHTTP::parseQuad(const QString& quad)
 {
     QVector<int> ret;

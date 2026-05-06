@@ -6,6 +6,7 @@
 #include "common/Logger.h"
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
+#include "streaming/Session.h"
 
 int main(int argc, char* argv[])
 {
@@ -134,6 +135,70 @@ int main(int argc, char* argv[])
         }
 
         computerManager.handleGetBoxArt(uuid, appId, std::move(respond));
+    });
+
+    // Phase 5: Start streaming — launch app + RTSP handshake
+    server.router()->postAsync("/api/hosts/:id/start",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) {
+            respond(HttpResponse::error(400, "Missing host ID"));
+            return;
+        }
+
+        NvComputer* host = computerManager.getHost(uuid);
+        if (!host) {
+            respond(HttpResponse::error(404, "Host not found"));
+            return;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QJsonObject body = doc.object();
+        int appId = body["appId"].toInt(0);
+        if (appId <= 0) {
+            respond(HttpResponse::error(400, "Missing or invalid appId"));
+            return;
+        }
+
+        auto* session = new StreamSession(
+            host, appId,
+            computerManager.http(),
+            std::move(respond)
+        );
+        session->start();
+    });
+
+    // Phase 5: Quit running app
+    server.router()->postAsync("/api/hosts/:id/quit",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) {
+            respond(HttpResponse::error(400, "Missing host ID"));
+            return;
+        }
+
+        NvComputer* host = computerManager.getHost(uuid);
+        if (!host) {
+            respond(HttpResponse::error(404, "Host not found"));
+            return;
+        }
+
+        auto* identity = IdentityManager::get();
+        QNetworkReply* reply = computerManager.http()->quitAppAsync(
+            host->activeAddress, host->activeHttpsPort,
+            identity->getCertificate(), identity->getPrivateKey());
+
+        // Wait for quit to complete, then respond
+        QObject::connect(reply, &QNetworkReply::finished, [reply, respond]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError) {
+                respond(HttpResponse::error(502, "Quit failed: " + reply->errorString()));
+            } else {
+                QJsonObject result;
+                result["status"] = "quit";
+                respond(HttpResponse::json(result));
+            }
+        });
     });
 
     if (!server.start())

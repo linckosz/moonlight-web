@@ -45,6 +45,10 @@ public:
     std::pair<int, QJsonObject> handleStartPairing(const QString& uuid);
     std::pair<int, QJsonObject> handleSubmitPin(const QString& uuid);
 
+    // Host lookup (public, for stream session creation)
+    NvComputer* getHost(const QString& uuid) const;
+    NvHTTP* http() const { return m_Http; }
+
     // App list — HTTPS fetch from paired host, async
     void handleGetAppList(const QString& uuid, ResponseCallback respond);
 

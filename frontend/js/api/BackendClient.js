@@ -42,4 +42,6 @@ export class BackendClient {
     static async getPairState(hostId)     { return this.get(`/api/hosts/${hostId}/pair`); }
     static async confirmPairing(hostId)   { return this.post(`/api/hosts/${hostId}/pair`); }
     static async getAppList(hostId)       { return this.get(`/api/hosts/${hostId}/apps`); }
+    static async launchApp(hostId, appId) { return this.post(`/api/hosts/${hostId}/start`, { appId }); }
+    static async quitApp(hostId)          { return this.post(`/api/hosts/${hostId}/quit`); }
 }

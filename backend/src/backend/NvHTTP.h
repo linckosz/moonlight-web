@@ -44,6 +44,18 @@ public:
                                    const QByteArray& clientCertPem,
                                    const QByteArray& clientKeyPem);
 
+    // Launch / quit app (HTTPS, requires client cert, async)
+    QNetworkReply* launchAppAsync(const NvAddress& address, quint16 httpsPort,
+                                   int appId, const QString& uniqueId,
+                                   const QByteArray& rikey, int rikeyid,
+                                   int width, int height, int fps, int bitrate,
+                                   const QByteArray& clientCertPem,
+                                   const QByteArray& clientKeyPem);
+
+    QNetworkReply* quitAppAsync(const NvAddress& address, quint16 httpsPort,
+                                 const QByteArray& clientCertPem,
+                                 const QByteArray& clientKeyPem);
+
     // Static XML helpers
     static void verifyResponseStatus(const QString& xml);
     static QString getXmlString(const QString& xml, const QString& tagName);
@@ -52,6 +64,7 @@ public:
     static int getCurrentGame(const QString& serverInfo);
     static QVector<NvApp> parseAppList(const QString& xml);
     static QVector<int> parseQuad(const QString& quad);
+    static QString parseSessionUrl(const QString& launchXml);
 
 private:
     QUrl buildUrl(const NvAddress& address, const QString& command,
