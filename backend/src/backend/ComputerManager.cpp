@@ -401,6 +401,11 @@ NvComputer* ComputerManager::findHostByUuid(const QString& uuid) const
     return m_Hosts.value(uuid, nullptr);
 }
 
+NvComputer* ComputerManager::getHost(const QString& uuid) const
+{
+    return m_Hosts.value(uuid, nullptr);
+}
+
 // --- REST API methods -------------------------------------------------------
 
 QJsonArray ComputerManager::getHostsJson() const

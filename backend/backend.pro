@@ -1,5 +1,4 @@
-QT += core network
-# Phase 5+: add websockets for WebSocket streaming
+QT += core network websockets
 CONFIG += c++17 console
 TEMPLATE = app
 
@@ -28,7 +27,10 @@ SOURCES += \
     src/backend/NvComputer.cpp \
     src/backend/ComputerManager.cpp \
     src/backend/IdentityManager.cpp \
-    src/backend/NvPairingManager.cpp
+    src/backend/NvPairingManager.cpp \
+    src/streaming/StreamConfig.cpp \
+    src/streaming/RtspClient.cpp \
+    src/streaming/Session.cpp
 
 HEADERS += \
     src/server/HttpServer.h \
@@ -42,7 +44,10 @@ HEADERS += \
     src/backend/NvComputer.h \
     src/backend/ComputerManager.h \
     src/backend/IdentityManager.h \
-    src/backend/NvPairingManager.h
+    src/backend/NvPairingManager.h \
+    src/streaming/StreamConfig.h \
+    src/streaming/RtspClient.h \
+    src/streaming/Session.h
 
 # Frontend directory (served as static files)
 DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"

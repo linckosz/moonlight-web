@@ -8,6 +8,7 @@
 import { HostListView } from './ui/HostListView.js';
 import { AppListView } from './ui/AppListView.js';
 import { BackendClient } from './api/BackendClient.js';
+import { Toast } from './ui/Toast.js';
 
 const MoonlightApp = {
     state: 'loading',
@@ -59,15 +60,33 @@ const MoonlightApp = {
             this.transition('host_list');
             this.showHostList();
         };
-        this.appListView.onLaunch = (app) => {
-            console.log(`[MW] Launch requested: ${app.name} (id=${app.id}) on ${host.displayName}`);
-            // Phase 5: POST /api/hosts/:id/start
-        };
+        this.appListView.onLaunch = (app) => this.launchApp(host, app);
     },
 
     transition(newState) {
         console.log(`[MW] State: ${this.state} -> ${newState}`);
         this.state = newState;
+    },
+
+    async launchApp(host, app) {
+        console.log(`[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}`);
+        this.transition('launching');
+        Toast.info(`Launching ${app.name}...`);
+
+        try {
+            const result = await BackendClient.launchApp(host.uuid, app.id);
+            console.log('[MW] Launch result:', result);
+
+            if (result.status === 'streaming') {
+                Toast.success(`${app.name} started`);
+                this.transition('streaming');
+                // Phase 5b: open stream view + WebSocket
+            }
+        } catch (err) {
+            console.error('[MW] Launch failed:', err);
+            Toast.error(err.message || 'Launch failed');
+            this.transition('app_list');
+        }
     }
 };
 
