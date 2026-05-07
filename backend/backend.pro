@@ -10,12 +10,19 @@ INCLUDEPATH += src
 INCLUDEPATH += $$PWD/third_party/qmdnsengine/qmdnsengine/src/include
 INCLUDEPATH += $$PWD/third_party/qmdnsengine
 
-# Phase 3: OpenSSL
-INCLUDEPATH += $$PWD/libs/windows/include/x64
+# Phase 5b: ENet (reliable UDP control channel)
+INCLUDEPATH += $$PWD/third_party/enet/include
+
+win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/third_party/enet/release/ -lenet
+else:win32:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/third_party/enet/debug/ -lenet
+else:unix: LIBS += -L$$OUT_PWD/third_party/enet/ -lenet
 
 win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/third_party/qmdnsengine/release/ -lqmdnsengine
 else:win32:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/third_party/qmdnsengine/debug/ -lqmdnsengine
 else:unix: LIBS += -L$$OUT_PWD/third_party/qmdnsengine/ -lqmdnsengine
+
+# Phase 3: OpenSSL
+INCLUDEPATH += $$PWD/libs/windows/include/x64
 
 SOURCES += \
     src/main.cpp \
@@ -30,7 +37,10 @@ SOURCES += \
     src/backend/NvPairingManager.cpp \
     src/streaming/StreamConfig.cpp \
     src/streaming/RtspClient.cpp \
-    src/streaming/Session.cpp
+    src/streaming/Session.cpp \
+    src/streaming/InputEncoder.cpp \
+    src/streaming/StreamRelay.cpp \
+    src/streaming/EnetControlStream.cpp
 
 HEADERS += \
     src/server/HttpServer.h \
@@ -47,7 +57,10 @@ HEADERS += \
     src/backend/NvPairingManager.h \
     src/streaming/StreamConfig.h \
     src/streaming/RtspClient.h \
-    src/streaming/Session.h
+    src/streaming/Session.h \
+    src/streaming/InputEncoder.h \
+    src/streaming/StreamRelay.h \
+    src/streaming/EnetControlStream.h
 
 # Frontend directory (served as static files)
 DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"

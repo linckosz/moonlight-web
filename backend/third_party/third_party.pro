@@ -1,2 +1,3 @@
 TEMPLATE = subdirs
-SUBDIRS = qmdnsengine
+CONFIG += ordered
+SUBDIRS = qmdnsengine enet

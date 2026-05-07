@@ -21,6 +21,7 @@ release/
 debug/
 backend/release/
 backend/debug/
+backend/build_msvc.bat
 
 # IDE
 .vs/

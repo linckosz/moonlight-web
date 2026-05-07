@@ -37,6 +37,11 @@ public:
 
     const SessionInfo& sessionInfo() const { return m_SessionInfo; }
 
+    // Release UDP socket ownership to the caller. Returns nullptr if already taken.
+    QUdpSocket* takeVideoSocket();
+    QUdpSocket* takeAudioSocket();
+    QUdpSocket* takeControlSocket();
+
 signals:
     void handshakeComplete(const RtspClient::SessionInfo& info);
     void handshakeFailed(const QString& error);

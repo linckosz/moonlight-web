@@ -1,15 +1,20 @@
 #include "NvHTTP.h"
 
+#include <QDebug>
 #include <QSslConfiguration>
 #include <QSslCertificate>
+#include <QSslError>
 #include <QSslKey>
 #include <QSslSocket>
+#include <QNetworkProxy>
 
 #include <QUuid>
 
 NvHTTP::NvHTTP(QNetworkAccessManager* nam, QObject* parent)
     : QObject(parent), m_Nam(nam)
 {
+    // Disable system proxy for LAN connections (Sunshine is always local)
+    m_Nam->setProxy(QNetworkProxy::NoProxy);
 }
 
 QUrl NvHTTP::buildUrl(const NvAddress& address, const QString& command,
@@ -233,17 +238,43 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
                  .arg(httpsPort)
                  .arg(query));
 
+    qDebug() << "[NvHTTP] launchApp URL:" << url.toString();
+    qDebug() << "[NvHTTP]   client cert size:" << clientCertPem.size()
+             << "key size:" << clientKeyPem.size();
+
     QNetworkRequest req(url);
     req.setTransferTimeout(30000);  // launch can take a few seconds
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
-    sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
-    sslConfig.setPrivateKey(QSslKey(clientKeyPem, QSsl::Rsa, QSsl::Pem));
+    QSslCertificate clientCert(clientCertPem, QSsl::Pem);
+    QSslKey clientKey(clientKeyPem, QSsl::Rsa, QSsl::Pem);
+
+    qDebug() << "[NvHTTP]   client cert valid:" << !clientCert.isNull()
+             << "key valid:" << !clientKey.isNull();
+
+    sslConfig.setLocalCertificate(clientCert);
+    sslConfig.setPrivateKey(clientKey);
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    return m_Nam->get(req);
+    // Log proxy settings
+    QNetworkProxy proxy = m_Nam->proxy();
+    qDebug() << "[NvHTTP]   proxy type:" << proxy.type()
+             << "host:" << proxy.hostName() << "port:" << proxy.port();
+
+    QNetworkReply* reply = m_Nam->get(req);
+
+    // Log SSL errors as they happen
+    QObject::connect(reply, &QNetworkReply::sslErrors,
+                     [url](const QList<QSslError>& errors) {
+        qWarning() << "[NvHTTP] SSL errors for" << url.toString();
+        for (const auto& e : errors) {
+            qWarning() << "[NvHTTP]   -" << e.errorString();
+        }
+    });
+
+    return reply;
 }
 
 QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
