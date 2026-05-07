@@ -265,12 +265,12 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 
     QNetworkReply* reply = m_Nam->get(req);
 
-    // Log SSL errors as they happen
+    // SSL errors are expected (Sunshine self-signed cert), logged as debug
     QObject::connect(reply, &QNetworkReply::sslErrors,
                      [url](const QList<QSslError>& errors) {
-        qWarning() << "[NvHTTP] SSL errors for" << url.toString();
+        qDebug() << "[NvHTTP] SSL errors for" << url.toString();
         for (const auto& e : errors) {
-            qWarning() << "[NvHTTP]   -" << e.errorString();
+            qDebug() << "[NvHTTP]   -" << e.errorString();
         }
     });
 

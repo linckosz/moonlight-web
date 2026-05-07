@@ -4,9 +4,11 @@
 #include <QUdpSocket>
 #include <QWebSocketServer>
 #include <QWebSocket>
+#include <memory>
 #include "RtspClient.h"
 
 class EnetControlStream;
+class InputCrypto;
 
 // Relays UDP RTP streams to the browser via WebSocket and forwards
 // browser input events to Sunshine via ENet reliable UDP control channel.
@@ -54,6 +56,7 @@ private:
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;
     EnetControlStream* m_EnetControl = nullptr;
+    std::unique_ptr<InputCrypto> m_Crypto;
     RtspClient::SessionInfo m_SessionInfo;
     quint16 m_WsPort = 48001;
     bool m_Running = false;

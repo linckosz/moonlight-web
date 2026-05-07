@@ -1,6 +1,7 @@
 #include "StreamRelay.h"
 #include "EnetControlStream.h"
 #include "InputEncoder.h"
+#include "InputCrypto.h"
 
 #include <QCoreApplication>
 #include <QJsonDocument>
@@ -21,6 +22,10 @@ StreamRelay::StreamRelay(QUdpSocket* videoSocket, QUdpSocket* audioSocket,
     if (m_VideoSocket)  m_VideoSocket->setParent(this);
     if (m_AudioSocket)  m_AudioSocket->setParent(this);
     if (m_ControlUdpSocket) m_ControlUdpSocket->setParent(this);
+
+    // AES-128-GCM encryption for input data (required by Sunshine)
+    if (!info.rikey.isEmpty())
+        m_Crypto = std::make_unique<InputCrypto>(info.rikey, info.rikeyid);
 
     m_WsServer = new QWebSocketServer(
         QString("Moonlight-Relay"),
@@ -117,8 +122,8 @@ void StreamRelay::sendToControl(const QByteArray& packet)
     if (!m_EnetControl || !m_EnetControl->isConnected())
         return;
 
-    // Determine channel from the packet magic
-    uint32_t magic = qFromLittleEndian<uint32_t>(packet.constData());
+    // Determine channel from the packet magic (at offset 4, after the BE size)
+    uint32_t magic = qFromLittleEndian<uint32_t>(packet.constData() + 4);
     quint8 channel;
     switch (magic) {
     case 0x03: case 0x04:  // keyboard down/up
@@ -134,7 +139,15 @@ void StreamRelay::sendToControl(const QByteArray& packet)
         break;
     }
 
-    m_EnetControl->sendInput(packet, channel);
+    // AES-128-GCM encrypt (Sunshine requires encrypted input data)
+    QByteArray payload;
+    if (m_Crypto)
+        payload = m_Crypto->wrapAndEncrypt(packet);
+    else
+        payload = packet; // fallback (shouldn't happen)
+
+    if (payload.isEmpty()) return;
+    m_EnetControl->sendInput(payload, channel);
 }
 
 // --- Slots ------------------------------------------------------------------

@@ -26,6 +26,8 @@ void RtspClient::start(const QUrl& rtspUrl, const QString& uniqueId, const Strea
     m_CSeq = 1;
     m_SessionInfo.host = rtspUrl.host();
     m_SessionInfo.rtspPort = rtspUrl.port(48010);
+    m_SessionInfo.rikey = config.rikey;
+    m_SessionInfo.rikeyid = config.rikeyid;
 
     // --- OPTIONS ---
     emit stateChanged("connecting", "OPTIONS");

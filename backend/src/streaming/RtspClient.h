@@ -27,6 +27,8 @@ public:
         QString sessionId;
         QString host;
         quint16 rtspPort = 0;
+        QByteArray rikey;   // AES-128 key for input encryption (16 bytes)
+        int rikeyid = 0;    // IV prefix (BE uint32 in first 4 bytes)
     };
 
     explicit RtspClient(QObject* parent = nullptr);
