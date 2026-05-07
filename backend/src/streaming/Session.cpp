@@ -1,20 +1,24 @@
 #include "Session.h"
+#include "StreamRelay.h"
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
 #include "../backend/IdentityManager.h"
 
+#include <QCoreApplication>
 #include <QJsonObject>
 #include <QDebug>
 #include <QUrl>
 
 StreamSession::StreamSession(NvComputer* host, int appId,
                                NvHTTP* http, ResponseCallback respond,
+                               quint16 wsPort,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
     , m_AppId(appId)
     , m_Http(http)
     , m_Respond(std::move(respond))
+    , m_WsPort(wsPort)
 {
 }
 
@@ -53,6 +57,8 @@ void StreamSession::start()
     QByteArray clientKey = identity->getPrivateKey();
 
     qDebug() << "[Session] Launching app" << m_AppId << "on" << m_Host->name;
+    qDebug() << "[Session]   address:" << m_Host->activeAddress.address()
+             << "port:" << m_Host->activeHttpsPort;
 
     m_LaunchReply = m_Http->launchAppAsync(
         m_Host->activeAddress, m_Host->activeHttpsPort,
@@ -94,8 +100,20 @@ void StreamSession::onLaunchReplyFinished()
     m_LaunchReply = nullptr;
 
     if (reply->error() != QNetworkReply::NoError) {
-        qWarning() << "[Session] Launch failed:" << reply->errorString();
-        m_Respond(HttpResponse::error(502, "Launch failed: " + reply->errorString()));
+        int code = static_cast<int>(reply->error());
+        qWarning() << "[Session] Launch error code:" << code << "-" << reply->errorString();
+        qWarning() << "[Session]   URL:" << reply->url().toString();
+
+        // Check SSL: if peer cert chain is empty and we expected TLS, it's a handshake issue
+        const auto& chain = reply->sslConfiguration().peerCertificateChain();
+        qWarning() << "[Session]   Peer cert chain size:" << chain.size();
+
+        QString detail = QString("Launch failed: [code=%1] %2 (target: %3:%4)")
+                             .arg(code)
+                             .arg(reply->errorString())
+                             .arg(m_Host->activeAddress.address())
+                             .arg(m_Host->activeHttpsPort);
+        m_Respond(HttpResponse::error(502, detail));
         emit sessionFailed(reply->errorString());
         deleteLater();
         return;
@@ -146,20 +164,44 @@ void StreamSession::onRtspHandshakeComplete(const RtspClient::SessionInfo& info)
              << "audio=" << info.audioPort
              << "control=" << info.controlPort;
 
-    m_SessionInfo = info;
+    // Extract UDP sockets from RtspClient before it's destroyed
+    QUdpSocket* videoSock = m_RtspClient->takeVideoSocket();
+    QUdpSocket* audioSock = m_RtspClient->takeAudioSocket();
+    QUdpSocket* ctrlSock  = m_RtspClient->takeControlSocket();
+
+    // Create the long-lived relay
+    auto* relay = new StreamRelay(videoSock, audioSock, ctrlSock, info, m_WsPort, this);
+
+    if (!relay->start()) {
+        delete relay;
+        m_Respond(HttpResponse::error(500, "Failed to start WebSocket relay"));
+        emit sessionFailed("WebSocket server failed to start");
+        deleteLater();
+        return;
+    }
+
+    // Reparent to QCoreApplication so relay survives StreamSession deletion
+    relay->setParent(QCoreApplication::instance());
+
+    // When the relay session ends, clean up
+    connect(relay, &StreamRelay::sessionEnded, this, [this]() {
+        quit();
+        deleteLater();
+    });
+
+    emit relayCreated(relay);
 
     QJsonObject result;
     result["status"] = "streaming";
+    result["wsUrl"] = relay->wsUrl();
+    result["wsPort"] = static_cast<int>(relay->wsPort());
     result["sessionUrl"] = QString("rtsp://%1:%2").arg(info.host).arg(info.rtspPort);
-    result["videoPort"] = info.videoPort;
-    result["audioPort"] = info.audioPort;
-    result["controlPort"] = info.controlPort;
-    result["sessionId"] = info.sessionId;
 
     m_Respond(HttpResponse::json(result));
     emit sessionStarted();
 
-    // Session stays alive — streaming continues until quit() or disconnect
+    // StreamSession is ephemeral — relay lives on
+    deleteLater();
 }
 
 void StreamSession::onRtspHandshakeFailed(const QString& error)

@@ -10,6 +10,7 @@
 
 class NvHTTP;
 class NvComputer;
+class StreamRelay;
 
 // Orchestrates launchApp → RTSP handshake → streaming session.
 // Created per-stream, self-deletes when done.
@@ -21,6 +22,7 @@ public:
     // Takes ownership of the response callback — will call it exactly once.
     StreamSession(NvComputer* host, int appId,
                   NvHTTP* http, ResponseCallback respond,
+                  quint16 wsPort = 48001,
                   QObject* parent = nullptr);
     ~StreamSession();
 
@@ -30,6 +32,7 @@ public:
     const RtspClient::SessionInfo& sessionInfo() const { return m_SessionInfo; }
 
 signals:
+    void relayCreated(StreamRelay* relay);
     void sessionStarted();
     void sessionFailed(const QString& error);
 
@@ -43,6 +46,7 @@ private:
     int m_AppId;
     NvHTTP* m_Http;
     ResponseCallback m_Respond;
+    quint16 m_WsPort = 48001;
 
     StreamConfig m_Config;
     RtspClient* m_RtspClient = nullptr;

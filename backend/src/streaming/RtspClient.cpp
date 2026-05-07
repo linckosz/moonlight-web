@@ -76,6 +76,27 @@ void RtspClient::start(const QUrl& rtspUrl, const QString& uniqueId, const Strea
     emit handshakeComplete(m_SessionInfo);
 }
 
+QUdpSocket* RtspClient::takeVideoSocket()
+{
+    QUdpSocket* s = m_VideoSocket;
+    m_VideoSocket = nullptr;
+    return s;
+}
+
+QUdpSocket* RtspClient::takeAudioSocket()
+{
+    QUdpSocket* s = m_AudioSocket;
+    m_AudioSocket = nullptr;
+    return s;
+}
+
+QUdpSocket* RtspClient::takeControlSocket()
+{
+    QUdpSocket* s = m_ControlSocket;
+    m_ControlSocket = nullptr;
+    return s;
+}
+
 void RtspClient::stop()
 {
     m_State = Idle;
@@ -287,7 +308,7 @@ QString RtspClient::buildAnnounceSdp() const
     sdp += QString("a=x-nv-audio.surround.AudioQuality:%1\r\n").arg(m_Config.kAudioQuality);
     sdp += QString("a=x-nv-aqos.packetDuration:%1\r\n").arg(m_Config.kAudioPacketDuration);
     sdp += "a=x-nv-aqos.qosTrafficType:5\r\n";
-    sdp += "a=x-nv-general.useReliableUdp:0\r\n";
+    sdp += "a=x-nv-general.useReliableUdp:1\r\n";
     sdp += "a=x-nv-general.featureFlags:0\r\n";
     sdp += "a=x-ml-general.featureFlags:0\r\n";
     sdp += QString("a=x-ml-video.configuredBitrateKbps:%1\r\n").arg(m_Config.kBitrateKbps);

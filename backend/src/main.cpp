@@ -1,12 +1,14 @@
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QJsonDocument>
+#include <QPointer>
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "common/Logger.h"
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
 #include "streaming/Session.h"
+#include "streaming/StreamRelay.h"
 
 int main(int argc, char* argv[])
 {
@@ -26,6 +28,9 @@ int main(int argc, char* argv[])
 
     QCommandLineOption logOption("log", "Log file path", "path");
     parser.addOption(logOption);
+
+    QCommandLineOption wsPortOption("ws-port", "WebSocket relay port", "port", "48001");
+    parser.addOption(wsPortOption);
 
     parser.process(app);
 
@@ -47,6 +52,10 @@ int main(int argc, char* argv[])
     // Phase 3: Initialize pairing identity (generates RSA keypair if needed)
     IdentityManager::get();
     Logger::info("Pairing identity initialized");
+
+    // Phase 5b: WebSocket relay tracking
+    quint16 wsPort = parser.value("ws-port").toUShort();
+    QPointer<StreamRelay> g_ActiveRelay;
 
     // Register API routes
     server.router()->get("/api/health", [](const HttpRequest&) {
@@ -139,7 +148,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Start streaming — launch app + RTSP handshake
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, wsPort, &g_ActiveRelay](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -163,14 +172,24 @@ int main(int argc, char* argv[])
         auto* session = new StreamSession(
             host, appId,
             computerManager.http(),
-            std::move(respond)
+            std::move(respond),
+            wsPort
         );
+
+        // Track the relay for quit/cleanup
+        QObject::connect(session, &StreamSession::relayCreated,
+            [&g_ActiveRelay](StreamRelay* relay) {
+                g_ActiveRelay = relay;
+                QObject::connect(relay, &StreamRelay::sessionEnded,
+                    [&g_ActiveRelay]() { g_ActiveRelay = nullptr; });
+            });
+
         session->start();
     });
 
     // Phase 5: Quit running app
     server.router()->postAsync("/api/hosts/:id/quit",
-        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, &g_ActiveRelay](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -181,6 +200,13 @@ int main(int argc, char* argv[])
         if (!host) {
             respond(HttpResponse::error(404, "Host not found"));
             return;
+        }
+
+        // Stop the stream relay first
+        if (g_ActiveRelay) {
+            g_ActiveRelay->stop();
+            g_ActiveRelay->deleteLater();
+            g_ActiveRelay = nullptr;
         }
 
         auto* identity = IdentityManager::get();

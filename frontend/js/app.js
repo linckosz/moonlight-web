@@ -7,6 +7,7 @@
  */
 import { HostListView } from './ui/HostListView.js';
 import { AppListView } from './ui/AppListView.js';
+import { StreamView } from './ui/StreamView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 
@@ -14,6 +15,7 @@ const MoonlightApp = {
     state: 'loading',
     hostListView: null,
     appListView: null,
+    streamView: null,
 
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
@@ -39,6 +41,10 @@ const MoonlightApp = {
         if (this.appListView) {
             this.appListView.destroy();
             this.appListView = null;
+        }
+        if (this.streamView) {
+            this.streamView.destroy();
+            this.streamView = null;
         }
     },
 
@@ -80,7 +86,12 @@ const MoonlightApp = {
             if (result.status === 'streaming') {
                 Toast.success(`${app.name} started`);
                 this.transition('streaming');
-                // Phase 5b: open stream view + WebSocket
+
+                this.streamView = new StreamView(
+                    document.getElementById('app'),
+                    result.wsUrl,
+                    host
+                );
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
