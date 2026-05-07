@@ -40,7 +40,8 @@ SOURCES += \
     src/streaming/Session.cpp \
     src/streaming/InputEncoder.cpp \
     src/streaming/StreamRelay.cpp \
-    src/streaming/EnetControlStream.cpp
+    src/streaming/EnetControlStream.cpp \
+    src/streaming/InputCrypto.cpp
 
 HEADERS += \
     src/server/HttpServer.h \
@@ -60,7 +61,8 @@ HEADERS += \
     src/streaming/Session.h \
     src/streaming/InputEncoder.h \
     src/streaming/StreamRelay.h \
-    src/streaming/EnetControlStream.h
+    src/streaming/EnetControlStream.h \
+    src/streaming/InputCrypto.h
 
 # Frontend directory (served as static files)
 DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"

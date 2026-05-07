@@ -131,8 +131,17 @@ void EnetControlStream::stop()
 void EnetControlStream::sendInput(const QByteArray& inputPacket, quint8 channel)
 {
     if (!m_Connected || !m_Peer) return;
-    // Use UNSEQUENCED for Sunshine to avoid HOL blocking on input data
-    sendMessage(inputPacket, PKT_TYPE_INPUT, channel, ENET_PACKET_FLAG_UNSEQUENCED);
+    // Use RELIABLE to match moonlight-qt — input events must not be dropped
+
+    // Hex dump first few packets per channel for debugging
+    static int hexDumpCount[0x30] = {};
+    if (channel < 0x30 && hexDumpCount[channel]++ < 3) {
+        QByteArray hex = inputPacket.toHex(' ');
+        qDebug() << "[ENet] Input hex dump ch=" << channel
+                 << "len=" << inputPacket.size() << ":" << hex;
+    }
+
+    sendMessage(inputPacket, PKT_TYPE_INPUT, channel, ENET_PACKET_FLAG_RELIABLE);
 }
 
 void EnetControlStream::service()
@@ -142,13 +151,18 @@ void EnetControlStream::service()
     ENetEvent event;
     while (enet_host_service(m_Host, &event, 0) > 0) {
         switch (event.type) {
-        case ENET_EVENT_TYPE_RECEIVE:
-            // Incoming data — not used for input (we just send)
+        case ENET_EVENT_TYPE_RECEIVE: {
+            uint16_t recvType = 0;
+            if (event.packet->dataLength >= 2)
+                recvType = qFromLittleEndian<uint16_t>(event.packet->data);
+            qDebug() << "[ENet] RECV type=0x" << Qt::hex << recvType
+                     << "ch=" << event.channelID
+                     << "len=" << event.packet->dataLength;
             enet_packet_destroy(event.packet);
             break;
-
+        }
         case ENET_EVENT_TYPE_DISCONNECT:
-            qWarning() << "[ENet] Peer disconnected";
+            qWarning() << "[ENet] Peer disconnected, data=" << event.data;
             m_Connected = false;
             m_ServiceTimer->stop();
             emit disconnected();
@@ -187,8 +201,17 @@ bool EnetControlStream::sendMessage(const QByteArray& payload, uint16_t type,
 
     // Service to send + flush
     ENetEvent event;
-    enet_host_service(m_Host, &event, 0);
+    int svc = enet_host_service(m_Host, &event, 0);
     enet_host_flush(m_Host);
+
+    // If Sunshine disconnected during send, handle it here
+    if (svc > 0 && event.type == ENET_EVENT_TYPE_DISCONNECT) {
+        qWarning() << "[ENet] Peer disconnected during send, data=" << event.data;
+        m_Connected = false;
+        m_ServiceTimer->stop();
+        emit disconnected();
+        return false;
+    }
 
     qDebug() << "[ENet] Sent packet type=0x" << Qt::hex << type
              << "channel=" << channel << "size=" << data.size();

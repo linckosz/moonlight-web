@@ -7,14 +7,15 @@
 
 static QByteArray packPacket(uint32_t magic, const QByteArray& payload)
 {
-    // Total size = 4 (size field itself) + 4 (magic) + payload
-    uint32_t totalSize = 4 + 4 + static_cast<uint32_t>(payload.size());
+    // NV_INPUT_HEADER.size excludes the size field itself (matches moonlight-common-c).
+    uint32_t headerSize = 4 + static_cast<uint32_t>(payload.size()); // magic + payload
+    uint32_t bufferSize = 4 + headerSize; // size field + magic + payload
 
     QByteArray pkt;
-    pkt.resize(static_cast<int>(totalSize));
+    pkt.resize(static_cast<int>(bufferSize));
 
-    // 4-byte big-endian total size (includes the size field)
-    qToBigEndian(totalSize, pkt.data());
+    // 4-byte big-endian size (excludes the size field itself)
+    qToBigEndian(headerSize, pkt.data());
 
     // 4-byte little-endian magic
     qToLittleEndian(magic, pkt.data() + 4);
@@ -58,8 +59,8 @@ QByteArray InputEncoder::encodeKeyEvent(const QJsonObject& msg, bool down)
 {
     QByteArray payload(6, '\0'); // 1 + 2 + 1 + 2 = 6 bytes
 
-    // flags — 0x02 = standard key, 0x01 = non-normalized (Sunshine)
-    payload[0] = 2;
+    // flags — 0 = standard (Sunshine), SS_KBE_FLAG_NON_NORMALIZED (0x01)
+    payload[0] = 0;
 
     // keyCode (Windows VK) | 0x8000
     int vk = msg["keyCode"].toInt(0);
