@@ -1,35 +1,38 @@
 #include "StreamRelay.h"
-#include "EnetControlStream.h"
-#include "InputEncoder.h"
-#include "InputCrypto.h"
+#include "MoonlightShim.h"
 
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
 
-StreamRelay::StreamRelay(QUdpSocket* videoSocket, QUdpSocket* audioSocket,
-                           QUdpSocket* controlUdpSocket,
-                           const RtspClient::SessionInfo& info,
-                           quint16 wsPort, QObject* parent)
+StreamRelay::StreamRelay(MoonlightShim* shim,
+                           quint16 wsPort,
+                           const QSslConfiguration& sslConfig,
+                           QObject* parent)
     : QObject(parent)
-    , m_VideoSocket(videoSocket)
-    , m_AudioSocket(audioSocket)
-    , m_ControlUdpSocket(controlUdpSocket)
-    , m_SessionInfo(info)
+    , m_Shim(shim)
     , m_WsPort(wsPort)
 {
-    if (m_VideoSocket)  m_VideoSocket->setParent(this);
-    if (m_AudioSocket)  m_AudioSocket->setParent(this);
-    if (m_ControlUdpSocket) m_ControlUdpSocket->setParent(this);
+    // Connect to MoonlightShim data signals (queued — cross-thread from moonlight internal threads)
+    connect(m_Shim, &MoonlightShim::videoFrameReady,
+            this, &StreamRelay::onVideoFrame);
+    connect(m_Shim, &MoonlightShim::audioSampleReady,
+            this, &StreamRelay::onAudioSample);
+    connect(m_Shim, &MoonlightShim::connectionStarted,
+            this, &StreamRelay::onShimConnectionStarted);
+    connect(m_Shim, &MoonlightShim::connectionFailed,
+            this, &StreamRelay::onShimConnectionFailed);
+    connect(m_Shim, &MoonlightShim::connectionTerminated,
+            this, &StreamRelay::onShimConnectionTerminated);
 
-    // AES-128-GCM encryption for input data (required by Sunshine)
-    if (!info.rikey.isEmpty())
-        m_Crypto = std::make_unique<InputCrypto>(info.rikey, info.rikeyid);
-
+    bool secure = !sslConfig.isNull();
     m_WsServer = new QWebSocketServer(
         QString("Moonlight-Relay"),
-        QWebSocketServer::NonSecureMode, this);
+        secure ? QWebSocketServer::SecureMode : QWebSocketServer::NonSecureMode,
+        this);
+    if (secure)
+        m_WsServer->setSslConfiguration(sslConfig);
 }
 
 StreamRelay::~StreamRelay()
@@ -44,34 +47,10 @@ bool StreamRelay::start()
         return false;
     }
 
-    // UDP → WS
-    if (m_VideoSocket)
-        connect(m_VideoSocket, &QUdpSocket::readyRead, this, &StreamRelay::onVideoReadyRead);
-    if (m_AudioSocket)
-        connect(m_AudioSocket, &QUdpSocket::readyRead, this, &StreamRelay::onAudioReadyRead);
-
-    // WS server
     connect(m_WsServer, &QWebSocketServer::newConnection,
             this, &StreamRelay::onNewWsConnection);
 
-    // ENet control channel to Sunshine (replaces legacy TCP)
-    m_EnetControl = new EnetControlStream(
-        m_SessionInfo.host,
-        m_SessionInfo.controlPort,
-        m_SessionInfo.controlConnectData,
-        this);
-
-    connect(m_EnetControl, &EnetControlStream::connected,
-            this, &StreamRelay::onEnetConnected);
-    connect(m_EnetControl, &EnetControlStream::connectionFailed,
-            this, &StreamRelay::onEnetFailed);
-    connect(m_EnetControl, &EnetControlStream::disconnected,
-            this, &StreamRelay::onEnetDisconnected);
-
-    qDebug() << "[StreamRelay] Starting ENet control channel to"
-             << m_SessionInfo.host << ":" << m_SessionInfo.controlPort;
-    m_EnetControl->start(); // blocking — may take a few seconds
-
+    qDebug() << "[StreamRelay] WebSocket server listening on port" << m_WsPort;
     m_Running = true;
     return true;
 }
@@ -80,9 +59,8 @@ void StreamRelay::stop()
 {
     m_Running = false;
 
-    if (m_EnetControl) {
-        m_EnetControl->stop();
-    }
+    if (m_Shim)
+        m_Shim->stopConnection();
 
     if (m_WsClient) {
         m_WsClient->close();
@@ -90,77 +68,71 @@ void StreamRelay::stop()
         m_WsClient = nullptr;
     }
 
-    if (m_WsServer) {
+    if (m_WsServer)
         m_WsServer->close();
-    }
 }
 
 QString StreamRelay::wsUrl() const
 {
-    return QString("ws://localhost:%1").arg(m_WsPort);
+    bool secure = m_WsServer && m_WsServer->secureMode() == QWebSocketServer::SecureMode;
+    return QString("%1://%2:%3")
+        .arg(secure ? "wss" : "ws")
+        .arg(m_ServerHost)
+        .arg(m_WsPort);
 }
 
-void StreamRelay::forwardUdp(QUdpSocket* udp, quint8 channel)
+// --- Video/audio forwarding (data from moonlight-common-c callbacks) ---------
+
+void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber)
 {
-    if (!m_WsClient || !udp)
+    Q_UNUSED(frameType);
+    Q_UNUSED(frameNumber);
+
+    if (!m_WsClient || !m_Running || !m_StreamStarted) {
+        // Buffer the frame while waiting for the WS client to connect
+        if (m_Running && m_PendingVideoFrames.size() < 120) {
+            m_PendingVideoFrames.append(data);
+        }
         return;
+    }
 
-    while (udp->hasPendingDatagrams()) {
-        QByteArray datagram;
-        datagram.resize(static_cast<int>(udp->pendingDatagramSize()));
-        udp->readDatagram(datagram.data(), datagram.size());
-
+    // Flush pending frames first
+    while (!m_PendingVideoFrames.isEmpty()) {
         QByteArray msg;
-        msg.append(static_cast<char>(channel));
-        msg.append(datagram);
+        msg.append(static_cast<char>(0x01));
+        msg.append(m_PendingVideoFrames.takeFirst());
         m_WsClient->sendBinaryMessage(msg);
     }
+
+    QByteArray msg;
+    msg.append(static_cast<char>(0x01));
+    msg.append(data);
+    m_WsClient->sendBinaryMessage(msg);
 }
 
-void StreamRelay::sendToControl(const QByteArray& packet)
+void StreamRelay::onAudioSample(const QByteArray& data)
 {
-    if (!m_EnetControl || !m_EnetControl->isConnected())
+    if (!m_WsClient || !m_Running || !m_StreamStarted) {
+        if (m_Running && m_PendingAudioFrames.size() < 120) {
+            m_PendingAudioFrames.append(data);
+        }
         return;
-
-    // Determine channel from the packet magic (at offset 4, after the BE size)
-    uint32_t magic = qFromLittleEndian<uint32_t>(packet.constData() + 4);
-    quint8 channel;
-    switch (magic) {
-    case 0x03: case 0x04:  // keyboard down/up
-        channel = 0x02;
-        break;
-    case 0x06: case 0x07:  // mouse move
-    case 0x08: case 0x09:  // mouse button
-    case 0x0A:              // mouse scroll
-        channel = 0x03;
-        break;
-    default:
-        channel = 0x00; // generic
-        break;
     }
 
-    // AES-128-GCM encrypt (Sunshine requires encrypted input data)
-    QByteArray payload;
-    if (m_Crypto)
-        payload = m_Crypto->wrapAndEncrypt(packet);
-    else
-        payload = packet; // fallback (shouldn't happen)
+    while (!m_PendingAudioFrames.isEmpty()) {
+        QByteArray msg;
+        msg.append(static_cast<char>(0x02));
+        msg.append(m_PendingAudioFrames.takeFirst());
+        m_WsClient->sendBinaryMessage(msg);
+    }
 
-    if (payload.isEmpty()) return;
-    m_EnetControl->sendInput(payload, channel);
+    QByteArray msg;
+    msg.append(static_cast<char>(0x02));
+    msg.append(data);
+    m_WsClient->sendBinaryMessage(msg);
 }
 
-// --- Slots ------------------------------------------------------------------
-
-void StreamRelay::onVideoReadyRead()
-{
-    forwardUdp(m_VideoSocket, 0x01);
-}
-
-void StreamRelay::onAudioReadyRead()
-{
-    forwardUdp(m_AudioSocket, 0x02);
-}
+// --- WebSocket handling ------------------------------------------------------
 
 void StreamRelay::onNewWsConnection()
 {
@@ -189,9 +161,36 @@ void StreamRelay::onWsTextMessage(const QString& message)
         return;
     }
 
-    QByteArray packet = InputEncoder::encodeFromJson(doc.object());
-    if (!packet.isEmpty())
-        sendToControl(packet);
+    QJsonObject msg = doc.object();
+    QString type = msg["type"].toString();
+
+    if (type == "keydown" || type == "keyup") {
+        bool down = (type == "keydown");
+        int vk = msg["keyCode"].toInt(0);
+        char mods = 0;
+        if (msg["ctrlKey"].toBool(false))  mods |= 0x02;
+        if (msg["shiftKey"].toBool(false)) mods |= 0x01;
+        if (msg["altKey"].toBool(false))   mods |= 0x04;
+        if (msg["metaKey"].toBool(false))  mods |= 0x08;
+        m_Shim->sendKeyEvent(static_cast<short>(vk), down, mods, 0);
+    }
+    else if (type == "mousemove") {
+        short dx = static_cast<short>(msg["dx"].toInt(0));
+        short dy = static_cast<short>(msg["dy"].toInt(0));
+        m_Shim->sendMouseMove(dx, dy);
+    }
+    else if (type == "mousedown" || type == "mouseup") {
+        bool down = (type == "mousedown");
+        int button = msg["button"].toInt(1);
+        m_Shim->sendMouseButton(down, button);
+    }
+    else if (type == "mousewheel") {
+        short delta = static_cast<short>(msg["delta"].toInt(0));
+        m_Shim->sendMouseScroll(delta);
+    }
+    else {
+        qWarning() << "[StreamRelay] Unknown input type:" << type;
+    }
 }
 
 void StreamRelay::onWsDisconnected()
@@ -202,23 +201,30 @@ void StreamRelay::onWsDisconnected()
         m_WsClient->deleteLater();
         m_WsClient = nullptr;
     }
+    m_StreamStarted = false;
     emit clientDisconnected();
     emit sessionEnded();
 }
 
-void StreamRelay::onEnetConnected()
+// --- Connection management ---------------------------------------------------
+
+void StreamRelay::onShimConnectionStarted()
 {
-    qDebug() << "[StreamRelay] ENet control channel connected — input enabled";
+    qDebug() << "[StreamRelay] ENet + video/audio streams established";
+    m_StreamStarted = true;
 }
 
-void StreamRelay::onEnetFailed(const QString& error)
+void StreamRelay::onShimConnectionFailed(const QString& error)
 {
-    qWarning() << "[StreamRelay] ENet control channel failed:" << error;
-    qWarning() << "[StreamRelay]   Input (keyboard/mouse) will NOT work.";
-}
-
-void StreamRelay::onEnetDisconnected()
-{
-    qWarning() << "[StreamRelay] ENet control channel disconnected";
+    qWarning() << "[StreamRelay] Stream connection failed:" << error;
+    m_Running = false;
     emit sessionEnded();
+}
+
+void StreamRelay::onShimConnectionTerminated(int errorCode)
+{
+    qWarning() << "[StreamRelay] Stream terminated, code:" << errorCode;
+    m_StreamStarted = false;
+    if (errorCode != 0)  // 0 = graceful termination
+        emit sessionEnded();
 }

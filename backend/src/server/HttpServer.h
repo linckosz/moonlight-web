@@ -3,6 +3,9 @@
 #include <QObject>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QSslServer>
+#include <QSslSocket>
+#include <QSslConfiguration>
 #include "common/Types.h"
 
 class RestRouter;
@@ -13,37 +16,41 @@ class HttpServer : public QObject
     Q_OBJECT
 
 public:
-    explicit HttpServer(quint16 port = 48000, QObject* parent = nullptr);
+    explicit HttpServer(quint16 httpPort = 48000, quint16 httpsPort = 48433,
+                        QObject* parent = nullptr);
     ~HttpServer();
 
     bool start();
     void stop();
 
     RestRouter* router() const { return m_Router; }
+    QSslConfiguration sslConfiguration() const { return m_SslConfig; }
 
 signals:
     void started(quint16 port);
     void serverError(const QString& message);
 
 private slots:
-    void onNewConnection();
+    void onHttpConnection();
     void onReadyRead();
     void onDisconnected();
 
 private:
     void processRequest(QTcpSocket* socket, const QByteArray& requestData);
-    HttpRequest parseRequest(const QByteArray& raw) const;
+    void onReadyReadSocket(QTcpSocket* socket);
     void sendResponse(QTcpSocket* socket, const HttpResponse& response);
+    HttpRequest parseRequest(const QByteArray& raw) const;
+    bool loadCert();
 
-    QTcpServer* m_TcpServer;
+    QTcpServer* m_HttpServer;
+    QSslServer* m_HttpsServer;
+    QSslConfiguration m_SslConfig;
     RestRouter* m_Router;
     StaticFileHandler* m_StaticFiles;
-    quint16 m_Port;
+    quint16 m_HttpPort;
+    quint16 m_HttpsPort;
 
-    // Per-connection read buffers
     QMap<QTcpSocket*, QByteArray> m_Buffers;
-
-    // Sockets waiting for async route response
     QSet<QTcpSocket*> m_PendingAsyncSockets;
-    static constexpr int ASYNC_TIMEOUT_MS = 30000;  // 30s
+    static constexpr int ASYNC_TIMEOUT_MS = 30000;
 };

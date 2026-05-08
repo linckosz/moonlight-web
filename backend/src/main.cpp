@@ -148,7 +148,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Start streaming — launch app + RTSP handshake
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, wsPort, &g_ActiveRelay](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, wsPort, &g_ActiveRelay, &server](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -169,11 +169,19 @@ int main(int argc, char* argv[])
             return;
         }
 
+        // Extract server host from the request Host header
+        QString serverHost = req.headers.value("host");
+        int colon = serverHost.indexOf(':');
+        if (colon >= 0)
+            serverHost = serverHost.left(colon);
+
         auto* session = new StreamSession(
             host, appId,
             computerManager.http(),
             std::move(respond),
-            wsPort
+            wsPort,
+            server.sslConfiguration(),
+            serverHost
         );
 
         // Track the relay for quit/cleanup
