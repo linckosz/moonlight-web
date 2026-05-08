@@ -33,12 +33,14 @@ export class WebSocketClient {
 
         this.ws.onclose = (evt) => {
             this.connected = false;
-            console.log('[WS] Disconnected:', evt.code, evt.reason);
+            console.log('[WS] Disconnected: code=', evt.code, 'reason=', evt.reason,
+                        'wasClean=', evt.wasClean, 'readyState=', this.ws ? this.ws.readyState : 'N/A');
             this.onClose && this.onClose(evt);
         };
 
         this.ws.onerror = (err) => {
-            console.error('[WS] Error:', err);
+            console.error('[WS] Error event — readyState=', this.ws ? this.ws.readyState : 'N/A',
+                          'connected=', this.connected, 'error=', err.type);
             this.onError && this.onError(err);
         };
 

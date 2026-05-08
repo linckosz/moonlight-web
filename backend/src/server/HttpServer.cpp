@@ -3,15 +3,24 @@
 #include "StaticFileHandler.h"
 #include "common/Logger.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QSslCertificate>
+#include <QSslKey>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 
-HttpServer::HttpServer(quint16 port, QObject* parent)
+// --- HttpServer --------------------------------------------------------------
+
+HttpServer::HttpServer(quint16 httpPort, quint16 httpsPort, QObject* parent)
     : QObject(parent)
-    , m_TcpServer(new QTcpServer(this))
+    , m_HttpServer(new QTcpServer(this))
+    , m_HttpsServer(new QSslServer(this))
     , m_Router(new RestRouter(this))
-    , m_Port(port)
+    , m_HttpPort(httpPort)
+    , m_HttpsPort(httpsPort)
 {
     QString frontendDir = QString(FRONTEND_DIR);
     m_StaticFiles = new StaticFileHandler(frontendDir, this);
@@ -22,53 +31,175 @@ HttpServer::~HttpServer()
     stop();
 }
 
-bool HttpServer::start()
+bool HttpServer::loadCert()
 {
-    if (!m_TcpServer->listen(QHostAddress::Any, m_Port)) {
-        emit serverError("Failed to listen on port " + QString::number(m_Port)
-                          + ": " + m_TcpServer->errorString());
+    QStringList candidates = {
+        QString(CERT_DIR),
+        QCoreApplication::applicationDirPath() + "/cert/",
+        QCoreApplication::applicationDirPath() + "/../cert/",
+        QString(FRONTEND_DIR) + "/../backend/cert/",
+    };
+
+    QString certDir;
+    for (const auto& d : candidates) {
+        if (QFile::exists(d + "cert.pem") && QFile::exists(d + "key.pem")) {
+            certDir = d;
+            break;
+        }
+    }
+
+    if (certDir.isEmpty()) {
+        Logger::warning("SSL cert not found — HTTPS disabled");
         return false;
     }
 
-    connect(m_TcpServer, &QTcpServer::newConnection,
-            this, &HttpServer::onNewConnection);
+    QString certPath = certDir + "cert.pem";
+    QString keyPath = certDir + "key.pem";
 
-    Logger::info("HTTP server listening on port " + QString::number(m_Port));
-    emit started(m_Port);
+    QFile certFile(certPath);
+    if (!certFile.open(QIODevice::ReadOnly)) {
+        Logger::warning("Failed to open cert file: " + certFile.errorString());
+        return false;
+    }
+    QSslCertificate cert(&certFile, QSsl::Pem);
+    certFile.close();
+
+    QFile keyFile(keyPath);
+    if (!keyFile.open(QIODevice::ReadOnly)) {
+        Logger::warning("Failed to open key file: " + keyFile.errorString());
+        return false;
+    }
+    QSslKey key(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+    keyFile.close();
+
+    if (cert.isNull() || key.isNull()) {
+        Logger::warning("SSL cert/key invalid — HTTPS disabled");
+        return false;
+    }
+
+    m_SslConfig = QSslConfiguration::defaultConfiguration();
+    m_SslConfig.setLocalCertificate(cert);
+    m_SslConfig.setPrivateKey(key);
+    m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+
+    m_HttpsServer->setSslConfiguration(m_SslConfig);
+
+    Logger::info("SSL certificate loaded from " + certDir);
+    return true;
+}
+
+bool HttpServer::start()
+{
+    Logger::info(QString("Qt SSL support=%1 build=%2 runtime=%3")
+        .arg(QSslSocket::supportsSsl() ? "yes" : "NO")
+        .arg(QSslSocket::sslLibraryBuildVersionString())
+        .arg(QSslSocket::sslLibraryVersionString()));
+
+    bool hasHttps = loadCert();
+
+    if (!m_HttpServer->listen(QHostAddress::Any, m_HttpPort)) {
+        emit serverError("Failed to listen on port " + QString::number(m_HttpPort)
+                          + ": " + m_HttpServer->errorString());
+        return false;
+    }
+    connect(m_HttpServer, &QTcpServer::newConnection,
+            this, &HttpServer::onHttpConnection);
+    Logger::info("HTTP redirect server on port " + QString::number(m_HttpPort));
+
+    if (hasHttps) {
+        if (!m_HttpsServer->listen(QHostAddress::Any, m_HttpsPort)) {
+            Logger::warning("HTTPS server failed to listen on port "
+                            + QString::number(m_HttpsPort));
+        } else {
+            Logger::info("HTTPS server on port " + QString::number(m_HttpsPort));
+            // QSslServer emits startedEncryptionHandshake for each new connection.
+            // We then wait for the socket's encrypted signal before processing requests.
+            connect(m_HttpsServer, &QSslServer::startedEncryptionHandshake,
+                    this, [this](QSslSocket* ssl) {
+                Logger::info("[HTTPS] handshake starting");
+                connect(ssl, &QSslSocket::encrypted, this, [this, ssl]() {
+                    Logger::info("[HTTPS] TLS connection established");
+                    m_Buffers[ssl] = QByteArray();
+                    connect(ssl, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
+                    connect(ssl, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
+                    if (ssl->bytesAvailable() > 0)
+                        onReadyReadSocket(ssl);
+                });
+                connect(ssl, &QAbstractSocket::errorOccurred,
+                        [ssl](QAbstractSocket::SocketError err) {
+                    Logger::warning("[HTTPS] Socket error: " + QString::number(err)
+                                    + " " + ssl->errorString());
+                });
+            });
+            connect(m_HttpsServer, &QSslServer::sslErrors,
+                    [](QSslSocket* socket, const QList<QSslError>& errors) {
+                for (const auto& e : errors)
+                    Logger::warning("[HTTPS] SSL error: " + e.errorString());
+                socket->ignoreSslErrors();
+            });
+        }
+    }
+
+    emit started(m_HttpsPort);
     return true;
 }
 
 void HttpServer::stop()
 {
-    m_TcpServer->close();
+    m_HttpServer->close();
+    m_HttpsServer->close();
     for (QTcpSocket* socket : m_Buffers.keys())
         socket->disconnectFromHost();
 }
 
-void HttpServer::onNewConnection()
+// --- HTTP redirect ----------------------------------------------------------
+
+void HttpServer::onHttpConnection()
 {
-    while (QTcpSocket* socket = m_TcpServer->nextPendingConnection()) {
-        m_Buffers[socket] = QByteArray();
-        connect(socket, &QTcpSocket::readyRead, this, &HttpServer::onReadyRead);
-        connect(socket, &QTcpSocket::disconnected, this, &HttpServer::onDisconnected);
+    while (QTcpSocket* socket = m_HttpServer->nextPendingConnection()) {
+        connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
+            QByteArray data = socket->readAll();
+            QString host = "localhost";
+            QString req = QString::fromUtf8(data);
+            for (const QString& line : req.split("\r\n")) {
+                if (line.startsWith("Host:", Qt::CaseInsensitive)) {
+                    host = line.mid(5).trimmed();
+                    int colon = host.indexOf(':');
+                    if (colon >= 0) host = host.left(colon);
+                    break;
+                }
+            }
+            QString redirectUrl = QString("https://%1:%2/").arg(host).arg(m_HttpsPort);
+            QByteArray resp;
+            resp.append("HTTP/1.1 301 Moved Permanently\r\n");
+            resp.append("Location: " + redirectUrl.toUtf8() + "\r\n");
+            resp.append("Content-Length: 0\r\n");
+            resp.append("Connection: close\r\n");
+            resp.append("\r\n");
+            socket->write(resp);
+            socket->flush();
+            socket->disconnectFromHost();
+        });
     }
 }
+
+// --- Shared request handling ------------------------------------------------
 
 void HttpServer::onReadyRead()
 {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-    if (!socket)
-        return;
+    if (!socket) return;
+    onReadyReadSocket(socket);
+}
 
+void HttpServer::onReadyReadSocket(QTcpSocket* socket)
+{
     m_Buffers[socket].append(socket->readAll());
 
-    // Check for complete HTTP request (headers end with \r\n\r\n)
     QByteArray& buffer = m_Buffers[socket];
     int headerEnd = buffer.indexOf("\r\n\r\n");
-    if (headerEnd == -1)
-        return;
+    if (headerEnd == -1) return;
 
-    // Parse Content-Length to determine if body is complete
     QString headerPart = QString::fromUtf8(buffer.left(headerEnd));
     int contentLength = 0;
     for (const QString& line : headerPart.split("\r\n")) {
@@ -79,13 +210,10 @@ void HttpServer::onReadyRead()
     }
 
     int totalSize = headerEnd + 4 + contentLength;
-    if (buffer.size() < totalSize)
-        return; // Body not fully received yet
+    if (buffer.size() < totalSize) return;
 
-    // Process complete request
     QByteArray requestData = buffer.left(totalSize);
     buffer.remove(0, totalSize);
-
     processRequest(socket, requestData);
 }
 
@@ -103,17 +231,14 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = parseRequest(requestData);
 
-    // Static files are always served synchronously
     if (!req.path.startsWith("/api/")) {
         HttpResponse resp = m_StaticFiles->serveFile(req.path);
         sendResponse(socket, resp);
         return;
     }
 
-    // Track socket for async response
     m_PendingAsyncSockets.insert(socket);
 
-    // Auto-timeout: abort if no response within ASYNC_TIMEOUT_MS
     QTimer::singleShot(ASYNC_TIMEOUT_MS, socket, [this, socket]() {
         if (m_PendingAsyncSockets.contains(socket)) {
             m_PendingAsyncSockets.remove(socket);
@@ -133,32 +258,24 @@ HttpRequest HttpServer::parseRequest(const QByteArray& raw) const
 {
     HttpRequest req;
     QString data = QString::fromUtf8(raw);
-
     QStringList lines = data.split("\r\n");
 
-    // Parse request line: METHOD /path?query HTTP/1.1
     if (!lines.isEmpty()) {
         QStringList parts = lines[0].split(' ');
         if (parts.size() >= 2) {
             req.method = parts[0].toUpper();
-
             QUrl url(parts[1]);
             req.path = url.path();
-            if (req.path.isEmpty())
-                req.path = "/";
-
-            // Parse query parameters
+            if (req.path.isEmpty()) req.path = "/";
             QUrlQuery query(url);
             for (const auto& item : query.queryItems())
                 req.queryParams[item.first] = item.second;
         }
     }
 
-    // Parse headers
     int i = 1;
     for (; i < lines.size(); i++) {
-        if (lines[i].isEmpty())
-            break; // End of headers
+        if (lines[i].isEmpty()) break;
         int colon = lines[i].indexOf(':');
         if (colon > 0) {
             QString key = lines[i].left(colon).trimmed();
@@ -167,20 +284,16 @@ HttpRequest HttpServer::parseRequest(const QByteArray& raw) const
         }
     }
 
-    // Body is everything after the blank line
     if (i < lines.size()) {
         QStringList bodyLines = lines.mid(i + 1);
         req.body = bodyLines.join("\r\n").toUtf8();
     }
-
     return req;
 }
 
 void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
 {
     QByteArray respData;
-
-    // Status line
     QString statusText;
     switch (response.statusCode) {
     case 200: statusText = "OK"; break;

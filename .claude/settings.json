@@ -38,7 +38,18 @@
       "Read(//c/vcpkg/**)",
       "Bash(cp d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/callbacks.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/compress.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/host.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/list.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/packet.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/peer.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/protocol.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/win32.c d:/Code/moonlight-web-deepseek/backend/third_party/enet/)",
       "Bash(cp 'd:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/include/enet/*.h' d:/Code/moonlight-web-deepseek/backend/third_party/enet/include/enet/)",
-      "Bash(\"C:/Qt/6.11.0/msvc2022_64/bin/qmake.exe\" backend.pro)"
+      "Bash(\"C:/Qt/6.11.0/msvc2022_64/bin/qmake.exe\" backend.pro)",
+      "Bash(export PATH=\"/c/Qt/Tools/mingw1310_64/bin:/c/Qt/6.11.0/mingw_64/bin:$PATH\")",
+      "Bash(qmake.exe ../backend.pro)",
+      "Bash(mingw32-make -j8 release)",
+      "Bash(powershell -Command \"Stop-Process -Name mw-server -Force\")",
+      "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6WebSockets.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
+      "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6Network.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
+      "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6Core.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
+      "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6Gui.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
+      "Bash(./mw-server.exe)",
+      "Bash(curl -k -X POST https://127.0.0.1:48433/api/hosts/B8FED538-4A4F-B308-DF93-A2A04056E184/quit --max-time 10)",
+      "Bash(curl -k -X POST https://127.0.0.1:48433/api/hosts/B8FED538-4A4F-B308-DF93-A2A04056E184/start -H 'Content-Type: application/json' -d '{\"appId\":881448767}' --max-time 30)"
     ],
     "additionalDirectories": [
       "d:\\Code\\moonlight-web-deepseek\\backend\\build\\release",

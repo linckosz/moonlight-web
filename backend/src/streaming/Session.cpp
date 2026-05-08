@@ -1,8 +1,13 @@
 #include "Session.h"
 #include "StreamRelay.h"
+#include "MoonlightShim.h"
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
 #include "../backend/IdentityManager.h"
+
+extern "C" {
+#include "Limelight.h"
+}
 
 #include <QCoreApplication>
 #include <QJsonObject>
@@ -12,6 +17,8 @@
 StreamSession::StreamSession(NvComputer* host, int appId,
                                NvHTTP* http, ResponseCallback respond,
                                quint16 wsPort,
+                               const QSslConfiguration& sslConfig,
+                               const QString& serverHost,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -19,6 +26,8 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_Http(http)
     , m_Respond(std::move(respond))
     , m_WsPort(wsPort)
+    , m_SslConfig(sslConfig)
+    , m_ServerHost(serverHost)
 {
 }
 
@@ -26,11 +35,6 @@ StreamSession::~StreamSession()
 {
     if (m_LaunchReply)
         m_LaunchReply->deleteLater();
-
-    if (m_RtspClient) {
-        m_RtspClient->stop();
-        m_RtspClient->deleteLater();
-    }
 }
 
 void StreamSession::start()
@@ -74,12 +78,11 @@ void StreamSession::start()
 
 void StreamSession::quit()
 {
-    if (m_RtspClient) {
-        m_RtspClient->stop();
-        m_RtspClient->deleteLater();
-        m_RtspClient = nullptr;
-    }
+    // Stop MoonlightShim first (calls LiStopConnection)
+    if (m_Shim)
+        m_Shim->stopConnection();
 
+    // Then tell Sunshine to quit the app via HTTPS
     auto* identity = IdentityManager::get();
     QByteArray clientCert = identity->getCertificate();
     QByteArray clientKey = identity->getPrivateKey();
@@ -102,11 +105,6 @@ void StreamSession::onLaunchReplyFinished()
     if (reply->error() != QNetworkReply::NoError) {
         int code = static_cast<int>(reply->error());
         qWarning() << "[Session] Launch error code:" << code << "-" << reply->errorString();
-        qWarning() << "[Session]   URL:" << reply->url().toString();
-
-        // Check SSL: if peer cert chain is empty and we expected TLS, it's a handshake issue
-        const auto& chain = reply->sslConfiguration().peerCertificateChain();
-        qWarning() << "[Session]   Peer cert chain size:" << chain.size();
 
         QString detail = QString("Launch failed: [code=%1] %2 (target: %3:%4)")
                              .arg(code)
@@ -147,33 +145,55 @@ void StreamSession::onLaunchReplyFinished()
         return;
     }
 
-    // Phase 2: RTSP handshake
-    m_RtspClient = new RtspClient(this);
-    connect(m_RtspClient, &RtspClient::handshakeComplete,
-            this, &StreamSession::onRtspHandshakeComplete);
-    connect(m_RtspClient, &RtspClient::handshakeFailed,
-            this, &StreamSession::onRtspHandshakeFailed);
+    m_SessionUrl = sessionUrl;
 
-    m_RtspClient->start(rtspUrl, m_Host->uuid, m_Config);
+    // Build InitParams for MoonlightShim
+    MoonlightShim::InitParams params;
+    params.hostAddress = m_Host->activeAddress.address();
+    params.appVersion = m_Host->appVersion;
+    params.gfeVersion = m_Host->gfeVersion;
+    params.rtspSessionUrl = m_SessionUrl;
+    params.serverCodecModeSupport = m_Host->serverCodecModeSupport;
+    params.aesKey = m_Config.rikey;
+    params.rikeyid = m_Config.rikeyid;
+
+    // Supported video formats from server codec support
+    params.supportedVideoFormats = VIDEO_FORMAT_H264;
+    if (m_Host->serverCodecModeSupport & 0x00000100)  // HEVC
+        params.supportedVideoFormats |= VIDEO_FORMAT_H265;
+    if (m_Host->serverCodecModeSupport & 0x00010000)  // AV1 Main 8
+        params.supportedVideoFormats |= 0x1000;
+
+    // Audio: stereo Opus matching StreamConfig
+    params.audioConfiguration = MAKE_AUDIO_CONFIGURATION(
+        StreamConfig::kAudioChannels,
+        StreamConfig::kAudioChannelMask);
+
+    // Create and start MoonlightShim
+    m_Shim = new MoonlightShim(this);
+
+    connect(m_Shim, &MoonlightShim::connectionStarted,
+            this, &StreamSession::onShimConnectionStarted);
+    connect(m_Shim, &MoonlightShim::connectionFailed,
+            this, &StreamSession::onShimConnectionFailed);
+
+    qDebug() << "[Session] Starting LiStartConnection...";
+    m_Shim->startConnection(params);
 }
 
-void StreamSession::onRtspHandshakeComplete(const RtspClient::SessionInfo& info)
+void StreamSession::onShimConnectionStarted()
 {
-    qDebug() << "[Session] RTSP handshake complete — streaming on ports:"
-             << "video=" << info.videoPort
-             << "audio=" << info.audioPort
-             << "control=" << info.controlPort;
+    qDebug() << "[Session] LiStartConnection succeeded — creating relay";
 
-    // Extract UDP sockets from RtspClient before it's destroyed
-    QUdpSocket* videoSock = m_RtspClient->takeVideoSocket();
-    QUdpSocket* audioSock = m_RtspClient->takeAudioSocket();
-    QUdpSocket* ctrlSock  = m_RtspClient->takeControlSocket();
-
-    // Create the long-lived relay
-    auto* relay = new StreamRelay(videoSock, audioSock, ctrlSock, info, m_WsPort, this);
+    // Create the long-lived relay with MoonlightShim reference
+    auto* relay = new StreamRelay(m_Shim, m_WsPort, m_SslConfig, this);
+    relay->setServerHost(m_ServerHost);
 
     if (!relay->start()) {
         delete relay;
+        m_Shim->stopConnection();
+        m_Shim->deleteLater();
+        m_Shim = nullptr;
         m_Respond(HttpResponse::error(500, "Failed to start WebSocket relay"));
         emit sessionFailed("WebSocket server failed to start");
         deleteLater();
@@ -182,20 +202,22 @@ void StreamSession::onRtspHandshakeComplete(const RtspClient::SessionInfo& info)
 
     // Reparent to QCoreApplication so relay survives StreamSession deletion
     relay->setParent(QCoreApplication::instance());
+    m_Shim->setParent(relay);
 
-    // When the relay session ends, clean up
+    // Clean up when relay session ends
     connect(relay, &StreamRelay::sessionEnded, this, [this]() {
         quit();
         deleteLater();
     });
 
+    m_Relay = relay;
     emit relayCreated(relay);
 
     QJsonObject result;
     result["status"] = "streaming";
     result["wsUrl"] = relay->wsUrl();
     result["wsPort"] = static_cast<int>(relay->wsPort());
-    result["sessionUrl"] = QString("rtsp://%1:%2").arg(info.host).arg(info.rtspPort);
+    result["sessionUrl"] = m_SessionUrl;
 
     m_Respond(HttpResponse::json(result));
     emit sessionStarted();
@@ -204,15 +226,14 @@ void StreamSession::onRtspHandshakeComplete(const RtspClient::SessionInfo& info)
     deleteLater();
 }
 
-void StreamSession::onRtspHandshakeFailed(const QString& error)
+void StreamSession::onShimConnectionFailed(const QString& error)
 {
-    qWarning() << "[Session] RTSP handshake failed:" << error;
+    qWarning() << "[Session] LiStartConnection failed:" << error;
 
-    // Try to quit the app on the host (best-effort)
+    // Best-effort quit via HTTPS
     quit();
 
-    QString friendly = QString("RTSP handshake failed — %1").arg(error);
-    m_Respond(HttpResponse::error(502, friendly));
+    m_Respond(HttpResponse::error(502, error));
     emit sessionFailed(error);
     deleteLater();
 }

@@ -18,7 +18,6 @@ else:unix: LIBS += -L$$OUT_PWD/third_party/qmdnsengine/ -lqmdnsengine
 INCLUDEPATH += $$PWD/third_party/moonlight-common-c/src
 INCLUDEPATH += $$PWD/third_party/moonlight-common-c/enet/include
 INCLUDEPATH += $$PWD/third_party/moonlight-common-c
-INCLUDEPATH += $$PWD/third_party/moonlight-common-c/nanors/deps/obl
 
 # OpenSSL
 INCLUDEPATH += $$PWD/libs/windows/include/x64
@@ -57,10 +56,6 @@ SOURCES += \
     third_party/moonlight-common-c/src/Misc.c \
     third_party/moonlight-common-c/src/FakeCallbacks.c \
     third_party/moonlight-common-c/src/ByteBuffer.c \
-    # moonlight-common-c nanors (Reed-Solomon FEC) \
-    third_party/moonlight-common-c/nanors/rs.c \
-    # moonlight-common-c RS wrapper \
-    third_party/moonlight-common-c/src/rswrapper.c \
     # moonlight-common-c core (added for LiStartConnection) \
     third_party/moonlight-common-c/src/Connection.c \
     third_party/moonlight-common-c/src/VideoStream.c \

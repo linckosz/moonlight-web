@@ -59,8 +59,6 @@ SOURCES += \
     third_party/moonlight-common-c/src/ByteBuffer.c \
     # moonlight-common-c nanors (Reed-Solomon FEC) \
     third_party/moonlight-common-c/nanors/rs.c \
-    # moonlight-common-c RS wrapper \
-    third_party/moonlight-common-c/src/rswrapper.c \
     # moonlight-common-c core (added for LiStartConnection) \
     third_party/moonlight-common-c/src/Connection.c \
     third_party/moonlight-common-c/src/VideoStream.c \

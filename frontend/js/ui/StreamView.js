@@ -1,11 +1,13 @@
 /**
- * Fullscreen streaming overlay with input capture.
- * Creates a canvas for future video rendering, captures keyboard/mouse
- * events, and relays them to the backend via WebSocket.
+ * Fullscreen streaming overlay with input capture and MSE video rendering.
+ * Creates a <video> element fed via MediaSource Extensions with H.264 fMP4
+ * segments built by Mp4Muxer. Captures keyboard/mouse events and relays them
+ * to the backend via WebSocket.
  */
 import { WebSocketClient } from '../api/WebSocketClient.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
+import { Mp4Muxer } from '../util/Mp4Muxer.js';
 
 export class StreamView {
     constructor(container, wsUrl, host) {
@@ -15,7 +17,15 @@ export class StreamView {
         this.ws = new WebSocketClient(wsUrl);
         this.pointerLocked = false;
 
-        // Bound handlers for add/removeEventListener
+        // Video
+        this.muxer = new Mp4Muxer(1920, 1080, 60);
+        this.mediaSource = null;
+        this.sourceBuffer = null;
+        this.frameQueue = [];
+        this.frameCount = 0;
+        this.connected = false;
+
+        // Bound handlers
         this._onKeyDown = (e) => this.handleKeyDown(e);
         this._onKeyUp = (e) => this.handleKeyUp(e);
         this._onMouseMove = (e) => this.handleMouseMove(e);
@@ -43,7 +53,8 @@ export class StreamView {
                 <button class="btn stream-quit-btn" id="btn-stream-quit">Stop Streaming</button>
             </div>
             <div class="stream-canvas-area">
-                <canvas id="stream-canvas" class="stream-canvas"></canvas>
+                <video id="stream-video" autoplay muted playsinline
+                       style="width:100%;height:100%;object-fit:contain;background:#000;"></video>
                 <div class="stream-click-hint" id="stream-hint">
                     Click to capture mouse &amp; keyboard
                 </div>
@@ -51,29 +62,113 @@ export class StreamView {
         `;
         document.getElementById('app').appendChild(el);
 
-        // Sizing
-        this.canvas = document.getElementById('stream-canvas');
+        this.video = document.getElementById('stream-video');
         this.statusEl = document.getElementById('stream-status');
         this.hintEl = document.getElementById('stream-hint');
-        this._resizeCanvas();
-        window.addEventListener('resize', () => this._resizeCanvas());
+
+        this.setupMediaSource();
 
         document.getElementById('btn-stream-quit').onclick = () => this.quit();
     }
 
-    _resizeCanvas() {
-        const area = document.querySelector('.stream-canvas-area');
-        if (!area) return;
-        const rect = area.getBoundingClientRect();
-        this.canvas.width = rect.width * (window.devicePixelRatio || 1);
-        this.canvas.height = rect.height * (window.devicePixelRatio || 1);
-        this.canvas.style.width = rect.width + 'px';
-        this.canvas.style.height = rect.height + 'px';
+    setupMediaSource() {
+        const mimeCodec = 'video/mp4; codecs="avc1.64002A"';
+        console.log('[StreamView] Checking MSE support for', mimeCodec, ':', MediaSource.isTypeSupported(mimeCodec));
+
+        if (!MediaSource.isTypeSupported(mimeCodec)) {
+            console.warn('[StreamView] MSE codec not supported, trying fallback');
+            const fallbacks = [
+                'video/mp4; codecs="avc1.42E01E"',
+                'video/mp4; codecs="avc1.4D401E"',
+                'video/mp4; codecs="avc1.640028"',
+                'video/mp4; codecs="avc1.42C01E"',
+            ];
+            let found = false;
+            for (const fb of fallbacks) {
+                console.log('[StreamView]   trying fallback:', fb, MediaSource.isTypeSupported(fb));
+            }
+            this.setStatus('error', 'Codec unsupported');
+            return;
+        }
+
+        console.log('[StreamView] Creating MediaSource...');
+        this.mediaSource = new MediaSource();
+        this.video.src = URL.createObjectURL(this.mediaSource);
+        console.log('[StreamView] MediaSource created, URL:', this.video.src);
+
+        this.mediaSource.addEventListener('sourceopen', () => {
+            console.log('[StreamView] MediaSource sourceopen fired, readyState=', this.mediaSource.readyState);
+            try {
+                this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeCodec);
+                this.sourceBuffer.mode = 'segments';
+                console.log('[StreamView] SourceBuffer added, mode=', this.sourceBuffer.mode);
+
+                this.sourceBuffer.addEventListener('updateend', () => {
+                    this._dequeueFrame();
+                });
+
+                this.sourceBuffer.addEventListener('error', (e) => {
+                    console.error('[StreamView] SourceBuffer error:', e, this.sourceBuffer);
+                });
+
+                this.sourceBuffer.addEventListener('abort', () => {
+                    console.warn('[StreamView] SourceBuffer abort');
+                });
+
+                this._dequeueFrame();
+            } catch (err) {
+                console.error('[StreamView] Failed to add source buffer:', err.message);
+                this.setStatus('error', 'Media setup failed: ' + err.message);
+            }
+        });
+
+        this.mediaSource.addEventListener('sourceclose', () => {
+            console.log('[StreamView] MediaSource sourceclose');
+        });
+
+        this.mediaSource.addEventListener('sourceended', () => {
+            console.log('[StreamView] MediaSource sourceended');
+        });
+    }
+
+    _dequeueFrame() {
+        if (!this.sourceBuffer) return;
+        if (this.sourceBuffer.updating) return;
+        if (this.frameQueue.length === 0) return;
+
+        const entry = this.frameQueue.shift();
+
+        try {
+            if (entry.init) {
+                console.log('[StreamView] Appending init segment, size=', entry.init.length || entry.init.byteLength);
+                this.sourceBuffer.appendBuffer(entry.init);
+                return;
+            }
+
+            if (entry.media) {
+                this.sourceBuffer.appendBuffer(entry.media);
+                this.frameCount++;
+                if (this.frameCount === 1) {
+                    console.log('[StreamView] First media segment appended');
+                    this.setStatus('live', 'Live');
+                }
+                if (this.frameCount % 60 === 0) {
+                    console.log('[StreamView] Frames appended:', this.frameCount, 'queue depth:', this.frameQueue.length);
+                }
+            }
+        } catch (err) {
+            console.error('[StreamView] appendBuffer error:', err.message);
+            setTimeout(() => this._dequeueFrame(), 10);
+        }
     }
 
     setupWebSocket() {
-        this.ws.onOpen = () => this.setStatus('live', 'Live');
+        this.ws.onOpen = () => {
+            this.connected = true;
+            this.setStatus('connecting', 'Waiting for stream...');
+        };
         this.ws.onClose = () => {
+            this.connected = false;
             this.setStatus('disconnected', 'Disconnected');
             Toast.error('Stream disconnected');
             setTimeout(() => this.quit(), 3000);
@@ -84,37 +179,97 @@ export class StreamView {
     }
 
     handleBinary(data) {
-        // data[0] = channel (0x01=video, 0x02=audio)
-        // data[1:] = raw RTP payload
-        // Phase 6 will feed video frames to a decoder
+        const bytes = new Uint8Array(data);
+        const channel = bytes[0];
+        const payload = bytes.slice(1);
+
+        if (!this._firstFrameReceived) {
+            this._firstFrameReceived = true;
+            console.log('[StreamView] First binary message received: channel=', '0x' + channel.toString(16),
+                        'payloadSize=', payload.length, 'bytes');
+        }
+
+        if (channel === 0x01) {
+            this._handleVideoFrame(payload);
+        } else if (channel === 0x02) {
+            if (!this._audioLogged) {
+                console.log('[StreamView] Audio sample received, size=', payload.length);
+                this._audioLogged = true;
+            }
+        }
+    }
+
+    _handleVideoFrame(annexB) {
+        if (annexB.length < 4) {
+            console.warn('[StreamView] Video frame too small:', annexB.length);
+            return;
+        }
+
+        // Detect keyframe: look for NAL type 5 (IDR) in the first NAL unit
+        let nalType = 0;
+        if (annexB[0] === 0x00 && annexB[1] === 0x00) {
+            if (annexB[2] === 0x01) {
+                nalType = annexB[3] & 0x1F;
+            } else if (annexB[2] === 0x00 && annexB[3] === 0x01) {
+                nalType = annexB[4] & 0x1F;
+            }
+        }
+        const isKeyframe = (nalType === 5 || nalType === 7);
+
+        if (!this._firstFrameProcessed) {
+            this._firstFrameProcessed = true;
+            console.log('[StreamView] First video frame: nalType=', nalType,
+                        'isKeyframe=', isKeyframe, 'size=', annexB.length);
+            console.log('[StreamView] First 16 bytes:', Array.from(annexB.slice(0, 16)).map(b => b.toString(16).padStart(2,'0')).join(' '));
+        }
+
+        try {
+            const result = this.muxer.processFrame(annexB, isKeyframe);
+
+            if (result.init) {
+                console.log('[StreamView] Got init segment, size=', result.init.length || result.init.byteLength);
+                this.frameQueue.push({ init: result.init, media: null });
+            }
+            if (result.media) {
+                this.frameQueue.push({ init: null, media: result.media });
+            }
+
+            while (this.frameQueue.length > 60) {
+                this.frameQueue.shift();
+            }
+
+            this._dequeueFrame();
+        } catch (err) {
+            console.error('[StreamView] Frame processing error:', err.message, err.stack);
+        }
     }
 
     bindEvents() {
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
-        this.canvas.addEventListener('mousemove', this._onMouseMove);
-        this.canvas.addEventListener('mousedown', this._onMouseDown);
-        this.canvas.addEventListener('mouseup', this._onMouseUp);
-        this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
-        this.canvas.addEventListener('contextmenu', this._onContextMenu);
-        this.canvas.addEventListener('click', () => this.requestPointerLock());
+        this.video.addEventListener('mousemove', this._onMouseMove);
+        this.video.addEventListener('mousedown', this._onMouseDown);
+        this.video.addEventListener('mouseup', this._onMouseUp);
+        this.video.addEventListener('wheel', this._onWheel, { passive: false });
+        this.video.addEventListener('contextmenu', this._onContextMenu);
+        this.video.addEventListener('click', () => this.requestPointerLock());
     }
 
     unbindEvents() {
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener('keyup', this._onKeyUp);
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
-        this.canvas.removeEventListener('mousemove', this._onMouseMove);
-        this.canvas.removeEventListener('mousedown', this._onMouseDown);
-        this.canvas.removeEventListener('mouseup', this._onMouseUp);
-        this.canvas.removeEventListener('wheel', this._onWheel);
-        this.canvas.removeEventListener('contextmenu', this._onContextMenu);
+        this.video.removeEventListener('mousemove', this._onMouseMove);
+        this.video.removeEventListener('mousedown', this._onMouseDown);
+        this.video.removeEventListener('mouseup', this._onMouseUp);
+        this.video.removeEventListener('wheel', this._onWheel);
+        this.video.removeEventListener('contextmenu', this._onContextMenu);
     }
 
     requestPointerLock() {
         if (!this.pointerLocked) {
-            this.canvas.requestPointerLock();
+            this.video.requestPointerLock();
         }
     }
 
@@ -167,7 +322,7 @@ export class StreamView {
     }
 
     handlePointerLockChange() {
-        this.pointerLocked = (document.pointerLockElement === this.canvas);
+        this.pointerLocked = (document.pointerLockElement === this.video);
         if (this.pointerLocked) {
             this.hintEl.style.display = 'none';
         } else {
@@ -189,8 +344,18 @@ export class StreamView {
         this.unbindEvents();
         this.ws.close();
 
-        if (document.pointerLockElement === this.canvas) {
+        if (document.pointerLockElement === this.video) {
             document.exitPointerLock();
+        }
+
+        // Close MediaSource
+        if (this.mediaSource && this.mediaSource.readyState === 'open') {
+            try {
+                this.mediaSource.endOfStream();
+            } catch (e) { /* ignore */ }
+        }
+        if (this.video.src) {
+            URL.revokeObjectURL(this.video.src);
         }
 
         try {
@@ -207,13 +372,18 @@ export class StreamView {
         this.unbindEvents();
         this.ws.close();
 
-        if (document.pointerLockElement === this.canvas) {
+        if (document.pointerLockElement === this.video) {
             document.exitPointerLock();
+        }
+
+        if (this.mediaSource && this.mediaSource.readyState === 'open') {
+            try { this.mediaSource.endOfStream(); } catch (e) { /* ignore */ }
+        }
+        if (this.video && this.video.src) {
+            URL.revokeObjectURL(this.video.src);
         }
 
         const el = document.getElementById('stream-view');
         if (el) el.remove();
-
-        window.removeEventListener('resize', () => this._resizeCanvas());
     }
 }
