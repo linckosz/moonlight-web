@@ -1,96 +1,103 @@
 # Moonlight-Web — Plan d'Architecture & Développement
 
+> **Note :** Ce document a été mis à jour pour refléter l'état réel du code après
+> les phases 1-5a. L'architecture a évolué depuis la rédaction initiale — voir les
+> annotations [REEL] pour les divergences.
+
 ## Vue d'ensemble
 
 ```
 Browser (HTML/JS)              Backend (C++/Qt)               Sunshine Host
 +-------------------+       +------------------------+       +----------------+
 |                   |       |                        |       |                |
-|  Web App          | REST  |  HTTP Server           | HTTPS |  Sunshine API  |
+|  Web App          | REST  |  HTTP/HTTPS Server     | HTTPS |  Sunshine API  |
 |  - Host List      |<----->|  - Static file serving |<----->|  /serverinfo   |
 |  - App List       |       |  - REST endpoints      |       |  /applist      |
 |  - Pair Dialog    |       |  - Proxy to Sunshine   |       |  /launch       |
 |                   |       |                        |       |  /pair         |
-|  Stream View      | WSS   |  WebSocket Server       |       |                |
-|  - WebCodecs      |<----->|  - Video passthrough   |       |  RTSP/RTP/UDP  |
-|  - AudioWorklet   |       |  - Audio PCM bridge    |<----->|  Moonlight-    |
-|  - Input Capture  |       |  - Input bridge        |       |  Common-C      |
+|  Stream View      | WSS   |  WebSocket Relay       |       |                |
+|  - MSE + <video>  |<----->|  - Video passthrough   |       |  RTSP/RTP/UDP  |
+|  - Input Capture  |       |  - Audio PCM forward   |<----->|  Moonlight-    |
+|                   |       |  - Input relay          |       |  Common-C      |
+|                   |       |  - ENet control channel |       |  (embedded)    |
 +-------------------+       +------------------------+       +----------------+
 ```
 
-**Principe :** Le backend est un serveur HTTP + WebSocket qui sert le frontend,
-proxifie les appels REST vers Sunshine, et intègre moonlight-common-c pour le
-protocole RTSP/RTP. Le frontend reçoit les access units H.264 brutes (passthrough)
-et les décode via WebCodecs. L'audio est forwardé en PCM brut. Pas de
-re-encodage dans le backend.
+**Principe :** Le backend est un serveur HTTP (HTTP→HTTPS redirect) + WebSocket
+qui sert le frontend, proxifie les appels REST vers Sunshine, et intègre
+directement moonlight-common-c (sources compilées dans backend.pro) pour le
+protocole RTSP/RTP et le canal de contrôle ENet. Le frontend reçoit les NAL units
+H.264 brutes (passthrough) et les encapsule en fMP4 pour le décodage via MSE
+(MediaSource Extensions) dans un élément `<video>`. L'audio est forwardé en PCM
+brut mais pas encore joué. Pas de re-encodage dans le backend.
+
+[REEL] La vidéo n'utilise PAS WebCodecs directement mais MSE + fMP4 (Mp4Muxer.js).
+L'audio PCM est forwardé mais pas encore joué (Phase 6 à faire).
+Le backend écoute à la fois HTTP (80→redirect) et HTTPS (48433, self-signed cert).
 
 ---
 
-## Structure du projet
+## Structure du projet (état réel après Phase 5a)
 
 ```
 moonlight-web-deepseek/
-├── mw-server.pro                  # Projet Qt (TEMPLATE = subdirs)
 ├── backend/
-│   ├── backend.pro                # Sous-projet backend
+│   ├── backend.pro                  # Projet Qt (TEMPLATE=app, compile moonlight-common-c inline)
 │   ├── src/
-│   │   ├── main.cpp               # Entry point
+│   │   ├── main.cpp                 # Entry point — init serveurs + routes REST
 │   │   ├── server/
-│   │   │   ├── HttpServer.h/.cpp       # Serveur HTTP embarqué (QTcpServer)
-│   │   │   ├── WebSocketServer.h/.cpp  # Endpoint WebSocket
-│   │   │   ├── StaticFileHandler.h/.cpp # Fichiers statiques frontend
-│   │   │   └── RestRouter.h/.cpp       # Routage REST (méthode + path)
+│   │   │   ├── HttpServer.h/.cpp         # Serveur HTTP + HTTPS (QTcpServer + QSslServer)
+│   │   │   ├── StaticFileHandler.h/.cpp  # Fichiers statiques frontend
+│   │   │   └── RestRouter.h/.cpp         # Routage REST sync/async (ResponseCallback)
 │   │   ├── backend/
-│   │   │   ├── NvHTTP.h/.cpp           # Client HTTP/HTTPS Sunshine
-│   │   │   ├── NvComputer.h/.cpp       # Modèle hôte (adresses, état, capacités)
-│   │   │   ├── NvApp.h/.cpp            # Modèle application distante
-│   │   │   ├── ComputerManager.h/.cpp   # Gestion liste hôtes + persistence + polling
-│   │   │   ├── ComputerSeeker.h/.cpp    # Découverte mDNS (_nvstream._tcp.local.)
-│   │   │   ├── PairingManager.h/.cpp    # Protocole challenge-response
-│   │   │   └── IdentityManager.h/.cpp   # RSA keypair, X.509 cert, UUID
+│   │   │   ├── NvHTTP.h/.cpp             # Client HTTP/HTTPS Sunshine (async only)
+│   │   │   ├── NvComputer.h/.cpp         # Modèle hôte (adresses, état, capacités, persistence)
+│   │   │   ├── NvApp.h                   # Modèle application distante
+│   │   │   ├── NvAddress.h              # Adresse réseau (IPv4, ports)
+│   │   │   ├── ComputerManager.h/.cpp    # Gestion liste hôtes + polling + serialisation HTTPS
+│   │   │   ├── ComputerSeeker.cpp        # (dans ComputerManager) découverte mDNS
+│   │   │   ├── IdentityManager.h/.cpp    # RSA keypair, X.509 cert, UUID
+│   │   │   └── NvPairingManager.h/.cpp   # Protocole challenge-response pairing
 │   │   ├── streaming/
-│   │   │   ├── Session.h/.cpp           # Orchestrateur LiStartConnection + callbacks
-│   │   │   ├── StreamConfig.h/.cpp      # Configuration fixe (1080p/60/H.264)
-│   │   │   ├── VideoBridge.h/.cpp       # DECODE_UNIT → WebSocket binaire
-│   │   │   ├── AudioBridge.h/.cpp       # PCM → WebSocket binaire
-│   │   │   └── InputBridge.h/.cpp       # WebSocket JSON → LiSend*Event()
+│   │   │   ├── StreamConfig.h/.cpp       # Configuration fixe (1080p/60/H.264)
+│   │   │   ├── MoonlightShim.h/.cpp      # [REEL] Pont moonlight-common-c → Qt signals
+│   │   │   ├── StreamRelay.h/.cpp        # [REEL] WebSocket relay (remplace Video/Audio/InputBridge)
+│   │   │   ├── EnetControlStream.h/.cpp  # [REEL] ENet control channel (START_A/B + input)
+│   │   │   ├── InputEncoder.h/.cpp       # [REEL] JSON input → GameStream wire format
+│   │   │   ├── InputCrypto.h/.cpp        # [REEL] AES-128-GCM input encryption
+│   │   │   ├── Session.h/.cpp            # Orchestrateur StreamSession (launch + LiStartConnection)
+│   │   │   └── RtspClient.h/.cpp         # [DEAD CODE] Ancien client RTSP standalone (non compilé)
 │   │   └── common/
 │   │       ├── Logger.h/.cpp
-│   │       ├── Types.h
-│   │       └── Platform.h/.cpp
+│   │       └── Types.h                   # HttpRequest, HttpResponse, ResponseCallback
 │   ├── third_party/
-│   │   ├── moonlight-common-c/    # Submodule Git
-│   │   └── qmdnsengine/           # Submodule Git
-│   └── certs/                     # Généré au runtime
+│   │   ├── moonlight-common-c/           # Submodule — sources compilées dans backend.pro
+│   │   ├── enet/                         # Inclus dans moonlight-common-c
+│   │   ├── qmdnsengine/                  # Submodule — build via .pro séparé, LIBS link
+│   │   └── third_party.pro              # Subdirs build for qmdnsengine
+│   ├── certs/                            # Généré au runtime (cert.pem + key.pem)
+│   └── libs/windows/                     # OpenSSL DLLs et headers
 ├── frontend/
 │   ├── index.html
 │   ├── css/
 │   │   ├── style.css
 │   │   └── stream.css
 │   ├── js/
-│   │   ├── app.js                 # State machine
+│   │   ├── app.js                        # State machine (LOADING→HOST_LIST→APP_LIST→STREAMING)
 │   │   ├── api/
-│   │   │   ├── BackendClient.js   # Client REST (fetch)
-│   │   │   ├── WebSocketClient.js # Client WebSocket streaming
-│   │   │   └── Protocol.js        # Helpers sérialisation
+│   │   │   ├── BackendClient.js          # Client REST (fetch)
+│   │   │   └── WebSocketClient.js        # Client WebSocket (binaire + texte)
 │   │   ├── models/
 │   │   │   ├── Host.js
 │   │   │   └── App.js
-│   │   ├── streaming/
-│   │   │   ├── StreamSession.js   # Orchestrateur streaming frontend
-│   │   │   ├── VideoPipeline.js   # WebCodecs VideoDecoder + canvas
-│   │   │   ├── AudioPipeline.js   # AudioContext + AudioWorklet
-│   │   │   └── audio-processor.js # AudioWorkletProcessor
-│   │   ├── input/
-│   │   │   ├── KeyboardHandler.js
-│   │   │   ├── MouseHandler.js
-│   │   │   └── GamepadHandler.js
+│   │   ├── util/
+│   │   │   └── Mp4Muxer.js              # [REEL] Muxeur fMP4 minimal (H.264 → MSE)
 │   │   └── ui/
 │   │       ├── HostListView.js
 │   │       ├── AppListView.js
 │   │       ├── PairDialog.js
-│   │       ├── StreamView.js
-│   │       └── ConnectionStatus.js
+│   │       ├── StreamView.js            # [REEL] Contient tout le streaming frontend
+│   │       └── Toast.js                 # [REEL] Notifications toast
 │   └── assets/
 │       └── favicon.ico
 └── docs/
@@ -98,34 +105,57 @@ moonlight-web-deepseek/
     └── moonlight-web-plan.md
 ```
 
+[REEL] Fichiers du plan initial qui n'existent pas :
+- `VideoBridge.h/.cpp` — remplacé par StreamRelay
+- `AudioBridge.h/.cpp` — remplacé par StreamRelay
+- `InputBridge.h/.cpp` — remplacé par StreamRelay + InputEncoder + InputCrypto + EnetControlStream
+- `WebSocketServer.h/.cpp` — remplacé par StreamRelay (incorpore QWebSocketServer)
+- `Protocol.js`, `ConnectionStatus.js` — jamais créés
+- `StreamSession.js`, `VideoPipeline.js`, `AudioPipeline.js`, `audio-processor.js` — fusionnés dans StreamView.js
+- `KeyboardHandler.js`, `MouseHandler.js`, `GamepadHandler.js` — input inline dans StreamView.js
+- `Platform.h/.cpp` — jamais créé (inutile, moonlight-common-c a ses propres Platform*)
+
+[REEL] Fichiers ajoutés depuis le plan :
+- `MoonlightShim.h/.cpp` — pont C→Qt pour moonlight-common-c
+- `StreamRelay.h/.cpp` — relay WebSocket central
+- `EnetControlStream.h/.cpp` — canal ENet pour input
+- `InputEncoder.h/.cpp` — encodage JSON→GameStream binary
+- `InputCrypto.h/.cpp` — AES-128-GCM pour input chiffré
+- `Mp4Muxer.js` — muxeur fMP4
+- `Toast.js` — notifications
+
 ---
 
 ## Décisions architecturales clés
 
 ### 1. Passthrough vidéo (pas de décode dans le backend)
 
-moonlight-common-c assemble les access units H.264 dans les callbacks
-`drSubmitDecodeUnit`. On forwarde ces NAL units directement au navigateur
-via WebSocket. Le navigateur les décode via WebCodecs (accéléré GPU).
+moonlight-common-c assemble les NAL units H.264 dans les callbacks
+`drSubmitDecodeUnit`. On forwarde ces NAL units (format Annex B, start codes
+00 00 00 01 préfixés) directement au navigateur via WebSocket.
 
-| Approche | Latence | Complexité | Charge |
+[REEL] Le navigateur encapsule les NAL units en fMP4 segments via `Mp4Muxer.js`
+et les passe à MSE (MediaSource Extensions + SourceBuffer) pour décodage GPU
+natif dans un élément `<video>`. Ce n'est PAS WebCodecs+canvas comme planifié
+initialement — MSE s'est avéré plus simple à intégrer (pas de gestion manuelle
+des timestamps, pas de synchronisation AV à coder).
+
+| Approche | Latence | Complexité | Statut |
 |----------|---------|------------|--------|
-| **Passthrough NAL → WebCodecs** | Minimale | Faible | GPU navigateur |
-| Décode backend + re-encode | +30ms+ | Très élevée | GPU backend |
-| Décode backend + MJPEG | +20ms | Moyenne | CPU backend |
+| **fMP4 + MSE + `<video>`** | ~1 trame | Faible | Implementé |
+| ~~WebCodecs + canvas~~ | Minimale | Moyenne | Abandonné (MSE suffit) |
+| Décode backend + re-encode | +30ms+ | Très élevée | Jamais envisagé |
 
-### 2. Protocole WebSocket custom plutôt que WebRTC
+### 2. Protocole WebSocket binaire simple plutôt que WebRTC
 
 moonlight-common-c utilise un format RTP propriétaire (FEC custom, séquencement).
-Adapter vers WebRTC nécessiterait de modifier moonlight-common-c (casser le contrat
-de submodule) ou implémenter une gateway complexe. Un protocole binaire simple
-sur WebSocket suffit sur un LAN.
+Adapter vers WebRTC nécessiterait de modifier moonlight-common-c. Un protocole
+binaire simple sur WebSocket suffit sur un LAN.
 
 ### 3. Connexion WebSocket unique
 
-Une seule connexion multiplexe vidéo, audio, contrôle et input. Pour un scénario
-LAN avec perte de paquets négligeable, le head-of-line blocking est non significatif
-et la gestion du cycle de vie est plus simple.
+Une seule connexion WebSocket (StreamRelay) multiplexe vidéo, audio et input.
+Pour un scénario LAN, le head-of-line blocking est négligeable.
 
 ### 4. Forward PCM audio plutôt que Opus
 
@@ -133,62 +163,101 @@ moonlight-common-c décode Opus multistream en interne et fournit du PCM dans
 `arDecodeAndPlaySample`. Forwarder le PCM évite de shipper un décodeur Opus WASM
 (~1MB+) et de réimplémenter le demuxing multistream en JS.
 
----
+[REEL] L'audio PCM est forwardé via WebSocket (channel 0x02) mais n'est pas
+encore joué côté navigateur. Phase 6 à implementer.
 
-## Protocole WebSocket
+### 5. [REEL] ENet pour le canal de contrôle (pas WebSocket)
 
-### Messages binaires
+Le plan initial prévoyait un pont WebSocket pour les événements input. En réalité,
+l'ENet embarqué dans moonlight-common-c est utilisé directement via
+`EnetControlStream`. Les événements input arrivent du navigateur en JSON sur le
+WebSocket, sont décodés par `InputEncoder`, chiffrés AES-128-GCM par
+`InputCrypto`, puis envoyés à Sunshine via ENet (START_A/B handshake, canal
+fiable).
 
-```
-Offset  Taille  Champ         Description
-------  ------  -----         -----------
-0       1       type          Message type
-1       4       timestamp     Microsecondes, uint32 big-endian
-5       N       payload       Données spécifiques au type
-```
+### 6. [REEL] MoonlightShim comme pont C→Qt
 
-| Type | Nom | Payload |
-|------|-----|---------|
-| 0x01 | VIDEO | Flux H.264 Annex B brut. Timestamp = temps de présentation en µs. |
-| 0x02 | AUDIO | PCM16 little-endian entrelacé. Bytes 1-4 = sample rate, Byte 5 = channels, reste = PCM. |
-| 0x05 | VIDEO_CONFIG | NAL units SPS/PPS pour initialisation WebCodecs. Envoyé avant les IDR frames. |
+`MoonlightShim` est un wrapper QObject qui :
+- Exécute `LiStartConnection()` sur un QThread dédié
+- Convertit les callbacks C de Limelight en signaux Qt
+- Expose `videoFrameReady(QByteArray, frameType, frameNumber)` et
+  `audioSampleReady(QByteArray)` pour StreamRelay
+- Thread-safe : les callbacks arrivent du thread worker, les signaux sont émis
+  et reçus par StreamRelay sur le main thread via Qt::AutoConnection
 
-### Messages texte (JSON)
+### 7. [REEL] Routes sync/async
 
-**Backend → Frontend :**
-```json
-{"type": "config", "data": {"width": 1920, "height": 1080, "fps": 60, "codec": "H264"}}
-{"type": "state",  "data": {"state": "connecting|streaming|stopped", "stage": "..."}}
-{"type": "stats",  "data": {"fps": 60, "bitrate": 20000, "rtt": 5}}
-{"type": "error",  "data": {"code": -100, "message": "..."}}
-{"type": "rumble", "data": {"controller": 0, "lowFreq": 128, "highFreq": 64}}
-```
+Le RestRouter supporte deux modes :
+- **Sync** (`get`, `post`, `del`) — retour immédiat HttpResponse
+- **Async** (`getAsync`, `postAsync`) — réponse différée via ResponseCallback
 
-**Frontend → Backend :**
-```json
-{"type": "input", "data": {"event": "keyDown", "key": 4, "modifiers": 0}}
-{"type": "input", "data": {"event": "mouseMove", "deltaX": 10, "deltaY": -5}}
-{"type": "input", "data": {"event": "mouseButton", "button": 1, "down": true}}
-{"type": "input", "data": {"event": "mouseWheel", "delta": 1}}
-{"type": "input", "data": {"event": "gamepad", "id": 0, "buttons": [...], "axes": [...]}}
-```
+Les routes qui impliquent HTTPS vers Sunshine (app list, launch, quit, box art)
+sont async pour éviter les QEventLoop imbriqués qui causaient des
+"Operation canceled" avec les sessions TLS concurrentes.
 
 ---
 
-## API REST
+## Protocole WebSocket (état réel)
+
+### Messages binaires (Backend → Frontend)
+
+```
+[channel:1][flags:1][payload:N]
+```
+
+| Channel | Nom | Payload |
+|---------|-----|---------|
+| 0x01 | VIDEO | NAL units H.264 format Annex B (start codes 00 00 00 01 préfixés par `MoonlightShim::drSubmitDecodeUnit`). flags bit0 = 1 si IDR keyframe. Timestamps implicites (ordre des frames). |
+| 0x02 | AUDIO | PCM16 little-endian entrelacé. flags inutilisés. Pas encore joué côté navigateur. |
+
+[REEL] Pas de message `VIDEO_CONFIG` (type 0x05) — les SPS/PPS sont inclus
+directement dans le flux Annex B. Le `Mp4Muxer` les extrait des NAL units pour
+construire le avcC de l'init segment fMP4.
+
+### Messages texte (Frontend → Backend) — Input JSON
+
+```json
+{"type":"keydown","keyCode":65,"ctrlKey":false,"shiftKey":false,"altKey":false}
+{"type":"keyup","keyCode":65,"ctrlKey":false,"shiftKey":false,"altKey":false}
+{"type":"mousemove","dx":10,"dy":-5}
+{"type":"mousedown","button":1}
+{"type":"mouseup","button":1}
+{"type":"mousewheel","delta":-120}
+```
+
+Pas de messages texte backend→frontend pour l'instant (state/stats/error
+viendront en Phase 8).
+
+[REEL] Différences avec le plan initial :
+- Pas d'horodatage (timestamp) dans les messages binaires
+- Pas de type 0x05 (VIDEO_CONFIG) — SPS/PPS in-band
+- Les messages texte ne sont définis que pour l'input (frontend→backend)
+- Pas d'implémentation des messages config/state/stats/error/rumble backend→frontend
+
+---
+
+## API REST (état réel)
 
 | Méthode | Path | Description |
 |---------|------|-------------|
-| GET | `/` | Sert `index.html` |
+| GET | `/` | Sert `index.html` (via HTTPS redirect) |
 | GET | `/*` | Sert les fichiers statiques de `frontend/` |
-| GET | `/api/hosts` | Liste tous les hôtes connus avec états |
-| POST | `/api/hosts/scan` | Déclenche un scan LAN manuel |
+| GET | `/api/health` | [REEL] Health check — retourne `{"status":"ok","version":"0.1.0"}` |
+| GET | `/api/hosts` | Liste tous les hôtes connus avec états (JSON) |
+| POST | `/api/hosts/scan` | Déclenche un scan LAN (mDNS) |
 | POST | `/api/hosts/manual` | Ajoute un hôte par IP `{"address": "..."}` |
+| DELETE | `/api/hosts/:id` | [REEL] Supprime un hôte de la liste persistée |
 | GET | `/api/hosts/:id/pair` | Récupère le PIN/statut de pairing |
 | POST | `/api/hosts/:id/pair` | Soumet le PIN pour pairing |
-| GET | `/api/hosts/:id/apps` | Liste les apps d'un hôte pairé |
-| POST | `/api/hosts/:id/start` | Lance le stream sur un hôte `{"appId": "..."}` |
-| POST | `/api/hosts/:id/quit` | Quitte l'app en cours sur un hôte |
+| GET | `/api/hosts/:id/apps` | [ASYNC] Liste les apps d'un hôte pairé (fetch HTTPS Sunshine) |
+| GET | `/api/hosts/:id/appasset` | [REEL][ASYNC] Jaquette PNG d'une app (`?appid=N`), cache-first |
+| POST | `/api/hosts/:id/start` | [REEL][ASYNC] Lance le stream — launchApp + LiStartConnection |
+| POST | `/api/hosts/:id/quit` | [REEL][ASYNC] Quitte l'app en cours + stop StreamRelay |
+
+[REEL] Routes marquées [ASYNC] utilisent `ResponseCallback` — le socket HTTP
+reste ouvert jusqu'à ce que le handler appelle la callback. Timeout 30s → 504.
+Les routes async évitent les QEventLoop imbriqués qui causaient des erreurs
+"Operation canceled" avec les sessions TLS concurrentes vers Sunshine.
 
 ---
 
@@ -214,48 +283,72 @@ encryptionFlags = ENCFLG_AUDIO | ENCFLG_VIDEO;
 ## Budget latence estimé
 
 ```
-Encode Sunshine (GPU) :          2-4ms
-Réseau (LAN, <1ms RTT) :        1ms
-moonlight-common-c reassembly : 1ms
-Traitement backend + queue :    0.5ms
-WebSocket send (localhost) :    0.5ms
-WebCodecs decode (GPU) :       2-4ms
-Canvas render :                 1ms
-Audio (AudioWorklet) :         5-10ms
-Total :                        ~13-22ms
+Encode Sunshine (GPU) :            2-4ms
+Réseau (LAN, <1ms RTT) :          1ms
+moonlight-common-c reassembly :   1ms
+Traitement backend + queue :      0.5ms
+WebSocket send (localhost) :      0.5ms
+MSE + SourceBuffer + decode GPU : 3-6ms  (via élément <video>)
+Audio (AudioWorklet, Phase 6) :   5-10ms
+Total :                          ~13-23ms
 ```
 
 Bien en-dessous du seuil de 50ms pour un streaming "local-like".
 
 ---
 
-## Threading model — Session
+## Threading model — Session (état réel)
 
 ```
-Main Thread (Qt event loop)           Worker Thread (LiStartConnection)
+Main Thread (Qt event loop)           Worker Thread (LiStartConnection via QThread::create)
    |                                         |
-   |-- Session::start()                       |
-   |   -> QThread::start()                    |
+   |-- StreamSession::start()                 |
+   |   -> NvHTTP::launchAppAsync()            |  [async HTTPS, callback sur main thread]
+   |   -> MoonlightShim::startConnection()    |
+   |      -> QThread::create([...])           |
+   |                                         |-- LiStartConnection() bloque ici
+   |                                         |   (RTSP handshake, bind UDP, RTP...)
    |                                         |
-   |                                   LiStartConnection() bloque ici
-   |                                         |
-   |   callbacks stage (via QMetaObject::invoke si UI, sinon direct)
-   |   <--------------------------------------
+   |   callbacks (Qt::AutoConnection — main thread si QObject)
+   |   <--------------------------------------  clStageStarting, clStageComplete,
+   |                                             clStageFailed, clConnectionStarted,
+   |                                             clConnectionTerminated
    |                                         |
    |   ===== STREAMING =====                  |
-   |   drSubmitDecodeUnit() (direct call, lock-free queue)
-   |   <--------------------------------------  VideoBridge → WebSocket send
+   |   drSubmitDecodeUnit() (direct call depuis moonlight-common-c)
+   |   émet videoFrameReady via Qt signal     |
+   |   <--------------------------------------  MoonlightShim (worker thread)
+   |   |                                      |
+   |   StreamRelay::onVideoFrame()            |
+   |   -> m_WsClient->sendBinaryMessage()     |  [main thread via AutoConnection]
    |                                         |
    |   arDecodeAndPlaySample()                |
-   |   <--------------------------------------  AudioBridge → WebSocket send
+   |   émet audioSampleReady via Qt signal    |
+   |   <--------------------------------------  MoonlightShim (worker thread)
+   |   |                                      |
+   |   StreamRelay::onAudioSample()           |
+   |   -> m_WsClient->sendBinaryMessage()     |
+   |                                         |
+   |   EnetControlStream::service()           |
+   |   (QTimer 20ms sur main thread)          |
+   |   -> enet_host_service()                 |
+   |                                         |
+   |   Input : WS JSON →                     |
+   |   StreamRelay::onWsTextMessage()        |
+   |   -> InputEncoder → InputCrypto →        |
+   |      EnetControlStream::sendInput()      |  [main thread]
    |                                         |
    |   connectionTerminated()                 |
    |   <--------------------------------------  Nettoyage
 ```
 
-Les envois WebSocket vidéo/audio se font **directement depuis le worker thread**
-pour éviter la latence de traversée de threads. `QWebSocket::sendBinaryMessage`
-est thread-safe (écriture dans le buffer socket OS).
+[REEL] Différences avec le plan initial :
+- `QThread::create([lambda])` plutôt qu'un QThread sous-classé
+- Pas de lock-free queue : les signaux Qt avec AutoConnection gèrent le thread
+  handoff (émetteur = worker thread, récepteur StreamRelay = main thread)
+- Le `EnetControlStream` tourne sur le main thread via QTimer 20ms
+- `QWebSocket::sendBinaryMessage` est appelé depuis le main thread seulement
+  (les callbacks arrivent via signaux Qt qui traversent les threads)
 
 ---
 
@@ -265,24 +358,22 @@ est thread-safe (écriture dans le buffer socket OS).
 
 **Objectif :** Un projet Qt qui compile et sert une page web.
 
-1. Créer `mw-server.pro` (qmake `TEMPLATE = subdirs`)
-2. Créer `backend/backend.pro` avec modules Qt : `core`, `network`, `websockets`
-3. Implémenter `main.cpp` — parser les arguments (port), démarrer les serveurs
-4. Implémenter `HttpServer` — basé sur `QTcpServer`, parsing HTTP minimal
-5. Implémenter `StaticFileHandler` — servir les fichiers de `frontend/`, MIME types
-6. Créer `frontend/index.html` — page d'accueil avec layout de base
-
 **Fichiers créés :**
-- `mw-server.pro`, `backend/backend.pro`
 - `backend/src/main.cpp`
 - `backend/src/server/HttpServer.h/.cpp`, `StaticFileHandler.h/.cpp`, `RestRouter.h/.cpp`
-- `backend/src/common/Logger.h/.cpp`
+- `backend/src/common/Logger.h/.cpp`, `common/Types.h`
 - `frontend/index.html`, `frontend/css/style.css`, `frontend/js/app.js`
+
+**Ce qui a été fait réellement :**
+- HTTP sur port 48000 + HTTPS sur port 48433 (avec cert self-signed)
+- Redirection HTTP→HTTPS automatique
+- Routes sync ET async (ResponseCallback)
+- Serveur statique pour frontend/
 
 **Critères d'acceptation :**
 - Le projet compile et s'exécute sur Windows 11 x64 avec Qt 6.x
-- `http://localhost:48000/` affiche la page d'accueil
-- La console affiche "Moonlight-Web server starting on port 48000"
+- `http://localhost:48000/` redirige vers HTTPS puis affiche la page d'accueil
+- La console affiche "Moonlight-Web server starting..."
 
 ---
 
@@ -291,29 +382,23 @@ est thread-safe (écriture dans le buffer socket OS).
 **Objectif :** Le backend découvre les hôtes Sunshine sur le LAN et les expose
 via l'API REST. Le frontend affiche la liste des hôtes.
 
-1. Ajouter `qmdnsengine` comme submodule Git, intégrer dans le `.pro`
-2. Implémenter `NvHTTP::getServerInfo()` — HTTP GET `/serverinfo`, parsing XML
-3. Implémenter `NvComputer` et `NvApp` (classes modèles)
-4. Implémenter `ComputerSeeker` — mDNS browse `_nvstream._tcp.local.`
-5. Implémenter `ComputerManager` — liste d'hôtes, polling 3s, persistence `QSettings`
-6. Implémenter les endpoints REST : `GET /api/hosts`, `POST /api/hosts/scan`, `POST /api/hosts/manual`
-7. Frontend `HostListView` — cartes d'hôtes avec icônes d'état
-8. Frontend `BackendClient` — client REST (fetch)
-
-**Fichiers créés/modifiés :**
-- Backend : `NvHTTP.h/.cpp`, `NvComputer.h/.cpp`, `NvApp.h/.cpp`
-- Backend : `ComputerManager.h/.cpp`, `ComputerSeeker.h/.cpp`
-- Backend : `Types.h`
-- Backend : mise à jour `backend.pro` (ajout qmdnsengine)
+**Fichiers créés :**
+- Backend : `NvHTTP.h/.cpp`, `NvComputer.h/.cpp`, `NvApp.h`, `NvAddress.h`
+- Backend : `ComputerManager.h/.cpp` (incorpore ComputerSeeker)
 - Frontend : `BackendClient.js`, `Host.js`, `App.js`, `HostListView.js`
-- Frontend : mise à jour `app.js` (state machine), `index.html`
+
+**Ce qui a été fait réellement :**
+- mDNS discovery via qmdnsengine
+- `ComputerManager` avec polling périodique (3s), persistence QSettings
+- `ComputerSeeker` intégré dans ComputerManager (pas de fichier séparé)
+- Routes sync pour /hosts, /scan, /manual
 
 **Critères d'acceptation :**
 - Au démarrage, le backend découvre les hôtes Sunshine sur le LAN
 - Le frontend affiche les hôtes en ligne avec badge "Live", hors ligne grisés
-- Le bouton "Scan" déclenche un nouveau scan mDNS
+- Le bouton "Scan" (déclenché automatiquement au focus) fonctionne
 - L'ajout manuel par IP fonctionne
-- Les hôtes persistent entre les redémarrages (offline par défaut)
+- Les hôtes persistent entre les redémarrages
 
 ---
 
@@ -321,18 +406,15 @@ via l'API REST. Le frontend affiche la liste des hôtes.
 
 **Objectif :** L'utilisateur peut pairer avec un hôte en ligne mais verrouillé.
 
-1. Implémenter `IdentityManager` — génération RSA 2048-bit + X.509 self-signed + UUID 64-bit
-2. Implémenter les méthodes pairing de `NvHTTP` : `getPairState()`, étapes challenge-response
-3. Implémenter `PairingManager` — protocole challenge-response (SHA-256 + AES-128-ECB)
-4. Implémenter endpoints REST : `GET /api/hosts/:id/pair`, `POST /api/hosts/:id/pair`
-5. Frontend `PairDialog` — affiche le PIN, instruction de saisie sur l'hôte
-6. Frontend state machine : host list → pair dialog (hôtes verrouillés) → app list
-
-**Fichiers créés/modifiés :**
-- Backend : `IdentityManager.h/.cpp`, `PairingManager.h/.cpp`
-- Backend : mise à jour `NvHTTP.h/.cpp` (méthodes pairing)
+**Fichiers créés :**
+- Backend : `IdentityManager.h/.cpp`, `NvPairingManager.h/.cpp`
 - Frontend : `PairDialog.js`
-- Frontend : mise à jour `HostListView.js`, `app.js`
+
+**Ce qui a été fait réellement :**
+- IdentityManager : génération RSA 2048-bit + X.509 self-signed + UUID 64-bit
+- NvPairingManager : challenge-response pairing complet (SHA-256 + AES-128-ECB)
+- Routes /pair (GET pour PIN, POST pour soumission)
+- PairDialog frontend : affiche PIN, instruction de saisie sur l'hôte
 
 **Critères d'acceptation :**
 - Clic sur un hôte verrouillé affiche le PairDialog avec PIN
@@ -346,75 +428,115 @@ via l'API REST. Le frontend affiche la liste des hôtes.
 
 **Objectif :** L'utilisateur peut voir et sélectionner les apps d'un hôte pairé.
 
-1. Implémenter `NvHTTP::getAppList()` — GET `/applist`, parsing XML
-2. Implémenter endpoint REST : `GET /api/hosts/:id/apps`
-3. Frontend `AppListView` — grille d'apps
-4. Frontend state machine : host list → app list → retour host list
-
-**Fichiers créés/modifiés :**
-- Backend : mise à jour `NvHTTP.h/.cpp` (getAppList)
+**Fichiers créés :**
 - Frontend : `AppListView.js`
-- Frontend : mise à jour `app.js`
+- Backend : mise à jour NvHTTP pour getAppListAsync()
 
-**Critères d'acceptation :**
-- Un hôte pairé affiche sa liste d'apps au clic
-- Les apps sont affichées en grille avec leur nom
-- L'utilisateur peut naviguer retour vers la liste d'hôtes
+**Ce qui a été fait réellement :**
+- `NvHTTP::getAppListAsync()` — fetch HTTPS /applist, parsing XML
+- Route async GET /api/hosts/:id/apps (évite QEventLoop imbriqué)
+- Route async GET /api/hosts/:id/appasset (cache-first box art)
+- Frontend AppListView : grille d'applications avec navigation retour
+- Ajout de Toast.js pour les notifications
+- Sérialisation des requêtes HTTPS par host (ComputerManager) pour éviter
+  "Operation canceled" avec les sessions TLS concurrentes
 
 ---
 
-### Phase 5 : Streaming — Pipeline Vidéo
+### Phase 5a : Streaming — RTSP Handshake (FAIT)
 
-**Objectif :** L'utilisateur peut lancer un jeu et voir la vidéo dans le navigateur.
+**Objectif :** Lancer une application sur Sunshine via HTTPS et établir la
+connexion streaming avec moonlight-common-c (LiStartConnection → handshake RTSP).
 
-1. Ajouter `moonlight-common-c` comme submodule Git, intégrer dans le `.pro`
-2. Configurer le build de moonlight-common-c (C99, CMake)
-3. Implémenter `StreamConfig` — config fixe (1080p, 60fps, H.264)
-4. Implémenter `NvHTTP::startApp()` — POST `/launch`, parser l'URL RTSP
-5. Implémenter `WebSocketServer` — `QWebSocketServer`, single-client
-6. Implémenter `Session` avec callbacks de connexion (stage tracking d'abord)
-7. Implémenter `VideoBridge` — `drSubmitDecodeUnit` → extraction H.264 → WebSocket
-8. Implémenter endpoint REST : `POST /api/hosts/:id/start`
-9. Frontend `StreamSession` — connecte WebSocket, route les données vidéo
-10. Frontend `VideoPipeline` — WebCodecs `VideoDecoder` + rendu `<canvas>`
-11. Frontend `StreamView` — canvas plein écran avec overlay
+**Fichiers créés :**
+- Backend : `StreamConfig.h/.cpp`, `Session.h/.cpp` (StreamSession)
+- Backend : `MoonlightShim.h/.cpp`, `StreamRelay.h/.cpp`
+- Backend : `EnetControlStream.h/.cpp`
+- Backend : `InputEncoder.h/.cpp`, `InputCrypto.h/.cpp`
+- Frontend : `WebSocketClient.js`, `StreamView.js`, `Mp4Muxer.js`
 
-**Fichiers créés/modifiés :**
-- Backend : mise à jour `backend.pro` (moonlight-common-c)
-- Backend : `StreamConfig.h/.cpp`, `Session.h/.cpp`, `VideoBridge.h/.cpp`
-- Backend : `WebSocketServer.h/.cpp`
-- Backend : mise à jour `NvHTTP.h/.cpp` (startApp, quitApp)
-- Frontend : `StreamSession.js`, `VideoPipeline.js`, `WebSocketClient.js`, `Protocol.js`
-- Frontend : `StreamView.js`, `ConnectionStatus.js`
-- Frontend : mise à jour `app.js`, `index.html`
-- Frontend : `css/stream.css`
+**Ce qui a été fait réellement :**
+- moonlight-common-c intégré en tant que sources compilées dans backend.pro
+  (Connection.c, RtspConnection.c, VideoStream.c, AudioStream.c, RtpVideoQueue.c,
+  RtpAudioQueue.c, ControlStream.c, InputStream.c, + ENet + nanors Reed-Solomon)
+- `MoonlightShim` : pont C→Qt qui appelle LiStartConnection() sur QThread dédié
+- `StreamConfig` : configuration fixe 1080p/60fps/H.264/20Mbps
+- `StreamRelay` : WebSocket server (port 48001) qui relaye vidéo+audio+input
+  entre MoonlightShim et le navigateur
+- `EnetControlStream` : canal ENet pour START_A/B handshake + input
+- `InputEncoder` : JSON input → GameStream wire format
+- `InputCrypto` : AES-128-GCM pour input chiffré
+- Frontend `StreamView` : MSE + `<video>` tag + Mp4Muxer fMP4
+- Frontend `WebSocketClient` : connexion WS, dispatch binaire/texte
+- Routes POST /api/hosts/:id/start et /quit (async)
+- Navigation : app list → launch → StreamView avec overlay quit
 
-**Critères d'acceptation :**
-- Clic sur une app la lance sur Sunshine (le jeu démarre sur l'hôte)
-- Le navigateur affiche la vidéo en streaming dans un canvas
-- La vidéo est fluide à 60fps avec latence <50ms
-- WebCodecs décode H.264 avec accélération matérielle
-- Le bouton "Quit" arrête le stream et retourne à la liste d'apps
+**Architecture :**
+```
+POST /api/hosts/:id/start
+  → StreamSession::start()
+    → NvHTTP::launchAppAsync() [HTTPS → Sunshine /launch]
+    → Parse sessionUrl du XML réponse
+    → Crée MoonlightShim + StreamRelay
+    → MoonlightShim::startConnection()
+      → QThread::create([LiStartConnection])
+        → RTSP handshake (OPTIONS,DESCRIBE,SETUP×3,ANNOUNCE,PLAY)
+        → drSubmitDecodeUnit() → MoonlightShim → StreamRelay → WS → Browser
+        → arDecodeAndPlaySample() → MoonlightShim → StreamRelay → WS → Browser
+    → Retourne {status:"streaming", wsUrl:"ws://...", wsPort:48001}
+```
+
+**Critères d'acceptation (5a) :**
+- Clic sur une app → POST /start → launch sur Sunshine → LiStartConnection réussit
+- Le backend reçoit les callbacks drSubmitDecodeUnit (frames vidéo H.264)
+- Le backend forwarde les frames H.264 via WebSocket
+- Le frontend reçoit les frames et les affiche via MSE+video
+- Le bouton "Stop Streaming" → POST /quit → LiStopConnection + Sunshine /quit
 
 **Points d'attention :**
-- Les frames IDR peuvent faire >100KB — `QWebSocket` supporte jusqu'à 256MB
-- SPS/PPS doivent être capturés et forwardés avant la première frame (message `VIDEO_CONFIG`)
-- `submitDecodeUnit` est appelé dans l'ordre des frames par moonlight-common-c
+- `RtspClient.h/.cpp` est du dead code — c'est moonlight-common-c qui gère le RTSP
+- Les frames IDR peuvent faire >100KB — QWebSocket supporte jusqu'à 256MB
+- Les SPS/PPS sont envoyés in-band (format Annex B avec start codes)
+- Le navigateur encapsule les NAL units en fMP4 via Mp4Muxer
+
+### Phase 5b : Streaming — Pipeline Vidéo (EN COURS)
+
+**Objectif :** Stabiliser le pipeline vidéo, gérer les cas limites, corriger
+les bugs de rendu.
+
+**Ce qu'il reste à faire :**
+- Correction du buffering vidéo (frames en attente avant connexion WS)
+- Gestion des keyframes et init segments fMP4
+- Overlay de statut de connexion
+- Détection de perte de connexion et reconnexion
+- Gestion des erreurs de décodage (MSE SourceBuffer)
+- Finalisation du quit propre (LiStopConnection + arrêt ENet)
+
+**Critères d'acceptation (5b) :**
+- La vidéo s'affiche dans les 2 secondes suivant le lancement
+- Flux stable à 60fps sans freeze ni corruption
+- Le "Stop Streaming" nettoie tout (processus Sunshine, ENet, WS, MSE)
+- Gestion des cas d'erreur (déconnexion, timeout, échec launch)
 
 ---
 
-### Phase 6 : Streaming — Pipeline Audio
+### Phase 6 : Streaming — Pipeline Audio (A FAIRE)
 
-**Objectif :** L'audio joue en synchronisation avec la vidéo.
+**Objectif :** L'audio du jeu est joué par le navigateur.
 
-1. Implémenter `AudioBridge` — `arDecodeAndPlaySample` → forward PCM via WebSocket
-2. Frontend `AudioPipeline` — AudioContext + AudioWorklet
-3. Frontend `audio-processor.js` — AudioWorkletProcessor
+**Ce qui est déjà fait :**
+- Backend `MoonlightShim::arDecodeAndPlaySample()` → émet `audioSampleReady(QByteArray)`
+- `StreamRelay::onAudioSample()` forwarde le PCM via WebSocket (channel 0x02)
+- moonlight-common-c décode Opus multistream en PCM
 
-**Fichiers créés/modifiés :**
-- Backend : `AudioBridge.h/.cpp`
-- Backend : mise à jour `Session.h/.cpp` (enregistrement AudioBridge)
-- Frontend : `AudioPipeline.js`, `audio-processor.js`
+**Ce qu'il reste à faire :**
+1. Frontend `AudioPipeline` — AudioContext + AudioWorklet
+2. Frontend `audio-processor.js` — AudioWorkletProcessor qui reçoit le PCM
+3. Synchronisation audio/video (timestamps)
+
+**Fichiers à créer :**
+- Frontend : `js/streaming/AudioPipeline.js` (ou intégré dans StreamView)
+- Frontend : `js/streaming/audio-processor.js` (AudioWorkletProcessor)
 
 **Critères d'acceptation :**
 - L'audio du jeu joue via les haut-parleurs du navigateur
@@ -424,22 +546,28 @@ via l'API REST. Le frontend affiche la liste des hôtes.
 
 ---
 
-### Phase 7 : Streaming — Input
+### Phase 7 : Streaming — Input (PARTIELLEMENT FAIT)
 
 **Objectif :** L'utilisateur peut interagir avec le stream (clavier, souris, manette).
 
-1. Implémenter `InputBridge` — parser JSON events, appeler `LiSend*Event()`
-2. Frontend `KeyboardHandler` — capture KeyboardEvent, mapping HID key codes
-3. Frontend `MouseHandler` — Pointer Lock API pour souris relative, boutons
-4. Frontend `GamepadHandler` — polling Gamepad API à ~60Hz
-5. Connecter signal `WebSocketServer::inputEventReceived` → `InputBridge::onInputEvent`
-6. Implémenter le mapping HID key codes (basé sur moonlight-qt `keyboard.cpp`)
+**Ce qui est déjà fait :**
+- Backend `InputEncoder` : JSON key events → GameStream wire format (NV_INPUT_HEADER)
+- Backend `InputCrypto` : AES-128-GCM encryption (matching moonlight-common-c)
+- Backend `EnetControlStream` : ENet reliable UDP → START_A/B handshake + input
+- Backend `StreamRelay::onWsTextMessage()` : parse JSON input, appelle `InputEncoder`,
+  puis `EnetControlStream::sendInput()`
+- Frontend clavier : `keydown`/`keyup` events avec keyCode (Windows VK) + modifiers
+- Frontend souris : Pointer Lock API → `mousemove` avec `movementX`/`movementY`,
+  `mousedown`/`mouseup` avec boutons, `wheel` avec delta
 
-**Fichiers créés/modifiés :**
-- Backend : `InputBridge.h/.cpp`
-- Backend : mise à jour `Session.h/.cpp`, `WebSocketServer.h/.cpp`
-- Frontend : `KeyboardHandler.js`, `MouseHandler.js`, `GamepadHandler.js`
-- Frontend : mise à jour `StreamSession.js`
+**Ce qu'il reste à faire :**
+1. Frontend `GamepadHandler` — Gamepad API polling
+2. Mapping clavier complet (basé sur moonlight-qt `keyboard.cpp`)
+3. Support des touches spéciales (combo quitter, plein écran)
+4. Rumble feedback (Gamepad API hapticActuators)
+
+**Fichiers à créer :**
+- Frontend : `js/input/GamepadHandler.js`
 
 **Critères d'acceptation :**
 - Le clavier fonctionne dans le jeu sur l'hôte
@@ -449,15 +577,15 @@ via l'API REST. Le frontend affiche la liste des hôtes.
 
 ---
 
-### Phase 8 : Polish et gestion d'erreurs
+### Phase 8 : Polish et gestion d'erreurs (A FAIRE)
 
 **Objectif :** Robustesse et UX fluide.
 
-1. Récupération sur erreur de session — gérer les déconnexions proprement
-2. Overlay de statut de connexion (avertissement connexion faible)
-3. Affichage stats FPS/bitrate (depuis `connectionStatusUpdate`)
-4. Arrêt gracieux — quitter l'app sur l'hôte à la fermeture du stream
-5. Configuration release build, sans console sur Windows (`SUBSYSTEM:WINDOWS`)
+1. Overlay de statut de connexion (avertissement connexion faible)
+2. Affichage stats FPS/bitrate (depuis `clConnectionStatusUpdate`)
+3. Messages texte backend→frontend pour state/stats/error
+4. Récupération sur erreur de session (reconnect)
+5. Configuration release build (SUBSYSTEM:WINDOWS)
 6. Logging fichier pour diagnostics
 
 **Critères d'acceptation :**
@@ -468,142 +596,145 @@ via l'API REST. Le frontend affiche la liste des hôtes.
 
 ---
 
-## Défis et mitigations
+## Défis et mitigations (mis à jour)
 
-| Défi | Risque | Mitigation |
-|------|--------|------------|
-| **Disponibilité WebCodecs** | Non supporté sur tous les navigateurs | Cibler Chrome/Edge Windows 11. Fallback MSE post-MVP. |
-| **Taille messages WebSocket** | IDR frames ~150KB | `QWebSocket` supporte jusqu'à 256MB. Split si nécessaire. |
-| **AudioContext autoplay** | Bloqué sans gesture utilisateur | Resume sur le clic de lancement d'app. |
-| **Pointer Lock** | Nécessite gesture utilisateur | Activer au premier clic sur le canvas. |
-| **mDNS sur Windows** | Pas de répondeur mDNS natif | `qmdnsengine` gère ça. Fallback : ajout IP manuel. |
-| **Thread safety QWebSocket** | Écriture depuis worker thread | Utiliser `QMetaObject::invokeMethod` + `Qt::QueuedConnection` ou queue protégée par mutex drainée par timer sur main thread. |
-| **Build moonlight-common-c Windows** | C99, peut nécessiter ajustements MSVC | CMake build. Définir `_CRT_SECURE_NO_WARNINGS` si nécessaire. |
-| **Dérive AV sync** | Callbacks audio/vidéo non synchronisés | Les deux flux portent des timestamps. Pour le MVP, accepter une dérive mineure (<50ms imperceptible). |
-| **Gamepad API** | Nécessite HTTPS ou localhost | Dev sur localhost. Prod avec certificat self-signed. |
-| **Rumble/force feedback** | Callbacks à forwarder au navigateur | MVP : logger les requêtes rumble. Post-MVP : implémenter via Gamepad API `hapticActuators`. |
+| Défi | Risque | Mitigation | Statut |
+|------|--------|------------|--------|
+| **Disponibilité WebCodecs** | Non supporté IE/Safari | Cibler Chrome/Edge. | [REEL] Utilise MSE sans fallback |
+| **Taille messages WebSocket** | IDR frames ~150KB | QWebSocket supporte jusqu'à 256MB. | OK |
+| **AudioContext autoplay** | Bloqué sans gesture utilisateur | Resume sur le clic de lancement d'app. | Phase 6 |
+| **Pointer Lock** | Nécessite gesture utilisateur | Activer au premier clic sur le canvas. | [REEL] Implementé |
+| **mDNS sur Windows** | Pas de répondeur mDNS natif | qmdnsengine. Fallback ajout IP manuel. | OK |
+| **Thread safety QWebSocket** | Écriture depuis worker thread | [REEL] Callbacks via signaux Qt AutoConnection → main thread. | OK |
+| **Build moonlight-common-c** | Ajustements MSVC | Sources dans backend.pro. | [REEL] Compile avec MSVC 2022 |
+| **Dérive AV sync** | Callbacks non synchronisés | Accepter derive <50ms. | Phase 6 |
+| **Gamepad API** | Nécessite HTTPS | Dev sur localhost. | Phase 7 |
+| **Rumble** | Callback non forwardé | [REEL] clRumble vide pour l'instant. | Phase 7 |
+| **Sérialisation HTTPS** | TLS concurrentes → "Operation canceled" | [REEL] File d'attente par host. Une requête à la fois. | Resolu |
+| **ENet Windows** | Initialisation Winsock | [REEL] enet_initialize() + WS2_32 lié. | OK |
+| **Input crypto AES-128-GCM** | Conformité moonlight-common-c | [REEL] InputCrypto avec OpenSSL EVP, IV rotation. | OK |
 
 ---
 
-## Dépendances — Submodules Git
+## Dépendances — Submodules Git (état réel)
 
 ```bash
 # Phase 2: mDNS discovery
 git submodule add https://github.com/cgutman/qmdnsengine.git \
     backend/third_party/qmdnsengine
 
-# Phase 5: Streaming protocol + H.264 parsing
+# Phase 5: Streaming protocol
 git submodule add https://github.com/moonlight-stream/moonlight-common-c.git \
     backend/third_party/moonlight-common-c
-git submodule add https://github.com/aizvorski/h264bitstream.git \
-    backend/third_party/h264bitstream
 ```
 
-### Fichiers wrapper nécessaires à la racine de chaque submodule
-
-Moonlight-qt utilise une structure "wrapper" : un dossier externe avec un `.pro`
-contient le submodule Git. Les fichiers suivants doivent être créés manuellement
-car ils ne font pas partie des submodules upstream :
-
-**qmdnsengine** — Fichier à créer à la racine du submodule :
-- `qmdnsengine_export.h` — Macro `QMDNSENGINE_EXPORT` (vide pour build statique)
-
-**moonlight-common-c** (Phase 5) :
-- Pas de fichier wrapper nécessaire ; le `.pro` référence directement les sources
-
-**h264bitstream** (Phase 5) :
-- Pas de fichier wrapper nécessaire ; le `.pro` référence directement les sources
-
-### Approche d'intégration
-
-Pour éviter la complexité des subdirs Qt, les sources des bibliothèques tierces
-sont compilées **directement dans le projet backend** (ajoutées dans `backend.pro`).
-Ceci garantit la compatibilité ABI (même compilateur, mêmes flags) et simplifie
-le build (pas de projet séparé à configurer).
-
-## Build des dépendances (Windows)
-
-Aucun build séparé n'est nécessaire. Toutes les sources tierces sont compilées
-directement par `backend.pro`. Voir la section Configuration build Qt ci-dessous.
+[REEL] Différences avec le plan initial :
+- Pas de submodule h264bitstream — inutile (le parsing NAL est fait côté
+  navigateur dans Mp4Muxer.js, et moonlight-common-c gère le depacketizing RTP)
+- moonlight-common-c compile ses sources directement dans backend.pro :
+  Connection.c, RtspConnection.c, VideoStream.c, AudioStream.c, RtpVideoQueue.c,
+  RtpAudioQueue.c, ControlStream.c, InputStream.c, Platform.c, PlatformSockets.c,
+  PlatformCrypto.c, Misc.c, ByteBuffer.c, LinkedBlockingQueue.c, FakeCallbacks.c,
+  rswrapper.c + ENet (callbacks.c, compress.c, host.c, list.c, packet.c, peer.c,
+  protocol.c, win32.c) + nanors (rs.c)
+- qmdnsengine est buildé via son propre .pro en tant que bibliothèque statique
+  séparée (LIBS link dans backend.pro)
+- OpenSSL requis : headers dans `libs/windows/include`, libs dans
+  `libs/windows/lib` (libssl.lib, libcrypto.lib)
 
 ---
 
-## Configuration build Qt
+## Configuration build Qt (état réel)
 
-**`mw-server.pro` :**
-```qmake
-TEMPLATE = subdirs
-CONFIG += ordered
-SUBDIRS = backend
-```
+Le fichier `backend.pro` est un projet Qt `TEMPLATE = app` unique (pas de subdirs).
+Toutes les sources, y compris moonlight-common-c, sont compilées directement.
 
-**`backend/backend.pro`** (modules et libs) :
+Modules Qt requis : `core`, `network`, `websockets`
+Compilateur : MSVC 2022 64-bit / Qt 6.x
+Dépendances externes : OpenSSL 3.x (libssl.lib + libcrypto.lib)
+
 ```qmake
 QT += core network websockets
 CONFIG += c++17 console
 TEMPLATE = app
+TARGET = mw-server
 
-INCLUDEPATH += third_party/moonlight-common-c
-LIBS += -Lthird_party/moonlight-common-c/build -lmoonlight-common-c
+INCLUDEPATH += src
+INCLUDEPATH += $$PWD/third_party/moonlight-common-c/src
+INCLUDEPATH += $$PWD/third_party/moonlight-common-c/enet/include
+INCLUDEPATH += $$PWD/third_party/qmdnsengine/qmdnsengine/src/include
+INCLUDEPATH += $$PWD/libs/windows/include/x64
 
-INCLUDEPATH += third_party/qmdnsengine/src
-LIBS += -Lthird_party/qmdnsengine/build -lqmdnsengine
+# moonlight-common-c sources (compilés inline)
+SOURCES += \
+    third_party/moonlight-common-c/src/Connection.c \
+    third_party/moonlight-common-c/src/RtspConnection.c \
+    third_party/moonlight-common-c/src/VideoStream.c \
+    third_party/moonlight-common-c/src/AudioStream.c \
+    third_party/moonlight-common-c/src/ControlStream.c \
+    third_party/moonlight-common-c/src/InputStream.c \
+    third_party/moonlight-common-c/src/RtpVideoQueue.c \
+    third_party/moonlight-common-c/src/RtpAudioQueue.c \
+    third_party/moonlight-common-c/src/Platform.c \
+    third_party/moonlight-common-c/src/PlatformSockets.c \
+    third_party/moonlight-common-c/src/PlatformCrypto.c \
+    # ... + ENet + nanors ...
 
 win32 {
-    LIBS += -lWS2_32 -lcrypt32 -ladvapi32
-    CONFIG(release, debug|release) {
-        QMAKE_LFLAGS += /SUBSYSTEM:WINDOWS
-    }
-}
-
-macx {
-    LIBS += -framework Security -framework CoreFoundation
-}
-
-unix:!macx {
-    LIBS += -lpthread -ldl
+    LIBS += -lWS2_32 -lwinmm
+    LIBS += -L$$PWD/libs/windows/lib/x64 -llibssl -llibcrypto
 }
 ```
 
 ---
 
-## Actions manuelles dans Qt Creator
+## Actions manuelles — Build et run
 
-### Initialisation du projet
+### Prérequis
+1. Qt 6.x (modules : core, network, websockets) — kit MSVC2022 64-bit
+2. OpenSSL 3.x (binaries + libs dans backend/libs/windows/)
+3. Submodules initialisés : `git submodule update --init --recursive`
 
-1. **Installer Qt 6.x** avec les modules : MSVC 2022 64-bit, Qt WebSockets, Qt Network
-2. **Ouvrir Qt Creator** → File → Open File or Project → sélectionner `mw-server.pro`
-3. **Configurer le kit** : choisir "Desktop Qt 6.x MSVC2022 64bit"
-4. **Cloner les submodules** manuellement (ou via Git Bash) :
-   ```bash
-   cd d:\Code\moonlight-web-deepseek
-   git init
-   git submodule add https://github.com/moonlight-stream/moonlight-common-c backend/third_party/moonlight-common-c
-   git submodule add https://github.com/moonlight-stream/qmdnsengine backend/third_party/qmdnsengine
-   ```
-5. **Builder les dépendances** (voir section Build des dépendances ci-dessus)
-6. **Build** : Ctrl+B dans Qt Creator
-7. **Run** : Ctrl+R — le serveur démarre sur `http://localhost:48000`
+### Build
+```bash
+# Via Qt Creator : ouvrir backend/backend.pro, kit MSVC2022, Ctrl+B
+# Via ligne de commande :
+cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat
+```
 
-### Configuration additionnelle
+### Run
+```bash
+cd backend/build/release && ./mw-server.exe
+# HTTP :48000 → HTTPS :48433, WS relay :48001
+# Ouvrir https://localhost:48433/ dans Chrome/Edge
+```
 
-- Ajouter OpenSSL au PATH Windows si les DLL ne sont pas trouvées
-- Pour le déploiement : `windeployqt` pour empaqueter les DLL Qt avec l'exécutable
+### Build manuel de qmdnsengine (si pas via le .pro subdirs)
+```bash
+cd backend/third_party/qmdnsengine
+qmake qmdnsengine.pro
+nmake
+```
+
+### Deploiement
+```bash
+windeployqt mw-server.exe
+# Copier : libcrypto-3-x64.dll, libssl-3-x64.dll
+```
 
 ---
 
-## Effort estimé
+## Effort estimé (mis à jour avec l'avancement réel)
 
-| Phase | Description | Effort estimé |
-|-------|-------------|---------------|
-| 1 | Squelette + HTTP | 2-3 jours |
-| 2 | Découverte hôtes + API | 3-4 jours |
-| 3 | Pairing | 2-3 jours |
-| 4 | Liste apps | 1-2 jours |
-| 5 | Pipeline vidéo | 4-5 jours |
-| 6 | Pipeline audio | 2-3 jours |
-| 7 | Input | 2-3 jours |
-| 8 | Polish | 3-5 jours |
-| **Total** | | **19-28 jours** |
-
-Total estimé : **4-6 semaines** pour un développeur familier avec Qt/C++ et les APIs web modernes.
+| Phase | Description | Effort | Statut |
+|-------|-------------|--------|--------|
+| 1 | Squelette + HTTP | 2-3 jours | ✅ Fait |
+| 2 | Découverte hôtes + API | 3-4 jours | ✅ Fait |
+| 3 | Pairing | 2-3 jours | ✅ Fait |
+| 4 | Liste apps | 1-2 jours | ✅ Fait |
+| 5a | RTSP Handshake + intgration moonlight-common-c | 3-4 jours | ✅ Fait |
+| 5b | Pipeline video (MSE + Mp4Muxer + StreamRelay) | 2-3 jours | 🔄 En cours |
+| 6 | Pipeline audio (AudioWorklet PCM) | 2-3 jours | ⏳ |
+| 7 | Input (Gamepad, polish mapping) | 2-3 jours | ⏳ |
+| 8 | Polish, erreurs, overlay stats | 3-5 jours | ⏳ |
+| **Total** | | **~20-30 jours** | **~60% fait** |

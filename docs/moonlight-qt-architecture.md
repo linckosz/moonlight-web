@@ -353,56 +353,137 @@ Session::clConnectionTerminated() → emit s_ActiveSession->sessionFinished(...)
 
 ---
 
-## 5. Points d'intégration pour Moonlight-Web
+## 5. Intégration Moonlight-Web — Décisions réelles
 
-### 5.1 Protocoles à réimplémenter
+### 5.1 Architecture d'intégration
 
-| Protocole | Description | Approche Web |
-|-----------|-------------|--------------|
-| **HTTPS API** (`/serverinfo`, `/applist`, `/launch`, `/pair`, `/quit`) | REST API de Sunshine | `fetch()` / `XMLHttpRequest` — pas de contrainte particulière |
-| **RTSP Handshake** | Négociation session, échange SDP, clés AES | Doit être réimplémenté en JS. Sunshine supporte aussi WebRTC (expérimental) |
-| **RTP Video** | Flux UDP/TCP H.264/HEVC/AV1 | WebCodecs API (`VideoDecoder`) ou MSE via `MediaSource` |
-| **RTP Audio** | Flux UDP Opus multistream | Web Audio API (`AudioContext`) + Opus decoder WASM/JS |
-| **Control Stream** | Canal ENet pour input et messages | WebSocket (Sunshine a un pont WebSocket, ou implémenter ENet en WASM) |
+Moonlight-Web intègre directement moonlight-common-c dans son backend C++/Qt.
+Contrairement à moonlight-qt qui lie LiStartConnection à une boucle SDL + décodeur
+FFmpeg + renderer GPU, moonlight-Web remplace toute la partie décodage/rendu par
+un relay WebSocket vers le navigateur.
 
-### 5.2 APIs Sunshines existantes réutilisables
-
-Sunshine expose ces endpoints (documentés dans le code de NvHTTP) :
-- `GET /serverinfo` — XML avec capacités serveur, modes d'affichage, codecs supportés
-- `GET /applist` — XML avec liste des applications
-- `POST /launch` — lance une app, retourne XML avec URL RTSP
-- `POST /quit` — ferme l'app en cours
-- `POST /pair` — appairage PIN
-- `GET /boxart` — jaquette d'un jeu (PNG)
-
-### 5.3 Structures de données clés
-
-- **`STREAM_CONFIGURATION`** ([Limelight.h:44-103](D:\Code\moonlight-qt\moonlight-common-c\moonlight-common-c\src\Limelight.h#L44-L103)) — configuration du stream
-- **`DECODE_UNIT`** — unité de décodage (frames réseau réassemblées)
-- **`VIDEO_STATS`** ([decoder.h:11-35](D:\Code\moonlight-qt\app\streaming\video\decoder.h#L11-L35)) — statistiques de performance
-- **`NvDisplayMode`** ([nvhttp.h:15-28](D:\Code\moonlight-qt\app\backend\nvhttp.h#L15-L28)) — mode d'affichage (width, height, refreshRate)
-- **`OPUS_MULTISTREAM_CONFIGURATION`** — configuration audio (canaux, sample rate)
-
-### 5.4 Formats vidéo supportés (masques)
-
-```cpp
-#define VIDEO_FORMAT_H264             0x0001
-#define VIDEO_FORMAT_H265             0x0100
-#define VIDEO_FORMAT_H265_MAIN10      0x0200
-#define VIDEO_FORMAT_H264_HIGH8_444   0x0400
-#define VIDEO_FORMAT_H265_REXT8_444   0x0800
-#define VIDEO_FORMAT_H265_REXT10_444  0x1000
-#define VIDEO_FORMAT_AV1_MAIN8        0x2000
-#define VIDEO_FORMAT_AV1_MAIN10       0x4000
-#define VIDEO_FORMAT_AV1_HIGH8_444    0x8000
-#define VIDEO_FORMAT_AV1_HIGH10_444   0x10000
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                         MOONLIGHT-WEB (Backend C++/Qt)                  │
+│                                                                         │
+│  ┌──────────────────────────────────────────────────────────┐          │
+│  │                Limelight C Library                        │          │
+│  │  ┌──────────┐ ┌───────────┐ ┌─────────┐ ┌────────────┐ │          │
+│  │  │Connection│ │RtpVideoQ  │ │RtpAudioQ│ │ControlStrm │ │          │
+│  │  │(RTSP)    │ │(réass.)   │ │(réass.) │ │(ENet)      │ │          │
+│  │  └──────────┘ └─────┬─────┘ └────┬────┘ └─────┬──────┘ │          │
+│  │                     │            │             │        │          │
+│  │                     ▼            ▼             ▼        │          │
+│  │              ┌─────────────┐ ┌────────┐ ┌──────────┐   │          │
+│  │              │MoonlightShim│ │(Opus→  │ │InputCryp │   │          │
+│  │              │(callbacks C │ │ PCM)   │ │to+AES-   │   │          │
+│  │              │ → Qt sigs) │ │        │ │128-GCM   │   │          │
+│  │              └──────┬──────┘ └────────┘ └──────────┘   │          │
+│  └─────────────────────┼──────────────────────────────────┘          │
+│                        │                                            │
+│                        ▼                                            │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │              StreamRelay                      │                   │
+│  │  WebSocket → [channel:1][flags:1][payload:N]  │                   │
+│  │  • Video (ch 0x01) — NAL units H.264 Annex B  │                   │
+│  │  • Audio (ch 0x02) — PCM16 LE                 │                   │
+│  │  • Input (JSON)  — key/mouse events           │                   │
+│  └──────────────────────┬───────────────────────┘                   │
+│                         │                                            │
+│                         ▼                                            │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │              EnetControlStream                │                   │
+│  │  ENet reliable UDP → START_A/B + input        │                   │
+│  │  (port 47999, moonlight-common-c ENet)        │                   │
+│  └──────────────────────────────────────────────┘                   │
+└─────────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    NAVIGATEUR (Frontend Vanilla JS)                   │
+│                                                                      │
+│  ┌────────────┐  ┌───────────────────────────────────────────────┐  │
+│  │ BackendCli │  │               StreamView                       │  │
+│  │ ent (fetch)│  │  ┌──────────────┐  ┌───────────────────────┐ │  │
+│  │            │  │  │ WebSocketCli │  │  MSE + <video> tag    │ │  │
+│  │ /api/hosts │  │  │  ent         │  │  MediaSource           │ │  │
+│  │ /api/start │  │  │              │  │  SourceBuffer          │ │  │
+│  │ /api/quit  │  │  │  onBinary →  │  │  Mp4Muxer (fMP4)      │ │  │
+│  └────────────┘  │  │  onText   →  │  └───────────────────────┘ │  │
+│                  │  └──────┬───────┘                             │  │
+│                  │         │ send(JSON input)                     │  │
+│                  └─────────┼─────────────────────────────────────┘  │
+│                            │                                        │
+│                    KeyboardEvent, MouseEvent,                        │
+│                    PointerLock API                                   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.5 Recommandations pour Moonlight-Web
+### 5.2 Décisions architecturales clés
 
-1. **API Layer** : réimplémenter `NvHTTP` en JS (fetch + DOMParser pour XML)
-2. **Streaming** : privilégier l'API WebCodecs pour le décodage H.264 hardware
-3. **Rendu** : canvas 2D ou WebGL pour l'affichage vidéo (faible latence)
-4. **Audio** : Web Audio API avec `AudioWorklet` pour la latence minimale
-5. **Input** : Gamepad API, KeyboardEvent, PointerEvent (natifs navigateur)
-6. **Réseau** : WebSocket pour le control stream (plutôt qu'ENet), RTSP en JS
+| Décision | Description |
+|----------|-------------|
+| **LiStartConnection** intégré dans le backend | Pas de réimplémentation RTSP en JS. moonlight-common-c gère tout le handshake (OPTIONS→DESCRIBE→SETUP×3→ANNOUNCE→PLAY) directement dans le backend C++. |
+| **MoonlightShim** pont C→Qt | Wrapper QObject qui expose les callbacks C de Limelight (`drSubmitDecodeUnit`, `arDecodeAndPlaySample`, `clConnectionStarted`) comme signaux Qt. Tourne sur un QThread dédié. |
+| **ENet natif** pour le contrôle | Utilisation de l'ENet embarqué dans moonlight-common-c pour le canal de contrôle (START_A/B handshake, input). Pas de pont WebSocket. |
+| **StreamRelay** (remplace Video/Audio/InputBridge) | Un seul objet QObject relaye vidéo + audio + input entre MoonlightShim et le navigateur via un WebSocket dédié (port 48001). |
+| **MSE + fMP4** plutôt que WebCodecs | Le frontend utilise MediaSource Extensions avec un muxeur fMP4 minimal (Mp4Muxer.js) qui encapsule les NAL units H.264 Annex B en segments fMP4. Décodé dans un élément `<video>` standard. |
+| **Pas de pipeline audio encore** | L'audio PCM est forwardé via WebSocket (channel 0x02) mais n'est pas encore joué. Phase 6 à venir. |
+| **Pas de VideoPipeline/AudioPipeline séparés** | Tout le streaming frontend est dans `StreamView.js`. Pas de modules `VideoPipeline.js` ou `AudioPipeline.js`. |
+| **Input relayé par StreamRelay** | Les events JSON du navigateur sont parsés directement par `StreamRelay::onWsTextMessage()` qui appelle `InputEncoder` → `EnetControlStream::sendInput()`. Pas d'InputBridge séparé. |
+
+### 5.3 Protocole WebSocket réel
+
+**Messages binaires (Backend → Frontend) :**
+
+```
+[channel:1][flags:1][payload:N]
+```
+
+| Channel | Nom | Payload |
+|---------|-----|---------|
+| 0x01 | VIDEO | NAL units H.264 en format Annex B (start codes 00 00 00 01 préfixés). flags bit0 = 1 si IDR keyframe. |
+| 0x02 | AUDIO | PCM16 little-endian entrelacé. flags inutilisés. |
+
+**Messages texte (Frontend → Backend) — input :**
+
+```json
+{"type":"keydown","keyCode":65,"ctrlKey":false,"shiftKey":false}
+{"type":"mousemove","dx":10,"dy":-5}
+{"type":"mousedown","button":1}
+{"type":"mousewheel","delta":-120}
+```
+
+Pas de messages texte backend→frontend pour l'instant (state/stats/error viendront en Phase 8).
+
+### 5.4 Flux réel d'un stream
+
+1. **POST /api/hosts/:id/start** (async) → crée `StreamSession`
+2. `StreamSession::start()` → `NvHTTP::launchAppAsync()` (HTTPS /launch)
+3. Parse sessionUrl du XML de réponse → crée `MoonlightShim` + `StreamRelay` (WebSocket)
+4. `MoonlightShim::startConnection()` → appelle `LiStartConnection()` sur QThread dédié
+5. moonlight-common-c : handshake RTSP → bind UDP → RTP video+audio → callbacks
+6. `drSubmitDecodeUnit()` → `MoonlightShim::videoFrameReady` signal → `StreamRelay` forwarde via WebSocket
+7. `arDecodeAndPlaySample()` → `MoonlightShim::audioSampleReady` signal → `StreamRelay` forwarde via WebSocket
+8. `clConnectionStarted()` → `m_StreamStarted = true`, client WebSocket peut se connecter
+9. Frontend : WebSocket connect → reçoit frames vidéo → `Mp4Muxer` → fMP4 → `SourceBuffer` → `<video>`
+10. Input : events navigateur → WebSocket JSON → `StreamRelay::onWsTextMessage()` → `InputEncoder` → AES-128-GCM → `EnetControlStream` → ENet → Sunshine
+
+### 5.5 Structures de données clés
+
+Identiques à moonlight-qt (mêmes headers Limelight.h) :
+- **`STREAM_CONFIGURATION`** ([Limelight.h](D:\Code\moonlight-qt\moonlight-common-c\moonlight-common-c\src\Limelight.h))
+- **`DECODE_UNIT`** — unité de décodage (frames réseau réassemblées)
+- **`OPUS_MULTISTREAM_CONFIGURATION`** — configuration audio
+- **`SERVER_INFORMATION`** — infos serveur (adresse, versions, codec support)
+
+### 5.6 Limites connues du MVP actuel
+
+| Point | Statut | Description |
+|-------|--------|-------------|
+| Audio | Non joué | Forwardé via WebSocket mais pas décodé/joué côté navigateur |
+| Gamepad | Non implémenté | Phase 7 |
+| Overlay stats | Non implémenté | Phase 8 |
+| HEVC/AV1 | Non testé | Seul H.264 est utilisé (codec fixe) |
+| Rumble | Non implémenté | Callback `clRumble` vide |
+| HDR | Non implémenté | Callback `clSetHdrMode` vide |
