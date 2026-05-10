@@ -169,30 +169,17 @@ void StreamSession::onLaunchReplyFinished()
         StreamConfig::kAudioChannels,
         StreamConfig::kAudioChannelMask);
 
-    // Create and start MoonlightShim
+    // Create MoonlightShim + StreamRelay BEFORE starting LiStartConnection.
+    // This ensures the relay is connected to all signals before frames arrive.
     m_Shim = new MoonlightShim(this);
 
-    connect(m_Shim, &MoonlightShim::connectionStarted,
-            this, &StreamSession::onShimConnectionStarted);
-    connect(m_Shim, &MoonlightShim::connectionFailed,
-            this, &StreamSession::onShimConnectionFailed);
-
-    qDebug() << "[Session] Starting LiStartConnection...";
-    m_Shim->startConnection(params);
-}
-
-void StreamSession::onShimConnectionStarted()
-{
-    qDebug() << "[Session] LiStartConnection succeeded — creating relay";
-
-    // Create the long-lived relay with MoonlightShim reference
+    // Create relay first — connects to MoonlightShim signals before LiStartConnection runs
     auto* relay = new StreamRelay(m_Shim, m_WsPort, m_SslConfig, this);
     relay->setServerHost(m_ServerHost);
 
     if (!relay->start()) {
         delete relay;
-        m_Shim->stopConnection();
-        m_Shim->deleteLater();
+        delete m_Shim;
         m_Shim = nullptr;
         m_Respond(HttpResponse::error(500, "Failed to start WebSocket relay"));
         emit sessionFailed("WebSocket server failed to start");
@@ -200,7 +187,13 @@ void StreamSession::onShimConnectionStarted()
         return;
     }
 
-    // Reparent to QCoreApplication so relay survives StreamSession deletion
+    // Now connect the session-level handlers AFTER relay is connected (order matters!)
+    connect(m_Shim, &MoonlightShim::connectionStarted,
+            this, &StreamSession::onShimConnectionStarted);
+    connect(m_Shim, &MoonlightShim::connectionFailed,
+            this, &StreamSession::onShimConnectionFailed);
+
+    // Relay must outlive StreamSession
     relay->setParent(QCoreApplication::instance());
     m_Shim->setParent(relay);
 
@@ -213,10 +206,18 @@ void StreamSession::onShimConnectionStarted()
     m_Relay = relay;
     emit relayCreated(relay);
 
+    qDebug() << "[Session] Relay created, starting LiStartConnection...";
+    m_Shim->startConnection(params);
+}
+
+void StreamSession::onShimConnectionStarted()
+{
+    qDebug() << "[Session] LiStartConnection succeeded — sending response to browser";
+
     QJsonObject result;
     result["status"] = "streaming";
-    result["wsUrl"] = relay->wsUrl();
-    result["wsPort"] = static_cast<int>(relay->wsPort());
+    result["wsUrl"] = m_Relay->wsUrl();
+    result["wsPort"] = static_cast<int>(m_Relay->wsPort());
     result["sessionUrl"] = m_SessionUrl;
 
     m_Respond(HttpResponse::json(result));

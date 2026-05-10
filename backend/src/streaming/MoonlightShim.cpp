@@ -153,14 +153,55 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
 {
     if (!s_Instance) return DR_OK;
 
-    int totalLen = decodeUnit->fullLength;
-    QByteArray frameData(totalLen, Qt::Uninitialized);
-    char* ptr = frameData.data();
+    // Each LENTRY is a raw NAL unit without start code.
+    // We prepend 00 00 00 01 to each to build proper Annex B.
+    static const char startCode[4] = {0, 0, 0, 1};
+    int bufCount = 0;
+    int totalLen = 0;
     PLENTRY entry = decodeUnit->bufferList;
     while (entry) {
+        totalLen += 4 + entry->length;
+        bufCount++;
+        entry = entry->next;
+    }
+
+    QByteArray frameData(totalLen, Qt::Uninitialized);
+    char* ptr = frameData.data();
+    entry = decodeUnit->bufferList;
+    while (entry) {
+        memcpy(ptr, startCode, 4);
+        ptr += 4;
         memcpy(ptr, entry->data, entry->length);
         ptr += entry->length;
         entry = entry->next;
+    }
+
+    static int frameCount = 0;
+    frameCount++;
+    if (frameCount <= 3 || frameCount % 120 == 0) {
+        fprintf(stderr, "[MoonlightShim] drSubmitDecodeUnit frame=%d type=%d size=%d bufs=%d\n",
+                decodeUnit->frameNumber, decodeUnit->frameType, totalLen, bufCount);
+
+        // Log first 32 bytes of the first frame in hex
+        if (frameCount == 1) {
+            fprintf(stderr, "[MoonlightShim] First 32 bytes: ");
+            for (int i = 0; i < 32 && i < totalLen; i++) {
+                fprintf(stderr, "%02x ", (unsigned char)frameData[i]);
+            }
+            fprintf(stderr, "\n");
+
+            // Log first 4 buffer entries individually
+            PLENTRY e = decodeUnit->bufferList;
+            for (int i = 0; i < 4 && e; i++) {
+                fprintf(stderr, "[MoonlightShim]   buf[%d] len=%d first8=", i, e->length);
+                for (int j = 0; j < 8 && j < e->length; j++) {
+                    fprintf(stderr, "%02x ", (unsigned char)e->data[j]);
+                }
+                fprintf(stderr, "\n");
+                e = e->next;
+            }
+        }
+        fflush(stderr);
     }
 
     emit s_Instance->videoFrameReady(frameData, decodeUnit->frameType, decodeUnit->frameNumber);
