@@ -34,6 +34,11 @@
       "Bash(ls -la \"d:/Code/moonlight-qt/moonlight-common-c/\" 2>/dev/null)",
       "Read(//d/Code/moonlight-qt/moonlight-common-c/**)",
       "Read(//d/Code/moonlight-qt/**)",
+      "Read(//d/Code/moonlight-xbox/Streaming/**)",
+      "Read(//d/Code/moonlight-xbox/Pages/**)",
+      "Read(//d/Code/moonlight-xbox/Assets/Shader/**)",
+      "Read(//d/Code/moonlight-xbox/libgamestream/**)",
+      "Read(//d/Code/moonlight-xbox/**)",
       "Bash(ls \"C:/vcpkg/packages/enet*\" 2>/dev/null && echo \"VCPKG_FOUND\" || echo \"NO_VCPKG\"; which vcpkg 2>/dev/null && echo \"VCPKG_IN_PATH\" || echo \"NO_VCPKG_PATH\")",
       "Read(//c/vcpkg/**)",
       "Bash(cp d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/callbacks.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/compress.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/host.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/list.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/packet.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/peer.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/protocol.c d:/Code/moonlight-qt/moonlight-common-c/moonlight-common-c/enet/win32.c d:/Code/moonlight-web-deepseek/backend/third_party/enet/)",
@@ -43,19 +48,31 @@
       "Bash(qmake.exe ../backend.pro)",
       "Bash(mingw32-make -j8 release)",
       "Bash(powershell -Command \"Stop-Process -Name mw-server -Force\")",
+      "Bash(powershell -Command \"Stop-Process -Name mw-server -Force\" 2>/dev/null; echo \"Server stopped or not running\")",
       "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6WebSockets.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
       "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6Network.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
       "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6Core.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
       "Bash(cp \"/c/Qt/6.11.0/mingw_64/bin/Qt6Gui.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
       "Bash(./mw-server.exe)",
+      "Bash(cd d:/Code/moonlight-web-deepseek/backend/build/release && ./mw-server.exe 2>&1 & sleep 1 && echo \"Server started\")",
       "Bash(curl -k -X POST https://127.0.0.1:48433/api/hosts/B8FED538-4A4F-B308-DF93-A2A04056E184/quit --max-time 10)",
-      "Bash(curl -k -X POST https://127.0.0.1:48433/api/hosts/B8FED538-4A4F-B308-DF93-A2A04056E184/start -H 'Content-Type: application/json' -d '{\"appId\":881448767}' --max-time 30)"
+      "Bash(curl -k -X POST https://127.0.0.1:48433/api/hosts/B8FED538-4A4F-B308-DF93-A2A04056E184/start -H 'Content-Type: application/json' -d '{\"appId\":881448767}' --max-time 30)",
+      "Bash(curl -k -s http://127.0.0.1:48000/api/hosts 2>&1 | head -c 500)",
+      "Bash(curl -k -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:48000/)",
+      "Bash(curl -k -s http://127.0.0.1:48000/api/hosts 2>&1)",
+      "Bash(mkdir -p \"d:/Code/moonlight-web-deepseek/backend/build/release/plugins/tls\")",
+      "Bash(cp \"/c/Qt/6.11.0/mingw_64/plugins/tls/\"*.dll \"d:/Code/moonlight-web-deepseek/backend/build/release/plugins/tls/\")",
+      "Bash(cp \"d:/Code/moonlight-web-deepseek/backend/libs/windows/lib/x64/libssl-3-x64.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
+      "Bash(cp \"d:/Code/moonlight-web-deepseek/backend/libs/windows/lib/x64/libcrypto-3-x64.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")"
     ],
     "additionalDirectories": [
       "d:\\Code\\moonlight-web-deepseek\\backend\\build\\release",
       "d:\\Code\\moonlight-web-deepseek\\backend\\build\\debug",
       "d:\\Code\\moonlight-web-deepseek\\backend\\release",
-      "d:\\Code\\moonlight-web-deepseek\\backend\\third_party\\qmdnsengine\\release"
+      "d:\\Code\\moonlight-web-deepseek\\backend\\third_party\\qmdnsengine\\release",
+      "D:\\Code\\moonlight-qt\\app",
+      "D:\\Code\\moonlight-qt\\moonlight-common-c",
+      "D:\\Code\\moonlight-xbox"
     ]
   }
 }
