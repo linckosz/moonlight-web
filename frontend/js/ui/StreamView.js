@@ -181,16 +181,18 @@ export class StreamView {
     handleBinary(data) {
         const bytes = new Uint8Array(data);
         const channel = bytes[0];
-        const payload = bytes.slice(1);
+        const flags = bytes[1];    // bit0 = isKeyframe (video only)
+        const payload = bytes.slice(2);
 
         if (!this._firstFrameReceived) {
             this._firstFrameReceived = true;
-            console.log('[StreamView] First binary message received: channel=', '0x' + channel.toString(16),
-                        'payloadSize=', payload.length, 'bytes');
+            console.log('[StreamView] First binary message: channel=0x' + channel.toString(16),
+                        'flags=0x' + flags.toString(16), 'payloadSize=' + payload.length);
         }
 
         if (channel === 0x01) {
-            this._handleVideoFrame(payload);
+            const isKeyframe = (flags & 0x01) !== 0;
+            this._handleVideoFrame(payload, isKeyframe);
         } else if (channel === 0x02) {
             if (!this._audioLogged) {
                 console.log('[StreamView] Audio sample received, size=', payload.length);
@@ -199,35 +201,26 @@ export class StreamView {
         }
     }
 
-    _handleVideoFrame(annexB) {
-        if (annexB.length < 4) {
-            console.warn('[StreamView] Video frame too small:', annexB.length);
+    _handleVideoFrame(data, isKeyframe) {
+        if (data.length < 4) {
+            console.warn('[StreamView] Video frame too small:', data.length);
             return;
         }
 
-        // Detect keyframe: look for NAL type 5 (IDR) in the first NAL unit
-        let nalType = 0;
-        if (annexB[0] === 0x00 && annexB[1] === 0x00) {
-            if (annexB[2] === 0x01) {
-                nalType = annexB[3] & 0x1F;
-            } else if (annexB[2] === 0x00 && annexB[3] === 0x01) {
-                nalType = annexB[4] & 0x1F;
-            }
-        }
-        const isKeyframe = (nalType === 5 || nalType === 7);
-
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
-            console.log('[StreamView] First video frame: nalType=', nalType,
-                        'isKeyframe=', isKeyframe, 'size=', annexB.length);
-            console.log('[StreamView] First 16 bytes:', Array.from(annexB.slice(0, 16)).map(b => b.toString(16).padStart(2,'0')).join(' '));
+            console.log('[StreamView] First video frame: isKeyframe=', isKeyframe, 'size=', data.length);
+            // Log first 40 bytes in hex
+            const hex = Array.from(data.slice(0, 40))
+                .map(b => b.toString(16).padStart(2, '0')).join(' ');
+            console.log('[StreamView] First 40 bytes:', hex);
         }
 
         try {
-            const result = this.muxer.processFrame(annexB, isKeyframe);
+            const result = this.muxer.processFrame(data, isKeyframe);
 
             if (result.init) {
-                console.log('[StreamView] Got init segment, size=', result.init.length || result.init.byteLength);
+                console.log('[StreamView] Got init segment, size=', result.init.length);
                 this.frameQueue.push({ init: result.init, media: null });
             }
             if (result.media) {
