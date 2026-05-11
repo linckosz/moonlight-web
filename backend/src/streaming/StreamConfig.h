@@ -3,7 +3,30 @@
 #include <QByteArray>
 #include <cstdint>
 
-// Fixed MVP stream configuration — 1080p60 H.264, 20 Mbps
+// Video codec preferences — controls RTSP negotiation and WebCodecs config.
+//
+// The enum values match the bit positions of the corresponding
+// VIDEO_FORMAT_MASK_* macros in moonlight-common-c, so computeVideoFormats()
+// can build the supportedVideoFormats bitmask from them.
+
+enum class VideoCodec {
+    Auto  = -1,  // HEVC preferred, H.264 fallback (default)
+    H264  = 0,
+    HEVC  = 1,
+    AV1   = 2
+};
+
+enum class ChromaSampling {
+    C420 = 0,
+    C444 = 1
+};
+
+enum class HdrMode {
+    SDR = 0,
+    HDR = 1
+};
+
+// Stream configuration — 1080p60, HEVC preferred, 20 Mbps
 struct StreamConfig {
     static constexpr int kWidth = 1920;
     static constexpr int kHeight = 1080;
@@ -13,8 +36,11 @@ struct StreamConfig {
     static constexpr int kMaxRefFrames = 1;
     static constexpr int kClientRefreshRateX100 = 6000;
     static constexpr int kVideoEncoderSlicesPerFrame = 1;
-    static constexpr int kVideoFormat = 0;   // 0=H.264, 1=HEVC, 2=AV1
-    static constexpr int kChromaSampling = 0; // 0=4:2:0, 1=4:4:4
+
+    // Codec preferences — will be user-selectable later
+    VideoCodec codec = VideoCodec::Auto;
+    ChromaSampling chroma = ChromaSampling::C420;
+    HdrMode hdr = HdrMode::SDR;
 
     // Audio: stereo Opus, 5ms packets
     static constexpr int kAudioChannels = 2;
@@ -27,4 +53,12 @@ struct StreamConfig {
     int rikeyid = 0;    // random uint32 (IV prefix)
 
     void generateKeys();
+
+    // Build the supportedVideoFormats bitmask (VIDEO_FORMAT_* flags from Limelight.h)
+    // based on the codec/chroma/hdr preferences.
+    int computeVideoFormats() const;
+
+    // colorSpace value for STREAM_CONFIGURATION.colorSpace
+    // Returns 0 (BT.601 SDR), 1 (BT.709 SDR), or adds flags for HDR.
+    int computeColorSpace() const;
 };

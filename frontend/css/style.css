@@ -287,6 +287,36 @@ html, body {
     padding: 6px 14px;
 }
 
+.host-card-remove {
+    flex-shrink: 0;
+    margin-left: 4px;
+}
+
+.btn-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 10px;
+    border: 1px solid rgba(244, 67, 54, 0.3);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    background-color: transparent;
+    color: var(--error);
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.btn-remove:hover {
+    background-color: rgba(244, 67, 54, 0.12);
+    border-color: var(--error);
+}
+
+.btn-remove:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 .host-unreachable {
     font-size: 0.8rem;
     color: var(--text-secondary);
@@ -325,6 +355,15 @@ html, body {
     }
 
     .host-card-actions .btn {
+        width: 100%;
+    }
+
+    .host-card-remove {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .btn-remove {
         width: 100%;
     }
 }

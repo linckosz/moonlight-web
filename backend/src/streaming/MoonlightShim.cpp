@@ -64,8 +64,8 @@ void MoonlightShim::startConnection(const InitParams& params)
         streamConfig.audioConfiguration = params.audioConfiguration;
         streamConfig.supportedVideoFormats = params.supportedVideoFormats;
         streamConfig.clientRefreshRateX100 = 6000;
-        streamConfig.colorSpace = 0;
-        streamConfig.colorRange = 0;
+        streamConfig.colorSpace = params.colorSpace;
+        streamConfig.colorRange = params.colorRange;
         streamConfig.encryptionFlags = ENCFLG_AUDIO | ENCFLG_VIDEO;
 
         memcpy(streamConfig.remoteInputAesKey, params.aesKey.constData(), 16);
@@ -119,9 +119,6 @@ void MoonlightShim::startConnection(const InitParams& params)
             emit connectionFailed(msg);
         }
     });
-
-    connect(m_WorkerThread, &QThread::finished,
-            m_WorkerThread, &QObject::deleteLater);
 
     m_WorkerThread->start();
 }
