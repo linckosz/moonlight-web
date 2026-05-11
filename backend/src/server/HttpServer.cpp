@@ -8,16 +8,72 @@
 #include <QFile>
 #include <QSslCertificate>
 #include <QSslKey>
+#include <QSslConfiguration>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
+#include <functional>
+
+// --- SslServer: creates QSslSocket directly from native handle ----------------
+// Avoids descriptor-transfer hack (get descriptor → setSocketDescriptor(-1) →
+// recreate QSslSocket) which fails on Windows because QTcpSocket's
+// setSocketDescriptor(-1) calls closesocket(), invalidating the handle.
+class SslServer : public QTcpServer
+{
+public:
+    using SslReadyCallback = std::function<void(QSslSocket*)>;
+
+    SslServer(const QSslConfiguration& sslConfig,
+              SslReadyCallback onSslReady,
+              QObject* parent = nullptr)
+        : QTcpServer(parent)
+        , m_SslConfig(sslConfig)
+        , m_OnSslReady(std::move(onSslReady))
+    {}
+
+protected:
+    void incomingConnection(qintptr handle) override
+    {
+        QSslSocket* ssl = new QSslSocket(this);
+        if (!ssl->setSocketDescriptor(handle)) {
+            Logger::warning("[HTTPS] SslServer: failed to set socket descriptor");
+            delete ssl;
+            return;
+        }
+
+        ssl->setSslConfiguration(m_SslConfig);
+        ssl->setPeerVerifyMode(QSslSocket::VerifyNone);
+
+        connect(ssl, &QSslSocket::encrypted, this, [this, ssl]() {
+            Logger::info("[HTTPS] TLS connection established");
+            m_OnSslReady(ssl);
+        });
+
+        connect(ssl, &QSslSocket::sslErrors, this, [ssl](const QList<QSslError>& errors) {
+            for (const auto& e : errors)
+                Logger::warning("[HTTPS] SSL error: " + e.errorString());
+            ssl->ignoreSslErrors();
+        });
+
+        connect(ssl, &QAbstractSocket::errorOccurred, this, [ssl](QAbstractSocket::SocketError) {
+            Logger::warning("[HTTPS] Socket error: " + ssl->errorString());
+            ssl->deleteLater();
+        });
+
+        ssl->startServerEncryption();
+    }
+
+private:
+    QSslConfiguration m_SslConfig;
+    SslReadyCallback m_OnSslReady;
+};
 
 // --- HttpServer --------------------------------------------------------------
 
 HttpServer::HttpServer(quint16 httpPort, quint16 httpsPort, QObject* parent)
     : QObject(parent)
     , m_HttpServer(new QTcpServer(this))
-    , m_HttpsServer(new QSslServer(this))
+    , m_HttpsServer(nullptr)
     , m_Router(new RestRouter(this))
     , m_HttpPort(httpPort)
     , m_HttpsPort(httpsPort)
@@ -82,8 +138,7 @@ bool HttpServer::loadCert()
     m_SslConfig.setPrivateKey(key);
     m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
 
-    m_HttpsServer->setSslConfiguration(m_SslConfig);
-
+    // SSL configuration is applied per-socket in SslServer::incomingConnection()
     Logger::info("SSL certificate loaded from " + certDir);
     return true;
 }
@@ -107,36 +162,25 @@ bool HttpServer::start()
     Logger::info("HTTP redirect server on port " + QString::number(m_HttpPort));
 
     if (hasHttps) {
-        if (!m_HttpsServer->listen(QHostAddress::Any, m_HttpsPort)) {
+        auto* sslServer = new SslServer(
+            m_SslConfig,
+            [this](QSslSocket* ssl) {
+                m_Buffers[ssl] = QByteArray();
+                connect(ssl, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
+                connect(ssl, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
+                if (ssl->bytesAvailable() > 0)
+                    onReadyReadSocket(ssl);
+            },
+            this
+        );
+
+        if (!sslServer->listen(QHostAddress::Any, m_HttpsPort)) {
             Logger::warning("HTTPS server failed to listen on port "
                             + QString::number(m_HttpsPort));
+            delete sslServer;
         } else {
             Logger::info("HTTPS server on port " + QString::number(m_HttpsPort));
-            // QSslServer emits startedEncryptionHandshake for each new connection.
-            // We then wait for the socket's encrypted signal before processing requests.
-            connect(m_HttpsServer, &QSslServer::startedEncryptionHandshake,
-                    this, [this](QSslSocket* ssl) {
-                Logger::info("[HTTPS] handshake starting");
-                connect(ssl, &QSslSocket::encrypted, this, [this, ssl]() {
-                    Logger::info("[HTTPS] TLS connection established");
-                    m_Buffers[ssl] = QByteArray();
-                    connect(ssl, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
-                    connect(ssl, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
-                    if (ssl->bytesAvailable() > 0)
-                        onReadyReadSocket(ssl);
-                });
-                connect(ssl, &QAbstractSocket::errorOccurred,
-                        [ssl](QAbstractSocket::SocketError err) {
-                    Logger::warning("[HTTPS] Socket error: " + QString::number(err)
-                                    + " " + ssl->errorString());
-                });
-            });
-            connect(m_HttpsServer, &QSslServer::sslErrors,
-                    [](QSslSocket* socket, const QList<QSslError>& errors) {
-                for (const auto& e : errors)
-                    Logger::warning("[HTTPS] SSL error: " + e.errorString());
-                socket->ignoreSslErrors();
-            });
+            m_HttpsServer = sslServer;
         }
     }
 
@@ -147,7 +191,8 @@ bool HttpServer::start()
 void HttpServer::stop()
 {
     m_HttpServer->close();
-    m_HttpsServer->close();
+    if (m_HttpsServer)
+        m_HttpsServer->close();
     for (QTcpSocket* socket : m_Buffers.keys())
         socket->disconnectFromHost();
 }
@@ -221,8 +266,15 @@ void HttpServer::onDisconnected()
 {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
     if (socket) {
+        bool wasPending = m_PendingAsyncSockets.contains(socket);
         m_Buffers.remove(socket);
         m_PendingAsyncSockets.remove(socket);
+        if (wasPending) {
+            qWarning() << "[HttpServer] onDisconnected — socket had pending async request!"
+                       << "peer=" << socket->peerAddress().toString()
+                       << ":" << socket->peerPort()
+                       << "bytesToWrite=" << socket->bytesToWrite();
+        }
         socket->deleteLater();
     }
 }
@@ -238,9 +290,13 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     }
 
     m_PendingAsyncSockets.insert(socket);
+    qInfo() << "[HttpServer] processRequest — dispatching async, socket=" << socket
+            << "method=" << req.method << "path=" << req.path;
 
     QTimer::singleShot(ASYNC_TIMEOUT_MS, socket, [this, socket]() {
         if (m_PendingAsyncSockets.contains(socket)) {
+            qWarning() << "[HttpServer] Async timeout for" << socket
+                       << "peer=" << socket->peerAddress().toString();
             m_PendingAsyncSockets.remove(socket);
             sendResponse(socket, HttpResponse::error(504, "Gateway Timeout"));
         }
@@ -250,6 +306,9 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         if (m_PendingAsyncSockets.contains(socket)) {
             m_PendingAsyncSockets.remove(socket);
             sendResponse(socket, resp);
+        } else {
+            qWarning() << "[HttpServer] Respond called but socket no longer pending — response discarded"
+                       << "socket=" << socket << "status=" << resp.statusCode;
         }
     });
 }
@@ -293,6 +352,12 @@ HttpRequest HttpServer::parseRequest(const QByteArray& raw) const
 
 void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
 {
+    qInfo() << "[HttpServer] sendResponse, status=" << response.statusCode
+            << "bodySize=" << response.body.size()
+            << "socket=" << socket
+            << "peer=" << (socket ? socket->peerAddress().toString() : "null")
+            << "state=" << (socket ? socket->state() : -1);
+
     QByteArray respData;
     QString statusText;
     switch (response.statusCode) {

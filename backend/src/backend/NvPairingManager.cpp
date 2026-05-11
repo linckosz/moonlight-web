@@ -10,6 +10,8 @@
 #include <QNetworkRequest>
 #include <QNetworkProxy>
 #include <QSslConfiguration>
+#include <QSslCertificate>
+#include <QSslKey>
 #include <QSslSocket>
 #include <QUuid>
 #include <QCryptographicHash>
@@ -98,7 +100,11 @@ QString NvPairingManager::openConnection(const QString& scheme, const QString& c
 #endif
 
     if (scheme == "https") {
+        // Mutual TLS: present client certificate as expected by Sunshine
+        auto* identity = IdentityManager::get();
         QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
+        ssl.setLocalCertificate(QSslCertificate(identity->getCertificate(), QSsl::Pem));
+        ssl.setPrivateKey(QSslKey(identity->getPrivateKey(), QSsl::Rsa, QSsl::Pem));
         ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
         req.setSslConfiguration(ssl);
     }
@@ -411,10 +417,11 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
             return FAILED;
         }
 
-        // --- Stage 5: pair challenge (HTTP, verification only) ---
+        // --- Stage 5: pair challenge (HTTPS — mutual TLS verification) ---
+        // This confirms the client cert is recognized by Sunshine over TLS.
 
         try {
-            QString pairChallengeXml = openConnection("http", "pair",
+            QString pairChallengeXml = openConnection("https", "pair",
                 "devicename=roth&updateState=1&phrase=pairchallenge",
                 REQUEST_TIMEOUT_MS);
 

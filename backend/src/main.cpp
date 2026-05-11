@@ -187,6 +187,7 @@ int main(int argc, char* argv[])
         // Track the relay for quit/cleanup
         QObject::connect(session, &StreamSession::relayCreated,
             [&g_ActiveRelay](StreamRelay* relay) {
+                qInfo() << "[main] relayCreated, relay=" << relay;
                 g_ActiveRelay = relay;
                 // Stop + clean relay whenever the session ends (WS disconnect,
                 // stream error, etc.), NOT just null the pointer. This prevents
@@ -194,9 +195,20 @@ int main(int argc, char* argv[])
                 // leaving the relay's WS server bound to the port.
                 QObject::connect(relay, &StreamRelay::sessionEnded,
                     [relay, &g_ActiveRelay]() {
+                        qInfo() << "[main] sessionEnded fired, relay=" << relay
+                                << "g_ActiveRelay=" << g_ActiveRelay.data();
                         relay->stop();
                         relay->deleteLater();
-                        g_ActiveRelay = nullptr;
+                        // Only clear g_ActiveRelay if it still points to us.
+                        // The HTTP /quit handler may have already cleared it
+                        // before calling relay->stop(), which can trigger
+                        // sessionEnded synchronously.
+                        if (g_ActiveRelay == relay) {
+                            qInfo() << "[main] sessionEnded — clearing g_ActiveRelay (was us)";
+                            g_ActiveRelay = nullptr;
+                        } else {
+                            qInfo() << "[main] sessionEnded — g_ActiveRelay already cleared by quit handler";
+                        }
                     });
             });
 
@@ -207,37 +219,66 @@ int main(int argc, char* argv[])
     server.router()->postAsync("/api/hosts/:id/quit",
         [&computerManager, &g_ActiveRelay](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
+        qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
+                << "relay valid=" << (!g_ActiveRelay.isNull());
+
         if (uuid.isEmpty()) {
+            qWarning() << "[quit] Empty uuid, returning 400";
             respond(HttpResponse::error(400, "Missing host ID"));
             return;
         }
 
         NvComputer* host = computerManager.getHost(uuid);
         if (!host) {
+            qWarning() << "[quit] Host not found for uuid=" << uuid;
             respond(HttpResponse::error(404, "Host not found"));
             return;
         }
+        qInfo() << "[quit] Host found:" << host->name << host->activeAddress.address()
+                << ":" << host->activeHttpsPort;
 
         // Stop the stream relay first
         if (g_ActiveRelay) {
-            g_ActiveRelay->stop();
-            g_ActiveRelay->deleteLater();
+            qInfo() << "[quit] Relay exists, stopping relay=" << g_ActiveRelay.data();
+
+            // Save relay pointer locally BEFORE clearing g_ActiveRelay.
+            // stop() can trigger sessionEnded synchronously (via WS close),
+            // which fires the sessionEnded lambda that sets g_ActiveRelay
+            // to nullptr via QPointer. If we don't save the pointer first,
+            // the subsequent g_ActiveRelay->deleteLater() below would
+            // dereference a null QPointer -> crash.
+            StreamRelay* relay = g_ActiveRelay;
             g_ActiveRelay = nullptr;
+            qInfo() << "[quit] Calling relay->stop() ...";
+            relay->stop();
+            qInfo() << "[quit] relay->stop() returned OK, scheduling deleteLater";
+            relay->deleteLater();
+        } else {
+            qInfo() << "[quit] No active relay (already stopped or never started)";
         }
 
+        qInfo() << "[quit] Sending quitAppAsync to Sunshine ...";
         auto* identity = IdentityManager::get();
         QNetworkReply* reply = computerManager.http()->quitAppAsync(
             host->activeAddress, host->activeHttpsPort,
             identity->getCertificate(), identity->getPrivateKey());
+        qInfo() << "[quit] quitAppAsync reply=" << reply;
 
         // Wait for quit to complete, then respond
         QObject::connect(reply, &QNetworkReply::finished, [reply, respond]() {
             reply->deleteLater();
             if (reply->error() != QNetworkReply::NoError) {
+                qWarning() << "[quit] Sunshine quit failed: error=" << reply->error()
+                           << "errorString=" << reply->errorString();
+                qInfo() << "[quit] EXIT — returning 502";
                 respond(HttpResponse::error(502, "Quit failed: " + reply->errorString()));
             } else {
+                QByteArray body = reply->readAll();
+                qInfo() << "[quit] Sunshine quit OK, body size=" << body.size()
+                        << "body=" << body.left(200);
                 QJsonObject result;
                 result["status"] = "quit";
+                qInfo() << "[quit] EXIT — returning 200 OK";
                 respond(HttpResponse::json(result));
             }
         });

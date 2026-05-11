@@ -78,20 +78,19 @@ void StreamSession::start()
 
 void StreamSession::quit()
 {
+    qInfo() << "[Session::quit] ENTER, m_Shim=" << m_Shim << "m_Relay=" << m_Relay
+            << "m_Connected=" << (m_Shim ? m_Shim->isConnected() : false);
+
     // Stop MoonlightShim first (calls LiStopConnection)
-    if (m_Shim)
+    if (m_Shim) {
+        qInfo() << "[Session::quit] Calling m_Shim->stopConnection() ...";
         m_Shim->stopConnection();
+        qInfo() << "[Session::quit] m_Shim->stopConnection() returned";
+    } else {
+        qInfo() << "[Session::quit] No m_Shim to stop";
+    }
 
-    // Then tell Sunshine to quit the app via HTTPS
-    auto* identity = IdentityManager::get();
-    QByteArray clientCert = identity->getCertificate();
-    QByteArray clientKey = identity->getPrivateKey();
-
-    QNetworkReply* reply = m_Http->quitAppAsync(
-        m_Host->activeAddress, m_Host->activeHttpsPort,
-        clientCert, clientKey);
-
-    connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
+    qInfo() << "[Session::quit] EXIT";
 }
 
 void StreamSession::onLaunchReplyFinished()

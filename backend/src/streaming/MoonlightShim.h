@@ -3,7 +3,9 @@
 #include <QObject>
 #include <QThread>
 #include <QByteArray>
+#include <atomic>
 #include <cstdint>
+#include <memory>
 
 struct _SERVER_INFORMATION;
 struct _STREAM_CONFIGURATION;
@@ -59,11 +61,17 @@ signals:
     void connectionTerminated(int errorCode);
     void videoFrameReady(QByteArray data, int frameType, int frameNumber);
     void audioSampleReady(QByteArray data);
+    void connectionStopped();
 
 private:
     QThread* m_WorkerThread = nullptr;
-    bool m_Connected = false;
-    static MoonlightShim* s_Instance;
+    std::atomic<bool> m_Connected{false};
+    std::atomic<bool> m_Stopping{false};
+    std::atomic<bool> m_CleanupDone{false};
+    static std::atomic<MoonlightShim*> s_Instance;
+
+    void finishCleanup();
+    void blockingStopConnection();
 
     // Video callbacks
     static int  drSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags);

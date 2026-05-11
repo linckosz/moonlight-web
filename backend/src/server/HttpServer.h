@@ -3,7 +3,6 @@
 #include <QObject>
 #include <QTcpServer>
 #include <QTcpSocket>
-#include <QSslServer>
 #include <QSslSocket>
 #include <QSslConfiguration>
 #include "common/Types.h"
@@ -16,7 +15,7 @@ class HttpServer : public QObject
     Q_OBJECT
 
 public:
-    explicit HttpServer(quint16 httpPort = 48000, quint16 httpsPort = 48433,
+    explicit HttpServer(quint16 httpPort = 48000, quint16 httpsPort = 48443,
                         QObject* parent = nullptr);
     ~HttpServer();
 
@@ -43,7 +42,7 @@ private:
     bool loadCert();
 
     QTcpServer* m_HttpServer;
-    QSslServer* m_HttpsServer;
+    QTcpServer* m_HttpsServer;
     QSslConfiguration m_SslConfig;
     RestRouter* m_Router;
     StaticFileHandler* m_StaticFiles;
