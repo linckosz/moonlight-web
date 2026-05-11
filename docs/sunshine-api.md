@@ -18,7 +18,7 @@ Voici la documentation complète en Markdown sur l'interaction entre un client M
 | GET /serverinfo             | Informations du serveur avec adresse MAC réelle et `PairStatus`            |
 | GET /pair                   | Continuer l'appairage ou vérifier le statut (`pairchallenge`)              |
 | GET /applist                | Liste des applications disponibles sur le serveur                          |
-| GET /appasset?appid=<id>    | Image de couverture (PNG) d'une application                                |
+| GET /appasset?appid=<id>&AssetType=2&AssetIdx=0 | Image de couverture (PNG) d'une application                                |
 | GET /launch                 | Lancer une application et obtenir l'URL RTSP de session                    |
 | GET /resume                 | Reprendre une session existante et obtenir l'URL RTSP                      |
 | GET /cancel                 | Arrêter l'application et la session en cours                               |
@@ -41,13 +41,20 @@ se déroule en trois couches :
 
 | Port  | Protocole | Usage                                      |
 |-------|-----------|--------------------------------------------|
-| 47989 | HTTP      | Découverte, appairage initial              |
-| 47990 | HTTPS     | Appairage sécurisé, lancement, liste d'apps|
+| 47989 | HTTP      | Découverte, appairage (4 phases)           |
+| 47984 | HTTPS     | GameStream sécurisé (port GFE par défaut)  |
+| 47990 | HTTPS     | GameStream sécurisé (port Sunshine par défaut) |
 | 48010 | TCP       | Négociation RTSP                           |
 | 47998 | UDP       | Flux vidéo                                 |
 | 47999 | UDP       | Flux audio                                 |
 | 48000 | UDP       | Canal de contrôle (input)                  |
 
+> **Important : le port HTTPS est dynamique.** Le client lit le champ `<HttpsPort>`
+> dans la réponse `/serverinfo` et l'utilise pour toutes les requêtes HTTPS suivantes.
+> GFE utilise 47984 par défaut ; Sunshine utilise 47990. moonlight-qt utilise
+> `DEFAULT_HTTPS_PORT = 47984` comme fallback si `HttpsPort` est vide ou nul.
+> Notre backend doit implémenter cette résolution dynamique.
+>
 > Les ports RTSP et UDP sont calculés par rapport au port de base via `net::map_port()`.
 > Le port RTSP est `base_port + 21` (`RTSP_SETUP_PORT = 21`).
 
@@ -65,6 +72,28 @@ Toutes les réponses des endpoints GameStream sont en **XML** avec la structure 
 
 Un `status_code` différent de `200` indique une erreur. Le champ `status_message`
 contient le message d'erreur le cas échéant.
+
+### Paramètres communs à toutes les requêtes
+
+**Toutes** les requêtes HTTP/HTTPS vers Sunshine (découverte, pairing, applist,
+launch, cancel) doivent inclure ces deux paramètres :
+
+| Paramètre | Valeur | Description |
+|-----------|--------|-------------|
+| `uniqueid` | `0123456789ABCDEF` | UUID fixe commun à tous les clients Moonlight (permet de fermer les sessions des autres clients) |
+| `uuid` | UUID v4 aléatoire hex | Généré aléatoirement à chaque requête |
+
+Ils sont ajoutés automatiquement par `NvHTTP::openConnection()` à chaque appel.
+
+> **Note** : le `uniqueid=0123456789ABCDEF` est une valeur fixe **partagée par tous
+> les clients Moonlight** (littéralement "Common UID for Moonlight clients to allow
+> them to quit games for each other"). Ne pas utiliser un UUID différent par client,
+> sinon GFE/Sunshine ne permettra pas de quit/overwrite la session d'un autre client.
+>
+> **L'identité réelle du client** est le certificat X.509 (RSA 2048 bits, CN="NVIDIA
+> GameStream Client"). Ce certificat est : (1) envoyé en hex dans la phase 1 du pairing,
+> (2) présenté lors du handshake TLS pour toutes les requêtes HTTPS. Le `uniqueid`
+> n'est qu'un paramètre HTTP partagé, pas une clé d'identité.
 
 ---
 
@@ -111,9 +140,16 @@ GET https://<host>:47990/serverinfo?uniqueid=<client_unique_id>
 | `uniqueid`             | UUID stable du serveur, utilisé pour l'identifier                           |
 | `ServerCodecModeSupport` | Bitmask des codecs supportés (voir tableau ci-dessous)                   |
 | `PairStatus`           | `1` si le client est appairé (HTTPS uniquement), `0` sinon                 |
-| `currentgame`          | ID de l'app en cours (`0` = aucune)                                        |
-| `state`                | `SUNSHINE_SERVER_FREE` ou `SUNSHINE_SERVER_BUSY`                           |
+| `currentgame`          | ID de l'app en cours. **Workaround GFE 2.8+** : forcé à `0` si `state` ne se termine pas par `_SERVER_BUSY` |
+| `state`                | `SUNSHINE_SERVER_FREE` ou `SUNSHINE_SERVER_BUSY`. Pour GFE/RTX Experience, contient `MJOLNIR_*` |
 | `mac`                  | Adresse MAC réelle (HTTPS) ou `00:00:00:00:00:00` (HTTP)                   |
+| `gputype`              | Modèle du GPU serveur (ex: `NVIDIA GeForce RTX 3080`)                      |
+| `ExternalPort`         | Port HTTP WAN (extension Sunshine, pas dans GFE)                           |
+| `ExternalIP`           | Adresse IP WAN (extension Sunshine, pas dans GFE)                          |
+| `GsVersion`            | Version du GameStream (GFE uniquement, pas toujours présent)                |
+
+La réponse contient aussi une liste d'éléments `<DisplayMode>` avec les champs
+`Width`, `Height`, `RefreshRate` pour chaque mode d'affichage supporté.
 
 **Bitmask `ServerCodecModeSupport` :**
 
@@ -144,38 +180,60 @@ Il utilise AES-ECB pour le chiffrement symétrique et RSA/SHA-256 pour les signa
 GET /pair?uniqueid=<id>&phrase=getservercert&...   ← bloque jusqu'au PIN
 ```
 
+> **Important : les 4 phases de pairing s'effectuent en HTTP (port 47989), pas en HTTPS.**
+> Seule la vérification finale `pairchallenge` utilise HTTPS pour confirmer que le TLS
+> mutuel fonctionne avec le certificat serveur récupéré.
+>
+> Toutes les requêtes de pairing incluent `devicename=roth&updateState=1` (constante moonlight-qt).
+>
+> En cas d'échec à n'importe quelle phase, appeler `/unpair` pour annuler la session
+> de pairing côté serveur avant de recommencer.
+>
+> **Dérivation de la clé AES :**
+> ```
+> AES_KEY = SHA256(salt_bytes + PIN_bytes)[:16]
+> ```
+> Pour les serveurs Gen 7+ (Sunshine, GFE récent) : SHA-256. Pour Gen < 7 : SHA-1.
+
 ### Diagramme de séquence
 
 ```
-Client Moonlight                    Sunshine
+Client Moonlight                    Sunshine (HTTP)
        |                                |
-       |-- GET /pair?phrase=getservercert -->|  (envoie clientcert + salt)
+       |-- GET /pair?devicename=roth&updateState=1 -->|
+       |       &phrase=getservercert&salt=...         |
+       |       &clientcert=...                        |
        |                                |  (Sunshine attend le PIN de l'utilisateur)
        |                                |  [utilisateur entre le PIN dans l'UI web]
        |<-- XML: plaincert (cert serveur) --|
        |                                |
-       |-- GET /pair?clientchallenge=... -->|
+       |-- GET /pair?devicename=roth&updateState=1 -->|
+       |       &clientchallenge=...                   |
        |<-- XML: challengeresponse ---------|
        |                                |
-       |-- GET /pair?serverchallengeresp=... -->|
+       |-- GET /pair?devicename=roth&updateState=1 -->|
+       |       &serverchallengeresp=...                |
        |<-- XML: pairingsecret ----------|
        |                                |
-       |-- GET /pair?clientpairingsecret=... -->|
+       |-- GET /pair?devicename=roth&updateState=1 -->|
+       |       &clientpairingsecret=...                |
        |<-- XML: paired=1 ou 0 ----------|
        |                                |
-       |-- GET /pair?phrase=pairchallenge -->|  (vérification post-appairage)
+       |-- GET /pair?devicename=roth&updateState=1 -->|  (HTTPS !)
+       |       &phrase=pairchallenge                   |  (vérification TLS mutuel)
        |<-- XML: paired=1 --------------|
+       |                                |
+       |  [Nouveau certificat serveur persistant]
 ```
 
 ---
 
 ### Phase 1 — `getservercert`
 
-**Requête :**
+**Requête (HTTP) :**
 ```
-GET /pair?uniqueid=<id>&phrase=getservercert
-         &clientcert=<cert_hex>
-         &salt=<16_bytes_hex>
+GET /pair?devicename=roth&updateState=1&phrase=getservercert
+         &clientcert=<cert_hex>&salt=<16_bytes_hex>
 ```
 
 | Paramètre   | Description                                                    |
@@ -203,9 +261,9 @@ AES_KEY = SHA256(salt_bytes + PIN_bytes)[:16]
 
 Le client envoie un challenge AES-ECB chiffré avec la clé dérivée.
 
-**Requête :**
+**Requête (HTTP) :**
 ```
-GET /pair?uniqueid=<id>&clientchallenge=<16_bytes_AES_chiffré_hex>
+GET /pair?devicename=roth&updateState=1&clientchallenge=<16_bytes_AES_chiffré_hex>
 ```
 
 **Traitement côté serveur :**
@@ -227,9 +285,9 @@ GET /pair?uniqueid=<id>&clientchallenge=<16_bytes_AES_chiffré_hex>
 
 Le client envoie sa réponse au challenge serveur.
 
-**Requête :**
+**Requête (HTTP) :**
 ```
-GET /pair?uniqueid=<id>&serverchallengeresp=<AES_chiffré_hex>
+GET /pair?devicename=roth&updateState=1&serverchallengeresp=<AES_chiffré_hex>
 ```
 
 **Contenu chiffré (client_hash) :**
@@ -255,9 +313,9 @@ AES_ECB_encrypt(
 
 ### Phase 4 — `clientpairingsecret` (finale)
 
-**Requête :**
+**Requête (HTTP) :**
 ```
-GET /pair?uniqueid=<id>&clientpairingsecret=<secret_16bytes + signature_RSA_hex>
+GET /pair?devicename=roth&updateState=1&clientpairingsecret=<secret_16bytes + signature_RSA_hex>
 ```
 
 **Vérification côté serveur :**
@@ -279,10 +337,11 @@ dans `sunshine_state.json`.
 
 ### Vérification post-appairage — `pairchallenge`
 
-Après un appairage réussi (ou lors de reconnexions), le client vérifie son statut :
+Après un appairage réussi (ou lors de reconnexions), le client vérifie que le TLS
+mutuel fonctionne. **Cette requête est en HTTPS** (contrairement aux 4 phases précédentes).
 
 ```
-GET /pair?uniqueid=<id>&phrase=pairchallenge
+GET /pair?uniqueid=0123456789ABCDEF&uuid=...&devicename=roth&updateState=1&phrase=pairchallenge
 ```
 
 **Réponse :**
@@ -290,6 +349,17 @@ GET /pair?uniqueid=<id>&phrase=pairchallenge
 <root status_code="200">
   <paired>1</paired>
 </root>
+```
+
+---
+
+### GET /unpair
+
+Utilisé pour annuler une session de pairing en cours (en cas d'échec à n'importe
+quelle phase du pairing). HTTP.
+
+```
+GET http://<host>:47989/unpair
 ```
 
 ---
@@ -323,14 +393,19 @@ GET https://<host>:47990/applist
     <IsHdrSupported>1</IsHdrSupported>
     <AppTitle>Desktop</AppTitle>
     <ID>1</ID>
+    <IsAppCollectorGame>0</IsAppCollectorGame>
   </App>
   <App>
     <IsHdrSupported>0</IsHdrSupported>
     <AppTitle>Mon Jeu</AppTitle>
     <ID>2</ID>
+    <IsAppCollectorGame>0</IsAppCollectorGame>
   </App>
 </root>
 ```
+
+> La doc officielle GFE mentionne aussi `IsAppCollectorGame` (booléen, GFE uniquement).
+> Sunshine peut ne pas inclure ce champ.
 
 ### `GET /appasset`
 
@@ -357,10 +432,13 @@ GET https://<host>:47990/launch
     &rikeyid=<key_id_int>
     &appid=<app_id>
     &mode=<width>x<height>x<fps>
+    &additionalStates=1
     &localAudioPlayMode=<0|1>
     &sops=<0|1>
     &surroundAudioInfo=<int>
     &gcmap=<int>
+    &remoteControllersBitmap=<int>
+    &gcpersist=<0|1>
     &hdrMode=<0|1>
     &corever=<int>
 ```
@@ -375,10 +453,17 @@ GET https://<host>:47990/launch
 | `mode`             | Résolution et FPS ex: `1920x1080x60`                                |
 | `localAudioPlayMode` | `1` = audio joué sur le serveur, `0` = audio envoyé au client     |
 | `sops`             | Server-side Optimal Playback Settings                               |
+| `additionalStates` | Toujours `1`                                                       |
 | `surroundAudioInfo` | Info surround (canaux en bits bas, flags en bits hauts)            |
+| `remoteControllersBitmap` | Bitmap des manettes connectées (même valeur que `gcmap`)     |
 | `gcmap`            | Gamepad capabilities map                                            |
-| `hdrMode`          | `1` = demande HDR                                                   |
-| `corever`          | Version du protocole core. `>= 1` active le RTSP chiffré           |
+| `gcpersist`        | Persist game controllers on disconnect (`0` ou `1`)                 |
+| `hdrMode`          | `1` = demande HDR. Les 4 paramètres `clientHdrCap*` suivants ne sont envoyés que si `hdrMode=1` |
+| `clientHdrCapVersion` | Version capacité HDR (conditionnel : hdrMode=1)                 |
+| `clientHdrCapSupportedFlagsInUint32` | Flags HDR (conditionnel : hdrMode=1)             |
+| `clientHdrCapMetaDataId` | Metadata ID HDR (conditionnel : hdrMode=1)                    |
+| `clientHdrCapDisplayData` | Display data HDR (conditionnel : hdrMode=1)                   |
+| `corever`          | Version du protocole core. `>= 1` active le RTSP chiffré. Ajouté par `LiGetLaunchUrlQueryParameters()` |
 
 **Réponse succès :**
 ```xml
@@ -487,9 +572,12 @@ a=fmtp:97 surround-params=...        (configs audio surround)
 
 | Flag              | Valeur | Description                    |
 |-------------------|--------|--------------------------------|
-| `SS_ENC_CONTROL_V2` | `0x4` | Chiffrement du canal de contrôle |
-| `SS_ENC_AUDIO`    | `0x8`  | Chiffrement audio              |
-| `SS_ENC_VIDEO`    | `0x10` | Chiffrement vidéo              |
+| `SS_ENC_CONTROL_V2` | `0x1` | Chiffrement du canal de contrôle |
+| `SS_ENC_VIDEO`    | `0x2`  | Chiffrement vidéo              |
+| `SS_ENC_AUDIO`    | `0x4`  | Chiffrement audio              |
+
+> Ces valeurs correspondent aux définitions de moonlight-common-c (`Limelight-internal.h`).
+> Attention : l'ordre des bits diffère de celui des flags `ENCFLG_*` utilisés par `LiStartConnection()`.
 
 ### Requête ANNOUNCE (SDP du client)
 
@@ -533,9 +621,29 @@ a=x-ss-video[0].intraRefresh:<0|1>
 
 ---
 
+## Détail des réponses SETUP
+
+Chaque réponse SETUP contient un header `Transport` au format :
+```
+Transport: unicast;server_port=<port>-<port+1>;source=<ip_serveur>
+```
+
+Le client parse le `server_port` pour déterminer le port UDP de chaque flux.
+Les headers additionnels inclus :
+
+| Type de flux | Header additionnel |
+|---|---|
+| Video | `X-SS-Ping-Payload` (8 bytes hex, généré aléatoirement par le serveur) |
+| Audio | `X-SS-Ping-Payload` (identique au payload vidéo) |
+| Control | `X-SS-Connect-Data` (uint32, identifiant de session de contrôle) |
+
+---
+
 ## Flux de streaming UDP
 
-Après le PLAY RTSP, trois flux UDP sont établis :
+Après le PLAY RTSP, trois flux UDP sont établis. **Les ports sont assignés dynamiquement
+par le serveur via le header `Transport` de chaque réponse SETUP RTSP.** Les valeurs
+ci-dessous sont les ports par défaut de Sunshine :
 
 ### Flux vidéo (port 47998)
 - Paquets RTP avec FEC Reed-Solomon
@@ -552,6 +660,11 @@ Après le PLAY RTSP, trois flux UDP sont établis :
 - Entrées clavier, souris, gamepad
 - Chiffrement AES-GCM (si `SS_ENC_CONTROL_V2` activé)
 - Identifié par `X-SS-Connect-Data` reçu lors du SETUP RTSP
+
+> **Note sur les fallbacks moonlight-common-c** : Si le parsing du header `Transport`
+> échoue, le client applique ces defaults : vidéo=47998, audio=48000, contrôle=47999
+> (les ports audio et contrôle sont inversés par rapport à la configuration Sunshine
+> standard). En pratique, le serveur spécifie toujours les ports corrects.
 
 ---
 
@@ -570,21 +683,64 @@ Après le PLAY RTSP, trois flux UDP sont établis :
 
 ---
 
-## Notes d'implémentation
+## API REST Sunshine (gestion/configuration)
 
-- **Identifiant client (`uniqueid`)** : UUID stable généré une fois par le client,
-  utilisé dans toutes les requêtes.
-- **Certificat client** : Généré une fois, présenté lors de l'appairage et de chaque
-  connexion TLS mutuelle.
+Sunshine expose aussi une API REST moderne sur le **même port HTTPS** (47990 par défaut).
+Cette API n'est **pas utilisée par Moonlight-Web pour le streaming**, mais est documentée
+ici pour référence (pourrait servir à l'avenir pour l'envoi automatique du PIN).
+
+### Authentification
+
+- Basic Auth (identifiants du compte administrateur Sunshine)
+- TLS simple (pas de certificat client)
+
+### Endpoints
+
+| Méthode | Endpoint | Description |
+|---------|----------|-------------|
+| GET | `/api/apps` | Liste des applications (JSON) |
+| POST | `/api/apps` | Ajouter/modifier une application |
+| POST | `/api/apps/close` | Fermer l'application en cours |
+| DELETE | `/api/apps/{index}` | Supprimer une application |
+| GET | `/api/clients/list` | Liste des clients appairés |
+| POST | `/api/clients/unpair` | Dépairer un client |
+| POST | `/api/clients/unpair-all` | Dépairer tous les clients |
+| GET | `/api/config` | Configuration complète |
+| POST | `/api/config` | Mettre à jour la configuration |
+| POST | `/api/pin` | Envoyer le PIN de pairing |
+| POST | `/api/password` | Changer le mot de passe |
+| GET | `/api/logs` | Logs du serveur |
+| POST | `/api/restart` | Redémarrer Sunshine |
+
+Documentation officielle : https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2api.html
+
+---
+
+## Notes d'implémentation pour Moonlight-Web
+
+- **`uniqueid` et `uuid`** : envoyés dans TOUTES les requêtes HTTP et HTTPS.
+  `uniqueid` = `0123456789ABCDEF` (valeur fixe partagée), `uuid` = UUID v4 aléatoire
+  généré à chaque requête.
+- **Certificat client** : Généré une fois (RSA 2048 bits, X.509 auto-signé, CN="NVIDIA GameStream Client"),
+  présenté lors de l'appairage (phase 1, encodé en hex) et dans chaque connexion TLS mutuelle (HTTPS).
+  C'est la véritable identité du client — le `uniqueid` n'est qu'un paramètre HTTP partagé.
+- **Pairing en HTTP** : Les 4 premières phases sont en HTTP (port 47989), pas en HTTPS.
+  Seule la vérification `pairchallenge` finale est en HTTPS.
+- **`devicename=roth&updateState=1`** : envoyé dans toutes les requêtes de pairing.
+- **`/unpair`** : appeler en cas d'échec de pairing pour nettoyer la session.
 - **`rikey` / `rikeyid`** : Générés aléatoirement à chaque session de streaming.
   Ne pas réutiliser entre sessions.
-- **`corever >= 1`** : Active le RTSP chiffré (`rtspenc://`). Recommandé pour les
-  clients modernes.
+- **`corever >= 1`** : Active le RTSP chiffré (`rtspenc://`) + chiffrement vidéo
+  et contrôle. Ajouté automatiquement par `LiGetLaunchUrlQueryParameters()`.
+  Toujours `1` pour les clients modernes.
+- **Port HTTPS dynamique** : Résolu via le champ `<HttpsPort>` de `/serverinfo`.
+  Fallback : `DEFAULT_HTTPS_PORT = 47984` (comportement moonlight-qt).
+- **Serialisation par host** : Une seule requête HTTPS sortante à la fois par host
+  Sunshine (sinon "Operation canceled" / échec GFE).
 - **Ordre des phases d'appairage** : Strictement imposé. Toute requête hors ordre
   retourne `paired=0` et invalide la session.
 - **Version du protocole** : Le `appversion` `7.1.431.-1` est fixe. Le `-1` en
   4e position est le signal que le serveur est Sunshine et non GFE.
-```
 
 ---
 
