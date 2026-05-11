@@ -70,7 +70,8 @@ export function splitNals(annexB) {
  */
 export function buildAvccDescription(sps, pps) {
     if (!sps || !pps) return null;
-    const len = 7 + 2 + sps.length + 1 + 2 + pps.length;
+    // Total: 6 (fixed header) + 2 (SPS length) + sps.length + 1 (numOfPPS) + 2 (PPS length) + pps.length
+    const len = 11 + sps.length + pps.length;
     const buf = new Uint8Array(len);
     let off = 0;
 
@@ -78,7 +79,7 @@ export function buildAvccDescription(sps, pps) {
     buf[off++] = sps[1];          // AVCProfileIndication
     buf[off++] = sps[2];          // profile_compatibility
     buf[off++] = sps[3];          // AVCLevelIndication
-    buf[off++] = 0xFF;            // lengthSizeMinusOne = 3 (4-byte length prefixes)
+    buf[off++] = 0xC3;            // reserved(11) + lengthSizeMinusOne(3) = 4-byte length prefixes
     buf[off++] = 0xE1;            // 1 SPS
 
     buf[off++] = (sps.length >> 8) & 0xFF;

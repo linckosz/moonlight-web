@@ -140,8 +140,11 @@ void MoonlightShim::interruptConnection()
 
 // --- Video callbacks (called from moonlight internal threads) ---
 
-int MoonlightShim::drSetup(int, int, int, int, void*, int)
+int MoonlightShim::drSetup(int videoFormat, int width, int height, int redrawRate, void*, int)
 {
+    fprintf(stderr, "[MoonlightShim] drSetup: videoFormat=0x%x %dx%d @%d\n",
+            videoFormat, width, height, redrawRate);
+    fflush(stderr);
     return 0;
 }
 
