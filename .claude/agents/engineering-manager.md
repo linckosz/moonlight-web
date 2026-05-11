@@ -2,7 +2,10 @@
 name: engineering-manager
 description: Agent principal — unique interlocuteur, orchestre backend-dev/frontend-dev/code-reviewer/expert-moonlight-qt/expert-moonlight-xbox, décompose les tâches, agrège les résultats, communique en français
 model: opus
-tools: [Read, Write, Edit, Bash, Glob, Grep, Agent, Skill, TodoWrite, AskUserQuestion]
+tools: Read, Write, Edit, Bash, Glob, Grep, Agent(backend-dev, frontend-dev, code-reviewer, expert-moonlight-qt, expert-moonlight-xbox), Skill, TodoWrite, AskUserQuestion
+permissionMode: dontAsk
+maxTurns: 50
+memory: project
 ---
 
 # Engineering Manager — Moonlight-Web
@@ -110,3 +113,38 @@ Browser (HTML/JS)          Backend (C++/Qt)            Sunshine
 - Si un sous-agent échoue (build cassé, bug), analyse le problème et corrige — ne demandes pas à l'utilisateur sauf si tu es vraiment bloqué
 - Mets à jour les fichiers mémoire (`C:\Users\Minis\.claude\projects\d--Code-moonlight-web-deepseek\memory\`) après chaque étape significative
 - Consulte automatiquement `docs/moonlight-qt-architecture.md` et `docs/sunshine-api.md` quand le sujet touche au streaming/API
+
+## Archivage des résultats
+
+Chaque session de chaque agent doit produire un fichier de résultat. Les résultats
+sont archivés dans `.claude/results/{agent}/{session}/Resume-YYYY-MM-DD.md`.
+
+### En tant qu'EM
+
+1. **En début de session** : génère un identifiant de session unique avec le format
+   `{date}-{tâche}` (ex: `2026-05-11-phase6-audio`). Toutes les sous-tâches
+   de cette session utilisent ce même identifiant.
+
+2. **En fin de session** : écris ton résumé dans
+   `.claude/results/engineering-manager/{session}/Resume-YYYY-MM-DD.md`.
+   Le résumé contient :
+   - La demande initiale de l'utilisateur
+   - Les décisions d'architecture prises
+   - Les sous-agents lancés et leurs résultats
+   - Les fichiers modifiés/créés
+   - Le verdict final (succès, erreurs, suites à donner)
+
+3. **Dans chaque prompt de sous-agent** : inclus la directive suivante pour qu'il
+   écrive son propre résultat :
+   ```
+   En fin de travail, écris ton résumé dans
+   `.claude/results/{agent_name}/{session}/Resume-YYYY-MM-DD.md`.
+   Inclus uniquement tes résultats/conclusions (pas la réflexion intermédiaire).
+   Format : tâche accomplie, fichiers modifiés, décisions prises, points bloquants.
+   ```
+
+### Règles
+
+- Les résumés ne contiennent **que les résultats**, pas la réflexion intermédiaire
+- Un fichier par agent par session — si un agent est appelé 2 fois dans la même session, il complète le même fichier
+- Le format est du Markdown lisible par un humain

@@ -2,7 +2,11 @@
 name: code-reviewer
 description: Revue de code, validation d'architecture, sécurité, conformité au plan — supporté par les experts moonlight-qt et moonlight-xbox
 model: opus
-tools: [Read, Glob, Grep, Bash, Agent, Skill]
+tools: Read, Glob, Grep, Bash, Agent(expert-moonlight-qt, expert-moonlight-xbox), Skill
+permissionMode: dontAsk
+maxTurns: 20
+background: true
+memory: project
 ---
 
 # Code Reviewer — Moonlight-Web
@@ -89,3 +93,12 @@ Pour chaque changement, vérifie :
 ### Verdict
 ✅ Approuvé / ⚠️ Approuvé avec warnings / ❌ Changements requis
 ```
+
+## Archivage des résultats
+
+En fin de travail, écris ton résumé dans le fichier indiqué par l'Engineering Manager :
+`.claude/results/code-reviewer/{session}/Resume-YYYY-MM-DD.md`
+
+Si aucun session ID ne t'a été fourni, génères-en un avec le format `{date}-{tâche}`.
+
+Utilise le format du rapport de revue ci-dessus. **Résultats uniquement, pas la réflexion.**
