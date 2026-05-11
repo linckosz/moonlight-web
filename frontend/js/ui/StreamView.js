@@ -12,7 +12,9 @@ import {
     NalParser,
     splitNals,
     buildAvccDescription,
-    getCodecString
+    getCodecString,
+    toAvcc,
+    FALLBACK_CODEC_STRINGS
 } from '../util/Mp4Muxer.js';
 
 export class StreamView {
@@ -143,21 +145,13 @@ export class StreamView {
             return;
         }
 
-        const primaryConfig = {
-            codec: codec,
-            description: avcc.buffer,
-            codedWidth: 1920,
-            codedHeight: 1080,
-            optimizeForLatency: true
-        };
-
         const applyConfig = (cfg) => {
             try {
                 this.decoder.configure(cfg);
                 this.decoderConfigured = true;
                 this.decoderConfiguring = false;
-                console.log('[StreamView] VideoDecoder configured, dequeuing ' +
-                            this.pendingFrames.length + ' pending frames');
+                console.log('[StreamView] VideoDecoder configured with codec=' + cfg.codec +
+                            ', dequeuing ' + this.pendingFrames.length + ' pending frames');
                 this.flushPendingFrames();
                 return true;
             } catch (e) {
@@ -167,40 +161,65 @@ export class StreamView {
             }
         };
 
-        // Try primary config first (with avcC description)
-        VideoDecoder.isConfigSupported(primaryConfig).then((result) => {
-            if (result.supported) {
-                console.log('[StreamView] Primary config supported');
-                applyConfig(primaryConfig);
+        // Try primary config first (with avcC description and SPS-derived codec)
+        const tryCodecs = (configs, index) => {
+            if (index >= configs.length) {
+                console.error('[StreamView] All codec configs rejected');
+                this.decoderConfiguring = false;
+                this.setStatus('error', 'Codec not supported by browser');
                 return;
             }
 
-            // Fallback: try without description
-            console.warn('[StreamView] Primary config not supported, trying fallback');
-            const fbConfig = {
-                codec: codec,
-                optimizeForLatency: true
-            };
-
-            VideoDecoder.isConfigSupported(fbConfig).then((fbResult) => {
-                if (fbResult.supported) {
-                    console.log('[StreamView] Fallback config supported');
-                    applyConfig(fbConfig);
+            const cfg = configs[index];
+            VideoDecoder.isConfigSupported(cfg).then((result) => {
+                if (result.supported) {
+                    console.log('[StreamView] Config supported: codec=' + cfg.codec +
+                                ' hasDescription=' + !!cfg.description);
+                    // applyConfig may fail (e.g., if decoder state is bad) — fall through
+                    if (!applyConfig(cfg)) {
+                        tryCodecs(configs, index + 1);
+                    }
                 } else {
-                    console.error('[StreamView] All configs rejected for codec:', codec);
-                    this.decoderConfiguring = false;
-                    this.setStatus('error', 'Codec not supported by browser');
+                    console.warn('[StreamView] Config rejected: codec=' + cfg.codec +
+                                 ', trying next');
+                    tryCodecs(configs, index + 1);
                 }
-            }).catch((fbErr) => {
-                console.error('[StreamView] Fallback isConfigSupported error:', fbErr);
-                this.decoderConfiguring = false;
-                applyConfig(fbConfig);
+            }).catch((err) => {
+                console.error('[StreamView] isConfigSupported error for codec=' +
+                              cfg.codec + ':', err);
+                tryCodecs(configs, index + 1);
             });
-        }).catch((err) => {
-            console.error('[StreamView] Primary isConfigSupported error:', err);
-            this.decoderConfiguring = false;
-            applyConfig(primaryConfig);
+        };
+
+        // Build list of configs to try, in priority order.
+        // All configs include the avcC description so the decoder knows
+        // the exact SPS/PPS, regardless of the codec string used.
+        // Data passed to decode() MUST be in AVCC format (4-byte length prefixes)
+        // when description is provided — decodeFrame() converts accordingly.
+        const configsToTry = [];
+
+        // 1. Primary: original codec string with avcC description
+        configsToTry.push({
+            codec: codec,
+            description: avcc.buffer,
+            codedWidth: 1920,
+            codedHeight: 1080,
+            optimizeForLatency: true
         });
+
+        // 2. Fallback codec strings WITH description
+        for (const fbCodec of FALLBACK_CODEC_STRINGS) {
+            if (fbCodec === codec) continue;
+            configsToTry.push({
+                codec: fbCodec,
+                description: avcc.buffer,
+                codedWidth: 1920,
+                codedHeight: 1080,
+                optimizeForLatency: true
+            });
+        }
+
+        tryCodecs(configsToTry, 0);
     }
 
     flushPendingFrames() {
@@ -224,12 +243,20 @@ export class StreamView {
 
         const type = isKeyframe ? 'key' : 'delta';
 
+        // Convert Annex B (start codes) to AVCC (4-byte length prefixes).
+        // VideoDecoder expects AVCC data when description (avcC) was provided
+        // in configure(). See buildAvccDescription() which sets lengthSizeMinusOne=3.
+        // When decoderConfigured is true, strip SPS/PPS since they are already
+        // in the avcC description -- including them confuses the decoder's
+        // keyframe detection (it expects the first NAL to be an IDR slice).
+        const avccData = toAvcc(data, this.decoderConfigured);
+
         try {
             const chunk = new EncodedVideoChunk({
                 type: type,
                 timestamp: timestamp,
                 duration: 16667,
-                data: data
+                data: avccData
             });
             this.decoder.decode(chunk);
             this.stats.received++;

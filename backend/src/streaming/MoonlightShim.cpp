@@ -153,14 +153,14 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
 {
     if (!s_Instance) return DR_OK;
 
-    // Each LENTRY is a raw NAL unit without start code.
-    // We prepend 00 00 00 01 to each to build proper Annex B.
-    static const char startCode[4] = {0, 0, 0, 1};
+    // Each LENTRY from moonlight-common-c already contains an Annex B start code
+    // (3 or 4 bytes: 00 00 01 or 00 00 00 01) followed by NAL data. Just concatenate
+    // them as-is to form a valid Annex B byte stream. No need to prepend start codes.
     int bufCount = 0;
     int totalLen = 0;
     PLENTRY entry = decodeUnit->bufferList;
     while (entry) {
-        totalLen += 4 + entry->length;
+        totalLen += entry->length;
         bufCount++;
         entry = entry->next;
     }
@@ -169,8 +169,6 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     char* ptr = frameData.data();
     entry = decodeUnit->bufferList;
     while (entry) {
-        memcpy(ptr, startCode, 4);
-        ptr += 4;
         memcpy(ptr, entry->data, entry->length);
         ptr += entry->length;
         entry = entry->next;
