@@ -145,6 +145,42 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
     msg.append(static_cast<char>(0x01));
     msg.append(static_cast<char>(frameType == 1 ? 0x01 : 0x00));
     msg.append(data);
+
+    // Log first WS message sent
+    static int wsMsgCount = 0;
+    wsMsgCount++;
+    if (wsMsgCount <= 2) {
+        qInfo() << "[StreamRelay] WS binary msg #" << wsMsgCount
+                << "totalSize=" << msg.size()
+                << "channel=" << (unsigned char)msg[0]
+                << "flags=" << (unsigned char)msg[1]
+                << "frameType=" << frameType;
+        // Log first 48 bytes of the actual payload (after 2-byte header)
+        if (msg.size() > 2) {
+            int dumpLen = qMin(48, msg.size() - 2);
+            QByteArray hexDump;
+            for (int i = 2; i < 2 + dumpLen; i++) {
+                hexDump += QString("%1 ").arg((unsigned char)msg[i], 2, 16, QChar('0')).toUtf8();
+            }
+            qInfo() << "[StreamRelay]   WS payload hex:" << hexDump;
+        }
+
+        // Also send a text debug message to the browser with the first 48 bytes hex
+        if (m_WsClient && msg.size() > 2) {
+            int dumpLen = qMin(48, msg.size() - 2);
+            QByteArray hexDump;
+            for (int i = 2; i < 2 + dumpLen; i++) {
+                hexDump += QString::asprintf("%02x ", (unsigned char)msg[i]).toUtf8();
+            }
+            hexDump.chop(1); // remove trailing space
+            QJsonObject dbgMsg;
+            dbgMsg["type"] = "debug_hex";
+            dbgMsg["payload"] = QString::fromUtf8(hexDump);
+            QJsonDocument dbgDoc(dbgMsg);
+            m_WsClient->sendTextMessage(QString::fromUtf8(dbgDoc.toJson(QJsonDocument::Compact)));
+        }
+    }
+
     m_WsClient->sendBinaryMessage(msg);
     m_FrameCount++;
 }
@@ -209,7 +245,7 @@ void StreamRelay::onNewWsConnection()
             this, &StreamRelay::onWsDisconnected);
 
     // Log WS errors
-    connect(m_WsClient, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+    connect(m_WsClient, &QWebSocket::errorOccurred,
             [](QAbstractSocket::SocketError err) {
         qWarning() << "[StreamRelay] WebSocket error:" << err;
     });

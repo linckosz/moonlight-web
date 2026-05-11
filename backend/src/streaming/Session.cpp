@@ -158,11 +158,9 @@ void StreamSession::onLaunchReplyFinished()
     params.rikeyid = m_Config.rikeyid;
 
     // Supported video formats from server codec support
+    // TODO: Add HEVC (VIDEO_FORMAT_H265) and AV1 support once frontend
+    //       WebCodecs pipeline handles those codecs. For now, only H.264.
     params.supportedVideoFormats = VIDEO_FORMAT_H264;
-    if (m_Host->serverCodecModeSupport & 0x00000100)  // HEVC
-        params.supportedVideoFormats |= VIDEO_FORMAT_H265;
-    if (m_Host->serverCodecModeSupport & 0x00010000)  // AV1 Main 8
-        params.supportedVideoFormats |= 0x1000;
 
     // Audio: stereo Opus matching StreamConfig
     params.audioConfiguration = MAKE_AUDIO_CONFIGURATION(

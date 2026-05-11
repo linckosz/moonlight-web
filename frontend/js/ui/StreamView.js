@@ -52,6 +52,36 @@ export class StreamView {
         this.setupWebSocket();
         this.bindEvents();
         this.startRenderLoop();
+        this.startDiagnostics();
+    }
+
+    // --- Diagnostics ---------------------------------------------------------
+
+    startDiagnostics() {
+        this._diagCount = 0;
+        this._diagHandle = setInterval(() => {
+            this._diagCount++;
+            console.log('[DIAG] #' + this._diagCount +
+                ' decoderConfigured=' + this.decoderConfigured +
+                ' decoderConfiguring=' + this.decoderConfiguring +
+                ' nalParser.isReady=' + this.nalParser.isReady() +
+                ' pendingFrames=' + this.pendingFrames.length +
+                ' frameQueue=' + this.frameQueue.length +
+                ' frameCount=' + this.frameCount +
+                ' received=' + this.stats.received +
+                ' decoded=' + this.stats.decoded +
+                ' rendered=' + this.stats.rendered +
+                ' dropped=' + this.stats.dropped +
+                ' canvas=' + this.canvas.width + 'x' + this.canvas.height +
+                ' decoder=' + (this.decoder ? 'exists' : 'null'));
+        }, 2000);
+    }
+
+    stopDiagnostics() {
+        if (this._diagHandle) {
+            clearInterval(this._diagHandle);
+            this._diagHandle = null;
+        }
     }
 
     // =========================================================================
@@ -96,22 +126,39 @@ export class StreamView {
 
     setupDecoder() {
         if (this.decoder) {
-            this.decoder.close();
+            console.log('[StreamView] Closing existing decoder');
+            try { this.decoder.close(); } catch (e) {}
             this.decoder = null;
         }
 
+        console.log('[StreamView] Creating new VideoDecoder');
         this.decoder = new VideoDecoder({
-            output: (frame) => this.onDecodedFrame(frame),
+            output: (frame) => {
+                console.log('[StreamView] Decoder OUTPUT callback fired, frame=' +
+                    (frame.displayWidth || frame.codedWidth) + 'x' + (frame.displayHeight || frame.codedHeight) +
+                    ' format=' + (frame.format || 'null') +
+                    ' timestamp=' + frame.timestamp);
+                this.onDecodedFrame(frame);
+            },
             error: (err) => {
                 console.error('[StreamView] VideoDecoder error:', err.message, err);
+                if (err.code) console.error('[StreamView] Error code:', err.code);
                 this.setStatus('error', 'Decoder error');
             }
         });
+        console.log('[StreamView] VideoDecoder created, state=' + this.decoder.state);
     }
 
     configureDecoder() {
-        if (this.decoderConfigured || this.decoderConfiguring || !this.nalParser.isReady()) return;
+        if (this.decoderConfigured || this.decoderConfiguring || !this.nalParser.isReady()) {
+            console.log('[StreamView] configureDecoder guard blocked: configured=' +
+                this.decoderConfigured + ' configuring=' + this.decoderConfiguring +
+                ' nalReady=' + this.nalParser.isReady());
+            return;
+        }
         this.decoderConfiguring = true;
+        console.log('[StreamView] configureDecoder STARTED, decoder state=' +
+            (this.decoder ? this.decoder.state : 'null'));
 
         const sps = this.nalParser.sps;
         const pps = this.nalParser.pps;
@@ -147,15 +194,21 @@ export class StreamView {
 
         const applyConfig = (cfg) => {
             try {
+                console.log('[StreamView] Calling decoder.configure() with codec=' + cfg.codec +
+                    ' descriptionLen=' + (cfg.description ? cfg.description.byteLength : 0));
                 this.decoder.configure(cfg);
                 this.decoderConfigured = true;
                 this.decoderConfiguring = false;
-                console.log('[StreamView] VideoDecoder configured with codec=' + cfg.codec +
+                console.log('[StreamView] VideoDecoder configured OK with codec=' + cfg.codec +
+                            ', state=' + this.decoder.state +
                             ', dequeuing ' + this.pendingFrames.length + ' pending frames');
                 this.flushPendingFrames();
                 return true;
             } catch (e) {
-                console.error('[StreamView] decoder.configure() failed:', e);
+                console.error('[StreamView] decoder.configure() failed:', e.message, e);
+                if (this.decoder) {
+                    console.log('[StreamView] Decoder state after failed configure: ' + this.decoder.state);
+                }
                 this.decoderConfiguring = false;
                 return false;
             }
@@ -171,22 +224,25 @@ export class StreamView {
             }
 
             const cfg = configs[index];
+            console.log('[StreamView] Testing config[' + index + ']: codec=' + cfg.codec);
             VideoDecoder.isConfigSupported(cfg).then((result) => {
+                console.log('[StreamView] isConfigSupported returned: supported=' +
+                    result.supported + ' for codec=' + cfg.codec);
                 if (result.supported) {
                     console.log('[StreamView] Config supported: codec=' + cfg.codec +
                                 ' hasDescription=' + !!cfg.description);
-                    // applyConfig may fail (e.g., if decoder state is bad) — fall through
                     if (!applyConfig(cfg)) {
+                        console.log('[StreamView] applyConfig failed, trying next config');
                         tryCodecs(configs, index + 1);
                     }
                 } else {
-                    console.warn('[StreamView] Config rejected: codec=' + cfg.codec +
+                    console.warn('[StreamView] Config NOT supported: codec=' + cfg.codec +
                                  ', trying next');
                     tryCodecs(configs, index + 1);
                 }
             }).catch((err) => {
                 console.error('[StreamView] isConfigSupported error for codec=' +
-                              cfg.codec + ':', err);
+                              cfg.codec + ':', err.message, err);
                 tryCodecs(configs, index + 1);
             });
         };
@@ -219,14 +275,17 @@ export class StreamView {
             });
         }
 
+        console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs');
         tryCodecs(configsToTry, 0);
     }
 
     flushPendingFrames() {
+        console.log('[StreamView] flushPendingFrames: draining ' + this.pendingFrames.length + ' frames');
         while (this.pendingFrames.length > 0) {
             const entry = this.pendingFrames.shift();
             this.decodeFrame(entry.data, entry.isKeyframe);
         }
+        console.log('[StreamView] flushPendingFrames done, decoder state=' + this.decoder.state);
     }
 
     decodeFrame(data, isKeyframe) {
@@ -234,6 +293,12 @@ export class StreamView {
             // Buffer until decoder is ready (limit to avoid OOM)
             if (this.pendingFrames.length < 120) {
                 this.pendingFrames.push({ data, isKeyframe });
+                if (this.pendingFrames.length === 1) {
+                    console.log('[StreamView] First frame buffered (pending), waiting for decoder config');
+                }
+                if (this.pendingFrames.length % 30 === 0) {
+                    console.log('[StreamView] Buffered frames: ' + this.pendingFrames.length);
+                }
             }
             return;
         }
@@ -244,11 +309,6 @@ export class StreamView {
         const type = isKeyframe ? 'key' : 'delta';
 
         // Convert Annex B (start codes) to AVCC (4-byte length prefixes).
-        // VideoDecoder expects AVCC data when description (avcC) was provided
-        // in configure(). See buildAvccDescription() which sets lengthSizeMinusOne=3.
-        // When decoderConfigured is true, strip SPS/PPS since they are already
-        // in the avcC description -- including them confuses the decoder's
-        // keyframe detection (it expects the first NAL to be an IDR slice).
         const avccData = toAvcc(data, this.decoderConfigured);
 
         try {
@@ -258,16 +318,32 @@ export class StreamView {
                 duration: 16667,
                 data: avccData
             });
+            console.log('[StreamView] Decoding frame #' + this.frameCount +
+                ' type=' + type + ' avccSize=' + avccData.length +
+                ' decoderState=' + this.decoder.state);
             this.decoder.decode(chunk);
             this.stats.received++;
+            // Log after every 60th frame
+            if (this.frameCount % 60 === 0) {
+                console.log('[StreamView] Stats: frameCount=' + this.frameCount +
+                    ' received=' + this.stats.received +
+                    ' decoded=' + this.stats.decoded +
+                    ' rendered=' + this.stats.rendered);
+            }
         } catch (err) {
-            console.error('[StreamView] decode() error:', err.message);
+            console.error('[StreamView] decode() error:', err.message, err);
             this.stats.dropped++;
         }
     }
 
     onDecodedFrame(frame) {
         this.stats.decoded++;
+
+        if (this.stats.decoded <= 3) {
+            console.log('[StreamView] onDecodedFrame #' + this.stats.decoded +
+                ' displaySize=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
+                ' format=' + frame.format);
+        }
 
         // Limit queue depth to 3 to keep latency low
         if (this.frameQueue.length >= 3) {
@@ -280,6 +356,7 @@ export class StreamView {
 
         // Update status on first frame
         if (!this._firstFrameRendered) {
+            console.log('[StreamView] FIRST DECODED FRAME! Setting status to Live');
             this.setStatus('live', 'Live');
             this._firstFrameRendered = true;
         }
@@ -349,7 +426,19 @@ export class StreamView {
         };
         this.ws.onError = () => Toast.error('WebSocket error');
         this.ws.onBinary = (data) => this.handleBinary(data);
+        this.ws.onText = (msg) => this.handleWSText(msg);
         this.ws.connect();
+    }
+
+    handleWSText(msg) {
+        try {
+            const obj = JSON.parse(msg);
+            if (obj.type === 'debug_hex') {
+                console.log('[Backend] First frame payload hex:', obj.payload);
+            }
+        } catch (e) {
+            // Not JSON, ignore
+        }
     }
 
     handleBinary(data) {
@@ -388,21 +477,43 @@ export class StreamView {
             this._firstFrameProcessed = true;
             console.log('[StreamView] First video frame: isKeyframe=' + isKeyframe,
                         'size=' + data.length);
+            // Log first 16 bytes of frame data to see NAL types
+            const hex = Array.from(data.slice(0, Math.min(16, data.length)))
+                .map(b => b.toString(16).padStart(2, '0')).join(' ');
+            console.log('[StreamView] First 16 bytes:', hex);
         }
 
         // Extract SPS/PPS from the first keyframe if not done yet
         if (!this.nalParser.isReady()) {
             if (isKeyframe) {
+                console.log('[StreamView] Feeding first keyframe to NalParser...');
                 const ready = this.nalParser.feed(data);
+                console.log('[StreamView] NalParser.feed() returned: ready=' + ready +
+                    ' sps=' + (this.nalParser.sps ? this.nalParser.sps.length : 'null') +
+                    ' pps=' + (this.nalParser.pps ? this.nalParser.pps.length : 'null'));
                 if (ready) {
                     console.log('[StreamView] SPS/PPS extracted from first keyframe');
+                    console.log('[StreamView] SPS first byte (NAL type): 0x' +
+                        this.nalParser.sps[0].toString(16) + ' type=' + (this.nalParser.sps[0] & 0x1F));
+                    console.log('[StreamView] PPS first byte (NAL type): 0x' +
+                        this.nalParser.pps[0].toString(16) + ' type=' + (this.nalParser.pps[0] & 0x1F));
                     this.configureDecoder();
+                } else {
+                    // Feed didn't find SPS/PPS — log what it found instead
+                    const nals = splitNals(data);
+                    console.log('[StreamView] NalParser found ' + nals.length + ' NALs, types:',
+                        nals.map(n => '0x' + n[0].toString(16) + '(type=' + (n[0] & 0x1F) + ')').join(', '));
                 }
+            } else {
+                // First frame is not a keyframe — this is a problem
+                console.warn('[StreamView] First frame is NOT a keyframe! Cannot extract SPS/PPS');
             }
         }
 
         // Try to configure decoder if SPS/PPS just became available
         if (!this.decoderConfigured && this.nalParser.isReady()) {
+            console.log('[StreamView] Calling configureDecoder from second check, configuring=' +
+                this.decoderConfiguring);
             this.configureDecoder();
         }
 
@@ -517,6 +628,7 @@ export class StreamView {
 
     async quit() {
         this.stopRenderLoop();
+        this.stopDiagnostics();
         this.unbindEvents();
         this.ws.close();
 
@@ -551,6 +663,7 @@ export class StreamView {
 
     destroy() {
         this.stopRenderLoop();
+        this.stopDiagnostics();
         this.unbindEvents();
         this.ws.close();
 
