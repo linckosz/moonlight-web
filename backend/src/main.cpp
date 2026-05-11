@@ -188,8 +188,16 @@ int main(int argc, char* argv[])
         QObject::connect(session, &StreamSession::relayCreated,
             [&g_ActiveRelay](StreamRelay* relay) {
                 g_ActiveRelay = relay;
+                // Stop + clean relay whenever the session ends (WS disconnect,
+                // stream error, etc.), NOT just null the pointer. This prevents
+                // a race where WS close arrives before the HTTP /quit request,
+                // leaving the relay's WS server bound to the port.
                 QObject::connect(relay, &StreamRelay::sessionEnded,
-                    [&g_ActiveRelay]() { g_ActiveRelay = nullptr; });
+                    [relay, &g_ActiveRelay]() {
+                        relay->stop();
+                        relay->deleteLater();
+                        g_ActiveRelay = nullptr;
+                    });
             });
 
         session->start();

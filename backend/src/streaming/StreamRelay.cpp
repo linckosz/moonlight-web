@@ -66,6 +66,15 @@ bool StreamRelay::start()
 
 void StreamRelay::stop()
 {
+    // Guard against re-entrant calls: closing m_WsClient may fire the
+    // disconnected signal synchronously, triggering sessionEnded ->
+    // relay->stop() again from the sessionEnded lambda in main.cpp.
+    if (m_Stopping) {
+        qInfo() << "[StreamRelay] stop() already in progress, skipping re-entrant call";
+        return;
+    }
+    m_Stopping = true;
+
     qInfo() << "[StreamRelay] stop(), running=" << m_Running << "frames sent=" << m_FrameCount
             << "pending video=" << m_PendingVideoFrames.size()
             << "pending audio=" << m_PendingAudioFrames.size();

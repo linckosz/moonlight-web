@@ -29,6 +29,12 @@ export class NalParser {
     isReady() {
         return !!(this.sps && this.pps);
     }
+
+    /** Reset extracted SPS/PPS (e.g. on stream stop). */
+    reset() {
+        this.sps = null;
+        this.pps = null;
+    }
 }
 
 /**

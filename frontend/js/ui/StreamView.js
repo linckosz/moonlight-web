@@ -48,6 +48,9 @@ export class StreamView {
         this._onPointerLockChange = () => this.handlePointerLockChange();
         this._onContextMenu = (e) => e.preventDefault();
 
+        // Guard flag to prevent re-entrant quit() calls
+        this._quitting = false;
+
         this.render();
         this.setupWebSocket();
         this.bindEvents();
@@ -130,6 +133,8 @@ export class StreamView {
             try { this.decoder.close(); } catch (e) {}
             this.decoder = null;
         }
+        this.decoderConfigured = false;
+        this.decoderConfiguring = false;
 
         console.log('[StreamView] Creating new VideoDecoder');
         this.decoder = new VideoDecoder({
@@ -150,6 +155,7 @@ export class StreamView {
     }
 
     configureDecoder() {
+        if (this._quitting) return;
         if (this.decoderConfigured || this.decoderConfiguring || !this.nalParser.isReady()) {
             console.log('[StreamView] configureDecoder guard blocked: configured=' +
                 this.decoderConfigured + ' configuring=' + this.decoderConfiguring +
@@ -303,6 +309,13 @@ export class StreamView {
             return;
         }
 
+        // Belt-and-suspenders: decoder was nulled during cleanup but a frame
+        // slipped past the decoderConfigured check (re-entrant event processing).
+        if (!this.decoder) {
+            console.warn('[StreamView] decodeFrame: decoder is null, dropping frame');
+            return;
+        }
+
         const timestamp = this.frameCount * 16667; // ~60 fps in microseconds
         this.frameCount++;
 
@@ -414,17 +427,22 @@ export class StreamView {
 
     setupWebSocket() {
         this.ws.onOpen = () => {
+            if (this._quitting) return;
             this.connected = true;
             this.setStatus('connecting', 'Waiting for stream...');
             this.setupDecoder();
         };
         this.ws.onClose = () => {
+            if (this._quitting) return;
             this.connected = false;
             this.setStatus('disconnected', 'Disconnected');
             Toast.error('Stream disconnected');
             setTimeout(() => this.quit(), 3000);
         };
-        this.ws.onError = () => Toast.error('WebSocket error');
+        this.ws.onError = () => {
+            if (this._quitting) return;
+            Toast.error('WebSocket error');
+        };
         this.ws.onBinary = (data) => this.handleBinary(data);
         this.ws.onText = (msg) => this.handleWSText(msg);
         this.ws.connect();
@@ -467,6 +485,10 @@ export class StreamView {
     }
 
     handleVideoFrame(data, isKeyframe) {
+        // Stop processing frames once quit() has started.  The WS may still
+        // deliver queued messages during the async HTTP /quit call.
+        if (this._quitting) return;
+
         if (data.length < 4) {
             console.warn('[StreamView] Video frame too small:', data.length);
             return;
@@ -627,14 +649,23 @@ export class StreamView {
     // =========================================================================
 
     async quit() {
+        // Guard: prevent re-entrant calls (e.g. from WS onClose -> setTimeout)
+        if (this._quitting) return;
+        this._quitting = true;
+
         this.stopRenderLoop();
         this.stopDiagnostics();
         this.unbindEvents();
-        this.ws.close();
 
         if (document.pointerLockElement === this.canvas) {
             document.exitPointerLock();
         }
+
+        // CRITICAL: Mark decoder not configured BEFORE nulling it. During the
+        // await below the WS is still open and frames may arrive.  Without this,
+        // decodeFrame() sees decoderConfigured=true but decoder=null -> crash.
+        this.decoderConfigured = false;
+        this.nalParser.reset();
 
         // Close VideoDecoder
         if (this.decoder) {
@@ -651,6 +682,9 @@ export class StreamView {
         this.frameQueue = [];
         this.pendingFrames = [];
 
+        // Send HTTP /quit BEFORE closing the WebSocket. This avoids a race
+        // where the backend's WS disconnect handler nullifies g_ActiveRelay
+        // before the HTTP /quit handler can stop the relay.
         try {
             await BackendClient.quitApp(this.host.uuid);
             Toast.success('Stream ended');
@@ -658,6 +692,8 @@ export class StreamView {
             console.warn('[StreamView] Quit failed:', err);
         }
 
+        // Close WS only after HTTP quit has completed
+        this.ws.close();
         this.destroy();
     }
 
@@ -675,6 +711,8 @@ export class StreamView {
             try { this.decoder.close(); } catch (e) { /* ignore */ }
             this.decoder = null;
         }
+        this.decoderConfigured = false;
+        this.nalParser.reset();
 
         for (const frame of this.frameQueue) {
             try { frame.close(); } catch (e) { /* ignore */ }

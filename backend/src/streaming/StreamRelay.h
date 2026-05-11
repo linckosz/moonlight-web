@@ -48,6 +48,7 @@ private:
     quint16 m_WsPort = 48001;
     QString m_ServerHost = "localhost";
     bool m_Running = false;
+    bool m_Stopping = false;
     bool m_StreamStarted = false;
     QList<QByteArray> m_PendingVideoFrames;
     QList<QByteArray> m_PendingAudioFrames;
