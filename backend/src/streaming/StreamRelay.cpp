@@ -66,31 +66,57 @@ bool StreamRelay::start()
 
 void StreamRelay::stop()
 {
+    qInfo() << "[StreamRelay::stop] ENTER, m_Stopping=" << m_Stopping
+            << "m_Running=" << m_Running
+            << "m_WsClient=" << m_WsClient
+            << "m_WsServer=" << m_WsServer
+            << "m_Shim=" << m_Shim
+            << "frames sent=" << m_FrameCount;
+
     // Guard against re-entrant calls: closing m_WsClient may fire the
     // disconnected signal synchronously, triggering sessionEnded ->
     // relay->stop() again from the sessionEnded lambda in main.cpp.
     if (m_Stopping) {
-        qInfo() << "[StreamRelay] stop() already in progress, skipping re-entrant call";
+        qInfo() << "[StreamRelay::stop] Already stopping, skip re-entrant call";
         return;
     }
     m_Stopping = true;
 
-    qInfo() << "[StreamRelay] stop(), running=" << m_Running << "frames sent=" << m_FrameCount
-            << "pending video=" << m_PendingVideoFrames.size()
-            << "pending audio=" << m_PendingAudioFrames.size();
     m_Running = false;
+    qInfo() << "[StreamRelay::stop] m_Running=false, pending video="
+            << m_PendingVideoFrames.size() << "pending audio=" << m_PendingAudioFrames.size();
 
-    if (m_Shim)
+    if (m_Shim) {
+        qInfo() << "[StreamRelay::stop] Calling m_Shim->stopConnection() ...";
         m_Shim->stopConnection();
-
-    if (m_WsClient) {
-        m_WsClient->close();
-        m_WsClient->deleteLater();
-        m_WsClient = nullptr;
+        qInfo() << "[StreamRelay::stop] m_Shim->stopConnection() returned";
+    } else {
+        qInfo() << "[StreamRelay::stop] No m_Shim to stop";
     }
 
-    if (m_WsServer)
+    if (m_WsClient) {
+        qInfo() << "[StreamRelay::stop] Closing WS client, closeCode=" << m_WsClient->closeCode()
+                << "state=" << m_WsClient->state();
+        qint64 beforeClose = QDateTime::currentMSecsSinceEpoch();
+        m_WsClient->close();
+        qint64 afterClose = QDateTime::currentMSecsSinceEpoch();
+        qInfo() << "[StreamRelay::stop] WS close() took" << (afterClose - beforeClose) << "ms"
+                << "new state=" << m_WsClient->state();
+        m_WsClient->deleteLater();
+        m_WsClient = nullptr;
+    } else {
+        qInfo() << "[StreamRelay::stop] No WS client to close";
+    }
+
+    if (m_WsServer) {
+        qInfo() << "[StreamRelay::stop] Closing WS server";
         m_WsServer->close();
+        qInfo() << "[StreamRelay::stop] WS server closed";
+    } else {
+        qInfo() << "[StreamRelay::stop] No WS server to close";
+    }
+
+    qInfo() << "[StreamRelay::stop] EXIT";
 }
 
 QString StreamRelay::wsUrl() const
@@ -314,20 +340,39 @@ void StreamRelay::onWsTextMessage(const QString& message)
 
 void StreamRelay::onWsDisconnected()
 {
-    qInfo() << "[StreamRelay] WebSocket client disconnected, frames sent=" << m_FrameCount
-            << "pending video=" << m_PendingVideoFrames.size();
+    qInfo() << "[StreamRelay::onWsDisconnected] ENTER, m_Running=" << m_Running
+            << "m_Stopping=" << m_Stopping
+            << "m_StreamStarted=" << m_StreamStarted
+            << "frames sent=" << m_FrameCount
+            << "pending video=" << m_PendingVideoFrames.size()
+            << "pending audio=" << m_PendingAudioFrames.size();
 
+    QString disconnectSource;
+    QWebSocketProtocol::CloseCode closeCode = QWebSocketProtocol::CloseCodeNormal;
+    QString closeReason;
     if (m_WsClient) {
-        qInfo() << "[StreamRelay] WS close code=" << m_WsClient->closeCode()
-                << "reason=" << m_WsClient->closeReason();
+        closeCode = m_WsClient->closeCode();
+        closeReason = m_WsClient->closeReason();
+        qInfo() << "[StreamRelay::onWsDisconnected] WS state=" << m_WsClient->state()
+                << "closeCode=" << closeCode
+                << "closeReason=" << closeReason;
         m_WsClient->deleteLater();
         m_WsClient = nullptr;
+    } else {
+        qInfo() << "[StreamRelay::onWsDisconnected] m_WsClient already null";
     }
+
     m_StreamStarted = false;
     m_PendingVideoFrames.clear();
     m_PendingAudioFrames.clear();
+
+    qInfo() << "[StreamRelay::onWsDisconnected] Emitting clientDisconnected ...";
     emit clientDisconnected();
+
+    qInfo() << "[StreamRelay::onWsDisconnected] Emitting sessionEnded ...";
     emit sessionEnded();
+
+    qInfo() << "[StreamRelay::onWsDisconnected] EXIT";
 }
 
 // --- Connection management ---------------------------------------------------
@@ -347,9 +392,16 @@ void StreamRelay::onShimConnectionFailed(const QString& error)
 
 void StreamRelay::onShimConnectionTerminated(int errorCode)
 {
-    qInfo() << "[StreamRelay] Stream terminated, code=" << errorCode
+    qInfo() << "[StreamRelay::onShimConnectionTerminated] ENTER, errorCode=" << errorCode
+            << "m_Running=" << m_Running << "m_Stopping=" << m_Stopping
             << "frames sent=" << m_FrameCount;
     m_StreamStarted = false;
-    if (errorCode != 0)
-        emit sessionEnded();
+
+    // Always emit sessionEnded so cleanup runs, regardless of error code.
+    // Graceful termination (code 0) still needs relay/shim cleanup.
+    // The re-entrant guard in stop() prevents double-free if sessionEnded
+    // fires again from other paths (e.g. onWsDisconnected).
+    qInfo() << "[StreamRelay::onShimConnectionTerminated] Emitting sessionEnded ...";
+    emit sessionEnded();
+    qInfo() << "[StreamRelay::onShimConnectionTerminated] EXIT";
 }

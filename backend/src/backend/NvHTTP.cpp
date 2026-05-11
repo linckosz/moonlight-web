@@ -8,6 +8,7 @@
 #include <QSslSocket>
 #include <QNetworkProxy>
 
+#include "IdentityManager.h"
 #include <QUuid>
 
 NvHTTP::NvHTTP(QNetworkAccessManager* nam, QObject* parent)
@@ -165,9 +166,12 @@ QNetworkReply* NvHTTP::getAppListAsync(const NvAddress& address, quint16 httpsPo
                                            const QByteArray& clientCertPem,
                                            const QByteArray& clientKeyPem)
 {
-    QUrl url(QString("https://%1:%2/applist")
+    QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QUrl url(QString("https://%1:%2/applist?uniqueid=%3&uuid=%4")
                  .arg(address.address())
-                 .arg(httpsPort));
+                 .arg(httpsPort)
+                 .arg(IdentityManager::get()->getUniqueId())
+                 .arg(uuid));
 
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
@@ -224,11 +228,13 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 {
     Q_UNUSED(bitrate)  // sent via RTSP ANNOUNCE, not /launch
     QString mode = QString("%1x%2x%3").arg(width).arg(height).arg(fps);
-    QString query = QString("appid=%1&uniqueid=%2&mode=%3&rikey=%4&rikeyid=%5"
+    QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString query = QString("appid=%1&uniqueid=%2&uuid=%3&mode=%4&rikey=%5&rikeyid=%6"
                             "&localAudioPlayMode=0&sops=1&surroundAudioInfo=196610"
-                            "&gcmap=0&hdrMode=0&corever=0")
+                            "&gcmap=0&hdrMode=0&corever=1")
                         .arg(appId)
                         .arg(uniqueId)
+                        .arg(uuid)
                         .arg(mode)
                         .arg(QString::fromLatin1(rikey.toHex()))
                         .arg(rikeyid);
@@ -243,7 +249,7 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
              << "key size:" << clientKeyPem.size();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(30000);  // launch can take a few seconds
+    req.setTransferTimeout(120000);  // launch can take up to 120s per spec
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
@@ -281,9 +287,12 @@ QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                      const QByteArray& clientCertPem,
                                      const QByteArray& clientKeyPem)
 {
-    QUrl url(QString("https://%1:%2/cancel")
+    QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QUrl url(QString("https://%1:%2/cancel?uniqueid=%3&uuid=%4")
                  .arg(address.address())
-                 .arg(httpsPort));
+                 .arg(httpsPort)
+                 .arg(IdentityManager::get()->getUniqueId())
+                 .arg(uuid));
 
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);

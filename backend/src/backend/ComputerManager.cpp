@@ -883,10 +883,12 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
     QByteArray cert = im->getCertificate();
     QByteArray key = im->getPrivateKey();
 
-    QUrl artUrl(QString("https://%1:%2/appasset?appid=%3")
+    QUrl artUrl(QString("https://%1:%2/appasset?appid=%3&uniqueid=%4&uuid=%5")
                     .arg(addr.address())
                     .arg(httpsPort)
-                    .arg(appId));
+                    .arg(appId)
+                    .arg(IdentityManager::get()->getUniqueId(),
+                         QUuid::createUuid().toString(QUuid::WithoutBraces)));
 
     QNetworkRequest artReq(artUrl);
     artReq.setTransferTimeout(5000);

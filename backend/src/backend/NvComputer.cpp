@@ -63,7 +63,7 @@ NvComputer::NvComputer(const QString& serverInfo, const NvAddress& activeAddr)
     QString httpsPortStr = NvHTTP::getXmlString(serverInfo, "HttpsPort");
     activeHttpsPort = httpsPortStr.isEmpty() ? 0 : httpsPortStr.toUShort();
     if (activeHttpsPort == 0)
-        activeHttpsPort = MW_HTTPS_PORT;
+        activeHttpsPort = 47984;  // GFE default port; Sunshine overrides via HttpsPort XML
 }
 
 // --- Construction from QSettings --------------------------------------------

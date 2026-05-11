@@ -76,12 +76,11 @@ void IdentityManager::loadOrGenerate()
     m_CredentialsLoaded = true;
     Logger::info("Identity credentials loaded from settings");
 
-    if (m_CachedUniqueId.isEmpty()) {
-        uint64_t uid;
-        RAND_bytes(reinterpret_cast<unsigned char*>(&uid), sizeof(uid));
-        m_CachedUniqueId = QString::number(uid, 16);
+    // Always use the fixed Moonlight common unique ID, even if previously migrated
+    if (m_CachedUniqueId != "0123456789ABCDEF") {
+        m_CachedUniqueId = "0123456789ABCDEF";
         settings.setValue(SER_UNIQUEID, m_CachedUniqueId);
-        Logger::info("Generated new unique ID: " + m_CachedUniqueId);
+        Logger::info("Using Moonlight common unique ID: " + m_CachedUniqueId);
     }
 }
 
@@ -137,10 +136,9 @@ void IdentityManager::createCredentials()
     X509_free(cert);
     EVP_PKEY_free(pk);
 
-    // Generate unique ID
-    uint64_t uid;
-    RAND_bytes(reinterpret_cast<unsigned char*>(&uid), sizeof(uid));
-    m_CachedUniqueId = QString::number(uid, 16);
+    // Use fixed Moonlight common unique ID to enable cross-client session management
+    // (quit games launched by other Moonlight clients on the same host)
+    m_CachedUniqueId = "0123456789ABCDEF";
 
     // Persist
     QSettings settings;
