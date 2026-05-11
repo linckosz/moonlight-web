@@ -1,13 +1,19 @@
 /**
- * Fullscreen streaming overlay with input capture and MSE video rendering.
- * Creates a <video> element fed via MediaSource Extensions with H.264 fMP4
- * segments built by Mp4Muxer. Captures keyboard/mouse events and relays them
- * to the backend via WebSocket.
+ * Fullscreen streaming overlay with WebCodecs video decoding and Canvas rendering.
+ *
+ * Receives raw H.264 Annex B frames over WebSocket from the backend relay,
+ * decodes them via WebCodecs VideoDecoder, and renders to a <canvas> element.
+ * Captures keyboard/mouse events and sends them back as JSON over the same WS.
  */
 import { WebSocketClient } from '../api/WebSocketClient.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
-import { Mp4Muxer } from '../util/Mp4Muxer.js';
+import {
+    NalParser,
+    splitNals,
+    buildAvccDescription,
+    getCodecString
+} from '../util/Mp4Muxer.js';
 
 export class StreamView {
     constructor(container, wsUrl, host) {
@@ -17,13 +23,18 @@ export class StreamView {
         this.ws = new WebSocketClient(wsUrl);
         this.pointerLocked = false;
 
-        // Video
-        this.muxer = new Mp4Muxer(1920, 1080, 60);
-        this.mediaSource = null;
-        this.sourceBuffer = null;
+        // WebCodecs
+        this.decoder = null;
+        this.decoderConfigured = false;
+        this.decoderConfiguring = false;
+        this.nalParser = new NalParser();
         this.frameQueue = [];
+        this.pendingFrames = [];    // frames buffered before decoder config
         this.frameCount = 0;
-        this.connected = false;
+        this.renderRunning = false;
+
+        // Stats
+        this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0 };
 
         // Bound handlers
         this._onKeyDown = (e) => this.handleKeyDown(e);
@@ -38,7 +49,12 @@ export class StreamView {
         this.render();
         this.setupWebSocket();
         this.bindEvents();
+        this.startRenderLoop();
     }
+
+    // =========================================================================
+    // DOM rendering
+    // =========================================================================
 
     render() {
         const el = document.createElement('div');
@@ -53,119 +69,250 @@ export class StreamView {
                 <button class="btn stream-quit-btn" id="btn-stream-quit">Stop Streaming</button>
             </div>
             <div class="stream-canvas-area">
-                <video id="stream-video" autoplay muted playsinline
-                       style="width:100%;height:100%;object-fit:contain;background:#000;"></video>
+                <canvas id="stream-canvas" class="stream-canvas"></canvas>
                 <div class="stream-click-hint" id="stream-hint">
-                    Click to capture mouse &amp; keyboard
+                    Click to capture mouse & keyboard
                 </div>
             </div>
         `;
         document.getElementById('app').appendChild(el);
 
-        this.video = document.getElementById('stream-video');
+        this.canvas = document.getElementById('stream-canvas');
+        this.ctx = this.canvas.getContext('2d');
+        // Set initial canvas size; will be adjusted when first frame arrives
+        this.canvas.width = 1920;
+        this.canvas.height = 1080;
         this.statusEl = document.getElementById('stream-status');
         this.hintEl = document.getElementById('stream-hint');
-
-        this.setupMediaSource();
 
         document.getElementById('btn-stream-quit').onclick = () => this.quit();
     }
 
-    setupMediaSource() {
-        const mimeCodec = 'video/mp4; codecs="avc1.64002A"';
-        console.log('[StreamView] Checking MSE support for', mimeCodec, ':', MediaSource.isTypeSupported(mimeCodec));
+    // =========================================================================
+    // WebCodecs VideoDecoder
+    // =========================================================================
 
-        if (!MediaSource.isTypeSupported(mimeCodec)) {
-            console.warn('[StreamView] MSE codec not supported, trying fallback');
-            const fallbacks = [
-                'video/mp4; codecs="avc1.42E01E"',
-                'video/mp4; codecs="avc1.4D401E"',
-                'video/mp4; codecs="avc1.640028"',
-                'video/mp4; codecs="avc1.42C01E"',
-            ];
-            let found = false;
-            for (const fb of fallbacks) {
-                console.log('[StreamView]   trying fallback:', fb, MediaSource.isTypeSupported(fb));
+    setupDecoder() {
+        if (this.decoder) {
+            this.decoder.close();
+            this.decoder = null;
+        }
+
+        this.decoder = new VideoDecoder({
+            output: (frame) => this.onDecodedFrame(frame),
+            error: (err) => {
+                console.error('[StreamView] VideoDecoder error:', err.message, err);
+                this.setStatus('error', 'Decoder error');
             }
-            this.setStatus('error', 'Codec unsupported');
+        });
+    }
+
+    configureDecoder() {
+        if (this.decoderConfigured || this.decoderConfiguring || !this.nalParser.isReady()) return;
+        this.decoderConfiguring = true;
+
+        const sps = this.nalParser.sps;
+        const pps = this.nalParser.pps;
+
+        const avcc = buildAvccDescription(sps, pps);
+        if (!avcc) {
+            console.warn('[StreamView] Failed to build avcC description');
+            this.decoderConfiguring = false;
             return;
         }
 
-        console.log('[StreamView] Creating MediaSource...');
-        this.mediaSource = new MediaSource();
-        this.video.src = URL.createObjectURL(this.mediaSource);
-        console.log('[StreamView] MediaSource created, URL:', this.video.src);
+        const codec = getCodecString(sps);
+        if (!codec) {
+            console.error('[StreamView] Could not determine codec string');
+            this.decoderConfiguring = false;
+            this.setStatus('error', 'Unknown codec');
+            return;
+        }
 
-        this.mediaSource.addEventListener('sourceopen', () => {
-            console.log('[StreamView] MediaSource sourceopen fired, readyState=', this.mediaSource.readyState);
+        // Log info
+        console.log('[StreamView] Configuring VideoDecoder: codec=' + codec,
+                    'avccLen=' + avcc.length,
+                    'spsLen=' + sps.length,
+                    'ppsLen=' + pps.length);
+        console.log('[StreamView] SPS hex:', Array.from(sps).map(b => b.toString(16).padStart(2, '0')).join(' '));
+
+        if (!VideoDecoder.isConfigSupported) {
+            console.error('[StreamView] WebCodecs VideoDecoder not available');
+            this.decoderConfiguring = false;
+            this.setStatus('error', 'WebCodecs not supported');
+            return;
+        }
+
+        const primaryConfig = {
+            codec: codec,
+            description: avcc.buffer,
+            codedWidth: 1920,
+            codedHeight: 1080,
+            optimizeForLatency: true
+        };
+
+        const applyConfig = (cfg) => {
             try {
-                this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeCodec);
-                this.sourceBuffer.mode = 'segments';
-                console.log('[StreamView] SourceBuffer added, mode=', this.sourceBuffer.mode);
-
-                this.sourceBuffer.addEventListener('updateend', () => {
-                    this._dequeueFrame();
-                });
-
-                this.sourceBuffer.addEventListener('error', (e) => {
-                    console.error('[StreamView] SourceBuffer error:', e, this.sourceBuffer);
-                });
-
-                this.sourceBuffer.addEventListener('abort', () => {
-                    console.warn('[StreamView] SourceBuffer abort');
-                });
-
-                this._dequeueFrame();
-            } catch (err) {
-                console.error('[StreamView] Failed to add source buffer:', err.message);
-                this.setStatus('error', 'Media setup failed: ' + err.message);
+                this.decoder.configure(cfg);
+                this.decoderConfigured = true;
+                this.decoderConfiguring = false;
+                console.log('[StreamView] VideoDecoder configured, dequeuing ' +
+                            this.pendingFrames.length + ' pending frames');
+                this.flushPendingFrames();
+                return true;
+            } catch (e) {
+                console.error('[StreamView] decoder.configure() failed:', e);
+                this.decoderConfiguring = false;
+                return false;
             }
-        });
+        };
 
-        this.mediaSource.addEventListener('sourceclose', () => {
-            console.log('[StreamView] MediaSource sourceclose');
-        });
-
-        this.mediaSource.addEventListener('sourceended', () => {
-            console.log('[StreamView] MediaSource sourceended');
-        });
-    }
-
-    _dequeueFrame() {
-        if (!this.sourceBuffer) return;
-        if (this.sourceBuffer.updating) return;
-        if (this.frameQueue.length === 0) return;
-
-        const entry = this.frameQueue.shift();
-
-        try {
-            if (entry.init) {
-                console.log('[StreamView] Appending init segment, size=', entry.init.length || entry.init.byteLength);
-                this.sourceBuffer.appendBuffer(entry.init);
+        // Try primary config first (with avcC description)
+        VideoDecoder.isConfigSupported(primaryConfig).then((result) => {
+            if (result.supported) {
+                console.log('[StreamView] Primary config supported');
+                applyConfig(primaryConfig);
                 return;
             }
 
-            if (entry.media) {
-                this.sourceBuffer.appendBuffer(entry.media);
-                this.frameCount++;
-                if (this.frameCount === 1) {
-                    console.log('[StreamView] First media segment appended');
-                    this.setStatus('live', 'Live');
+            // Fallback: try without description
+            console.warn('[StreamView] Primary config not supported, trying fallback');
+            const fbConfig = {
+                codec: codec,
+                optimizeForLatency: true
+            };
+
+            VideoDecoder.isConfigSupported(fbConfig).then((fbResult) => {
+                if (fbResult.supported) {
+                    console.log('[StreamView] Fallback config supported');
+                    applyConfig(fbConfig);
+                } else {
+                    console.error('[StreamView] All configs rejected for codec:', codec);
+                    this.decoderConfiguring = false;
+                    this.setStatus('error', 'Codec not supported by browser');
                 }
-                if (this.frameCount % 60 === 0) {
-                    console.log('[StreamView] Frames appended:', this.frameCount, 'queue depth:', this.frameQueue.length);
-                }
-            }
-        } catch (err) {
-            console.error('[StreamView] appendBuffer error:', err.message);
-            setTimeout(() => this._dequeueFrame(), 10);
+            }).catch((fbErr) => {
+                console.error('[StreamView] Fallback isConfigSupported error:', fbErr);
+                this.decoderConfiguring = false;
+                applyConfig(fbConfig);
+            });
+        }).catch((err) => {
+            console.error('[StreamView] Primary isConfigSupported error:', err);
+            this.decoderConfiguring = false;
+            applyConfig(primaryConfig);
+        });
+    }
+
+    flushPendingFrames() {
+        while (this.pendingFrames.length > 0) {
+            const entry = this.pendingFrames.shift();
+            this.decodeFrame(entry.data, entry.isKeyframe);
         }
     }
+
+    decodeFrame(data, isKeyframe) {
+        if (!this.decoderConfigured) {
+            // Buffer until decoder is ready (limit to avoid OOM)
+            if (this.pendingFrames.length < 120) {
+                this.pendingFrames.push({ data, isKeyframe });
+            }
+            return;
+        }
+
+        const timestamp = this.frameCount * 16667; // ~60 fps in microseconds
+        this.frameCount++;
+
+        const type = isKeyframe ? 'key' : 'delta';
+
+        try {
+            const chunk = new EncodedVideoChunk({
+                type: type,
+                timestamp: timestamp,
+                duration: 16667,
+                data: data
+            });
+            this.decoder.decode(chunk);
+            this.stats.received++;
+        } catch (err) {
+            console.error('[StreamView] decode() error:', err.message);
+            this.stats.dropped++;
+        }
+    }
+
+    onDecodedFrame(frame) {
+        this.stats.decoded++;
+
+        // Limit queue depth to 3 to keep latency low
+        if (this.frameQueue.length >= 3) {
+            const old = this.frameQueue.shift();
+            old.close();
+            this.stats.dropped++;
+        }
+
+        this.frameQueue.push(frame);
+
+        // Update status on first frame
+        if (!this._firstFrameRendered) {
+            this.setStatus('live', 'Live');
+            this._firstFrameRendered = true;
+        }
+    }
+
+    startRenderLoop() {
+        if (this.renderRunning) return;
+        this.renderRunning = true;
+
+        const loop = (now) => {
+            if (!this.renderRunning) return;
+
+            // Dequeue and render the latest frame
+            while (this.frameQueue.length > 0) {
+                const frame = this.frameQueue.shift();
+
+                // Resize canvas to match frame dimensions if needed
+                if (frame.displayWidth && frame.displayHeight &&
+                    (this.canvas.width !== frame.displayWidth ||
+                     this.canvas.height !== frame.displayHeight)) {
+                    this.canvas.width = frame.displayWidth;
+                    this.canvas.height = frame.displayHeight;
+                }
+
+                // Draw frame to canvas
+                this.ctx.drawImage(frame, 0, 0,
+                    this.canvas.width, this.canvas.height);
+                frame.close();
+                this.stats.rendered++;
+
+                // Log stats periodically
+                if (this.stats.rendered % 60 === 0) {
+                    console.log('[StreamView] Stats:',
+                        'received=' + this.stats.received,
+                        'decoded=' + this.stats.decoded,
+                        'rendered=' + this.stats.rendered,
+                        'dropped=' + this.stats.dropped,
+                        'queue=' + this.frameQueue.length);
+                }
+            }
+
+            requestAnimationFrame(loop);
+        };
+
+        requestAnimationFrame(loop);
+    }
+
+    stopRenderLoop() {
+        this.renderRunning = false;
+    }
+
+    // =========================================================================
+    // WebSocket
+    // =========================================================================
 
     setupWebSocket() {
         this.ws.onOpen = () => {
             this.connected = true;
             this.setStatus('connecting', 'Waiting for stream...');
+            this.setupDecoder();
         };
         this.ws.onClose = () => {
             this.connected = false;
@@ -181,92 +328,95 @@ export class StreamView {
     handleBinary(data) {
         const bytes = new Uint8Array(data);
         const channel = bytes[0];
-        const flags = bytes[1];    // bit0 = isKeyframe (video only)
+        const flags = bytes[1];
         const payload = bytes.slice(2);
 
-        if (!this._firstFrameReceived) {
-            this._firstFrameReceived = true;
+        if (!this._firstMsgLogged) {
+            this._firstMsgLogged = true;
             console.log('[StreamView] First binary message: channel=0x' + channel.toString(16),
-                        'flags=0x' + flags.toString(16), 'payloadSize=' + payload.length);
+                        'flags=0x' + flags.toString(16),
+                        'payloadSize=' + payload.length);
         }
 
         if (channel === 0x01) {
             const isKeyframe = (flags & 0x01) !== 0;
-            this._handleVideoFrame(payload, isKeyframe);
+            this.handleVideoFrame(payload, isKeyframe);
         } else if (channel === 0x02) {
+            // Audio channel — PCM data, will be handled in Phase 6
             if (!this._audioLogged) {
-                console.log('[StreamView] Audio sample received, size=', payload.length);
+                console.log('[StreamView] Audio sample received, size=' + payload.length);
                 this._audioLogged = true;
             }
         }
     }
 
-    _handleVideoFrame(data, isKeyframe) {
+    handleVideoFrame(data, isKeyframe) {
         if (data.length < 4) {
             console.warn('[StreamView] Video frame too small:', data.length);
             return;
         }
 
+        // Log first frame details
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
-            console.log('[StreamView] First video frame: isKeyframe=', isKeyframe, 'size=', data.length);
-            // Log first 40 bytes in hex
-            const hex = Array.from(data.slice(0, 40))
-                .map(b => b.toString(16).padStart(2, '0')).join(' ');
-            console.log('[StreamView] First 40 bytes:', hex);
+            console.log('[StreamView] First video frame: isKeyframe=' + isKeyframe,
+                        'size=' + data.length);
         }
 
-        try {
-            const result = this.muxer.processFrame(data, isKeyframe);
-
-            if (result.init) {
-                console.log('[StreamView] Got init segment, size=', result.init.length);
-                this.frameQueue.push({ init: result.init, media: null });
+        // Extract SPS/PPS from the first keyframe if not done yet
+        if (!this.nalParser.isReady()) {
+            if (isKeyframe) {
+                const ready = this.nalParser.feed(data);
+                if (ready) {
+                    console.log('[StreamView] SPS/PPS extracted from first keyframe');
+                    this.configureDecoder();
+                }
             }
-            if (result.media) {
-                this.frameQueue.push({ init: null, media: result.media });
-            }
-
-            while (this.frameQueue.length > 60) {
-                this.frameQueue.shift();
-            }
-
-            this._dequeueFrame();
-        } catch (err) {
-            console.error('[StreamView] Frame processing error:', err.message, err.stack);
         }
+
+        // Try to configure decoder if SPS/PPS just became available
+        if (!this.decoderConfigured && this.nalParser.isReady()) {
+            this.configureDecoder();
+        }
+
+        // Submit frame to decoder
+        this.decodeFrame(data, isKeyframe);
     }
+
+    // =========================================================================
+    // Input events
+    // =========================================================================
 
     bindEvents() {
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
-        this.video.addEventListener('mousemove', this._onMouseMove);
-        this.video.addEventListener('mousedown', this._onMouseDown);
-        this.video.addEventListener('mouseup', this._onMouseUp);
-        this.video.addEventListener('wheel', this._onWheel, { passive: false });
-        this.video.addEventListener('contextmenu', this._onContextMenu);
-        this.video.addEventListener('click', () => this.requestPointerLock());
+        this.canvas.addEventListener('mousemove', this._onMouseMove);
+        this.canvas.addEventListener('mousedown', this._onMouseDown);
+        this.canvas.addEventListener('mouseup', this._onMouseUp);
+        this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
+        this.canvas.addEventListener('contextmenu', this._onContextMenu);
+        this.canvas.addEventListener('click', () => this.requestPointerLock());
     }
 
     unbindEvents() {
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener('keyup', this._onKeyUp);
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
-        this.video.removeEventListener('mousemove', this._onMouseMove);
-        this.video.removeEventListener('mousedown', this._onMouseDown);
-        this.video.removeEventListener('mouseup', this._onMouseUp);
-        this.video.removeEventListener('wheel', this._onWheel);
-        this.video.removeEventListener('contextmenu', this._onContextMenu);
-    }
-
-    requestPointerLock() {
-        if (!this.pointerLocked) {
-            this.video.requestPointerLock();
+        if (this.canvas) {
+            this.canvas.removeEventListener('mousemove', this._onMouseMove);
+            this.canvas.removeEventListener('mousedown', this._onMouseDown);
+            this.canvas.removeEventListener('mouseup', this._onMouseUp);
+            this.canvas.removeEventListener('wheel', this._onWheel);
+            this.canvas.removeEventListener('contextmenu', this._onContextMenu);
         }
     }
 
-    // --- Input handlers ---
+    requestPointerLock() {
+        if (!this.pointerLocked && this.canvas) {
+            this.canvas.requestPointerLock();
+        }
+    }
 
     handleKeyDown(e) {
         e.preventDefault();
@@ -315,41 +465,52 @@ export class StreamView {
     }
 
     handlePointerLockChange() {
-        this.pointerLocked = (document.pointerLockElement === this.video);
-        if (this.pointerLocked) {
-            this.hintEl.style.display = 'none';
-        } else {
-            this.hintEl.style.display = 'flex';
+        this.pointerLocked = (document.pointerLockElement === this.canvas);
+        if (this.hintEl) {
+            this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }
     }
 
-    // --- Status ---
+    // =========================================================================
+    // Status
+    // =========================================================================
 
     setStatus(state, text) {
+        if (!this.statusEl) return;
         const dot = this.statusEl.querySelector('.stream-status-dot');
-        dot.className = 'stream-status-dot status-' + state;
+        if (dot) {
+            dot.className = 'stream-status-dot status-' + state;
+        }
         this.statusEl.childNodes[1].textContent = ' ' + text;
     }
 
-    // --- Quit ---
+    // =========================================================================
+    // Quit / Cleanup
+    // =========================================================================
 
     async quit() {
+        this.stopRenderLoop();
         this.unbindEvents();
         this.ws.close();
 
-        if (document.pointerLockElement === this.video) {
+        if (document.pointerLockElement === this.canvas) {
             document.exitPointerLock();
         }
 
-        // Close MediaSource
-        if (this.mediaSource && this.mediaSource.readyState === 'open') {
+        // Close VideoDecoder
+        if (this.decoder) {
             try {
-                this.mediaSource.endOfStream();
+                this.decoder.close();
             } catch (e) { /* ignore */ }
+            this.decoder = null;
         }
-        if (this.video.src) {
-            URL.revokeObjectURL(this.video.src);
+
+        // Close any pending frames
+        for (const frame of this.frameQueue) {
+            try { frame.close(); } catch (e) { /* ignore */ }
         }
+        this.frameQueue = [];
+        this.pendingFrames = [];
 
         try {
             await BackendClient.quitApp(this.host.uuid);
@@ -362,19 +523,24 @@ export class StreamView {
     }
 
     destroy() {
+        this.stopRenderLoop();
         this.unbindEvents();
         this.ws.close();
 
-        if (document.pointerLockElement === this.video) {
+        if (document.pointerLockElement === this.canvas) {
             document.exitPointerLock();
         }
 
-        if (this.mediaSource && this.mediaSource.readyState === 'open') {
-            try { this.mediaSource.endOfStream(); } catch (e) { /* ignore */ }
+        if (this.decoder) {
+            try { this.decoder.close(); } catch (e) { /* ignore */ }
+            this.decoder = null;
         }
-        if (this.video && this.video.src) {
-            URL.revokeObjectURL(this.video.src);
+
+        for (const frame of this.frameQueue) {
+            try { frame.close(); } catch (e) { /* ignore */ }
         }
+        this.frameQueue = [];
+        this.pendingFrames = [];
 
         const el = document.getElementById('stream-view');
         if (el) el.remove();
