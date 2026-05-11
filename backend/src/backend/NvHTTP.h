@@ -50,7 +50,8 @@ public:
                                    const QByteArray& rikey, int rikeyid,
                                    int width, int height, int fps, int bitrate,
                                    const QByteArray& clientCertPem,
-                                   const QByteArray& clientKeyPem);
+                                   const QByteArray& clientKeyPem,
+                                   int hdrMode = 0);
 
     QNetworkReply* quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                  const QByteArray& clientCertPem,

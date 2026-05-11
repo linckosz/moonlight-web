@@ -224,20 +224,22 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
                                                const QByteArray& rikey, int rikeyid,
                                                int width, int height, int fps, int bitrate,
                                                const QByteArray& clientCertPem,
-                                               const QByteArray& clientKeyPem)
+                                               const QByteArray& clientKeyPem,
+                                               int hdrMode)
 {
     Q_UNUSED(bitrate)  // sent via RTSP ANNOUNCE, not /launch
     QString mode = QString("%1x%2x%3").arg(width).arg(height).arg(fps);
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString query = QString("appid=%1&uniqueid=%2&uuid=%3&mode=%4&rikey=%5&rikeyid=%6"
                             "&localAudioPlayMode=0&sops=1&surroundAudioInfo=196610"
-                            "&gcmap=0&hdrMode=0&corever=1")
+                            "&gcmap=0&hdrMode=%7&corever=1")
                         .arg(appId)
                         .arg(uniqueId)
                         .arg(uuid)
                         .arg(mode)
                         .arg(QString::fromLatin1(rikey.toHex()))
-                        .arg(rikeyid);
+                        .arg(rikeyid)
+                        .arg(hdrMode);
 
     QUrl url(QString("https://%1:%2/launch?%3")
                  .arg(address.address())

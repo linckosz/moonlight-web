@@ -11,10 +11,13 @@ import { Toast } from './Toast.js';
 import {
     NalParser,
     splitNals,
-    buildAvccDescription,
+    buildDescription,
     getCodecString,
     toAvcc,
-    FALLBACK_CODEC_STRINGS
+    H264_FALLBACK_CODEC_STRINGS,
+    HEVC_FALLBACK_CODEC_STRINGS,
+    CODEC_H264,
+    CODEC_HEVC
 } from '../util/Mp4Muxer.js';
 
 export class StreamView {
@@ -163,20 +166,18 @@ export class StreamView {
             return;
         }
         this.decoderConfiguring = true;
-        console.log('[StreamView] configureDecoder STARTED, decoder state=' +
-            (this.decoder ? this.decoder.state : 'null'));
+        const codecType = this.nalParser.codec;
+        console.log('[StreamView] configureDecoder STARTED, codec=' + codecType +
+            ', decoder state=' + (this.decoder ? this.decoder.state : 'null'));
 
-        const sps = this.nalParser.sps;
-        const pps = this.nalParser.pps;
-
-        const avcc = buildAvccDescription(sps, pps);
-        if (!avcc) {
-            console.warn('[StreamView] Failed to build avcC description');
+        const desc = buildDescription(this.nalParser);
+        if (!desc) {
+            console.warn('[StreamView] Failed to build codec description');
             this.decoderConfiguring = false;
             return;
         }
 
-        const codec = getCodecString(sps);
+        const codec = getCodecString(this.nalParser);
         if (!codec) {
             console.error('[StreamView] Could not determine codec string');
             this.decoderConfiguring = false;
@@ -184,12 +185,9 @@ export class StreamView {
             return;
         }
 
-        // Log info
         console.log('[StreamView] Configuring VideoDecoder: codec=' + codec,
-                    'avccLen=' + avcc.length,
-                    'spsLen=' + sps.length,
-                    'ppsLen=' + pps.length);
-        console.log('[StreamView] SPS hex:', Array.from(sps).map(b => b.toString(16).padStart(2, '0')).join(' '));
+                    'descLen=' + desc.length,
+                    'codecType=' + this.nalParser.codec);
 
         if (!VideoDecoder.isConfigSupported) {
             console.error('[StreamView] WebCodecs VideoDecoder not available');
@@ -253,35 +251,35 @@ export class StreamView {
             });
         };
 
-        // Build list of configs to try, in priority order.
-        // All configs include the avcC description so the decoder knows
-        // the exact SPS/PPS, regardless of the codec string used.
-        // Data passed to decode() MUST be in AVCC format (4-byte length prefixes)
-        // when description is provided — decodeFrame() converts accordingly.
+        // Build configs: primary + fallbacks, all with codec description (avcC or hvcC).
+        // Description data is in AVCC/HEVC format (4-byte length prefixes).
+        // decodeFrame() converts Annex B to this format when descriptor is enabled.
         const configsToTry = [];
+        const fallbacks = (codecType === CODEC_HEVC)
+            ? HEVC_FALLBACK_CODEC_STRINGS
+            : H264_FALLBACK_CODEC_STRINGS;
 
-        // 1. Primary: original codec string with avcC description
         configsToTry.push({
             codec: codec,
-            description: avcc.buffer,
+            description: desc.buffer,
             codedWidth: 1920,
             codedHeight: 1080,
             optimizeForLatency: true
         });
 
-        // 2. Fallback codec strings WITH description
-        for (const fbCodec of FALLBACK_CODEC_STRINGS) {
+        for (const fbCodec of fallbacks) {
             if (fbCodec === codec) continue;
             configsToTry.push({
                 codec: fbCodec,
-                description: avcc.buffer,
+                description: desc.buffer,
                 codedWidth: 1920,
                 codedHeight: 1080,
                 optimizeForLatency: true
             });
         }
 
-        console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs');
+        console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs (' +
+            (codecType === CODEC_HEVC ? 'HEVC' : 'H.264') + ')');
         tryCodecs(configsToTry, 0);
     }
 

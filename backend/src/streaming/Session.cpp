@@ -60,17 +60,60 @@ void StreamSession::start()
     QByteArray clientCert = identity->getCertificate();
     QByteArray clientKey = identity->getPrivateKey();
 
+    // Step 1: Force-quit any stale session on Sunshine before launching.
+    //
+    // If the browser tab was closed without a clean /quit (e.g. crash, tab kill),
+    // Sunshine may still believe a session is active and reject the new /launch.
+    // Sending /cancel first makes the start flow idempotent: any orphaned
+    // session is torn down before we attempt to start a new one.
+    //
+    // HTTPS requests to Sunshine are serialized per host (the same QNAManager
+    // is used for both quit and launch), so the quit MUST complete before the
+    // launch begins. We chain them via the reply's finished signal.
+    //
+    // The quit is best-effort: if it fails (no session running, network blip,
+    // etc.) we log a warning and proceed with the launch anyway.
+    qInfo() << "[Session] Pre-start: force-quitting any stale session on"
+            << m_Host->name << m_Host->activeAddress.address();
+
+    QNetworkReply* quitReply = m_Http->quitAppAsync(
+        m_Host->activeAddress, m_Host->activeHttpsPort,
+        clientCert, clientKey);
+
+    connect(quitReply, &QNetworkReply::finished, this,
+            [this, quitReply, clientCert, clientKey]() {
+        quitReply->deleteLater();
+
+        if (quitReply->error() != QNetworkReply::NoError) {
+            qWarning() << "[Session] Pre-start quit: network error"
+                       << quitReply->errorString()
+                       << "(non-fatal, continuing with launch)";
+        } else {
+            QByteArray body = quitReply->readAll();
+            qInfo() << "[Session] Pre-start quit: OK, response:"
+                    << body.left(200);
+        }
+
+        // Step 2: Launch the app (HTTPS serialized: quit finished first)
+        doLaunchApp(clientCert, clientKey);
+    });
+}
+
+void StreamSession::doLaunchApp(const QByteArray& clientCert,
+                                const QByteArray& clientKey)
+{
     qDebug() << "[Session] Launching app" << m_AppId << "on" << m_Host->name;
     qDebug() << "[Session]   address:" << m_Host->activeAddress.address()
              << "port:" << m_Host->activeHttpsPort;
 
     m_LaunchReply = m_Http->launchAppAsync(
         m_Host->activeAddress, m_Host->activeHttpsPort,
-        m_AppId, identity->getUniqueId(),
+        m_AppId, IdentityManager::get()->getUniqueId(),
         m_Config.rikey, m_Config.rikeyid,
         StreamConfig::kWidth, StreamConfig::kHeight, StreamConfig::kFps,
         StreamConfig::kBitrateKbps,
-        clientCert, clientKey);
+        clientCert, clientKey,
+        (m_Config.hdr == HdrMode::HDR) ? 1 : 0);
 
     connect(m_LaunchReply, &QNetworkReply::finished,
             this, &StreamSession::onLaunchReplyFinished);
@@ -156,10 +199,12 @@ void StreamSession::onLaunchReplyFinished()
     params.aesKey = m_Config.rikey;
     params.rikeyid = m_Config.rikeyid;
 
-    // Supported video formats from server codec support
-    // TODO: Add HEVC (VIDEO_FORMAT_H265) and AV1 support once frontend
-    //       WebCodecs pipeline handles those codecs. For now, only H.264.
-    params.supportedVideoFormats = VIDEO_FORMAT_H264;
+    // Video formats: codec preference bitmap computed from StreamConfig.
+    // Default is HEVC preferred with H.264 fallback.
+    params.supportedVideoFormats = m_Config.computeVideoFormats();
+
+    // Pass color space from config (BT.709 SDR or BT.2020 HDR)
+    params.colorSpace = m_Config.computeColorSpace();
 
     // Audio: stereo Opus matching StreamConfig
     params.audioConfiguration = MAKE_AUDIO_CONFIGURATION(

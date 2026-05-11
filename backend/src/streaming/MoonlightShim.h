@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QThread>
+#include <QPointer>
 #include <QByteArray>
 #include <atomic>
 #include <cstdint>
@@ -34,6 +35,8 @@ public:
         int bitrateKbps = 20000;
         int packetSize = 1024;
         int supportedVideoFormats = 0x0001; // VIDEO_FORMAT_H264
+        int colorSpace = 1;   // 0=BT.601 1=BT.709 SDR, 6=BT.2020+P(Q(HDR10)
+        int colorRange = 0;   // 0=Limited(TV), 1=Full(PC)
         int audioConfiguration = 0;
 
         QByteArray aesKey;  // 16 bytes
@@ -64,7 +67,7 @@ signals:
     void connectionStopped();
 
 private:
-    QThread* m_WorkerThread = nullptr;
+    QPointer<QThread> m_WorkerThread;
     std::atomic<bool> m_Connected{false};
     std::atomic<bool> m_Stopping{false};
     std::atomic<bool> m_CleanupDone{false};

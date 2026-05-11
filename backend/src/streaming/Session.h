@@ -40,6 +40,8 @@ private slots:
     void onShimConnectionFailed(const QString& error);
 
 private:
+    void doLaunchApp(const QByteArray& clientCert, const QByteArray& clientKey);
+
     NvComputer* m_Host;
     int m_AppId;
     NvHTTP* m_Http;
