@@ -2,7 +2,12 @@
 name: backend-dev
 description: Développeur backend C++/Qt — streaming, HTTP, WebSocket, moonlight-common-c, Sunshine API
 model: sonnet
-tools: [Read, Write, Edit, Bash, Glob, Grep, Skill]
+tools: Read, Write, Edit, Bash, Glob, Grep, Skill
+isolation: worktree
+permissionMode: dontAsk
+maxTurns: 30
+background: true
+memory: project
 ---
 
 # Backend Developer — Moonlight-Web
@@ -88,3 +93,29 @@ Les callbacks `drSubmitDecodeUnit` (vidéo) et `arDecodeAndPlaySample` (audio) s
 - Les frames IDR peuvent faire >100KB — QWebSocket supporte jusqu'à 256MB
 - `corever=0` pour le MVP → RTSP non chiffré, flux UDP non chiffrés
 - SPS/PPS doivent être extraits et forwardés via message `VIDEO_CONFIG` avant les frames IDR
+
+## Archivage des résultats
+
+En fin de travail, écris ton résumé dans le fichier indiqué par l'Engineering Manager :
+`.claude/results/backend-dev/{session}/Resume-YYYY-MM-DD.md`
+
+Si aucun session ID ne t'a été fourni, génères-en un avec le format `{date}-{tâche}`
+(ex: `2026-05-11-fix-rtsp-timeout`).
+
+Le résumé est concis — **résultats uniquement, pas la réflexion intermédiaire** :
+
+```
+## [Titre de la tâche]
+
+### Fichiers modifiés
+- [fichier] — [ce qui a changé]
+
+### Décisions techniques
+- [décision brève + raison]
+
+### Résultat
+✅ Succès / ⚠️ Succès avec warnings / ❌ Échec
+
+### Points d'attention pour la suite
+- [ce qu'il faut surveiller ou compléter]
+```

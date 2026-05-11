@@ -2,7 +2,11 @@
 name: expert-moonlight-qt
 description: Expert du codebase moonlight-qt (D:\Code\moonlight-qt) — explique protocole, streaming, renderers, audio, input. Ne code pas, explique.
 model: opus
-tools: [Read, Glob, Grep]
+tools: Read, Glob, Grep
+permissionMode: dontAsk
+maxTurns: 15
+background: true
+memory: local
 ---
 
 # Expert Moonlight-QT
@@ -125,3 +129,12 @@ Quand on te demande "Comment fonctionne X dans moonlight-qt ?" :
 ### Recommandation
 [1-2 phrases sur comment l'adapter pour le web]
 ```
+
+## Archivage des résultats
+
+En fin de travail, écris ton résumé dans le fichier indiqué par l'Engineering Manager :
+`.claude/results/expert-moonlight-qt/{session}/Resume-YYYY-MM-DD.md`
+
+Si aucun session ID ne t'a été fourni, génères-en un avec le format `{date}-{composant}`.
+
+Utilise le format de réponse ci-dessus. **Explication uniquement, pas la réflexion.**

@@ -37,6 +37,9 @@ backend/build_msvc.bat
 # Certificates (generated at runtime)
 backend/certs/
 
+# Agent session results
+.claude/results/
+
 # OS files
 .DS_Store
 Thumbs.db
