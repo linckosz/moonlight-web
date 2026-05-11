@@ -109,14 +109,42 @@ export function getCodecString(sps) {
 }
 
 /**
+ * Common H.264 codec strings supported by all modern browsers.
+ * Used as fallback when the primary codec string (derived from SPS) is rejected.
+ * Listed in order of preference.
+ */
+export const FALLBACK_CODEC_STRINGS = [
+    'avc1.64002A',  // High 4.2 (most common for 1080p60)
+    'avc1.640028',  // High 4.0
+    'avc1.64001F',  // High 3.1
+    'avc1.64001E',  // High 3.0
+    'avc1.4D002A',  // Main 4.2
+    'avc1.4D0028',  // Main 4.0
+    'avc1.42002A',  // Baseline 4.2
+    'avc1.42001E',  // Baseline 3.0
+];
+
+/**
  * Convert raw Annex B data (with start codes) to AVCC format
  * (4-byte length prefixes per NAL unit). Useful if the decoder
  * requires AVCC format instead of Annex B.
+ *
+ * When the decoder is configured with an avcC description (which already
+ * contains SPS/PPS), set stripParams=true to skip SPS (type 7) and PPS
+ * (type 8) NAL units from the output. This is needed because the browser's
+ * VideoDecoder expects the first NAL after configure() to be an IDR slice
+ * for a chunk marked as type 'key' -- including SPS/PPS before the IDR
+ * causes the browser to reject the chunk as "not a key frame".
  */
-export function toAvcc(annexB) {
+export function toAvcc(annexB, stripParams = false) {
     const nals = splitNals(annexB);
     const parts = [];
     for (const n of nals) {
+        const type = n[0] & 0x1F;
+        // When description is provided, SPS/PPS are already in the avcC box.
+        // Strip them here so the first NAL encountered by the decoder is the
+        // actual IDR slice, satisfying the "key frame required after configure" rule.
+        if (stripParams && (type === 7 || type === 8)) continue;
         const l = n.length;
         parts.push((l>>24)&0xFF, (l>>16)&0xFF, (l>>8)&0xFF, l&0xFF);
         for (let i = 0; i < l; i++) parts.push(n[i]);
