@@ -64,6 +64,6 @@ powershell -Command "Stop-Process -Name mw-server -Force"
 ## Notes
 
 - Le serveur doit avoir les DLLs Qt + OpenSSL dans le dossier de sortie
-- Port par défaut : 48000 (HTTP), 48433 (HTTPS)
+- Port par défaut : 48000 (HTTP), 48443 (HTTPS)
 - Sunshine n'a pas besoin d'être en ligne pour ce test de base
 - Pour tester le streaming réel, il faut un host Sunshine accessible

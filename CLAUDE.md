@@ -23,6 +23,7 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 | `code-reviewer` | Opus (Deepseek-v4-pro) | Revue de code, validation architecture, sécurité |
 | `expert-moonlight-qt` | Opus (Deepseek-v4-pro) | Explique le code de référence moonlight-qt |
 | `expert-moonlight-xbox` | Opus (Deepseek-v4-pro) | Explique le code de référence moonlight-xbox |
+| `expert-moonlight-web-stream` | Opus (Deepseek-v4-pro) | Explique le code de référence moonlight-web-stream (Rust, WebRTC) |
 
 ## Skills
 
@@ -64,7 +65,7 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 # Build backend (MSVC)
 cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat
 
-# Lancer le serveur (port 48000 HTTP, 48433 HTTPS)
+# Lancer le serveur (port 48000 HTTP, 48443 HTTPS)
 cd backend/build/release && ./mw-server.exe
 
 # Arrêter le serveur

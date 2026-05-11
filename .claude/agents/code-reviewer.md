@@ -2,7 +2,7 @@
 name: code-reviewer
 description: Revue de code, validation d'architecture, sécurité, conformité au plan — supporté par les experts moonlight-qt et moonlight-xbox
 model: opus
-tools: Read, Glob, Grep, Bash, Agent(expert-moonlight-qt, expert-moonlight-xbox), Skill
+tools: Read, Glob, Grep, Bash, Agent(expert-moonlight-qt, expert-moonlight-xbox, expert-moonlight-web-stream), Skill
 permissionMode: dontAsk
 maxTurns: 20
 background: true
