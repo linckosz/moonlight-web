@@ -85,6 +85,7 @@ corever=0 (RTSP non chiffré)
 Les callbacks `drSubmitDecodeUnit` (vidéo) et `arDecodeAndPlaySample` (audio) sont appelés depuis un thread worker. Il faut forwarder les données sans bloquer.
 
 ### Tu peux utiliser le skill `build` pour compiler le backend.
+### Pour toute interaction avec l'API Sunshine (endpoints, formats XML, pairing, launch), utilise le skill `sunshine-api`.
 
 ## Points d'attention
 

@@ -33,6 +33,7 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 | `phase-review` | Vérifie les critères d'acceptation d'une phase |
 | `sync-moonlight-qt` | Référence croisée moonlight-qt → moonlight-web |
 | `sync-moonlight-xbox` | Référence croisée moonlight-xbox → moonlight-web |
+| `sunshine-api` | Référence API Sunshine — endpoints, pairing, launch, RTSP, XML |
 
 ## Présentation du projet
 
