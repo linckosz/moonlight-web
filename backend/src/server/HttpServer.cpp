@@ -80,7 +80,11 @@ HttpServer::HttpServer(quint16 httpPort, quint16 httpsPort, QObject* parent)
     , m_HttpPort(httpPort)
     , m_HttpsPort(httpsPort)
 {
+    // Try compile-time frontend path first (development), fall back to
+    // executable-relative path (deployment / MSI install).
     QString frontendDir = QString(FRONTEND_DIR);
+    if (!QDir(frontendDir).exists())
+        frontendDir = QCoreApplication::applicationDirPath() + "/frontend/";
     m_StaticFiles = new StaticFileHandler(frontendDir, this);
 }
 
@@ -270,17 +274,21 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         .arg(QSslSocket::sslLibraryBuildVersionString())
         .arg(QSslSocket::sslLibraryVersionString()));
 
+    m_HttpsPort = preferredHttpsPort;
     bool hasHttps = loadCert();
 
-    // Start HTTP redirect server
+    // Start HTTP redirect server (port 80 by default)
     if (!m_HttpServer->listen(QHostAddress::Any, m_HttpPort)) {
-        emit serverError("Failed to listen on port " + QString::number(m_HttpPort)
-                          + ": " + m_HttpServer->errorString());
-        return false;
+        Logger::warning("HTTP redirect server: port " + QString::number(m_HttpPort)
+                        + " unavailable (" + m_HttpServer->errorString()
+                        + "), continuing without HTTP→HTTPS redirect");
+        m_HttpServer->deleteLater();
+        m_HttpServer = nullptr;
+    } else {
+        connect(m_HttpServer, &QTcpServer::newConnection,
+                this, &HttpServer::onHttpConnection);
+        Logger::info("HTTP→HTTPS redirect on port " + QString::number(m_HttpPort));
     }
-    connect(m_HttpServer, &QTcpServer::newConnection,
-            this, &HttpServer::onHttpConnection);
-    Logger::info("HTTP redirect server on port " + QString::number(m_HttpPort));
 
     // Start HTTPS with port fallback
     if (hasHttps) {
@@ -345,17 +353,51 @@ bool HttpServer::start(quint16 preferredHttpsPort)
 
 void HttpServer::stop()
 {
-    m_HttpServer->close();
-    if (m_HttpsServer)
+    if (m_HttpServer) {
+        m_HttpServer->close();
+    }
+    if (m_HttpsServer) {
         m_HttpsServer->close();
-    for (QTcpSocket* socket : m_Buffers.keys())
+        m_HttpsServer->deleteLater();
+        m_HttpsServer = nullptr;
+    }
+    m_ActiveHttpsPort = 0;
+    for (QTcpSocket* socket : m_Buffers.keys()) {
         socket->disconnectFromHost();
+        socket->deleteLater();
+    }
+    m_Buffers.clear();
+    m_PendingAsyncSockets.clear();
+}
+
+bool HttpServer::changeHttpsPort(quint16 newPort)
+{
+    quint16 oldPort = m_ActiveHttpsPort;
+    Logger::info(QString("Changing HTTPS port from %1 to %2...")
+        .arg(oldPort)
+        .arg(newPort));
+
+    m_HttpsPort = newPort;
+    stop();
+
+    if (!start(newPort)) {
+        Logger::error(QString("Failed to bind new HTTPS port %1, falling back to %2")
+            .arg(newPort).arg(oldPort));
+        if (!start(oldPort)) {
+            Logger::error("Could not restart HTTPS server on any port");
+            return false;
+        }
+    }
+
+    Logger::info(QString("HTTPS port changed to %1").arg(m_ActiveHttpsPort));
+    return true;
 }
 
 // --- HTTP redirect ----------------------------------------------------------
 
 void HttpServer::onHttpConnection()
 {
+    if (!m_HttpServer) return;
     while (QTcpSocket* socket = m_HttpServer->nextPendingConnection()) {
         connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
             QByteArray data = socket->readAll();
@@ -369,9 +411,11 @@ void HttpServer::onHttpConnection()
                     break;
                 }
             }
-            QString redirectUrl = QString("https://%1:%2/").arg(host).arg(m_ActiveHttpsPort);
+            QString redirectUrl = m_HttpsPort == 443
+                ? QString("https://%1/").arg(host)
+                : QString("https://%1:%2/").arg(host).arg(m_HttpsPort);
             QByteArray resp;
-            resp.append("HTTP/1.1 301 Moved Permanently\r\n");
+            resp.append("HTTP/1.1 307 Temporary Redirect\r\n");
             resp.append("Location: " + redirectUrl.toUtf8() + "\r\n");
             resp.append("Content-Length: 0\r\n");
             resp.append("Connection: close\r\n");

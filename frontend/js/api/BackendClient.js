@@ -44,4 +44,20 @@ export class BackendClient {
     static async getAppList(hostId)       { return this.get(`/api/hosts/${hostId}/apps`); }
     static async launchApp(hostId, appId) { return this.post(`/api/hosts/${hostId}/start`, { appId }); }
     static async quitApp(hostId)          { return this.post(`/api/hosts/${hostId}/quit`); }
+
+    // ── Admin Settings ───────────────────────────────────────────────────────────
+
+    static async getAdminSettings()               { return this.get('/api/admin/settings'); }
+    static async saveAdminSettings(settings)      { return this.post('/api/admin/settings', settings); }
+
+    // ── Streaming Settings ───────────────────────────────────────────────────────
+
+    static async getStreamingSettings()            { return this.get('/api/settings/streaming'); }
+    static async saveStreamingSettings(settings)   { return this.post('/api/settings/streaming', settings); }
+
+    // ── DuckDNS ──────────────────────────────────────────────────────────────────
+
+    static async getDdnsConsent()         { return this.get('/api/ddns/consent'); }
+    static async setDdnsConsent(granted)  { return this.post('/api/ddns/consent', { granted }); }
+    static async configureDdnsToken(token) { return this.post('/api/ddns/configure', { token }); }
 }

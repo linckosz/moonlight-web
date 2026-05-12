@@ -23,6 +23,7 @@ public:
                   quint16 wsPort = 48001,
                   const QSslConfiguration& sslConfig = {},
                   const QString& serverHost = "localhost",
+                  VideoCodec videoCodec = VideoCodec::Auto,
                   QObject* parent = nullptr);
     ~StreamSession();
 

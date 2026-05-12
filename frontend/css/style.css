@@ -648,3 +648,333 @@ html, body {
     }
 }
 
+/* ========================================================================
+   Settings View
+   ======================================================================== */
+
+.settings-view,
+.admin-view {
+    width: 100%;
+    max-width: 640px;
+    margin: 0 auto;
+}
+
+.settings-header,
+.admin-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+
+.settings-header h2,
+.admin-header h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+/* Admin close button (X) */
+
+.admin-close-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1.3rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.admin-close-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.settings-section {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 20px;
+}
+
+.settings-section-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+}
+
+.settings-section-desc {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 20px;
+}
+
+.settings-section-desc code {
+    font-family: 'Consolas', 'Courier New', monospace;
+    background-color: var(--bg-primary);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.8rem;
+}
+
+.settings-field {
+    margin-bottom: 18px;
+}
+
+.settings-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+}
+
+.settings-input {
+    display: block;
+    width: 100%;
+    padding: 10px 14px;
+    font-size: 0.875rem;
+    font-family: 'Consolas', 'Courier New', monospace;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.settings-input:focus {
+    border-color: var(--accent);
+}
+
+.settings-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+/* Select dropdown (video codec selector, etc.) */
+
+.settings-select {
+    display: block;
+    width: 100%;
+    padding: 10px 14px;
+    font-size: 0.875rem;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    appearance: auto;
+    -webkit-appearance: auto;
+}
+
+.settings-select:focus {
+    border-color: var(--accent);
+}
+
+.settings-select option {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.settings-hint {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
+.settings-hint a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.settings-hint a:hover {
+    text-decoration: underline;
+}
+
+/* Checkbox styled as a toggle-like row */
+.settings-checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.settings-checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-top: 2px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.settings-checkbox-text {
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: var(--text-primary);
+}
+
+.settings-note {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin-top: 8px;
+    padding-left: 28px;
+}
+
+.settings-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+.btn-save {
+    background-color: var(--accent);
+    font-weight: 500;
+}
+
+.btn-save:disabled {
+    opacity: 0.5;
+    cursor: default;
+    background-color: var(--bg-card);
+    color: var(--text-secondary);
+}
+
+.settings-status {
+    margin-top: 16px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.settings-status-ok {
+    background-color: rgba(76, 175, 80, 0.12);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    color: #a5d6a7;
+}
+
+.settings-status-ok a {
+    color: #81c784;
+    text-decoration: underline;
+    font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.settings-status-pending {
+    background-color: rgba(255, 152, 0, 0.12);
+    border: 1px solid rgba(255, 152, 0, 0.3);
+    color: #ffcc80;
+}
+
+/* Header action buttons */
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.btn-icon:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.btn-icon.nav-active {
+    background-color: var(--accent);
+    color: #fff;
+}
+
+.btn-icon svg {
+    display: block;
+}
+
+/* ========================================================================
+   DDNS / Public Access Banner
+   ======================================================================== */
+
+.ddns-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 24px;
+    background-color: #1b5e20;
+    border-bottom: 1px solid #2e7d32;
+    font-size: 0.8rem;
+    color: #c8e6c9;
+    flex-shrink: 0;
+}
+
+.ddns-banner-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ddns-banner-text a {
+    color: #a5d6a7;
+    text-decoration: underline;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.8rem;
+}
+
+.ddns-banner-text a:hover {
+    color: #e8f5e9;
+}
+
+.ddns-banner-close {
+    background: none;
+    border: none;
+    color: #c8e6c9;
+    font-size: 1.15rem;
+    cursor: pointer;
+    padding: 0 4px 0 12px;
+    line-height: 1;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+}
+
+.ddns-banner-close:hover {
+    opacity: 1;
+}
+
+@media (max-width: 600px) {
+    .ddns-banner {
+        padding: 6px 12px;
+        font-size: 0.75rem;
+    }
+
+    .ddns-banner-text a {
+        font-size: 0.75rem;
+    }
+}
+

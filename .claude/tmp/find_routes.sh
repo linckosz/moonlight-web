@@ -1,0 +1,1 @@
+grep -rn "start\|/api/hosts\|/api/host/" d:\Code\moonlight-web-deepseek\backend\src\server\ --include="*.cpp" --include="*.h" 2>/dev/null | head -30

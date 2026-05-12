@@ -17,6 +17,7 @@ const HEVC_PPS = 34;
 
 export const CODEC_H264 = 'h264';
 export const CODEC_HEVC = 'hevc';
+export const CODEC_AV1 = 'av1';
 
 /**
  * Auto-detects codec type from NAL unit types found in an Annex B buffer.
