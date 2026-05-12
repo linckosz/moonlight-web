@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QStandardPaths>
+#include <QTimer>
 #include "server/AppSettings.h"
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
@@ -171,7 +172,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Start streaming — launch app + RTSP handshake
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, wsPort, &g_ActiveRelay, &server, preferredCodec](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, wsPort, &g_ActiveRelay, &server, &appSettings](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -205,7 +206,7 @@ int main(int argc, char* argv[])
             wsPort,
             server.sslConfiguration(),
             serverHost,
-            preferredCodec
+            appSettings.videoCodec()
         );
 
         // Track the relay for quit/cleanup
@@ -416,18 +417,36 @@ int main(int argc, char* argv[])
 
         if (body.contains("https_port")) {
             quint16 newPort = static_cast<quint16>(body["https_port"].toInt(443));
+            quint16 oldPort = server.activeHttpsPort();
 
             // Save to persistent settings
             appSettings.setHttpsPort(newPort);
 
-            // Attempt runtime port change
-            qInfo() << "[admin] Changing HTTPS port to" << newPort;
-            bool ok = server.changeHttpsPort(newPort);
-
             QJsonObject obj;
-            obj["status"] = ok ? "saved" : "partial";
-            obj["https_port"] = static_cast<int>(server.activeHttpsPort());
-            obj["restart_required"] = !ok;
+            obj["https_port"] = static_cast<int>(newPort);
+
+            if (newPort == oldPort || oldPort == 0) {
+                // Same port or server not running — nothing to restart
+                obj["status"] = "saved";
+            } else {
+                // Port changed: respond first, then restart the server.
+                // This ensures the HTTP response is flushed to the client
+                // before stop() closes all sockets.
+                obj["status"] = "saved";
+                obj["port_changed"] = true;
+
+                qInfo() << "[admin] Scheduled deferred HTTPS port change from"
+                        << oldPort << "to" << newPort;
+
+                QTimer::singleShot(0, [&server, newPort, oldPort]() {
+                    qInfo() << "[admin] Deferred: changing HTTPS port to" << newPort;
+                    if (!server.changeHttpsPort(newPort)) {
+                        qWarning() << "[admin] Port change failed, restoring" << oldPort;
+                        server.changeHttpsPort(oldPort);
+                    }
+                });
+            }
+
             return HttpResponse::json(obj);
         }
 

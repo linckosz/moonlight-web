@@ -123,10 +123,10 @@ const MoonlightApp = {
             localStorage.setItem('ddns_banner_dismissed', 'true');
         });
 
-        // Insert at the top of #app, above the header
-        const header = app.querySelector('.app-header');
-        if (header) {
-            app.insertBefore(banner, header);
+        // Insert between header and main content
+        const main = document.getElementById('main-content');
+        if (main) {
+            main.parentNode.insertBefore(banner, main);
         } else {
             app.prepend(banner);
         }
@@ -180,7 +180,7 @@ const MoonlightApp = {
         this.transition('settings');
         this._clearCurrentView();
         const main = document.getElementById('main-content');
-        this.settingsView = new SettingsView(main);
+        this.settingsView = new SettingsView(main, () => this.showHostList());
         this.settingsView.start();
         this._updateNavHighlight('settings');
     },

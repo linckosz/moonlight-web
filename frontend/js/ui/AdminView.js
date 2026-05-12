@@ -96,7 +96,7 @@ export class AdminView {
             <div class="admin-view" id="view-admin">
                 <div class="admin-header">
                     <h2>Admin Control Panel</h2>
-                    <button class="admin-close-btn" id="btn-admin-close"
+                    <button class="view-close-btn" id="btn-admin-close"
                             title="Close (discards unsaved changes)">&times;</button>
                 </div>
 
@@ -231,6 +231,19 @@ export class AdminView {
                     const result = await BackendClient.saveAdminSettings({ https_port: newPort });
                     if (result.status === 'saved') {
                         Toast.success('Port changed to ' + result.https_port);
+
+                        if (result.port_changed) {
+                            // Redirect browser to the new HTTPS port.
+                            // The backend changed the port asynchronously.
+                            const newUrl = new URL(window.location.href);
+                            newUrl.port = String(result.https_port);
+                            // Brief delay to let the toast appear before reload
+                            setTimeout(() => {
+                                window.location.href = newUrl.toString();
+                            }, 300);
+                            return;
+                        }
+
                         // Reload state to reflect actual bound port
                         await this._loadState();
                         portInput.value = String(this._httpsPort);
