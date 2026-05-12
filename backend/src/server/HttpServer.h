@@ -15,15 +15,22 @@ class HttpServer : public QObject
     Q_OBJECT
 
 public:
-    explicit HttpServer(quint16 httpPort = 48000, quint16 httpsPort = 48443,
+    explicit HttpServer(quint16 httpPort = 48000, quint16 httpsPort = 443,
                         QObject* parent = nullptr);
     ~HttpServer();
 
-    bool start();
+    /// Start servers. preferredHttpsPort is tried first, then fallback ranges.
+    bool start(quint16 preferredHttpsPort = 443);
     void stop();
 
     RestRouter* router() const { return m_Router; }
     QSslConfiguration sslConfiguration() const { return m_SslConfig; }
+
+    /// The port the HTTPS server actually bound to (0 if not started).
+    quint16 activeHttpsPort() const { return m_ActiveHttpsPort; }
+
+    /// The HTTP redirect server port.
+    quint16 httpPort() const { return m_HttpPort; }
 
     /// Reload TLS configuration from cert/ directory.
     /// Called after Let's Encrypt certificate acquisition.
@@ -56,6 +63,7 @@ private:
     StaticFileHandler* m_StaticFiles;
     quint16 m_HttpPort;
     quint16 m_HttpsPort;
+    quint16 m_ActiveHttpsPort = 0;
 
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;

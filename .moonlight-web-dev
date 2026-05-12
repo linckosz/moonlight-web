@@ -6,4 +6,4 @@
 #
 # This variable can also be set via the Qt runtime environment (qputenv),
 # which takes priority over this file.
-MOONLIGHT_DDNS_CONSENT=0
+MOONLIGHT_DDNS_CONSENT=1

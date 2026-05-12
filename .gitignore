@@ -40,6 +40,9 @@ backend/certs/
 # Agent session results
 .claude/results/
 
+# Local dev config (committed once, then ignored)
+.moonlight-web-dev
+
 # OS files
 .DS_Store
 Thumbs.db

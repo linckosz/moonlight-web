@@ -10,6 +10,7 @@
 #include <QSslCertificate>
 #include <QSslKey>
 #include <QSslConfiguration>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -90,7 +91,12 @@ HttpServer::~HttpServer()
 
 QString HttpServer::findCertDir()
 {
+    // Writable path first (AppData): catches Let's Encrypt certs from lego
+    // and self-signed certs generated at runtime — essential for MSI installs
+    // where the application directory is read-only.
+    QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QStringList candidates = {
+        appData + "/cert/",
         QString(CERT_DIR),
         QCoreApplication::applicationDirPath() + "/cert/",
         QCoreApplication::applicationDirPath() + "/../cert/",
@@ -219,7 +225,8 @@ bool HttpServer::reloadTls()
 
 bool HttpServer::generateSelfSignedCert()
 {
-    QString certDir = QCoreApplication::applicationDirPath() + "/cert/";
+    // Use AppData for writability — Program Files is read-only for MSI installs.
+    QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
     QDir().mkpath(certDir);
 
     QProcess gen;
@@ -256,7 +263,7 @@ bool HttpServer::generateSelfSignedCert()
     return loadCertFiles(certDir);
 }
 
-bool HttpServer::start()
+bool HttpServer::start(quint16 preferredHttpsPort)
 {
     Logger::info(QString("Qt SSL support=%1 build=%2 runtime=%3")
         .arg(QSslSocket::supportsSsl() ? "yes" : "NO")
@@ -265,6 +272,7 @@ bool HttpServer::start()
 
     bool hasHttps = loadCert();
 
+    // Start HTTP redirect server
     if (!m_HttpServer->listen(QHostAddress::Any, m_HttpPort)) {
         emit serverError("Failed to listen on port " + QString::number(m_HttpPort)
                           + ": " + m_HttpServer->errorString());
@@ -274,30 +282,64 @@ bool HttpServer::start()
             this, &HttpServer::onHttpConnection);
     Logger::info("HTTP redirect server on port " + QString::number(m_HttpPort));
 
+    // Start HTTPS with port fallback
     if (hasHttps) {
-        auto* sslServer = new SslServer(
-            m_SslConfig,
-            [this](QSslSocket* ssl) {
-                m_Buffers[ssl] = QByteArray();
-                connect(ssl, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
-                connect(ssl, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
-                if (ssl->bytesAvailable() > 0)
-                    onReadyReadSocket(ssl);
-            },
-            this
-        );
+        // Lambda to create and test an SslServer on a given port
+        auto tryHttpsPort = [this](quint16 port) -> SslServer* {
+            auto* ssl = new SslServer(
+                m_SslConfig,
+                [this](QSslSocket* socket) {
+                    m_Buffers[socket] = QByteArray();
+                    connect(socket, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
+                    connect(socket, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
+                    if (socket->bytesAvailable() > 0)
+                        onReadyReadSocket(socket);
+                },
+                this
+            );
+            if (ssl->listen(QHostAddress::Any, port))
+                return ssl;
+            delete ssl;
+            return nullptr;
+        };
 
-        if (!sslServer->listen(QHostAddress::Any, m_HttpsPort)) {
-            Logger::warning("HTTPS server failed to listen on port "
-                            + QString::number(m_HttpsPort));
-            delete sslServer;
+        // 1. Try the preferred port (default 443, or from settings.json)
+        Logger::info("HTTPS attempting preferred port " + QString::number(preferredHttpsPort));
+        m_HttpsServer = tryHttpsPort(preferredHttpsPort);
+        m_ActiveHttpsPort = preferredHttpsPort;
+
+        // 2. Fallback range 1: 49443 to 65443, step 1000
+        if (!m_HttpsServer) {
+            for (quint16 p = 49443; p <= 65443; p += 1000) {
+                m_HttpsServer = tryHttpsPort(p);
+                if (m_HttpsServer) {
+                    m_ActiveHttpsPort = p;
+                    break;
+                }
+            }
+        }
+
+        // 3. Fallback range 2: 49152 to 65535, step 1
+        if (!m_HttpsServer) {
+            for (quint16 p = 49152; p <= 65535; ++p) {
+                if ((p - 49152) % 1000 == 0)
+                    Logger::info("HTTPS scanning ports starting at " + QString::number(p));
+                m_HttpsServer = tryHttpsPort(p);
+                if (m_HttpsServer) {
+                    m_ActiveHttpsPort = p;
+                    break;
+                }
+            }
+        }
+
+        if (m_HttpsServer) {
+            Logger::info("HTTPS server started on port " + QString::number(m_ActiveHttpsPort));
         } else {
-            Logger::info("HTTPS server on port " + QString::number(m_HttpsPort));
-            m_HttpsServer = sslServer;
+            Logger::error("HTTPS server failed: no available port in any fallback range");
         }
     }
 
-    emit started(m_HttpsPort);
+    emit started(m_ActiveHttpsPort);
     return true;
 }
 
@@ -327,7 +369,7 @@ void HttpServer::onHttpConnection()
                     break;
                 }
             }
-            QString redirectUrl = QString("https://%1:%2/").arg(host).arg(m_HttpsPort);
+            QString redirectUrl = QString("https://%1:%2/").arg(host).arg(m_ActiveHttpsPort);
             QByteArray resp;
             resp.append("HTTP/1.1 301 Moved Permanently\r\n");
             resp.append("Location: " + redirectUrl.toUtf8() + "\r\n");
