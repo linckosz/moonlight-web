@@ -25,6 +25,10 @@ public:
     RestRouter* router() const { return m_Router; }
     QSslConfiguration sslConfiguration() const { return m_SslConfig; }
 
+    /// Reload TLS configuration from cert/ directory.
+    /// Called after Let's Encrypt certificate acquisition.
+    bool reloadTls();
+
 signals:
     void started(quint16 port);
     void serverError(const QString& message);

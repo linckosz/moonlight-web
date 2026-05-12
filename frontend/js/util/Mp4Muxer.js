@@ -187,100 +187,73 @@ export function getH264CodecString(sps) {
  * We extract the profile_tier_level from the SPS and build a minimal hvcC.
  */
 export function buildHvcCDescription(vps, sps, pps) {
-    if (!vps || !sps || !pps || sps.length < 4) return null;
+    if (!vps || !sps || !pps || sps.length < 15) return null;
 
-    // Parse SPS to extract profile_tier_level fields.
-    // After the 2-byte NAL header:
-    // sps_video_parameter_set_id (4 bits)
-    // sps_max_sub_layers_minus1 (3 bits)
-    // sps_temporal_id_nesting_flag (1 bit)
-    // Then profile_tier_level(sps_max_sub_layers_minus1)
+    // Build hvcC (HEVCDecoderConfigurationRecord) per ISO 14496-15.
     //
-    // The profile_tier_level general fields are always present:
-    // general_profile_space (2), general_tier_flag (1), general_profile_idc (5)
-    // general_profile_compatibility_flags (32)
-    // general_constraint_indicator_flags (48) -- includes general_*_source_flag
-    // general_level_idc (8)
-    // Total general part: 12 bytes + 1 optional sublayer flag byte
-
-    // Read bits from sps starting at byte 2 (after 2-byte NAL header)
-    const rbsp = sps.slice(2);
-
-    // Fast path: copy the first 12 bytes of profile_tier_level directly.
-    // This works because sps_max_sub_layers_minus1 is typically 0,
-    // so the profile_tier_level has exactly the 12 general bytes.
-    // The general_part starts at bit offset 8 (after the 8-bit SPS header
-    // fields: 4+3+1 bits).
+    // SPS layout (after 2-byte NAL header):
+    //   byte 2: sps_video_parameter_set_id(4) | sps_max_sub_layers_minus1(3) | temporal_id_nesting(1)
+    //   bytes 3-14: profile_tier_level general fields (12 bytes, always present):
+    //     byte 3:  general_profile_space(2) | general_tier_flag(1) | general_profile_idc(5)
+    //     bytes 4-7:  general_profile_compatibility_flags (4)
+    //     bytes 8-13: general_constraint_indicator_flags (6)
+    //     byte 14: general_level_idc
     //
-    // For simplicity, we start from rbsp[1] which contains the last 3 bits
-    // of sps_temporal_id_nesting_flag + first 5 bits of general_profile_idc.
+    // Fixed hvcC header: 22 bytes (configurationVersion + PTL + fixed fields).
+    // Each NAL array entry: 1 (type) + 2 (count) + 2 (length) = 5 + nal_unit.
 
-    // Calculate general_profile_idc from the first byte of PTL
-    const ptlByte0 = rbsp.length > 1 ? rbsp[1] : 0;
-    const general_profile_idc = ptlByte0 & 0x1F; // lower 5 bits
-
-    // General level is at rbsp[12] in the simplest case (max_sub_layers_minus1=0)
-    // But the exact offset depends on parsing. Use a safe default.
-    const general_level_idc = rbsp.length > 12 ? rbsp[12] : 93; // level 5.1 default
-
-    // Build hvcC
-    const hvcCLen = 30 + vps.length + sps.length + pps.length;
+    // Fixed header: 1 (version) + 12 (PTL) + 2 + 1 + 1 + 1 + 1 + 2 + 1 + 1 = 23
+    // Each NAL array entry: 5 (1 type + 2 count + 2 length) + NAL data
+    const hvcCLen = 23 + 5 + vps.length + 5 + sps.length + 5 + pps.length;
     const buf = new Uint8Array(hvcCLen);
     let off = 0;
 
     // configurationVersion
     buf[off++] = 0x01;
 
-    // ---- profile_tier_level general fields (12 bytes) ----
-    // Copy the general part from SPS bytes 2-13 (includes 2-byte NAL header skip)
-    // Bytes: general_profile_space(2)+tier_flag(1)+general_profile_idc(5) = 1 byte
-    //        general_profile_compatibility_flags = 4 bytes
-    //        general_constraint_indicator_flags = 6 bytes
-    //        general_level_idc = 1 byte
-    // Total = 12 bytes
-    // These start at byte offset 2 (after NAL header) + 1 (after sps header fields)
-    if (sps.length >= 15) {
-        // Copy profile_tier_level general fields from SPS bytes 3-14
-        // Byte 3: last bit of sps header + first 7 bits of PTL
-        // We reconstruct it: general_profile_space=0, tier_flag=0, general_profile_idc from SPS
-        buf[off++] = general_profile_idc & 0x1F; // general_profile_space=0, tier=0
-        buf.set(sps.slice(4, 8), off); off += 4;  // compatibility flags
-        buf.set(sps.slice(8, 14), off); off += 6; // constraint + level_idc
-    } else {
-        // Fallback: use compact profile_tier_level
-        buf[off++] = general_profile_idc & 0x1F;
-        buf[off++] = 0x60; buf[off++] = 0x00; buf[off++] = 0x00; buf[off++] = 0x00; // compat flags
-        buf[off++] = 0x00; buf[off++] = 0x00; buf[off++] = 0x00; buf[off++] = 0x00;
-        buf[off++] = 0x00; buf[off++] = 0x00; // constraint
-        buf[off++] = general_level_idc;
-    }
+    // profile_tier_level general fields — copy directly from SPS bytes 3-14
+    buf.set(sps.slice(3, 15), off); off += 12;
 
-    // Remaining fixed fields
-    buf[off++] = 0xF0; buf[off++] = 0x00; // min_spatial_segmentation_idc (reserved + 0)
-    buf[off++] = 0xFC;                     // parallelismType (reserved + 0)
-    buf[off++] = 0xFC | 0x01;             // chromaFormat = 1 (4:2:0)
-    buf[off++] = 0xF8;                     // bitDepthLumaMinus8 = 0
-    buf[off++] = 0xF8;                     // bitDepthChromaMinus8 = 0
-    buf[off++] = 0x00; buf[off++] = 0x00; // avgFrameRate (0 = unspecified)
-    buf[off++] = 0x0F;                     // constantFrameRate(0) | numTemporalLayers(1) | temporalIdNested(1) | lengthSizeMinusOne(3)
-    buf[off++] = 0x03;                     // numOfArrays = 3 (VPS, SPS, PPS)
+    // min_spatial_segmentation_idc: reserved(4) + 0
+    buf[off++] = 0xF0; buf[off++] = 0x00;
+
+    // parallelismType: reserved(6) + 0
+    buf[off++] = 0xFC;
+
+    // chromaFormat: reserved(6) + chroma_format_idc (1 = 4:2:0)
+    buf[off++] = 0xFC | 0x01;
+
+    // bitDepthLumaMinus8: reserved(5) + 0
+    buf[off++] = 0xF8;
+
+    // bitDepthChromaMinus8: reserved(5) + 0
+    buf[off++] = 0xF8;
+
+    // avgFrameRate (0 = unspecified)
+    buf[off++] = 0x00; buf[off++] = 0x00;
+
+    // constantFrameRate(2)=0 | numTemporalLayers(3)=1 | temporalIdNested(1)=1 | lengthSizeMinusOne(2)=3
+    buf[off++] = 0x0F;
+
+    // numOfArrays = 3 (VPS, SPS, PPS)
+    buf[off++] = 0x03;
 
     // VPS array
-    buf[off++] = 0x00 | HEVC_VPS;         // completeness=0, NAL_unit_type=32
-    buf[off++] = 0x00; buf[off++] = 0x01; // numNalus = 1
+    buf[off++] = 0x00 | HEVC_VPS;
+    buf[off++] = 0x00; buf[off++] = 0x01;
     buf[off++] = (vps.length >> 8) & 0xFF;
     buf[off++] = vps.length & 0xFF;
     buf.set(vps, off); off += vps.length;
 
     // SPS array
-    buf[off++] = 0x00 | HEVC_SPS;         // NAL_unit_type=33
+    buf[off++] = 0x00 | HEVC_SPS;
     buf[off++] = 0x00; buf[off++] = 0x01;
     buf[off++] = (sps.length >> 8) & 0xFF;
     buf[off++] = sps.length & 0xFF;
     buf.set(sps, off); off += sps.length;
 
     // PPS array
-    buf[off++] = 0x00 | HEVC_PPS;         // NAL_unit_type=34
+    buf[off++] = 0x00 | HEVC_PPS;
     buf[off++] = 0x00; buf[off++] = 0x01;
     buf[off++] = (pps.length >> 8) & 0xFF;
     buf[off++] = pps.length & 0xFF;

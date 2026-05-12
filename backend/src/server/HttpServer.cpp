@@ -207,6 +207,16 @@ bool HttpServer::renewWithLego()
     return true;
 }
 
+bool HttpServer::reloadTls()
+{
+    QString certDir = findCertDir();
+    if (certDir.isEmpty()) {
+        Logger::warning("[TLS] No certificate directory found, cannot reload");
+        return false;
+    }
+    return loadCertFiles(certDir);
+}
+
 bool HttpServer::generateSelfSignedCert()
 {
     QString certDir = QCoreApplication::applicationDirPath() + "/cert/";
