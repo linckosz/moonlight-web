@@ -40,6 +40,10 @@ private:
     void sendResponse(QTcpSocket* socket, const HttpResponse& response);
     HttpRequest parseRequest(const QByteArray& raw) const;
     bool loadCert();
+    QString findCertDir();
+    bool loadCertFiles(const QString& certDir);
+    bool renewWithLego();
+    bool generateSelfSignedCert();
 
     QTcpServer* m_HttpServer;
     QTcpServer* m_HttpsServer;

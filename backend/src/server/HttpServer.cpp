@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QSslCertificate>
 #include <QSslKey>
 #include <QSslConfiguration>
@@ -87,7 +88,7 @@ HttpServer::~HttpServer()
     stop();
 }
 
-bool HttpServer::loadCert()
+QString HttpServer::findCertDir()
 {
     QStringList candidates = {
         QString(CERT_DIR),
@@ -96,19 +97,15 @@ bool HttpServer::loadCert()
         QString(FRONTEND_DIR) + "/../backend/cert/",
     };
 
-    QString certDir;
     for (const auto& d : candidates) {
-        if (QFile::exists(d + "cert.pem") && QFile::exists(d + "key.pem")) {
-            certDir = d;
-            break;
-        }
+        if (QFile::exists(d + "cert.pem") && QFile::exists(d + "key.pem"))
+            return d;
     }
+    return {};
+}
 
-    if (certDir.isEmpty()) {
-        Logger::warning("SSL cert not found — HTTPS disabled");
-        return false;
-    }
-
+bool HttpServer::loadCertFiles(const QString& certDir)
+{
     QString certPath = certDir + "cert.pem";
     QString keyPath = certDir + "key.pem";
 
@@ -129,7 +126,7 @@ bool HttpServer::loadCert()
     keyFile.close();
 
     if (cert.isNull() || key.isNull()) {
-        Logger::warning("SSL cert/key invalid — HTTPS disabled");
+        Logger::warning("SSL cert/key invalid");
         return false;
     }
 
@@ -138,9 +135,115 @@ bool HttpServer::loadCert()
     m_SslConfig.setPrivateKey(key);
     m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
 
-    // SSL configuration is applied per-socket in SslServer::incomingConnection()
     Logger::info("SSL certificate loaded from " + certDir);
     return true;
+}
+
+bool HttpServer::loadCert()
+{
+    QString certDir = findCertDir();
+
+    if (!certDir.isEmpty()) {
+        Logger::info("SSL certificate found in " + certDir);
+
+        if (!loadCertFiles(certDir)) {
+            Logger::warning("Failed to load certificate files");
+            return generateSelfSignedCert();
+        }
+
+        QDateTime expiry = m_SslConfig.localCertificate().expiryDate();
+        QDateTime renewThreshold = QDateTime::currentDateTimeUtc().addDays(14);
+
+        if (expiry > renewThreshold) {
+            Logger::info(QString("SSL certificate valid until %1, no renewal needed")
+                .arg(expiry.toString("yyyy-MM-dd")));
+            return true;
+        }
+
+        Logger::warning(QString("SSL certificate expires %1, attempting lego renewal...")
+            .arg(expiry.toString("yyyy-MM-dd")));
+
+        if (renewWithLego()) {
+            Logger::info("Certificate renewed, reloading...");
+            return loadCertFiles(certDir);
+        }
+
+        Logger::warning("Lego renewal failed, falling back to self-signed certificate");
+    } else {
+        Logger::warning("No SSL certificate files found, generating self-signed certificate");
+    }
+
+    return generateSelfSignedCert();
+}
+
+bool HttpServer::renewWithLego()
+{
+    QProcess lego;
+    lego.setProcessChannelMode(QProcess::MergedChannels);
+    lego.start("lego", QStringList() << "renew");
+
+    if (!lego.waitForStarted(5000)) {
+        Logger::warning("lego not found in PATH, cannot auto-renew");
+        return false;
+    }
+
+    if (!lego.waitForFinished(60000)) {
+        lego.kill();
+        lego.waitForFinished(5000);
+        Logger::warning("lego renew timed out after 60s");
+        return false;
+    }
+
+    QByteArray output = lego.readAll();
+
+    if (lego.exitCode() != 0) {
+        Logger::warning(QString("lego renew failed (exit %1): %2")
+            .arg(lego.exitCode())
+            .arg(QString::fromUtf8(output).trimmed()));
+        return false;
+    }
+
+    Logger::info("lego renew completed successfully");
+    return true;
+}
+
+bool HttpServer::generateSelfSignedCert()
+{
+    QString certDir = QCoreApplication::applicationDirPath() + "/cert/";
+    QDir().mkpath(certDir);
+
+    QProcess gen;
+    gen.setProcessChannelMode(QProcess::MergedChannels);
+    gen.start("openssl", QStringList()
+        << "req" << "-x509" << "-newkey" << "rsa:2048"
+        << "-keyout" << (certDir + "key.pem")
+        << "-out" << (certDir + "cert.pem")
+        << "-days" << "365" << "-nodes"
+        << "-subj" << "/CN=Moonlight-Web");
+
+    if (!gen.waitForStarted(5000)) {
+        Logger::error("openssl not found in PATH, cannot generate self-signed certificate");
+        return false;
+    }
+
+    if (!gen.waitForFinished(30000)) {
+        gen.kill();
+        gen.waitForFinished(5000);
+        Logger::error("openssl timed out generating self-signed certificate");
+        return false;
+    }
+
+    QByteArray output = gen.readAll();
+
+    if (gen.exitCode() != 0) {
+        Logger::error(QString("openssl failed (exit %1): %2")
+            .arg(gen.exitCode())
+            .arg(QString::fromUtf8(output).trimmed()));
+        return false;
+    }
+
+    Logger::info("Self-signed certificate generated in " + certDir);
+    return loadCertFiles(certDir);
 }
 
 bool HttpServer::start()

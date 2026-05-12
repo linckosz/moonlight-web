@@ -15,8 +15,8 @@ const HEVC_VPS = 32;
 const HEVC_SPS = 33;
 const HEVC_PPS = 34;
 
-const CODEC_H264 = 'h264';
-const CODEC_HEVC = 'hevc';
+export const CODEC_H264 = 'h264';
+export const CODEC_HEVC = 'hevc';
 
 /**
  * Auto-detects codec type from NAL unit types found in an Annex B buffer.
@@ -374,19 +374,22 @@ export const HEVC_FALLBACK_CODEC_STRINGS = [
  * When stripParams is true, SPS/PPS (H.264) or VPS/SPS/PPS (HEVC) NAL units
  * are skipped because the decoder already has them via the description.
  */
-export function toAvcc(annexB, stripParams = false) {
+export function toAvcc(annexB, stripParams = false, codec = null) {
     const nals = splitNals(annexB);
     const parts = [];
     for (const n of nals) {
         if (n.length < 1) continue;
-        const type = n[0] & 0x1F;
 
-        // HEVC: check 2-byte header
-        if (stripParams && n.length >= 2) {
-            const hevcType = (n[0] >> 1) & 0x3F;
-            if (hevcType === HEVC_VPS || hevcType === HEVC_SPS || hevcType === HEVC_PPS) continue;
+        if (stripParams) {
+            if (codec === CODEC_HEVC && n.length >= 2) {
+                const hevcType = (n[0] >> 1) & 0x3F;
+                if (hevcType === HEVC_VPS || hevcType === HEVC_SPS || hevcType === HEVC_PPS) continue;
+            }
+            if (codec === CODEC_H264 || (!codec && n.length < 2)) {
+                const type = n[0] & 0x1F;
+                if (type === H264_SPS || type === H264_PPS) continue;
+            }
         }
-        if (stripParams && (type === H264_SPS || type === H264_PPS)) continue;
 
         const l = n.length;
         parts.push((l>>24)&0xFF, (l>>16)&0xFF, (l>>8)&0xFF, l&0xFF);
