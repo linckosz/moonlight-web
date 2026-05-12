@@ -1,7 +1,10 @@
 #include <QCoreApplication>
 #include <QCommandLineParser>
+#include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QPointer>
+#include <QStandardPaths>
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "common/Logger.h"
@@ -9,6 +12,7 @@
 #include "backend/IdentityManager.h"
 #include "streaming/Session.h"
 #include "streaming/StreamRelay.h"
+#include "network/DdnsClient.h"
 
 int main(int argc, char* argv[])
 {
@@ -286,6 +290,104 @@ int main(int argc, char* argv[])
 
     if (!server.start())
         return 1;
+
+    // Phase N: DuckDNS dynamic DNS
+    bool ddnsConsentPending = false;
+    bool ddnsConsentResult = false;
+
+    DdnsClient ddns([&server]() {
+        // Cert reload callback — called after Let's Encrypt cert obtained
+        qInfo() << "[main] Let's Encrypt cert obtained, reloading TLS...";
+        if (!server.reloadTls()) {
+            qWarning() << "[main] TLS reload failed";
+        }
+    });
+
+    QObject::connect(&ddns, &DdnsClient::consentRequired, [&]() {
+        qInfo() << "[main] DuckDNS consent required";
+        ddnsConsentPending = true;
+    });
+
+    QObject::connect(&ddns, &DdnsClient::registered,
+        [](const QString& subdomain, const QString& ip) {
+        qInfo() << "[main] DuckDNS registered:" << subdomain << "->" << ip;
+    });
+
+    QObject::connect(&ddns, &DdnsClient::certObtained, []() {
+        qInfo() << "[main] Let's Encrypt certificate obtained and loaded";
+    });
+
+    QObject::connect(&ddns, &DdnsClient::errorOccurred, [](const QString& msg) {
+        qWarning() << "[main] DuckDNS error:" << msg;
+    });
+
+    // API route: get DuckDNS consent status
+    server.router()->get("/api/ddns/consent", [&](const HttpRequest&) {
+        QJsonObject obj;
+        obj["asked"] = !ddnsConsentPending && (ddns.isActive() || !ddns.subdomain().isEmpty());
+        obj["pending"] = ddnsConsentPending;
+        obj["active"] = ddns.isActive();
+        if (ddns.isActive()) {
+            obj["subdomain"] = ddns.subdomain();
+        }
+        return HttpResponse::json(obj);
+    });
+
+    // API route: submit DuckDNS consent decision
+    server.router()->post("/api/ddns/consent", [&](const HttpRequest& req) {
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QJsonObject body = doc.object();
+        if (!body.contains("granted")) {
+            return HttpResponse::error(400, "Missing 'granted' field");
+        }
+
+        bool granted = body["granted"].toBool();
+        ddnsConsentPending = false;
+        ddnsConsentResult = granted;
+        ddns.setConsent(granted);
+
+        QJsonObject obj;
+        obj["status"] = granted ? "accepted" : "declined";
+        return HttpResponse::json(obj);
+    });
+
+    // API route: configure DuckDNS token (must be done before start)
+    server.router()->post("/api/ddns/configure", [&](const HttpRequest& req) {
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QJsonObject body = doc.object();
+        if (!body.contains("token")) {
+            return HttpResponse::error(400, "Missing 'token' field");
+        }
+
+        QString token = body["token"].toString();
+        // Save token to settings (DdnsClient.loadSettings will pick it up on next start)
+        QString settingsDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QDir().mkpath(settingsDir);
+        QString settingsPath = settingsDir + "/settings.json";
+        QFile file(settingsPath);
+        QJsonObject settings;
+        if (file.open(QIODevice::ReadOnly)) {
+            settings = QJsonDocument::fromJson(file.readAll()).object();
+            file.close();
+        }
+        settings["ddns_token"] = token;
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            file.write(QJsonDocument(settings).toJson(QJsonDocument::Indented));
+            file.close();
+        }
+
+        qInfo() << "[main] DuckDNS token configured";
+
+        // Apply token and re-trigger DuckDNS registration
+        ddns.configure(token);
+
+        QJsonObject obj;
+        obj["status"] = "configured";
+        return HttpResponse::json(obj);
+    });
+
+    // Start DuckDNS workflow (will emit consentRequired if first launch)
+    ddns.start();
 
     Logger::info("Server ready. Open http://localhost:" + QString::number(port) + " in your browser.");
 

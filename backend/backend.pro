@@ -29,6 +29,7 @@ SOURCES += \
     src/server/StaticFileHandler.cpp \
     src/server/RestRouter.cpp \
     src/common/Logger.cpp \
+    src/network/DdnsClient.cpp \
     src/backend/NvHTTP.cpp \
     src/backend/NvComputer.cpp \
     src/backend/ComputerManager.cpp \
@@ -78,6 +79,7 @@ HEADERS += \
     src/server/RestRouter.h \
     src/common/Logger.h \
     src/common/Types.h \
+    src/network/DdnsClient.h \
     src/backend/NvAddress.h \
     src/backend/NvApp.h \
     src/backend/NvHTTP.h \
