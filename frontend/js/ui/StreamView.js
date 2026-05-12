@@ -19,12 +19,18 @@ import {
     CODEC_H264,
     CODEC_HEVC
 } from '../util/Mp4Muxer.js';
+import {
+    findSequenceHeader,
+    buildAv1DecoderConfigs,
+    CODEC_AV1
+} from '../util/Av1Utils.js';
 
 export class StreamView {
-    constructor(container, wsUrl, host) {
+    constructor(container, wsUrl, host, videoCodec) {
         this.container = container;
         this.wsUrl = wsUrl;
         this.host = host;
+        this.videoCodec = videoCodec || 'auto';
         this.ws = new WebSocketClient(wsUrl);
         this.pointerLocked = false;
 
@@ -104,6 +110,7 @@ export class StreamView {
                     <span class="stream-status-dot status-connecting"></span>
                     Connecting...
                 </div>
+                <div class="stream-codec-badge" id="stream-codec-badge">${this.videoCodec.toUpperCase()}</div>
                 <button class="btn stream-quit-btn" id="btn-stream-quit">Stop Streaming</button>
             </div>
             <div class="stream-canvas-area">
@@ -496,12 +503,20 @@ export class StreamView {
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
             console.log('[StreamView] First video frame: isKeyframe=' + isKeyframe,
-                        'size=' + data.length);
-            // Log first 16 bytes of frame data to see NAL types
+                        'size=' + data.length + ' codec=' + this.videoCodec);
             const hex = Array.from(data.slice(0, Math.min(16, data.length)))
                 .map(b => b.toString(16).padStart(2, '0')).join(' ');
             console.log('[StreamView] First 16 bytes:', hex);
         }
+
+        // AV1 pipeline: no NAL units, no SPS/PPS, no Annex B start codes.
+        // OBUs are passed directly to the decoder.
+        if (this.videoCodec === CODEC_AV1) {
+            this.handleAv1Frame(data, isKeyframe);
+            return;
+        }
+
+        // --- H.264 / HEVC pipeline (existing) ---
 
         // Extract SPS/PPS from the first keyframe if not done yet
         if (!this.nalParser.isReady()) {
@@ -539,6 +554,128 @@ export class StreamView {
 
         // Submit frame to decoder
         this.decodeFrame(data, isKeyframe);
+    }
+
+    // --- AV1 pipeline ---
+
+    handleAv1Frame(data, isKeyframe) {
+        // On first keyframe, extract the Sequence Header OBU for decoder config
+        // and immediately configure the decoder.
+        if (!this.decoderConfigured && !this.decoderConfiguring) {
+            if (isKeyframe) {
+                console.log('[StreamView] AV1: extracting Sequence Header OBU from first keyframe');
+                const seqHeader = findSequenceHeader(data);
+                if (seqHeader) {
+                    console.log('[StreamView] AV1: Sequence Header OBU found, size=' + seqHeader.length);
+                } else {
+                    console.log('[StreamView] AV1: no Sequence Header OBU found, configuring without description');
+                }
+                this.configureAv1Decoder(seqHeader || undefined);
+            } else {
+                // Wait for a keyframe before configuring — buffer until then
+                if (this.pendingFrames.length < 120) {
+                    this.pendingFrames.push({ data, isKeyframe });
+                }
+                return;
+            }
+        }
+
+        // Submit frame to AV1 decoder (no AVCC conversion needed)
+        this.decodeAv1Frame(data, isKeyframe);
+    }
+
+    configureAv1Decoder(seqHeaderObu) {
+        if (this.decoderConfigured || this.decoderConfiguring) return;
+        if (!this.decoder) {
+            console.warn('[StreamView] configureAv1Decoder: no decoder, calling setupDecoder()');
+            this.setupDecoder();
+        }
+        this.decoderConfiguring = true;
+
+        console.log('[StreamView] configureAv1Decoder STARTED, seqHeader=' +
+            (seqHeaderObu ? seqHeaderObu.length + ' bytes' : 'none'));
+
+        const configs = buildAv1DecoderConfigs(seqHeaderObu || null);
+
+        const tryCodecs = (index) => {
+            if (index >= configs.length) {
+                console.error('[StreamView] All AV1 codec configs rejected');
+                this.decoderConfiguring = false;
+                this.setStatus('error', 'AV1 codec not supported by browser');
+                return;
+            }
+
+            const cfg = configs[index];
+            console.log('[StreamView] Testing AV1 config[' + index + ']: codec=' + cfg.codec +
+                ' desc=' + (cfg.description ? cfg.description.byteLength + ' bytes' : 'none'));
+
+            VideoDecoder.isConfigSupported(cfg).then((result) => {
+                if (result.supported) {
+                    console.log('[StreamView] AV1 config supported: codec=' + cfg.codec);
+                    try {
+                        this.decoder.configure(cfg);
+                        this.decoderConfigured = true;
+                        this.decoderConfiguring = false;
+                        console.log('[StreamView] AV1 VideoDecoder configured OK with codec=' + cfg.codec +
+                            ', dequeuing ' + this.pendingFrames.length + ' pending frames');
+                        // Drain pending frames using AV1 decoder path (not flushPendingFrames
+                        // which calls toAvcc() and corrupts OBU data).
+                        while (this.pendingFrames.length > 0) {
+                            const entry = this.pendingFrames.shift();
+                            this.decodeAv1Frame(entry.data, entry.isKeyframe);
+                        }
+                    } catch (e) {
+                        console.warn('[StreamView] AV1 applyConfig failed, trying next:', e.message);
+                        tryCodecs(index + 1);
+                    }
+                } else {
+                    console.log('[StreamView] AV1 config NOT supported: codec=' + cfg.codec + ', trying next');
+                    tryCodecs(index + 1);
+                }
+            }).catch((err) => {
+                console.warn('[StreamView] AV1 isConfigSupported error for codec=' + cfg.codec + ':', err.message);
+                tryCodecs(index + 1);
+            });
+        };
+
+        tryCodecs(0);
+    }
+
+    decodeAv1Frame(data, isKeyframe) {
+        if (!this.decoderConfigured) {
+            // Buffer until decoder is ready (limit to avoid OOM)
+            if (this.pendingFrames.length < 120) {
+                this.pendingFrames.push({ data, isKeyframe });
+            }
+            return;
+        }
+
+        // Belt-and-suspenders: decoder was nulled during cleanup
+        if (!this.decoder) {
+            console.warn('[StreamView] decodeAv1Frame: decoder is null, dropping frame');
+            return;
+        }
+
+        const timestamp = this.frameCount * 16667;
+        this.frameCount++;
+
+        const type = isKeyframe ? 'key' : 'delta';
+
+        // AV1 data is raw OBUs — no conversion needed (no Annex B, no AVCC).
+        // The VideoDecoder parses OBU framing directly.
+        try {
+            const chunk = new EncodedVideoChunk({
+                type: type,
+                timestamp: timestamp,
+                duration: 16667,
+                data: data
+            });
+            this.decoder.decode(chunk);
+            this.stats.received++;
+        } catch (err) {
+            console.error('[StreamView] decodeAv1Frame() error:', err.message, err);
+            this.stats.dropped++;
+        }
     }
 
     // =========================================================================

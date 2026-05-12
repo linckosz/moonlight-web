@@ -54,6 +54,19 @@
     50% { opacity: 0.3; }
 }
 
+.stream-codec-badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    padding: 2px 8px;
+    letter-spacing: 0.5px;
+    margin-left: auto;
+    margin-right: 12px;
+}
+
 .stream-quit-btn {
     padding: 6px 18px;
     font-size: 13px;

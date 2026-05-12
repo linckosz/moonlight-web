@@ -54,24 +54,6 @@ void DdnsClient::start()
     }
 
     if (!m_ConsentAsked) {
-        // Dev bypass: env var MOONLIGHT_DDNS_CONSENT=1 or .moonlight-web-dev file
-        // at project root silently grants consent (no installer, no UI popup).
-        if (qEnvironmentVariableIntValue("MOONLIGHT_DDNS_CONSENT") == 1) {
-            qInfo() << "[DdnsClient] MOONLIGHT_DDNS_CONSENT=1 — consent auto-granted (env)";
-            setConsent(true);
-            return;
-        }
-        // Walk up from the executable to find .moonlight-web-dev at project root.
-        // Build directories vary (backend/build/debug/, build/<qt>/backend/debug/),
-        // so we can't hardcode the number of ../ steps.
-        QDir dir(QCoreApplication::applicationDirPath());
-        while (!dir.exists(".moonlight-web-dev") && dir.cdUp()) { }
-        if (dir.exists(".moonlight-web-dev")) {
-            qInfo() << "[DdnsClient] .moonlight-web-dev found — consent auto-granted (file)";
-            setConsent(true);
-            return;
-        }
-        // No bypass — ask for consent via UI
         emit consentRequired();
         return;
     }

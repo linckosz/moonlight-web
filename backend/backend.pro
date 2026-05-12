@@ -1,4 +1,4 @@
-QT += core network websockets
+QT += core network websockets widgets
 CONFIG += c++17 console
 TEMPLATE = app
 
@@ -25,11 +25,13 @@ INCLUDEPATH += $$PWD/libs/windows/include/x64
 
 SOURCES += \
     src/main.cpp \
+    src/server/AppSettings.cpp \
     src/server/HttpServer.cpp \
     src/server/StaticFileHandler.cpp \
     src/server/RestRouter.cpp \
     src/common/Logger.cpp \
     src/network/DdnsClient.cpp \
+    src/TrayManager.cpp \
     src/backend/NvHTTP.cpp \
     src/backend/NvComputer.cpp \
     src/backend/ComputerManager.cpp \
@@ -74,12 +76,14 @@ SOURCES += \
     third_party/moonlight-common-c/src/RtpAudioQueue.c
 
 HEADERS += \
+    src/server/AppSettings.h \
     src/server/HttpServer.h \
     src/server/StaticFileHandler.h \
     src/server/RestRouter.h \
     src/common/Logger.h \
     src/common/Types.h \
     src/network/DdnsClient.h \
+    src/TrayManager.h \
     src/backend/NvAddress.h \
     src/backend/NvApp.h \
     src/backend/NvHTTP.h \

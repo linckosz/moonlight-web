@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+    <!--
+        Moonlight-Web — Windows Installer Package
+
+        Build process:
+          1. deploy.bat      — stage all runtime files into deploy/Moonlight-Web/
+          2. build_msi.bat   — heat + candle + light to produce the MSI
+
+        Variables (passed via candle.exe -d):
+          - DeployDir : absolute path to the staged deploy directory
+    -->
+
+    <Product Id="*"
+             Name="Moonlight-Web"
+             Language="1033"
+             Version="0.1.0"
+             Manufacturer="Moonlight-Web"
+             UpgradeCode="550F5B3E-4C7A-4F5A-8B3C-9D8F2A1E4C7B">
+
+        <Package InstallerVersion="200"
+                 Compressed="yes"
+                 InstallScope="perMachine"
+                 Platform="x64"
+                 Manufacturer="Moonlight-Web"
+                 Description="Moonlight-Web Game Streaming Client"
+                 Comments="Moonlight-Web allows streaming games from Sunshine-compatible hosts in a browser." />
+
+        <!-- Allow upgrades and block downgrades -->
+        <MajorUpgrade DowngradeErrorMessage="A newer version of Moonlight-Web is already installed. Please uninstall it first."
+                      AllowSameVersionUpgrades="yes" />
+
+        <!-- Media template embeds cabinet inside the MSI -->
+        <MediaTemplate EmbedCab="yes" />
+
+        <!-- Directory structure -->
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder">
+                <Directory Id="APPLICATIONFOLDER" Name="Moonlight-Web" />
+            </Directory>
+            <Directory Id="ProgramMenuFolder" />
+        </Directory>
+
+        <!-- Start Menu shortcut -->
+        <DirectoryRef Id="ProgramMenuFolder">
+            <Component Id="ApplicationShortcut" Guid="*">
+                <Shortcut Id="MoonlightWebShortcut"
+                          Name="Moonlight-Web"
+                          Description="Moonlight-Web Game Streaming Client"
+                          Target="[APPLICATIONFOLDER]mw-server.exe"
+                          WorkingDirectory="APPLICATIONFOLDER" />
+                <RemoveFolder Id="RemoveProgramMenuDir" On="uninstall" />
+                <RegistryValue Root="HKCU"
+                               Key="Software\Moonlight-Web"
+                               Name="installed"
+                               Type="integer"
+                               Value="1"
+                               KeyPath="yes" />
+            </Component>
+        </DirectoryRef>
+
+        <!-- Feature: includes all harvested files + shortcut -->
+        <Feature Id="MainFeature"
+                 Title="Moonlight-Web"
+                 Description="Moonlight-Web Game Streaming Client"
+                 Level="1">
+            <ComponentGroupRef Id="DeployedFiles" />
+            <ComponentRef Id="ApplicationShortcut" />
+        </Feature>
+
+        <!-- UI: minimal wizard -->
+        <UIRef Id="WixUI_Minimal" />
+
+        <!-- Icon for Add/Remove Programs -->
+        <Icon Id="app.ico" SourceFile="$(var.DeployDir)\mw-server.exe" />
+        <Property Id="ARPPRODUCTICON" Value="app.ico" />
+
+        <!-- Publisher link in Add/Remove Programs -->
+        <Property Id="ARPURLINFOABOUT" Value="https://github.com/moonlight-stream/moonlight-web" />
+
+    </Product>
+</Wix>

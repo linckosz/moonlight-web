@@ -36,6 +36,11 @@ public:
     /// Called after Let's Encrypt certificate acquisition.
     bool reloadTls();
 
+    /// Change the HTTPS port at runtime. Stops current listeners and
+    /// re-binds to the new port. Returns true if the new port binds OK.
+    /// All existing connections are closed during the transition.
+    bool changeHttpsPort(quint16 newPort);
+
 signals:
     void started(quint16 port);
     void serverError(const QString& message);

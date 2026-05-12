@@ -19,6 +19,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                quint16 wsPort,
                                const QSslConfiguration& sslConfig,
                                const QString& serverHost,
+                               VideoCodec videoCodec,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -29,6 +30,9 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_SslConfig(sslConfig)
     , m_ServerHost(serverHost)
 {
+    // Apply video codec preference from settings (default Auto)
+    m_Config.codec = videoCodec;
+    qInfo() << "[Session] Video codec preference set to" << static_cast<int>(videoCodec);
 }
 
 StreamSession::~StreamSession()
@@ -261,6 +265,14 @@ void StreamSession::onShimConnectionStarted()
     result["wsUrl"] = m_Relay->wsUrl();
     result["wsPort"] = static_cast<int>(m_Relay->wsPort());
     result["sessionUrl"] = m_SessionUrl;
+
+    // Report the negotiated video codec back to the browser
+    switch (m_Config.codec) {
+    case VideoCodec::H264: result["videoCodec"] = "h264"; break;
+    case VideoCodec::HEVC: result["videoCodec"] = "hevc"; break;
+    case VideoCodec::AV1:  result["videoCodec"] = "av1";  break;
+    default:               result["videoCodec"] = "auto";  break;
+    }
 
     m_Respond(HttpResponse::json(result));
     emit sessionStarted();

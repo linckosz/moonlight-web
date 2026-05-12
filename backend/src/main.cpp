@@ -1,4 +1,4 @@
-#include <QCoreApplication>
+#include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFile>
@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QStandardPaths>
+#include "server/AppSettings.h"
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "common/Logger.h"
@@ -14,10 +15,11 @@
 #include "streaming/Session.h"
 #include "streaming/StreamRelay.h"
 #include "network/DdnsClient.h"
+#include "TrayManager.h"
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     QCoreApplication::setApplicationName("Moonlight-Web");
     QCoreApplication::setApplicationVersion("0.1.0");
     QCoreApplication::setOrganizationName("Moonlight-Web");
@@ -28,7 +30,7 @@ int main(int argc, char* argv[])
     parser.addHelpOption();
     parser.addVersionOption();
 
-    QCommandLineOption portOption("port", "HTTP server port", "port", "48000");
+    QCommandLineOption portOption("port", "HTTP server port", "port", "80");
     parser.addOption(portOption);
 
     QCommandLineOption logOption("log", "Log file path", "path");
@@ -57,6 +59,13 @@ int main(int argc, char* argv[])
     // Phase 3: Initialize pairing identity (generates RSA keypair if needed)
     IdentityManager::get();
     Logger::info("Pairing identity initialized");
+
+    // Read persistent settings (https_port, video_codec, ddns_token, ...)
+    AppSettings appSettings;
+    quint16 httpsPort = appSettings.httpsPort(443);
+    VideoCodec preferredCodec = appSettings.videoCodec();
+    Logger::info("[main] Settings: https_port=" + QString::number(httpsPort)
+                 + ", video_codec=" + AppSettings::videoCodecToString(preferredCodec));
 
     // Phase 5b: WebSocket relay tracking
     quint16 wsPort = parser.value("ws-port").toUShort();
@@ -162,7 +171,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Start streaming — launch app + RTSP handshake
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, wsPort, &g_ActiveRelay, &server](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, wsPort, &g_ActiveRelay, &server, preferredCodec](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -195,7 +204,8 @@ int main(int argc, char* argv[])
             std::move(respond),
             wsPort,
             server.sslConfiguration(),
-            serverHost
+            serverHost,
+            preferredCodec
         );
 
         // Track the relay for quit/cleanup
@@ -298,44 +308,14 @@ int main(int argc, char* argv[])
         });
     });
 
-    // Read preferred HTTPS port from settings.json (persisted across restarts)
-    quint16 httpsPort = 443;
-    {
-        QString settingsDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QDir().mkpath(settingsDir);
-        QString settingsPath = settingsDir + "/settings.json";
-        QFile file(settingsPath);
-        if (file.open(QIODevice::ReadOnly)) {
-            QJsonObject settings = QJsonDocument::fromJson(file.readAll()).object();
-            QJsonObject::iterator portIt = settings.find("https_port");
-            if (portIt != settings.end())
-                httpsPort = static_cast<quint16>(portIt->toInt());
-            file.close();
-        }
-    }
-
     if (!server.start(httpsPort))
         return 1;
 
     // Persist the active HTTPS port (may differ from preferred port due to fallback)
     {
-        QString settingsDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QString settingsPath = settingsDir + "/settings.json";
-        QFile file(settingsPath);
-        QJsonObject settings;
-        if (file.open(QIODevice::ReadOnly)) {
-            settings = QJsonDocument::fromJson(file.readAll()).object();
-            file.close();
-        }
-
-        int activePort = static_cast<int>(server.activeHttpsPort());
-        if (settings.value("https_port").toInt() != activePort) {
-            settings["https_port"] = activePort;
-            if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                file.write(QJsonDocument(settings).toJson(QJsonDocument::Indented));
-                file.close();
-            }
-        }
+        quint16 activePort = server.activeHttpsPort();
+        if (appSettings.httpsPort(0) != activePort)
+            appSettings.setHttpsPort(activePort);
     }
 
     // Phase N: DuckDNS dynamic DNS
@@ -371,12 +351,11 @@ int main(int argc, char* argv[])
     // API route: get DuckDNS consent status
     server.router()->get("/api/ddns/consent", [&](const HttpRequest&) {
         QJsonObject obj;
-        obj["asked"] = !ddnsConsentPending && (ddns.isActive() || !ddns.subdomain().isEmpty());
-        obj["pending"] = ddnsConsentPending;
+        obj["consent_granted"] = appSettings.ddnsConsentGranted();
         obj["active"] = ddns.isActive();
-        if (ddns.isActive()) {
-            obj["subdomain"] = ddns.subdomain();
-        }
+        obj["port"] = static_cast<int>(server.activeHttpsPort());
+        obj["token_configured"] = !ddns.token().isEmpty();
+        obj["subdomain"] = ddns.subdomain();
         return HttpResponse::json(obj);
     });
 
@@ -392,9 +371,11 @@ int main(int argc, char* argv[])
         ddnsConsentPending = false;
         ddnsConsentResult = granted;
         ddns.setConsent(granted);
+        appSettings.setDdnsConsentGranted(granted);
 
         QJsonObject obj;
         obj["status"] = granted ? "accepted" : "declined";
+        obj["consent_granted"] = granted;
         return HttpResponse::json(obj);
     });
 
@@ -408,20 +389,7 @@ int main(int argc, char* argv[])
 
         QString token = body["token"].toString();
         // Save token to settings (DdnsClient.loadSettings will pick it up on next start)
-        QString settingsDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QDir().mkpath(settingsDir);
-        QString settingsPath = settingsDir + "/settings.json";
-        QFile file(settingsPath);
-        QJsonObject settings;
-        if (file.open(QIODevice::ReadOnly)) {
-            settings = QJsonDocument::fromJson(file.readAll()).object();
-            file.close();
-        }
-        settings["ddns_token"] = token;
-        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            file.write(QJsonDocument(settings).toJson(QJsonDocument::Indented));
-            file.close();
-        }
+        appSettings.setDdnsToken(token);
 
         qInfo() << "[main] DuckDNS token configured";
 
@@ -433,11 +401,72 @@ int main(int argc, char* argv[])
         return HttpResponse::json(obj);
     });
 
+    // ── Admin settings (localhost only, server config) ────────────────────────
+
+    server.router()->get("/api/admin/settings", [&server, &appSettings](const HttpRequest&) {
+        QJsonObject obj;
+        obj["http_port"] = static_cast<int>(server.httpPort());
+        obj["https_port"] = static_cast<int>(server.activeHttpsPort());
+        return HttpResponse::json(obj);
+    });
+
+    server.router()->post("/api/admin/settings", [&server, &appSettings](const HttpRequest& req) {
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QJsonObject body = doc.object();
+
+        if (body.contains("https_port")) {
+            quint16 newPort = static_cast<quint16>(body["https_port"].toInt(443));
+
+            // Save to persistent settings
+            appSettings.setHttpsPort(newPort);
+
+            // Attempt runtime port change
+            qInfo() << "[admin] Changing HTTPS port to" << newPort;
+            bool ok = server.changeHttpsPort(newPort);
+
+            QJsonObject obj;
+            obj["status"] = ok ? "saved" : "partial";
+            obj["https_port"] = static_cast<int>(server.activeHttpsPort());
+            obj["restart_required"] = !ok;
+            return HttpResponse::json(obj);
+        }
+
+        return HttpResponse::error(400, "No supported settings provided");
+    });
+
+    // ── Streaming settings ────────────────────────────────────────────────────
+
+    server.router()->get("/api/settings/streaming", [&appSettings](const HttpRequest&) {
+        QJsonObject obj;
+        obj["video_codec"] = AppSettings::videoCodecToString(appSettings.videoCodec());
+        return HttpResponse::json(obj);
+    });
+
+    server.router()->post("/api/settings/streaming", [&appSettings](const HttpRequest& req) {
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QJsonObject body = doc.object();
+
+        if (body.contains("video_codec")) {
+            VideoCodec codec = AppSettings::videoCodecFromString(body["video_codec"].toString());
+            appSettings.setVideoCodec(codec);
+            QJsonObject obj;
+            obj["status"] = "saved";
+            obj["video_codec"] = AppSettings::videoCodecToString(codec);
+            return HttpResponse::json(obj);
+        }
+
+        return HttpResponse::error(400, "No supported settings provided");
+    });
+
     // Start DuckDNS workflow (will emit consentRequired if first launch)
     ddns.setHttpsPort(server.activeHttpsPort());
     ddns.start();
 
-    Logger::info("Server ready. Open http://localhost:" + QString::number(port) + " in your browser.");
+    // Phase N: System tray icon
+    TrayManager trayManager(&server);
+    trayManager.init();
+
+    Logger::info("Server ready. Open https://localhost" + (httpsPort != 443 ? ":" + QString::number(server.activeHttpsPort()) : QString()) + " in your browser.");
 
     return app.exec();
 }
