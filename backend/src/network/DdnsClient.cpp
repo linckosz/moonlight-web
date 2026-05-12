@@ -61,8 +61,12 @@ void DdnsClient::start()
             setConsent(true);
             return;
         }
-        QString devFlag = QCoreApplication::applicationDirPath() + "/../../.moonlight-web-dev";
-        if (QFile::exists(devFlag)) {
+        // Walk up from the executable to find .moonlight-web-dev at project root.
+        // Build directories vary (backend/build/debug/, build/<qt>/backend/debug/),
+        // so we can't hardcode the number of ../ steps.
+        QDir dir(QCoreApplication::applicationDirPath());
+        while (!dir.exists(".moonlight-web-dev") && dir.cdUp()) { }
+        if (dir.exists(".moonlight-web-dev")) {
             qInfo() << "[DdnsClient] .moonlight-web-dev found — consent auto-granted (file)";
             setConsent(true);
             return;
@@ -190,7 +194,7 @@ void DdnsClient::checkIp()
         settings["ddns_last_ip"] = m_CurrentIp;
         saveSettings(settings);
 
-        emit registered(m_Subdomain, ip);
+        emit registered(m_Subdomain, ip, m_HttpsPort);
 
         if (m_OnCertReload) {
             if (runLego()) {
@@ -359,27 +363,38 @@ bool DdnsClient::runLego()
     m_LegoRetries = 0;
     qInfo() << "[DdnsClient] Let's Encrypt certificate obtained for" << domain;
 
-    // Lego stores certs in ./<domain>/ by default relative to working dir.
-    // The cert is at: .lego/certificates/<domain>.crt
-    // We need to copy/symlink it to our cert directory.
-    QString certDir = QCoreApplication::applicationDirPath() + "/cert/";
-    QDir().mkpath(certDir);
+    // Lego stores certs in .lego/certificates/<domain>.{crt,key}
+    // relative to the working directory (applicationDirPath).
+    //
+    // Copy certs to AppData first — that's where the server looks at startup
+    // and it's writable even for MSI installs (Program Files is read-only).
+    QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
+    QDir().mkpath(appDataDir);
 
     QString legoDir = QCoreApplication::applicationDirPath() + "/.lego/certificates/";
     QString certSrc = legoDir + domain + ".crt";
     QString keySrc  = legoDir + domain + ".key";
 
-    QFile::remove(certDir + "cert.pem");
-    QFile::remove(certDir + "key.pem");
+    QFile::remove(appDataDir + "cert.pem");
+    QFile::remove(appDataDir + "key.pem");
 
-    if (!QFile::copy(certSrc, certDir + "cert.pem") ||
-        !QFile::copy(keySrc, certDir + "key.pem")) {
-        qWarning() << "[DdnsClient] Failed to copy Let's Encrypt certificates to cert/";
+    if (!QFile::copy(certSrc, appDataDir + "cert.pem") ||
+        !QFile::copy(keySrc, appDataDir + "key.pem")) {
+        qWarning() << "[DdnsClient] Failed to copy certificates to" << appDataDir;
         emit errorOccurred("Failed to copy Let's Encrypt certificates");
         return false;
     }
 
-    qInfo() << "[DdnsClient] Certificates copied to" << certDir;
+    qInfo() << "[DdnsClient] Certificates copied to" << appDataDir;
+
+    // Best-effort copy next to the exe for development convenience
+    QString exeCertDir = QCoreApplication::applicationDirPath() + "/cert/";
+    if (QDir().mkpath(exeCertDir)) {
+        QFile::remove(exeCertDir + "cert.pem");
+        QFile::remove(exeCertDir + "key.pem");
+        QFile::copy(certSrc, exeCertDir + "cert.pem");
+        QFile::copy(keySrc, exeCertDir + "key.pem");
+    }
 
     // Trigger TLS reload
     if (m_OnCertReload) {

@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QPointer>
 #include <QStandardPaths>
 #include "server/HttpServer.h"
@@ -66,6 +67,15 @@ int main(int argc, char* argv[])
         QJsonObject obj;
         obj["status"] = "ok";
         obj["version"] = QCoreApplication::applicationVersion();
+        return HttpResponse::json(obj);
+    });
+
+    server.router()->get("/api/server/status", [&server](const HttpRequest&) {
+        QJsonObject obj;
+        obj["status"] = "running";
+        obj["version"] = QCoreApplication::applicationVersion();
+        obj["http_port"] = static_cast<int>(server.httpPort());
+        obj["https_port"] = static_cast<int>(server.activeHttpsPort());
         return HttpResponse::json(obj);
     });
 
@@ -288,8 +298,45 @@ int main(int argc, char* argv[])
         });
     });
 
-    if (!server.start())
+    // Read preferred HTTPS port from settings.json (persisted across restarts)
+    quint16 httpsPort = 443;
+    {
+        QString settingsDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QDir().mkpath(settingsDir);
+        QString settingsPath = settingsDir + "/settings.json";
+        QFile file(settingsPath);
+        if (file.open(QIODevice::ReadOnly)) {
+            QJsonObject settings = QJsonDocument::fromJson(file.readAll()).object();
+            QJsonObject::iterator portIt = settings.find("https_port");
+            if (portIt != settings.end())
+                httpsPort = static_cast<quint16>(portIt->toInt());
+            file.close();
+        }
+    }
+
+    if (!server.start(httpsPort))
         return 1;
+
+    // Persist the active HTTPS port (may differ from preferred port due to fallback)
+    {
+        QString settingsDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QString settingsPath = settingsDir + "/settings.json";
+        QFile file(settingsPath);
+        QJsonObject settings;
+        if (file.open(QIODevice::ReadOnly)) {
+            settings = QJsonDocument::fromJson(file.readAll()).object();
+            file.close();
+        }
+
+        int activePort = static_cast<int>(server.activeHttpsPort());
+        if (settings.value("https_port").toInt() != activePort) {
+            settings["https_port"] = activePort;
+            if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                file.write(QJsonDocument(settings).toJson(QJsonDocument::Indented));
+                file.close();
+            }
+        }
+    }
 
     // Phase N: DuckDNS dynamic DNS
     bool ddnsConsentPending = false;
@@ -309,8 +356,8 @@ int main(int argc, char* argv[])
     });
 
     QObject::connect(&ddns, &DdnsClient::registered,
-        [](const QString& subdomain, const QString& ip) {
-        qInfo() << "[main] DuckDNS registered:" << subdomain << "->" << ip;
+        [](const QString& subdomain, const QString& ip, quint16 httpsPort) {
+        qInfo() << "[main] DuckDNS registered:" << subdomain << ":" << httpsPort << "->" << ip;
     });
 
     QObject::connect(&ddns, &DdnsClient::certObtained, []() {
@@ -387,6 +434,7 @@ int main(int argc, char* argv[])
     });
 
     // Start DuckDNS workflow (will emit consentRequired if first launch)
+    ddns.setHttpsPort(server.activeHttpsPort());
     ddns.start();
 
     Logger::info("Server ready. Open http://localhost:" + QString::number(port) + " in your browser.");

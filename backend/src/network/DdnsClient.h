@@ -50,6 +50,9 @@ public:
     /// Saves token and re-triggers IP discovery + DuckDNS registration.
     void configure(const QString& token);
 
+    /// Set the HTTPS port for the registered signal and log messages.
+    void setHttpsPort(quint16 port) { m_HttpsPort = port; }
+
     /// Returns whether DuckDNS is currently active (consent granted + registered).
     bool isActive() const { return m_Active; }
 
@@ -70,8 +73,8 @@ signals:
     /// Emitted on error (network, API, etc.).
     void errorOccurred(const QString& message);
 
-    /// Emitted when DuckDNS registration succeeds.
-    void registered(const QString& subdomain, const QString& ip);
+    /// Emitted when DuckDNS registration succeeds. Includes the HTTPS port.
+    void registered(const QString& subdomain, const QString& ip, quint16 httpsPort);
 
     /// Emitted when a Let's Encrypt certificate has been obtained.
     void certObtained();
@@ -97,6 +100,7 @@ private:
     QString m_Subdomain;
     QString m_Token;
     QString m_CurrentIp;
+    quint16 m_HttpsPort = 443;
     int m_LegoRetries = 0;
 
     CertReloadCallback m_OnCertReload;
