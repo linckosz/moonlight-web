@@ -274,7 +274,7 @@ export class HostListView {
                 </div>
                 ${!host.isAvailable && !host.isLocked
                     ? `<div class="host-card-remove">
-                         <button class="btn-remove" data-uuid="${host.uuid}" title="Remove host from list">Remove</button>
+                         <button class="btn btn-secondary btn-remove" data-uuid="${host.uuid}">Remove</button>
                        </div>`
                     : ''
                 }

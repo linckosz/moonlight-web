@@ -320,7 +320,7 @@ export class StreamView {
         const type = isKeyframe ? 'key' : 'delta';
 
         // Convert Annex B (start codes) to AVCC (4-byte length prefixes).
-        const avccData = toAvcc(data, this.decoderConfigured);
+        const avccData = toAvcc(data, this.decoderConfigured, this.nalParser.codec);
 
         try {
             const chunk = new EncodedVideoChunk({

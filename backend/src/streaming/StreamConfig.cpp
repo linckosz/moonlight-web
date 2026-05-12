@@ -20,14 +20,11 @@ int StreamConfig::computeVideoFormats() const
 
     switch (codec) {
     case VideoCodec::AV1:
-        fmt |= VIDEO_FORMAT_MASK_AV1;
-        // fall through: AV1 -> HEVC -> H.264 chain
-        [[fallthrough]];
-    case VideoCodec::HEVC:
-        fmt |= VIDEO_FORMAT_MASK_H265;
-        [[fallthrough]];
+        fmt |= VIDEO_FORMAT_MASK_AV1 | VIDEO_FORMAT_MASK_H265 | VIDEO_FORMAT_MASK_H264;
+        break;
     case VideoCodec::Auto:
-        fmt |= VIDEO_FORMAT_MASK_H264;
+    case VideoCodec::HEVC:
+        fmt |= VIDEO_FORMAT_MASK_H265 | VIDEO_FORMAT_MASK_H264;
         break;
     case VideoCodec::H264:
         fmt |= VIDEO_FORMAT_MASK_H264;
