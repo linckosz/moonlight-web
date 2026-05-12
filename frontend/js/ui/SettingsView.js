@@ -8,8 +8,9 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 
 export class SettingsView {
-    constructor(container) {
+    constructor(container, onClose) {
         this.container = container;
+        this.onClose = onClose || (() => {});
 
         this._videoCodec = 'auto';
 
@@ -82,6 +83,8 @@ export class SettingsView {
             <div class="settings-view" id="view-settings">
                 <div class="settings-header">
                     <h2>Streaming Settings</h2>
+                    <button class="view-close-btn" id="btn-settings-close"
+                            title="Close (discards unsaved changes)">&times;</button>
                 </div>
 
                 <div class="settings-section">
@@ -145,6 +148,15 @@ export class SettingsView {
                     saveBtn.textContent = 'Save Changes';
                     this._updateSaveButton();
                 }
+            });
+        // ── Close button ───────────────────────────────────────────────────────
+        const closeBtn = this.container.querySelector('#btn-settings-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                if (this._dirty) {
+                    Toast.info('Settings changes discarded');
+                }
+                this.onClose();
             });
         }
     }

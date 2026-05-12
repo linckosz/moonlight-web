@@ -411,9 +411,10 @@ void HttpServer::onHttpConnection()
                     break;
                 }
             }
-            QString redirectUrl = m_HttpsPort == 443
+            quint16 redirectPort = m_ActiveHttpsPort != 0 ? m_ActiveHttpsPort : m_HttpsPort;
+            QString redirectUrl = redirectPort == 443
                 ? QString("https://%1/").arg(host)
-                : QString("https://%1:%2/").arg(host).arg(m_HttpsPort);
+                : QString("https://%1:%2/").arg(host).arg(redirectPort);
             QByteArray resp;
             resp.append("HTTP/1.1 307 Temporary Redirect\r\n");
             resp.append("Location: " + redirectUrl.toUtf8() + "\r\n");

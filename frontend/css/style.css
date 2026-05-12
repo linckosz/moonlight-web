@@ -35,7 +35,8 @@ html, body {
 #app {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
 }
 
 /* Header */
@@ -47,6 +48,7 @@ html, body {
     padding: 12px 24px;
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
 }
 
 .app-header h1 {
@@ -64,6 +66,8 @@ html, body {
 
 #main-content {
     flex: 1;
+    overflow-y: auto;
+    min-height: 0;
     padding: 24px;
     max-width: 960px;
     margin: 0 auto;
@@ -305,6 +309,7 @@ html, body {
     color: var(--text-secondary);
     border-top: 1px solid var(--border);
     background-color: var(--bg-secondary);
+    flex-shrink: 0;
 }
 
 /* Responsive */
@@ -675,7 +680,7 @@ html, body {
 
 /* Admin close button (X) */
 
-.admin-close-btn {
+.view-close-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -691,7 +696,7 @@ html, body {
     transition: background-color 0.15s, color 0.15s;
 }
 
-.admin-close-btn:hover {
+.view-close-btn:hover {
     background-color: rgba(255, 255, 255, 0.1);
     color: var(--text-primary);
 }
@@ -929,6 +934,7 @@ html, body {
     font-size: 0.8rem;
     color: #c8e6c9;
     flex-shrink: 0;
+    z-index: 5;
 }
 
 .ddns-banner-text {
