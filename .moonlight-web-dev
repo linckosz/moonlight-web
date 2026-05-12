@@ -1,4 +1,9 @@
+# DO NOT COMMIT THIS FILE
+# 
 # When set to 1, auto-grants DuckDNS consent at startup, bypassing the GDPR
 # consent popup. This is useful for developers testing remote access via a
 # domain name (DuckDNS + Let's Encrypt). Not needed for LAN-only development.
+#
+# This variable can also be set via the Qt runtime environment (qputenv),
+# which takes priority over this file.
 MOONLIGHT_DDNS_CONSENT=0
