@@ -94,6 +94,21 @@ void AppSettings::setVideoCodec(VideoCodec codec)
     writeAll(obj);
 }
 
+// ── Gaming mode ────────────────────────────────────────────────────────────────
+
+bool AppSettings::gamingMode() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("gaming_mode", true).toBool();
+}
+
+void AppSettings::setGamingMode(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["gaming_mode"] = enabled;
+    writeAll(obj);
+}
+
 // ── DuckDNS ────────────────────────────────────────────────────────────────────
 
 QString AppSettings::ddnsToken() const
