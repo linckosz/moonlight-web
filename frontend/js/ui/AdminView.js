@@ -124,7 +124,7 @@ export class AdminView {
 
                     <div class="settings-actions">
                         <button class="btn btn-save" id="btn-admin-save" disabled>
-                            Save Changes
+                            Save &amp; Reload
                         </button>
                     </div>
                 </div>
@@ -211,6 +211,13 @@ export class AdminView {
         if (portInput) {
             portInput.addEventListener('input', () => this._onFieldChange());
             portInput.addEventListener('change', () => this._onFieldChange());
+            portInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const saveBtn = this.container.querySelector('#btn-admin-save');
+                    if (saveBtn && !saveBtn.disabled) saveBtn.click();
+                }
+            });
         }
 
         // ── Save Settings button ──────────────────────────────────────────────
@@ -256,7 +263,7 @@ export class AdminView {
                     Toast.error('Failed to save: ' + err.message);
                 } finally {
                     saveBtn.classList.remove('btn-loading');
-                    saveBtn.textContent = 'Save Changes';
+                    saveBtn.textContent = 'Save & Reload';
                     this._updateSaveButton();
                 }
             });

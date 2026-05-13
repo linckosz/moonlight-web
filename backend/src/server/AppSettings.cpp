@@ -99,7 +99,7 @@ void AppSettings::setVideoCodec(VideoCodec codec)
 bool AppSettings::gamingMode() const
 {
     QJsonObject obj = readAll();
-    return obj.value("gaming_mode", true).toBool();
+    return obj.value("gaming_mode").toBool(true);
 }
 
 void AppSettings::setGamingMode(bool enabled)
