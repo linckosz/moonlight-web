@@ -1,5 +1,5 @@
 /**
- * Moonlight-Web — Admin Control Panel
+ * Moonlight-Web — Server Settings
  *
  * Server administration functions (localhost only):
  *   - DuckDNS dynamic DNS configuration (token + GDPR consent)
@@ -95,7 +95,7 @@ export class AdminView {
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
                 <div class="admin-header">
-                    <h2>Admin Control Panel</h2>
+                    <h2>Server Settings</h2>
                     <button class="view-close-btn" id="btn-admin-close"
                             title="Close (discards unsaved changes)">&times;</button>
                 </div>

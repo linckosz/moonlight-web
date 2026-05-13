@@ -13,6 +13,43 @@ import { AdminView } from './ui/AdminView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 
+// ── Global error handler ──────────────────────────────────────────────────────
+// Catches runtime errors and module-load failures that would otherwise silently
+// prevent the UI from rendering.  Shows a visible message in the main area.
+window.addEventListener('error', (evt) => {
+    console.error('[MW] Uncaught error:', evt.error || evt.message, evt);
+    const main = document.getElementById('main-content');
+    if (main && main.children.length === 0) {
+        main.innerHTML = `
+            <div class="hosts-view">
+                <div class="hosts-header"><h2>Error</h2></div>
+                <div class="hosts-error">
+                    <p>Failed to load application</p>
+                    <p class="hint">${(evt.error && evt.error.message) || evt.message || 'Unknown error'}</p>
+                    <button class="btn" onclick="location.reload()">Retry</button>
+                </div>
+            </div>
+        `;
+    }
+});
+
+window.addEventListener('unhandledrejection', (evt) => {
+    console.error('[MW] Unhandled Promise rejection:', evt.reason);
+    const main = document.getElementById('main-content');
+    if (main && main.children.length === 0) {
+        const msg = (evt.reason && evt.reason.message) || String(evt.reason || 'Unknown error');
+        main.innerHTML = `
+            <div class="hosts-view">
+                <div class="hosts-header"><h2>Initialization Error</h2></div>
+                <div class="hosts-error">
+                    <p>${msg}</p>
+                    <button class="btn" onclick="location.reload()">Retry</button>
+                </div>
+            </div>
+        `;
+    }
+});
+
 const MoonlightApp = {
     state: 'loading',
     hostListView: null,
@@ -24,6 +61,21 @@ const MoonlightApp = {
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
 
+        // IMPORTANT: render the HostListView SYNCHRONOUSLY before any async
+        // operations.  If the health check fetch hangs or throws, the user
+        // would otherwise see an empty <main> (blank page).
+        this._initNavButtons();
+        this.showHostList();
+
+        // Background async housekeeping — never blocks the initial render.
+        this._initAsync();
+    },
+
+    /**
+     * Non-blocking async setup: health check, DuckDNS banner, etc.
+     * Runs after the UI is visible so a slow/failed fetch doesn't hide it.
+     */
+    async _initAsync() {
         try {
             const health = await BackendClient.get('/api/health');
             console.log('[MW] Server:', health);
@@ -31,14 +83,7 @@ const MoonlightApp = {
             console.warn('[MW] Server health check failed:', err);
         }
 
-        // Navigation buttons in header
-        this._initNavButtons();
-
-        // Check if DuckDNS is active and show public-access banner
         this.checkDdnsBanner();
-
-        this.transition('host_list');
-        this.showHostList();
     },
 
     _initNavButtons() {
@@ -161,6 +206,10 @@ const MoonlightApp = {
         this.transition('host_list');
         this._clearCurrentView();
         const main = document.getElementById('main-content');
+        if (!main) {
+            console.error('[MW] #main-content not found in DOM');
+            return;
+        }
         this.hostListView = new HostListView(main);
         this.hostListView.onLaunch = (host) => this.showAppList(host);
         this.hostListView.start();
