@@ -193,7 +193,9 @@ int main(int argc, char* argv[])
             return;
         }
 
-        // Extract server host from the request Host header
+        // Extract server host from the request Host header.
+        // The WebSocket relay runs on THIS server, not on Sunshine,
+        // so we use the Host the browser used to reach us.
         QString serverHost = req.headers.value("host");
         int colon = serverHost.indexOf(':');
         if (colon >= 0)

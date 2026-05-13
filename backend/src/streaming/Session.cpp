@@ -59,6 +59,15 @@ void StreamSession::start()
         return;
     }
 
+    // Fallback AV1 -> H.264: AV1 is not yet validated in moonlight-common-c.
+    // When selected, LiStartConnection negotiates AV1 with Sunshine, the
+    // RTSP handshake succeeds, but Sunshine immediately terminates with
+    // ML_ERROR_GRACEFUL_TERMINATION (-100) without sending any frames.
+    if (m_Config.codec == VideoCodec::AV1) {
+        qWarning() << "[Session] AV1 not validated yet, falling back to H.264";
+        m_Config.codec = VideoCodec::H264;
+    }
+
     // Generate per-session encryption keys
     m_Config.generateKeys();
 

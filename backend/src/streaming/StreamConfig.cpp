@@ -20,25 +20,27 @@ int StreamConfig::computeVideoFormats() const
 
     switch (codec) {
     case VideoCodec::AV1:
-        fmt |= VIDEO_FORMAT_MASK_AV1 | VIDEO_FORMAT_MASK_H265 | VIDEO_FORMAT_MASK_H264;
+        // Base: AV1 Main8 + HEVC Main + H.264 (higher profiles added conditionally below)
+        fmt |= VIDEO_FORMAT_AV1_MAIN8 | VIDEO_FORMAT_H265 | VIDEO_FORMAT_MASK_H264;
         break;
     case VideoCodec::Auto:
     case VideoCodec::HEVC:
-        fmt |= VIDEO_FORMAT_MASK_H265 | VIDEO_FORMAT_MASK_H264;
+        // Base: HEVC Main + H.264 (higher profiles added conditionally below)
+        fmt |= VIDEO_FORMAT_H265 | VIDEO_FORMAT_MASK_H264;
         break;
     case VideoCodec::H264:
         fmt |= VIDEO_FORMAT_MASK_H264;
         break;
     }
 
-    // Chroma 4:4:4 adds the YUV444 mask for all supported codecs
-    if (chroma == ChromaSampling::C444) {
-        fmt |= VIDEO_FORMAT_MASK_YUV444;
-    }
-
-    // HDR adds 10-bit profiles for H.265 and AV1
+    // HDR adds 10-bit profiles (HEVC Main10, HEVC RExt10, AV1 Main10, AV1 High10)
     if (hdr == HdrMode::HDR) {
         fmt |= VIDEO_FORMAT_MASK_10BIT;
+    }
+
+    // Chroma 4:4:4 adds YUV444 profiles for all codecs
+    if (chroma == ChromaSampling::C444) {
+        fmt |= VIDEO_FORMAT_MASK_YUV444;
     }
 
     return fmt;
