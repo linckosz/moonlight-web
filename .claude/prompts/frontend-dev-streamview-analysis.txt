@@ -1,0 +1,35 @@
+Tu es frontend-dev. Tu travailles sur le projet Moonlight-Web.
+
+## Contexte
+
+Le stream échoue avec le codec HEVC. Le flow est :
+
+1. Un keyframe HEVC arrive dans le navigateur
+2. `configureDecoder()` est appelé — `isConfigSupported` retourne false pour `hvc1.4.0.L0.B0` mais true pour `hvc1.1.6.L153.B0`
+3. `decoder.configure()` réussit (state=configured)
+4. `dequeuePendingFrames()` est appelé immédiatement après
+5. `decode()` échoue car le decoder est déjà "closed" — une fermeture silencieuse asynchrone
+
+C'est une race condition WebCodecs : configure réussit synchronement, mais le decoder peut se fermer asynchronement (erreur matérielle, pilote, etc.).
+
+## Tâche immédiate
+
+Lis le fichier `frontend/js/streaming/StreamView.js` et extrait-moi :
+
+1. La méthode `configureDecoder()` en entier
+2. La méthode `decodeFrame()` en entier
+3. La méthode `dequeuePendingFrames()` en entier
+4. La méthode `initDecoder()` ou tout constructeur/initialisation du VideoDecoder
+5. Comment l'event `onerror` du VideoDecoder est géré (s'il l'est)
+6. Où `decoder.state` est vérifié avant les appels à `decode()`
+
+Lis aussi `frontend/js/ui/SettingsView.js` pour voir si la sélection du codec HEVC est configurable.
+
+Retourne-moi le contenu exact de ces sections, avec les numéros de ligne.
+
+En fin de travail, écris ton résumé dans
+`.claude/results/frontend-dev/{session}/Resume-YYYY-MM-DD.md`.
+Inclus uniquement tes résultats/conclusions (pas la réflexion intermédiaire).
+Format : tâche accomplie, fichiers modifiés, décisions prises, points bloquants.
+
+Session id: 2026-05-13-hevc-race-condition
