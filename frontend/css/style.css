@@ -36,7 +36,7 @@ html, body {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    overflow: hidden;
+    overflow: clip;
 }
 
 /* Header */
@@ -49,6 +49,9 @@ html, body {
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
 .app-header h1 {
