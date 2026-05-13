@@ -15,9 +15,8 @@ export class SettingsView {
         this._videoCodec = 'auto';
         this._gamingMode = true;
 
-        // Dirty tracking
-        this._cleanState = {};
-        this._dirty = false;
+        // Debounce timer to avoid rapid repeated saves
+        this._saveTimer = null;
     }
 
     async start() {
@@ -37,37 +36,46 @@ export class SettingsView {
     }
 
     destroy() {
-        // Cleanup if needed
-    }
-
-    // --- Dirty tracking ---
-
-    _markClean() {
-        const codecSelect = this.container.querySelector('#settings-video-codec');
-        const gamingCheck = this.container.querySelector('#settings-gaming-mode');
-        this._cleanState = {
-            videoCodec: codecSelect ? codecSelect.value : this._videoCodec,
-            gamingMode: gamingCheck ? gamingCheck.checked : this._gamingMode
-        };
-        this._dirty = false;
-        this._updateSaveButton();
-    }
-
-    _onFieldChange() {
-        const codecSelect = this.container.querySelector('#settings-video-codec');
-        const gamingCheck = this.container.querySelector('#settings-gaming-mode');
-        if (!codecSelect && !gamingCheck) return;
-        const codecDirty = codecSelect && (codecSelect.value !== this._cleanState.videoCodec);
-        const gamingDirty = gamingCheck && (gamingCheck.checked !== this._cleanState.gamingMode);
-        this._dirty = codecDirty || gamingDirty;
-        this._updateSaveButton();
-    }
-
-    _updateSaveButton() {
-        const saveBtn = this.container.querySelector('#btn-settings-save');
-        if (saveBtn) {
-            saveBtn.disabled = !this._dirty;
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = null;
         }
+    }
+
+    // --- Auto-save ---
+
+    _autoSave() {
+        // Debounce: cancel any pending save
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+        }
+
+        const codecSelect = this.container.querySelector('#settings-video-codec');
+        const gamingCheck = this.container.querySelector('#settings-gaming-mode');
+        if (!codecSelect || !gamingCheck) return;
+
+        this._saveTimer = setTimeout(async () => {
+            this._saveTimer = null;
+
+            const codec = codecSelect.value;
+            const gamingMode = gamingCheck.checked;
+
+            try {
+                const result = await BackendClient.saveStreamingSettings({
+                    video_codec: codec,
+                    gaming_mode: gamingMode
+                });
+                if (result.status === 'saved') {
+                    this._videoCodec = result.video_codec || this._videoCodec;
+                    this._gamingMode = result.gaming_mode !== false;
+                    // Subtle toast feedback
+                    Toast.success('Saved');
+                }
+            } catch (err) {
+                console.error('[Settings] Auto-save failed:', err);
+                Toast.error('Save failed: ' + err.message);
+            }
+        }, 300); // 300ms debounce
     }
 
     // --- Rendering ---
@@ -91,7 +99,7 @@ export class SettingsView {
                 <div class="settings-header">
                     <h2>Streaming Settings</h2>
                     <button class="view-close-btn" id="btn-settings-close"
-                            title="Close (discards unsaved changes)">&times;</button>
+                            title="Close">&times;</button>
                 </div>
 
                 <div class="settings-section">
@@ -128,71 +136,29 @@ export class SettingsView {
                         </label>
                     </div>
 
-                    <div class="settings-actions">
-                        <button class="btn btn-save" id="btn-settings-save" disabled>
-                            Save Changes
-                        </button>
-                    </div>
                 </div>
             </div>
         `;
 
-        this._markClean();
     }
 
     bindEvents() {
-        // ── Codec selector dirty tracking ─────────────────────────────────────
+        // ── Codec selector auto-save ──────────────────────────────────────────
         const codecSelect = this.container.querySelector('#settings-video-codec');
         if (codecSelect) {
-            codecSelect.addEventListener('change', () => this._onFieldChange());
+            codecSelect.addEventListener('change', () => this._autoSave());
         }
 
-        // ── Gaming mode checkbox dirty tracking ───────────────────────────────
+        // ── Gaming mode checkbox auto-save ────────────────────────────────────
         const gamingCheck = this.container.querySelector('#settings-gaming-mode');
         if (gamingCheck) {
-            gamingCheck.addEventListener('change', () => this._onFieldChange());
+            gamingCheck.addEventListener('change', () => this._autoSave());
         }
 
-        // ── Save button ───────────────────────────────────────────────────────
-        const saveBtn = this.container.querySelector('#btn-settings-save');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', async () => {
-                const codec = codecSelect.value;
-                const gamingMode = gamingCheck ? gamingCheck.checked : true;
-
-                saveBtn.disabled = true;
-                saveBtn.classList.add('btn-loading');
-                saveBtn.textContent = 'Saving...';
-
-                try {
-                    const result = await BackendClient.saveStreamingSettings({
-                        video_codec: codec,
-                        gaming_mode: gamingMode
-                    });
-                    if (result.status === 'saved') {
-                        this._videoCodec = result.video_codec || this._videoCodec;
-                        this._gamingMode = result.gaming_mode !== false;
-                        Toast.success('Settings saved');
-                        this._markClean();
-                    }
-                } catch (err) {
-                    console.error('[Settings] Failed to save:', err);
-                    Toast.error('Failed to save: ' + err.message);
-                } finally {
-                    saveBtn.classList.remove('btn-loading');
-                    saveBtn.textContent = 'Save Changes';
-                    this._updateSaveButton();
-                }
-            });
-        // ── Close button ───────────────────────────────────────────────────────
+        // ── Close button ──────────────────────────────────────────────────────
         const closeBtn = this.container.querySelector('#btn-settings-close');
         if (closeBtn) {
-            closeBtn.addEventListener('click', () => {
-                if (this._dirty) {
-                    Toast.info('Settings changes discarded');
-                }
-                this.onClose();
-            });
+            closeBtn.addEventListener('click', () => this.onClose());
         }
     }
 
