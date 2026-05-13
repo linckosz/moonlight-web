@@ -29,6 +29,15 @@ public:
     static QString videoCodecToString(VideoCodec codec);
     static VideoCodec videoCodecFromString(const QString& str);
 
+    // ── Gaming mode ───────────────────────────────────────────────────────────
+    //
+    // When enabled (default), mouse pointer is locked for seamless camera
+    // control. When disabled, absolute mouse position tracking is used instead.
+    // Stored as JSON bool "gaming_mode", default true.
+
+    bool gamingMode() const;
+    void setGamingMode(bool enabled);
+
     // ── DuckDNS ─────────────────────────────────────────────────────────────
 
     QString ddnsToken() const;

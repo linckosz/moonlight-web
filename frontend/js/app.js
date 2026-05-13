@@ -269,7 +269,8 @@ const MoonlightApp = {
                     document.getElementById('app'),
                     result.wsUrl,
                     host,
-                    result.videoCodec
+                    result.videoCodec,
+                    result.gamingMode !== false
                 );
             }
         } catch (err) {

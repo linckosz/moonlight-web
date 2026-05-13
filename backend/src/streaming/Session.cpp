@@ -20,6 +20,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                const QSslConfiguration& sslConfig,
                                const QString& serverHost,
                                VideoCodec videoCodec,
+                               bool gamingMode,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -29,6 +30,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_WsPort(wsPort)
     , m_SslConfig(sslConfig)
     , m_ServerHost(serverHost)
+    , m_GamingMode(gamingMode)
 {
     // Apply video codec preference from settings (default Auto)
     m_Config.codec = videoCodec;
@@ -265,6 +267,9 @@ void StreamSession::onShimConnectionStarted()
     result["wsUrl"] = m_Relay->wsUrl();
     result["wsPort"] = static_cast<int>(m_Relay->wsPort());
     result["sessionUrl"] = m_SessionUrl;
+
+    // Pass gaming mode preference to the frontend
+    result["gamingMode"] = m_GamingMode;
 
     // Report the negotiated video codec back to the browser
     switch (m_Config.codec) {

@@ -26,11 +26,12 @@ import {
 } from '../util/Av1Utils.js';
 
 export class StreamView {
-    constructor(container, wsUrl, host, videoCodec) {
+    constructor(container, wsUrl, host, videoCodec, gamingMode = true) {
         this.container = container;
         this.wsUrl = wsUrl;
         this.host = host;
         this.videoCodec = videoCodec || 'auto';
+        this._gamingMode = gamingMode;
         this.ws = new WebSocketClient(wsUrl);
         this.pointerLocked = false;
 
@@ -61,6 +62,12 @@ export class StreamView {
         this._quitting = false;
 
         this.render();
+
+        // Hide the "click to capture" hint in normal mode (no pointer lock)
+        if (!this._gamingMode && this.hintEl) {
+            this.hintEl.style.display = 'none';
+        }
+
         this.setupWebSocket();
         this.bindEvents();
         this.startRenderLoop();
@@ -683,15 +690,82 @@ export class StreamView {
     // =========================================================================
 
     bindEvents() {
+        // Common events (both modes)
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
-        document.addEventListener('pointerlockchange', this._onPointerLockChange);
-        this.canvas.addEventListener('mousemove', this._onMouseMove);
-        this.canvas.addEventListener('mousedown', this._onMouseDown);
-        this.canvas.addEventListener('mouseup', this._onMouseUp);
         this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
         this.canvas.addEventListener('contextmenu', this._onContextMenu);
+
+        // Mode-specific events
+        if (this._gamingMode) {
+            this._bindGamingEvents();
+        } else {
+            this._setupNormalMouse();
+        }
+    }
+
+    _bindGamingEvents() {
+        document.addEventListener('pointerlockchange', this._onPointerLockChange);
+        this.canvas.addEventListener('mousemove', this._onMouseMove);
         this.canvas.addEventListener('click', () => this.requestPointerLock());
+    }
+
+    _setupNormalMouse() {
+        // Track absolute mouse position to compute relative deltas
+        this._mouseX = -1;
+        this._mouseY = -1;
+        this._dragCount = 0;
+
+        // Hide cursor by default (like gaming mode), show during drag
+        this.canvas.style.cursor = 'none';
+
+        this._onNormalMouseMove = (e) => {
+            const rect = this.canvas.getBoundingClientRect();
+            const newX = e.clientX - rect.left;
+            const newY = e.clientY - rect.top;
+
+            // On first move after re-entering, skip delta (no reference point)
+            if (this._mouseX >= 0 && this._mouseY >= 0) {
+                const dx = newX - this._mouseX;
+                const dy = newY - this._mouseY;
+                this.ws.send({ type: 'mousemove', dx, dy });
+            }
+
+            this._mouseX = newX;
+            this._mouseY = newY;
+        };
+
+        this._onNormalMouseDown = (e) => {
+            this._dragCount++;
+            this.canvas.style.cursor = 'default';
+            this.handleMouseDown(e);
+        };
+
+        this._onNormalMouseUp = (e) => {
+            this._dragCount--;
+            if (this._dragCount <= 0) {
+                this._dragCount = 0;
+                this.canvas.style.cursor = 'none';
+            }
+            this.handleMouseUp(e);
+        };
+
+        this._onNormalMouseEnter = () => {
+            // Reset tracking when mouse re-enters canvas
+            this._mouseX = -1;
+            this._mouseY = -1;
+        };
+
+        this._onNormalMouseLeave = () => {
+            this._dragCount = 0;
+            this.canvas.style.cursor = 'default';
+        };
+
+        this.canvas.addEventListener('mousemove', this._onNormalMouseMove);
+        this.canvas.addEventListener('mousedown', this._onNormalMouseDown);
+        this.canvas.addEventListener('mouseup', this._onNormalMouseUp);
+        this.canvas.addEventListener('mouseenter', this._onNormalMouseEnter);
+        this.canvas.addEventListener('mouseleave', this._onNormalMouseLeave);
     }
 
     unbindEvents() {
@@ -704,6 +778,20 @@ export class StreamView {
             this.canvas.removeEventListener('mouseup', this._onMouseUp);
             this.canvas.removeEventListener('wheel', this._onWheel);
             this.canvas.removeEventListener('contextmenu', this._onContextMenu);
+
+            // Normal mouse listeners (only bound in non-gaming mode)
+            if (!this._gamingMode) {
+                if (this._onNormalMouseMove)
+                    this.canvas.removeEventListener('mousemove', this._onNormalMouseMove);
+                if (this._onNormalMouseDown)
+                    this.canvas.removeEventListener('mousedown', this._onNormalMouseDown);
+                if (this._onNormalMouseUp)
+                    this.canvas.removeEventListener('mouseup', this._onNormalMouseUp);
+                if (this._onNormalMouseEnter)
+                    this.canvas.removeEventListener('mouseenter', this._onNormalMouseEnter);
+                if (this._onNormalMouseLeave)
+                    this.canvas.removeEventListener('mouseleave', this._onNormalMouseLeave);
+            }
         }
     }
 
@@ -714,6 +802,14 @@ export class StreamView {
     }
 
     handleKeyDown(e) {
+        // Quit combo: Shift+Ctrl+Alt+E (Windows/Linux) / Shift+Ctrl+Option+E (Mac)
+        // Works in both gaming and normal mode.
+        if (e.shiftKey && e.ctrlKey && e.altKey && e.code === 'KeyE') {
+            e.preventDefault();
+            this.quit();
+            return;
+        }
+
         e.preventDefault();
         this.ws.send({
             type: 'keydown',

@@ -206,7 +206,8 @@ int main(int argc, char* argv[])
             wsPort,
             server.sslConfiguration(),
             serverHost,
-            appSettings.videoCodec()
+            appSettings.videoCodec(),
+            appSettings.gamingMode()
         );
 
         // Track the relay for quit/cleanup
@@ -458,6 +459,7 @@ int main(int argc, char* argv[])
     server.router()->get("/api/settings/streaming", [&appSettings](const HttpRequest&) {
         QJsonObject obj;
         obj["video_codec"] = AppSettings::videoCodecToString(appSettings.videoCodec());
+        obj["gaming_mode"] = appSettings.gamingMode();
         return HttpResponse::json(obj);
     });
 
@@ -465,16 +467,29 @@ int main(int argc, char* argv[])
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
+        QJsonObject obj;
+        bool hadChange = false;
+
         if (body.contains("video_codec")) {
             VideoCodec codec = AppSettings::videoCodecFromString(body["video_codec"].toString());
             appSettings.setVideoCodec(codec);
-            QJsonObject obj;
-            obj["status"] = "saved";
             obj["video_codec"] = AppSettings::videoCodecToString(codec);
-            return HttpResponse::json(obj);
+            obj["status"] = "saved";
+            hadChange = true;
         }
 
-        return HttpResponse::error(400, "No supported settings provided");
+        if (body.contains("gaming_mode")) {
+            bool enabled = body["gaming_mode"].toBool();
+            appSettings.setGamingMode(enabled);
+            obj["gaming_mode"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (!hadChange)
+            return HttpResponse::error(400, "No supported settings provided");
+
+        return HttpResponse::json(obj);
     });
 
     // Start DuckDNS workflow (will emit consentRequired if first launch)

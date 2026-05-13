@@ -24,6 +24,7 @@ public:
                   const QSslConfiguration& sslConfig = {},
                   const QString& serverHost = "localhost",
                   VideoCodec videoCodec = VideoCodec::Auto,
+                  bool gamingMode = true,
                   QObject* parent = nullptr);
     ~StreamSession();
 
@@ -52,6 +53,7 @@ private:
     QString m_ServerHost;
 
     StreamConfig m_Config;
+    bool m_GamingMode = true;
     QNetworkReply* m_LaunchReply = nullptr;
     QString m_SessionUrl;
 
