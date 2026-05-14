@@ -731,6 +731,16 @@ html, body {
     background-color: var(--bg-primary);
     padding: 1px 5px;
     border-radius: 3px;
+}
+
+.settings-section-desc a {
+    color: var(--text-secondary);
+    text-decoration: underline;
+}
+
+.settings-section-desc a:hover {
+    color: var(--text-primary);
+}
     font-size: 0.8rem;
 }
 
@@ -923,86 +933,150 @@ html, body {
     display: block;
 }
 
-/* ── zrok tunnel status ───────────────────────────────────────────────────── */
+/* ── nport tunnel (Internet Access) ────────────────────────────────────────── */
 
-.zrok-status {
-    margin-top: 12px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    font-size: 13px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+/* Checkbox row: [ ] Internet Access */
+.tunnel-checkbox-row {
+    margin-bottom: 14px;
 }
 
-.zrok-status.zrok-active {
-    background: rgba(76, 175, 80, 0.12);
-    border: 1px solid rgba(76, 175, 80, 0.3);
-}
-
-.zrok-status.zrok-inactive {
-    background: rgba(255, 152, 0, 0.12);
-    border: 1px solid rgba(255, 152, 0, 0.3);
-}
-
-.zrok-status.zrok-pending {
-    background: rgba(160, 160, 176, 0.08);
-    border: 1px solid rgba(160, 160, 176, 0.2);
-}
-
-.zrok-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 6px;
-    vertical-align: middle;
-}
-
-.zrok-active .zrok-dot {
-    background: var(--success);
-}
-
-.zrok-inactive .zrok-dot {
-    background: var(--warning);
-}
-
-.zrok-pending .zrok-dot {
-    background: var(--text-secondary);
-}
-
-.zrok-url {
+.tunnel-checkbox-label {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
 }
 
-.zrok-url code {
-    font-size: 13px;
-    background: rgba(0, 0, 0, 0.2);
-    padding: 4px 8px;
-    border-radius: 4px;
+.tunnel-checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #4a90d9;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.tunnel-checkbox-label input[type="checkbox"]:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.tunnel-checkbox-text {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Domain row: label + URL */
+.tunnel-domain-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    padding-left: 28px;  /* Align with text under checkbox */
+}
+
+.tunnel-domain-label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* Clickable URL link (tunnel active) */
+.tunnel-url-link {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    text-decoration: underline;
     word-break: break-all;
 }
 
-.zrok-copy-btn {
-    font-size: 11px;
-    padding: 2px 8px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-card);
-    color: var(--text-primary);
-    cursor: pointer;
-    white-space: nowrap;
+.tunnel-url-link:hover {
+    color: #64b5f6;
 }
 
-.zrok-copy-btn:hover {
-    border-color: var(--accent);
-}
-
-.zrok-reserved {
-    font-size: 12px;
+/* Disabled/grayed URL (tunnel inactive) */
+.tunnel-url-disabled {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.9rem;
     color: var(--text-secondary);
+    opacity: 0.5;
+    word-break: break-all;
+    cursor: default;
+}
+
+/* Info/error text */
+.tunnel-info {
+    position: relative;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    padding: 8px 28px 8px 12px;  /* Right padding for close button */
+    border-radius: 6px;
+    margin-top: 4px;
+}
+
+.tunnel-info-neutral {
+    color: var(--text-secondary);
+    padding-top: 0;
+}
+
+.tunnel-info-success {
+    background: rgba(38, 166, 154, 0.12);
+    border: 1px solid rgba(38, 166, 154, 0.3);
+    color: #80cbc4;
+}
+
+.tunnel-info-error {
+    background: rgba(244, 67, 54, 0.12);
+    border: 1px solid rgba(244, 67, 54, 0.3);
+    color: #ef9a9a;
+}
+
+.tunnel-info-pending {
+    background: rgba(255, 152, 0, 0.12);
+    border: 1px solid rgba(255, 152, 0, 0.3);
+    color: #ffcc80;
+}
+
+.tunnel-info-warning {
+    background: rgba(255, 152, 0, 0.08);
+    border: 1px solid rgba(255, 152, 0, 0.2);
+    color: var(--text-secondary);
+}
+
+/* Spinner for "Starting..." state */
+.tunnel-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 152, 0, 0.3);
+    border-top-color: #ffcc80;
+    border-radius: 50%;
+    animation: tunnelSpin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+@keyframes tunnelSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* Close button for tunnel info messages (×) */
+.tunnel-info-close {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.15rem;
+    line-height: 1;
+    color: inherit;
+    opacity: 0.5;
+    padding: 0 2px;
+}
+
+.tunnel-info-close:hover {
+    opacity: 1;
 }
 
 

@@ -18,9 +18,9 @@ SignalingServer::SignalingServer(DataChannelRelay* relay,
     , m_ServerHost(serverHost)
 {
     qInfo() << "[SignalingServer] Created, wsPort=" << wsPort
-            << "mode=NonSecure (zrok handles TLS)";
+            << "mode=NonSecure (nport/Cloudflare handles TLS)";
 
-    // Always NonSecure — TLS is terminated by zrok for remote access.
+    // Always NonSecure — TLS is terminated by nport/Cloudflare for remote access.
     // Local LAN clients connect via ws://localhost:<port> directly.
     m_WsServer = new QWebSocketServer(
         QString("Moonlight-Signaling"),
@@ -95,13 +95,25 @@ void SignalingServer::stop()
 
 QString SignalingServer::wsUrl() const
 {
-    // If an override URL is set (e.g. for zrok tunnel), return it as-is.
-    // The browser connects to wss://<zrok-url> directly.
-    if (!m_OverrideWsUrl.isEmpty())
-        return m_OverrideWsUrl;
+    if (!m_OverrideWsUrl.isEmpty()) {
+        // Override URL (e.g. from nport tunnel): "https://moonlightweb-xxx.nport.link"
+        QString url = m_OverrideWsUrl;
+        // Replace https:// with wss:// for WebSocket protocol
+        if (url.startsWith("https://"))
+            url.replace(0, 8, "wss://");
+        // Ensure /ws path for the proxy on the unified port
+        if (!url.endsWith("/ws"))
+            url += "/ws";
+        return url;
+    }
 
-    // Default: construct from serverHost + port (local LAN).
-    return QString("ws://%1:%2").arg(m_ServerHost).arg(m_WsPort);
+    // LAN: WebSocket goes through the same HTTPS port (443) via HttpServer proxy.
+    // The browser connects to wss://<host>[:<port>]/ws, which triggers a WebSocket
+    // upgrade detection in HttpServer that proxies to the local signaling server.
+    QString host = m_ServerHost;
+    if (m_HttpsPort != 443)
+        host += ":" + QString::number(m_HttpsPort);
+    return QString("wss://%1/ws").arg(host);
 }
 
 // --- New WS client connected ---

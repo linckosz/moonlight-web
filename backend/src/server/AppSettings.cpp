@@ -109,30 +109,18 @@ void AppSettings::setGamingMode(bool enabled)
     writeAll(obj);
 }
 
-// ── zrok ───────────────────────────────────────────────────────────────────────
+// ── nport tunnel ──────────────────────────────────────────────────────────────
 
-QString AppSettings::zrokToken() const
+QString AppSettings::nportSubdomain() const
 {
     QJsonObject obj = readAll();
-    return obj.value("zrok_token").toString();
+    return obj.value("nport_subdomain").toString();
 }
 
-void AppSettings::setZrokToken(const QString& token)
+void AppSettings::setNportSubdomain(const QString& subdomain)
 {
     QJsonObject obj = readAll();
-    obj["zrok_token"] = token;
+    obj["nport_subdomain"] = subdomain;
     writeAll(obj);
 }
 
-QString AppSettings::zrokReservedName() const
-{
-    QJsonObject obj = readAll();
-    return obj.value("zrok_reserved_name").toString();
-}
-
-void AppSettings::setZrokReservedName(const QString& name)
-{
-    QJsonObject obj = readAll();
-    obj["zrok_reserved_name"] = name;
-    writeAll(obj);
-}

@@ -446,6 +446,15 @@ void HttpServer::onReadyReadSocket(QTcpSocket* socket)
     if (headerEnd == -1) return;
 
     QString headerPart = QString::fromUtf8(buffer.left(headerEnd));
+
+    // WebSocket upgrade: proxy the connection to the local signaling server.
+    // This allows both HTTPS and WebSocket signaling to share the same port 443,
+    // which is required for the nport tunnel to expose the full UI.
+    if (headerPart.contains("Upgrade: websocket", Qt::CaseInsensitive)) {
+        handleWebSocketUpgrade(socket, buffer);
+        return;
+    }
+
     int contentLength = 0;
     for (const QString& line : headerPart.split("\r\n")) {
         if (line.startsWith("Content-Length:", Qt::CaseInsensitive)) {
@@ -485,6 +494,11 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
     if (!req.path.startsWith("/api/")) {
         HttpResponse resp = m_StaticFiles->serveFile(req.path);
+        // SPA fallback: for any non-API path that doesn't match a real file,
+        // serve index.html so the frontend can handle its own routing via
+        // the History API (e.g. /admin, /settings).
+        if (resp.statusCode == 404)
+            resp = m_StaticFiles->serveFile("/");
         sendResponse(socket, resp);
         return;
     }
@@ -511,6 +525,80 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
                        << "socket=" << socket << "status=" << resp.statusCode;
         }
     });
+}
+
+void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)
+{
+    qInfo() << "[HttpServer] WebSocket upgrade detected, proxying to local port"
+            << m_SignalingPort;
+
+    // Remove from our tracking — HttpServer should no longer manage this socket.
+    m_Buffers.remove(clientSocket);
+    m_PendingAsyncSockets.remove(clientSocket);
+
+    // Disconnect HttpServer's handlers from this socket so they don't interfere
+    // with the bidirectional proxy.
+    QObject::disconnect(clientSocket, &QTcpSocket::readyRead,
+                         this, &HttpServer::onReadyRead);
+    QObject::disconnect(clientSocket, &QTcpSocket::disconnected,
+                         this, &HttpServer::onDisconnected);
+
+    // Target socket: connects to the local signaling WebSocket server.
+    QTcpSocket* target = new QTcpSocket(this);
+
+    // Guard flags: cleanup is called at most once, regardless of which signal
+    // fires first (client disconnect, target disconnect, target error).
+    bool* guard = new bool(false);
+
+    auto cleanup = [clientSocket, target, guard]() {
+        if (*guard) return;
+        *guard = true;
+        if (clientSocket->state() == QAbstractSocket::ConnectedState)
+            clientSocket->disconnectFromHost();
+        if (target->state() == QAbstractSocket::ConnectedState)
+            target->disconnectFromHost();
+        target->deleteLater();
+        clientSocket->deleteLater();
+        delete guard;
+    };
+
+    // Pre-connect cleanup: if client disconnects before target connects,
+    // this handler ensures the target socket is not left dangling.
+    QObject::connect(clientSocket, &QTcpSocket::disconnected, cleanup);
+
+    QObject::connect(target, &QTcpSocket::connected,
+        [clientSocket, target, requestData, cleanup, guard]() {
+            // Late connection after cleanup: tear down and return.
+            if (*guard) {
+                target->disconnectFromHost();
+                return;
+            }
+
+            // Forward the initial HTTP upgrade request to the signaling server.
+            // This includes all headers (Upgrade, Sec-WebSocket-Key, etc.).
+            target->write(requestData);
+
+            // Bidirectional forwarding: client <-> signaling server.
+            QObject::connect(clientSocket, &QTcpSocket::readyRead,
+                [clientSocket, target]() {
+                    target->write(clientSocket->readAll());
+                });
+            QObject::connect(target, &QTcpSocket::readyRead,
+                [clientSocket, target]() {
+                    clientSocket->write(target->readAll());
+                });
+        });
+
+    // Post-connect cleanup: when either side disconnects or errors out.
+    QObject::connect(target, &QTcpSocket::disconnected, cleanup);
+    QObject::connect(target, &QAbstractSocket::errorOccurred,
+        [target, cleanup](QAbstractSocket::SocketError) {
+            qWarning() << "[HttpServer] WebSocket proxy: connection error:"
+                       << target->errorString();
+            cleanup();
+        });
+
+    target->connectToHost(QHostAddress::LocalHost, m_SignalingPort);
 }
 
 HttpRequest HttpServer::parseRequest(const QByteArray& raw) const

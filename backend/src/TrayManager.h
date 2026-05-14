@@ -20,6 +20,7 @@ public:
 private slots:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
     void onOpen();
+    void onOpenSettings();
     void onRestart();
     void onQuit();
 

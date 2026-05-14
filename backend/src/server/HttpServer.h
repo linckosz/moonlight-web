@@ -26,6 +26,9 @@ public:
     RestRouter* router() const { return m_Router; }
     QSslConfiguration sslConfiguration() const { return m_SslConfig; }
 
+    /// Port of the local signaling WebSocket server (for WS→proxy routing).
+    void setSignalingPort(quint16 port) { m_SignalingPort = port; }
+
     /// The port the HTTPS server actually bound to (0 if not started).
     quint16 activeHttpsPort() const { return m_ActiveHttpsPort; }
 
@@ -54,6 +57,7 @@ private:
     void processRequest(QTcpSocket* socket, const QByteArray& requestData);
     void onReadyReadSocket(QTcpSocket* socket);
     void sendResponse(QTcpSocket* socket, const HttpResponse& response);
+    void handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData);
     HttpRequest parseRequest(const QByteArray& raw) const;
     bool loadCert();
     QString findCertDir();
@@ -69,6 +73,8 @@ private:
     quint16 m_HttpPort;
     quint16 m_HttpsPort;
     quint16 m_ActiveHttpsPort = 0;
+
+    quint16 m_SignalingPort = 48001;
 
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;

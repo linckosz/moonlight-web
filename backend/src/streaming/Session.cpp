@@ -253,10 +253,11 @@ void StreamSession::onLaunchReplyFinished()
     auto* relay = new DataChannelRelay(m_Shim, this);
 
     // SignalingServer: WebSocket for SDP/ICE exchange only.
-    // NonSecure mode: zrok provides TLS termination for remote access.
+    // NonSecure mode: nport/Cloudflare provides TLS termination for remote access.
     auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
+    signaling->setHttpsPort(m_HttpsPort);
 
-    // If an explicit WS URL was set (e.g. zrok tunnel), apply it.
+    // If an explicit WS URL was set (e.g. nport tunnel), apply it.
     if (!m_ExplicitWsUrl.isEmpty()) {
         signaling->setOverrideWsUrl(m_ExplicitWsUrl);
         qInfo() << "[Session] Using explicit signaling URL:" << m_ExplicitWsUrl;
@@ -305,7 +306,6 @@ void StreamSession::onShimConnectionStarted()
     QJsonObject result;
     result["status"] = "streaming";
     result["signalingUrl"] = m_Signaling ? m_Signaling->wsUrl() : QString();
-    result["signalingPort"] = m_Signaling ? static_cast<int>(m_Signaling->port()) : 0;
     result["sessionUrl"] = m_SessionUrl;
 
     // Pass gaming mode preference to the frontend

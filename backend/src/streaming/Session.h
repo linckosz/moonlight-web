@@ -31,8 +31,13 @@ public:
     void quit();
 
     /// Override the signaling WS URL returned to the browser.
-    /// When zrok is active, this should be "wss://<zrok-public-url>".
+    /// When nport tunnel is active, this is "wss://<subdomain>.nport.link".
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
+
+    /// Set the actual HTTPS port used by HttpServer (may differ from 443
+    /// due to port fallback). Used to construct the correct wsUrl() for
+    /// the browser when sharing the unified port.
+    void setHttpsPort(quint16 port) { m_HttpsPort = port; }
 
 signals:
     void relayCreated(DataChannelRelay* relay);
@@ -61,6 +66,9 @@ private:
 
     /// If non-empty, overrides SignalingServer::wsUrl() in the /start response.
     QString m_ExplicitWsUrl;
+
+    /// The HTTPS port HttpServer is actually listening on (may be != 443).
+    quint16 m_HttpsPort = 443;
 
     MoonlightShim* m_Shim = nullptr;
     DataChannelRelay* m_Relay = nullptr;

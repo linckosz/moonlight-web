@@ -33,13 +33,14 @@ public:
     void stop();
 
     void setServerHost(const QString& host) { m_ServerHost = host; }
+    void setHttpsPort(quint16 port) { m_HttpsPort = port; }
     quint16 port() const { return m_WsPort; }
 
     /// Returns the WebSocket URL for browser connections.
-    /// If an override URL is set (e.g. for zrok tunnels), returns that instead.
+    /// If an override URL is set (e.g. for nport tunnel), returns that instead.
     QString wsUrl() const;
 
-    /// Override the WS URL (used when zrok provides a public WSS endpoint).
+    /// Override the WS URL (used when nport provides a public WSS endpoint).
     /// The browser will connect to this URL instead of the local ws://... one.
     void setOverrideWsUrl(const QString& url) { m_OverrideWsUrl = url; }
 
@@ -66,6 +67,7 @@ private:
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;
     quint16 m_WsPort = 0;
+    quint16 m_HttpsPort = 443;
     QString m_ServerHost;
     bool m_Running = false;
     std::atomic<bool> m_Stopping{false};
