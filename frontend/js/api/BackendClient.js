@@ -55,8 +55,9 @@ export class BackendClient {
     static async getStreamingSettings()            { return this.get('/api/settings/streaming'); }
     static async saveStreamingSettings(settings)   { return this.post('/api/settings/streaming', settings); }
 
-    // ── zrok tunnel ──────────────────────────────────────────────────────────────
+    // ── Cloudflare tunnel (remote access via cloudflared) ──────────────────────────────────
 
-    static async getZrokStatus()                 { return this.get('/api/zrok/status'); }
-    static async configureZrokToken(token)        { return this.post('/api/zrok/configure', { token }); }
+    static async getTunnelStatus()                 { return this.get('/api/tunnel/status'); }
+    static async configureTunnel(options)           { return this.post('/api/tunnel/configure', options); }
+    static async disableTunnel()                    { return this.post('/api/tunnel/disable'); }
 }

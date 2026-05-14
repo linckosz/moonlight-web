@@ -1,2 +1,5 @@
 - [Phase 6 Audio Pipeline](phase6-audio-pipeline.md) — AudioWorklet, PCM16->Float32, AudioPipeline lifecycle
-- [Tray Control Panel](tray-control-panel.md) — Action "Control Panel" dans le System Tray, ouvre le frontend dans le navigateur
+- [Tray Control Panel](tray-control-panel.md) — Action "Server Settings" dans le System Tray, ouvre `/admin`
+- [History API Routing](history-api-routing.md) — SPA fallback backend + History API frontend, plus de hash routing
+- [Internet Access UI Refactor](internet-access-ui-refactor.md) — Checkbox + URL + 6 etats, auto-subdomain
+- [Cloudflared -> nport Migration](cloudflared-to-nport-migration.md) — Node.js runtime integre, nport CLI remplace cloudflared, prepare_node_nport.ps1

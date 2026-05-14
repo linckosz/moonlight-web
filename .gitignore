@@ -4,8 +4,6 @@ build-*/
 *.o
 *.obj
 *.exe
-!backend/tools/*.exe
-!backend/tools/windows/*.exe
 *.dll
 *.so
 *.dylib

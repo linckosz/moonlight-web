@@ -47,14 +47,14 @@ bool TrayManager::init()
 
     // Build context menu
     QAction* openAction = m_Menu->addAction(tr("&Open"));
-    QAction* controlPanelAction = m_Menu->addAction(tr("&Control Panel"));
+    QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
     m_Menu->addSeparator();
     QAction* restartAction = m_Menu->addAction(tr("&Restart"));
     m_Menu->addSeparator();
     QAction* quitAction = m_Menu->addAction(tr("&Quit"));
 
     connect(openAction, &QAction::triggered, this, &TrayManager::onOpen);
-    connect(controlPanelAction, &QAction::triggered, this, &TrayManager::onOpen);
+    connect(controlPanelAction, &QAction::triggered, this, &TrayManager::onOpenSettings);
     connect(restartAction, &QAction::triggered, this, &TrayManager::onRestart);
     connect(quitAction, &QAction::triggered, this, &TrayManager::onQuit);
     connect(m_TrayIcon, &QSystemTrayIcon::activated, this, &TrayManager::onActivated);
@@ -82,6 +82,18 @@ void TrayManager::onOpen()
     }
     QUrl url(QStringLiteral("https://localhost:%1").arg(port));
     qInfo() << "[TrayManager] Opening" << url.toString();
+    QDesktopServices::openUrl(url);
+}
+
+void TrayManager::onOpenSettings()
+{
+    quint16 port = m_Server->activeHttpsPort();
+    if (port == 0) {
+        qWarning() << "[TrayManager] Cannot open settings — HTTPS server not running";
+        return;
+    }
+    QUrl url(QStringLiteral("https://localhost:%1/admin").arg(port));
+    qInfo() << "[TrayManager] Opening settings" << url.toString();
     QDesktopServices::openUrl(url);
 }
 

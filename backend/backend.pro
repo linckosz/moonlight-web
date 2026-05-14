@@ -23,7 +23,9 @@ INCLUDEPATH += $$PWD/third_party/moonlight-common-c/nanors/deps/obl
 # libdatachannel (WebRTC DataChannel — built via CMake in build_libdatachannel.bat)
 exists($$PWD/third_party/libdatachannel/install/include) {
     INCLUDEPATH += $$PWD/third_party/libdatachannel/install/include
-    LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp
+    win32:CONFIG(release, debug|release): LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp
+    else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/third_party/libdatachannel/install/debug/lib -ldatachannel -ljuice -lusrsctp
+    else:unix: LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp
     DEFINES += RTC_STATIC RTC_ENABLE_WEBSOCKET=0 RTC_ENABLE_MEDIA=0
 } else {
     # Submodule not yet initialized — headers missing, build will fail.
@@ -41,7 +43,7 @@ SOURCES += \
     src/server/StaticFileHandler.cpp \
     src/server/RestRouter.cpp \
     src/common/Logger.cpp \
-    src/network/ZrokClient.cpp \
+    src/network/NportClient.cpp \
     src/TrayManager.cpp \
     src/backend/NvHTTP.cpp \
     src/backend/NvComputer.cpp \
@@ -95,7 +97,7 @@ HEADERS += \
     src/server/RestRouter.h \
     src/common/Logger.h \
     src/common/Types.h \
-    src/network/ZrokClient.h \
+    src/network/NportClient.h \
     src/TrayManager.h \
     src/backend/NvAddress.h \
     src/backend/NvApp.h \

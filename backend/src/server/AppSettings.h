@@ -38,14 +38,11 @@ public:
     bool gamingMode() const;
     void setGamingMode(bool enabled);
 
-    // ── zrok ────────────────────────────────────────────────────────────────
+    // ── nport tunnel ──────────────────────────────────────────────────────────
 
-    QString zrokToken() const;
-    void setZrokToken(const QString& token);
-
-    /// Reserved share name (e.g. "moonlightweb-a1b2c3d4").
-    QString zrokReservedName() const;
-    void setZrokReservedName(const QString& name);
+    /// Persistent subdomain for remote tunnel access (e.g. "moonlightweb-a1b2").
+    QString nportSubdomain() const;
+    void setNportSubdomain(const QString& subdomain);
 
     // ── Low-level access (for other one-off settings) ───────────────────────
 

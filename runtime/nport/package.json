@@ -1,0 +1,7 @@
+{
+    "name": "nport-wrapper",
+    "private": true,
+    "dependencies": {
+        "nport": "latest"
+    }
+}

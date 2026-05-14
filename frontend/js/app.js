@@ -61,14 +61,35 @@ const MoonlightApp = {
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
 
-        // IMPORTANT: render the HostListView SYNCHRONOUSLY before any async
-        // operations.  If the health check fetch hangs or throws, the user
-        // would otherwise see an empty <main> (blank page).
         this._initNavButtons();
-        this.showHostList();
+        this._initRouter();
 
         // Background async housekeeping — never blocks the initial render.
         this._initAsync();
+    },
+
+    /**
+     * History API router: reads window.location.pathname for initial route
+     * and listens to popstate for browser back/forward.
+     */
+    _initRouter() {
+        window.addEventListener('popstate', (e) => {
+            const state = e.state || {};
+            const view = state.view || 'hosts';
+            this._navigateByView(view, state);
+        });
+
+        // Determine initial view from URL path (no pushState — URL already matches)
+        const path = window.location.pathname;
+        let initialView = 'hosts';
+        if (path === '/admin') initialView = 'admin';
+        else if (path === '/settings') initialView = 'settings';
+        else if (path === '/apps') initialView = 'apps';
+        else if (path === '/streaming') initialView = 'streaming';
+
+        const initialState = { view: initialView };
+        history.replaceState(initialState, '', path);
+        this._navigateByView(initialView, initialState);
     },
 
     /**
@@ -128,6 +149,70 @@ const MoonlightApp = {
         }
     },
 
+    /**
+     * Render a view by name without pushing history state.
+     * Used internally by _initRouter() and the popstate handler.
+     * URL/bookmark management is handled by the caller (pushState in show*()
+     * methods, or the browser's own history for popstate).
+     * @param {string} view - 'hosts', 'admin', 'settings', 'apps', or 'streaming'
+     * @param {Object} [state] - History state for view restoration (e.g. { hostUuid, hostDisplayName })
+     */
+    _navigateByView(view, state) {
+        this._clearCurrentView();
+        const main = document.getElementById('main-content');
+        if (!main) return;
+
+        switch (view) {
+            case 'admin':
+                this.transition('admin');
+                this.adminView = new AdminView(main, () => history.back());
+                this.adminView.start();
+                this._updateNavHighlight('admin');
+                break;
+            case 'settings':
+                this.transition('settings');
+                this.settingsView = new SettingsView(main, () => history.back());
+                this.settingsView.start();
+                this._updateNavHighlight('settings');
+                break;
+            case 'apps': {
+                const hostState = state || {};
+                if (hostState.hostUuid) {
+                    this.transition('app_list');
+                    this._clearCurrentView();
+                    // Reconstruct a minimal host object from stored state
+                    const host = {
+                        uuid: hostState.hostUuid,
+                        displayName: hostState.hostDisplayName || 'Host'
+                    };
+                    this.appListView = new AppListView(main, host);
+                    this.appListView.onBack = () => {
+                        this._clearCurrentView();
+                        this.transition('host_list');
+                        this.showHostList();
+                    };
+                    this.appListView.onLaunch = (app) => this.launchApp(host, app);
+                    this._updateNavHighlight('hosts');
+                } else {
+                    // No host context — redirect to host list
+                    this.showHostList();
+                }
+                break;
+            }
+            case 'streaming':
+                // Streaming state is ephemeral — cannot restore from URL alone
+                this.showHostList();
+                break;
+            default:
+                this.transition('host_list');
+                this.hostListView = new HostListView(main);
+                this.hostListView.onLaunch = (host) => this.showAppList(host);
+                this.hostListView.start();
+                this._updateNavHighlight('hosts');
+                break;
+        }
+    },
+
     // --- Navigation ---
 
     _clearCurrentView() {
@@ -154,38 +239,22 @@ const MoonlightApp = {
     },
 
     showHostList() {
-        this.transition('host_list');
-        this._clearCurrentView();
-        const main = document.getElementById('main-content');
-        if (!main) {
-            console.error('[MW] #main-content not found in DOM');
-            return;
-        }
-        this.hostListView = new HostListView(main);
-        this.hostListView.onLaunch = (host) => this.showAppList(host);
-        this.hostListView.start();
-        this._updateNavHighlight('hosts');
+        history.pushState({ view: 'hosts' }, '', '/');
+        this._navigateByView('hosts');
     },
 
     showAdmin() {
-        this.transition('admin');
-        this._clearCurrentView();
-        const main = document.getElementById('main-content');
-        this.adminView = new AdminView(main, () => this.showHostList());
-        this.adminView.start();
-        this._updateNavHighlight('admin');
+        history.pushState({ view: 'admin' }, '', '/admin');
+        this._navigateByView('admin');
     },
 
     showSettings() {
-        this.transition('settings');
-        this._clearCurrentView();
-        const main = document.getElementById('main-content');
-        this.settingsView = new SettingsView(main, () => this.showHostList());
-        this.settingsView.start();
-        this._updateNavHighlight('settings');
+        history.pushState({ view: 'settings' }, '', '/settings');
+        this._navigateByView('settings');
     },
 
     showAppList(host) {
+        history.pushState({ view: 'apps', hostUuid: host.uuid, hostDisplayName: host.displayName }, '', '/apps');
         this.transition('app_list');
         this._clearCurrentView();
         const main = document.getElementById('main-content');
@@ -214,6 +283,7 @@ const MoonlightApp = {
 
             if (result.status === 'streaming') {
                 Toast.success(`${app.name} started`);
+                history.pushState({ view: 'streaming' }, '', '/streaming');
                 this.transition('streaming');
 
                 this.streamView = new StreamView(
