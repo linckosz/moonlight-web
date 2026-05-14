@@ -20,6 +20,17 @@ INCLUDEPATH += $$PWD/third_party/moonlight-common-c/enet/include
 INCLUDEPATH += $$PWD/third_party/moonlight-common-c
 INCLUDEPATH += $$PWD/third_party/moonlight-common-c/nanors/deps/obl
 
+# libdatachannel (WebRTC DataChannel — built via CMake in build_libdatachannel.bat)
+exists($$PWD/third_party/libdatachannel/install/include) {
+    INCLUDEPATH += $$PWD/third_party/libdatachannel/install/include
+    LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp
+    DEFINES += RTC_STATIC RTC_ENABLE_WEBSOCKET=0 RTC_ENABLE_MEDIA=0
+} else {
+    # Submodule not yet initialized — headers missing, build will fail.
+    # Instruct user: git submodule add https://github.com/paullouisageneau/libdatachannel.git backend/third_party/libdatachannel
+    error("libdatachannel not found. Run: git submodule add https://github.com/paullouisageneau/libdatachannel.git backend/third_party/libdatachannel && cd backend/third_party/libdatachannel && cmake -B build && cmake --build build")
+}
+
 # OpenSSL
 INCLUDEPATH += $$PWD/libs/windows/include/x64
 
@@ -30,7 +41,7 @@ SOURCES += \
     src/server/StaticFileHandler.cpp \
     src/server/RestRouter.cpp \
     src/common/Logger.cpp \
-    src/network/DdnsClient.cpp \
+    src/network/ZrokClient.cpp \
     src/TrayManager.cpp \
     src/backend/NvHTTP.cpp \
     src/backend/NvComputer.cpp \
@@ -39,8 +50,10 @@ SOURCES += \
     src/backend/NvPairingManager.cpp \
     src/streaming/StreamConfig.cpp \
     src/streaming/Session.cpp \
-    src/streaming/StreamRelay.cpp \
     src/streaming/MoonlightShim.cpp \
+    # WebRTC DataChannel relay (replaces StreamRelay) \
+    src/streaming/DataChannelRelay.cpp \
+    src/streaming/SignalingServer.cpp \
     # moonlight-common-c ENet \
     third_party/moonlight-common-c/enet/callbacks.c \
     third_party/moonlight-common-c/enet/compress.c \
@@ -82,7 +95,7 @@ HEADERS += \
     src/server/RestRouter.h \
     src/common/Logger.h \
     src/common/Types.h \
-    src/network/DdnsClient.h \
+    src/network/ZrokClient.h \
     src/TrayManager.h \
     src/backend/NvAddress.h \
     src/backend/NvApp.h \
@@ -93,7 +106,8 @@ HEADERS += \
     src/backend/NvPairingManager.h \
     src/streaming/StreamConfig.h \
     src/streaming/Session.h \
-    src/streaming/StreamRelay.h \
+    src/streaming/DataChannelRelay.h \
+    src/streaming/SignalingServer.h \
     src/streaming/MoonlightShim.h \
     # moonlight-common-c headers \
     third_party/moonlight-common-c/src/Platform.h \
@@ -115,7 +129,7 @@ DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"
 DEFINES += CERT_DIR=\\\"$$PWD/cert/\\\"
 
 win32 {
-    LIBS += -lWS2_32 -lwinmm
+    LIBS += -lWS2_32 -lwinmm -lBcrypt
     LIBS += -L$$PWD/libs/windows/lib/x64 -llibssl -llibcrypto
 }
 

@@ -1,0 +1,2 @@
+- [Phase 6 Audio Pipeline](phase6-audio-pipeline.md) — AudioWorklet, PCM16->Float32, AudioPipeline lifecycle
+- [Tray Control Panel](tray-control-panel.md) — Action "Control Panel" dans le System Tray, ouvre le frontend dans le navigateur

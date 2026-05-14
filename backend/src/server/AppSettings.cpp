@@ -109,31 +109,30 @@ void AppSettings::setGamingMode(bool enabled)
     writeAll(obj);
 }
 
-// ── DuckDNS ────────────────────────────────────────────────────────────────────
+// ── zrok ───────────────────────────────────────────────────────────────────────
 
-QString AppSettings::ddnsToken() const
+QString AppSettings::zrokToken() const
 {
     QJsonObject obj = readAll();
-    return obj.value("ddns_token").toString();
+    return obj.value("zrok_token").toString();
 }
 
-void AppSettings::setDdnsToken(const QString& token)
+void AppSettings::setZrokToken(const QString& token)
 {
     QJsonObject obj = readAll();
-    obj["ddns_token"] = token;
+    obj["zrok_token"] = token;
     writeAll(obj);
 }
 
-bool AppSettings::ddnsConsentGranted() const
+QString AppSettings::zrokReservedName() const
 {
     QJsonObject obj = readAll();
-    return obj.value("ddns_consent_granted").toBool();
+    return obj.value("zrok_reserved_name").toString();
 }
 
-void AppSettings::setDdnsConsentGranted(bool granted)
+void AppSettings::setZrokReservedName(const QString& name)
 {
     QJsonObject obj = readAll();
-    obj["ddns_consent_granted"] = granted;
-    obj["ddns_consent_version"] = 1;
+    obj["zrok_reserved_name"] = name;
     writeAll(obj);
 }

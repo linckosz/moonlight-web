@@ -38,14 +38,14 @@ public:
     bool gamingMode() const;
     void setGamingMode(bool enabled);
 
-    // ── DuckDNS ─────────────────────────────────────────────────────────────
+    // ── zrok ────────────────────────────────────────────────────────────────
 
-    QString ddnsToken() const;
-    void setDdnsToken(const QString& token);
+    QString zrokToken() const;
+    void setZrokToken(const QString& token);
 
-    /// Consentement RGPD pour la creation du sous-domaine DuckDNS.
-    bool ddnsConsentGranted() const;
-    void setDdnsConsentGranted(bool granted);
+    /// Reserved share name (e.g. "moonlightweb-a1b2c3d4").
+    QString zrokReservedName() const;
+    void setZrokReservedName(const QString& name);
 
     // ── Low-level access (for other one-off settings) ───────────────────────
 

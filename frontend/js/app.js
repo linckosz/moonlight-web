@@ -72,7 +72,7 @@ const MoonlightApp = {
     },
 
     /**
-     * Non-blocking async setup: health check, DuckDNS banner, etc.
+     * Non-blocking async setup: health check, etc.
      * Runs after the UI is visible so a slow/failed fetch doesn't hide it.
      */
     async _initAsync() {
@@ -82,8 +82,6 @@ const MoonlightApp = {
         } catch (err) {
             console.warn('[MW] Server health check failed:', err);
         }
-
-        this.checkDdnsBanner();
     },
 
     _initNavButtons() {
@@ -127,53 +125,6 @@ const MoonlightApp = {
         const btnSettings = document.getElementById('btn-settings');
         if (btnSettings) {
             btnSettings.classList.toggle('nav-active', active === 'settings');
-        }
-    },
-
-    async checkDdnsBanner() {
-        // Respect permanent dismissal
-        if (localStorage.getItem('ddns_banner_dismissed')) return;
-
-        try {
-            const consent = await BackendClient.get('/api/ddns/consent');
-            if (consent.active && consent.subdomain) {
-                this.showDdnsBanner(consent.subdomain, consent.port || 48443);
-            }
-        } catch (err) {
-            console.warn('[MW] Failed to check DuckDNS status:', err);
-        }
-    },
-
-    showDdnsBanner(subdomain, port) {
-        const app = document.getElementById('app');
-        if (!app) return;
-
-        // Avoid duplicates
-        if (app.querySelector('.ddns-banner')) return;
-
-        const banner = document.createElement('div');
-        banner.className = 'ddns-banner';
-
-        const publicUrl = `https://${subdomain}.duckdns.org:${port}`;
-
-        banner.innerHTML = `
-            <span class="ddns-banner-text">
-                Public access: <a href="${publicUrl}" target="_blank" rel="noopener">${publicUrl}</a>
-            </span>
-            <button class="ddns-banner-close" title="Dismiss">&times;</button>
-        `;
-
-        banner.querySelector('.ddns-banner-close').addEventListener('click', () => {
-            banner.remove();
-            localStorage.setItem('ddns_banner_dismissed', 'true');
-        });
-
-        // Insert between header and main content
-        const main = document.getElementById('main-content');
-        if (main) {
-            main.parentNode.insertBefore(banner, main);
-        } else {
-            app.prepend(banner);
         }
     },
 
@@ -267,7 +218,7 @@ const MoonlightApp = {
 
                 this.streamView = new StreamView(
                     document.getElementById('app'),
-                    result.wsUrl,
+                    result.signalingUrl || result.wsUrl,  // WebRTC signaling URL (fallback to WS for legacy)
                     host,
                     result.videoCodec,
                     result.gamingMode !== false

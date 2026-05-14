@@ -424,3 +424,13 @@ void MoonlightShim::sendMouseScroll(short scrollAmount)
     LiSendHighResScrollEvent(scrollAmount);
 }
 
+void MoonlightShim::requestIdrFrame()
+{
+    if (!m_Connected.load(std::memory_order_acquire)) {
+        qWarning() << "[MoonlightShim] requestIdrFrame skipped — not connected";
+        return;
+    }
+    qInfo() << "[MoonlightShim] Calling LiRequestIdrFrame() to request IDR from Sunshine";
+    LiRequestIdrFrame();
+}
+

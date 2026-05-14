@@ -87,7 +87,7 @@ curl -k http://127.0.0.1:48000/api/hosts
 | 3 — Pairing | ✅ |
 | 4 — Liste des applications | ✅ |
 | 5a — RTSP Handshake | ✅ |
-| 5b — Pipeline Vidéo | 🔄 En cours |
-| 6 — Pipeline Audio | ⏳ |
+| 5b — Pipeline Vidéo | ✅ |
+| 6 — Pipeline Audio | ✅ |
 | 7 — Input | ⏳ |
 | 8 — Polish & erreurs | ⏳ |

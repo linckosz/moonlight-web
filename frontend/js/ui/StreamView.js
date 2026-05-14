@@ -1,13 +1,14 @@
 /**
  * Fullscreen streaming overlay with WebCodecs video decoding and Canvas rendering.
  *
- * Receives raw H.264 Annex B frames over WebSocket from the backend relay,
+ * Receives raw H.264 Annex B frames over WebRTC DataChannel from the backend,
  * decodes them via WebCodecs VideoDecoder, and renders to a <canvas> element.
- * Captures keyboard/mouse events and sends them back as JSON over the same WS.
+ * Captures keyboard/mouse events and sends them back as JSON over the input DC.
  */
-import { WebSocketClient } from '../api/WebSocketClient.js';
+import { WebRtcDataChannel } from '../api/WebRtcDataChannel.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
+import { AudioPipeline } from '../audio/AudioPipeline.js';
 import {
     NalParser,
     splitNals,
@@ -26,14 +27,18 @@ import {
 } from '../util/Av1Utils.js';
 
 export class StreamView {
-    constructor(container, wsUrl, host, videoCodec, gamingMode = true) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true) {
         this.container = container;
-        this.wsUrl = wsUrl;
+        this.signalingUrl = signalingUrl;
         this.host = host;
         this.videoCodec = videoCodec || 'auto';
         this._gamingMode = gamingMode;
-        this.ws = new WebSocketClient(wsUrl);
+        this.webrtc = new WebRtcDataChannel(signalingUrl);
         this.pointerLocked = false;
+
+        // Audio pipeline (PCM16 -> AudioWorklet -> speakers)
+        this.audioPipeline = new AudioPipeline();
+        this._audioLogged = false;
 
         // WebCodecs
         this.decoder = null;
@@ -58,6 +63,12 @@ export class StreamView {
         this._onPointerLockChange = () => this.handlePointerLockChange();
         this._onContextMenu = (e) => e.preventDefault();
 
+        // IDR request state: if no keyframe arrives after buffering many frames
+        // without decoder config, we ask the backend to request an IDR from Sunshine.
+        // This is a safety net for the rare race where the initial IDR is lost.
+        this._idrRequested = false;
+        this._idrTimeout = null;
+
         // Guard flag to prevent re-entrant quit() calls
         this._quitting = false;
 
@@ -68,10 +79,11 @@ export class StreamView {
             this.hintEl.style.display = 'none';
         }
 
-        this.setupWebSocket();
+        this.setupWebRtc();
         this.bindEvents();
         this.startRenderLoop();
         this.startDiagnostics();
+        this.initAudioAsync();
     }
 
     // --- Diagnostics ---------------------------------------------------------
@@ -92,7 +104,10 @@ export class StreamView {
                 ' rendered=' + this.stats.rendered +
                 ' dropped=' + this.stats.dropped +
                 ' canvas=' + this.canvas.width + 'x' + this.canvas.height +
-                ' decoder=' + (this.decoder ? 'exists' : 'null'));
+                ' decoder=' + (this.decoder ? 'exists' : 'null') +
+                ' audio.ready=' + (this.audioPipeline ? this.audioPipeline.ready : 'no') +
+                ' audio.samples=' + (this.audioPipeline ? this.audioPipeline.getStats().writtenSamples : 0) +
+                ' audio.underrun=' + (this.audioPipeline ? this.audioPipeline.getStats().underrunCount : 0));
         }, 2000);
     }
 
@@ -100,6 +115,50 @@ export class StreamView {
         if (this._diagHandle) {
             clearInterval(this._diagHandle);
             this._diagHandle = null;
+        }
+    }
+
+    // =========================================================================
+    // Audio Pipeline
+    // =========================================================================
+
+    /**
+     * Initialise the AudioPipeline asynchronously.
+     *
+     * Safe to call from the constructor — non-blocking.  Audio starts silently
+     * until the worklet module loads (usually <100ms).
+     */
+    async initAudioAsync() {
+        const ok = await this.audioPipeline.init();
+        if (ok) {
+            console.log('[StreamView] AudioPipeline ready');
+            // Resume if the context was suspended (autoplay policy).
+            // StreamView is created after a user click, so this usually succeeds.
+            if (this.audioPipeline.context &&
+                this.audioPipeline.context.state === 'suspended') {
+                await this.audioPipeline.resume();
+            }
+        } else {
+            console.warn('[StreamView] AudioPipeline init failed — audio will be silent');
+        }
+    }
+
+    /**
+     * Handle an incoming PCM16 audio sample from the WebRTC DataChannel.
+     * @param {Uint8Array} sample - PCM16 stereo interleaved data.
+     */
+    handleAudioSample(sample) {
+        if (this._quitting) return;
+
+        if (!this._audioLogged) {
+            console.log('[StreamView] Audio sample received, size=' + sample.length +
+                ', writing to pipeline...');
+            this._audioLogged = true;
+        }
+
+        // Write to AudioPipeline (init may not be complete yet — safe to drop)
+        if (this.audioPipeline && this.audioPipeline.ready) {
+            this.audioPipeline.write(sample);
         }
     }
 
@@ -434,70 +493,47 @@ export class StreamView {
     }
 
     // =========================================================================
-    // WebSocket
+    // WebRTC DataChannel (replaces legacy WebSocket binary transport)
     // =========================================================================
 
-    setupWebSocket() {
-        this.ws.onOpen = () => {
+    setupWebRtc() {
+        this.webrtc.onOpen = () => {
             if (this._quitting) return;
             this.connected = true;
             this.setStatus('connecting', 'Waiting for stream...');
             this.setupDecoder();
+
+            // Safety timeout: if no decoder config after 3 seconds, request an IDR.
+            // This handles the rare case where all frames arrive as deltas (missed IDR).
+            this._idrTimeout = setTimeout(() => {
+                if (!this.nalParser.isReady() && !this._idrRequested) {
+                    this._idrRequested = true;
+                    console.warn('[StreamView] No keyframe after 3s, requesting IDR from backend');
+                    this.webrtc.send({ type: 'requestidr' });
+                }
+            }, 3000);
         };
-        this.ws.onClose = () => {
+        this.webrtc.onClose = () => {
             if (this._quitting) return;
             this.connected = false;
             this.setStatus('disconnected', 'Disconnected');
             Toast.error('Stream disconnected');
             setTimeout(() => this.quit(), 3000);
         };
-        this.ws.onError = () => {
+        this.webrtc.onError = (err) => {
             if (this._quitting) return;
-            Toast.error('WebSocket error');
+            console.error('[StreamView] WebRTC error:', err.message);
+            Toast.error('WebRTC connection error');
         };
-        this.ws.onBinary = (data) => this.handleBinary(data);
-        this.ws.onText = (msg) => this.handleWSText(msg);
-        this.ws.connect();
-    }
-
-    handleWSText(msg) {
-        try {
-            const obj = JSON.parse(msg);
-            if (obj.type === 'debug_hex') {
-                console.log('[Backend] First frame payload hex:', obj.payload);
-            }
-        } catch (e) {
-            // Not JSON, ignore
-        }
-    }
-
-    handleBinary(data) {
-        const bytes = new Uint8Array(data);
-        const channel = bytes[0];
-        const flags = bytes[1];
-        const payload = bytes.slice(2);
-
-        if (!this._firstMsgLogged) {
-            this._firstMsgLogged = true;
-            console.log('[StreamView] First binary message: channel=0x' + channel.toString(16),
-                        'flags=0x' + flags.toString(16),
-                        'payloadSize=' + payload.length);
-        }
-
-        if (channel === 0x01) {
-            const isKeyframe = (flags & 0x01) !== 0;
-            this.handleVideoFrame(payload, isKeyframe);
-        } else if (channel === 0x02) {
-            // Audio channel — PCM data, will be handled in Phase 6
-            if (!this._audioLogged) {
-                console.log('[StreamView] Audio sample received, size=' + payload.length);
-                this._audioLogged = true;
-            }
-        }
+        // Video frames arrive fully reassembled from WebRtcDataChannel
+        this.webrtc.onVideo = (frame, isKeyframe) => this.handleVideoFrame(frame, isKeyframe);
+        // Audio samples (PCM16 stereo interleaved) -> AudioPipeline
+        this.webrtc.onAudio = (sample) => this.handleAudioSample(sample);
+        this.webrtc.connect();
     }
 
     handleVideoFrame(data, isKeyframe) {
-        // Stop processing frames once quit() has started.  The WS may still
+        // Stop processing frames once quit() has started.  The DC may still
         // deliver queued messages during the async HTTP /quit call.
         if (this._quitting) return;
 
@@ -523,11 +559,21 @@ export class StreamView {
             return;
         }
 
-        // --- H.264 / HEVC pipeline (existing) ---
+        // --- H.264 / HEVC pipeline ---
 
         // Extract SPS/PPS from the first keyframe if not done yet
         if (!this.nalParser.isReady()) {
             if (isKeyframe) {
+                // If we requested an IDR, clear stale pending frames that reference
+                // the old (lost) IDR. They would corrupt the decoder if fed with the
+                // new SPS/PPS.
+                if (this._idrRequested && this.pendingFrames.length > 0) {
+                    console.log('[StreamView] IDR received, clearing ' +
+                        this.pendingFrames.length + ' stale pending frames');
+                    this.pendingFrames = [];
+                    this._idrRequested = false;
+                }
+
                 console.log('[StreamView] Feeding first keyframe to NalParser...');
                 const ready = this.nalParser.feed(data);
                 console.log('[StreamView] NalParser.feed() returned: ready=' + ready +
@@ -549,6 +595,15 @@ export class StreamView {
             } else {
                 // First frame is not a keyframe — this is a problem
                 console.warn('[StreamView] First frame is NOT a keyframe! Cannot extract SPS/PPS');
+
+                // Request an IDR if we've buffered too many delta frames without decoder config.
+                // Threshold: 30 frames (~0.5s at 60fps) without a keyframe.
+                if (this.pendingFrames.length > 30 && !this._idrRequested) {
+                    this._idrRequested = true;
+                    console.warn('[StreamView] No keyframe after ' + this.pendingFrames.length +
+                        ' frames, requesting IDR from backend');
+                    this.webrtc.send({ type: 'requestidr' });
+                }
             }
         }
 
@@ -570,6 +625,14 @@ export class StreamView {
         // and immediately configure the decoder.
         if (!this.decoderConfigured && !this.decoderConfiguring) {
             if (isKeyframe) {
+                // If we requested an IDR, clear stale pending frames
+                if (this._idrRequested && this.pendingFrames.length > 0) {
+                    console.log('[StreamView] AV1: IDR received, clearing ' +
+                        this.pendingFrames.length + ' stale pending frames');
+                    this.pendingFrames = [];
+                    this._idrRequested = false;
+                }
+
                 console.log('[StreamView] AV1: extracting Sequence Header OBU from first keyframe');
                 const seqHeader = findSequenceHeader(data);
                 if (seqHeader) {
@@ -582,6 +645,14 @@ export class StreamView {
                 // Wait for a keyframe before configuring — buffer until then
                 if (this.pendingFrames.length < 120) {
                     this.pendingFrames.push({ data, isKeyframe });
+                }
+
+                // Request an IDR if we've buffered too many delta frames
+                if (this.pendingFrames.length > 30 && !this._idrRequested) {
+                    this._idrRequested = true;
+                    console.warn('[StreamView] AV1: No keyframe after ' +
+                        this.pendingFrames.length + ' frames, requesting IDR');
+                    this.webrtc.send({ type: 'requestidr' });
                 }
                 return;
             }
@@ -728,7 +799,7 @@ export class StreamView {
             if (this._mouseX >= 0 && this._mouseY >= 0) {
                 const dx = newX - this._mouseX;
                 const dy = newY - this._mouseY;
-                this.ws.send({ type: 'mousemove', dx, dy });
+                this.webrtc.send({ type: 'mousemove', dx, dy });
             }
 
             this._mouseX = newX;
@@ -811,7 +882,7 @@ export class StreamView {
         }
 
         e.preventDefault();
-        this.ws.send({
+        this.webrtc.send({
             type: 'keydown',
             key: e.key,
             code: e.code,
@@ -825,7 +896,7 @@ export class StreamView {
 
     handleKeyUp(e) {
         e.preventDefault();
-        this.ws.send({
+        this.webrtc.send({
             type: 'keyup',
             key: e.key,
             code: e.code,
@@ -839,20 +910,20 @@ export class StreamView {
 
     handleMouseMove(e) {
         if (!this.pointerLocked) return;
-        this.ws.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
+        this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
     }
 
     handleMouseDown(e) {
-        this.ws.send({ type: 'mousedown', button: e.button + 1 });
+        this.webrtc.send({ type: 'mousedown', button: e.button + 1 });
     }
 
     handleMouseUp(e) {
-        this.ws.send({ type: 'mouseup', button: e.button + 1 });
+        this.webrtc.send({ type: 'mouseup', button: e.button + 1 });
     }
 
     handleWheel(e) {
         e.preventDefault();
-        this.ws.send({ type: 'mousewheel', delta: e.deltaY });
+        this.webrtc.send({ type: 'mousewheel', delta: e.deltaY });
     }
 
     handlePointerLockChange() {
@@ -888,6 +959,12 @@ export class StreamView {
         this.stopDiagnostics();
         this.unbindEvents();
 
+        // Clear IDR request timer
+        if (this._idrTimeout) {
+            clearTimeout(this._idrTimeout);
+            this._idrTimeout = null;
+        }
+
         if (document.pointerLockElement === this.canvas) {
             document.exitPointerLock();
         }
@@ -906,6 +983,11 @@ export class StreamView {
             this.decoder = null;
         }
 
+        // Close AudioPipeline
+        if (this.audioPipeline) {
+            this.audioPipeline.close();
+        }
+
         // Close any pending frames
         for (const frame of this.frameQueue) {
             try { frame.close(); } catch (e) { /* ignore */ }
@@ -913,9 +995,18 @@ export class StreamView {
         this.frameQueue = [];
         this.pendingFrames = [];
 
-        // Send HTTP /quit BEFORE closing the WebSocket. This avoids a race
-        // where the backend's WS disconnect handler nullifies g_ActiveRelay
-        // before the HTTP /quit handler can stop the relay.
+        // Close the WebRTC DataChannels FIRST, before the HTTP /quit reaches the
+        // backend.  This ensures this.webrtc.close() sets _stopping=true so that
+        // any dc.onclose / dc.onerror events from the backend closing its side
+        // are recognised as intentional, not treated as errors.
+        //
+        // Previously we reversed this order (HTTP first, then close) to avoid a
+        // theoretical race where the backend's sessionEnded handler nullified
+        // g_ActiveRelay before the HTTP handler could stop the relay.  Analysis
+        // showed the race is benign: DataChannelRelay::stop() is idempotent
+        // (atomic m_Stopping guard), so either path works correctly.
+        this.webrtc.close();
+
         try {
             await BackendClient.quitApp(this.host.uuid);
             Toast.success('Stream ended');
@@ -923,8 +1014,6 @@ export class StreamView {
             console.warn('[StreamView] Quit failed:', err);
         }
 
-        // Close WS only after HTTP quit has completed
-        this.ws.close();
         this.destroy();
     }
 
@@ -932,7 +1021,12 @@ export class StreamView {
         this.stopRenderLoop();
         this.stopDiagnostics();
         this.unbindEvents();
-        this.ws.close();
+        this.webrtc.close();
+
+        if (this._idrTimeout) {
+            clearTimeout(this._idrTimeout);
+            this._idrTimeout = null;
+        }
 
         if (document.pointerLockElement === this.canvas) {
             document.exitPointerLock();
@@ -944,6 +1038,10 @@ export class StreamView {
         }
         this.decoderConfigured = false;
         this.nalParser.reset();
+
+        if (this.audioPipeline) {
+            this.audioPipeline.close();
+        }
 
         for (const frame of this.frameQueue) {
             try { frame.close(); } catch (e) { /* ignore */ }
