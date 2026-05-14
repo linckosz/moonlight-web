@@ -532,6 +532,10 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     qInfo() << "[HttpServer] WebSocket upgrade detected, proxying to local port"
             << m_SignalingPort;
 
+    // Copy the upgrade request BEFORE removing from m_Buffers.  requestData is a
+    // const reference to the QByteArray inside m_Buffers — remove() destroys it.
+    QByteArray upgradeRequest = requestData;
+
     // Remove from our tracking — HttpServer should no longer manage this socket.
     m_Buffers.remove(clientSocket);
     m_PendingAsyncSockets.remove(clientSocket);
@@ -567,7 +571,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     QObject::connect(clientSocket, &QTcpSocket::disconnected, cleanup);
 
     QObject::connect(target, &QTcpSocket::connected,
-        [clientSocket, target, requestData, cleanup, guard]() {
+        [clientSocket, target, upgradeRequest, guard]() {
             // Late connection after cleanup: tear down and return.
             if (*guard) {
                 target->disconnectFromHost();
@@ -576,7 +580,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
             // Forward the initial HTTP upgrade request to the signaling server.
             // This includes all headers (Upgrade, Sec-WebSocket-Key, etc.).
-            target->write(requestData);
+            target->write(upgradeRequest);
 
             // Bidirectional forwarding: client <-> signaling server.
             QObject::connect(clientSocket, &QTcpSocket::readyRead,

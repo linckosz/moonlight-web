@@ -995,23 +995,19 @@ export class StreamView {
         this.frameQueue = [];
         this.pendingFrames = [];
 
-        // Close the WebRTC DataChannels FIRST, before the HTTP /quit reaches the
-        // backend.  This ensures this.webrtc.close() sets _stopping=true so that
-        // any dc.onclose / dc.onerror events from the backend closing its side
-        // are recognised as intentional, not treated as errors.
-        //
-        // Previously we reversed this order (HTTP first, then close) to avoid a
-        // theoretical race where the backend's sessionEnded handler nullified
-        // g_ActiveRelay before the HTTP handler could stop the relay.  Analysis
-        // showed the race is benign: DataChannelRelay::stop() is idempotent
-        // (atomic m_Stopping guard), so either path works correctly.
-        this.webrtc.close();
+        // Mark WebRTC as stopping before calling /quit so that DataChannel
+        // "onclose" events from the backend closing its side are not treated
+        // as unexpected errors.  Then send the HTTP request while the relay
+        // is still reachable.
+        this.webrtc.markStopping();
 
         try {
             await BackendClient.quitApp(this.host.uuid);
+            this.webrtc.close();
             Toast.success('Stream ended');
         } catch (err) {
             console.warn('[StreamView] Quit failed:', err);
+            this.webrtc.close();
         }
 
         this.destroy();
