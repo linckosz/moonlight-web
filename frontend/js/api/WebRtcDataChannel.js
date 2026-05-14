@@ -167,6 +167,11 @@ export class WebRtcDataChannel {
         }
     }
 
+    /** Mark as stopping without closing — suppresses "closed unexpectedly" noise. */
+    markStopping() {
+        this._stopping = true;
+    }
+
     /** Close all connections and clean up. */
     close() {
         if (this._stopping) return;
