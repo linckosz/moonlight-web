@@ -2,8 +2,8 @@
  * Moonlight-Web — Server Settings
  *
  * Server administration functions (localhost only):
- *   - DuckDNS dynamic DNS configuration (token + GDPR consent)
  *   - HTTPS port configuration
+ *   - zrok tunnel configuration (remote access)
  *
  * All settings stored server-side. Unsaved changes are discarded on close.
  */
@@ -19,12 +19,12 @@ export class AdminView {
         this._httpsPort = 443;
         this._httpPort = 48000;
 
-        // DuckDNS state
-        this._ddnsConsent = false;
-        this._ddnsToken = '';
-        this._ddnsActive = false;
-        this._ddnsSubdomain = '';
-        this._tokenConfigured = false;
+        // zrok state
+        this._zrokToken = '';
+        this._zrokActive = false;
+        this._zrokPublicUrl = '';
+        this._zrokReservedName = '';
+        this._zrokHasToken = false;
 
         // Dirty tracking: snapshot of values at load time
         this._cleanState = {};
@@ -33,6 +33,7 @@ export class AdminView {
 
     async start() {
         await this._loadState();
+        await this._loadZrokState();
         this.render();
         this.bindEvents();
     }
@@ -45,16 +46,17 @@ export class AdminView {
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
+    }
 
+    async _loadZrokState() {
         try {
-            const ddns = await BackendClient.getDdnsConsent();
-            this._ddnsConsent = ddns.consent_granted || false;
-            this._ddnsActive = ddns.active || false;
-            this._ddnsSubdomain = ddns.subdomain || '';
-            this._tokenConfigured = ddns.token_configured || false;
-            this._ddnsToken = ''; // never expose token to UI for security
+            const status = await BackendClient.getZrokStatus();
+            this._zrokActive = status.active || false;
+            this._zrokPublicUrl = status.public_url || '';
+            this._zrokReservedName = status.reserved_name || '';
+            this._zrokHasToken = status.token_configured || false;
         } catch (err) {
-            console.warn('[Admin] Failed to load DuckDNS state:', err);
+            console.warn('[Admin] Failed to load zrok status:', err);
         }
     }
 
@@ -91,6 +93,34 @@ export class AdminView {
 
     // --- Rendering ---
 
+    _zrokStatusHtml() {
+        if (this._zrokActive) {
+            return `
+                <div class="zrok-status zrok-active">
+                    <span class="zrok-dot"></span>
+                    Tunnel active
+                    <div class="zrok-url">
+                        <code>${this.esc(this._zrokPublicUrl)}</code>
+                        <button class="zrok-copy-btn" id="btn-zrok-copy" title="Copy URL">Copy</button>
+                    </div>
+                    <p class="zrok-reserved">Reserved name: <strong>${this.esc(this._zrokReservedName)}</strong></p>
+                </div>`;
+        } else if (this._zrokHasToken) {
+            return `
+                <div class="zrok-status zrok-inactive">
+                    <span class="zrok-dot"></span>
+                    Tunnel inactive — check zrok is installed and token is valid
+                    <p class="zrok-reserved">Reserved name: <strong>${this.esc(this._zrokReservedName)}</strong></p>
+                </div>`;
+        } else {
+            return `
+                <div class="zrok-status zrok-pending">
+                    <span class="zrok-dot"></span>
+                    Not configured — enter your zrok token to enable remote access
+                </div>`;
+        }
+    }
+
     render() {
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
@@ -98,6 +128,30 @@ export class AdminView {
                     <h2>Server Settings</h2>
                     <button class="view-close-btn" id="btn-admin-close"
                             title="Close (discards unsaved changes)">&times;</button>
+                </div>
+
+                <!-- zrok Tunnel -->
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Remote Access (zrok)</h3>
+                    <p class="settings-section-desc">
+                        zrok creates a secure tunnel so you can stream from outside
+                        your home network. No router configuration needed.
+                        <a href="https://zrok.io" target="_blank" rel="noopener">Get a free token</a>.
+                    </p>
+
+                    <div class="settings-field">
+                        <label class="settings-label" for="admin-zrok-token">
+                            zrok Token
+                        </label>
+                        <input type="password" id="admin-zrok-token" class="settings-input"
+                               placeholder="Paste your zrok token..."
+                               value="${this.esc(this._zrokToken)}"
+                               autocomplete="off" />
+                        <button class="btn btn-save" id="btn-zrok-save"
+                                style="margin-top:8px;">Save Token</button>
+                    </div>
+
+                    ${this._zrokStatusHtml()}
                 </div>
 
                 <!-- Server Settings -->
@@ -128,84 +182,50 @@ export class AdminView {
                         </button>
                     </div>
                 </div>
-
-                <!-- DuckDNS -->
-                <div class="settings-section">
-                    <h3 class="settings-section-title">DuckDNS Dynamic DNS</h3>
-                    <p class="settings-section-desc">
-                        DuckDNS provides a free dynamic DNS service so your Moonlight-Web
-                        server can be reached via a public hostname (e.g.
-                        <code>moonlightweb-xxxx.duckdns.org</code>).
-                    </p>
-
-                    <div class="settings-field">
-                        <label class="settings-label" for="admin-ddns-token">
-                            DuckDNS Token
-                        </label>
-                        <input type="text" id="admin-ddns-token" class="settings-input"
-                               placeholder="Enter your DuckDNS token"
-                               value="${this.esc(this._ddnsToken)}"
-                               ${this._tokenConfigured ? 'readonly' : ''} />
-                        <p class="settings-hint">
-                            Get your token from
-                            <a href="https://www.duckdns.org" target="_blank" rel="noopener">
-                                duckdns.org
-                            </a>.
-                        </p>
-                    </div>
-
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="admin-ddns-consent"
-                                   ${this._ddnsConsent ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">
-                                I authorize Moonlight-Web to create a DuckDNS subdomain
-                                and periodically update its public IP address.
-                            </span>
-                        </label>
-                        <p class="settings-note">
-                            <em>GDPR notice:</em> This setting is stored server-side only
-                            (local settings.json). No data is transmitted to third parties
-                            beyond DuckDNS for the sole purpose of dynamic DNS updates.
-                            Moonlight-Web does not collect or store any personal data.
-                        </p>
-                        <p class="settings-note">
-                            By enabling this feature, your server's public IP address will be
-                            shared with DuckDNS (duckdns.org) and updated every 5 minutes.
-                            No personal data is collected or stored. Your DuckDNS token is
-                            stored locally on this server only &mdash; never transmitted to third
-                            parties.
-                        </p>
-                    </div>
-
-                    <div class="settings-actions">
-                        <button class="btn btn-save" id="btn-admin-save-token"
-                                ${this._tokenConfigured ? 'disabled' : ''}>
-                            ${this._tokenConfigured ? 'Token Saved' : 'Save Token'}
-                        </button>
-                    </div>
-
-                    ${this._ddnsActive && this._ddnsSubdomain
-                        ? `<div class="settings-status settings-status-ok">
-                               Public URL: <a href="https://${this.esc(this._ddnsSubdomain)}.duckdns.org"
-                                  target="_blank" rel="noopener">
-                                  ${this.esc(this._ddnsSubdomain)}.duckdns.org</a>
-                           </div>`
-                        : this._ddnsConsent && !this._tokenConfigured
-                            ? `<div class="settings-status settings-status-pending">
-                                   Consent given. Enter your DuckDNS token above to activate.
-                               </div>`
-                            : ''
-                    }
-                </div>
             </div>
         `;
 
-        // Snapshot clean state after render
         this._markClean();
     }
 
     bindEvents() {
+        // ── zrok token save ───────────────────────────────────────────────────
+        const zrokSaveBtn = this.container.querySelector('#btn-zrok-save');
+        const zrokTokenInput = this.container.querySelector('#admin-zrok-token');
+        if (zrokSaveBtn && zrokTokenInput) {
+            zrokSaveBtn.addEventListener('click', async () => {
+                const token = zrokTokenInput.value.trim();
+                if (!token) {
+                    Toast.warning('Please enter a zrok token');
+                    return;
+                }
+
+                zrokSaveBtn.disabled = true;
+                zrokSaveBtn.textContent = 'Saving...';
+
+                try {
+                    const result = await BackendClient.configureZrokToken(token);
+                    if (result.status === 'configured') {
+                        this._zrokReservedName = result.reserved_name || '';
+                        Toast.success('zrok token saved. Tunnel starting...');
+                        setTimeout(async () => {
+                            await this._loadZrokState();
+                            this._refreshZrokSection();
+                        }, 2000);
+                    }
+                } catch (err) {
+                    console.error('[Admin] Failed to configure zrok:', err);
+                    Toast.error('Failed to configure zrok: ' + err.message);
+                } finally {
+                    zrokSaveBtn.disabled = false;
+                    zrokSaveBtn.textContent = 'Save Token';
+                }
+            });
+        }
+
+        // ── zrok URL copy ─────────────────────────────────────────────────────
+        this._bindCopyBtn();
+
         // ── Port field dirty tracking ──────────────────────────────────────────
         const portInput = this.container.querySelector('#admin-https-port');
         if (portInput) {
@@ -240,18 +260,14 @@ export class AdminView {
                         Toast.success('Port changed to ' + result.https_port);
 
                         if (result.port_changed) {
-                            // Redirect browser to the new HTTPS port.
-                            // The backend changed the port asynchronously.
                             const newUrl = new URL(window.location.href);
                             newUrl.port = String(result.https_port);
-                            // Brief delay to let the toast appear before reload
                             setTimeout(() => {
                                 window.location.href = newUrl.toString();
                             }, 300);
                             return;
                         }
 
-                        // Reload state to reflect actual bound port
                         await this._loadState();
                         portInput.value = String(this._httpsPort);
                         this._markClean();
@@ -279,117 +295,46 @@ export class AdminView {
                 this.onClose();
             });
         }
+    }
 
-        // ── Consent checkbox ──────────────────────────────────────────────────
-        const consentCb = this.container.querySelector('#admin-ddns-consent');
-        if (consentCb) {
-            consentCb.addEventListener('change', async () => {
-                const granted = consentCb.checked;
-                try {
-                    const result = await BackendClient.setDdnsConsent(granted);
-                    if (result.status === 'accepted' || result.status === 'declined') {
-                        this._ddnsConsent = granted;
-                        Toast.success(
-                            granted
-                                ? 'DuckDNS consent granted'
-                                : 'DuckDNS consent revoked'
-                        );
-                        // Re-render status section
-                        if (this._tokenConfigured || !granted) {
-                            await this._loadState();
-                            this._updateDdnsStatus();
-                        }
+    // ── Partial DOM update for zrok section ──────────────────────────────────
 
-                        // If conset revoked, re-enable token input
-                        const tokenInput = this.container.querySelector('#admin-ddns-token');
-                        if (tokenInput && !granted) {
-                            tokenInput.removeAttribute('readonly');
-                            this._tokenConfigured = false;
-                            this._updateDdnsStatus();
-                        }
-                    }
-                } catch (err) {
-                    console.error('[Admin] Failed to set consent:', err);
-                    Toast.error('Failed to save consent: ' + err.message);
-                    consentCb.checked = !granted;
-                }
-            });
-        }
+    _refreshZrokSection() {
+        const statusEl = this.container.querySelector('.zrok-status');
+        if (!statusEl) return;
 
-        // ── Save token button ─────────────────────────────────────────────────
-        const saveTokenBtn = this.container.querySelector('#btn-admin-save-token');
-        const tokenInput = this.container.querySelector('#admin-ddns-token');
-        if (saveTokenBtn && tokenInput) {
-            saveTokenBtn.addEventListener('click', async () => {
-                const token = tokenInput.value.trim();
-                if (!token) {
-                    Toast.warning('Please enter a DuckDNS token');
-                    return;
-                }
-
-                saveTokenBtn.disabled = true;
-                saveTokenBtn.classList.add('btn-loading');
-                saveTokenBtn.textContent = 'Saving...';
-
-                try {
-                    const result = await BackendClient.configureDdnsToken(token);
-                    if (result.status === 'configured') {
-                        this._tokenConfigured = true;
-                        saveTokenBtn.textContent = 'Token Saved';
-                        saveTokenBtn.classList.remove('btn-loading');
-                        await this._loadState();
-                        this._updateDdnsStatus();
-                        Toast.success('DuckDNS token saved');
-                    }
-                } catch (err) {
-                    console.error('[Admin] Failed to save token:', err);
-                    Toast.error('Failed to save token: ' + err.message);
-                    saveTokenBtn.disabled = false;
-                    saveTokenBtn.classList.remove('btn-loading');
-                    saveTokenBtn.textContent = 'Save Token';
-                }
-            });
+        if (this._zrokActive) {
+            statusEl.className = 'zrok-status zrok-active';
+            statusEl.innerHTML = `
+                <span class="zrok-dot"></span>
+                Tunnel active
+                <div class="zrok-url">
+                    <code>${this.esc(this._zrokPublicUrl)}</code>
+                    <button class="zrok-copy-btn" id="btn-zrok-copy" title="Copy URL">Copy</button>
+                </div>
+                <p class="zrok-reserved">Reserved name: <strong>${this.esc(this._zrokReservedName)}</strong></p>`;
+            this._bindCopyBtn();
+        } else if (this._zrokHasToken) {
+            statusEl.className = 'zrok-status zrok-inactive';
+            statusEl.innerHTML = `
+                <span class="zrok-dot"></span>
+                Tunnel inactive — check zrok is installed and token is valid
+                <p class="zrok-reserved">Reserved name: <strong>${this.esc(this._zrokReservedName)}</strong></p>`;
         }
     }
 
-    // --- DuckDNS status partial update ---
-
-    _updateDdnsStatus() {
-        const section = this.container.querySelector('.settings-section:last-child');
-        if (!section) return;
-
-        let statusEl = section.querySelector('.settings-status');
-        const actionsEl = section.querySelector('.settings-actions:last-of-type');
-
-        // Remove old status
-        if (statusEl) statusEl.remove();
-
-        const newStatus = this._ddnsActive && this._ddnsSubdomain
-            ? `<div class="settings-status settings-status-ok">
-                   Public URL: <a href="https://${this.esc(this._ddnsSubdomain)}.duckdns.org"
-                      target="_blank" rel="noopener">
-                      ${this.esc(this._ddnsSubdomain)}.duckdns.org</a>
-               </div>`
-            : this._ddnsConsent && !this._tokenConfigured
-                ? `<div class="settings-status settings-status-pending">
-                       Consent given. Enter your DuckDNS token above to activate.
-                   </div>`
-                : '';
-
-        if (newStatus && actionsEl) {
-            actionsEl.insertAdjacentHTML('afterend', newStatus);
-        }
-
-        // Update save token button state
-        const saveTokenBtn = section.querySelector('#btn-admin-save-token');
-        if (saveTokenBtn) {
-            saveTokenBtn.disabled = this._tokenConfigured;
-            saveTokenBtn.textContent = this._tokenConfigured ? 'Token Saved' : 'Save Token';
-        }
-
-        if (this._tokenConfigured) {
-            const tokenInput = this.container.querySelector('#admin-ddns-token');
-            if (tokenInput) tokenInput.setAttribute('readonly', '');
+    _bindCopyBtn() {
+        const copyBtn = this.container.querySelector('#btn-zrok-copy');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+                if (this._zrokPublicUrl) {
+                    navigator.clipboard.writeText(this._zrokPublicUrl).then(() => {
+                        Toast.success('URL copied');
+                    }).catch(() => {
+                        Toast.warning('Failed to copy');
+                    });
+                }
+            });
         }
     }
 

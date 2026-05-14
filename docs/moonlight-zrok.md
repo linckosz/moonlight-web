@@ -10,6 +10,7 @@ Construire une architecture de streaming gaming Web :
 - avec découverte automatique via URL HTTPS
 - avec URL fixe persistante générée par Moonlight-Web
 - avec streaming UDP peer-to-peer faible latence
+- Continuer à utiliser moonlight-common-c
 - avec accès direct aux frames via ENET
 - sans pipeline vidéo WebRTC
 
@@ -19,13 +20,13 @@ Construire une architecture de streaming gaming Web :
 
 ```
 ┌─────────────────────────────────────────────┐
-│ HOST PC (chez utilisateur)                 │
+│ HOST PC (chez utilisateur)                  │
 │                                             │
 │ Moonlight-Web Host                          │
 │ ├── HTTP UI Server                          │
 │ ├── zrok embedded client                    │
 │ ├── ICE/STUN signaling                      │
-│ ├── ENET UDP server                         │
+│ ├── ENET UDP server (moonlight-common-c)    │
 │ ├── Video stream UDP                        │
 │ ├── Audio UDP                               │
 │ └── Input UDP                               │
@@ -98,7 +99,7 @@ https://moonlightweb-{UniqueID}.share.zrok.io
 Exemple :
 
 ```
-https://moonlightweb-k82x4p.share.zrok.io
+https://moonlightweb-k82x4pe8.share.zrok.io
 ```
 
 ---
@@ -118,7 +119,7 @@ https://moonlightweb-k82x4p.share.zrok.io
 
 ## Premier lancement
 
-1. Générer un ID machine unique
+1. Génèrer un ID machine unique alphanumérique de 8 caractères en minuscules uniquement (a–z, 0–9), basé sur un mélange de timestamp et de suffixe aléatoire. L’objectif est d’obtenir un identifiant court, unique à forte probabilité de non-collision, adapté pour des usages comme URLs, bases de données ou tracking.
 2. Construire un nom zrok :
 
 ```
@@ -128,20 +129,20 @@ moonlightweb-{UniqueID}
 Exemple :
 
 ```
-moonlightweb-k82x4p
+moonlightweb-k82x4pe8
 ```
 
 3. Réserver le share :
 
 ```bash
-zrok reserve public http://localhost:<UI_PORT> --unique-name moonlightweb-k82x4p
+zrok reserve public http://localhost:<UI_PORT> --unique-name moonlightweb-k82x4pe8
 ```
 
 4. Stocker localement :
 
 ```json
 {
-  "zrokReservedName": "moonlightweb-k82x4p"
+  "zrokReservedName": "moonlightweb-k82x4pe8"
 }
 ```
 
@@ -150,7 +151,7 @@ zrok reserve public http://localhost:<UI_PORT> --unique-name moonlightweb-k82x4p
 ## Lancements suivants
 
 ```bash
-zrok share reserved moonlightweb-k82x4p
+zrok share reserved moonlightweb-k82x4pe8
 ```
 
 ---
@@ -169,7 +170,7 @@ Signaling WS:
 localhost:<WS_PORT>
 
 ENET:
-UDP 47000 / 48000 / 49000
+UDP 47998 (video) / 47999 (audio) / 48000 (inputs)
 ```
 
 ⚠️ Le port UI est dynamique et doit être injecté dans zrok au runtime.
@@ -179,7 +180,7 @@ UDP 47000 / 48000 / 49000
 ### 2. Lancement zrok
 
 ```bash
-zrok share reserved moonlightweb-k82x4p
+zrok share reserved moonlightweb-k82x4pe8
 ```
 
 Doit pointer vers :
@@ -193,7 +194,7 @@ http://localhost:<UI_PORT>
 ### 3. URL utilisateur
 
 ```
-https://moonlightweb-k82x4p.share.zrok.io
+https://moonlightweb-k82x4pe8.share.zrok.io
 ```
 
 ---
@@ -203,7 +204,7 @@ https://moonlightweb-k82x4p.share.zrok.io
 ### 4. Ouverture URL
 
 ```
-https://moonlightweb-k82x4p.share.zrok.io
+https://moonlightweb-k82x4pe8.share.zrok.io
 ```
 
 ---
@@ -211,7 +212,7 @@ https://moonlightweb-k82x4p.share.zrok.io
 ### 5. Signaling
 
 ```
-wss://moonlightweb-k82x4p.share.zrok.io/ws
+wss://moonlightweb-k82x4pe8.share.zrok.io/ws
 ```
 
 Utilisé uniquement pour :
@@ -275,20 +276,7 @@ ENET connect()
 
 ## Phase 5 — Client rendering
 
-### 11. Frames
-
-- H264 / HEVC / AV1
-- ou format custom
-
----
-
-### 12. Décodage
-
-- WebCodecs (recommandé)
-- fallback WASM
-- fallback software
-
----
+Ne change rien de l'actuel qui fonctionne déjà,
 
 # Architecture réseau
 
@@ -318,4 +306,10 @@ ENET connect()
 
 ---
 
-# Conclu
+# Conclusion
+
+- zrok = bootstrap uniquement
+- ENET = transport principal
+- UDP = peer-to-peer direct
+- URL fixe = moonlightweb-{UniqueID}
+- zéro compte utilisateur final

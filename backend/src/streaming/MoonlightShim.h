@@ -57,6 +57,10 @@ public:
     void sendMouseButton(bool down, int button);
     void sendMouseScroll(short scrollAmount);
 
+    // Request an IDR frame from the host (Sunshine).
+    // Called when the browser needs a keyframe to configure its decoder.
+    void requestIdrFrame();
+
 signals:
     void stageChanged(int stage);
     void connectionStarted();

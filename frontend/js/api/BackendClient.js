@@ -55,9 +55,8 @@ export class BackendClient {
     static async getStreamingSettings()            { return this.get('/api/settings/streaming'); }
     static async saveStreamingSettings(settings)   { return this.post('/api/settings/streaming', settings); }
 
-    // ── DuckDNS ──────────────────────────────────────────────────────────────────
+    // ── zrok tunnel ──────────────────────────────────────────────────────────────
 
-    static async getDdnsConsent()         { return this.get('/api/ddns/consent'); }
-    static async setDdnsConsent(granted)  { return this.post('/api/ddns/consent', { granted }); }
-    static async configureDdnsToken(token) { return this.post('/api/ddns/configure', { token }); }
+    static async getZrokStatus()                 { return this.get('/api/zrok/status'); }
+    static async configureZrokToken(token)        { return this.post('/api/zrok/configure', { token }); }
 }

@@ -1,0 +1,1 @@
+ls -la "C:/Users/Minis/.claude/projects/d--Code-moonlight-web-deepseek/memory/"

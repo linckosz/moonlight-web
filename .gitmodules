@@ -4,3 +4,6 @@
 [submodule "backend/third_party/moonlight-common-c"]
 	path = backend/third_party/moonlight-common-c
 	url = https://github.com/moonlight-stream/moonlight-common-c.git
+[submodule "backend/third_party/libdatachannel"]
+	path = backend/third_party/libdatachannel
+	url = https://github.com/paullouisageneau/libdatachannel.git

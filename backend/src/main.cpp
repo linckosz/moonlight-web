@@ -7,6 +7,8 @@
 #include <QPointer>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QDateTime>
+#include <QRandomGenerator>
 #include "server/AppSettings.h"
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
@@ -14,9 +16,12 @@
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
 #include "streaming/Session.h"
-#include "streaming/StreamRelay.h"
-#include "network/DdnsClient.h"
+#include "streaming/DataChannelRelay.h"
+#include "network/ZrokClient.h"
 #include "TrayManager.h"
+
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 int main(int argc, char* argv[])
 {
@@ -37,7 +42,7 @@ int main(int argc, char* argv[])
     QCommandLineOption logOption("log", "Log file path", "path");
     parser.addOption(logOption);
 
-    QCommandLineOption wsPortOption("ws-port", "WebSocket relay port", "port", "48001");
+    QCommandLineOption wsPortOption("ws-port", "WebRTC signaling WebSocket port", "port", "48001");
     parser.addOption(wsPortOption);
 
     parser.process(app);
@@ -61,16 +66,29 @@ int main(int argc, char* argv[])
     IdentityManager::get();
     Logger::info("Pairing identity initialized");
 
-    // Read persistent settings (https_port, video_codec, ddns_token, ...)
+    // Force OpenSSL init before any PeerConnection is created.
+    // libdatachannel inits OpenSSL lazily; if the first DTLS handshake
+    // triggers a race on the static init mutex, SSL_ERROR_SYSCALL can occur.
+    // Doing a synchronous init here avoids the race entirely.
+    {
+        OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS
+                         | OPENSSL_INIT_LOAD_CRYPTO_STRINGS
+                         | OPENSSL_INIT_NO_ATEXIT, nullptr);
+        OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
+        Logger::info("OpenSSL initialized");
+    }
+
+    // Read persistent settings (https_port, video_codec, zrok_token, ...)
     AppSettings appSettings;
     quint16 httpsPort = appSettings.httpsPort(443);
     VideoCodec preferredCodec = appSettings.videoCodec();
     Logger::info("[main] Settings: https_port=" + QString::number(httpsPort)
                  + ", video_codec=" + AppSettings::videoCodecToString(preferredCodec));
 
-    // Phase 5b: WebSocket relay tracking
-    quint16 wsPort = parser.value("ws-port").toUShort();
-    QPointer<StreamRelay> g_ActiveRelay;
+    // Phase 5b: WebRTC DataChannel relay + signaling tracking
+    quint16 signalingPort = parser.value("ws-port").toUShort();
+    QPointer<DataChannelRelay> g_ActiveRelay;
+    ZrokClient zrokClient;
 
     // Register API routes
     server.router()->get("/api/health", [](const HttpRequest&) {
@@ -172,7 +190,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Start streaming — launch app + RTSP handshake
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, wsPort, &g_ActiveRelay, &server, &appSettings](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &server, &appSettings, &zrokClient](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -193,44 +211,53 @@ int main(int argc, char* argv[])
             return;
         }
 
-        // Extract server host from the request Host header.
-        // The WebSocket relay runs on THIS server, not on Sunshine,
-        // so we use the Host the browser used to reach us.
-        QString serverHost = req.headers.value("host");
-        int colon = serverHost.indexOf(':');
-        if (colon >= 0)
-            serverHost = serverHost.left(colon);
+        // Determine the signaling WS URL for the browser.
+        // If zrok is active, the browser connects via the public zrok URL.
+        // Otherwise, use the local serverHost.
+        QString serverHost;
+        QString explicitWsUrl;
+        if (zrokClient.isActive()) {
+            // zrok provides "moonlightweb-xxxx.share.zrok.io" (no scheme).
+            // The browser connects via wss://<host> (port 443, default for WSS).
+            QString zrokHost = zrokClient.publicUrl();
+            explicitWsUrl = "wss://" + zrokHost;
+            serverHost = zrokHost;
+            qInfo() << "[main] Using zrok signaling URL:" << explicitWsUrl;
+        } else {
+            // Local LAN: use the Host header from the browser's request.
+            serverHost = req.headers.value("host");
+            int colon = serverHost.indexOf(':');
+            if (colon >= 0)
+                serverHost = serverHost.left(colon);
+        }
 
         auto* session = new StreamSession(
             host, appId,
             computerManager.http(),
             std::move(respond),
-            wsPort,
-            server.sslConfiguration(),
+            signalingPort,
             serverHost,
             appSettings.videoCodec(),
             appSettings.gamingMode()
         );
 
-        // Track the relay for quit/cleanup
+        // Apply zrok override URL if active
+        if (!explicitWsUrl.isEmpty())
+            session->setExplicitWsUrl(explicitWsUrl);
+
+        // Track the DataChannelRelay for quit/cleanup
         QObject::connect(session, &StreamSession::relayCreated,
-            [&g_ActiveRelay](StreamRelay* relay) {
+            [&g_ActiveRelay](DataChannelRelay* relay) {
                 qInfo() << "[main] relayCreated, relay=" << relay;
                 g_ActiveRelay = relay;
-                // Stop + clean relay whenever the session ends (WS disconnect,
-                // stream error, etc.), NOT just null the pointer. This prevents
-                // a race where WS close arrives before the HTTP /quit request,
-                // leaving the relay's WS server bound to the port.
-                QObject::connect(relay, &StreamRelay::sessionEnded,
+                // Stop + clean relay whenever the session ends (DataChannel
+                // disconnect, stream error, etc.), NOT just null the pointer.
+                QObject::connect(relay, &DataChannelRelay::sessionEnded,
                     [relay, &g_ActiveRelay]() {
                         qInfo() << "[main] sessionEnded fired, relay=" << relay
                                 << "g_ActiveRelay=" << g_ActiveRelay.data();
                         relay->stop();
                         relay->deleteLater();
-                        // Only clear g_ActiveRelay if it still points to us.
-                        // The HTTP /quit handler may have already cleared it
-                        // before calling relay->stop(), which can trigger
-                        // sessionEnded synchronously.
                         if (g_ActiveRelay == relay) {
                             qInfo() << "[main] sessionEnded — clearing g_ActiveRelay (was us)";
                             g_ActiveRelay = nullptr;
@@ -265,17 +292,11 @@ int main(int argc, char* argv[])
         qInfo() << "[quit] Host found:" << host->name << host->activeAddress.address()
                 << ":" << host->activeHttpsPort;
 
-        // Stop the stream relay first
+        // Stop the DataChannelRelay first (closes PeerConnection + DataChannels)
         if (g_ActiveRelay) {
             qInfo() << "[quit] Relay exists, stopping relay=" << g_ActiveRelay.data();
 
-            // Save relay pointer locally BEFORE clearing g_ActiveRelay.
-            // stop() can trigger sessionEnded synchronously (via WS close),
-            // which fires the sessionEnded lambda that sets g_ActiveRelay
-            // to nullptr via QPointer. If we don't save the pointer first,
-            // the subsequent g_ActiveRelay->deleteLater() below would
-            // dereference a null QPointer -> crash.
-            StreamRelay* relay = g_ActiveRelay;
+            DataChannelRelay* relay = g_ActiveRelay;
             g_ActiveRelay = nullptr;
             qInfo() << "[quit] Calling relay->stop() ...";
             relay->stop();
@@ -322,69 +343,39 @@ int main(int argc, char* argv[])
             appSettings.setHttpsPort(activePort);
     }
 
-    // Phase N: DuckDNS dynamic DNS
-    bool ddnsConsentPending = false;
-    bool ddnsConsentResult = false;
+    // ── zrok tunnel (replaces DuckDNS for remote signaling WS access) ─────
 
-    DdnsClient ddns([&server]() {
-        // Cert reload callback — called after Let's Encrypt cert obtained
-        qInfo() << "[main] Let's Encrypt cert obtained, reloading TLS...";
-        if (!server.reloadTls()) {
-            qWarning() << "[main] TLS reload failed";
+    // Load persisted zrok config (token + reserved name)
+    QString zrokToken = appSettings.zrokToken();
+    QString zrokReservedName = appSettings.zrokReservedName();
+    if (!zrokToken.isEmpty()) {
+        zrokClient.setToken(zrokToken);
+        zrokClient.setTargetPort(signalingPort);
+
+        if (!zrokReservedName.isEmpty()) {
+            zrokClient.setReservedName(zrokReservedName);
         }
-    });
 
-    QObject::connect(&ddns, &DdnsClient::consentRequired, [&]() {
-        qInfo() << "[main] DuckDNS consent required";
-        ddnsConsentPending = true;
-    });
+        qInfo() << "[main] zrok token configured, reservedName="
+                << (zrokReservedName.isEmpty() ? "<not reserved>" : zrokReservedName);
 
-    QObject::connect(&ddns, &DdnsClient::registered,
-        [](const QString& subdomain, const QString& ip, quint16 httpsPort) {
-        qInfo() << "[main] DuckDNS registered:" << subdomain << ":" << httpsPort << "->" << ip;
-    });
+        zrokClient.start();
+    }
 
-    QObject::connect(&ddns, &DdnsClient::certObtained, []() {
-        qInfo() << "[main] Let's Encrypt certificate obtained and loaded";
-    });
-
-    QObject::connect(&ddns, &DdnsClient::errorOccurred, [](const QString& msg) {
-        qWarning() << "[main] DuckDNS error:" << msg;
-    });
-
-    // API route: get DuckDNS consent status
-    server.router()->get("/api/ddns/consent", [&](const HttpRequest&) {
+    // API route: get zrok tunnel status
+    server.router()->get("/api/zrok/status", [&](const HttpRequest&) {
         QJsonObject obj;
-        obj["consent_granted"] = appSettings.ddnsConsentGranted();
-        obj["active"] = ddns.isActive();
-        obj["port"] = static_cast<int>(server.activeHttpsPort());
-        obj["token_configured"] = !ddns.token().isEmpty();
-        obj["subdomain"] = ddns.subdomain();
+        obj["active"] = zrokClient.isActive();
+        obj["public_url"] = zrokClient.isActive()
+            ? "wss://" + zrokClient.publicUrl()
+            : QString();
+        obj["reserved_name"] = zrokClient.reservedName();
+        obj["token_configured"] = !appSettings.zrokToken().isEmpty();
         return HttpResponse::json(obj);
     });
 
-    // API route: submit DuckDNS consent decision
-    server.router()->post("/api/ddns/consent", [&](const HttpRequest& req) {
-        QJsonDocument doc = QJsonDocument::fromJson(req.body);
-        QJsonObject body = doc.object();
-        if (!body.contains("granted")) {
-            return HttpResponse::error(400, "Missing 'granted' field");
-        }
-
-        bool granted = body["granted"].toBool();
-        ddnsConsentPending = false;
-        ddnsConsentResult = granted;
-        ddns.setConsent(granted);
-        appSettings.setDdnsConsentGranted(granted);
-
-        QJsonObject obj;
-        obj["status"] = granted ? "accepted" : "declined";
-        obj["consent_granted"] = granted;
-        return HttpResponse::json(obj);
-    });
-
-    // API route: configure DuckDNS token (must be done before start)
-    server.router()->post("/api/ddns/configure", [&](const HttpRequest& req) {
+    // API route: configure zrok token (triggers tunnel start)
+    server.router()->post("/api/zrok/configure", [&](const HttpRequest& req) {
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
         if (!body.contains("token")) {
@@ -392,16 +383,39 @@ int main(int argc, char* argv[])
         }
 
         QString token = body["token"].toString();
-        // Save token to settings (DdnsClient.loadSettings will pick it up on next start)
-        appSettings.setDdnsToken(token);
+        appSettings.setZrokToken(token);
 
-        qInfo() << "[main] DuckDNS token configured";
+        qInfo() << "[main] zrok token saved";
 
-        // Apply token and re-trigger DuckDNS registration
-        ddns.configure(token);
+        // (Re)start the zrok client with the new token
+        zrokClient.stop();
+        zrokClient.setToken(token);
+
+        // Generate a reserved name if not already set
+        if (zrokClient.reservedName().isEmpty()) {
+            // 8-char alphanumeric ID (a-z, 0-9), generated once and persisted.
+            // Uses timestamp + random suffix for high-probability uniqueness.
+            const QString chars = QStringLiteral("abcdefghijklmnopqrstuvwxyz0123456789");
+            auto ts = QDateTime::currentMSecsSinceEpoch();
+            // Mix timestamp bits and random bits into a 48-bit seed
+            quint64 seed = (static_cast<quint64>(ts) << 16) ^ QRandomGenerator::global()->generate64();
+            QString shortId(8, QChar('a'));
+            for (int i = 0; i < 8; ++i) {
+                shortId[i] = chars.at(static_cast<int>(seed % 36));
+                seed /= 36;
+            }
+            QString name = "moonlightweb-" + shortId;
+            zrokClient.setReservedName(name);
+            appSettings.setZrokReservedName(name);
+            qInfo() << "[main] Generated zrok reserved name:" << name;
+        }
+
+        zrokClient.setTargetPort(signalingPort);
+        zrokClient.start();
 
         QJsonObject obj;
         obj["status"] = "configured";
+        obj["reserved_name"] = zrokClient.reservedName();
         return HttpResponse::json(obj);
     });
 
@@ -493,10 +507,6 @@ int main(int argc, char* argv[])
 
         return HttpResponse::json(obj);
     });
-
-    // Start DuckDNS workflow (will emit consentRequired if first launch)
-    ddns.setHttpsPort(server.activeHttpsPort());
-    ddns.start();
 
     // Phase N: System tray icon
     TrayManager trayManager(&server);

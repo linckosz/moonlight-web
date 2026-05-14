@@ -1,5 +1,6 @@
 #include "Session.h"
-#include "StreamRelay.h"
+#include "DataChannelRelay.h"
+#include "SignalingServer.h"
 #include "MoonlightShim.h"
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
@@ -17,7 +18,6 @@ extern "C" {
 StreamSession::StreamSession(NvComputer* host, int appId,
                                NvHTTP* http, ResponseCallback respond,
                                quint16 wsPort,
-                               const QSslConfiguration& sslConfig,
                                const QString& serverHost,
                                VideoCodec videoCodec,
                                bool gamingMode,
@@ -28,7 +28,6 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_Http(http)
     , m_Respond(std::move(respond))
     , m_WsPort(wsPort)
-    , m_SslConfig(sslConfig)
     , m_ServerHost(serverHost)
     , m_GamingMode(gamingMode)
 {
@@ -137,9 +136,28 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert,
 void StreamSession::quit()
 {
     qInfo() << "[Session::quit] ENTER, m_Shim=" << m_Shim << "m_Relay=" << m_Relay
+            << "m_Signaling=" << m_Signaling
             << "m_Connected=" << (m_Shim ? m_Shim->isConnected() : false);
 
-    // Stop MoonlightShim first (calls LiStopConnection)
+    // Stop SignalingServer first (closes WS, stops further signaling)
+    if (m_Signaling) {
+        qInfo() << "[Session::quit] Calling m_Signaling->stop() ...";
+        m_Signaling->stop();
+        qInfo() << "[Session::quit] m_Signaling->stop() returned";
+    } else {
+        qInfo() << "[Session::quit] No m_Signaling to stop";
+    }
+
+    // Stop DataChannelRelay (closes PeerConnection + DataChannels)
+    if (m_Relay) {
+        qInfo() << "[Session::quit] Calling m_Relay->stop() ...";
+        m_Relay->stop();
+        qInfo() << "[Session::quit] m_Relay->stop() returned";
+    } else {
+        qInfo() << "[Session::quit] No m_Relay to stop";
+    }
+
+    // Stop MoonlightShim last (calls LiStopConnection)
     if (m_Shim) {
         qInfo() << "[Session::quit] Calling m_Shim->stopConnection() ...";
         m_Shim->stopConnection();
@@ -226,25 +244,36 @@ void StreamSession::onLaunchReplyFinished()
         StreamConfig::kAudioChannels,
         StreamConfig::kAudioChannelMask);
 
-    // Create MoonlightShim + StreamRelay BEFORE starting LiStartConnection.
-    // This ensures the relay is connected to all signals before frames arrive.
+    // Create MoonlightShim + DataChannelRelay + SignalingServer
+    // BEFORE starting LiStartConnection. The relay must be connected to all
+    // signals before frames arrive.
     m_Shim = new MoonlightShim(this);
 
-    // Create relay first — connects to MoonlightShim signals before LiStartConnection runs
-    auto* relay = new StreamRelay(m_Shim, m_WsPort, m_SslConfig, this);
-    relay->setServerHost(m_ServerHost);
+    // DataChannelRelay: owns the libdatachannel PeerConnection + DataChannels
+    auto* relay = new DataChannelRelay(m_Shim, this);
 
-    if (!relay->start()) {
+    // SignalingServer: WebSocket for SDP/ICE exchange only.
+    // NonSecure mode: zrok provides TLS termination for remote access.
+    auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
+
+    // If an explicit WS URL was set (e.g. zrok tunnel), apply it.
+    if (!m_ExplicitWsUrl.isEmpty()) {
+        signaling->setOverrideWsUrl(m_ExplicitWsUrl);
+        qInfo() << "[Session] Using explicit signaling URL:" << m_ExplicitWsUrl;
+    }
+
+    if (!signaling->start()) {
+        delete signaling;
         delete relay;
         delete m_Shim;
         m_Shim = nullptr;
-        m_Respond(HttpResponse::error(500, "Failed to start WebSocket relay"));
-        emit sessionFailed("WebSocket server failed to start");
+        m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
+        emit sessionFailed("Signaling server failed to start");
         deleteLater();
         return;
     }
 
-    // Now connect the session-level handlers AFTER relay is connected (order matters!)
+    // Now connect the session-level handlers
     connect(m_Shim, &MoonlightShim::connectionStarted,
             this, &StreamSession::onShimConnectionStarted);
     connect(m_Shim, &MoonlightShim::connectionFailed,
@@ -252,18 +281,20 @@ void StreamSession::onLaunchReplyFinished()
 
     // Relay must outlive StreamSession
     relay->setParent(QCoreApplication::instance());
+    signaling->setParent(relay);  // Signaling is a child of relay
     m_Shim->setParent(relay);
 
-    // Clean up when relay session ends
-    connect(relay, &StreamRelay::sessionEnded, this, [this]() {
+    // Clean up when relay session ends (DataChannel disconnect, error, etc.)
+    connect(relay, &DataChannelRelay::sessionEnded, this, [this]() {
         quit();
         deleteLater();
     });
 
     m_Relay = relay;
+    m_Signaling = signaling;
     emit relayCreated(relay);
 
-    qDebug() << "[Session] Relay created, starting LiStartConnection...";
+    qDebug() << "[Session] Relay + Signaling created, starting LiStartConnection...";
     m_Shim->startConnection(params);
 }
 
@@ -273,8 +304,8 @@ void StreamSession::onShimConnectionStarted()
 
     QJsonObject result;
     result["status"] = "streaming";
-    result["wsUrl"] = m_Relay->wsUrl();
-    result["wsPort"] = static_cast<int>(m_Relay->wsPort());
+    result["signalingUrl"] = m_Signaling ? m_Signaling->wsUrl() : QString();
+    result["signalingPort"] = m_Signaling ? static_cast<int>(m_Signaling->port()) : 0;
     result["sessionUrl"] = m_SessionUrl;
 
     // Pass gaming mode preference to the frontend
