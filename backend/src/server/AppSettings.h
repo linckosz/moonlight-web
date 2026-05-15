@@ -14,6 +14,11 @@ class AppSettings
 public:
     explicit AppSettings();
 
+    // ── HTTP port ────────────────────────────────────────────────────────────
+
+    quint16 httpPort(quint16 fallback = 80) const;
+    void setHttpPort(quint16 port);
+
     // ── HTTPS port ──────────────────────────────────────────────────────────
 
     quint16 httpsPort(quint16 fallback = 443) const;

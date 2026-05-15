@@ -54,9 +54,14 @@ int main(int argc, char* argv[])
     Logger::info("Moonlight-Web server starting...");
     Logger::info("Version: " + QCoreApplication::applicationVersion());
 
-    // Start HTTP server
-    quint16 port = parser.value("port").toUShort();
-    HttpServer server(port);
+    // Read HTTP/HTTPS port preferences from persisted settings.
+    // CLI --port overrides the persisted HTTP port when explicitly provided.
+    AppSettings appSettings;
+    quint16 httpPort = appSettings.httpPort(80);
+    if (parser.isSet("port"))
+        httpPort = parser.value("port").toUShort();
+
+    HttpServer server(httpPort);
 
     // Initialize ComputerManager (Phase 2: host discovery)
     ComputerManager computerManager(&app);
@@ -78,11 +83,11 @@ int main(int argc, char* argv[])
         Logger::info("OpenSSL initialized");
     }
 
-    // Read persistent settings (https_port, video_codec, nport_subdomain, ...)
-    AppSettings appSettings;
+    // Read remaining persistent settings
     quint16 httpsPort = appSettings.httpsPort(443);
     VideoCodec preferredCodec = appSettings.videoCodec();
-    Logger::info("[main] Settings: https_port=" + QString::number(httpsPort)
+    Logger::info("[main] Settings: http_port=" + QString::number(httpPort)
+                 + ", https_port=" + QString::number(httpsPort)
                  + ", video_codec=" + AppSettings::videoCodecToString(preferredCodec));
 
     // Phase 5b: WebRTC DataChannel relay + signaling tracking
@@ -338,11 +343,15 @@ int main(int argc, char* argv[])
     if (!server.start(httpsPort))
         return 1;
 
-    // Persist the active HTTPS port (may differ from preferred port due to fallback)
+    // Persist active ports (may differ from preferred due to fallback)
     {
-        quint16 activePort = server.activeHttpsPort();
-        if (appSettings.httpsPort(0) != activePort)
-            appSettings.setHttpsPort(activePort);
+        quint16 activeHttps = server.activeHttpsPort();
+        if (appSettings.httpsPort(0) != activeHttps)
+            appSettings.setHttpsPort(activeHttps);
+
+        quint16 activeHttp = server.httpPort();
+        if (appSettings.httpPort(0) != activeHttp)
+            appSettings.setHttpPort(activeHttp);
     }
 
     // Configure HttpServer to proxy WebSocket upgrades to the signaling server.
@@ -380,7 +389,7 @@ int main(int argc, char* argv[])
 
     // Always set the persisted subdomain (auto-generated or previously saved)
     nportClient.setSubdomain(nportSubdomain);
-    nportClient.setTargetPort(server.activeHttpsPort());
+    nportClient.setTargetPort(server.httpPort());
     qInfo() << "[main] nport subdomain:" << nportSubdomain;
 
     // API route: get tunnel status
@@ -431,12 +440,12 @@ int main(int argc, char* argv[])
         // (Re)start the tunnel
         nportClient.stop();
         nportClient.setSubdomain(subdomain);
-        nportClient.setTargetPort(server.activeHttpsPort());
+        nportClient.setTargetPort(server.httpPort());
 
         if (nportClient.isAvailable()) {
             nportClient.start();
         } else {
-            qWarning() << "[main] nport not available (Node.js/nport not found) —"
+            qWarning() << "[main] nport not available (binary not found) —"
                        << "tunnel not started";
         }
 

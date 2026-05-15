@@ -65,7 +65,7 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 # Build backend (MSVC)
 cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat
 
-# Lancer le serveur (port 48000 HTTP, 48443 HTTPS)
+# Lancer le serveur (port 48 HTTP, 443 HTTPS)
 cd backend/build/release && ./mw-server.exe
 
 # Arrêter le serveur

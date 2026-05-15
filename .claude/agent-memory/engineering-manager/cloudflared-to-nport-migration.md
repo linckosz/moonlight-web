@@ -28,5 +28,23 @@ Remplacement de cloudflared par le package npm nport + Node.js runtime embarqué
 ## Fichiers supprimes
 - `backend/tools/download_cloudflared.ps1` (remplace par prepare_node_nport.ps1)
 
-## Point d'attention
-Le package npm `nport` n'a pas ete verifie directement (npm view non disponible). L'implementation lit dynamiquement le `package.json` du package installe pour trouver le `bin` entry. Si le package nport a une structure non standard, un fallback vers `cli.js` ou `index.js` est fait.
+## Point d'attention — Detection du binaire nport
+
+Le package npm `nport` est un outil Node.js CLI. npm cree un wrapper `.cmd` sur Windows (dans `node_modules/.bin/nport.cmd`), pas un `.exe`.
+
+### Correction (2026-05-15)
+
+Le `findNportBinary()` cherchait uniquement `nport.exe` sur Windows, donc ne trouvait jamais le wrapper `.cmd`. Fix :
+- Cherche d'abord `nport.cmd` (npm wrapper), puis `nport.exe`, puis `nport`
+- `where nport` (sans extension) au lieu de `where nport.exe`
+- QProcess execute les `.cmd` nativement via cmd.exe, aucun changement dans `launchNport()`
+
+### Messages stale corriges
+- `AdminView.js` : "Node.js runtime not found" -> "nport binary not found"
+- `main.cpp` : "Node.js/nport not found" -> "binary not found"
+
+### Fichiers modifies
+- `backend/src/network/NportClient.cpp` — `findNportBinary()` multi-binary search
+- `backend/src/network/NportClient.h` — commentaire mis a jour
+- `frontend/js/ui/AdminView.js` — message stale supprime
+- `backend/src/main.cpp` — message stale supprime

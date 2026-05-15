@@ -3,3 +3,4 @@
 - [History API Routing](history-api-routing.md) — SPA fallback backend + History API frontend, plus de hash routing
 - [Internet Access UI Refactor](internet-access-ui-refactor.md) — Checkbox + URL + 6 etats, auto-subdomain
 - [Cloudflared -> nport Migration](cloudflared-to-nport-migration.md) — Node.js runtime integre, nport CLI remplace cloudflared, prepare_node_nport.ps1
+- [Nport Graceful Shutdown Fix](nport-graceful-shutdown-fix.md) — Ctrl+C graceux, pre-creation tunnel API, HTTP origin fix, suppression releaseSubdomain

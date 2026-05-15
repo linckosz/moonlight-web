@@ -277,17 +277,47 @@ bool HttpServer::start(quint16 preferredHttpsPort)
     m_HttpsPort = preferredHttpsPort;
     bool hasHttps = loadCert();
 
-    // Start HTTP redirect server (port 80 by default)
-    if (!m_HttpServer->listen(QHostAddress::Any, m_HttpPort)) {
-        Logger::warning("HTTP redirect server: port " + QString::number(m_HttpPort)
-                        + " unavailable (" + m_HttpServer->errorString()
-                        + "), continuing without HTTP→HTTPS redirect");
-        m_HttpServer->deleteLater();
-        m_HttpServer = nullptr;
-    } else {
-        connect(m_HttpServer, &QTcpServer::newConnection,
-                this, &HttpServer::onHttpConnection);
-        Logger::info("HTTP→HTTPS redirect on port " + QString::number(m_HttpPort));
+    // Start HTTP server with port fallback (must-have for nport).
+    // Try the preferred port first, then scan from 49080 upward.
+    {
+        auto tryHttpPort = [this](quint16 port) -> bool {
+            if (m_HttpServer->listen(QHostAddress::Any, port)) {
+                m_HttpPort = port;
+                return true;
+            }
+            return false;
+        };
+
+        bool httpOk = false;
+
+        // 1. Try the preferred port
+        if (tryHttpPort(m_HttpPort)) {
+            httpOk = true;
+        } else {
+            Logger::warning("HTTP port " + QString::number(m_HttpPort)
+                            + " unavailable (" + m_HttpServer->errorString()
+                            + "), scanning fallback range...");
+        }
+
+        // 2. Fallback: scan from 49080 upward
+        if (!httpOk) {
+            for (quint16 p = 49080; p <= 65535; ++p) {
+                if (tryHttpPort(p)) {
+                    httpOk = true;
+                    break;
+                }
+            }
+        }
+
+        if (httpOk) {
+            connect(m_HttpServer, &QTcpServer::newConnection,
+                    this, &HttpServer::onHttpConnection);
+            Logger::info("HTTP server on port " + QString::number(m_HttpPort));
+        } else {
+            Logger::error("HTTP server failed: no available port in any range");
+            m_HttpServer->deleteLater();
+            m_HttpServer = nullptr;
+        }
     }
 
     // Start HTTPS with port fallback
@@ -393,38 +423,49 @@ bool HttpServer::changeHttpsPort(quint16 newPort)
     return true;
 }
 
+bool HttpServer::isLanHost(const QString& host) const
+{
+    QString h = host.toLower().trimmed();
+    if (h.isEmpty()) return true;  // Missing Host header → assume LAN
+
+    // Localhost
+    if (h == "localhost" || h == "127.0.0.1" || h == "::1")
+        return true;
+
+    QHostAddress addr(h);
+    if (addr.isNull()) return false;  // Not an IP → public domain (e.g. nport.link)
+
+    if (addr.isLoopback()) return true;
+
+    // Private IPv4 ranges
+    if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
+        quint32 ip = addr.toIPv4Address();
+        // 10.0.0.0/8
+        if ((ip & 0xFF000000) == 0x0A000000) return true;
+        // 172.16.0.0/12
+        if ((ip & 0xFFF00000) == 0xAC100000) return true;
+        // 192.168.0.0/16
+        if ((ip & 0xFFFF0000) == 0xC0A80000) return true;
+    }
+
+    return false;
+}
+
 // --- HTTP redirect ----------------------------------------------------------
 
 void HttpServer::onHttpConnection()
 {
     if (!m_HttpServer) return;
     while (QTcpSocket* socket = m_HttpServer->nextPendingConnection()) {
+        // Plain HTTP server: process requests directly (no redirect to HTTPS).
+        // This allows the nport/cloudflared tunnel to connect via HTTP
+        // (cloudflared uses http://localhost:<port> as the origin).
+        // External TLS access goes through the separate HTTPS listener.
+        m_Buffers[socket] = QByteArray();
         connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
-            QByteArray data = socket->readAll();
-            QString host = "localhost";
-            QString req = QString::fromUtf8(data);
-            for (const QString& line : req.split("\r\n")) {
-                if (line.startsWith("Host:", Qt::CaseInsensitive)) {
-                    host = line.mid(5).trimmed();
-                    int colon = host.indexOf(':');
-                    if (colon >= 0) host = host.left(colon);
-                    break;
-                }
-            }
-            quint16 redirectPort = m_ActiveHttpsPort != 0 ? m_ActiveHttpsPort : m_HttpsPort;
-            QString redirectUrl = redirectPort == 443
-                ? QString("https://%1/").arg(host)
-                : QString("https://%1:%2/").arg(host).arg(redirectPort);
-            QByteArray resp;
-            resp.append("HTTP/1.1 307 Temporary Redirect\r\n");
-            resp.append("Location: " + redirectUrl.toUtf8() + "\r\n");
-            resp.append("Content-Length: 0\r\n");
-            resp.append("Connection: close\r\n");
-            resp.append("\r\n");
-            socket->write(resp);
-            socket->flush();
-            socket->disconnectFromHost();
+            onReadyReadSocket(socket);
         });
+        connect(socket, &QTcpSocket::disconnected, this, &HttpServer::onDisconnected);
     }
 }
 
@@ -491,6 +532,29 @@ void HttpServer::onDisconnected()
 void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestData)
 {
     HttpRequest req = parseRequest(requestData);
+
+    // HTTP→HTTPS redirect for plain HTTP connections from LAN/local clients.
+    // Only redirect when the user typed http:// in their browser (LAN/localhost).
+    // Public hosts (nport tunnel) are NOT redirected — the client is already on
+    // HTTPS at the nport edge, and the tunnel forwards plain HTTP to us.
+    if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0) {
+        QString host = req.headers.value("host");
+        int portSep = host.lastIndexOf(':');
+        QString hostname = (portSep >= 0) ? host.left(portSep) : host;
+
+        if (isLanHost(hostname)) {
+            QString location = QString("https://%1:%2%3")
+                .arg(hostname)
+                .arg(m_ActiveHttpsPort)
+                .arg(req.path);
+            HttpResponse resp;
+            resp.statusCode = 307;
+            resp.headers["Location"] = location;
+            sendResponse(socket, resp);
+            return;
+        }
+        // Public host (nport): fall through, serve directly
+    }
 
     if (!req.path.startsWith("/api/")) {
         HttpResponse resp = m_StaticFiles->serveFile(req.path);

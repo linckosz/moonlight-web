@@ -33,7 +33,7 @@ brut mais pas encore joué. Pas de re-encodage dans le backend.
 
 [REEL] La vidéo n'utilise PAS WebCodecs directement mais MSE + fMP4 (Mp4Muxer.js).
 L'audio PCM est forwardé mais pas encore joué (Phase 6 à faire).
-Le backend écoute à la fois HTTP (80→redirect) et HTTPS (48443, self-signed cert).
+Le backend écoute à la fois HTTP (80→redirect) et HTTPS (443, self-signed cert).
 
 ---
 
@@ -365,7 +365,7 @@ Main Thread (Qt event loop)           Worker Thread (LiStartConnection via QThre
 - `frontend/index.html`, `frontend/css/style.css`, `frontend/js/app.js`
 
 **Ce qui a été fait réellement :**
-- HTTP sur port 48000 + HTTPS sur port 48443 (avec cert self-signed)
+- HTTP sur port 80 + HTTPS sur port 443 (avec cert self-signed)
 - Redirection HTTP→HTTPS automatique
 - Routes sync ET async (ResponseCallback)
 - Serveur statique pour frontend/
@@ -705,8 +705,8 @@ cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat
 ### Run
 ```bash
 cd backend/build/release && ./mw-server.exe
-# HTTP :48000 → HTTPS :48443, WS relay :48001
-# Ouvrir https://localhost:48443/ dans Chrome/Edge
+# HTTP :80 → HTTPS :443, WS relay :48001
+# Ouvrir https://localhost/ dans Chrome/Edge
 ```
 
 ### Build manuel de qmdnsengine (si pas via le .pro subdirs)
