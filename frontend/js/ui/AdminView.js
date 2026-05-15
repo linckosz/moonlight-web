@@ -17,7 +17,7 @@ export class AdminView {
 
         // Server settings state
         this._httpsPort = 443;
-        this._httpPort = 48000;
+        this._httpPort = 80;
 
         // Tunnel state (nport)
         this._tunnelActive = false;
@@ -44,7 +44,7 @@ export class AdminView {
         try {
             const admin = await BackendClient.getAdminSettings();
             this._httpsPort = admin.https_port || 443;
-            this._httpPort = admin.http_port || 48000;
+            this._httpPort = admin.http_port || 80;
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
@@ -120,7 +120,7 @@ export class AdminView {
             case 'error':
                 return this.esc(this._tunnelError || 'Failed to start tunnel.');
             case 'unavailable':
-                return 'Unavailable — Node.js runtime not found. Run the server installer.';
+                return 'Unavailable — nport binary not found. Run prepare_node_nport.ps1 to enable remote access.';
             case 'idle':
             default:
                 return '';

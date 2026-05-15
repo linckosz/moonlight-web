@@ -15,7 +15,7 @@ class HttpServer : public QObject
     Q_OBJECT
 
 public:
-    explicit HttpServer(quint16 httpPort = 48000, quint16 httpsPort = 443,
+    explicit HttpServer(quint16 httpPort = 80, quint16 httpsPort = 443,
                         QObject* parent = nullptr);
     ~HttpServer();
 
@@ -59,6 +59,7 @@ private:
     void sendResponse(QTcpSocket* socket, const HttpResponse& response);
     void handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData);
     HttpRequest parseRequest(const QByteArray& raw) const;
+    bool isLanHost(const QString& host) const;
     bool loadCert();
     QString findCertDir();
     bool loadCertFiles(const QString& certDir);

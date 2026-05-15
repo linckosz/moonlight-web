@@ -38,6 +38,24 @@ void AppSettings::writeAll(const QJsonObject& obj)
     }
 }
 
+// ── HTTP port ──────────────────────────────────────────────────────────────────
+
+quint16 AppSettings::httpPort(quint16 fallback) const
+{
+    QJsonObject obj = readAll();
+    auto it = obj.find("http_port");
+    if (it != obj.end())
+        return static_cast<quint16>(it->toInt());
+    return fallback;
+}
+
+void AppSettings::setHttpPort(quint16 port)
+{
+    QJsonObject obj = readAll();
+    obj["http_port"] = static_cast<int>(port);
+    writeAll(obj);
+}
+
 // ── HTTPS port ─────────────────────────────────────────────────────────────────
 
 quint16 AppSettings::httpsPort(quint16 fallback) const
