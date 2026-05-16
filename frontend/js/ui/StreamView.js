@@ -118,7 +118,8 @@ export class StreamView {
                 ' decoder=' + (this.decoder ? 'exists' : 'null') +
                 ' audio.ready=' + (this.audioPipeline ? this.audioPipeline.ready : 'no') +
                 ' audio.samples=' + (this.audioPipeline ? this.audioPipeline.getStats().writtenSamples : 0) +
-                ' audio.underrun=' + (this.audioPipeline ? this.audioPipeline.getStats().underrunCount : 0));
+                ' audio.underrun=' + (this.audioPipeline ? this.audioPipeline.getStats().underrunCount : 0) +
+                (this._lastFrameColorSpace ? ' cs=' + JSON.stringify(this._lastFrameColorSpace) : ''));
         }, 2000);
     }
 
@@ -348,7 +349,17 @@ export class StreamView {
             description: desc.buffer,
             codedWidth: 1920,
             codedHeight: 1080,
-            optimizeForLatency: true
+            optimizeForLatency: true,
+            // Explicit BT.709 limited-range — the H.264 broadcast standard.
+            // Some Chrome versions ignore VUI in the codec description and
+            // default to BT.601 full-range, causing color shifts (washed out
+            // or oversaturated). Setting this explicitly prevents the fallback.
+            colorSpace: {
+                primaries: 'bt709',
+                transfer: 'bt709',
+                matrix: 'bt709',
+                fullRange: false
+            }
         });
 
         for (const fbCodec of fallbacks) {
@@ -358,7 +369,13 @@ export class StreamView {
                 description: desc.buffer,
                 codedWidth: 1920,
                 codedHeight: 1080,
-                optimizeForLatency: true
+                optimizeForLatency: true,
+                colorSpace: {
+                    primaries: 'bt709',
+                    transfer: 'bt709',
+                    matrix: 'bt709',
+                    fullRange: false
+                }
             });
         }
 
@@ -435,9 +452,22 @@ export class StreamView {
         this.stats.decoded++;
 
         if (this.stats.decoded <= 3) {
+            const cs = frame.colorSpace;
             console.log('[StreamView] onDecodedFrame #' + this.stats.decoded +
                 ' displaySize=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
-                ' format=' + frame.format);
+                ' format=' + (frame.format || '?') +
+                ' colorSpace=' + JSON.stringify({
+                    primaries: cs?.primaries,
+                    transfer: cs?.transfer,
+                    matrix: cs?.matrix,
+                    fullRange: cs?.fullRange
+                }));
+        }
+        if (this.stats.decoded === 1) {
+            const cs = frame.colorSpace;
+            this._lastFrameColorSpace = cs ? {
+                p: cs.primaries, t: cs.transfer, m: cs.matrix, f: cs.fullRange
+            } : null;
         }
 
         // Limit queue depth to 3 to keep latency low

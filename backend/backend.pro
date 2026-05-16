@@ -34,14 +34,15 @@ exists($$PWD/third_party/libdatachannel/install/include) {
 }
 
 # miniupnpc (UPnP-IGD port mapping for WebRTC NAT traversal)
-exists($$PWD/third_party/miniupnpc/lib) {
-    INCLUDEPATH += $$PWD/third_party/miniupnpc/include
-    win32:CONFIG(release, debug|release): LIBS += -L$$PWD/third_party/miniupnpc/lib -lminiupnpc -lws2_32 -liphlpapi
-    else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/third_party/miniupnpc/lib -lminiupnpc -lws2_32 -liphlpapi
+# Built from git submodule: backend/third_party/miniupnp
+exists($$PWD/third_party/miniupnp/build/lib) {
+    INCLUDEPATH += $$PWD/third_party/miniupnp/build/include
+    win32:CONFIG(release, debug|release): LIBS += -L$$PWD/third_party/miniupnp/build/lib -lminiupnpc -lws2_32 -liphlpapi
+    else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/third_party/miniupnp/build/lib -lminiupnpc -lws2_32 -liphlpapi
     else:unix: LIBS += -lminiupnpc
     DEFINES += MW_HAVE_MINIUPNPC MINIUPNP_STATICLIB
 } else {
-    warning("miniupnpc not found in third_party/miniupnpc — UPnP NAT traversal disabled. Run build_miniupnpc.bat to enable.")
+    warning("miniupnpc not found — UPnP NAT traversal disabled. Run build_miniupnpc.bat to build from submodule.")
 }
 
 # OpenSSL
