@@ -1,7 +1,8 @@
 @echo off
-REM Build miniupnpc as static lib for MSVC
-REM Clones miniupnpc from GitHub, compiles required source files,
-REM and creates a static library in third_party/miniupnpc/lib/
+REM Build miniupnpc as static lib for MSVC from git submodule
+REM Requires: git submodule init && git submodule update
+REM Output:   third_party/miniupnp/build/lib/miniupnpc.lib
+REM           third_party/miniupnp/build/include/miniupnpc/
 
 setlocal enabledelayedexpansion
 
@@ -13,64 +14,52 @@ if not defined VSINSTALLDIR (
     )
 )
 
-set SRC_DIR=%~dp0third_party\miniupnpc\src
-set OUT_DIR=%~dp0third_party\miniupnpc\lib
-set INC_DIR=%~dp0third_party\miniupnpc\include\miniupnpc
+set SUBMODULE_DIR=%~dp0third_party\miniupnp\miniupnpc
+set SRC_DIR=%SUBMODULE_DIR%\src
+set HEADER_DIR=%SUBMODULE_DIR%\include
+set BUILD_DIR=%~dp0third_party\miniupnp\build
+set OUT_DIR=%BUILD_DIR%\lib
+set INC_DIR=%BUILD_DIR%\include\miniupnpc
 
-echo [miniupnpc] Building static library...
+echo [miniupnpc] Building static library from submodule...
+echo [miniupnpc]   Source: %SRC_DIR%
+echo [miniupnpc]   Output: %OUT_DIR%
 
-REM Step 1: Clone or update miniupnpc source
+REM Step 1: Verify submodule is present
 if not exist "%SRC_DIR%\miniupnpc.c" (
-    echo [miniupnpc] Downloading miniupnpc source...
-    if not exist "%SRC_DIR%" mkdir "%SRC_DIR%"
-    cd /d "%SRC_DIR%"
-    REM Try git clone first; if no git, try curl
-    git clone https://github.com/miniupnp/miniupnp.git tmp 2>nul
-    if exist "tmp\miniupnpc\miniupnpc.c" (
-        echo [miniupnpc] Source obtained via git
-        REM Move files from subdirectory
-        copy /Y "tmp\miniupnpc\*.c" "." >nul
-        copy /Y "tmp\miniupnpc\*.h" "." >nul
-        rmdir /S /Q tmp
-    ) else (
-        echo [miniupnpc] Git not available, trying curl with ZIP download...
-        rmdir /S /Q tmp 2>nul
-        powershell -Command "& {Invoke-WebRequest -Uri 'https://github.com/miniupnp/miniupnp/archive/refs/heads/master.zip' -OutFile '%SRC_DIR%\miniupnpc.zip'}"
-        if exist "%SRC_DIR%\miniupnpc.zip" (
-            cd /d "%SRC_DIR%"
-            REM Use PowerShell to extract
-            powershell -Command "& {Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('%SRC_DIR%\miniupnpc.zip', '%SRC_DIR%\tmp2')}"
-            if exist "%SRC_DIR%\tmp2\miniupnp-master\miniupnpc" (
-                copy /Y "%SRC_DIR%\tmp2\miniupnp-master\miniupnpc\*.c" "." >nul
-                copy /Y "%SRC_DIR%\tmp2\miniupnp-master\miniupnpc\*.h" "." >nul
-            )
-            rmdir /S /Q "%SRC_DIR%\tmp2" 2>nul
-            del "%SRC_DIR%\miniupnpc.zip"
-        )
-    )
-    if not exist "%SRC_DIR%\miniupnpc.c" (
-        echo [miniupnpc] ERROR: Failed to obtain miniupnpc source
-        echo [miniupnpc] Please manually clone https://github.com/miniupnp/miniupnp
-        echo [miniupnpc] and copy miniupnpc/*.c, miniupnpc/*.h into %SRC_DIR%
-        exit /b 1
-    )
-    echo [miniupnpc] Source obtained successfully
+    echo [miniupnpc] ERROR: miniupnpc sources not found
+    echo [miniupnpc] Run: git submodule init ^&^& git submodule update
+    exit /b 1
 )
 
 REM Step 2: Create output directories
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 if not exist "%INC_DIR%" mkdir "%INC_DIR%"
 
-REM Step 3: Copy all headers to include dir
+REM Step 3: Copy public headers to include dir
 echo [miniupnpc] Copying headers...
-copy /Y "%SRC_DIR%\*.h" "%INC_DIR%\" >nul
+copy /Y "%HEADER_DIR%\*.h" "%INC_DIR%\" >nul
+REM Also copy internal headers needed for compilation
+copy /Y "%SRC_DIR%\win32_snprintf.h" "%INC_DIR%\" >nul
 
-REM Step 4: Compile source files
+REM Step 4: Generate miniupnpcstrings.h (required by minisoap.c)
+echo [miniupnpc] Generating miniupnpcstrings.h...
+(
+echo #ifndef MINIUPNPCSTRINGS_H_INCLUDED
+echo #define MINIUPNPCSTRINGS_H_INCLUDED
+echo #define OS_STRING "Windows"
+echo #define MINIUPNPC_VERSION_STRING "2.2.8"
+echo #define UPNP_VERSION_MAJOR 1
+echo #define UPNP_VERSION_MINOR 1
+echo #define UPNP_VERSION_STRING "UPnP/1.1"
+echo #endif
+) > "%INC_DIR%\miniupnpcstrings.h"
+
+REM Step 5: Compile source files
 echo [miniupnpc] Compiling source files...
 
-set CFLAGS=/c /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /DWIN32_LEAN_AND_MEAN /DMINIUPNP_STATICLIB /I"%SRC_DIR%"
+set CFLAGS=/c /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /DWIN32_LEAN_AND_MEAN /DMINIUPNP_STATICLIB /I"%SRC_DIR%" /I"%INC_DIR%"
 
-REM Compile all miniupnpc source files (from CMakeLists.txt MINIUPNPC_SOURCES)
 for %%f in (
     igd_desc_parse
     miniupnpc
@@ -92,7 +81,7 @@ for %%f in (
     if errorlevel 1 goto :error
 )
 
-REM Step 5: Create static library
+REM Step 6: Create static library
 echo [miniupnpc] Creating library...
 lib /OUT:"%OUT_DIR%\miniupnpc.lib" ^
     "%OUT_DIR%\igd_desc_parse.obj" ^
@@ -113,7 +102,6 @@ lib /OUT:"%OUT_DIR%\miniupnpc.lib" ^
 if errorlevel 1 goto :error
 
 echo [miniupnpc] Library built successfully at %OUT_DIR%\miniupnpc.lib
-echo [miniupnpc] To link: add -L%OUT_DIR% -lminiupnpc to your linker flags
 goto :eof
 
 :error
