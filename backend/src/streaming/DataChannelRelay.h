@@ -56,6 +56,21 @@ public:
     // Called when the browser signals that it needs a keyframe (no decoder config yet).
     void requestIdrFrame();
 
+    // ── UPnP NAT traversal ──────────────────────────────────────────────────
+
+    /// Set the public IP and port discovered via UPnP.
+    /// When set, host candidates in SDP will be rewritten to use this public
+    /// address instead of the private LAN address, enabling direct P2P
+    /// connections from outside the local network.
+    void setPublicAddress(const std::string& publicIP, uint16_t publicPort);
+
+    /// Enable rewriting of host candidates to use the configured public address.
+    void setForceHostCandidatePublic(bool force) { m_ForceHostPublic = force; }
+
+    /// When UPnP is active, suppress IPv6 candidates so the browser is forced
+    /// to use the IPv4 UPnP path (IPv6 often fails through residential NAT/firewall).
+    void setSuppressIPv6Candidates(bool suppress) { m_SuppressIPv6 = suppress; }
+
     bool isConnected() const { return m_Connected; }
 
 signals:
@@ -113,4 +128,10 @@ private:
     // delta frames because it missed the initial IDR.
     QByteArray m_BufferedKeyframe;
     bool m_HaveBufferedKeyframe = false;
+
+    // ── UPnP NAT traversal ──────────────────────────────────────────────────
+    std::string m_PublicIP;      // Public IP discovered via UPnP (or empty)
+    uint16_t m_PublicPort = 0;   // Mapped port from UPnP (0 = not mapped)
+    bool m_ForceHostPublic = false;
+    bool m_SuppressIPv6 = false; // Suppress IPv6 candidates when UPnP active
 };

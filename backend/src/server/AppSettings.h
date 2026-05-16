@@ -49,6 +49,13 @@ public:
     QString nportSubdomain() const;
     void setNportSubdomain(const QString& subdomain);
 
+    // ── UPnP NAT traversal ────────────────────────────────────────────────────
+
+    /// Whether UPnP port mapping is enabled for WebRTC NAT traversal.
+    /// Default: true (recommended — enables direct P2P connections from outside LAN).
+    bool upnpEnabled() const;
+    void setUpnpEnabled(bool enabled);
+
     // ── Low-level access (for other one-off settings) ───────────────────────
 
     /// Read the entire settings JSON object.

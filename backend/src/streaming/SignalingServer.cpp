@@ -1,11 +1,13 @@
 #include "SignalingServer.h"
 #include "DataChannelRelay.h"
+#include "network/UPNPClient.h"
 
 #include <rtc/rtc.hpp>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
 #include <QHostAddress>
+#include <QTimer>
 #include <memory>
 
 SignalingServer::SignalingServer(DataChannelRelay* relay,
@@ -60,6 +62,16 @@ bool SignalingServer::start()
 
     qInfo() << "[SignalingServer] Listening OK";
     m_Running = true;
+
+    // Async UPnP discovery: kicks off IGD discovery without blocking start().
+    // The browser doesn't connect immediately (user still clicks "Launch"), so
+    // UPnP has time to complete before the PeerConnection is created.
+    if (m_UseUPnP && m_ServerHost != "localhost") {
+        QTimer::singleShot(0, this, [this]() {
+            setupUPnP();
+        });
+    }
+
     return true;
 }
 
@@ -87,6 +99,8 @@ void SignalingServer::stop()
         qInfo() << "[SignalingServer] Closing WS server";
         m_WsServer->close();
     }
+
+    cleanupUPnP();
 
     m_SignalingComplete = false;
     m_DataChannelsOpen = false;
@@ -152,17 +166,23 @@ void SignalingServer::onNewWsConnection()
         qWarning() << "[SignalingServer] WS error:" << err;
     });
 
-    // Prepare libdatachannel PeerConnection with appropriate ICE config
-    rtc::Configuration config;
-    config.iceTransportPolicy = rtc::TransportPolicy::All;
-    config.forceMediaTransport = true;  // DataChannel only, no media tracks
+    // Build ICE configuration: STUN + optionally UPnP-aware fixed port
+    rtc::Configuration config = buildIceConfig(isInternet, m_UpnpMappedPort);
 
-    if (isInternet) {
-        qInfo() << "[SignalingServer] Adding STUN server for Internet client";
-        rtc::IceServer stun("stun:stun.l.google.com:19302");
-        config.iceServers.push_back(stun);
-    } else {
-        qInfo() << "[SignalingServer] LAN client: no STUN needed";
+    // If UPnP is active, tell the relay to rewrite host candidates with the
+    // public IP and mapped port so the browser sees a "host" candidate at
+    // PUBLIC_IP:48010 instead of 192.168.x.x:48010.
+    if (!m_UpnpPublicIP.isEmpty() && m_UpnpMappedPort > 0) {
+        m_Relay->setPublicAddress(
+            m_UpnpPublicIP.toStdString(),
+            m_UpnpMappedPort);
+        m_Relay->setForceHostCandidatePublic(true);
+        // Suppress IPv6 candidates so ICE is forced to use the IPv4 UPnP path.
+        // Residential IPv6 often has firewall rules that block unsolicited
+        // inbound traffic, causing DTLS/SCTP to fail silently.
+        m_Relay->setSuppressIPv6Candidates(true);
+        qInfo() << "[SignalingServer] UPnP: relaying host candidate as"
+                << m_UpnpPublicIP << ":" << m_UpnpMappedPort;
     }
 
     // Prepare the PeerConnection + DataChannels
@@ -329,4 +349,127 @@ bool SignalingServer::isPrivateAddress(const QString& ip) const
     }
 
     return false;
+}
+
+// ── UPnP NAT traversal ─────────────────────────────────────────────────────────
+
+rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort)
+{
+    rtc::Configuration config;
+    config.iceTransportPolicy = rtc::TransportPolicy::All;
+    config.forceMediaTransport = true;  // DataChannel only, no media tracks
+
+    if (isInternet) {
+        if (upnpMappedPort > 0) {
+            // UPnP mode: fixed port matching the UPnP mapping.
+            // STUN is added as fallback — srflx candidates duplicate the UPnP
+            // address, but the host candidate (rewritten by DataChannelRelay)
+            // will have higher priority and be preferred by the browser.
+            config.portRangeBegin = upnpMappedPort;
+            config.portRangeEnd = upnpMappedPort;
+            qInfo() << "[SignalingServer] UPnP ICE: port range fixed to"
+                    << upnpMappedPort << "-" << upnpMappedPort;
+
+            rtc::IceServer stun("stun:stun.l.google.com:19302");
+            config.iceServers.push_back(stun);
+        } else {
+            // No UPnP: standard STUN-only mode (existing behavior for LAN or
+            // Internet without UPnP).
+            qInfo() << "[SignalingServer] Standard ICE: STUN only (no UPnP)";
+            rtc::IceServer stun("stun:stun.l.google.com:19302");
+            config.iceServers.push_back(stun);
+        }
+    } else {
+        qInfo() << "[SignalingServer] LAN ICE: no STUN, no UPnP";
+    }
+
+    return config;
+}
+
+bool SignalingServer::setupUPnP()
+{
+    if (m_Upnp) {
+        qInfo() << "[UPNP] Already set up";
+        return true;
+    }
+
+    qInfo() << "[UPNP] Setting UPnP for signaling server (host=" << m_ServerHost << ")";
+
+    auto* upnp = new UPNPClient(this);
+    if (!upnp->discover(2000)) {
+        qInfo() << "[UPNP] No IGD found — STUN fallback only";
+        delete upnp;
+        return false;
+    }
+
+    // Get public IP via UPnP (more reliable than STUN srflx for routing)
+    std::string pubIP = upnp->getExternalIPAddress();
+    if (!pubIP.empty()) {
+        m_UpnpPublicIP = QString::fromStdString(pubIP);
+        qInfo() << "[UPNP] Public IP:" << m_UpnpPublicIP;
+    }
+
+    // Try to add port mapping with fallback on port range
+    uint16_t port = kUpnpPort;
+    bool mappingOk = false;
+    for (int attempt = 0; attempt < kUpnpMaxPortAttempts; attempt++) {
+        uint16_t tryPort = port + static_cast<uint16_t>(attempt);
+        if (upnp->addPortMapping(tryPort, tryPort,
+                                 kUpnpLeaseDurationSec,
+                                 "Moonlight-Web WebRTC")) {
+            m_UpnpMappedPort = tryPort;
+            mappingOk = true;
+            break;
+        }
+        qWarning() << "[UPNP] Port" << tryPort << "failed, trying next...";
+    }
+
+    if (!mappingOk) {
+        qWarning() << "[UPNP] All ports in range" << kUpnpPort << "-"
+                   << (kUpnpPort + kUpnpMaxPortAttempts - 1) << "failed";
+        delete upnp;
+        return false;
+    }
+
+    // Store the UPNPClient instance — it will be cleaned up in cleanupUPnP()
+    m_Upnp = upnp;
+
+    // Schedule periodic renewal for routers without persistent mappings
+    m_UpnpRenewTimer = new QTimer(this);
+    connect(m_UpnpRenewTimer, &QTimer::timeout, this, [this]() {
+        if (m_Upnp && m_UpnpMappedPort > 0) {
+            qInfo() << "[UPNP] Renewing port mapping (every"
+                    << (kUpnpRenewIntervalMs / 60000) << "min)";
+            m_Upnp->addPortMapping(m_UpnpMappedPort, m_UpnpMappedPort,
+                                   kUpnpLeaseDurationSec,
+                                   "Moonlight-Web WebRTC");
+        }
+    });
+    m_UpnpRenewTimer->start(kUpnpRenewIntervalMs);
+
+    qInfo() << "[UPNP] Setup complete: port" << m_UpnpMappedPort
+            << "mapped, public IP:" << m_UpnpPublicIP;
+    return true;
+}
+
+void SignalingServer::cleanupUPnP()
+{
+    if (m_UpnpRenewTimer) {
+        m_UpnpRenewTimer->stop();
+        m_UpnpRenewTimer->deleteLater();
+        m_UpnpRenewTimer = nullptr;
+    }
+
+    if (m_Upnp && m_UpnpMappedPort > 0) {
+        qInfo() << "[UPNP] Removing port mapping" << m_UpnpMappedPort;
+        m_Upnp->removePortMapping(m_UpnpMappedPort);
+    }
+
+    if (m_Upnp) {
+        m_Upnp->deleteLater();
+        m_Upnp = nullptr;
+    }
+
+    m_UpnpMappedPort = 0;
+    m_UpnpPublicIP.clear();
 }

@@ -277,6 +277,15 @@ const MoonlightApp = {
         this.transition('launching');
         Toast.info(`Launching ${app.name}...`);
 
+        // Load UPnP preference from streaming settings before launching
+        let upnpEnabled = true;
+        try {
+            const settings = await BackendClient.getStreamingSettings();
+            upnpEnabled = settings.upnp_enabled !== false;
+        } catch (err) {
+            console.warn('[MW] Failed to load streaming settings for UPnP check:', err);
+        }
+
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id);
             console.log('[MW] Launch result:', result);
@@ -291,7 +300,9 @@ const MoonlightApp = {
                     result.signalingUrl || result.wsUrl,  // WebRTC signaling URL (fallback to WS for legacy)
                     host,
                     result.videoCodec,
-                    result.gamingMode !== false
+                    result.gamingMode !== false,
+                    upnpEnabled,
+                    result.upnpAvailable !== false
                 );
             }
         } catch (err) {

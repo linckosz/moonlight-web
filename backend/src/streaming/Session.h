@@ -24,6 +24,7 @@ public:
                   const QString& serverHost = "localhost",
                   VideoCodec videoCodec = VideoCodec::Auto,
                   bool gamingMode = true,
+                  bool upnpEnabled = true,
                   QObject* parent = nullptr);
     ~StreamSession();
 
@@ -61,6 +62,7 @@ private:
 
     StreamConfig m_Config;
     bool m_GamingMode = true;
+    bool m_UpnpEnabled = true;
     QNetworkReply* m_LaunchReply = nullptr;
     QString m_SessionUrl;
 
