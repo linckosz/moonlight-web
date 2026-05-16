@@ -21,6 +21,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                const QString& serverHost,
                                VideoCodec videoCodec,
                                bool gamingMode,
+                               bool upnpEnabled,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -30,6 +31,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_WsPort(wsPort)
     , m_ServerHost(serverHost)
     , m_GamingMode(gamingMode)
+    , m_UpnpEnabled(upnpEnabled)
 {
     // Apply video codec preference from settings (default Auto)
     m_Config.codec = videoCodec;
@@ -256,6 +258,7 @@ void StreamSession::onLaunchReplyFinished()
     // NonSecure mode: nport/Cloudflare provides TLS termination for remote access.
     auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
     signaling->setHttpsPort(m_HttpsPort);
+    signaling->setUseUPnP(m_UpnpEnabled);
 
     // If an explicit WS URL was set (e.g. nport tunnel), apply it.
     if (!m_ExplicitWsUrl.isEmpty()) {
@@ -310,6 +313,16 @@ void StreamSession::onShimConnectionStarted()
 
     // Pass gaming mode preference to the frontend
     result["gamingMode"] = m_GamingMode;
+
+    // UPnP NAT traversal status
+    if (m_Signaling) {
+        bool upnpAvailable = (m_Signaling->upnpMappedPort() > 0);
+        result["upnpAvailable"] = upnpAvailable;
+        if (upnpAvailable) {
+            result["upnpPublicIP"] = m_Signaling->upnpPublicIP();
+            result["upnpPort"] = static_cast<int>(m_Signaling->upnpMappedPort());
+        }
+    }
 
     // Report the negotiated video codec back to the browser
     switch (m_Config.codec) {

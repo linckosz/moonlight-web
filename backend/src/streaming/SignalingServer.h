@@ -7,7 +7,12 @@
 #include <memory>
 #include <atomic>
 
+namespace rtc {
+struct Configuration;
+}
+
 class DataChannelRelay;
+class UPNPClient;
 
 // Minimal WebSocket server for WebRTC signaling only.
 // Exchanges SDP offer/answer and ICE candidates between the browser
@@ -78,4 +83,46 @@ private:
 
     /// If non-empty, wsUrl() returns this URL instead of constructing one.
     QString m_OverrideWsUrl;
+
+    // ── UPnP NAT traversal ──────────────────────────────────────────────────
+
+public:
+    /// Enable/disable UPnP port mapping for NAT traversal.
+    /// Called before start() to set the preference from settings.
+    void setUseUPnP(bool enable) { m_UseUPnP = enable; }
+
+    /// The external port mapped via UPnP (0 = not mapped).
+    uint16_t upnpMappedPort() const { return m_UpnpMappedPort; }
+
+    /// The public IP discovered via UPnP (empty if not available).
+    QString upnpPublicIP() const { return m_UpnpPublicIP; }
+
+private:
+    /// Discover IGD and add a UDP port mapping via UPnP.
+    /// Called async (QTimer::singleShot(0)) so it doesn't block start().
+    bool setupUPnP();
+
+    /// Remove the UPnP port mapping and clean up resources.
+    void cleanupUPnP();
+
+    /// Build the rtc::Configuration with ICE servers and port range.
+    /// UPnP-aware: if a mapping is active, portRange is fixed and STUN
+    /// may be omitted (UPnP-provided public IP is used instead).
+    static rtc::Configuration buildIceConfig(bool isInternet,
+                                              uint16_t upnpMappedPort);
+
+    bool m_UseUPnP = true;
+    UPNPClient* m_Upnp = nullptr;
+    uint16_t m_UpnpMappedPort = 0;
+    QString m_UpnpPublicIP;
+    QTimer* m_UpnpRenewTimer = nullptr;
+
+    /// Default UDP port for UPnP mapping (must match libdatachannel port range).
+    static constexpr uint16_t kUpnpPort = 48010;
+    /// Max number of port+1 fallback attempts if the default port is taken.
+    static constexpr int kUpnpMaxPortAttempts = 5;
+    /// Lease duration in seconds (1 hour). Renew timer fires at half this interval.
+    static constexpr uint32_t kUpnpLeaseDurationSec = 3600;
+    /// Renew timer interval (ms): every 30 minutes.
+    static constexpr int kUpnpRenewIntervalMs = 1800000;
 };

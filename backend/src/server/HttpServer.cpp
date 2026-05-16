@@ -462,9 +462,7 @@ void HttpServer::onHttpConnection()
         // (cloudflared uses http://localhost:<port> as the origin).
         // External TLS access goes through the separate HTTPS listener.
         m_Buffers[socket] = QByteArray();
-        connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
-            onReadyReadSocket(socket);
-        });
+        connect(socket, &QTcpSocket::readyRead, this, &HttpServer::onReadyRead);
         connect(socket, &QTcpSocket::disconnected, this, &HttpServer::onDisconnected);
     }
 }

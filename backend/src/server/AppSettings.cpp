@@ -142,3 +142,19 @@ void AppSettings::setNportSubdomain(const QString& subdomain)
     writeAll(obj);
 }
 
+// ── UPnP NAT traversal ────────────────────────────────────────────────────────
+
+bool AppSettings::upnpEnabled() const
+{
+    QJsonObject obj = readAll();
+    // Default to true — UPnP is beneficial for most users
+    return obj.value("upnp_enabled").toBool(true);
+}
+
+void AppSettings::setUpnpEnabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["upnp_enabled"] = enabled;
+    writeAll(obj);
+}
+

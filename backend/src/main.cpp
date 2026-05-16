@@ -86,9 +86,11 @@ int main(int argc, char* argv[])
     // Read remaining persistent settings
     quint16 httpsPort = appSettings.httpsPort(443);
     VideoCodec preferredCodec = appSettings.videoCodec();
+    bool upnpEnabled = appSettings.upnpEnabled();
     Logger::info("[main] Settings: http_port=" + QString::number(httpPort)
                  + ", https_port=" + QString::number(httpsPort)
-                 + ", video_codec=" + AppSettings::videoCodecToString(preferredCodec));
+                 + ", video_codec=" + AppSettings::videoCodecToString(preferredCodec)
+                 + ", upnp_enabled=" + (upnpEnabled ? "true" : "false"));
 
     // Phase 5b: WebRTC DataChannel relay + signaling tracking
     quint16 signalingPort = parser.value("ws-port").toUShort();
@@ -194,8 +196,10 @@ int main(int argc, char* argv[])
     });
 
     // Phase 5: Start streaming — launch app + RTSP handshake
+    auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
+
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &server, &appSettings, &nportClient](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -233,7 +237,8 @@ int main(int argc, char* argv[])
             signalingPort,
             serverHost,
             appSettings.videoCodec(),
-            appSettings.gamingMode()
+            appSettings.gamingMode(),
+            effectiveUpnpEnabled
         );
 
         // Inform the session about the effective HTTPS port (for wsUrl()
@@ -521,6 +526,7 @@ int main(int argc, char* argv[])
         QJsonObject obj;
         obj["video_codec"] = AppSettings::videoCodecToString(appSettings.videoCodec());
         obj["gaming_mode"] = appSettings.gamingMode();
+        obj["upnp_enabled"] = appSettings.upnpEnabled();
         return HttpResponse::json(obj);
     });
 
@@ -543,6 +549,14 @@ int main(int argc, char* argv[])
             bool enabled = body["gaming_mode"].toBool();
             appSettings.setGamingMode(enabled);
             obj["gaming_mode"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("upnp_enabled")) {
+            bool enabled = body["upnp_enabled"].toBool();
+            appSettings.setUpnpEnabled(enabled);
+            obj["upnp_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
         }

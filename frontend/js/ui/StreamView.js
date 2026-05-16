@@ -27,12 +27,23 @@ import {
 } from '../util/Av1Utils.js';
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true) {
         this.container = container;
         this.signalingUrl = signalingUrl;
         this.host = host;
         this.videoCodec = videoCodec || 'auto';
         this._gamingMode = gamingMode;
+        this._upnpEnabled = upnpEnabled;
+        this._upnpAvailable = upnpAvailable;
+
+        // ── UPnP status toast ─────────────────────────────────────────────────
+        if (this._upnpEnabled) {
+            if (this._upnpAvailable) {
+                Toast.success('UPnP active — port mapped');
+            } else {
+                Toast.warning('UPnP not available — connections from outside your LAN will rely on STUN relay (may fail on strict NATs).');
+            }
+        }
         this.webrtc = new WebRtcDataChannel(signalingUrl);
         this.pointerLocked = false;
 

@@ -1,0 +1,384 @@
+/* $Id: connecthostport.c,v 1.25 2025/05/24 15:59:08 nanard Exp $ */
+/* vim: tabstop=4 shiftwidth=4 noexpandtab
+ * Project : miniupnp
+ * Web : http://miniupnp.free.fr/ or https://miniupnp.tuxfamily.org/
+ * Author : Thomas Bernard
+ * Copyright (c) 2010-2026 Thomas Bernard
+ * This software is subject to the conditions detailed in the
+ * LICENCE file provided in this distribution. */
+
+/* use getaddrinfo() or gethostbyname()
+ * uncomment the following line in order to use gethostbyname() */
+#ifdef NO_GETADDRINFO
+#define USE_GETHOSTBYNAME
+#endif
+
+#include <string.h>
+#include <stdio.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#define MAXHOSTNAMELEN 64
+#include "win32_snprintf.h"
+#define herror
+#define socklen_t int
+#else /* #ifdef _WIN32 */
+#include <unistd.h>
+#include <sys/types.h>
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+#include <sys/time.h>
+#endif /* #ifdef MINIUPNPC_SET_SOCKET_TIMEOUT */
+#include <sys/param.h>
+#include <sys/select.h>
+#include <errno.h>
+#define closesocket close
+#include <netdb.h>
+#include <netinet/in.h>
+/* defining MINIUPNPC_IGNORE_EINTR enable the ignore of interruptions
+ * during the connect() call */
+#define MINIUPNPC_IGNORE_EINTR
+#include <sys/socket.h>
+#include <sys/select.h>
+#if !defined(__amigaos__) && !defined(__amigaos4__)
+#define USE_POLL
+#include <poll.h>
+#endif
+#endif /* #else _WIN32 */
+
+#if defined(__amigaos__) || defined(__amigaos4__)
+#define herror(A) printf("%s\n", A)
+#endif
+
+#include "connecthostport.h"
+
+#if defined(_WIN32) && defined(MINIUPNPC_IGNORE_EINTR)
+#error MINIUPNPC_IGNORE_EINTR cannot be used in Win32 builds
+#endif
+
+#ifndef MINIUPNPC_CONNECT_TIMEOUT_IN_MS
+#define MINIUPNPC_CONNECT_TIMEOUT_IN_MS 3000
+#endif
+
+#ifndef MAXHOSTNAMELEN
+#define MAXHOSTNAMELEN 64
+#endif
+
+#if defined(MINIUPNPC_IGNORE_EINTR) && !defined(USE_POLL)
+/* Returns 0 if not in range, 1 if fd is in range */
+static int is_socket_in_fd_set_range(SOCKET s)
+{
+#ifdef _WIN32
+	/* WIN32 systems don't need this check */
+	(void)s;
+	return 1;
+#else
+	if (s >= FD_SETSIZE) {
+		fprintf(stderr, "Socket %d is >= FD_SETSIZE %d\n",
+		        (int)s, (int)FD_SETSIZE);
+		return 0;
+	}
+	return 1;
+#endif /* #ifdef _WIN32 */
+}
+#endif /* #if defined(MINIUPNPC_SET_SOCKET_TIMEOUT) && !defined(USE_POLL) */
+
+/* connecthostport()
+ * return a socket connected (TCP) to the host and port
+ * or -1 in case of error */
+SOCKET connecthostport(const char * host, unsigned short port,
+                       unsigned int scope_id)
+{
+	SOCKET s;
+	int n;
+#ifdef USE_GETHOSTBYNAME
+	struct sockaddr_in dest;
+	struct hostent *hp;
+#else /* #ifdef USE_GETHOSTBYNAME */
+	char tmp_host[MAXHOSTNAMELEN+1];
+	char port_str[8];
+	struct addrinfo *ai, *p;
+	struct addrinfo hints;
+#endif /* #ifdef USE_GETHOSTBYNAME */
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+#ifdef _WIN32
+	DWORD timeout = MINIUPNPC_CONNECT_TIMEOUT_IN_MS; /* 3000 ms */
+#else
+	struct timeval timeout = { MINIUPNPC_CONNECT_TIMEOUT_IN_MS / 1000,
+							   (MINIUPNPC_CONNECT_TIMEOUT_IN_MS % 1000) * 1000 }; /* 3 s */
+#endif
+#endif /* #ifdef MINIUPNPC_SET_SOCKET_TIMEOUT */
+
+#ifdef USE_GETHOSTBYNAME
+	hp = gethostbyname(host);
+	if(hp == NULL)
+	{
+		herror(host);
+		return INVALID_SOCKET;
+	}
+	memcpy(&dest.sin_addr, hp->h_addr, sizeof(dest.sin_addr));
+	memset(dest.sin_zero, 0, sizeof(dest.sin_zero));
+	s = socket(PF_INET, SOCK_STREAM, 0);
+	if(ISINVALID(s))
+	{
+		PRINT_SOCKET_ERROR("socket");
+		return INVALID_SOCKET;
+	}
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+	/* setting a 3 seconds timeout for the connect() call */
+#ifdef _WIN32
+	/* https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-setsockopt
+	 * SO_RCVTIMEO DWORD Sets the timeout, in milliseconds, for blocking
+	 * receive calls. */
+	if(setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) < 0)
+#else
+	/* from socket(7) :
+	SO_RCVTIMEO et SO_SNDTIMEO
+	Specify the receiving or sending timeouts until reporting an error. The
+	argument is a struct timeval. If an input or output function blocks for
+	this period of time, and data has been sent or received, the return value
+	of that function will be the amount of data transferred; if no data has
+	been transferred and the timeout has been reached, then -1 is returned with
+	errno set to EAGAIN or EWOULDBLOCK, or EINPROGRESS (for connect(2)) just as
+	if the socket was specified to be nonblocking. If the timeout is set to
+	zero (the default), then the operation will never timeout. Timeouts only
+	have effect for system calls that perform socket I/O (e.g., accept(2),
+	connect(2), read(2), recvmsg(2), send(2), sendmsg(2)); timeouts have no
+	effect for select(2), poll(2), epoll_wait(2), and so on. */
+	if(setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(struct timeval)) < 0)
+#endif
+	{
+		PRINT_SOCKET_ERROR("setsockopt SO_RCVTIMEO");
+	}
+#ifdef _WIN32
+	if(setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout)) < 0)
+#else
+	if(setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(struct timeval)) < 0)
+#endif
+	{
+		PRINT_SOCKET_ERROR("setsockopt SO_SNDTIMEO");
+	}
+#endif /* #ifdef MINIUPNPC_SET_SOCKET_TIMEOUT */
+	dest.sin_family = AF_INET;
+	dest.sin_port = htons(port);
+	n = connect(s, (struct sockaddr *)&dest, sizeof(struct sockaddr_in));
+#ifdef MINIUPNPC_IGNORE_EINTR
+	/* EINTR The system call was interrupted by a signal that was caught
+	 * EINPROGRESS The socket is nonblocking and the connection cannot
+	 *             be completed immediately. */
+	while(n < 0 && (errno == EINTR || errno == EINPROGRESS))
+	{
+		socklen_t len;
+		int err;
+#ifdef USE_POLL
+		struct pollfd pfd = {s, POLLOUT, 0};
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+		n = poll(&pfd, 1, MINIUPNPC_CONNECT_TIMEOUT_IN_MS);
+#else
+		n = poll(&pfd, 1, -1);
+#endif
+		if(n == 1 && pfd.revents & POLLERR) {
+			/* error on socket */
+			closesocket(s);
+			return INVALID_SOCKET;
+		}
+#else /* #ifdef USE_POLL */
+		fd_set wset;
+		FD_ZERO(&wset);
+		if(!is_socket_in_fd_set_range(s)) {
+			closesocket(s);
+			return INVALID_SOCKET;
+		}
+		FD_SET(s, &wset);
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+		n = select(s + 1, NULL, &wset, NULL, &timeout);
+#else
+		n = select(s + 1, NULL, &wset, NULL, NULL);
+#endif
+#endif /* #ifdef USE_POLL */
+		if(n < 0) {
+			if (errno == EINTR)
+				continue;	/* try again */
+			else
+				break;	/* EBADF, EFAULT, EINVAL */
+		}
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+		if(n == 0) {
+			errno = ETIMEDOUT;
+			n = -1;
+			break;
+		}
+#endif
+		len = sizeof(err);
+		if(getsockopt(s, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
+			PRINT_SOCKET_ERROR("getsockopt");
+			closesocket(s);
+			return INVALID_SOCKET;
+		}
+		if(err != 0) {
+			errno = err;
+			n = -1;
+		}
+	}
+#endif /* #ifdef MINIUPNPC_IGNORE_EINTR */
+	if(n<0)
+	{
+		PRINT_SOCKET_ERROR("connect");
+		closesocket(s);
+		return INVALID_SOCKET;
+	}
+#else /* #ifdef USE_GETHOSTBYNAME */
+	/* use getaddrinfo() instead of gethostbyname() */
+	memset(&hints, 0, sizeof(hints));
+	/* hints.ai_flags = AI_ADDRCONFIG; */
+#ifdef AI_NUMERICSERV
+	hints.ai_flags = AI_NUMERICSERV;
+#endif
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_family = AF_UNSPEC; /* AF_INET, AF_INET6 or AF_UNSPEC */
+	/* hints.ai_protocol = IPPROTO_TCP; */
+	snprintf(port_str, sizeof(port_str), "%hu", port);
+	if(host[0] == '[')
+	{
+		/* literal ip v6 address */
+		int i, j;
+		for(i = 0, j = 1; host[j] && (host[j] != ']') && i < MAXHOSTNAMELEN; i++, j++)
+		{
+			tmp_host[i] = host[j];
+			if(0 == strncmp(host+j, "%25", 3))	/* %25 is just url encoding for '%' */
+				j+=2;							/* skip "25" */
+		}
+		tmp_host[i] = '\0';
+	}
+	else
+	{
+		strncpy(tmp_host, host, MAXHOSTNAMELEN);
+	}
+	tmp_host[MAXHOSTNAMELEN] = '\0';
+	n = getaddrinfo(tmp_host, port_str, &hints, &ai);
+	if(n != 0)
+	{
+#ifdef _WIN32
+		fprintf(stderr, "getaddrinfo() error : %d\n", n);
+#else
+		fprintf(stderr, "getaddrinfo() error : %s\n", gai_strerror(n));
+#endif
+		return INVALID_SOCKET;
+	}
+	s = INVALID_SOCKET;
+	for(p = ai; p; p = p->ai_next)
+	{
+		if(!ISINVALID(s))
+			closesocket(s);
+#ifdef DEBUG
+		printf("ai_family=%d ai_socktype=%d ai_protocol=%d (PF_INET=%d, PF_INET6=%d)\n",
+		       p->ai_family, p->ai_socktype, p->ai_protocol, PF_INET, PF_INET6);
+#endif
+		s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+		if(ISINVALID(s))
+			continue;
+		if(p->ai_addr->sa_family == AF_INET6 && scope_id > 0) {
+			struct sockaddr_in6 * addr6 = (struct sockaddr_in6 *)p->ai_addr;
+			addr6->sin6_scope_id = scope_id;
+		}
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+		/* setting a 3 seconds timeout for the connect() call */
+#ifdef _WIN32
+		if(setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) < 0)
+#else
+		if(setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(struct timeval)) < 0)
+#endif
+		{
+			PRINT_SOCKET_ERROR("setsockopt");
+		}
+#ifdef _WIN32
+		if(setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout)) < 0)
+#else
+		if(setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(struct timeval)) < 0)
+#endif
+		{
+			PRINT_SOCKET_ERROR("setsockopt");
+		}
+#endif /* #ifdef MINIUPNPC_SET_SOCKET_TIMEOUT */
+		n = connect(s, p->ai_addr, MSC_CAST_INT p->ai_addrlen);
+#ifdef MINIUPNPC_IGNORE_EINTR
+		/* EINTR The system call was interrupted by a signal that was caught
+		 * EINPROGRESS The socket is nonblocking and the connection cannot
+		 *             be completed immediately. */
+		while(n < 0 && (errno == EINTR || errno == EINPROGRESS))
+		{
+			socklen_t len;
+			int err;
+#ifdef USE_POLL
+			struct pollfd pfd = {s, POLLOUT, 0};
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+			n = poll(&pfd, 1, MINIUPNPC_CONNECT_TIMEOUT_IN_MS);
+#else
+			n = poll(&pfd, 1, -1);
+#endif
+			if(n == 1 && pfd.revents & POLLERR) {
+				/* remote end closed socket */
+				n = -2;
+				fprintf(stderr, "poll: POLLERR on socket\n");
+				break;
+			}
+#else /* #ifdef USE_POLL */
+			fd_set wset;
+			FD_ZERO(&wset);
+			if(!is_socket_in_fd_set_range(s)) {
+				n = -2;
+				break;
+			}
+			FD_SET(s, &wset);
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+			n = select(s + 1, NULL, &wset, NULL, &timeout);
+#else
+			n = select(s + 1, NULL, &wset, NULL, NULL);
+#endif
+#endif /* #ifdef USE_POLL */
+			if(n < 0) {
+				if (errno == EINTR)
+					continue;	/* try again */
+				else
+					break; /* EBADF, EFAULT, EINVAL */
+			}
+#ifdef MINIUPNPC_SET_SOCKET_TIMEOUT
+			if(n == 0) {
+				errno = ETIMEDOUT;
+				n = -1;
+				break;
+			}
+#endif
+			len = sizeof(err);
+			if(getsockopt(s, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
+				PRINT_SOCKET_ERROR("getsockopt");
+				closesocket(s);
+				freeaddrinfo(ai);
+				return INVALID_SOCKET;
+			}
+			if(err != 0) {
+				errno = err;
+				n = -1;
+			}
+		}
+#endif /* #ifdef MINIUPNPC_IGNORE_EINTR */
+		if(n >= 0)	/* connect() was successful */
+			break;
+	}
+	freeaddrinfo(ai);
+	if(ISINVALID(s))
+	{
+		PRINT_SOCKET_ERROR("socket");
+		return INVALID_SOCKET;
+	}
+	if(n < 0)
+	{
+		if(n != -2)
+			PRINT_SOCKET_ERROR("connect");
+		closesocket(s);
+		return INVALID_SOCKET;
+	}
+#endif /* #ifdef USE_GETHOSTBYNAME */
+	return s;
+}

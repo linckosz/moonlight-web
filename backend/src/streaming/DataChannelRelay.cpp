@@ -82,9 +82,61 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
 
     // --- Local ICE candidate callback ---
     m_Pc->onLocalCandidate([this](const rtc::Candidate& candidate) {
+        rtc::Candidate modCandidate = candidate;
+
+        // If UPnP is active and this is a host candidate, rewrite it with the
+        // public IP and mapped port. This gives the browser a reachable UDP
+        // endpoint through the UPnP-opened router port.
+        if (m_ForceHostPublic && !m_PublicIP.empty() && m_PublicPort > 0 &&
+            candidate.type() == rtc::Candidate::Type::Host) {
+
+            // Only rewrite IPv4 candidates — parsing the candidate string
+            // to check the address field. IPv6 addresses contain ':' in the
+            // address part; rewriting them with an IPv4 public IP produces
+            // an invalid candidate that breaks ICE.
+            std::string candStr = candidate.candidate();
+            size_t firstSpace = candStr.find(' ');
+            bool isIpv4 = true;
+            if (firstSpace != std::string::npos &&
+                candStr.find(':', firstSpace + 1) != std::string::npos) {
+                isIpv4 = false;
+            }
+
+            if (isIpv4) {
+                try {
+                    modCandidate.changeAddress(m_PublicIP, m_PublicPort);
+                    qInfo() << "[DataChannelRelay] Rewrote host candidate:"
+                            << QString::fromStdString(candidate.candidate())
+                            << "->" << QString::fromStdString(m_PublicIP)
+                            << ":" << m_PublicPort;
+                } catch (const std::exception& e) {
+                    qWarning() << "[DataChannelRelay] Failed to rewrite candidate:"
+                               << e.what();
+                }
+            } else {
+                qInfo() << "[DataChannelRelay] Skipping IPv6 candidate (cannot rewrite to IPv4):"
+                        << QString::fromStdString(candidate.candidate());
+            }
+        }
+
+        // When UPnP is active, suppress IPv6 candidates entirely so the
+        // browser's ICE agent is forced to use the IPv4 UPnP path.
+        // Residential IPv6 often fails because the router firewall blocks
+        // unsolicited inbound IPv6 traffic (DTLS/SCTP timeout).
+        if (m_SuppressIPv6) {
+            std::string candStr = std::string(modCandidate.candidate());
+            size_t space = candStr.find(' ');
+            if (space != std::string::npos &&
+                candStr.find(':', space + 1) != std::string::npos) {
+                qInfo() << "[DataChannelRelay] Suppressing IPv6 candidate (UPnP active):"
+                        << QString::fromStdString(candStr).left(80);
+                return;  // Skip — don't emit this candidate
+            }
+        }
+
         emit signalingIceCandidate(
-            std::string(candidate.candidate()),
-            std::string(candidate.mid()));
+            std::string(modCandidate.candidate()),
+            std::string(modCandidate.mid()));
     });
 
     // --- State change callback ---
@@ -201,34 +253,36 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
             qInfo() << "[DataChannelRelay] onVideoFrame dropped — m_Stopping=true";
         return;
     }
+
+    bool isKeyframe = (frameType == 1);
+
+    // Always buffer the latest keyframe, even if the Video DC doesn't exist
+    // yet. Sunshine starts sending the initial IDR immediately after launch,
+    // before ICE negotiation and DataChannel creation complete (~1-2s).
+    // Without this buffer, the keyframe (containing SPS/PPS) is lost, the
+    // browser's VideoDecoder can never configure, and we get decoder=null.
+    if (isKeyframe) {
+        m_BufferedKeyframe = data;
+        m_HaveBufferedKeyframe = true;
+        qInfo() << "[DataChannelRelay] Buffered keyframe size=" << data.size()
+                << "(DC ready=" << (m_VideoDc && m_VideoDc->isOpen()) << ")";
+
+        // If DC is already open, send the buffered keyframe immediately
+        if (m_VideoDc && m_VideoDc->isOpen()) {
+            sendBufferedKeyframe();
+        }
+        return;  // Don't try to send the same frame twice
+    }
+
+    // Non-keyframes are useless before the DC is ready
     if (!m_VideoDc) {
         static int noDcCount = 0;
         if (++noDcCount <= 5)
             qInfo() << "[DataChannelRelay] onVideoFrame dropped — m_VideoDc is null (DCs not created yet?)";
         return;
     }
-
-    bool isKeyframe = (frameType == 1);
-
     if (!m_VideoDc->isOpen()) {
-        if (isKeyframe) {
-            // Buffer the keyframe: it will be sent when the Video DC opens.
-            // This prevents a rare black-screen where the initial IDR from
-            // Sunshine arrives before ICE negotiation completes, and the
-            // browser never receives SPS/PPS to configure the decoder.
-            m_BufferedKeyframe = data;
-            m_HaveBufferedKeyframe = true;
-            qInfo() << "[DataChannelRelay] Buffered keyframe size=" << data.size()
-                    << "for when Video DC opens";
-
-            // Re-check: DC may have opened between our isOpen() check and now.
-            // If so, send the buffered frame immediately.
-            if (m_VideoDc->isOpen()) {
-                sendBufferedKeyframe();
-            }
-        }
-        // Delta frames before the DC opens are useless — drop them
-        return;
+        return;  // DC exists but not yet open
     }
 
     static int logCounter = 0;
@@ -471,4 +525,12 @@ void DataChannelRelay::requestIdrFrame()
     if (m_Stopping.load() || !m_Shim) return;
     qInfo() << "[DataChannelRelay] requestIdrFrame: forwarding to MoonlightShim";
     m_Shim->requestIdrFrame();
+}
+
+void DataChannelRelay::setPublicAddress(const std::string& publicIP, uint16_t publicPort)
+{
+    m_PublicIP = publicIP;
+    m_PublicPort = publicPort;
+    qInfo() << "[DataChannelRelay] UPnP public address set:"
+            << QString::fromStdString(publicIP) << ":" << publicPort;
 }
