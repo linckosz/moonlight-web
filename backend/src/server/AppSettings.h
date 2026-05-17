@@ -56,6 +56,16 @@ public:
     bool upnpEnabled() const;
     void setUpnpEnabled(bool enabled);
 
+    // ── Transport preference ──────────────────────────────────────────────────
+    //
+    // Values stored in JSON: "webrtc" (default), "wss" (legacy StreamRelay)
+    //
+    // "webrtc": Uses WebRTC DataChannels via libdatachannel (default).
+    // "wss":    Uses the legacy WebSocket StreamRelay (for testing/diagnostics).
+
+    QString transport() const;
+    void setTransport(const QString& transport);
+
     // ── Low-level access (for other one-off settings) ───────────────────────
 
     /// Read the entire settings JSON object.

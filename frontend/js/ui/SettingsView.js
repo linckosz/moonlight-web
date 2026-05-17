@@ -15,6 +15,7 @@ export class SettingsView {
         this._videoCodec = 'auto';
         this._gamingMode = true;
         this._upnpEnabled = true;
+        this._transport = 'webrtc';
 
         // Debounce timer to avoid rapid repeated saves
         this._saveTimer = null;
@@ -32,6 +33,7 @@ export class SettingsView {
             this._videoCodec = data.video_codec || 'auto';
             this._gamingMode = data.gaming_mode !== false;
             this._upnpEnabled = data.upnp_enabled !== false;
+            this._transport = data.transport || 'webrtc';
         } catch (err) {
             console.warn('[Settings] Failed to load streaming settings:', err);
         }
@@ -55,7 +57,8 @@ export class SettingsView {
         const codecSelect = this.container.querySelector('#settings-video-codec');
         const gamingCheck = this.container.querySelector('#settings-gaming-mode');
         const upnpCheck = this.container.querySelector('#settings-upnp-enabled');
-        if (!codecSelect || !gamingCheck || !upnpCheck) return;
+        const transportSelect = this.container.querySelector('#settings-transport');
+        if (!codecSelect || !gamingCheck || !upnpCheck || !transportSelect) return;
 
         this._saveTimer = setTimeout(async () => {
             this._saveTimer = null;
@@ -63,17 +66,20 @@ export class SettingsView {
             const codec = codecSelect.value;
             const gamingMode = gamingCheck.checked;
             const upnpEnabled = upnpCheck.checked;
+            const transport = transportSelect.value;
 
             try {
                 const result = await BackendClient.saveStreamingSettings({
                     video_codec: codec,
                     gaming_mode: gamingMode,
-                    upnp_enabled: upnpEnabled
+                    upnp_enabled: upnpEnabled,
+                    transport: transport
                 });
                 if (result.status === 'saved') {
                     this._videoCodec = result.video_codec || this._videoCodec;
                     this._gamingMode = result.gaming_mode !== false;
                     this._upnpEnabled = result.upnp_enabled !== false;
+                    this._transport = result.transport || this._transport;
                     // Subtle toast feedback
                     Toast.success('Saved');
                 }
@@ -160,6 +166,27 @@ export class SettingsView {
                         </label>
                     </div>
 
+                    <div class="settings-transport" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
+                        <label class="setting-row" style="display: flex; align-items: center; justify-content: space-between;">
+                            <span class="setting-label">
+                                <strong>Transport Protocol</strong>
+                                <br>
+                                <span class="setting-description" style="font-size: 0.85em; color: #666;">
+                                    <strong>WebRTC</strong> (default): uses libdatachannel DataChannels for
+                                    low-latency video/audio streaming.<br>
+                                    <strong>WebSocket</strong>: legacy StreamRelay over plain WebSocket
+                                    (for testing/diagnostics).
+                                </span>
+                            </span>
+                            <span class="setting-control">
+                                <select id="settings-transport" class="settings-select" style="min-width: 120px;">
+                                    <option value="webrtc" ${this._transport === 'webrtc' ? 'selected' : ''}>WebRTC</option>
+                                    <option value="wss" ${this._transport === 'wss' ? 'selected' : ''}>WebSocket</option>
+                                </select>
+                            </span>
+                        </label>
+                    </div>
+
                 </div>
             </div>
         `;
@@ -183,6 +210,12 @@ export class SettingsView {
         const upnpCheck = this.container.querySelector('#settings-upnp-enabled');
         if (upnpCheck) {
             upnpCheck.addEventListener('change', () => this._autoSave());
+        }
+
+        // ── Transport selector auto-save ────────────────────────────────────────
+        const transportSelect = this.container.querySelector('#settings-transport');
+        if (transportSelect) {
+            transportSelect.addEventListener('change', () => this._autoSave());
         }
 
         // ── Close button ──────────────────────────────────────────────────────

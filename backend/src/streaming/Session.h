@@ -11,6 +11,7 @@ class NvHTTP;
 class NvComputer;
 class DataChannelRelay;
 class SignalingServer;
+class StreamRelay;
 class MoonlightShim;
 
 class StreamSession : public QObject
@@ -25,6 +26,7 @@ public:
                   VideoCodec videoCodec = VideoCodec::Auto,
                   bool gamingMode = true,
                   bool upnpEnabled = true,
+                  const QString& transport = "webrtc",
                   QObject* parent = nullptr);
     ~StreamSession();
 
@@ -42,6 +44,7 @@ public:
 
 signals:
     void relayCreated(DataChannelRelay* relay);
+    void streamRelayCreated(StreamRelay* relay);
     void sessionStarted();
     void sessionFailed(const QString& error);
 
@@ -63,6 +66,7 @@ private:
     StreamConfig m_Config;
     bool m_GamingMode = true;
     bool m_UpnpEnabled = true;
+    QString m_Transport = "webrtc";
     QNetworkReply* m_LaunchReply = nullptr;
     QString m_SessionUrl;
 
@@ -75,4 +79,5 @@ private:
     MoonlightShim* m_Shim = nullptr;
     DataChannelRelay* m_Relay = nullptr;
     SignalingServer* m_Signaling = nullptr;
+    StreamRelay* m_StreamRelay = nullptr;
 };

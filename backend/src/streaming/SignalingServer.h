@@ -106,8 +106,8 @@ private:
     void cleanupUPnP();
 
     /// Build the rtc::Configuration with ICE servers and port range.
-    /// UPnP-aware: if a mapping is active, portRange is fixed and STUN
-    /// may be omitted (UPnP-provided public IP is used instead).
+    /// ICE-TCP is always enabled as fallback. STUN is always present in
+    /// Internet mode. UPnP sets a fixed port range and rewrites host candidates.
     static rtc::Configuration buildIceConfig(bool isInternet,
                                               uint16_t upnpMappedPort);
 

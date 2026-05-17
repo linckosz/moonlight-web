@@ -359,28 +359,34 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     config.iceTransportPolicy = rtc::TransportPolicy::All;
     config.forceMediaTransport = true;  // DataChannel only, no media tracks
 
+    // Enable ICE-TCP as fallback: the browser generates TCP candidates
+    // automatically with lower ICE priority than UDP. TCP will only be
+    // chosen if all UDP candidates fail (e.g., restrictive firewall).
+    config.enableIceTcp = true;
+
     if (isInternet) {
+        // STUN is always present in Internet mode — it discovers the
+        // public srflx address. Without STUN, we'd have only host candidates.
+        rtc::IceServer stun("stun:stun.l.google.com:19302");
+        config.iceServers.push_back(stun);
+
         if (upnpMappedPort > 0) {
-            // UPnP mode: fixed port matching the UPnP mapping.
-            // STUN is added as fallback — srflx candidates duplicate the UPnP
-            // address, but the host candidate (rewritten by DataChannelRelay)
-            // will have higher priority and be preferred by the browser.
+            // UPnP mode: fix the libdatachannel port to match the UPnP mapping.
+            // The host candidate (rewritten by DataChannelRelay to the public
+            // IP:port) will have higher ICE priority than srflx and be preferred.
             config.portRangeBegin = upnpMappedPort;
             config.portRangeEnd = upnpMappedPort;
-            qInfo() << "[SignalingServer] UPnP ICE: port range fixed to"
-                    << upnpMappedPort << "-" << upnpMappedPort;
-
-            rtc::IceServer stun("stun:stun.l.google.com:19302");
-            config.iceServers.push_back(stun);
+            qInfo() << "[SignalingServer] Internet ICE: UPnP port="
+                    << upnpMappedPort << " + STUN + ICE-TCP";
         } else {
-            // No UPnP: standard STUN-only mode (existing behavior for LAN or
-            // Internet without UPnP).
-            qInfo() << "[SignalingServer] Standard ICE: STUN only (no UPnP)";
-            rtc::IceServer stun("stun:stun.l.google.com:19302");
-            config.iceServers.push_back(stun);
+            // No UPnP: srflx via STUN is the only way to discover the public
+            // address. ICE-TCP provides a TCP fallback path.
+            qInfo() << "[SignalingServer] Internet ICE: STUN only (no UPnP) + ICE-TCP";
         }
     } else {
-        qInfo() << "[SignalingServer] LAN ICE: no STUN, no UPnP";
+        // LAN: no STUN (loopback candidates only). ICE-TCP provides a TCP
+        // fallback for restrictive LAN environments (corporate firewalls, etc.).
+        qInfo() << "[SignalingServer] LAN ICE: no STUN, no UPnP, ICE-TCP enabled";
     }
 
     return config;

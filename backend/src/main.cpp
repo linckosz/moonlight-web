@@ -95,6 +95,7 @@ int main(int argc, char* argv[])
     // Phase 5b: WebRTC DataChannel relay + signaling tracking
     quint16 signalingPort = parser.value("ws-port").toUShort();
     QPointer<DataChannelRelay> g_ActiveRelay;
+    QPointer<StreamRelay> g_ActiveStreamRelay;
     NportClient nportClient;
 
     // Register API routes
@@ -199,7 +200,7 @@ int main(int argc, char* argv[])
     auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
 
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -230,6 +231,9 @@ int main(int argc, char* argv[])
         if (colon >= 0)
             serverHost = serverHost.left(colon);
 
+        QString transportPref = appSettings.transport();
+        qInfo() << "[Session] Transport preference:" << transportPref;
+
         auto* session = new StreamSession(
             host, appId,
             computerManager.http(),
@@ -238,14 +242,32 @@ int main(int argc, char* argv[])
             serverHost,
             appSettings.videoCodec(),
             appSettings.gamingMode(),
-            effectiveUpnpEnabled
+            effectiveUpnpEnabled,
+            transportPref
         );
 
         // Inform the session about the effective HTTPS port (for wsUrl()
         // construction when the WebSocket shares the same HTTPS port).
         session->setHttpsPort(server.activeHttpsPort());
 
-        // Track the DataChannelRelay for quit/cleanup
+        // Track StreamRelay for quit/cleanup (WSS mode)
+        QObject::connect(session, &StreamSession::streamRelayCreated,
+            [&g_ActiveStreamRelay](StreamRelay* relay) {
+                qInfo() << "[main] streamRelayCreated, relay=" << relay;
+                g_ActiveStreamRelay = relay;
+
+                QObject::connect(relay, &StreamRelay::sessionEnded,
+                    [relay, &g_ActiveStreamRelay]() {
+                        qInfo() << "[main] StreamRelay sessionEnded, relay=" << relay;
+                        relay->stop();
+                        relay->deleteLater();
+                        if (g_ActiveStreamRelay == relay) {
+                            g_ActiveStreamRelay = nullptr;
+                        }
+                    });
+            });
+
+        // Track the DataChannelRelay for quit/cleanup (WebRTC mode)
         QObject::connect(session, &StreamSession::relayCreated,
             [&g_ActiveRelay, &nportClient](DataChannelRelay* relay) {
                 qInfo() << "[main] relayCreated, relay=" << relay;
@@ -284,7 +306,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Quit running app
     server.router()->postAsync("/api/hosts/:id/quit",
-        [&computerManager, &g_ActiveRelay](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                 << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -304,17 +326,28 @@ int main(int argc, char* argv[])
         qInfo() << "[quit] Host found:" << host->name << host->activeAddress.address()
                 << ":" << host->activeHttpsPort;
 
-        // Stop the DataChannelRelay first (closes PeerConnection + DataChannels)
-        if (g_ActiveRelay) {
-            qInfo() << "[quit] Relay exists, stopping relay=" << g_ActiveRelay.data();
+        // Stop the transport relay first (closes PeerConnection or WS)
+        bool relayStopped = false;
 
+        if (g_ActiveRelay) {
+            qInfo() << "[quit] WebRTC relay exists, stopping relay=" << g_ActiveRelay.data();
             DataChannelRelay* relay = g_ActiveRelay;
             g_ActiveRelay = nullptr;
-            qInfo() << "[quit] Calling relay->stop() ...";
             relay->stop();
-            qInfo() << "[quit] relay->stop() returned OK, scheduling deleteLater";
             relay->deleteLater();
-        } else {
+            relayStopped = true;
+        }
+
+        if (g_ActiveStreamRelay) {
+            qInfo() << "[quit] StreamRelay exists, stopping relay=" << g_ActiveStreamRelay.data();
+            StreamRelay* relay = g_ActiveStreamRelay;
+            g_ActiveStreamRelay = nullptr;
+            relay->stop();
+            relay->deleteLater();
+            relayStopped = true;
+        }
+
+        if (!relayStopped) {
             qInfo() << "[quit] No active relay (already stopped or never started)";
         }
 
@@ -527,6 +560,7 @@ int main(int argc, char* argv[])
         obj["video_codec"] = AppSettings::videoCodecToString(appSettings.videoCodec());
         obj["gaming_mode"] = appSettings.gamingMode();
         obj["upnp_enabled"] = appSettings.upnpEnabled();
+        obj["transport"] = appSettings.transport();
         return HttpResponse::json(obj);
     });
 
@@ -559,6 +593,16 @@ int main(int argc, char* argv[])
             obj["upnp_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
+        }
+
+        if (body.contains("transport")) {
+            QString transport = body["transport"].toString();
+            if (transport == "webrtc" || transport == "wss") {
+                appSettings.setTransport(transport);
+                obj["transport"] = transport;
+                obj["status"] = "saved";
+                hadChange = true;
+            }
         }
 
         if (!hadChange)
