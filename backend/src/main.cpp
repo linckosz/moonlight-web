@@ -17,6 +17,7 @@
 #include "backend/IdentityManager.h"
 #include "streaming/Session.h"
 #include "streaming/DataChannelRelay.h"
+#include "streaming/StreamRelay.h"
 #include "network/NportClient.h"
 #include "TrayManager.h"
 
