@@ -11,7 +11,7 @@ namespace rtc {
 struct Configuration;
 }
 
-class DataChannelRelay;
+class RelayBase;
 class UPNPClient;
 
 // Minimal WebSocket server for WebRTC signaling only.
@@ -28,7 +28,7 @@ class SignalingServer : public QObject
     Q_OBJECT
 
 public:
-    SignalingServer(DataChannelRelay* relay,
+    SignalingServer(RelayBase* relay,
                     quint16 wsPort,
                     const QString& serverHost = "localhost",
                     QObject* parent = nullptr);
@@ -67,7 +67,7 @@ private slots:
 private:
     bool isPrivateAddress(const QString& ip) const;
 
-    DataChannelRelay* m_Relay;
+    RelayBase* m_Relay;
 
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;

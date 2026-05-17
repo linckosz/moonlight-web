@@ -46,7 +46,7 @@ cmake .. ^
     -DUSE_GNUTLS=OFF ^
     -DUSE_MBEDTLS=OFF ^
     -DNO_WEBSOCKET=ON ^
-    -DNO_MEDIA=ON ^
+    -DNO_MEDIA=OFF ^
     -DNO_EXAMPLES=ON ^
     -DNO_TESTS=ON ^
     -DOPENSSL_ROOT_DIR="D:/Code/moonlight-web-deepseek/backend/libs/windows"

@@ -1,5 +1,5 @@
 #include "SignalingServer.h"
-#include "DataChannelRelay.h"
+#include "RelayBase.h"
 #include "network/UPNPClient.h"
 
 #include <rtc/rtc.hpp>
@@ -10,7 +10,7 @@
 #include <QTimer>
 #include <memory>
 
-SignalingServer::SignalingServer(DataChannelRelay* relay,
+SignalingServer::SignalingServer(RelayBase* relay,
                                  quint16 wsPort,
                                  const QString& serverHost,
                                  QObject* parent)
@@ -51,13 +51,13 @@ bool SignalingServer::start()
     connect(m_WsServer, &QWebSocketServer::newConnection,
             this, &SignalingServer::onNewWsConnection);
 
-    // Connect DataChannelRelay signaling signals -> WS forwarding
-    connect(m_Relay, &DataChannelRelay::signalingSdpReady,
+    // Connect relay signaling signals -> WS forwarding
+    connect(m_Relay, &RelayBase::signalingSdpReady,
             this, &SignalingServer::onLocalSdp);
-    connect(m_Relay, &DataChannelRelay::signalingIceCandidate,
+    connect(m_Relay, &RelayBase::signalingIceCandidate,
             this, &SignalingServer::onLocalIceCandidate);
-    // Track when DataChannels are fully open (SCTP established)
-    connect(m_Relay, &DataChannelRelay::dataChannelsOpen,
+    // Track when DataChannels/Tracks are fully open
+    connect(m_Relay, &RelayBase::dataChannelsOpen,
             this, &SignalingServer::onDataChannelsOpen);
 
     qInfo() << "[SignalingServer] Listening OK";

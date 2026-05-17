@@ -10,6 +10,7 @@
 class NvHTTP;
 class NvComputer;
 class DataChannelRelay;
+class MediaTrackRelay;
 class SignalingServer;
 class StreamRelay;
 class MoonlightShim;
@@ -47,6 +48,7 @@ public:
 
 signals:
     void relayCreated(DataChannelRelay* relay);
+    void mediaTrackRelayCreated(MediaTrackRelay* relay);
     void streamRelayCreated(StreamRelay* relay);
     void sessionStarted();
     void sessionFailed(const QString& error);
@@ -84,6 +86,7 @@ private:
 
     MoonlightShim* m_Shim = nullptr;
     DataChannelRelay* m_Relay = nullptr;
+    MediaTrackRelay* m_MediaTrackRelay = nullptr;
     SignalingServer* m_Signaling = nullptr;
     StreamRelay* m_StreamRelay = nullptr;
 };

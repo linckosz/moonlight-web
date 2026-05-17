@@ -17,6 +17,7 @@
 #include "backend/IdentityManager.h"
 #include "streaming/Session.h"
 #include "streaming/DataChannelRelay.h"
+#include "streaming/MediaTrackRelay.h"
 #include "streaming/StreamRelay.h"
 #include "network/NportClient.h"
 #include "TrayManager.h"
@@ -96,6 +97,7 @@ int main(int argc, char* argv[])
     // Phase 5b: WebRTC DataChannel relay + signaling tracking
     quint16 signalingPort = parser.value("ws-port").toUShort();
     QPointer<DataChannelRelay> g_ActiveRelay;
+    QPointer<MediaTrackRelay> g_ActiveMediaTrackRelay;
     QPointer<StreamRelay> g_ActiveStreamRelay;
     NportClient nportClient;
 
@@ -201,7 +203,7 @@ int main(int argc, char* argv[])
     auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
 
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -298,6 +300,28 @@ int main(int argc, char* argv[])
                     });
             });
 
+        // Track the MediaTrackRelay for quit/cleanup (WebRTC media mode)
+        QObject::connect(session, &StreamSession::mediaTrackRelayCreated,
+            [&g_ActiveMediaTrackRelay, &nportClient](MediaTrackRelay* relay) {
+                qInfo() << "[main] mediaTrackRelayCreated, relay=" << relay;
+                g_ActiveMediaTrackRelay = relay;
+
+                // Resume nport refresh once media tracks + DataChannels are open
+                QObject::connect(relay, &MediaTrackRelay::dataChannelsOpen,
+                    &nportClient, &NportClient::resumeRefresh);
+
+                // Stop + clean relay whenever the session ends
+                QObject::connect(relay, &MediaTrackRelay::sessionEnded,
+                    [relay, &g_ActiveMediaTrackRelay]() {
+                        qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << relay;
+                        relay->stop();
+                        relay->deleteLater();
+                        if (g_ActiveMediaTrackRelay == relay) {
+                            g_ActiveMediaTrackRelay = nullptr;
+                        }
+                    });
+            });
+
         // Pause nport refresh during signaling to avoid breaking WS connection
         nportClient.pauseRefresh();
 
@@ -310,7 +334,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Quit running app
     server.router()->postAsync("/api/hosts/:id/quit",
-        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                 << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -337,6 +361,15 @@ int main(int argc, char* argv[])
             qInfo() << "[quit] WebRTC relay exists, stopping relay=" << g_ActiveRelay.data();
             DataChannelRelay* relay = g_ActiveRelay;
             g_ActiveRelay = nullptr;
+            relay->stop();
+            relay->deleteLater();
+            relayStopped = true;
+        }
+
+        if (g_ActiveMediaTrackRelay) {
+            qInfo() << "[quit] MediaTrackRelay exists, stopping relay=" << g_ActiveMediaTrackRelay.data();
+            MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
+            g_ActiveMediaTrackRelay = nullptr;
             relay->stop();
             relay->deleteLater();
             relayStopped = true;
@@ -603,7 +636,7 @@ int main(int argc, char* argv[])
 
         if (body.contains("transport")) {
             QString transport = body["transport"].toString();
-            if (transport == "webrtc" || transport == "wss") {
+            if (transport == "webrtc" || transport == "wss" || transport == "webrtc-media") {
                 appSettings.setTransport(transport);
                 obj["transport"] = transport;
                 obj["status"] = "saved";

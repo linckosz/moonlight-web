@@ -6,6 +6,7 @@
  * Captures keyboard/mouse events and sends them back as JSON over the input DC.
  */
 import { WebRtcDataChannel } from '../api/WebRtcDataChannel.js';
+import { WebRtcMedia } from '../api/WebRtcMedia.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
@@ -45,7 +46,11 @@ export class StreamView {
                 Toast.warning('UPnP not available — connections from outside your LAN will rely on STUN relay (may fail on strict NATs).');
             }
         }
-        this.webrtc = new WebRtcDataChannel(signalingUrl);
+        if (this._transport === 'webrtc-media') {
+            this.webrtc = new WebRtcMedia(signalingUrl);
+        } else {
+            this.webrtc = new WebRtcDataChannel(signalingUrl);
+        }
         this.pointerLocked = false;
 
         // Audio pipeline (PCM16 -> AudioWorklet -> speakers)
@@ -213,6 +218,8 @@ export class StreamView {
             </div>
             <div class="stream-canvas-area">
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
+                <video id="stream-video" class="stream-video" autoplay muted playsinline
+                       style="width:100%;height:100%;object-fit:contain;display:none;"></video>
                 <div class="stream-click-hint" id="stream-hint">
                     Click to capture mouse & keyboard
                 </div>
@@ -225,6 +232,18 @@ export class StreamView {
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
+
+        // Video element for native RTP media track mode (webrtc-media)
+        this.videoEl = document.getElementById('stream-video');
+        if (this._transport === 'webrtc-media') {
+            this.canvas.style.display = 'none';
+            this.videoEl.style.display = 'block';
+            // Pass video element to WebRtcMedia for media track rendering
+            if (this.webrtc && typeof this.webrtc.setVideoElement === 'function') {
+                this.webrtc.setVideoElement(this.videoEl);
+            }
+        }
+
         this.statusEl = document.getElementById('stream-status');
         this.hintEl = document.getElementById('stream-hint');
 
@@ -632,6 +651,8 @@ export class StreamView {
 
     startRenderLoop() {
         if (this.renderRunning) return;
+        // Media track mode: video is rendered natively via <video>, no canvas loop needed.
+        if (this._transport === 'webrtc-media') return;
         this.renderRunning = true;
 
         const loop = (now) => {
@@ -685,17 +706,36 @@ export class StreamView {
             if (this._quitting) return;
             this.connected = true;
             this.setStatus('connecting', 'Waiting for stream...');
-            this.setupDecoder();
 
-            // Safety timeout: if no decoder config after 3 seconds, request an IDR.
-            // This handles the rare case where all frames arrive as deltas (missed IDR).
-            this._idrTimeout = setTimeout(() => {
-                if (!this.nalParser.isReady() && !this._idrRequested) {
-                    this._idrRequested = true;
-                    console.warn('[StreamView] No keyframe after 3s, requesting IDR from backend');
-                    this.webrtc.send({ type: 'requestidr' });
+            if (this._transport === 'webrtc-media') {
+                // Media track mode: video arrives natively via <video> element.
+                // No WebCodecs decoder needed. The first video frame triggers
+                // the 'live' status via the video element's playing event.
+                if (this.videoEl) {
+                    this.videoEl.onplaying = () => {
+                        if (!this._firstFrameRendered) {
+                            this._firstFrameRendered = true;
+                            const w = this.videoEl.videoWidth || 0;
+                            const h = this.videoEl.videoHeight || 0;
+                            if (w > 0) this._resolution = w + '×' + h;
+                            this.setStatus('live', 'Live');
+                            if (this._overlayEl) this._overlayEl.style.display = '';
+                        }
+                    };
                 }
-            }, 3000);
+            } else {
+                // DataChannel mode: set up WebCodecs decoder
+                this.setupDecoder();
+
+                // Safety timeout: if no decoder config after 3 seconds, request an IDR.
+                this._idrTimeout = setTimeout(() => {
+                    if (!this.nalParser.isReady() && !this._idrRequested) {
+                        this._idrRequested = true;
+                        console.warn('[StreamView] No keyframe after 3s, requesting IDR from backend');
+                        this.webrtc.send({ type: 'requestidr' });
+                    }
+                }, 3000);
+            }
         };
         this.webrtc.onClose = () => {
             if (this._quitting) return;
@@ -709,8 +749,10 @@ export class StreamView {
             console.error('[StreamView] WebRTC error:', err.message);
             Toast.error('WebRTC connection error');
         };
-        // Video frames arrive fully reassembled from WebRtcDataChannel
-        this.webrtc.onVideo = (frame, isKeyframe, backendTs) => this.handleVideoFrame(frame, isKeyframe, backendTs);
+        // Video frames: DataChannel mode uses WebCodecs callbacks
+        if (this._transport !== 'webrtc-media') {
+            this.webrtc.onVideo = (frame, isKeyframe, backendTs) => this.handleVideoFrame(frame, isKeyframe, backendTs);
+        }
         // Audio samples (PCM16 stereo interleaved) -> AudioPipeline
         this.webrtc.onAudio = (sample) => this.handleAudioSample(sample);
         this.webrtc.connect();
