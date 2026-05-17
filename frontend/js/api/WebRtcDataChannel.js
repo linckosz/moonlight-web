@@ -14,7 +14,8 @@
  *   6. Once DataChannels open, close signaling WS, start data transfer.
  *
  * Fragmentation protocol (backend sends video/audio in chunks):
- *   Header: [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4]
+ *   Header: [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
+ *   backend_ts: backend monotonic ms timestamp (mod 2^32) for end-to-end latency.
  *   Max payload per chunk: 14000 bytes (under SCTP 16KB limit).
  *
  * Reassembly:
@@ -46,7 +47,7 @@ export class WebRtcDataChannel {
         this.onOpen = null;       // All DataChannels open
         this.onClose = null;      // Disconnected / error
         this.onError = null;      // Error event
-        this.onVideo = null;      // (frame: Uint8Array, isKeyframe: boolean)
+        this.onVideo = null;      // (frame: Uint8Array, isKeyframe: boolean, backendTs: number)
         this.onAudio = null;      // (sample: Uint8Array)
 
         // Stats
@@ -59,6 +60,14 @@ export class WebRtcDataChannel {
         // Logging
         this._logCount = 0;
         this._frameLogCount = 0;
+        this._idrLogCount = 0;
+
+        // Starvation detection: track the timestamp of the last assembled frame.
+        // If it exceeds STARVATION_TIMEOUT_MS without a new frame, request an IDR
+        // to kick-start the decoder.
+        this._lastAssembledTime = 0;
+        this._starvationRequested = false;
+        this.STARVATION_TIMEOUT_MS = 200;  // 200ms without a frame indicates trouble
 
         // Guard
         this._stopping = false;
@@ -75,7 +84,7 @@ export class WebRtcDataChannel {
         this.WS_GRACE_PERIOD_MS = 10000;  // 10 seconds
 
         // Constants (must match backend)
-        this.FRAG_HEADER_SIZE = 13;
+        this.FRAG_HEADER_SIZE = 17;
         this.CLEANUP_INTERVAL_MS = 500;
         this.FRAME_TIMEOUT_MS = 500;
 
@@ -460,6 +469,9 @@ export class WebRtcDataChannel {
     _onVideoChunk(data) {
         this.stats.chunksReceived++;
 
+        // Any chunk arrival means the stream is alive — reset starvation detector
+        this._starvationRequested = false;
+
         if (data instanceof ArrayBuffer) {
             data = new Uint8Array(data);
         } else if (data instanceof Blob) {
@@ -480,6 +492,7 @@ export class WebRtcDataChannel {
         const totalChunks = view.getUint16(6, false);   // offset 6, big endian
         const isKeyframe = view.getUint8(8) !== 0;      // offset 8
         const payloadSize = view.getUint32(9, false);   // offset 9, big endian
+        const backendTs = view.getUint32(13, false);    // offset 13, big endian
         const payload = new Uint8Array(data.buffer, data.byteOffset + this.FRAG_HEADER_SIZE, payloadSize);
 
         // Check if we already have an entry for this frame
@@ -491,7 +504,8 @@ export class WebRtcDataChannel {
                 received: 0,
                 keyframe: isKeyframe,
                 firstChunkTime: performance.now(),
-                completed: false
+                completed: false,
+                backendTs: backendTs   // Same for all chunks in a frame
             };
             // Pre-allocate array
             for (let i = 0; i < totalChunks; i++) entry.chunks[i] = null;
@@ -513,45 +527,40 @@ export class WebRtcDataChannel {
     }
 
     _assembleFrame(frameId, entry) {
-        // Check if all chunks received (for keyframe, require ALL)
-        if (entry.keyframe && entry.received < entry.total) {
-            // Keyframe missing chunks — drop it
+        // If any chunks are missing, drop the frame entirely.
+        // For keyframes: required for correct SPS/PPS extraction.
+        // For delta frames: missing bytes produce an invalid bitstream that
+        // crashes the VideoDecoder. It's better to drop and let the IDR
+        // recovery mechanism handle it.
+        if (entry.received < entry.total) {
             this.stats.framesDropped++;
-            if (this._frameLogCount < 3) {
-                console.warn('[WebRTC] Dropping incomplete keyframe #' + frameId +
+            if (this._frameLogCount < 10) {
+                const tag = entry.keyframe ? 'keyframe' : 'delta';
+                console.warn('[WebRTC] Dropping incomplete ' + tag + ' #' + frameId +
                     ': got ' + entry.received + '/' + entry.total + ' chunks');
                 this._frameLogCount++;
             }
             return;
         }
 
-        // For delta frames, fill missing chunks with zeros
+        // All chunks received — assemble normally
         let totalSize = 0;
         for (let i = 0; i < entry.total; i++) {
-            if (entry.chunks[i]) {
-                totalSize += entry.chunks[i].length;
-            }
+            totalSize += entry.chunks[i].length;
         }
 
         const assembled = new Uint8Array(totalSize);
         let offset = 0;
         for (let i = 0; i < entry.total; i++) {
-            if (entry.chunks[i]) {
-                assembled.set(entry.chunks[i], offset);
-                offset += entry.chunks[i].length;
-            } else {
-                // Missing chunk in delta frame — fill with zeros
-                // This may corrupt the frame, but allows decoding to continue
-                if (this._frameLogCount < 3) {
-                    console.warn('[WebRTC] Filling missing chunk #' + i + '/' + entry.total +
-                        ' for delta frame #' + frameId + ' with zeros');
-                    this._frameLogCount++;
-                }
-            }
+            assembled.set(entry.chunks[i], offset);
+            offset += entry.chunks[i].length;
         }
 
         this.stats.framesAssembled++;
         this.stats.framesReceived++;
+
+        // Track last assembled frame time for starvation detection
+        this._lastAssembledTime = performance.now();
 
         if (this.stats.framesAssembled <= 3 || this.stats.framesAssembled % 60 === 0) {
             console.log('[WebRTC] Assembled frame #' + frameId +
@@ -561,9 +570,9 @@ export class WebRtcDataChannel {
                 ' totalFrames=' + this.stats.framesAssembled);
         }
 
-        // Emit video frame
+        // Emit video frame with backend timestamp for latency calculations
         if (this.onVideo) {
-            this.onVideo(assembled, entry.keyframe);
+            this.onVideo(assembled, entry.keyframe, entry.backendTs);
         }
     }
 
@@ -596,6 +605,7 @@ export class WebRtcDataChannel {
     _cleanupStaleFrames() {
         const now = performance.now();
         const toDelete = [];
+        let staleCount = 0;
 
         for (const [frameId, entry] of this._reassembly) {
             if (entry.completed) {
@@ -607,15 +617,11 @@ export class WebRtcDataChannel {
             if (age > this.FRAME_TIMEOUT_MS) {
                 // Frame timed out — drop it
                 this.stats.framesDropped++;
+                staleCount++;
                 if (this._frameLogCount < 5) {
                     console.warn('[WebRTC] Dropping stale frame #' + frameId +
                         ': age=' + Math.round(age) + 'ms, got ' + entry.received + '/' + entry.total);
                     this._frameLogCount++;
-                }
-
-                // For keyframes that timeout, notify the app so it can request a new keyframe
-                if (entry.keyframe && this._pendingKeyframeTimeout) {
-                    // No mechanism for keyframe request in current protocol
                 }
 
                 toDelete.push(frameId);
@@ -625,6 +631,45 @@ export class WebRtcDataChannel {
         for (const id of toDelete) {
             this._reassembly.delete(id);
         }
+
+        // Proactive IDR request: if multiple frames went stale, the decoder
+        // may be starved for data. Ask the backend to request an IDR from
+        // Sunshine so we can recover quickly.
+        if (staleCount >= 3) {
+            this._requestIdrFrame('stale frames (' + staleCount + ' dropped)');
+        }
+
+        // Starvation detection: if no frame was assembled for STARVATION_TIMEOUT_MS
+        // and we haven't already requested an IDR for this episode, request one.
+        if (!this._starvationRequested &&
+            this._lastAssembledTime > 0 &&
+            (now - this._lastAssembledTime) > this.STARVATION_TIMEOUT_MS &&
+            this.stats.framesAssembled > 5 /* skip initial quiet period */) {
+            this._starvationRequested = true;
+            this._requestIdrFrame('starvation (' +
+                Math.round(now - this._lastAssembledTime) + 'ms since last frame)');
+        }
+    }
+
+    /** Request an IDR (key) frame from Sunshine via the input DataChannel. */
+    _requestIdrFrame(reason) {
+        if (!this.dataChannels.input ||
+            this.dataChannels.input.readyState !== 'open') {
+            // Cannot request IDR yet — input DC not open.  The backend will
+            // buffer the keyframe from Sunshine and send it when the Video
+            // DataChannel opens.
+            if (this._idrLogCount < 3) {
+                console.warn('[WebRTC] Cannot request IDR — input DC not open yet');
+                this._idrLogCount++;
+            }
+            return;
+        }
+
+        this._idrLogCount++;
+        if (this._idrLogCount <= 5 || this._idrLogCount % 10 === 0) {
+            console.warn('[WebRTC] Requesting IDR frame (' + reason + ')');
+        }
+        this.dataChannels.input.send(JSON.stringify({ type: 'requestidr' }));
     }
 
     // =========================================================================

@@ -302,7 +302,8 @@ const MoonlightApp = {
                     result.videoCodec,
                     result.gamingMode !== false,
                     upnpEnabled,
-                    result.upnpAvailable !== false
+                    result.upnpAvailable !== false,
+                    result.transport || (result.signalingUrl ? 'webrtc' : 'wss')
                 );
             }
         } catch (err) {

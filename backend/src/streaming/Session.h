@@ -42,6 +42,9 @@ public:
     /// the browser when sharing the unified port.
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
 
+    /// Set the port for the legacy WSS StreamRelay (separate from signaling WS port).
+    void setStreamRelayPort(quint16 port) { m_StreamRelayPort = port; }
+
 signals:
     void relayCreated(DataChannelRelay* relay);
     void streamRelayCreated(StreamRelay* relay);
@@ -75,6 +78,9 @@ private:
 
     /// The HTTPS port HttpServer is actually listening on (may be != 443).
     quint16 m_HttpsPort = 443;
+
+    /// Port for legacy WSS StreamRelay (separate from m_WsPort used for signaling).
+    quint16 m_StreamRelayPort = 48002;
 
     MoonlightShim* m_Shim = nullptr;
     DataChannelRelay* m_Relay = nullptr;
