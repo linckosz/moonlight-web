@@ -11,7 +11,7 @@
 #include <mutex>
 
 DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
-    : QObject(parent)
+    : RelayBase(parent)
     , m_Shim(shim)
 {
     qInfo() << "[DataChannelRelay] Created";

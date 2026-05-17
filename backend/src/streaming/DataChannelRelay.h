@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QObject>
+#include "RelayBase.h"
 #include <QByteArray>
 #include <QMutex>
 #include <memory>
@@ -11,9 +11,7 @@
 #include <cstddef>
 
 namespace rtc {
-class PeerConnection;
 class DataChannel;
-struct Configuration;
 }
 
 class MoonlightShim;
@@ -28,7 +26,7 @@ class MoonlightShim;
 //   is internally thread-safe.
 // - libdatachannel callbacks (onMessage for input) fire from internal threads.
 //   We marshal input back to the main thread via QMetaObject::invokeMethod.
-class DataChannelRelay : public QObject
+class DataChannelRelay : public RelayBase
 {
     Q_OBJECT
 
@@ -36,43 +34,27 @@ public:
     explicit DataChannelRelay(MoonlightShim* shim, QObject* parent = nullptr);
     ~DataChannelRelay();
 
-    // PeerConnection access for SignalingServer
+    // PeerConnection access (not part of RelayBase interface)
     std::shared_ptr<rtc::PeerConnection> peerConnection() const { return m_Pc; }
 
-    // Prepare PeerConnection + DataChannels. Returns the local SDP description
-    // once generated (via signalingSdpReady signal) or false on failure.
-    // The caller (SignalingServer) waits for signalingSdpReady before sending
-    // the offer to the browser.
-    bool prepare(const rtc::Configuration& config, bool isInternet = false);
+    // ── RelayBase interface ─────────────────────────────────────────────────
 
-    // Feed remote SDP answer (from browser) back into the PeerConnection.
-    bool setRemoteDescription(const std::string& sdp);
+    bool prepare(const rtc::Configuration& config, bool isInternet = false) override;
 
-    // Feed remote ICE candidate (from browser) into the PeerConnection.
-    bool addRemoteCandidate(const std::string& candidate, const std::string& mid);
+    bool setRemoteDescription(const std::string& sdp) override;
 
-    void stop();
+    bool addRemoteCandidate(const std::string& candidate, const std::string& mid) override;
 
-    // Request an IDR frame from Sunshine.
-    // Called when the browser signals that it needs a keyframe (no decoder config yet).
-    void requestIdrFrame();
+    void stop() override;
 
-    // ── UPnP NAT traversal ──────────────────────────────────────────────────
+    void requestIdrFrame() override;
 
-    /// Set the public IP and port discovered via UPnP.
-    /// When set, host candidates in SDP will be rewritten to use this public
-    /// address instead of the private LAN address, enabling direct P2P
-    /// connections from outside the local network.
-    void setPublicAddress(const std::string& publicIP, uint16_t publicPort);
+    // UPnP NAT traversal
+    void setPublicAddress(const std::string& publicIP, uint16_t publicPort) override;
+    void setForceHostCandidatePublic(bool force) override { m_ForceHostPublic = force; }
+    void setSuppressIPv6Candidates(bool suppress) override { m_SuppressIPv6 = suppress; }
 
-    /// Enable rewriting of host candidates to use the configured public address.
-    void setForceHostCandidatePublic(bool force) { m_ForceHostPublic = force; }
-
-    /// When UPnP is active, suppress IPv6 candidates so the browser is forced
-    /// to use the IPv4 UPnP path (IPv6 often fails through residential NAT/firewall).
-    void setSuppressIPv6Candidates(bool suppress) { m_SuppressIPv6 = suppress; }
-
-    bool isConnected() const { return m_Connected; }
+    bool isConnected() const override { return m_Connected; }
 
 signals:
     // Emitted when the local SDP description (offer) is ready to send to browser.

@@ -148,15 +148,18 @@ export class SettingsView {
                                 <strong>Transport Protocol</strong>
                                 <br>
                                 <span class="setting-description" style="font-size: 0.85em; color: #666;">
-                                    <strong>WebRTC</strong> (default): uses libdatachannel DataChannels for
-                                    low-latency video/audio streaming.<br>
+                                    <strong>WebRTC DataChannel</strong>: WebCodecs-based video over DataChannels
+                                    (lowest latency).<br>
+                                    <strong>WebRTC</strong>: native RTP media tracks for video (hardware decoder,
+                                    wider compatibility).<br>
                                     <strong>WebSocket</strong>: legacy StreamRelay over plain WebSocket
                                     (for testing/diagnostics).
                                 </span>
                             </span>
                             <span class="setting-control">
                                 <select id="settings-transport" class="settings-select" style="min-width: 120px;">
-                                    <option value="webrtc" ${this._transport === 'webrtc' ? 'selected' : ''}>WebRTC</option>
+                                    <option value="webrtc" ${this._transport === 'webrtc' ? 'selected' : ''}>WebRTC DataChannel</option>
+                                    <option value="webrtc-media" ${this._transport === 'webrtc-media' ? 'selected' : ''}>WebRTC</option>
                                     <option value="wss" ${this._transport === 'wss' ? 'selected' : ''}>WebSocket</option>
                                 </select>
                             </span>

@@ -1,5 +1,6 @@
 #include "Session.h"
 #include "DataChannelRelay.h"
+#include "MediaTrackRelay.h"
 #include "SignalingServer.h"
 #include "StreamRelay.h"
 #include "MoonlightShim.h"
@@ -132,7 +133,8 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert,
 void StreamSession::quit()
 {
     qInfo() << "[Session::quit] ENTER, m_Shim=" << m_Shim
-            << "m_Relay=" << m_Relay << "m_Signaling=" << m_Signaling
+            << "m_Relay=" << m_Relay << "m_MediaTrackRelay=" << m_MediaTrackRelay
+            << "m_Signaling=" << m_Signaling
             << "m_StreamRelay=" << m_StreamRelay
             << "m_Connected=" << (m_Shim ? m_Shim->isConnected() : false)
             << "transport=" << m_Transport;
@@ -146,8 +148,26 @@ void StreamSession::quit()
         } else {
             qInfo() << "[Session::quit] No m_StreamRelay to stop";
         }
+    } else if (m_Transport == "webrtc-media") {
+        // WebRTC Media Track mode: stop SignalingServer first
+        if (m_Signaling) {
+            qInfo() << "[Session::quit] Calling m_Signaling->stop() ...";
+            m_Signaling->stop();
+            qInfo() << "[Session::quit] m_Signaling->stop() returned";
+        } else {
+            qInfo() << "[Session::quit] No m_Signaling to stop";
+        }
+
+        // Stop MediaTrackRelay (closes PeerConnection + tracks)
+        if (m_MediaTrackRelay) {
+            qInfo() << "[Session::quit] Calling m_MediaTrackRelay->stop() ...";
+            m_MediaTrackRelay->stop();
+            qInfo() << "[Session::quit] m_MediaTrackRelay->stop() returned";
+        } else {
+            qInfo() << "[Session::quit] No m_MediaTrackRelay to stop";
+        }
     } else {
-        // WebRTC mode: stop SignalingServer first (closes WS, stops signaling)
+        // WebRTC DataChannel mode: stop SignalingServer first (closes WS, stops signaling)
         if (m_Signaling) {
             qInfo() << "[Session::quit] Calling m_Signaling->stop() ...";
             m_Signaling->stop();
@@ -294,6 +314,58 @@ void StreamSession::onLaunchReplyFinished()
         emit streamRelayCreated(streamRelay);
 
         qDebug() << "[Session] StreamRelay created, starting LiStartConnection...";
+        m_Shim->startConnection(params);
+    } else if (m_Transport == "webrtc-media") {
+        // ── WebRTC Media Track mode: MediaTrackRelay + SignalingServer ─────────
+        qInfo() << "[Session] Transport=webrtc-media — using MediaTrackRelay";
+
+        // MediaTrackRelay: owns the libdatachannel PeerConnection + video track + audio/input DCs
+        auto* relay = new MediaTrackRelay(m_Shim, this);
+
+        // SignalingServer: WebSocket for SDP/ICE exchange only.
+        auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
+        signaling->setHttpsPort(m_HttpsPort);
+        signaling->setUseUPnP(m_UpnpEnabled);
+
+        // If an explicit WS URL was set (e.g. nport tunnel), apply it.
+        if (!m_ExplicitWsUrl.isEmpty()) {
+            signaling->setOverrideWsUrl(m_ExplicitWsUrl);
+            qInfo() << "[Session] Using explicit signaling URL:" << m_ExplicitWsUrl;
+        }
+
+        if (!signaling->start()) {
+            delete signaling;
+            delete relay;
+            delete m_Shim;
+            m_Shim = nullptr;
+            m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
+            emit sessionFailed("Signaling server failed to start");
+            deleteLater();
+            return;
+        }
+
+        // Connect session-level handlers
+        connect(m_Shim, &MoonlightShim::connectionStarted,
+                this, &StreamSession::onShimConnectionStarted);
+        connect(m_Shim, &MoonlightShim::connectionFailed,
+                this, &StreamSession::onShimConnectionFailed);
+
+        // Relay must outlive StreamSession
+        relay->setParent(QCoreApplication::instance());
+        signaling->setParent(relay);
+        m_Shim->setParent(relay);
+
+        // Clean up when relay session ends (media track disconnect, error, etc.)
+        connect(relay, &MediaTrackRelay::sessionEnded, this, [this]() {
+            quit();
+            deleteLater();
+        });
+
+        m_MediaTrackRelay = relay;
+        m_Signaling = signaling;
+        emit mediaTrackRelayCreated(relay);
+
+        qDebug() << "[Session] MediaTrackRelay + Signaling created, starting LiStartConnection...";
         m_Shim->startConnection(params);
     } else {
         // ── WebRTC mode: DataChannelRelay + SignalingServer (default) ─────

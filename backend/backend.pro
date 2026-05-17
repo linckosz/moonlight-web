@@ -23,10 +23,10 @@ INCLUDEPATH += $$PWD/third_party/moonlight-common-c/nanors/deps/obl
 # libdatachannel (WebRTC DataChannel — built via CMake in build_libdatachannel.bat)
 exists($$PWD/third_party/libdatachannel/install/include) {
     INCLUDEPATH += $$PWD/third_party/libdatachannel/install/include
-    win32:CONFIG(release, debug|release): LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp
-    else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/third_party/libdatachannel/install/debug/lib -ldatachannel -ljuice -lusrsctp
-    else:unix: LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp
-    DEFINES += RTC_STATIC RTC_ENABLE_WEBSOCKET=0 RTC_ENABLE_MEDIA=0
+    win32:CONFIG(release, debug|release): LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp -lsrtp2
+    else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/third_party/libdatachannel/install/debug/lib -ldatachannel -ljuice -lusrsctp -lsrtp2
+    else:unix: LIBS += -L$$PWD/third_party/libdatachannel/install/lib -ldatachannel -ljuice -lusrsctp -lsrtp2
+    DEFINES += RTC_STATIC RTC_ENABLE_WEBSOCKET=0 RTC_ENABLE_MEDIA=1
 } else {
     # Submodule not yet initialized — headers missing, build will fail.
     # Instruct user: git submodule add https://github.com/paullouisageneau/libdatachannel.git backend/third_party/libdatachannel
@@ -69,6 +69,7 @@ SOURCES += \
     src/streaming/StreamRelay.cpp \
     # WebRTC DataChannel relay \
     src/streaming/DataChannelRelay.cpp \
+    src/streaming/MediaTrackRelay.cpp \
     src/streaming/SignalingServer.cpp \
     # moonlight-common-c ENet \
     third_party/moonlight-common-c/enet/callbacks.c \
@@ -123,7 +124,9 @@ HEADERS += \
     src/backend/NvPairingManager.h \
     src/streaming/StreamConfig.h \
     src/streaming/Session.h \
+    src/streaming/RelayBase.h \
     src/streaming/DataChannelRelay.h \
+    src/streaming/MediaTrackRelay.h \
     src/streaming/SignalingServer.h \
     src/streaming/MoonlightShim.h \
     src/streaming/StreamRelay.h \
