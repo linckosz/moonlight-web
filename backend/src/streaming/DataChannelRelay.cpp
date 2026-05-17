@@ -171,9 +171,11 @@ void DataChannelRelay::createDataChannels()
     qInfo() << "[DataChannelRelay] Creating DataChannels";
 
     // --- Video DataChannel (server->browser, H.264 NAL units) ---
+    // Unordered + no retransmits: video frames are time-sensitive, stale data
+    // is worse than lost data. The decoder can recover from the next keyframe.
     rtc::DataChannelInit videoConfig;
     videoConfig.reliability.unordered = true;
-    videoConfig.reliability.maxRetransmits = 1;  // One retransmit for robustness
+    videoConfig.reliability.maxRetransmits = 0;  // No retransmits for video
     videoConfig.negotiated = true;
     videoConfig.id = 0;
 
