@@ -256,25 +256,20 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 
     bool isKeyframe = (frameType == 1);
 
-    // Always buffer the latest keyframe, even if the Video DC doesn't exist
-    // yet. Sunshine starts sending the initial IDR immediately after launch,
+    // Buffer keyframes arriving before the Video DC is ready.
+    // Sunshine starts sending the initial IDR immediately after launch,
     // before ICE negotiation and DataChannel creation complete (~1-2s).
     // Without this buffer, the keyframe (containing SPS/PPS) is lost, the
     // browser's VideoDecoder can never configure, and we get decoder=null.
-    if (isKeyframe) {
+    if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
         m_BufferedKeyframe = data;
         m_HaveBufferedKeyframe = true;
         qInfo() << "[DataChannelRelay] Buffered keyframe size=" << data.size()
                 << "(DC ready=" << (m_VideoDc && m_VideoDc->isOpen()) << ")";
-
-        // If DC is already open, send the buffered keyframe immediately
-        if (m_VideoDc && m_VideoDc->isOpen()) {
-            sendBufferedKeyframe();
-        }
-        return;  // Don't try to send the same frame twice
+        return;
     }
 
-    // Non-keyframes are useless before the DC is ready
+    // Drop non-keyframes before DC is ready
     if (!m_VideoDc) {
         static int noDcCount = 0;
         if (++noDcCount <= 5)

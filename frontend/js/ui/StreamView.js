@@ -344,22 +344,28 @@ export class StreamView {
             ? HEVC_FALLBACK_CODEC_STRINGS
             : H264_FALLBACK_CODEC_STRINGS;
 
-        configsToTry.push({
-            codec: codec,
-            description: desc.buffer,
-            codedWidth: 1920,
-            codedHeight: 1080,
-            optimizeForLatency: true,
-            // Explicit BT.709 limited-range — the H.264 broadcast standard.
-            // Some Chrome versions ignore VUI in the codec description and
-            // default to BT.601 full-range, causing color shifts (washed out
-            // or oversaturated). Setting this explicitly prevents the fallback.
+        // Explicit BT.709 limited-range — the H.264 broadcast standard.
+        // Some Chrome versions ignore VUI and default to BT.601 full-range,
+        // causing color shifts (washed out / oversaturated).
+        // Only for H.264: Chrome WebCodecs rejects HEVC configs that include
+        // an explicit colorSpace (likely a Chrome bug / incomplete support).
+        const isH264 = (codecType === CODEC_H264);
+        const bt709 = isH264 ? {
             colorSpace: {
                 primaries: 'bt709',
                 transfer: 'bt709',
                 matrix: 'bt709',
                 fullRange: false
             }
+        } : {};
+
+        configsToTry.push({
+            codec: codec,
+            description: desc.buffer,
+            codedWidth: 1920,
+            codedHeight: 1080,
+            optimizeForLatency: true,
+            ...bt709
         });
 
         for (const fbCodec of fallbacks) {
@@ -370,12 +376,7 @@ export class StreamView {
                 codedWidth: 1920,
                 codedHeight: 1080,
                 optimizeForLatency: true,
-                colorSpace: {
-                    primaries: 'bt709',
-                    transfer: 'bt709',
-                    matrix: 'bt709',
-                    fullRange: false
-                }
+                ...bt709
             });
         }
 
