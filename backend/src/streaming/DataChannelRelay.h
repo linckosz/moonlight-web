@@ -8,6 +8,7 @@
 #include <string>
 #include <functional>
 #include <cstdint>
+#include <cstddef>
 
 namespace rtc {
 class PeerConnection;
@@ -98,10 +99,19 @@ private:
     void handleMouseScroll(const std::string& body);
 
     // Fragmentation helpers — sends data in chunks over a DataChannel.
-    // Header: [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4]
+    // Header: [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
+    // backend_ts: monotonic millisecond timestamp (mod 2^32) taken at send time,
+    // used by the frontend to compute end-to-end latency.
     // Max payload per chunk: kMaxPayloadSize (under SCTP 16KB limit).
-    static constexpr int kFragHeaderSize = 13;
+    static constexpr int kFragHeaderSize = 17;
     static constexpr int kMaxPayloadSize = 14000;
+
+    // Backpressure: if the SCTP send buffer exceeds this threshold, drop
+    // incoming delta frames to prevent main-thread blocking on dc->send().
+    // Keyframes always pass through.  The SCTP association's send buffer is
+    // typically ~256 KB; we set the watermark at 128 KB so there is room
+    // for keyframe chunks without blocking the main thread.
+    static constexpr size_t kHighWatermark = 128 * 1024;
 
     void sendFragmented(const QByteArray& data, bool isKeyframe,
                         std::shared_ptr<rtc::DataChannel>& dc);
@@ -121,6 +131,10 @@ private:
     std::atomic<bool> m_Stopping{false};
     int m_FrameCount = 0;
     uint32_t m_FrameId = 0;  // Monotonic counter for fragmentation headers
+
+    // Backpressure counters (diagnostic logging)
+    int m_DeltaDroppedCount = 0;           // Delta frames dropped due to full SCTP buffer
+    int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
 
     // Buffered keyframe: if the first IDR arrives before the Video DataChannel
     // is open, we save it here and send it as soon as the DC opens.

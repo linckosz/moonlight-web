@@ -591,8 +591,15 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
 void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)
 {
-    qInfo() << "[HttpServer] WebSocket upgrade detected, proxying to local port"
-            << m_SignalingPort;
+    // Parse the WebSocket path from the upgrade request to determine the target.
+    //   GET /ws          → proxy to m_SignalingPort (WebRTC signaling)
+    //   GET /ws/stream   → proxy to m_StreamRelayPort (legacy WSS StreamRelay)
+    QString firstLine = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n")));
+    QString path = firstLine.section(' ', 1, 1);
+    quint16 targetPort = (path == "/ws/stream") ? m_StreamRelayPort : m_SignalingPort;
+
+    qInfo() << "[HttpServer] WebSocket upgrade detected, path=" << path
+            << "targetPort=" << targetPort;
 
     // Copy the upgrade request BEFORE removing from m_Buffers.  requestData is a
     // const reference to the QByteArray inside m_Buffers — remove() destroys it.
@@ -609,7 +616,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     QObject::disconnect(clientSocket, &QTcpSocket::disconnected,
                          this, &HttpServer::onDisconnected);
 
-    // Target socket: connects to the local signaling WebSocket server.
+    // Target socket: connects to the local WebSocket server (signaling or stream relay).
     QTcpSocket* target = new QTcpSocket(this);
 
     // Guard flags: cleanup is called at most once, regardless of which signal
@@ -664,8 +671,9 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
             cleanup();
         });
 
-    target->connectToHost(QHostAddress::LocalHost, m_SignalingPort);
+    target->connectToHost(QHostAddress::LocalHost, targetPort);
 }
+
 
 HttpRequest HttpServer::parseRequest(const QByteArray& raw) const
 {

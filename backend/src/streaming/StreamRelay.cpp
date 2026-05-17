@@ -121,11 +121,12 @@ void StreamRelay::stop()
 
 QString StreamRelay::wsUrl() const
 {
-    bool secure = m_WsServer && m_WsServer->secureMode() == QWebSocketServer::SecureMode;
-    return QString("%1://%2:%3")
-        .arg(secure ? "wss" : "ws")
-        .arg(m_ServerHost)
-        .arg(m_WsPort);
+    // The browser connects via the HttpServer WSS proxy on the unified HTTPS port.
+    // The proxy routes /ws/stream to this StreamRelay's local WS port.
+    QString host = m_ServerHost;
+    if (m_HttpsPort != 443)
+        host += ":" + QString::number(m_HttpsPort);
+    return QString("wss://%1/ws/stream").arg(host);
 }
 
 // --- Video/audio forwarding -------------------------------------------------

@@ -409,8 +409,9 @@ void DataChannelRelay::onInputMessage(const std::string& message)
 
 // --- Fragmented send ---
 // Splits data into chunks of up to kMaxPayloadSize bytes.
-// Header format (13 bytes total):
-//   [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4]
+// Header format (17 bytes total):
+//   [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
+// backend_ts: QDateTime::currentMSecsSinceEpoch() modulo 2^32, written at send time.
 // All multi-byte fields in network byte order (big endian).
 
 void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
@@ -419,9 +420,46 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     if (m_Stopping.load() || !dc || !dc->isOpen()) return;
     if (data.isEmpty()) return;
 
+    // Backpressure: drop delta frames when the SCTP send buffer is full.
+    // Without this check, dc->send() blocks the main thread (Qt event loop)
+    // until the buffer drains, causing micro-freezes in audio/video processing.
+    // Keyframes are always sent because losing a keyframe would stall the
+    // browser decoder until the next IDR request.
+    if (!isKeyframe) {
+        size_t bufAmt = dc->bufferedAmount();
+        if (bufAmt > kHighWatermark) {
+            m_DeltaDroppedCount++;
+            if (m_DeltaDroppedCount <= 3 || m_DeltaDroppedCount % 120 == 0) {
+                qInfo() << "[DataChannelRelay] Dropped delta frame (SCTP full)"
+                        << "bufferedAmount=" << bufAmt
+                        << "totalDropped=" << m_DeltaDroppedCount
+                        << "kHighWatermark=" << kHighWatermark;
+            }
+            return;
+        }
+    } else {
+        // Log a warning if a keyframe arrives while the buffer is above the
+        // watermark — it may cause a brief main-thread stall.
+        size_t bufAmt = dc->bufferedAmount();
+        if (bufAmt > kHighWatermark) {
+            m_KeyframeBackpressureWarnings++;
+            if (m_KeyframeBackpressureWarnings <= 5) {
+                qInfo() << "[DataChannelRelay] Keyframe with full SCTP buffer"
+                        << "bufferedAmount=" << bufAmt
+                        << "warnCount=" << m_KeyframeBackpressureWarnings;
+            }
+        }
+    }
+
     int totalSize = data.size();
     int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
     uint32_t frameId = m_FrameId++;
+
+    // Capture a monotonic timestamp (ms since epoch, modulo 2^32) at send time.
+    // The frontend uses this with Date.now() to estimate end-to-end latency.
+    // Clocks must be roughly synchronized (NTP) for the estimate to be accurate.
+    uint32_t backendTs = static_cast<uint32_t>(
+        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
     for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
         int offset = chunkIdx * kMaxPayloadSize;
@@ -455,6 +493,12 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         bin[11] = static_cast<std::byte>((payloadSize32 >> 8) & 0xFF);
         bin[12] = static_cast<std::byte>(payloadSize32 & 0xFF);
 
+        // Backend timestamp (4 bytes, big endian) — same value for all chunks
+        bin[13] = static_cast<std::byte>((backendTs >> 24) & 0xFF);
+        bin[14] = static_cast<std::byte>((backendTs >> 16) & 0xFF);
+        bin[15] = static_cast<std::byte>((backendTs >> 8) & 0xFF);
+        bin[16] = static_cast<std::byte>(backendTs & 0xFF);
+
         // Payload
         std::memcpy(bin.data() + kFragHeaderSize, data.constData() + offset,
                     static_cast<size_t>(payloadSize));
@@ -487,6 +531,10 @@ void DataChannelRelay::stop()
     }
 
     qInfo() << "[DataChannelRelay::stop] ENTER, frameCount=" << m_FrameCount;
+
+    // Reset backpressure counters for next session
+    m_DeltaDroppedCount = 0;
+    m_KeyframeBackpressureWarnings = 0;
 
     // Clear buffered keyframe (if any)
     m_BufferedKeyframe.clear();

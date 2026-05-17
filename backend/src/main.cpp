@@ -251,6 +251,9 @@ int main(int argc, char* argv[])
         // construction when the WebSocket shares the same HTTPS port).
         session->setHttpsPort(server.activeHttpsPort());
 
+        // Set the port for the legacy WSS StreamRelay (separate from signaling WS).
+        session->setStreamRelayPort(signalingPort + 1);
+
         // Track StreamRelay for quit/cleanup (WSS mode)
         QObject::connect(session, &StreamSession::streamRelayCreated,
             [&g_ActiveStreamRelay](StreamRelay* relay) {
@@ -397,6 +400,8 @@ int main(int argc, char* argv[])
     // Both HTTPS and WebSocket signaling now share the same port (443 by default),
     // so the nport tunnel exposes the full UI to remote users.
     server.setSignalingPort(signalingPort);
+    // Legacy WSS StreamRelay uses the next port for its local WS server.
+    server.setStreamRelayPort(signalingPort + 1);
 
     // ── nport tunnel ─────────────────────────────────────────────────────────────
 

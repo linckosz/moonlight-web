@@ -29,6 +29,10 @@ public:
     /// Port of the local signaling WebSocket server (for WS→proxy routing).
     void setSignalingPort(quint16 port) { m_SignalingPort = port; }
 
+    /// Port of the local stream relay WebSocket server (legacy WSS mode).
+    /// The HttpServer proxies wss://host/ws/stream to this local port.
+    void setStreamRelayPort(quint16 port) { m_StreamRelayPort = port; }
+
     /// The port the HTTPS server actually bound to (0 if not started).
     quint16 activeHttpsPort() const { return m_ActiveHttpsPort; }
 
@@ -76,6 +80,7 @@ private:
     quint16 m_ActiveHttpsPort = 0;
 
     quint16 m_SignalingPort = 48001;
+    quint16 m_StreamRelayPort = 48002;
 
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;

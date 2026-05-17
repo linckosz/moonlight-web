@@ -22,6 +22,7 @@ public:
     void stop();
 
     void setServerHost(const QString& host) { m_ServerHost = host; }
+    void setHttpsPort(quint16 port) { m_HttpsPort = port; }
     quint16 wsPort() const { return m_WsPort; }
     QString wsUrl() const;
 
@@ -47,6 +48,7 @@ private:
     QWebSocket* m_WsClient = nullptr;
     quint16 m_WsPort = 48001;
     QString m_ServerHost = "localhost";
+    quint16 m_HttpsPort = 443;
     bool m_Running = false;
     bool m_Stopping = false;
     bool m_StreamStarted = false;

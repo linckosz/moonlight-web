@@ -14,7 +14,6 @@ export class SettingsView {
 
         this._videoCodec = 'auto';
         this._gamingMode = true;
-        this._upnpEnabled = true;
         this._transport = 'webrtc';
 
         // Debounce timer to avoid rapid repeated saves
@@ -32,7 +31,6 @@ export class SettingsView {
             const data = await BackendClient.getStreamingSettings();
             this._videoCodec = data.video_codec || 'auto';
             this._gamingMode = data.gaming_mode !== false;
-            this._upnpEnabled = data.upnp_enabled !== false;
             this._transport = data.transport || 'webrtc';
         } catch (err) {
             console.warn('[Settings] Failed to load streaming settings:', err);
@@ -56,29 +54,25 @@ export class SettingsView {
 
         const codecSelect = this.container.querySelector('#settings-video-codec');
         const gamingCheck = this.container.querySelector('#settings-gaming-mode');
-        const upnpCheck = this.container.querySelector('#settings-upnp-enabled');
         const transportSelect = this.container.querySelector('#settings-transport');
-        if (!codecSelect || !gamingCheck || !upnpCheck || !transportSelect) return;
+        if (!codecSelect || !gamingCheck || !transportSelect) return;
 
         this._saveTimer = setTimeout(async () => {
             this._saveTimer = null;
 
             const codec = codecSelect.value;
             const gamingMode = gamingCheck.checked;
-            const upnpEnabled = upnpCheck.checked;
             const transport = transportSelect.value;
 
             try {
                 const result = await BackendClient.saveStreamingSettings({
                     video_codec: codec,
                     gaming_mode: gamingMode,
-                    upnp_enabled: upnpEnabled,
                     transport: transport
                 });
                 if (result.status === 'saved') {
                     this._videoCodec = result.video_codec || this._videoCodec;
                     this._gamingMode = result.gaming_mode !== false;
-                    this._upnpEnabled = result.upnp_enabled !== false;
                     this._transport = result.transport || this._transport;
                     // Subtle toast feedback
                     Toast.success('Saved');
@@ -148,24 +142,6 @@ export class SettingsView {
                         </label>
                     </div>
 
-                    <div class="settings-upnp" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
-                        <label class="setting-row" style="display: flex; align-items: center; justify-content: space-between;">
-                            <span class="setting-label">
-                                <strong>UPnP NAT Traversal</strong>
-                                <br>
-                                <span class="setting-description" style="font-size: 0.85em; color: #666;">
-                                    Automatically configure your router (UPnP) for direct P2P connections
-                                    from outside your local network. If disabled, connections from the
-                                    internet will relay through STUN/TURN.
-                                </span>
-                            </span>
-                            <span class="setting-control">
-                                <input type="checkbox" id="settings-upnp-enabled"
-                                    ${this._upnpEnabled ? 'checked' : ''} />
-                            </span>
-                        </label>
-                    </div>
-
                     <div class="settings-transport" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">
                         <label class="setting-row" style="display: flex; align-items: center; justify-content: space-between;">
                             <span class="setting-label">
@@ -204,12 +180,6 @@ export class SettingsView {
         const gamingCheck = this.container.querySelector('#settings-gaming-mode');
         if (gamingCheck) {
             gamingCheck.addEventListener('change', () => this._autoSave());
-        }
-
-        // ── UPnP checkbox auto-save ───────────────────────────────────────────
-        const upnpCheck = this.container.querySelector('#settings-upnp-enabled');
-        if (upnpCheck) {
-            upnpCheck.addEventListener('change', () => this._autoSave());
         }
 
         // ── Transport selector auto-save ────────────────────────────────────────

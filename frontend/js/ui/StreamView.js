@@ -27,11 +27,12 @@ import {
 } from '../util/Av1Utils.js';
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc') {
         this.container = container;
         this.signalingUrl = signalingUrl;
         this.host = host;
         this.videoCodec = videoCodec || 'auto';
+        this._transport = transport;
         this._gamingMode = gamingMode;
         this._upnpEnabled = upnpEnabled;
         this._upnpAvailable = upnpAvailable;
@@ -64,6 +65,17 @@ export class StreamView {
         // Stats
         this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0 };
 
+        // Overlay stats
+        this._overlayEl = null;
+        this._overlayInterval = null;
+        this._resolution = '';              // "1920x1080" — set once on first frame
+        this._codec = this.videoCodec;      // Same as videoCodec
+        this._transport = transport;        // "webrtc" or "wss"
+        this._totalBytes = 0;               // Cumulative video bytes for bitrate
+        this._startTime = performance.now();// Stream start time for bitrate calc
+        this._fpsTimestamps = [];           // performance.now() per decoded frame
+        this._latencySamples = [];          // { time: perfNow, latency: ms }
+
         // Bound handlers
         this._onKeyDown = (e) => this.handleKeyDown(e);
         this._onKeyUp = (e) => this.handleKeyUp(e);
@@ -79,6 +91,14 @@ export class StreamView {
         // This is a safety net for the rare race where the initial IDR is lost.
         this._idrRequested = false;
         this._idrTimeout = null;
+
+        // Decoder recovery guard: prevents re-entrant recovery when the error
+        // callback fires during setupDecoder() (called from within recovery).
+        this._decoderRecovering = false;
+        // Recovery attempt counter + limit: prevents infinite recovery loops if
+        // the bitstream is fundamentally corrupted (e.g., persistent packet loss).
+        this._recoveryAttempts = 0;
+        this.MAX_RECOVERY_ATTEMPTS = 10;
 
         // Guard flag to prevent re-entrant quit() calls
         this._quitting = false;
@@ -209,6 +229,22 @@ export class StreamView {
         this.hintEl = document.getElementById('stream-hint');
 
         document.getElementById('btn-stream-quit').onclick = () => this.quit();
+
+        // ── Streaming stats overlay (top-right, semi-transparent) ──────────
+        this._overlayEl = document.createElement('div');
+        this._overlayEl.id = 'stream-stats-overlay';
+        this._overlayEl.style.cssText =
+            'position:fixed;top:50px;right:10px;' +
+            'background:rgba(0,0,0,0.6);color:#ccc;' +
+            'font-family:monospace;font-size:12px;' +
+            'padding:8px 12px;border-radius:6px;' +
+            'z-index:100;pointer-events:none;' +
+            'white-space:pre;display:none;';
+        this._overlayEl.textContent = 'Waiting...';
+        document.getElementById('stream-view').appendChild(this._overlayEl);
+
+        // Start overlay update timer (every 500ms)
+        this._overlayInterval = setInterval(() => this._updateOverlay(), 500);
     }
 
     // =========================================================================
@@ -236,10 +272,86 @@ export class StreamView {
             error: (err) => {
                 console.error('[StreamView] VideoDecoder error:', err.message, err);
                 if (err.code) console.error('[StreamView] Error code:', err.code);
-                this.setStatus('error', 'Decoder error');
+                this._handleDecoderError(err);
             }
         });
         console.log('[StreamView] VideoDecoder created, state=' + this.decoder.state);
+    }
+
+    /**
+     * Recover from a VideoDecoder error by creating a new decoder and
+     * requesting an IDR (keyframe) from the backend.
+     *
+     * The VideoDecoder is single-use: once it enters 'closed' state due to
+     * a decoding error, it cannot be re-opened.  We must:
+     *   1. Close the broken decoder.
+     *   2. Create a new VideoDecoder via setupDecoder().
+     *   3. Reset the NAL parser so SPS/PPS are re-extracted from the next
+     *      keyframe.
+     *   4. Clear pending frames — they reference corrupted/lost reference
+     *      frames and cannot be decoded by the new decoder.
+     *   5. Request an IDR from the backend so Sunshine sends a fresh keyframe.
+     *
+     * After recovery, the next keyframe triggers configureDecoder() which
+     * reconfigures the new decoder and resumes normal playback.
+     */
+    _handleDecoderError(err) {
+        // Guard: prevent recovery during quit
+        if (this._quitting) return;
+        // Guard: prevent re-entrant recovery (error callback may fire during
+        // setupDecoder(), which would loop back to this method)
+        if (this._decoderRecovering) return;
+        // Guard: limit total recovery attempts to avoid infinite loops on
+        // a fundamentally broken connection
+        this._recoveryAttempts++;
+        if (this._recoveryAttempts > this.MAX_RECOVERY_ATTEMPTS) {
+            console.error('[StreamView] Max recovery attempts (' + this.MAX_RECOVERY_ATTEMPTS +
+                ') reached, giving up');
+            this.setStatus('error', 'Max recovery attempts exceeded');
+            return;
+        }
+        this._decoderRecovering = true;
+
+        console.warn('[StreamView] Starting decoder recovery (' + this._recoveryAttempts +
+            '/' + this.MAX_RECOVERY_ATTEMPTS + ') from: ' +
+            (err ? err.message : 'unknown'));
+
+        // 1. Close the broken decoder
+        if (this.decoder) {
+            try { this.decoder.close(); } catch (e) { /* ignore */ }
+            this.decoder = null;
+        }
+        this.decoderConfigured = false;
+        this.decoderConfiguring = false;
+
+        // 2. Clear frame queue — frames output by the old decoder are invalid
+        //    once the decoder is closed
+        for (const frame of this.frameQueue) {
+            try { frame.close(); } catch (e) { /* ignore */ }
+        }
+        this.frameQueue = [];
+
+        // 3. Clear pending frames — they reference lost/corrupted reference
+        //    frames and would produce more errors on the new decoder
+        this.pendingFrames = [];
+
+        // 4. Reset NAL parser to force re-extraction of SPS/PPS from the
+        //    next keyframe
+        this.nalParser.reset();
+
+        // 5. Create a new decoder
+        this.setupDecoder();
+
+        // 6. Request an IDR so Sunshine sends a clean keyframe
+        this._idrRequested = true;
+        if (this.webrtc) {
+            console.log('[StreamView] Requesting IDR after decoder error');
+            this.webrtc.send({ type: 'requestidr' });
+        }
+
+        this.setStatus('connecting', 'Recovering...');
+
+        this._decoderRecovering = false;
     }
 
     configureDecoder() {
@@ -416,6 +528,15 @@ export class StreamView {
             return;
         }
 
+        // VideoDecoder is single-use: once closed by an async error, it stays
+        // closed.  Detect this early and trigger recovery rather than flooding
+        // the console with "Cannot call 'decode' on a closed codec".
+        if (this.decoder.state === 'closed') {
+            console.warn('[StreamView] Decoder is closed, triggering recovery');
+            this._handleDecoderError(new Error('Decoder state is closed'));
+            return;
+        }
+
         const timestamp = this.frameCount * 16667; // ~60 fps in microseconds
         this.frameCount++;
 
@@ -446,11 +567,26 @@ export class StreamView {
         } catch (err) {
             console.error('[StreamView] decode() error:', err.message, err);
             this.stats.dropped++;
+            this._handleDecoderError(err);
         }
     }
 
     onDecodedFrame(frame) {
         this.stats.decoded++;
+
+        // A successful decode means we've recovered — reset the counter
+        this._recoveryAttempts = 0;
+
+        // FPS tracking: record decode timestamp (2s sliding window in _updateOverlay)
+        this._fpsTimestamps.push(performance.now());
+
+        // Latency: compute e2e delay from backend timestamp to now
+        if (this._latestBackendTs !== undefined) {
+            const latency = performance.now() - this._latestBackendTs;
+            if (latency > 0 && latency < 5000) { // ignore outliers
+                this._latencySamples.push({ time: performance.now(), latency });
+            }
+        }
 
         if (this.stats.decoded <= 3) {
             const cs = frame.colorSpace;
@@ -483,8 +619,14 @@ export class StreamView {
         // Update status on first frame
         if (!this._firstFrameRendered) {
             console.log('[StreamView] FIRST DECODED FRAME! Setting status to Live');
+            // Capture resolution from first frame
+            const w = frame.displayWidth || frame.codedWidth || 0;
+            const h = frame.displayHeight || frame.codedHeight || 0;
+            if (w > 0) this._resolution = w + '×' + h;
             this.setStatus('live', 'Live');
             this._firstFrameRendered = true;
+            // Show stats overlay
+            if (this._overlayEl) this._overlayEl.style.display = '';
         }
     }
 
@@ -568,13 +710,53 @@ export class StreamView {
             Toast.error('WebRTC connection error');
         };
         // Video frames arrive fully reassembled from WebRtcDataChannel
-        this.webrtc.onVideo = (frame, isKeyframe) => this.handleVideoFrame(frame, isKeyframe);
+        this.webrtc.onVideo = (frame, isKeyframe, backendTs) => this.handleVideoFrame(frame, isKeyframe, backendTs);
         // Audio samples (PCM16 stereo interleaved) -> AudioPipeline
         this.webrtc.onAudio = (sample) => this.handleAudioSample(sample);
         this.webrtc.connect();
     }
 
-    handleVideoFrame(data, isKeyframe) {
+    // ── Stats overlay (refreshed every 500ms) ────────────────────────────
+
+    _updateOverlay() {
+        if (!this._overlayEl) return;
+
+        const now = performance.now();
+        const elapsed = (now - this._startTime) / 1000;
+        let fps = 0;
+        let bitrateMbps = 0;
+        let latencyMs = 0;
+
+        // FPS: decoded frames in the last 2 seconds
+        const cutoff = now - 2000;
+        this._fpsTimestamps = this._fpsTimestamps.filter(t => t > cutoff);
+        fps = Math.round(this._fpsTimestamps.length / 2);
+
+        // Bitrate: total bytes / elapsed seconds
+        if (elapsed > 0.5) {
+            bitrateMbps = ((this._totalBytes * 8) / elapsed) / 1e6;
+        }
+
+        // Latency: average of last 5s of samples
+        const latencyCutoff = now - 5000;
+        this._latencySamples = this._latencySamples.filter(s => s.time > latencyCutoff);
+        if (this._latencySamples.length > 0) {
+            const sum = this._latencySamples.reduce((a, s) => a + s.latency, 0);
+            latencyMs = Math.round(sum / this._latencySamples.length);
+        }
+
+        const codec = this.videoCodec === 'auto' ? 'h264' : this.videoCodec;
+
+        this._overlayEl.textContent =
+            this._resolution + ' | ' +
+            fps + ' fps | ' +
+            bitrateMbps.toFixed(1) + ' Mbps | ' +
+            codec + ' | ' +
+            this._transport + ' | ' +
+            latencyMs + 'ms';
+    }
+
+    handleVideoFrame(data, isKeyframe, backendTs) {
         // Stop processing frames once quit() has started.  The DC may still
         // deliver queued messages during the async HTTP /quit call.
         if (this._quitting) return;
@@ -582,6 +764,18 @@ export class StreamView {
         if (data.length < 4) {
             console.warn('[StreamView] Video frame too small:', data.length);
             return;
+        }
+
+        // Track cumulative video bytes for bitrate calculation
+        this._totalBytes += data.length;
+
+        // Store the most recent backend timestamp for latency calculation.
+        // We use the latest value rather than per-frame matching because
+        // VideoDecoder decodes asynchronously — the simplest robust approach
+        // is to take the most recently submitted frame's backendTs as a
+        // proxy for the next decoded frame.  At 60fps the error is <16ms.
+        if (backendTs !== undefined) {
+            this._latestBackendTs = backendTs;
         }
 
         // Log first frame details
@@ -1000,6 +1194,15 @@ export class StreamView {
         this.stopRenderLoop();
         this.stopDiagnostics();
         this.unbindEvents();
+
+        // Clear stats overlay timer
+        if (this._overlayInterval) {
+            clearInterval(this._overlayInterval);
+            this._overlayInterval = null;
+        }
+        if (this._overlayEl) {
+            this._overlayEl.style.display = 'none';
+        }
 
         // Clear IDR request timer
         if (this._idrTimeout) {
