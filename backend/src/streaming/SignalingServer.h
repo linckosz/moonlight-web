@@ -13,6 +13,7 @@ struct Configuration;
 
 class RelayBase;
 class UPNPClient;
+class MoonlightShim;
 
 // Minimal WebSocket server for WebRTC signaling only.
 // Exchanges SDP offer/answer and ICE candidates between the browser
@@ -49,6 +50,11 @@ public:
     /// The browser will connect to this URL instead of the local ws://... one.
     void setOverrideWsUrl(const QString& url) { m_OverrideWsUrl = url; }
 
+    /// Set the MoonlightShim instance for WS fallback mode.
+    /// When ICE times out, video/audio data is sent over the signaling WebSocket
+    /// instead of WebRTC DataChannels, using the same fragmentation format.
+    void setMoonlightShim(MoonlightShim* shim) { m_Shim = shim; }
+
 signals:
     void clientConnected();
     void clientDisconnected();
@@ -64,10 +70,42 @@ private slots:
     void onLocalIceCandidate(const std::string& candidate, const std::string& mid);
     void onDataChannelsOpen();
 
+    // ICE timeout → WS fallback
+    void onRelayIceTimedOut();
+
 private:
     bool isPrivateAddress(const QString& ip) const;
 
+    // ── WS Fallback mode ────────────────────────────────────────────────────
+    // When ICE negotiation times out (UDP blocked by corporate firewall),
+    // video/audio data is forwarded over the existing signaling WebSocket
+    // instead of WebRTC DataChannels. This provides a TCP-based fallback
+    // path through restrictive networks.
+
+    /// Start WS fallback — triggered by DataChannelRelay::iceTimedOut().
+    /// Sends {type:"fallback-ws"} to the browser, then routes MoonlightShim
+    /// video/audio signals through the signaling WebSocket as binary frames.
+    void startWsFallback();
+
+    /// Handle text messages received on the WS in fallback mode.
+    /// These are input commands (keydown, mousemove, etc.) from the browser.
+    void handleWsFallbackInput(const QString& message);
+
+    /// Forward a MoonlightShim video frame to the browser as a binary WS frame.
+    /// Uses the same fragmentation format as DataChannelRelay, with a 1-byte
+    /// channel prefix (0x01=video, 0x02=audio) before the frag header.
+    void forwardVideoViaWs(const QByteArray& data, int frameType, int frameNumber);
+
+    /// Forward a MoonlightShim audio sample to the browser as a binary WS frame.
+    void forwardAudioViaWs(const QByteArray& data);
+
+    bool m_WsFallbackActive = false;
+    bool m_ShimConnected = false;  ///< MoonlightShim signals connected for fallback
+
+    /// ── Members ─────────────────────────────────────────────────────────────
+
     RelayBase* m_Relay;
+    MoonlightShim* m_Shim = nullptr;
 
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;

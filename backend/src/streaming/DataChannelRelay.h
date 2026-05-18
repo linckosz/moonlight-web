@@ -3,6 +3,7 @@
 #include "RelayBase.h"
 #include <QByteArray>
 #include <QMutex>
+#include <QTimer>
 #include <memory>
 #include <atomic>
 #include <string>
@@ -56,15 +57,8 @@ public:
 
     bool isConnected() const override { return m_Connected; }
 
-signals:
-    // Emitted when the local SDP description (offer) is ready to send to browser.
-    void signalingSdpReady(const std::string& sdp);
-    // Emitted for each local ICE candidate to forward to browser.
-    void signalingIceCandidate(const std::string& candidate, const std::string& mid);
-    // All DataChannels are open and ready for data.
-    void dataChannelsOpen();
-    // Session ended (disconnect / error).
-    void sessionEnded();
+    // Signals inherited from RelayBase: signalingSdpReady, signalingIceCandidate,
+    // dataChannelsOpen, sessionEnded.
 
 private slots:
     void onVideoFrame(const QByteArray& data, int frameType, int frameNumber);
@@ -130,4 +124,15 @@ private:
     uint16_t m_PublicPort = 0;   // Mapped port from UPnP (0 = not mapped)
     bool m_ForceHostPublic = false;
     bool m_SuppressIPv6 = false; // Suppress IPv6 candidates when UPnP active
+
+    // ── ICE timeout ──────────────────────────────────────────────────────────
+    QTimer* m_IceCheckTimer = nullptr;
+
+private slots:
+    void onIceCheckTimeout();
+
+signals:
+    /// Emitted when ICE fails to reach Connected within 3s after setRemoteDescription.
+    /// Used by SignalingServer to trigger WS fallback.
+    void iceTimedOut();
 };
