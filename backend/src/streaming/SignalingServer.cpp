@@ -1,5 +1,7 @@
 #include "SignalingServer.h"
 #include "RelayBase.h"
+#include "DataChannelRelay.h"
+#include "MoonlightShim.h"
 #include "network/UPNPClient.h"
 
 #include <rtc/rtc.hpp>
@@ -8,6 +10,7 @@
 #include <QDebug>
 #include <QHostAddress>
 #include <QTimer>
+#include <QMap>
 #include <memory>
 
 SignalingServer::SignalingServer(RelayBase* relay,
@@ -60,6 +63,13 @@ bool SignalingServer::start()
     connect(m_Relay, &RelayBase::dataChannelsOpen,
             this, &SignalingServer::onDataChannelsOpen);
 
+    // ICE timeout → WebSocket fallback (when UDP is blocked)
+    // Only DataChannelRelay has the iceTimedOut signal; MediaTrackRelay doesn't.
+    if (auto* dcRelay = qobject_cast<DataChannelRelay*>(m_Relay)) {
+        connect(dcRelay, &DataChannelRelay::iceTimedOut,
+                this, &SignalingServer::onRelayIceTimedOut);
+    }
+
     qInfo() << "[SignalingServer] Listening OK";
     m_Running = true;
 
@@ -99,6 +109,16 @@ void SignalingServer::stop()
         qInfo() << "[SignalingServer] Closing WS server";
         m_WsServer->close();
     }
+
+    // Disconnect WS fallback signal handlers (if any)
+    if (m_ShimConnected && m_Shim) {
+        disconnect(m_Shim, &MoonlightShim::videoFrameReady,
+                   this, &SignalingServer::forwardVideoViaWs);
+        disconnect(m_Shim, &MoonlightShim::audioSampleReady,
+                   this, &SignalingServer::forwardAudioViaWs);
+        m_ShimConnected = false;
+    }
+    m_WsFallbackActive = false;
 
     cleanupUPnP();
 
@@ -152,8 +172,16 @@ void SignalingServer::onNewWsConnection()
 
     // Check if this is a local or remote connection (for STUN)
     QHostAddress peerAddr = m_WsClient->peerAddress();
-    bool isInternet = !isPrivateAddress(peerAddr.toString());
-    qInfo() << "[SignalingServer] Client connected from" << peerAddr.toString()
+    // Normalize IPv4-mapped IPv6 (::ffff:x.x.x.x -> x.x.x.x) so that
+    // isPrivateAddress() sees a clean IPv4 string instead of an IPv6 one.
+    QString peerAddrStr = peerAddr.toString();
+    if (peerAddrStr.startsWith("::ffff:") && peerAddrStr.count('.') == 3)
+        peerAddrStr = peerAddrStr.mid(7);
+    bool isInternet = !isPrivateAddress(peerAddrStr);
+    // Force LAN mode for loopback (more robust than classification alone)
+    if (peerAddrStr == "127.0.0.1" || peerAddrStr == "::1")
+        isInternet = false;
+    qInfo() << "[SignalingServer] Client connected from" << peerAddrStr
             << "(isInternet=" << isInternet << ")";
 
     connect(m_WsClient, &QWebSocket::textMessageReceived,
@@ -206,6 +234,13 @@ void SignalingServer::onWsTextMessage(const QString& message)
     QJsonObject msg = doc.object();
     QString type = msg["type"].toString();
 
+    // In WS fallback mode, text messages from the browser carry input commands
+    // (keydown, mousemove, etc.) instead of signaling (sdp, ice).
+    if (m_WsFallbackActive) {
+        handleWsFallbackInput(message);
+        return;
+    }
+
     static int msgCount = 0;
     msgCount++;
     if (msgCount <= 3) {
@@ -230,6 +265,17 @@ void SignalingServer::onWsTextMessage(const QString& message)
         qInfo() << "[SignalingServer] Received ICE candidate, mid=" << mid;
 
         m_Relay->addRemoteCandidate(candidate.toStdString(), mid.toStdString());
+    }
+    else if (type == "fallback-ws-request") {
+        if (m_WsFallbackActive) {
+            qWarning() << "[SignalingServer] Fallback WS already active, ignoring duplicate request";
+            return;
+        }
+        qWarning() << "[SignalingServer] Browser requested WS fallback (ICE disconnected/failed before connected)";
+        // The browser detected ICE failure before ever reaching "connected"
+        // (UDP blocked by corporate firewall). Transition to WS fallback
+        // immediately — don't wait for the libdatachannel ICE timeout.
+        startWsFallback();
     }
     else {
         qWarning() << "[SignalingServer] Unknown message type:" << type;
@@ -281,6 +327,299 @@ void SignalingServer::onWsDisconnected()
     }
 
     qInfo() << "[SignalingServer::onWsDisconnected] EXIT";
+}
+
+// ── WS Fallback — ICE timeout → WebSocket data transport ──────────────────────
+
+void SignalingServer::onRelayIceTimedOut()
+{
+    if (m_Stopping.load() || m_WsFallbackActive) {
+        qInfo() << "[SignalingServer] onRelayIceTimedOut ignored: stopping="
+                << m_Stopping.load() << "fallbackActive=" << m_WsFallbackActive;
+        return;
+    }
+    qWarning() << "[SignalingServer] ICE timeout — starting WebSocket fallback";
+    startWsFallback();
+}
+
+void SignalingServer::startWsFallback()
+{
+    if (!m_WsClient || !m_WsClient->isValid() || !m_Shim) {
+        qWarning() << "[SignalingServer] Cannot start WS fallback:"
+                    << "WS client valid=" << (m_WsClient && m_WsClient->isValid())
+                    << "Shim set=" << (m_Shim != nullptr);
+        // If we can't fallback, end the session
+        emit sessionEnded();
+        return;
+    }
+
+    qInfo() << "[SignalingServer] === STARTING WS FALLBACK ===";
+    qInfo() << "[SignalingServer] ICE failed — routing video/audio over signaling WebSocket";
+
+    m_WsFallbackActive = true;
+
+    // Step 1: Stop the DataChannelRelay (sets m_Stopping, its signal handlers
+    // become no-ops but remain connected to avoid Qt disconnect issues).
+    m_Relay->stop();
+
+    // Step 2: Connect MoonlightShim video/audio signals to WS forwarding slots.
+    // These fire in ADDITION to DataChannelRelay's slots (which are no-ops now).
+    if (!m_ShimConnected) {
+        connect(m_Shim, &MoonlightShim::videoFrameReady,
+                this, &SignalingServer::forwardVideoViaWs);
+        connect(m_Shim, &MoonlightShim::audioSampleReady,
+                this, &SignalingServer::forwardAudioViaWs);
+        m_ShimConnected = true;
+    }
+
+    // Step 3: Send fallback notification to browser — tells the frontend to
+    // repurpose this WS for data transport (binary frames arrive immediately).
+    QJsonObject fallbackMsg;
+    fallbackMsg["type"] = "fallback-ws";
+    QJsonDocument doc(fallbackMsg);
+    m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+    qInfo() << "[SignalingServer] Sent fallback-ws notification to browser";
+
+    // Step 4: Emit dataChannelsOpen — signals StreamView that the transport
+    // is ready (same as when WebRTC DataChannels open normally).
+    // This triggers the browser to start rendering.
+    onDataChannelsOpen();
+
+    qInfo() << "[SignalingServer] === WS FALLBACK ACTIVE ===";
+    qInfo() << "[SignalingServer] Video frames and audio samples will now be"
+            << "sent as binary WebSocket messages";
+}
+
+// ── WS Fallback: fragment video/audio and send as binary WS frames ────────────
+//
+// Uses the same fragmentation format as DataChannelRelay (17-byte header + payload),
+// with an additional 1-byte channel prefix:
+//   [channel:1][frag_header:17][payload...]
+//
+// Channel byte: 0x01 = video, 0x02 = audio
+//
+// The frontend strips the channel byte and dispatches to the existing
+// _onVideoChunk / _onAudioChunk reassembly logic (unchanged format).
+//
+// We don't use backpressure here — WebSocket over TCP handles buffering
+// transparently (unlike SCTP DataChannels with limited send buffers).
+
+static constexpr int kFallbackFragHeaderSize = 17;
+static constexpr int kFallbackMaxPayloadSize = 14000;
+static constexpr std::byte kChannelVideo{0x01};
+static constexpr std::byte kChannelAudio{0x02};
+
+void SignalingServer::forwardVideoViaWs(const QByteArray& data, int frameType, int)
+{
+    if (m_Stopping.load() || !m_WsFallbackActive || !m_WsClient || !m_WsClient->isValid())
+        return;
+    if (data.isEmpty()) return;
+
+    static int fallbackFrameCount = 0;
+    fallbackFrameCount++;
+
+    int totalSize = data.size();
+    int totalChunks = (totalSize + kFallbackMaxPayloadSize - 1) / kFallbackMaxPayloadSize;
+    uint32_t backendTs = static_cast<uint32_t>(
+        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+
+    // Generate a monotonic frame ID for this frame (same scheme as DataChannelRelay)
+    // Use a static counter scoped to this function
+    static uint32_t wsFrameId = 0;
+    uint32_t frameId = wsFrameId++;
+
+    for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+        int offset = chunkIdx * kFallbackMaxPayloadSize;
+        int payloadSize = std::min(kFallbackMaxPayloadSize, totalSize - offset);
+
+        // Total message: 1 (channel) + 17 (frag header) + payload
+        QByteArray msg(1 + kFallbackFragHeaderSize + payloadSize, Qt::Uninitialized);
+
+        // Channel byte (1 byte)
+        msg[0] = static_cast<char>(kChannelVideo);
+
+        // Frame ID (4 bytes, big endian)
+        msg[1] = static_cast<char>((frameId >> 24) & 0xFF);
+        msg[2] = static_cast<char>((frameId >> 16) & 0xFF);
+        msg[3] = static_cast<char>((frameId >> 8) & 0xFF);
+        msg[4] = static_cast<char>(frameId & 0xFF);
+
+        // Chunk index (2 bytes, big endian)
+        uint16_t chunkIdx16 = static_cast<uint16_t>(chunkIdx);
+        msg[5] = static_cast<char>((chunkIdx16 >> 8) & 0xFF);
+        msg[6] = static_cast<char>(chunkIdx16 & 0xFF);
+
+        // Total chunks (2 bytes, big endian)
+        uint16_t totalChunks16 = static_cast<uint16_t>(totalChunks);
+        msg[7] = static_cast<char>((totalChunks16 >> 8) & 0xFF);
+        msg[8] = static_cast<char>(totalChunks16 & 0xFF);
+
+        // Is keyframe (1 byte)
+        bool isKeyframe = (frameType == 1);
+        msg[9] = static_cast<char>(isKeyframe ? 0x01 : 0x00);
+
+        // Payload size (4 bytes, big endian)
+        uint32_t payloadSize32 = static_cast<uint32_t>(payloadSize);
+        msg[10] = static_cast<char>((payloadSize32 >> 24) & 0xFF);
+        msg[11] = static_cast<char>((payloadSize32 >> 16) & 0xFF);
+        msg[12] = static_cast<char>((payloadSize32 >> 8) & 0xFF);
+        msg[13] = static_cast<char>(payloadSize32 & 0xFF);
+
+        // Backend timestamp (4 bytes, big endian)
+        msg[14] = static_cast<char>((backendTs >> 24) & 0xFF);
+        msg[15] = static_cast<char>((backendTs >> 16) & 0xFF);
+        msg[16] = static_cast<char>((backendTs >> 8) & 0xFF);
+        msg[17] = static_cast<char>(backendTs & 0xFF);
+
+        // Payload
+        if (payloadSize > 0) {
+            memcpy(msg.data() + 1 + kFallbackFragHeaderSize,
+                   data.constData() + offset,
+                   static_cast<size_t>(payloadSize));
+        }
+
+        try {
+            m_WsClient->sendBinaryMessage(msg);
+        } catch (const std::exception& e) {
+            qWarning() << "[SignalingServer] WS fallback send error:" << e.what();
+            return;
+        }
+    }
+
+    if (fallbackFrameCount <= 3 || fallbackFrameCount % 300 == 0) {
+        qInfo() << "[SignalingServer] Fallback video frame #" << fallbackFrameCount
+                << "size=" << totalSize << "chunks=" << totalChunks
+                << "keyframe=" << (frameType == 1);
+    }
+}
+
+void SignalingServer::forwardAudioViaWs(const QByteArray& data)
+{
+    if (m_Stopping.load() || !m_WsFallbackActive || !m_WsClient || !m_WsClient->isValid())
+        return;
+    if (data.isEmpty()) return;
+
+    static int fallbackAudioCount = 0;
+    fallbackAudioCount++;
+
+    int totalSize = data.size();
+    int totalChunks = (totalSize + kFallbackMaxPayloadSize - 1) / kFallbackMaxPayloadSize;
+    uint32_t backendTs = static_cast<uint32_t>(
+        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+
+    static uint32_t wsFrameId = 0;
+    uint32_t frameId = wsFrameId++;
+
+    for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+        int offset = chunkIdx * kFallbackMaxPayloadSize;
+        int payloadSize = std::min(kFallbackMaxPayloadSize, totalSize - offset);
+
+        QByteArray msg(1 + kFallbackFragHeaderSize + payloadSize, Qt::Uninitialized);
+
+        // Channel byte: audio
+        msg[0] = static_cast<char>(kChannelAudio);
+
+        // Frame ID (4 bytes, big endian)
+        msg[1] = static_cast<char>((frameId >> 24) & 0xFF);
+        msg[2] = static_cast<char>((frameId >> 16) & 0xFF);
+        msg[3] = static_cast<char>((frameId >> 8) & 0xFF);
+        msg[4] = static_cast<char>(frameId & 0xFF);
+
+        // Chunk index (2 bytes, big endian)
+        uint16_t chunkIdx16 = static_cast<uint16_t>(chunkIdx);
+        msg[5] = static_cast<char>((chunkIdx16 >> 8) & 0xFF);
+        msg[6] = static_cast<char>(chunkIdx16 & 0xFF);
+
+        // Total chunks (2 bytes, big endian)
+        uint16_t totalChunks16 = static_cast<uint16_t>(totalChunks);
+        msg[7] = static_cast<char>((totalChunks16 >> 8) & 0xFF);
+        msg[8] = static_cast<char>(totalChunks16 & 0xFF);
+
+        // Is keyframe: always 0 for audio
+        msg[9] = static_cast<char>(0x00);
+
+        // Payload size (4 bytes, big endian)
+        uint32_t payloadSize32 = static_cast<uint32_t>(payloadSize);
+        msg[10] = static_cast<char>((payloadSize32 >> 24) & 0xFF);
+        msg[11] = static_cast<char>((payloadSize32 >> 16) & 0xFF);
+        msg[12] = static_cast<char>((payloadSize32 >> 8) & 0xFF);
+        msg[13] = static_cast<char>(payloadSize32 & 0xFF);
+
+        // Backend timestamp (4 bytes, big endian)
+        msg[14] = static_cast<char>((backendTs >> 24) & 0xFF);
+        msg[15] = static_cast<char>((backendTs >> 16) & 0xFF);
+        msg[16] = static_cast<char>((backendTs >> 8) & 0xFF);
+        msg[17] = static_cast<char>(backendTs & 0xFF);
+
+        // Payload
+        if (payloadSize > 0) {
+            memcpy(msg.data() + 1 + kFallbackFragHeaderSize,
+                   data.constData() + offset,
+                   static_cast<size_t>(payloadSize));
+        }
+
+        try {
+            m_WsClient->sendBinaryMessage(msg);
+        } catch (const std::exception& e) {
+            qWarning() << "[SignalingServer] WS fallback audio send error:" << e.what();
+            return;
+        }
+    }
+
+    if (fallbackAudioCount <= 3) {
+        qInfo() << "[SignalingServer] Fallback audio #" << fallbackAudioCount
+                << "size=" << totalSize << "chunks=" << totalChunks;
+    }
+}
+
+void SignalingServer::handleWsFallbackInput(const QString& message)
+{
+    if (m_Stopping.load() || !m_Shim) return;
+
+    QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8());
+    if (!doc.isObject()) {
+        qWarning() << "[SignalingServer] Fallback input: invalid JSON";
+        return;
+    }
+
+    QJsonObject msg = doc.object();
+    QString type = msg["type"].toString();
+
+    // Same input handling as DataChannelRelay::onInputMessage
+    if (type == "keydown" || type == "keyup") {
+        bool down = (type == "keydown");
+        int vk = msg["keyCode"].toInt(0);
+        char mods = 0;
+        if (msg["ctrlKey"].toBool(false))  mods |= 0x02;
+        if (msg["shiftKey"].toBool(false)) mods |= 0x01;
+        if (msg["altKey"].toBool(false))   mods |= 0x04;
+        if (msg["metaKey"].toBool(false))  mods |= 0x08;
+        m_Shim->sendKeyEvent(static_cast<short>(vk), down, mods, 0);
+    }
+    else if (type == "mousemove") {
+        short dx = static_cast<short>(msg["dx"].toInt(0));
+        short dy = static_cast<short>(msg["dy"].toInt(0));
+        m_Shim->sendMouseMove(dx, dy);
+    }
+    else if (type == "mousedown" || type == "mouseup") {
+        bool down = (type == "mousedown");
+        int button = msg["button"].toInt(1);
+        m_Shim->sendMouseButton(down, button);
+    }
+    else if (type == "mousewheel") {
+        short delta = static_cast<short>(msg["delta"].toInt(0));
+        m_Shim->sendMouseScroll(delta);
+    }
+    else if (type == "requestidr") {
+        qInfo() << "[SignalingServer] Fallback input: requesting IDR frame";
+        m_Shim->requestIdrFrame();
+    }
+    else {
+        static int unknownInputCount = 0;
+        if (++unknownInputCount <= 5) {
+            qWarning() << "[SignalingServer] Fallback input: unknown type:" << type;
+        }
+    }
 }
 
 // --- DataChannelRelay signals forwarded to WS client ---
@@ -348,6 +687,23 @@ bool SignalingServer::isPrivateAddress(const QString& ip) const
         if ((ipv4 & 0xFFFF0000) == 0xA9FE0000) return true;
     }
 
+    // Check IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
+    // QHostAddress reports IPv6Protocol for these, but toIPv4Address()
+    // correctly returns the embedded IPv4 address portion.
+    // Without this check, clients connecting via IPv6 from a private IPv4
+    // subnet (e.g. nport relaying IPv6 to localhost) would be classified
+    // as "internet", forcing STUN/TURN unnecessarily.
+    if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
+        quint32 ipv4 = addr.toIPv4Address();
+        if (ipv4 != 0) {
+            // Same private range checks against the embedded IPv4 address
+            if ((ipv4 & 0xFF000000) == 0x0A000000) return true;
+            if ((ipv4 & 0xFFF00000) == 0xAC100000) return true;
+            if ((ipv4 & 0xFFFF0000) == 0xC0A80000) return true;
+            if ((ipv4 & 0xFFFF0000) == 0xA9FE0000) return true;
+        }
+    }
+
     return false;
 }
 
@@ -357,16 +713,27 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
 {
     rtc::Configuration config;
     config.iceTransportPolicy = rtc::TransportPolicy::All;
-    config.forceMediaTransport = true;  // DataChannel only, no media tracks
 
-    // Enable ICE-TCP as fallback: the browser generates TCP candidates
-    // automatically with lower ICE priority than UDP. TCP will only be
-    // chosen if all UDP candidates fail (e.g., restrictive firewall).
-    config.enableIceTcp = true;
+    // forceMediaTransport defaults to false (libdatachannel default).
+    // When true, it forces DTLS-SRTP (media transport) even for
+    // DataChannel-only connections. The browser's answer has no media
+    // tracks, so the SRTP-specific DTLS handshake would fail, causing
+    // the PeerConnection to transition to "Failed" immediately after
+    // ICE connectivity is established.
+    //
+    // Both relay types work correctly with the default:
+    //   - DataChannelRelay: libdatachannel creates DTLS for SCTP automatically
+    //   - MediaTrackRelay: the video track triggers SRTP negotiation implicitly
+    // config.forceMediaTransport is NOT set here.
 
     if (isInternet) {
-        // STUN is always present in Internet mode — it discovers the
-        // public srflx address. Without STUN, we'd have only host candidates.
+        // Enable ICE-TCP as fallback — the browser generates TCP candidates
+        // automatically with lower ICE priority than UDP. TCP will only be
+        // chosen if all UDP candidates fail (e.g., restrictive firewall).
+        config.enableIceTcp = true;
+
+        // STUN discovers the public srflx address. Without STUN, we'd have
+        // only host candidates (not reachable from outside the LAN).
         rtc::IceServer stun("stun:stun.l.google.com:19302");
         config.iceServers.push_back(stun);
 
@@ -384,9 +751,11 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
             qInfo() << "[SignalingServer] Internet ICE: STUN only (no UPnP) + ICE-TCP";
         }
     } else {
-        // LAN: no STUN (loopback candidates only). ICE-TCP provides a TCP
-        // fallback for restrictive LAN environments (corporate firewalls, etc.).
-        qInfo() << "[SignalingServer] LAN ICE: no STUN, no UPnP, ICE-TCP enabled";
+        // LAN: no STUN, no ICE-TCP. Host candidates are sufficient for
+        // loopback/LAN connectivity. ICE-TCP is unnecessary and was found
+        // to cause PeerConnection failures in some libdatachannel versions.
+        config.enableIceTcp = false;
+        qInfo() << "[SignalingServer] LAN ICE: no STUN, no UPnP, no ICE-TCP";
     }
 
     return config;

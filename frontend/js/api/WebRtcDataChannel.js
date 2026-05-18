@@ -72,6 +72,17 @@ export class WebRtcDataChannel {
         // Guard
         this._stopping = false;
 
+        // WS fallback mode: when ICE times out (UDP blocked), the backend
+        // sends video/audio data over the existing signaling WebSocket as
+        // binary frames. Text frames carry input commands the other way.
+        this._wsFallback = false;
+        this._fallbackRequestTimer = null;
+
+        // ICE connection timeout: if ICE doesn't reach "connected" within
+        // 3s, trigger WebSocket fallback (UDP blocked, corporate firewall).
+        this._iceTimeout = null;
+        this.ICE_TIMEOUT_MS = 3000;
+
         // ICE state tracking — used to distinguish premature WS close
         // (before ICE) from graceful WS close after ICE connected but
         // before DataChannels open (which can recover).
@@ -155,8 +166,20 @@ export class WebRtcDataChannel {
         this._cleanupTimer = setInterval(() => this._cleanupStaleFrames(), this.CLEANUP_INTERVAL_MS);
     }
 
-    /** Send JSON input message over the input DataChannel. */
+    /**
+     * Send a JSON message (typically input command) to the backend.
+     * Uses the input DataChannel in normal mode, or the signaling WS in fallback mode.
+     */
     send(obj) {
+        // WS fallback mode: send via text WebSocket message
+        if (this._wsFallback) {
+            if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
+                this.signalingWs.send(JSON.stringify(obj));
+            }
+            return;
+        }
+
+        // Normal mode: send via input DataChannel
         if (this.dataChannels.input && this.dataChannels.input.readyState === 'open') {
             this.dataChannels.input.send(JSON.stringify(obj));
         } else {
@@ -176,6 +199,79 @@ export class WebRtcDataChannel {
         }
     }
 
+    /** Cancel any pending fallback request timer. */
+    _clearFallbackRequestTimer() {
+        if (this._fallbackRequestTimer) {
+            clearTimeout(this._fallbackRequestTimer);
+            this._fallbackRequestTimer = null;
+        }
+    }
+
+    /** Start the ICE connection timeout timer (3s). */
+    _startIceTimer() {
+        this._clearIceTimer();
+        this._iceTimeout = setTimeout(() => this._onIceTimeout(), this.ICE_TIMEOUT_MS);
+        console.log('[WebRTC] ICE timeout set to ' + (this.ICE_TIMEOUT_MS / 1000) + 's');
+    }
+
+    /** Cancel the ICE connection timeout timer. */
+    _clearIceTimer() {
+        if (this._iceTimeout) {
+            clearTimeout(this._iceTimeout);
+            this._iceTimeout = null;
+        }
+    }
+
+    /** Called when ICE fails to connect within 3s. */
+    _onIceTimeout() {
+        if (this._stopping || this.connected || this._iceConnected) return;
+        this._iceTimeout = null;
+
+        console.warn('[WebRTC] ICE timeout — connection not established within ' +
+            (this.ICE_TIMEOUT_MS / 1000) + 's');
+
+        // Try WS fallback: if the signaling WebSocket is still open (TCP),
+        // send a fallback request to the backend.
+        if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
+            this._requestWsFallback('timeout');
+        } else {
+            // WS is gone — no fallback possible, display error
+            this._onError("La connexion WebRTC n'a pas pu être établie. " +
+                "Vérifiez que votre réseau autorise l'UDP sortant.");
+        }
+    }
+
+    /**
+     * Request WebSocket fallback transport.
+     *
+     * Called when ICE fails before ever connecting (UDP blocked by corporate
+     * firewall). Sends a request to the backend to route video/audio data over
+     * the existing signaling WebSocket (TCP) instead of WebRTC DataChannels.
+     *
+     * A 5-second timeout guards against the case where the backend doesn't
+     * respond (e.g. the WS is closed before the response arrives).
+     *
+     * @param {string} reason - Debug label ('disconnected', 'failed', 'timeout')
+     */
+    _requestWsFallback(reason) {
+        if (this._wsFallback || this._stopping) return;
+
+        console.warn('[WebRTC] ICE ' + reason + ' — requesting WS fallback from backend');
+
+        // Cancel the ICE timeout — the 5s fallback timer below replaces it.
+        this._clearIceTimer();
+        this._clearFallbackRequestTimer();
+        this._fallbackRequestTimer = setTimeout(() => {
+            if (!this._wsFallback && !this._stopping) {
+                console.error('[WebRTC] WS fallback response not received within 5s — error');
+                this._onError("La connexion WebRTC n'a pas pu être établie. " +
+                    "Vérifiez que votre réseau autorise l'UDP sortant.");
+            }
+        }, 5000);
+
+        this._sendSignaling({ type: 'fallback-ws-request' });
+    }
+
     /** Mark as stopping without closing — suppresses "closed unexpectedly" noise. */
     markStopping() {
         this._stopping = true;
@@ -189,6 +285,14 @@ export class WebRtcDataChannel {
 
         // Clear any pending WS close grace timer
         this._clearWsCloseTimer();
+
+        // Clear ICE timeout
+        this._clearIceTimer();
+
+        // Clear fallback request timer
+        this._clearFallbackRequestTimer();
+
+        this._wsFallback = false;
 
         // Stop cleanup timer
         if (this._cleanupTimer) {
@@ -262,13 +366,29 @@ export class WebRtcDataChannel {
             console.log('[WebRTC] ICE state:', state);
             if (state === 'connected' || state === 'completed') {
                 this._iceConnected = true;
+                // Cancel ICE timeout — connection established
+                this._clearIceTimer();
+                // Clear fallback request timer — ICE came up
+                this._clearFallbackRequestTimer();
                 // DataChannels should open shortly via SCTP
             } else if (state === 'disconnected' || state === 'failed') {
                 if (!this._stopping) {
-                    // If we were waiting for DCs after WS close, the ICE
-                    // disconnect is definitive — stop waiting and error.
-                    this._clearWsCloseTimer();
-                    this._onError('ICE ' + state);
+                    if (!this._iceConnected) {
+                        // ICE transitioned to disconnected/failed BEFORE ever
+                        // reaching connected. This means UDP is blocked
+                        // (e.g. corporate firewall). Try WS fallback instead
+                        // of immediately erroring — the signaling WebSocket
+                        // (TCP) is still open and can carry data.
+                        this._requestWsFallback(state);
+                    } else {
+                        // ICE WAS connected before — real disconnection.
+                        // Cancel ICE timeout — ICE already failed
+                        this._clearIceTimer();
+                        // If we were waiting for DCs after WS close, the ICE
+                        // disconnect is definitive — stop waiting and error.
+                        this._clearWsCloseTimer();
+                        this._onError('ICE ' + state);
+                    }
                 }
             }
         };
@@ -285,12 +405,15 @@ export class WebRtcDataChannel {
     }
 
     _createDataChannels() {
-        // Video DataChannel (ID=0, ordered=false, maxRetransmits=1)
+        // Video DataChannel (ID=0, ordered=false, maxRetransmits=0 — no retransmits)
+        // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=0.
+        // Real-time video: stale retransmitted data is worse than a dropped packet,
+        // the decoder recovers from the next keyframe.
         const videoInit = {
             negotiated: true,
             id: 0,
             ordered: false,
-            maxRetransmits: 1
+            maxRetransmits: 0
         };
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
         this._setupDataChannel('video', this.dataChannels.video);
@@ -388,6 +511,17 @@ export class WebRtcDataChannel {
             this._handleSdpOffer(msg.sdp);
         } else if (msg.type === 'ice') {
             this._handleIceCandidate(msg.candidate, msg.mid);
+        } else if (msg.type === 'fallback-ws') {
+            // Backend initiated WS fallback (ICE timeout — UDP blocked).
+            // The signaling WebSocket will now carry video/audio as binary frames.
+            console.log('[WebRTC] Received fallback-ws from backend — switching to WS transport');
+            this._handleFallbackWs();
+        } else if (msg.type === 'fallback-ws-ack') {
+            // Response to our fallback-ws-request — backend confirms fallback
+            console.log('[WebRTC] Received fallback-ws-ack from backend');
+            if (!this._wsFallback) {
+                this._handleFallbackWs();
+            }
         } else {
             console.warn('[WebRTC] Unknown signaling message type:', msg.type);
         }
@@ -411,6 +545,11 @@ export class WebRtcDataChannel {
             const answer = await this.pc.createAnswer();
             await this.pc.setLocalDescription(answer);
             console.log('[WebRTC] Local description set (answer), sending...');
+
+            // Start ICE timeout: if ICE doesn't reach connected/completed
+            // within ICE_TIMEOUT_MS, the connection has failed (likely UDP
+            // blocked by a corporate firewall).
+            this._startIceTimer();
 
             // Send answer via signaling WS
             this._sendSignaling({
@@ -670,6 +809,92 @@ export class WebRtcDataChannel {
             console.warn('[WebRTC] Requesting IDR frame (' + reason + ')');
         }
         this.dataChannels.input.send(JSON.stringify({ type: 'requestidr' }));
+    }
+
+    // =========================================================================
+    // WebSocket fallback (when ICE times out — UDP blocked)
+    // =========================================================================
+
+    /**
+     * Switch to WebSocket data transport when WebRTC ICE negotiation fails.
+     *
+     * The signaling WebSocket (already connected via TCP) is repurposed to carry
+     * video/audio data as binary frames and input commands as text frames.
+     * This provides a TCP-based fallback through restrictive corporate firewalls
+     * that block UDP (preventing ICE from completing).
+     *
+     * Video/audio binary format (same as DataChannel fragmentation):
+     *   [channel:1][frag_header:17][payload...]
+     *   channel: 0x01=video, 0x02=audio
+     *
+     * After the switch, we set binaryType='arraybuffer' on the WS and route
+     * incoming binary frames to the existing _onVideoChunk / _onAudioChunk
+     * reassembly logic (stripping the channel prefix byte).
+     */
+    _handleFallbackWs() {
+        if (this._wsFallback || this._stopping) return;
+        console.log('[WebRTC] === SWITCHING TO WS FALLBACK ===');
+        this._wsFallback = true;
+
+        // Cancel ICE timeout — WS transport is now active
+        this._clearIceTimer();
+        // Cancel fallback request timer — fallback has been confirmed
+        this._clearFallbackRequestTimer();
+
+        // Configure WS for binary data reception
+        if (this.signalingWs) {
+            // Remove old message handlers — we install our own
+            this.signalingWs.onmessage = (evt) => this._onWsFallbackMessage(evt);
+            // Ensure binary data arrives as ArrayBuffer
+            this.signalingWs.binaryType = 'arraybuffer';
+        }
+
+        // Close the PeerConnection — we're done with WebRTC
+        // (DataChannels will never open since ICE failed)
+        if (this.pc) {
+            try { this.pc.close(); } catch (e) {}
+            this.pc = null;
+        }
+        this.dataChannels = { video: null, audio: null, input: null };
+
+        // Mark as connected — triggers StreamView to set up decoder etc.
+        this.connected = true;
+
+        console.log('[WebRTC] WS fallback active — video/audio via binary WS, input via text WS');
+
+        // Notify caller that transport is ready
+        if (this.onOpen) this.onOpen();
+    }
+
+    /**
+     * Handle incoming WS messages in fallback mode.
+     * Binary → video/audio data, Text → ignored (no server-to-client text yet).
+     */
+    _onWsFallbackMessage(evt) {
+        if (this._stopping) return;
+
+        // Binary frames carry video/audio data with a 1-byte channel prefix
+        if (evt.data instanceof ArrayBuffer) {
+            const raw = new Uint8Array(evt.data);
+            if (raw.length < 1) return;
+
+            const channel = raw[0];
+            // Strip channel prefix byte — the remaining data starts with 17-byte frag header
+            const payload = raw.subarray(1);
+
+            if (channel === 0x01) {
+                // Video channel
+                this._onVideoChunk(payload);
+            } else if (channel === 0x02) {
+                // Audio channel
+                this._onAudioChunk(payload);
+            } else {
+                console.warn('[WebRTC] WS fallback: unknown channel byte:', channel);
+            }
+        } else if (typeof evt.data === 'string') {
+            // Text messages from backend in fallback mode are currently unused
+            // (reserved for future extensions like rumble or connection stats)
+        }
     }
 
     // =========================================================================

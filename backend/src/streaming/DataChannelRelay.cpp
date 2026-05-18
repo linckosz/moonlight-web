@@ -22,6 +22,13 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
             this, &DataChannelRelay::onAudioSample);
     connect(m_Shim, &MoonlightShim::connectionTerminated,
             this, &DataChannelRelay::onShimConnectionTerminated);
+
+    // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
+    // Connected within 3s after setRemoteDescription().
+    // Triggers WebSocket fallback when UDP is blocked (corporate firewall).
+    m_IceCheckTimer = new QTimer(this);
+    m_IceCheckTimer->setSingleShot(true);
+    connect(m_IceCheckTimer, &QTimer::timeout, this, &DataChannelRelay::onIceCheckTimeout);
 }
 
 DataChannelRelay::~DataChannelRelay()
@@ -49,6 +56,13 @@ bool DataChannelRelay::setRemoteDescription(const std::string& sdp)
     }
     try {
         m_Pc->setRemoteDescription(rtc::Description(sdp));
+        qInfo() << "[DataChannelRelay] Remote description set — starting ICE timeout (3s)";
+        // Start ICE connection timer. The remote description is set, so ICE
+        // negotiation begins now. If it doesn't reach Connected within 3s,
+        // we emit iceTimedOut() for WS fallback.
+        if (m_IceCheckTimer) {
+            m_IceCheckTimer->start(3000);
+        }
         return true;
     } catch (const std::exception& e) {
         qWarning() << "[DataChannelRelay] setRemoteDescription failed:" << e.what();
@@ -143,12 +157,20 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
     m_Pc->onStateChange([this](rtc::PeerConnection::State state) {
         qInfo() << "[DataChannelRelay] PC state changed to" << static_cast<int>(state);
         if (state == rtc::PeerConnection::State::Connected) {
-            qInfo() << "[DataChannelRelay] PeerConnection connected";
+            qInfo() << "[DataChannelRelay] PeerConnection connected — canceling ICE timeout";
+            // Cancel ICE timeout timer — connection established successfully
+            if (m_IceCheckTimer) {
+                m_IceCheckTimer->stop();
+            }
         } else if (state == rtc::PeerConnection::State::Disconnected ||
                    state == rtc::PeerConnection::State::Failed ||
                    state == rtc::PeerConnection::State::Closed) {
             if (!m_Stopping.exchange(true)) {
                 m_Connected = false;
+                // Cancel ICE timeout timer — PC already disconnected/failed
+                if (m_IceCheckTimer) {
+                    m_IceCheckTimer->stop();
+                }
                 qInfo() << "[DataChannelRelay] PC disconnected/failed/closed";
                 emit sessionEnded();
             }
@@ -532,6 +554,11 @@ void DataChannelRelay::stop()
 
     qInfo() << "[DataChannelRelay::stop] ENTER, frameCount=" << m_FrameCount;
 
+    // Stop ICE timeout timer
+    if (m_IceCheckTimer) {
+        m_IceCheckTimer->stop();
+    }
+
     // Reset backpressure counters for next session
     m_DeltaDroppedCount = 0;
     m_KeyframeBackpressureWarnings = 0;
@@ -570,6 +597,20 @@ void DataChannelRelay::requestIdrFrame()
     if (m_Stopping.load() || !m_Shim) return;
     qInfo() << "[DataChannelRelay] requestIdrFrame: forwarding to MoonlightShim";
     m_Shim->requestIdrFrame();
+}
+
+void DataChannelRelay::onIceCheckTimeout()
+{
+    if (m_Stopping.load()) return;
+    if (m_Connected) return; // Safety: should not happen since we cancel on Connected
+
+    qWarning() << "[DataChannelRelay] ICE timeout — PC did not reach Connected within 3s."
+               << "This likely indicates UDP is blocked (corporate firewall)."
+               << "Emitting iceTimedOut() for WebSocket fallback.";
+
+    // Do NOT set m_Stopping or emit sessionEnded() — the SignalingServer
+    // will handle this by switching to WS data transport fallback.
+    emit iceTimedOut();
 }
 
 void DataChannelRelay::setPublicAddress(const std::string& publicIP, uint16_t publicPort)

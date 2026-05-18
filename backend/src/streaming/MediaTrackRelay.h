@@ -59,15 +59,8 @@ public:
 
     bool isConnected() const override { return m_Connected; }
 
-signals:
-    // Emitted when the local SDP description (offer) is ready to send to browser.
-    void signalingSdpReady(const std::string& sdp);
-    // Emitted for each local ICE candidate to forward to browser.
-    void signalingIceCandidate(const std::string& candidate, const std::string& mid);
-    // All channels/tracks are open and ready for data.
-    void dataChannelsOpen();
-    // Session ended (disconnect / error).
-    void sessionEnded();
+    // Signals inherited from RelayBase: signalingSdpReady, signalingIceCandidate,
+    // dataChannelsOpen, sessionEnded.
 
 private slots:
     void onVideoFrame(const QByteArray& data, int frameType, int frameNumber);

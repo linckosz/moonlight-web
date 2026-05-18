@@ -414,6 +414,9 @@ void StreamSession::onLaunchReplyFinished()
             deleteLater();
         });
 
+        // Provide MoonlightShim reference for WS fallback (ICE timeout → WS data transport)
+        signaling->setMoonlightShim(m_Shim);
+
         m_Relay = relay;
         m_Signaling = signaling;
         emit relayCreated(relay);
