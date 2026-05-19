@@ -256,12 +256,34 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
     if (!instance) return DR_OK;
 
-    // Bail early during shutdown: LiStopConnection() may be running on the main
-    // thread (stopping decoder threads) while this callback is called from a
-    // decoder thread. The m_Stopping flag is set atomically by stopConnection()
-    // before LiStopConnection() is called, ensuring this check is visible.
+    // Bail early during shutdown
     if (instance->m_Stopping.load(std::memory_order_acquire)) {
         return DR_OK;
+    }
+
+    // Record frame submit time for decode latency measurement.
+    // The relay reads this in sendFragmented() to compute end-to-end pipeline latency.
+    auto submitTime = std::chrono::steady_clock::now();
+    instance->m_FrameSubmitTimeUs.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            submitTime.time_since_epoch()).count(),
+        std::memory_order_release);
+
+    // If a keyframe arrives and we had an outstanding IDR request, measure RTT.
+    // hostRttMs = round-trip / 2 (one-way latency from backend to Sunshine).
+    if (decodeUnit->frameType == 1) { // FRAME_TYPE_IDR
+        int64_t reqTs = instance->m_IdrRequestTimeUs.load(std::memory_order_acquire);
+        if (reqTs > 0) {
+            int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                submitTime.time_since_epoch()).count();
+            double rttUs = static_cast<double>(nowUs - reqTs);
+            // Only update if RTT is plausible (< 10s)
+            if (rttUs > 0 && rttUs < 10'000'000) {
+                instance->m_HostRttMs.store(rttUs / 2000.0, std::memory_order_release);
+            }
+            // Reset the request timestamp to avoid reusing stale measurements
+            instance->m_IdrRequestTimeUs.store(0, std::memory_order_release);
+        }
     }
 
     // Each LENTRY from moonlight-common-c already contains an Annex B start code
@@ -312,6 +334,13 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
         }
         fflush(stderr);
     }
+
+    // Measure the time spent in buffer concatenation — contributes to decode latency.
+    auto concatEnd = std::chrono::steady_clock::now();
+    instance->m_LastDecodeLatencyUs.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            concatEnd - submitTime).count(),
+        std::memory_order_release);
 
     // Use the local copy — safe even if main thread clears s_Instance concurrently.
     emit instance->videoFrameReady(frameData, decodeUnit->frameType, decodeUnit->frameNumber);
@@ -430,6 +459,12 @@ void MoonlightShim::requestIdrFrame()
         qWarning() << "[MoonlightShim] requestIdrFrame skipped — not connected";
         return;
     }
+    // Record the request timestamp for RTT measurement.
+    // When the next keyframe arrives in drSubmitDecodeUnit(), we compute
+    // hostRttMs = (now - requestTimestamp) / 2 (half round-trip).
+    m_IdrRequestTimeUs.store(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count(),
+        std::memory_order_release);
     qInfo() << "[MoonlightShim] Calling LiRequestIdrFrame() to request IDR from Sunshine";
     LiRequestIdrFrame();
 }

@@ -1,0 +1,41 @@
+Analyse complète du système de routing/navigation frontend actuel.
+
+Contexte :
+- Projet Moonlight-Web : client de streaming GameStream compatible Sunshine
+- Frontend : Vanilla JS modules ES6 dans frontend/js/
+- Backend : C++/Qt servant les fichiers statiques
+
+Tu dois explorer et analyser en détail le système de routing/navigation actuel.
+
+Étape 1 : Liste tous les fichiers JS pertinents dans frontend/js/
+
+Étape 2 : Pour chaque fichier, lis son contenu et identifie :
+- Comment les vues sont gérées (affichage/masquage)
+- Comment la navigation fonctionne (pushState, popState, hash, etc.)
+- Comment l'historique navigateur (History API) est utilisé
+- Comment les transitions entre vues sont déclenchées
+
+Étape 3 : Identifie en particulier :
+- Les vues principales : HostsView, AppsView
+- Les vues overlay/modal : AdminView, SettingsView
+- La vue streaming : StreamView
+- Comment ces vues s'affichent et se masquent
+- Comment les événements popstate sont gérés
+- Où se trouve la logique de routing centralisée (ou non)
+
+Étape 4 : Vérifie l'utilisation de l'URL / du path dans le navigateur :
+- Y a-t-il du hash-based routing (#/hosts, #/apps) ?
+- Y a-t-il du History API (pushState, popstate) ?
+- Le serveur backend a-t-il un fallback SPA (sert index.html pour toutes les routes) ?
+
+Étape 5 : Cherche dans le backend (backend/src/) si un fallback SPA est implémenté.
+
+Résumé attendu :
+1. Architecture actuelle du routing (schéma textuel si pertinent)
+2. Fichiers impliqués avec leur rôle précis
+3. Comment les vues sont gérées
+4. Comment l'historique navigateur est (ou n'est pas) utilisé
+5. Où est la logique de navigation et comment elle est déclenchée
+6. Analyse critique : ce qui manque, ce qui est fragile
+
+Format ta réponse en sections claires. Sois exhaustif.

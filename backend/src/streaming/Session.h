@@ -28,6 +28,7 @@ public:
                   bool gamingMode = true,
                   bool upnpEnabled = true,
                   const QString& transport = "webrtc",
+                  const QString& stunServer = "stun:stun.l.google.com:19302",
                   QObject* parent = nullptr);
     ~StreamSession();
 
@@ -72,6 +73,7 @@ private:
     bool m_GamingMode = true;
     bool m_UpnpEnabled = true;
     QString m_Transport = "webrtc";
+    QString m_StunServer = "stun:stun.l.google.com:19302";
     QNetworkReply* m_LaunchReply = nullptr;
     QString m_SessionUrl;
 

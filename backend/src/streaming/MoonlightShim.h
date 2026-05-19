@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <chrono>
 
 struct _SERVER_INFORMATION;
 struct _STREAM_CONFIGURATION;
@@ -61,6 +62,11 @@ public:
     // Called when the browser needs a keyframe to configure its decoder.
     void requestIdrFrame();
 
+    // Metrics for stats overlay
+    double hostRttMs() const { return m_HostRttMs.load(std::memory_order_acquire); }
+    int64_t lastDecodeLatencyUs() const { return m_LastDecodeLatencyUs.load(std::memory_order_acquire); }
+    int64_t frameSubmitTimeUs() const { return m_FrameSubmitTimeUs.load(std::memory_order_acquire); }
+
 signals:
     void stageChanged(int stage);
     void connectionStarted();
@@ -76,6 +82,12 @@ private:
     std::atomic<bool> m_Stopping{false};
     std::atomic<bool> m_CleanupDone{false};
     static std::atomic<MoonlightShim*> s_Instance;
+
+    // Metrics (written from worker thread, read from main thread)
+    std::atomic<double> m_HostRttMs{0.0};
+    std::atomic<int64_t> m_LastDecodeLatencyUs{0};
+    std::atomic<int64_t> m_FrameSubmitTimeUs{0};
+    std::atomic<int64_t> m_IdrRequestTimeUs{0};
 
     void finishCleanup();
     void blockingStopConnection();

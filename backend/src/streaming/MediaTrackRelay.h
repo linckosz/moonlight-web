@@ -3,6 +3,7 @@
 #include "RelayBase.h"
 #include <QByteArray>
 #include <QMutex>
+#include <QTimer>
 #include <memory>
 #include <atomic>
 #include <string>
@@ -106,4 +107,10 @@ private:
     uint16_t m_PublicPort = 0;
     bool m_ForceHostPublic = false;
     bool m_SuppressIPv6 = false;
+
+    // ── Stats timer (2s interval) ────────────────────────────────────────────
+    QTimer* m_StatsTimer = nullptr;
+
+private slots:
+    void onStatsTimerTick();
 };

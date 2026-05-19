@@ -38,8 +38,16 @@ export class WebRtcDataChannel {
         this.dataChannels = { video: null, audio: null, input: null };
         this.connected = false;
 
-        // ICE config
-        this.iceServers = options.iceServers || [
+        // WSS mode: legacy StreamRelay WebSocket passthrough.
+        // When true, this class acts as a simple WS client that receives
+        // binary video/audio frames (2-byte header + payload) and sends
+        // input commands as JSON text, without any WebRTC PeerConnection.
+        this._wssMode = options.wssMode === true;
+
+        // ICE config — populated dynamically by backend ice-config message.
+        // Fallback: Google public STUN if no message received before PC creation.
+        this._dynamicIceServers = null;
+        this._defaultIceServers = [
             { urls: 'stun:stun.l.google.com:19302' }
         ];
 
@@ -49,6 +57,7 @@ export class WebRtcDataChannel {
         this.onError = null;      // Error event
         this.onVideo = null;      // (frame: Uint8Array, isKeyframe: boolean, backendTs: number)
         this.onAudio = null;      // (sample: Uint8Array)
+        this.onStats = null;      // (msg: object) stats/pong messages from backend
 
         // Stats
         this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
@@ -103,11 +112,17 @@ export class WebRtcDataChannel {
         this.DC_VIDEO_LABEL = 'video';
         this.DC_AUDIO_LABEL = 'audio';
         this.DC_INPUT_LABEL = 'input';
+
+        // WSS mode received frame count (for logging only)
+        this._wssFrameCount = 0;
     }
 
     /**
      * Start the WebRTC connection: connect signaling WS, create PeerConnection,
      * wait for offer from backend, answer, exchange ICE.
+     *
+     * In WSS mode (legacy StreamRelay), skips WebRTC entirely and uses the
+     * WebSocket as a direct binary passthrough for video/audio data.
      */
     connect() {
         if (this._stopping) return;
@@ -115,64 +130,92 @@ export class WebRtcDataChannel {
         console.log('[WebRTC] Connecting to signaling:', this.signalingUrl);
         this.signalingWs = new WebSocket(this.signalingUrl);
 
-        this.signalingWs.onopen = () => {
-            console.log('[WebRTC] Signaling WS connected, waiting for SDP offer...');
-            this._createPeerConnection();
-        };
+        if (this._wssMode) {
+            // ── WSS mode: direct WebSocket binary passthrough ────────────────
+            this.signalingWs.binaryType = 'arraybuffer';
 
-        this.signalingWs.onmessage = (evt) => {
-            if (this._stopping) return;
-            try {
-                const msg = JSON.parse(evt.data);
-                this._handleSignalingMessage(msg);
-            } catch (e) {
-                console.warn('[WebRTC] Invalid signaling message:', e.message);
-            }
-        };
+            this.signalingWs.onopen = () => {
+                console.log('[WSS] WS connected, stream ready');
+                this.connected = true;
+                if (this.onOpen) this.onOpen();
+            };
 
-        this.signalingWs.onerror = (err) => {
-            console.error('[WebRTC] Signaling WS error:', err);
-            if (!this._stopping) {
-                this._onError('Signaling WebSocket error');
-            }
-        };
+            this.signalingWs.onmessage = (evt) => this._onWssMessage(evt);
 
-        this.signalingWs.onclose = (evt) => {
-            console.log('[WebRTC] Signaling WS closed: code=' + evt.code, 'reason=' + evt.reason);
+            this.signalingWs.onerror = (err) => {
+                console.error('[WSS] WS error:', err);
+                if (!this._stopping) {
+                    this._onError('WebSocket error');
+                }
+            };
 
-            // If already connected (DCs open) or stopping, WS close is expected
-            if (this.connected || this._stopping) return;
-
-            if (this._iceConnected) {
-                // ICE was connected, so the WebRTC transport is established.
-                // The WS may have been closed by the backend (e.g. transient
-                // PC state glitch on first launch) even though SCTP/DataChannels
-                // are still coming up.  Give them a grace period to open before
-                // treating the WS close as a fatal error.
-                console.log('[WebRTC] WS closed after ICE connected — waiting ' +
-                    (this.WS_GRACE_PERIOD_MS / 1000) + 's for DataChannels...');
-                this._wsCloseTimer = setTimeout(() => {
-                    if (!this.connected && !this._stopping) {
-                        this._onError('Timed out waiting for DataChannels after WS closed');
+            this.signalingWs.onclose = (evt) => {
+                console.log('[WSS] WS closed: code=' + evt.code, 'reason=' + evt.reason);
+                if (!this._stopping) {
+                    if (this.connected) {
+                        // Unexpected close after being connected
+                        this._onError('WebSocket closed unexpectedly');
+                    } else {
+                        // Closed before connecting
+                        this._onError('WebSocket closed before connection established');
                     }
-                }, this.WS_GRACE_PERIOD_MS);
-            } else {
-                // WS closed before ICE even connected — real failure
-                this._onError('Signaling closed before WebRTC connection established');
-            }
-        };
+                }
+            };
+        } else {
+            // ── Normal WebRTC mode: wait for SDP offer ──────────────────────────
+            this.signalingWs.onopen = () => {
+                console.log('[WebRTC] Signaling WS connected, waiting for SDP offer...');
+                this._createPeerConnection();
+            };
 
-        // Start cleanup timer
-        this._cleanupTimer = setInterval(() => this._cleanupStaleFrames(), this.CLEANUP_INTERVAL_MS);
+            this.signalingWs.onmessage = (evt) => {
+                if (this._stopping) return;
+                try {
+                    const msg = JSON.parse(evt.data);
+                    this._handleSignalingMessage(msg);
+                } catch (e) {
+                    console.warn('[WebRTC] Invalid signaling message:', e.message);
+                }
+            };
+
+            this.signalingWs.onerror = (err) => {
+                console.error('[WebRTC] Signaling WS error:', err);
+                if (!this._stopping) {
+                    this._onError('Signaling WebSocket error');
+                }
+            };
+
+            this.signalingWs.onclose = (evt) => {
+                console.log('[WebRTC] Signaling WS closed: code=' + evt.code, 'reason=' + evt.reason);
+
+                // If already connected (DCs open) or stopping, WS close is expected
+                if (this.connected || this._stopping) return;
+
+                if (this._iceConnected) {
+                    console.log('[WebRTC] WS closed after ICE connected — waiting ' +
+                        (this.WS_GRACE_PERIOD_MS / 1000) + 's for DataChannels...');
+                    this._wsCloseTimer = setTimeout(() => {
+                        if (!this.connected && !this._stopping) {
+                            this._onError('Timed out waiting for DataChannels after WS closed');
+                        }
+                    }, this.WS_GRACE_PERIOD_MS);
+                } else {
+                    this._onError('Signaling closed before WebRTC connection established');
+                }
+            };
+
+            // Start cleanup timer (for chunk reassembly in WebRTC mode)
+            this._cleanupTimer = setInterval(() => this._cleanupStaleFrames(), this.CLEANUP_INTERVAL_MS);
+        }
     }
 
     /**
      * Send a JSON message (typically input command) to the backend.
-     * Uses the input DataChannel in normal mode, or the signaling WS in fallback mode.
+     * Uses the input DataChannel in normal mode, or the signaling WS in WSS/fallback mode.
      */
     send(obj) {
-        // WS fallback mode: send via text WebSocket message
-        if (this._wsFallback) {
+        // WSS mode or WS fallback mode: send via text on the signaling WS
+        if (this._wssMode || this._wsFallback) {
             if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
                 this.signalingWs.send(JSON.stringify(obj));
             }
@@ -283,6 +326,23 @@ export class WebRtcDataChannel {
         this._stopping = true;
         console.log('[WebRTC] Closing...');
 
+        if (this._wssMode) {
+            // WSS mode: only the WS needs closing
+            if (this.signalingWs) {
+                this.signalingWs.onopen = null;
+                this.signalingWs.onmessage = null;
+                this.signalingWs.onerror = null;
+                this.signalingWs.onclose = null;
+                if (this.signalingWs.readyState === WebSocket.OPEN ||
+                    this.signalingWs.readyState === WebSocket.CONNECTING) {
+                    try { this.signalingWs.close(); } catch (e) { /* ignore */ }
+                }
+                this.signalingWs = null;
+            }
+            this.connected = false;
+            return;
+        }
+
         // Clear any pending WS close grace timer
         this._clearWsCloseTimer();
 
@@ -341,10 +401,14 @@ export class WebRtcDataChannel {
     _createPeerConnection() {
         console.log('[WebRTC] Creating RTCPeerConnection');
 
+        // Use dynamically-received ICE servers from backend, or fall back
+        // to the default Google public STUN server.
+        const iceServers = this._dynamicIceServers || this._defaultIceServers;
         const config = {
-            iceServers: this.iceServers,
+            iceServers: iceServers,
             iceTransportPolicy: 'all'
         };
+        console.log('[WebRTC] ICE servers:', JSON.stringify(iceServers));
 
         this.pc = new RTCPeerConnection(config);
 
@@ -487,8 +551,17 @@ export class WebRtcDataChannel {
             } else if (label === 'audio') {
                 this._onAudioChunk(evt.data);
             } else if (label === 'input') {
-                // Server-to-client input messages (rumble, etc.) — not used yet
-                console.log('[WebRTC] Input DC message:', evt.data);
+                // Parse server-to-client JSON messages (stats, pong, rumble, etc.)
+                try {
+                    const msg = JSON.parse(evt.data);
+                    if (msg.type === 'stats' || msg.type === 'pong') {
+                        if (this.onStats) this.onStats(msg);
+                    } else {
+                        console.log('[WebRTC] Input DC message:', msg);
+                    }
+                } catch (e) {
+                    console.warn('[WebRTC] Invalid input DC message:', evt.data);
+                }
             }
         };
     }
@@ -521,6 +594,21 @@ export class WebRtcDataChannel {
             console.log('[WebRTC] Received fallback-ws-ack from backend');
             if (!this._wsFallback) {
                 this._handleFallbackWs();
+            }
+        } else if (msg.type === 'ice-config') {
+            // Dynamic ICE server configuration from backend.
+            // Overrides the default Google STUN with the user-configured server.
+            console.log('[WebRTC] Received ice-config:', JSON.stringify(msg.iceServers));
+            this._dynamicIceServers = msg.iceServers;
+            // If the PeerConnection is already created, update its ICE servers
+            // via setConfiguration() so subsequent ICE candidates use the new config.
+            if (this.pc) {
+                try {
+                    this.pc.setConfiguration({ iceServers: this._dynamicIceServers });
+                    console.log('[WebRTC] Updated PC ICE servers via setConfiguration');
+                } catch (e) {
+                    console.warn('[WebRTC] Failed to update PC ICE config:', e.message);
+                }
             }
         } else {
             console.warn('[WebRTC] Unknown signaling message type:', msg.type);
@@ -790,8 +878,20 @@ export class WebRtcDataChannel {
         }
     }
 
-    /** Request an IDR (key) frame from Sunshine via the input DataChannel. */
+    /** Request an IDR (key) frame from Sunshine via the input DataChannel or WS text (WSS mode). */
     _requestIdrFrame(reason) {
+        // WSS mode: send via signaling WS text message
+        if (this._wssMode) {
+            if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
+                this._idrLogCount++;
+                if (this._idrLogCount <= 5 || this._idrLogCount % 10 === 0) {
+                    console.warn('[WSS] Requesting IDR frame (' + reason + ')');
+                }
+                this.signalingWs.send(JSON.stringify({ type: 'requestidr' }));
+            }
+            return;
+        }
+
         if (!this.dataChannels.input ||
             this.dataChannels.input.readyState !== 'open') {
             // Cannot request IDR yet — input DC not open.  The backend will
@@ -895,6 +995,55 @@ export class WebRtcDataChannel {
             // Text messages from backend in fallback mode are currently unused
             // (reserved for future extensions like rumble or connection stats)
         }
+    }
+
+    // =========================================================================
+    // WSS mode: legacy StreamRelay binary passthrough
+    // =========================================================================
+
+    /**
+     * Handle incoming WebSocket messages in WSS mode.
+     *
+     * StreamRelay protocol (2-byte header + payload):
+     *   [channel:1][flags:1][payload...]
+     *   channel=0x01 video, channel=0x02 audio
+     *   flags bit0: 1=keyframe (video only)
+     *
+     * The video payload is raw H.264 Annex B data; audio is raw PCM16.
+     * Text messages from the backend are ignored (they carry no useful data).
+     */
+    _onWssMessage(evt) {
+        if (this._stopping) return;
+
+        if (evt.data instanceof ArrayBuffer) {
+            const raw = new Uint8Array(evt.data);
+            if (raw.length < 2) return;
+
+            const channel = raw[0];
+            const flags = raw[1];
+            const payload = raw.subarray(2);
+
+            if (channel === 0x01) {
+                // Video frame
+                const isKeyframe = (flags & 0x01) !== 0;
+                this._wssFrameCount++;
+                if (this._wssFrameCount <= 3 || this._wssFrameCount % 60 === 0) {
+                    console.log('[WSS] Video frame #' + this._wssFrameCount +
+                        ' keyframe=' + isKeyframe + ' size=' + payload.length);
+                }
+                if (this.onVideo) {
+                    this.onVideo(payload, isKeyframe, undefined);
+                }
+            } else if (channel === 0x02) {
+                // Audio sample (PCM16)
+                if (this.onAudio) {
+                    this.onAudio(payload);
+                }
+            } else {
+                console.warn('[WSS] Unknown channel byte: 0x' + channel.toString(16));
+            }
+        }
+        // Text messages from backend in WSS mode are ignored
     }
 
     // =========================================================================

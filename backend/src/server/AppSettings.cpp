@@ -142,6 +142,22 @@ void AppSettings::setNportSubdomain(const QString& subdomain)
     writeAll(obj);
 }
 
+// ── STUN server ──────────────────────────────────────────────────────────────────
+
+QString AppSettings::stunServer() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("stun_server").toString(
+        QStringLiteral("stun:stun.l.google.com:19302"));
+}
+
+void AppSettings::setStunServer(const QString& url)
+{
+    QJsonObject obj = readAll();
+    obj["stun_server"] = url;
+    writeAll(obj);
+}
+
 // ── Transport preference ───────────────────────────────────────────────────────
 
 QString AppSettings::transport() const

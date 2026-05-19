@@ -89,10 +89,12 @@ int main(int argc, char* argv[])
     quint16 httpsPort = appSettings.httpsPort(443);
     VideoCodec preferredCodec = appSettings.videoCodec();
     bool upnpEnabled = appSettings.upnpEnabled();
+    QString stunServer = appSettings.stunServer();
     Logger::info("[main] Settings: http_port=" + QString::number(httpPort)
                  + ", https_port=" + QString::number(httpsPort)
                  + ", video_codec=" + AppSettings::videoCodecToString(preferredCodec)
-                 + ", upnp_enabled=" + (upnpEnabled ? "true" : "false"));
+                 + ", upnp_enabled=" + (upnpEnabled ? "true" : "false")
+                 + ", stun_server=" + stunServer);
 
     // Phase 5b: WebRTC DataChannel relay + signaling tracking
     quint16 signalingPort = parser.value("ws-port").toUShort();
@@ -203,7 +205,7 @@ int main(int argc, char* argv[])
     auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
 
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -246,7 +248,8 @@ int main(int argc, char* argv[])
             appSettings.videoCodec(),
             appSettings.gamingMode(),
             effectiveUpnpEnabled,
-            transportPref
+            transportPref,
+            stunServer
         );
 
         // Inform the session about the effective HTTPS port (for wsUrl()
@@ -600,6 +603,7 @@ int main(int argc, char* argv[])
         obj["gaming_mode"] = appSettings.gamingMode();
         obj["upnp_enabled"] = appSettings.upnpEnabled();
         obj["transport"] = appSettings.transport();
+        obj["stun_server"] = appSettings.stunServer();
         return HttpResponse::json(obj);
     });
 
@@ -639,6 +643,16 @@ int main(int argc, char* argv[])
             if (transport == "webrtc" || transport == "wss" || transport == "webrtc-media") {
                 appSettings.setTransport(transport);
                 obj["transport"] = transport;
+                obj["status"] = "saved";
+                hadChange = true;
+            }
+        }
+
+        if (body.contains("stun_server")) {
+            QString url = body["stun_server"].toString().trimmed();
+            if (!url.isEmpty()) {
+                appSettings.setStunServer(url);
+                obj["stun_server"] = url;
                 obj["status"] = "saved";
                 hadChange = true;
             }
