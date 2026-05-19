@@ -5,6 +5,7 @@
 #include "network/UPNPClient.h"
 
 #include <rtc/rtc.hpp>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
@@ -150,6 +151,29 @@ QString SignalingServer::wsUrl() const
     return QString("wss://%1/ws").arg(host);
 }
 
+// --- ICE configuration push to browser ---
+
+void SignalingServer::sendIceConfig()
+{
+    if (!m_WsClient || !m_WsClient->isValid()) {
+        qWarning() << "[SignalingServer] Cannot send ice-config: no WS client";
+        return;
+    }
+
+    QJsonObject iceServer;
+    iceServer["urls"] = m_StunServerUrl;
+    QJsonArray iceServers;
+    iceServers.append(iceServer);
+
+    QJsonObject msg;
+    msg["type"] = "ice-config";
+    msg["iceServers"] = iceServers;
+
+    QJsonDocument doc(msg);
+    m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+    qInfo() << "[SignalingServer] Sent ice-config: stun=" << m_StunServerUrl;
+}
+
 // --- New WS client connected ---
 
 void SignalingServer::onNewWsConnection()
@@ -194,8 +218,12 @@ void SignalingServer::onNewWsConnection()
         qWarning() << "[SignalingServer] WS error:" << err;
     });
 
+    // Send ICE server configuration to the browser first, so the frontend
+    // knows which STUN server to use before creating its RTCPeerConnection.
+    sendIceConfig();
+
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
-    rtc::Configuration config = buildIceConfig(isInternet, m_UpnpMappedPort);
+    rtc::Configuration config = buildIceConfig(isInternet, m_UpnpMappedPort, m_StunServerUrl);
 
     // If UPnP is active, tell the relay to rewrite host candidates with the
     // public IP and mapped port so the browser sees a "host" candidate at
@@ -709,7 +737,7 @@ bool SignalingServer::isPrivateAddress(const QString& ip) const
 
 // ── UPnP NAT traversal ─────────────────────────────────────────────────────────
 
-rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort)
+rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort, const QString& stunServerUrl)
 {
     rtc::Configuration config;
     config.iceTransportPolicy = rtc::TransportPolicy::All;
@@ -734,8 +762,8 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
 
         // STUN discovers the public srflx address. Without STUN, we'd have
         // only host candidates (not reachable from outside the LAN).
-        rtc::IceServer stun("stun:stun.l.google.com:19302");
-        config.iceServers.push_back(stun);
+        // The STUN server URL is configurable via AppSettings (default: Google public STUN).
+        config.iceServers.emplace_back(stunServerUrl.toStdString());
 
         if (upnpMappedPort > 0) {
             // UPnP mode: fix the libdatachannel port to match the UPnP mapping.

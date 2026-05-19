@@ -9,6 +9,7 @@
 #include <QDateTime>
 #include <QMap>
 #include <mutex>
+#include <chrono>
 
 DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
     : RelayBase(parent)
@@ -29,6 +30,12 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
     m_IceCheckTimer = new QTimer(this);
     m_IceCheckTimer->setSingleShot(true);
     connect(m_IceCheckTimer, &QTimer::timeout, this, &DataChannelRelay::onIceCheckTimeout);
+
+    // Stats timer: sends periodic stats (hostRtt, decodeLatency) to the browser.
+    // Starts when Input DC opens, stops in stop().
+    m_StatsTimer = new QTimer(this);
+    m_StatsTimer->setInterval(2000); // 2s interval
+    connect(m_StatsTimer, &QTimer::timeout, this, &DataChannelRelay::onStatsTimerTick);
 }
 
 DataChannelRelay::~DataChannelRelay()
@@ -247,6 +254,12 @@ void DataChannelRelay::createDataChannels()
             // All 3 DataChannels are open when we reach here
             // (they all open together as part of SCTP association)
             emit dataChannelsOpen();
+
+            // Start periodic stats timer
+            if (m_StatsTimer) {
+                m_StatsTimer->start();
+                qInfo() << "[DataChannelRelay] Stats timer started (2s interval)";
+            }
         });
         m_InputDc->onClosed([this]() {
             qInfo() << "[DataChannelRelay] Input DataChannel closed";
@@ -424,6 +437,26 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         qInfo() << "[DataChannelRelay] Requesting IDR frame from Sunshine (browser request)";
         m_Shim->requestIdrFrame();
     }
+    else if (type == "ping") {
+        // Respond with pong on the input DataChannel.
+        // The ts field mirrors the browser's timestamp so it can compute RTT.
+        int seq = msg["seq"].toInt(0);
+        double ts = msg["ts"].toDouble(0);
+        QJsonObject pong;
+        pong["type"] = "pong";
+        pong["seq"] = seq;
+        pong["ts"] = ts;
+        QByteArray pongJson = QJsonDocument(pong).toJson(QJsonDocument::Compact);
+        if (m_InputDc && !m_Stopping.load()) {
+            try {
+                m_InputDc->send(std::string(pongJson.constData(), pongJson.size()));
+            } catch (const std::exception& e) {
+                if (!m_Stopping.load()) {
+                    qWarning() << "[DataChannelRelay] Pong send error:" << e.what();
+                }
+            }
+        }
+    }
     else {
         qWarning() << "[DataChannelRelay] Unknown input type:" << type;
     }
@@ -441,6 +474,21 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
 {
     if (m_Stopping.load() || !dc || !dc->isOpen()) return;
     if (data.isEmpty()) return;
+
+    // Track decode pipeline latency: time from frameSubmitUs (set in
+    // MoonlightShim::drSubmitDecodeUnit) to actual send over WebRTC.
+    // This captures buffer concatenation + signal queuing + fragmentation overhead.
+    if (m_Shim) {
+        int64_t submitTs = m_Shim->frameSubmitTimeUs();
+        if (submitTs > 0) {
+            int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            int64_t latency = nowUs - submitTs;
+            if (latency > 0 && latency < 1'000'000) { // Cap at 1s
+                m_LastDecodeLatencyUs = latency;
+            }
+        }
+    }
 
     // Backpressure: drop delta frames when the SCTP send buffer is full.
     // Without this check, dc->send() blocks the main thread (Qt event loop)
@@ -543,6 +591,35 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     }
 }
 
+// --- Stats timer (2s interval) ---
+
+void DataChannelRelay::onStatsTimerTick()
+{
+    if (m_Stopping.load() || !m_Connected) return;
+    if (!m_InputDc || !m_InputDc->isOpen()) return;
+
+    double hostRttMs = 0.0;
+    int64_t decodeLatUs = m_LastDecodeLatencyUs.load(std::memory_order_acquire);
+
+    if (m_Shim) {
+        hostRttMs = m_Shim->hostRttMs();
+    }
+
+    QJsonObject stats;
+    stats["type"] = "stats";
+    stats["hostRttMs"] = hostRttMs;
+    stats["decodeLatencyUs"] = decodeLatUs;
+    QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);
+
+    try {
+        m_InputDc->send(std::string(statsJson.constData(), statsJson.size()));
+    } catch (const std::exception& e) {
+        if (!m_Stopping.load()) {
+            qWarning() << "[DataChannelRelay] Stats send error:" << e.what();
+        }
+    }
+}
+
 // --- Stop ---
 
 void DataChannelRelay::stop()
@@ -559,9 +636,15 @@ void DataChannelRelay::stop()
         m_IceCheckTimer->stop();
     }
 
+    // Stop stats timer
+    if (m_StatsTimer) {
+        m_StatsTimer->stop();
+    }
+
     // Reset backpressure counters for next session
     m_DeltaDroppedCount = 0;
     m_KeyframeBackpressureWarnings = 0;
+    m_LastDecodeLatencyUs.store(0, std::memory_order_release);
 
     // Clear buffered keyframe (if any)
     m_BufferedKeyframe.clear();

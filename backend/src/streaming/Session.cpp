@@ -25,6 +25,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                bool gamingMode,
                                bool upnpEnabled,
                                const QString& transport,
+                               const QString& stunServer,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -36,6 +37,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_GamingMode(gamingMode)
     , m_UpnpEnabled(upnpEnabled)
     , m_Transport(transport)
+    , m_StunServer(stunServer)
 {
     // Apply video codec preference from settings (default Auto)
     m_Config.codec = videoCodec;
@@ -326,6 +328,7 @@ void StreamSession::onLaunchReplyFinished()
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setUseUPnP(m_UpnpEnabled);
+        signaling->setStunServer(m_StunServer);
 
         // If an explicit WS URL was set (e.g. nport tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
@@ -379,6 +382,7 @@ void StreamSession::onLaunchReplyFinished()
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setUseUPnP(m_UpnpEnabled);
+        signaling->setStunServer(m_StunServer);
 
         // If an explicit WS URL was set (e.g. nport tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {

@@ -35,8 +35,10 @@ export class WebRtcMedia {
         this.dataChannels = { audio: null, input: null };
         this.connected = false;
 
-        // ICE config
-        this.iceServers = options.iceServers || [
+        // ICE config — populated dynamically by backend ice-config message.
+        // Fallback: Google public STUN if no message received before PC creation.
+        this._dynamicIceServers = null;
+        this._defaultIceServers = [
             { urls: 'stun:stun.l.google.com:19302' }
         ];
 
@@ -48,6 +50,7 @@ export class WebRtcMedia {
         this.onClose = null;      // Disconnected / error
         this.onError = null;      // Error event
         this.onAudio = null;      // (sample: Uint8Array) PCM16 audio
+        this.onStats = null;      // (msg: object) stats/pong messages from backend
 
         // Stats
         this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
@@ -227,10 +230,14 @@ export class WebRtcMedia {
     _createPeerConnection() {
         console.log('[WebRtcMedia] Creating RTCPeerConnection');
 
+        // Use dynamically-received ICE servers from backend, or fall back
+        // to the default Google public STUN server.
+        const iceServers = this._dynamicIceServers || this._defaultIceServers;
         const config = {
-            iceServers: this.iceServers,
+            iceServers: iceServers,
             iceTransportPolicy: 'all'
         };
+        console.log('[WebRtcMedia] ICE servers:', JSON.stringify(iceServers));
 
         this.pc = new RTCPeerConnection(config);
 
@@ -351,7 +358,16 @@ export class WebRtcMedia {
             if (label === this.DC_AUDIO_LABEL) {
                 this._onAudioChunk(evt.data);
             } else if (label === this.DC_INPUT_LABEL) {
-                console.log('[WebRtcMedia] Input DC message:', evt.data);
+                try {
+                    const msg = JSON.parse(evt.data);
+                    if (msg.type === 'stats' || msg.type === 'pong') {
+                        if (this.onStats) this.onStats(msg);
+                    } else {
+                        console.log('[WebRtcMedia] Input DC message:', msg);
+                    }
+                } catch (e) {
+                    console.warn('[WebRtcMedia] Invalid input DC message:', evt.data);
+                }
             }
         };
     }
@@ -372,6 +388,18 @@ export class WebRtcMedia {
             this._handleSdpOffer(msg.sdp);
         } else if (msg.type === 'ice') {
             this._handleIceCandidate(msg.candidate, msg.mid);
+        } else if (msg.type === 'ice-config') {
+            // Dynamic ICE server configuration from backend.
+            console.log('[WebRtcMedia] Received ice-config:', JSON.stringify(msg.iceServers));
+            this._dynamicIceServers = msg.iceServers;
+            if (this.pc) {
+                try {
+                    this.pc.setConfiguration({ iceServers: this._dynamicIceServers });
+                    console.log('[WebRtcMedia] Updated PC ICE servers via setConfiguration');
+                } catch (e) {
+                    console.warn('[WebRtcMedia] Failed to update PC ICE config:', e.message);
+                }
+            }
         } else {
             console.warn('[WebRtcMedia] Unknown signaling message type:', msg.type);
         }

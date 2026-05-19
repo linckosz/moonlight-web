@@ -56,6 +56,15 @@ public:
     bool upnpEnabled() const;
     void setUpnpEnabled(bool enabled);
 
+    // ── STUN server ─────────────────────────────────────────────────────────────
+    //
+    // STUN server URL for WebRTC ICE connectivity. Used by both the backend's
+    // libdatachannel PeerConnection and forwarded to the browser for its
+    // RTCPeerConnection. Default: "stun:stun.l.google.com:19302"
+
+    QString stunServer() const;
+    void setStunServer(const QString& url);
+
     // ── Transport preference ──────────────────────────────────────────────────
     //
     // Values stored in JSON: "webrtc" (default), "wss" (legacy StreamRelay)

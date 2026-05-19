@@ -55,6 +55,10 @@ public:
     /// instead of WebRTC DataChannels, using the same fragmentation format.
     void setMoonlightShim(MoonlightShim* shim) { m_Shim = shim; }
 
+    /// Set the STUN server URL to use for ICE configuration.
+    /// Default: "stun:stun.l.google.com:19302"
+    void setStunServer(const QString& url) { m_StunServerUrl = url; }
+
 signals:
     void clientConnected();
     void clientDisconnected();
@@ -86,6 +90,11 @@ private:
     /// Sends {type:"fallback-ws"} to the browser, then routes MoonlightShim
     /// video/audio signals through the signaling WebSocket as binary frames.
     void startWsFallback();
+
+    /// Send ICE server configuration to the browser as {type:"ice-config"}.
+    /// Called in onNewWsConnection() so the browser knows which STUN server
+    /// to use for its RTCPeerConnection, overriding the hardcoded default.
+    void sendIceConfig();
 
     /// Handle text messages received on the WS in fallback mode.
     /// These are input commands (keydown, mousemove, etc.) from the browser.
@@ -122,6 +131,9 @@ private:
     /// If non-empty, wsUrl() returns this URL instead of constructing one.
     QString m_OverrideWsUrl;
 
+    /// STUN server URL for ICE configuration. Default: Google public STUN.
+    QString m_StunServerUrl = QStringLiteral("stun:stun.l.google.com:19302");
+
     // ── UPnP NAT traversal ──────────────────────────────────────────────────
 
 public:
@@ -147,7 +159,8 @@ private:
     /// ICE-TCP is always enabled as fallback. STUN is always present in
     /// Internet mode. UPnP sets a fixed port range and rewrites host candidates.
     static rtc::Configuration buildIceConfig(bool isInternet,
-                                              uint16_t upnpMappedPort);
+                                              uint16_t upnpMappedPort,
+                                              const QString& stunServerUrl);
 
     bool m_UseUPnP = true;
     UPNPClient* m_Upnp = nullptr;

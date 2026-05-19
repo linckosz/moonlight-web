@@ -9,6 +9,7 @@
 #include <QMap>
 #include <cstring>
 #include <random>
+#include <chrono>
 
 MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
     : RelayBase(parent)
@@ -22,6 +23,11 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
             this, &MediaTrackRelay::onAudioSample);
     connect(m_Shim, &MoonlightShim::connectionTerminated,
             this, &MediaTrackRelay::onShimConnectionTerminated);
+
+    // Stats timer: sends periodic stats to the browser via Input DC.
+    m_StatsTimer = new QTimer(this);
+    m_StatsTimer->setInterval(2000);
+    connect(m_StatsTimer, &QTimer::timeout, this, &MediaTrackRelay::onStatsTimerTick);
 }
 
 MediaTrackRelay::~MediaTrackRelay()
@@ -224,6 +230,12 @@ void MediaTrackRelay::createTracksAndChannels()
                 qInfo() << "[MediaTrackRelay] Input DataChannel open";
                 m_Connected = true;
                 emit dataChannelsOpen();
+
+                // Start periodic stats timer
+                if (m_StatsTimer) {
+                    m_StatsTimer->start();
+                    qInfo() << "[MediaTrackRelay] Stats timer started (2s interval)";
+                }
             });
             m_InputDc->onClosed([this]() {
                 qInfo() << "[MediaTrackRelay] Input DataChannel closed";
@@ -432,6 +444,25 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         qInfo() << "[MediaTrackRelay] Requesting IDR frame from Sunshine (browser request)";
         m_Shim->requestIdrFrame();
     }
+    else if (type == "ping") {
+        // Respond with pong (mirror the browser's timestamp for RTT calculation).
+        int seq = msg["seq"].toInt(0);
+        double ts = msg["ts"].toDouble(0);
+        QJsonObject pong;
+        pong["type"] = "pong";
+        pong["seq"] = seq;
+        pong["ts"] = ts;
+        QByteArray pongJson = QJsonDocument(pong).toJson(QJsonDocument::Compact);
+        if (m_InputDc && !m_Stopping.load()) {
+            try {
+                m_InputDc->send(std::string(pongJson.constData(), pongJson.size()));
+            } catch (const std::exception& e) {
+                if (!m_Stopping.load()) {
+                    qWarning() << "[MediaTrackRelay] Pong send error:" << e.what();
+                }
+            }
+        }
+    }
     else {
         qWarning() << "[MediaTrackRelay] Unknown input type:" << type;
     }
@@ -504,6 +535,35 @@ void MediaTrackRelay::sendAudioFragmented(const QByteArray& data,
     }
 }
 
+// ── Stats timer (2s interval) ───────────────────────────────────────────────────
+
+void MediaTrackRelay::onStatsTimerTick()
+{
+    if (m_Stopping.load() || !m_Connected) return;
+    if (!m_InputDc || !m_InputDc->isOpen()) return;
+
+    double hostRttMs = 0.0;
+    if (m_Shim) {
+        hostRttMs = m_Shim->hostRttMs();
+    }
+
+    QJsonObject stats;
+    stats["type"] = "stats";
+    stats["hostRttMs"] = hostRttMs;
+    // Media track mode: decode happens natively in the browser via RTP,
+    // so backend decode latency is not meaningful here.
+    stats["decodeLatencyUs"] = 0;
+    QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);
+
+    try {
+        m_InputDc->send(std::string(statsJson.constData(), statsJson.size()));
+    } catch (const std::exception& e) {
+        if (!m_Stopping.load()) {
+            qWarning() << "[MediaTrackRelay] Stats send error:" << e.what();
+        }
+    }
+}
+
 // ── Stop ────────────────────────────────────────────────────────────────────────
 
 void MediaTrackRelay::stop()
@@ -514,6 +574,11 @@ void MediaTrackRelay::stop()
     }
 
     qInfo() << "[MediaTrackRelay::stop] ENTER, frameCount=" << m_FrameCount;
+
+    // Stop stats timer
+    if (m_StatsTimer) {
+        m_StatsTimer->stop();
+    }
 
     m_Connected = false;
     m_BufferedKeyframe.clear();

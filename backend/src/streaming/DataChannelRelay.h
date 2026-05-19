@@ -112,6 +112,9 @@ private:
     int m_DeltaDroppedCount = 0;           // Delta frames dropped due to full SCTP buffer
     int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
 
+    // Decode latency tracking (microseconds)
+    std::atomic<int64_t> m_LastDecodeLatencyUs{0};
+
     // Buffered keyframe: if the first IDR arrives before the Video DataChannel
     // is open, we save it here and send it as soon as the DC opens.
     // This prevents a rare black-screen race where the browser receives only
@@ -128,8 +131,12 @@ private:
     // ── ICE timeout ──────────────────────────────────────────────────────────
     QTimer* m_IceCheckTimer = nullptr;
 
+    // ── Stats timer (2s interval) ────────────────────────────────────────────
+    QTimer* m_StatsTimer = nullptr;
+
 private slots:
     void onIceCheckTimeout();
+    void onStatsTimerTick();
 
 signals:
     /// Emitted when ICE fails to reach Connected within 3s after setRemoteDescription.

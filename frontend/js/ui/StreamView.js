@@ -27,6 +27,62 @@ import {
     CODEC_AV1
 } from '../util/Av1Utils.js';
 
+/**
+ * Sliding window statistics tracker.
+ * Maintains a fixed-duration window of samples and provides min/max/avg.
+ */
+class SlidingStats {
+    constructor(windowMs = 5000) {
+        this._windowMs = windowMs;
+        this._samples = []; // [{ time, value }]
+    }
+
+    addSample(value) {
+        this._samples.push({ time: performance.now(), value });
+        this._prune();
+    }
+
+    get count() {
+        this._prune();
+        return this._samples.length;
+    }
+
+    get min() {
+        this._prune();
+        if (this._samples.length === 0) return 0;
+        let m = Infinity;
+        for (const s of this._samples) {
+            if (s.value < m) m = s.value;
+        }
+        return m;
+    }
+
+    get max() {
+        this._prune();
+        if (this._samples.length === 0) return 0;
+        let m = -Infinity;
+        for (const s of this._samples) {
+            if (s.value > m) m = s.value;
+        }
+        return m;
+    }
+
+    get avg() {
+        this._prune();
+        if (this._samples.length === 0) return 0;
+        let sum = 0;
+        for (const s of this._samples) {
+            sum += s.value;
+        }
+        return sum / this._samples.length;
+    }
+
+    _prune() {
+        const cutoff = performance.now() - this._windowMs;
+        this._samples = this._samples.filter(s => s.time > cutoff);
+    }
+}
+
 export class StreamView {
     constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc') {
         this.container = container;
@@ -38,6 +94,10 @@ export class StreamView {
         this._upnpEnabled = upnpEnabled;
         this._upnpAvailable = upnpAvailable;
 
+        /** Callback invoked after quit() completes cleanup. Used by MoonlightApp
+         *  to restore the underlying main view (apps/hosts). */
+        this.onQuit = null;
+
         // ── UPnP status toast ─────────────────────────────────────────────────
         if (this._upnpEnabled) {
             if (this._upnpAvailable) {
@@ -48,6 +108,10 @@ export class StreamView {
         }
         if (this._transport === 'webrtc-media') {
             this.webrtc = new WebRtcMedia(signalingUrl);
+        } else if (this._transport === 'wss') {
+            // Legacy WSS mode: direct WebSocket passthrough via StreamRelay,
+            // without any WebRTC PeerConnection or DataChannels.
+            this.webrtc = new WebRtcDataChannel(signalingUrl, { wssMode: true });
         } else {
             this.webrtc = new WebRtcDataChannel(signalingUrl);
         }
@@ -80,6 +144,17 @@ export class StreamView {
         this._startTime = performance.now();// Stream start time for bitrate calc
         this._fpsTimestamps = [];           // performance.now() per decoded frame
         this._latencySamples = [];          // { time: perfNow, latency: ms }
+
+        // ── Stats overlay (Amelioration 2) ───────────────────────────────────
+        this._hostRttStats = new SlidingStats(5000);       // backed RTT (ms)
+        this._browserRttStats = new SlidingStats(5000);    // browser ping/pong RTT (ms)
+        this._decodeLatencyStats = new SlidingStats(5000); // backend decode latency (ms)
+        this._pingSeq = 0;
+        this._pingInterval = null;
+
+        // Forward stats/pong messages from backend to the stats overlay system.
+        // Set before setupWebRtc() so it's active when connect() is called.
+        this.webrtc.onStats = (msg) => this._handleStatsMessage(msg);
 
         // Bound handlers
         this._onKeyDown = (e) => this.handleKeyDown(e);
@@ -253,10 +328,10 @@ export class StreamView {
         this._overlayEl = document.createElement('div');
         this._overlayEl.id = 'stream-stats-overlay';
         this._overlayEl.style.cssText =
-            'position:fixed;top:50px;right:10px;' +
-            'background:rgba(0,0,0,0.6);color:#ccc;' +
-            'font-family:monospace;font-size:12px;' +
-            'padding:8px 12px;border-radius:6px;' +
+            'position:fixed;top:10px;right:10px;' +
+            'background:rgba(0,0,0,0.55);color:#ccc;' +
+            'font:11px monospace;' +
+            'padding:6px 10px;border-radius:6px;' +
             'z-index:100;pointer-events:none;' +
             'white-space:pre;display:none;';
         this._overlayEl.textContent = 'Waiting...';
@@ -707,6 +782,15 @@ export class StreamView {
             this.connected = true;
             this.setStatus('connecting', 'Waiting for stream...');
 
+            // Start ping timer for browser-side RTT measurement.
+            // Sends a ping every 2s on the input DC; backend echoes back a pong.
+            if (this._pingInterval) clearInterval(this._pingInterval);
+            this._pingInterval = setInterval(() => {
+                if (this._quitting) return;
+                const seq = this._pingSeq++;
+                this.webrtc.send({ type: 'ping', seq, ts: performance.now() });
+            }, 2000);
+
             if (this._transport === 'webrtc-media') {
                 // Media track mode: video arrives natively via <video> element.
                 // No WebCodecs decoder needed. The first video frame triggers
@@ -767,7 +851,6 @@ export class StreamView {
         const elapsed = (now - this._startTime) / 1000;
         let fps = 0;
         let bitrateMbps = 0;
-        let latencyMs = 0;
 
         // FPS: decoded frames in the last 2 seconds
         const cutoff = now - 2000;
@@ -779,23 +862,68 @@ export class StreamView {
             bitrateMbps = ((this._totalBytes * 8) / elapsed) / 1e6;
         }
 
-        // Latency: average of last 5s of samples
-        const latencyCutoff = now - 5000;
-        this._latencySamples = this._latencySamples.filter(s => s.time > latencyCutoff);
-        if (this._latencySamples.length > 0) {
-            const sum = this._latencySamples.reduce((a, s) => a + s.latency, 0);
-            latencyMs = Math.round(sum / this._latencySamples.length);
-        }
-
         const codec = this.videoCodec === 'auto' ? 'h264' : this.videoCodec;
 
-        this._overlayEl.textContent =
-            this._resolution + ' | ' +
+        // Build enriched overlay lines
+        const lines = [];
+
+        // Line 1: basic stream info
+        lines.push(
+            (this._resolution || '?') + ' | ' +
             fps + ' fps | ' +
             bitrateMbps.toFixed(1) + ' Mbps | ' +
             codec + ' | ' +
-            this._transport + ' | ' +
-            latencyMs + 'ms';
+            this._transport
+        );
+
+        // Line 2: host RTT (backend ↔ Sunshine)
+        if (this._hostRttStats.count > 0) {
+            const avg = this._hostRttStats.avg.toFixed(1);
+            const min = this._hostRttStats.min.toFixed(1);
+            const max = this._hostRttStats.max.toFixed(1);
+            lines.push('RTT host: ' + avg + 'ms [' + min + '-' + max + ']');
+        }
+
+        // Line 3: browser RTT (browser ↔ backend)
+        if (this._browserRttStats.count > 0) {
+            const avg = this._browserRttStats.avg.toFixed(1);
+            const min = this._browserRttStats.min.toFixed(1);
+            const max = this._browserRttStats.max.toFixed(1);
+            lines.push('RTT browser: ' + avg + 'ms [' + min + '-' + max + ']');
+        }
+
+        // Line 4: decode latency
+        if (this._decodeLatencyStats.count > 0) {
+            const avg = this._decodeLatencyStats.avg.toFixed(1);
+            const min = this._decodeLatencyStats.min.toFixed(1);
+            const max = this._decodeLatencyStats.max.toFixed(1);
+            lines.push('Decode: ' + avg + 'ms [' + min + '-' + max + ']');
+        }
+
+        // Line 5: frame counts
+        lines.push('Frames: R:' + this.stats.received +
+            ' D:' + this.stats.decoded +
+            ' Dr:' + this.stats.dropped);
+
+        this._overlayEl.textContent = lines.join('\n');
+    }
+
+    // ── Stats message handler (ping/pong + periodic backend stats) ─────────
+
+    _handleStatsMessage(msg) {
+        if (msg.type === 'pong') {
+            const browserRtt = performance.now() - msg.ts;
+            if (browserRtt > 0 && browserRtt < 10000) {
+                this._browserRttStats.addSample(browserRtt);
+            }
+        } else if (msg.type === 'stats') {
+            if (msg.hostRttMs !== undefined && msg.hostRttMs > 0) {
+                this._hostRttStats.addSample(msg.hostRttMs);
+            }
+            if (msg.decodeLatencyUs !== undefined && msg.decodeLatencyUs > 0) {
+                this._decodeLatencyStats.addSample(msg.decodeLatencyUs / 1000);
+            }
+        }
     }
 
     handleVideoFrame(data, isKeyframe, backendTs) {
@@ -1246,6 +1374,12 @@ export class StreamView {
             this._overlayEl.style.display = 'none';
         }
 
+        // Clear ping timer
+        if (this._pingInterval) {
+            clearInterval(this._pingInterval);
+            this._pingInterval = null;
+        }
+
         // Clear IDR request timer
         if (this._idrTimeout) {
             clearTimeout(this._idrTimeout);
@@ -1298,6 +1432,13 @@ export class StreamView {
         }
 
         this.destroy();
+
+        // Notify MoonlightApp that streaming ended (restores apps/hosts view).
+        if (this.onQuit) {
+            const cb = this.onQuit;
+            this.onQuit = null;  // Fire once
+            cb();
+        }
     }
 
     destroy() {
@@ -1305,6 +1446,11 @@ export class StreamView {
         this.stopDiagnostics();
         this.unbindEvents();
         this.webrtc.close();
+
+        if (this._pingInterval) {
+            clearInterval(this._pingInterval);
+            this._pingInterval = null;
+        }
 
         if (this._idrTimeout) {
             clearTimeout(this._idrTimeout);
