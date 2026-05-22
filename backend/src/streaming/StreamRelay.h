@@ -26,6 +26,9 @@ public:
     quint16 wsPort() const { return m_WsPort; }
     QString wsUrl() const;
 
+    /// Access the MoonlightShim for explicit stopConnection() before cleanup.
+    MoonlightShim* moonlightShim() const { return m_Shim; }
+
 signals:
     void sessionEnded();
     void clientConnected();

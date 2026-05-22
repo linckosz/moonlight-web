@@ -55,8 +55,11 @@ SOURCES += \
     src/server/StaticFileHandler.cpp \
     src/server/RestRouter.cpp \
     src/common/Logger.cpp \
-    src/network/NportClient.cpp \
     src/network/UPNPClient.cpp \
+    src/network/DeSecClient.cpp \
+    src/network/StunClient.cpp \
+    src/network/AcmeClient.cpp \
+    src/network/InternetAccessManager.cpp \
     src/TrayManager.cpp \
     src/backend/NvHTTP.cpp \
     src/backend/NvComputer.cpp \
@@ -112,8 +115,11 @@ HEADERS += \
     src/server/RestRouter.h \
     src/common/Logger.h \
     src/common/Types.h \
-    src/network/NportClient.h \
     src/network/UPNPClient.h \
+    src/network/DeSecClient.h \
+    src/network/StunClient.h \
+    src/network/AcmeClient.h \
+    src/network/InternetAccessManager.h \
     src/TrayManager.h \
     src/backend/NvAddress.h \
     src/backend/NvApp.h \
@@ -150,7 +156,7 @@ DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"
 DEFINES += CERT_DIR=\\\"$$PWD/cert/\\\"
 
 win32 {
-    LIBS += -lWS2_32 -lwinmm -lBcrypt
+    LIBS += -lWS2_32 -lwinmm -lBcrypt -lCrypt32
     LIBS += -L$$PWD/libs/windows/lib/x64 -llibssl -llibcrypto
 }
 

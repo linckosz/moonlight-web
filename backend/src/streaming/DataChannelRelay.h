@@ -57,6 +57,8 @@ public:
 
     bool isConnected() const override { return m_Connected; }
 
+    MoonlightShim* moonlightShim() const override { return m_Shim; }
+
     // Signals inherited from RelayBase: signalingSdpReady, signalingIceCandidate,
     // dataChannelsOpen, sessionEnded.
 

@@ -24,9 +24,9 @@ SignalingServer::SignalingServer(RelayBase* relay,
     , m_ServerHost(serverHost)
 {
     qInfo() << "[SignalingServer] Created, wsPort=" << wsPort
-            << "mode=NonSecure (nport/Cloudflare handles TLS)";
+            << "mode=NonSecure (tunnel/Cloudflare handles TLS)";
 
-    // Always NonSecure — TLS is terminated by nport/Cloudflare for remote access.
+    // Always NonSecure — TLS is terminated by the external tunnel or Cloudflare.
     // Local LAN clients connect via ws://localhost:<port> directly.
     m_WsServer = new QWebSocketServer(
         QString("Moonlight-Signaling"),
@@ -131,7 +131,7 @@ void SignalingServer::stop()
 QString SignalingServer::wsUrl() const
 {
     if (!m_OverrideWsUrl.isEmpty()) {
-        // Override URL (e.g. from nport tunnel): "https://moonlightweb-xxx.nport.link"
+        // Override URL (e.g. from a public tunnel endpoint)
         QString url = m_OverrideWsUrl;
         // Replace https:// with wss:// for WebSocket protocol
         if (url.startsWith("https://"))
@@ -719,7 +719,7 @@ bool SignalingServer::isPrivateAddress(const QString& ip) const
     // QHostAddress reports IPv6Protocol for these, but toIPv4Address()
     // correctly returns the embedded IPv4 address portion.
     // Without this check, clients connecting via IPv6 from a private IPv4
-    // subnet (e.g. nport relaying IPv6 to localhost) would be classified
+    // subnet (e.g. a tunnel relaying IPv6 to localhost) would be classified
     // as "internet", forcing STUN/TURN unnecessarily.
     if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
         quint32 ipv4 = addr.toIPv4Address();

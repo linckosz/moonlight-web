@@ -2,8 +2,9 @@
  * Moonlight-Web — Server Settings
  *
  * Server administration functions (localhost only):
+ *   - Internet Access (deSEC) with DNS propagation check
  *   - HTTPS port configuration
- *   - nport.io tunnel configuration (remote access via nport CLI)
+ *   - Transport mode
  *
  * All settings stored server-side. Unsaved changes are discarded on close.
  */
@@ -19,14 +20,24 @@ export class AdminView {
         this._httpsPort = 443;
         this._httpPort = 80;
 
-        // Tunnel state (nport)
-        this._tunnelActive = false;
-        this._tunnelUrl = '';
-        this._tunnelSubdomain = '';
-        this._tunnelAvailable = false;
-        this._tunnelError = '';
-        this._tunnelState = 'idle';  // idle | checking | starting | active | error | unavailable
-        this._tunnelSeq = 0;         // Incremented on each enable/disable, guards poll races
+        // Internet Access state (deSEC)
+        this._internetEnabled = false;
+        this._domain = '';
+        this._publicIp = '';
+        this._localIp = '';
+        this._uniqueId = '';
+        this._transportMode = 'auto';
+        this._upnpAvailable = false;
+        this._pendingRegistration = false;
+        this._lastError = '';
+
+        // GDPR consent gate (once per page load)
+        this._gdprConsented = false;
+
+        // DNS propagation polling
+        this._dnsPollTimer = null;
+        this._dnsPollAttempts = 0;
+        this._maxDnsPollAttempts = 60; // 5 min at 5s interval
 
         // Dirty tracking: snapshot of values at load time
         this._cleanState = {};
@@ -35,9 +46,10 @@ export class AdminView {
 
     async start() {
         await this._loadState();
-        await this._loadTunnelState();
+        await this._loadInternetState();
         this.render();
         this.bindEvents();
+        this._startDnsPollingIfNeeded();
     }
 
     async _loadState() {
@@ -50,36 +62,80 @@ export class AdminView {
         }
     }
 
-    async _loadTunnelState() {
+    async _loadInternetState() {
         try {
-            const status = await BackendClient.getTunnelStatus();
-            this._tunnelActive = status.active || false;
-            this._tunnelUrl = status.public_url || '';
-            this._tunnelSubdomain = status.subdomain || '';
-            this._tunnelAvailable = status.available || false;
-            this._tunnelError = status.error || '';
-            this._updateTunnelState();
+            const status = await BackendClient.getInternetStatus();
+            this._internetEnabled = status.internet_access_enabled || false;
+            this._domain = status.domain || '';
+            this._publicIp = status.public_ip || '';
+            this._localIp = status.local_ip || '';
+            this._uniqueId = status.unique_id || '';
+            this._transportMode = status.transport_mode || 'auto';
+            this._upnpAvailable = status.upnp_available || false;
+            this._pendingRegistration = status.pending_registration || false;
+            this._lastError = status.last_error || '';
+            this._httpsPort = status.https_port || this._httpsPort;
         } catch (err) {
-            console.warn('[Admin] Failed to load tunnel status:', err);
-            this._tunnelState = 'error';
-            this._tunnelError = 'Failed to check tunnel status';
-        }
-    }
-
-    _updateTunnelState() {
-        if (!this._tunnelAvailable) {
-            this._tunnelState = 'unavailable';
-        } else if (this._tunnelError && !this._tunnelActive) {
-            this._tunnelState = 'error';
-        } else if (this._tunnelActive) {
-            this._tunnelState = 'active';
-        } else {
-            this._tunnelState = 'idle';
+            console.warn('[Admin] Failed to load internet status:', err);
         }
     }
 
     destroy() {
-        // Cleanup if needed
+        this._stopDnsPolling();
+    }
+
+    // --- DNS Propagation Polling ---
+
+    _startDnsPollingIfNeeded() {
+        if (this._internetEnabled && this._pendingRegistration) {
+            this._startDnsPolling();
+        }
+    }
+
+    _startDnsPolling() {
+        this._stopDnsPolling();
+        this._dnsPollAttempts = 0;
+        this._dnsPollTimer = setInterval(async () => {
+            this._dnsPollAttempts++;
+            if (this._dnsPollAttempts > this._maxDnsPollAttempts) {
+                this._stopDnsPolling();
+                this._pendingRegistration = false;
+                this._lastError = 'DNS propagation timed out after 5 minutes. Check your domain configuration.';
+                this.render();
+                this.bindEvents();
+                return;
+            }
+            try {
+                const status = await BackendClient.getInternetStatus();
+                if (!status.pending_registration && status.domain) {
+                    // DNS propagated successfully
+                    this._stopDnsPolling();
+                    this._internetEnabled = true;
+                    this._domain = status.domain || this._domain;
+                    this._publicIp = status.public_ip || this._publicIp;
+                    this._pendingRegistration = false;
+                    this._lastError = '';
+                    this.render();
+                    this.bindEvents();
+                    Toast.success('DNS propagated — your site is now available at ' + this._domain);
+                } else if (status.last_error && status.last_error !== this._lastError) {
+                    this._lastError = status.last_error;
+                    this._pendingRegistration = status.pending_registration !== false;
+                    this.render();
+                    this.bindEvents();
+                }
+            } catch (err) {
+                console.warn('[Admin] DNS poll failed:', err);
+            }
+        }, 5000);
+    }
+
+    _stopDnsPolling() {
+        if (this._dnsPollTimer) {
+            clearInterval(this._dnsPollTimer);
+            this._dnsPollTimer = null;
+        }
+        this._dnsPollAttempts = 0;
     }
 
     // --- Dirty tracking ---
@@ -111,43 +167,43 @@ export class AdminView {
 
     // --- Rendering ---
 
-    _tunnelInfoText() {
-        switch (this._tunnelState) {
-            case 'starting':
-                return '<span class="tunnel-spinner"></span> Starting tunnel...';
-            case 'active':
-                return 'Tunnel is active — you can stream from anywhere.';
-            case 'error':
-                return this.esc(this._tunnelError || 'Failed to start tunnel.');
-            case 'unavailable':
-                return 'Unavailable — nport binary not found. Run prepare_node_nport.ps1 to enable remote access.';
-            case 'idle':
-            default:
-                return '';
+    _buildDomainUrl() {
+        if (!this._domain) return '';
+        const prefix = 'https://' + this._domain;
+        if (this._httpsPort !== 443) {
+            return prefix + ':' + this._httpsPort;
         }
+        return prefix;
     }
 
-    _tunnelInfoClass() {
-        switch (this._tunnelState) {
-            case 'active':  return 'tunnel-info-success';
-            case 'error':   return 'tunnel-info-error';
-            case 'starting': return 'tunnel-info-pending';
-            case 'unavailable': return 'tunnel-info-warning';
-            default:        return 'tunnel-info-neutral';
-        }
-    }
+    _getLocalIpForDisplay() {
+        // Only reveal the server LAN IP when accessing from localhost.
+        // Remote LAN clients already know the IP (they typed it in the URL).
+        const hostname = window.location.hostname;
+        const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+        if (!isLocalhost) return '';
 
-    _tunnelUrlHtml() {
-        if (!this._tunnelSubdomain) return '';
-        const domain = `moonlightweb-${this._tunnelSubdomain}.nport.link`;
-        const displayUrl = `https://${domain}`;
-        if (this._tunnelState === 'active' && this._tunnelUrl) {
-            return `<a class="tunnel-url-link" href="${this.esc(displayUrl)}" target="_blank" rel="noopener">${this.esc(displayUrl)}</a>`;
-        }
-        return `<span class="tunnel-url-disabled">${this.esc(displayUrl)}</span>`;
+        // Use the backend-discovered LAN IP (from GetAdaptersAddresses / UPnP).
+        if (this._localIp) return this._localIp;
+
+        // On localhost the backend should have provided the IP via getLocalIP().
+        // If not, show a generic placeholder.
+        return '192.168.?.?';
     }
 
     render() {
+        const transportOptions = [
+            { value: 'auto', label: 'Auto (prefer UDP)' },
+            { value: 'webrtc-media-udp', label: 'WebRTC MediaTrack (UDP)' },
+            { value: 'webrtc-dc-udp', label: 'WebRTC DataChannel (UDP)' },
+            { value: 'webrtc-media-tcp', label: 'WebRTC MediaTrack (TCP)' },
+            { value: 'webrtc-dc-tcp', label: 'WebRTC DataChannel (TCP)' },
+            { value: 'wss', label: 'WSS (WebSocket Secure)' }
+        ];
+
+        const domainUrl = this._buildDomainUrl();
+        const showDomain = this._internetEnabled || !!this._domain;
+
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
                 <div class="admin-header">
@@ -156,62 +212,114 @@ export class AdminView {
                             title="Close (discards unsaved changes)">&times;</button>
                 </div>
 
-                <!-- nport.io Tunnel (Internet Access) -->
+                <!-- Internet -->
                 <div class="settings-section">
+                    <h3 class="settings-section-title">Internet</h3>
 
-                    <div class="tunnel-checkbox-row">
-                        <label class="tunnel-checkbox-label">
-                            <input type="checkbox" id="chk-tunnel-enable"
-                                   ${this._tunnelState === 'unavailable' ? 'disabled' : ''}
-                                   ${this._tunnelState === 'active' ? 'checked' : ''} />
-                            <span class="tunnel-checkbox-text">Internet Access</span>
-                        </label>
+                    <label class="tunnel-checkbox-label">
+                        <input type="checkbox" id="chk-internet-enable"
+                               ${this._internetEnabled ? 'checked' : ''} />
+                        <span class="tunnel-checkbox-text">Enable Internet Access</span>
+                    </label>
+
+                    ${showDomain ? `
+                        <div style="margin-top:12px;">
+                            <div class="settings-field">
+                                <div style="padding:6px 0;font-family:monospace;">
+                                    ${this._internetEnabled && !this._pendingRegistration && domainUrl
+                                        ? `<a href="${this.esc(domainUrl)}" target="_blank" rel="noopener" class="tunnel-url-link">${this.esc(domainUrl)}</a>`
+                                        : `<span class="tunnel-url-disabled">${domainUrl ? this.esc(domainUrl) : ''}</span>`
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <!-- Info frame (always visible) -->
+                    <div class="internet-info-box">
+                        <p>Activating sends your <strong>public IP</strong> to deSEC to create
+                        a DNS A record pointing to your network.</p>
+                        <p>Authorizes <strong>UPnP</strong> port mapping on your router
+                        ${this._upnpAvailable ? '(available on this network).' : '(not available on this network).'}
+                        You can also forward ports manually.</p>
+                        ${this._publicIp ? `<p>Public IP: <code>${this.esc(this._publicIp)}</code></p>` : ''}
+                        <p>UPnP: ${this._upnpAvailable
+                            ? '<span class="text-success">Available</span>'
+                            : '<span class="text-muted">Not available</span>'}
+                        </p>
                     </div>
 
-                    <p class="settings-section-desc">
-                        Creates a secure nport tunnel you can stream from outside
-                        your home network.
-                        <a href="https://www.npmjs.com/package/nport" target="_blank" rel="noopener">Learn more</a>.
-                    </p>
+                    <!-- DNS propagation indicator -->
+                    ${this._pendingRegistration ? `
+                        <div class="dns-propagating">
+                            <span class="tunnel-spinner"></span>
+                            <span>DNS propagation in progress &mdash; your site will be
+                            available shortly. This may take a few minutes...</span>
+                        </div>
+                    ` : ''}
 
-                    <div class="tunnel-domain-row">
-                        <span class="tunnel-domain-label">Your secured public domain:</span>
-                        ${this._tunnelUrlHtml()}
-                    </div>
+                    <!-- Error display -->
+                    ${this._lastError && !this._pendingRegistration ? `
+                        <div class="internet-info-box internet-info-error">
+                            <p>${this.esc(this._lastError)}</p>
+                        </div>
+                    ` : ''}
 
-                    <p class="tunnel-info ${this._tunnelInfoClass()}"
-                       style="${this._tunnelState === 'idle' ? 'display:none' : ''}">
-                        <span class="tunnel-info-text">${this._tunnelInfoText()}</span>
-                        <button class="tunnel-info-close" title="Dismiss">&times;</button>
-                    </p>
+                    <!-- Port Mapping: only shown when UPnP is NOT available -->
+                    ${!this._upnpAvailable ? `
+                        <div class="settings-field" style="padding-top:12px;">
+                            <label class="settings-label">Port Mapping</label>
+                            <p class="settings-hint">
+                                UPnP is not available on your router. To allow external access,
+                                manually forward ports in your router settings:
+                                <br />Source (<strong>Any:${this._httpsPort}</strong>) &rarr;
+                                Destination (<strong>${this._getLocalIpForDisplay() ? this.esc(this._getLocalIpForDisplay()) + ':' : ''}${this._httpsPort}</strong>)
+                                ${this._getLocalIpForDisplay() ? '' : `<br />Enter the LAN IP address of this server (e.g. 192.168.1.x) as the destination.`}
+                                <br /><strong>TCP and UDP</strong>.
+                            </p>
+                        </div>
+                    ` : ''}
                 </div>
 
-                <!-- Server Settings -->
+                <!-- Server Configuration -->
                 <div class="settings-section">
                     <h3 class="settings-section-title">Server Configuration</h3>
-                    <p class="settings-section-desc">
-                        Configure the server HTTPS port. Changes require a brief
-                        service interruption while the port is rebound.
-                    </p>
+
+                    <div class="settings-field">
+                        <label class="settings-label" for="select-transport-mode">
+                            Transport Mode
+                        </label>
+                        <select id="select-transport-mode" class="settings-select">
+                            ${transportOptions.map(o =>
+                                `<option value="${o.value}" ${o.value === this._transportMode ? 'selected' : ''}>${this.esc(o.label)}</option>`
+                            ).join('')}
+                        </select>
+                        <p class="settings-hint">
+                            When set to <strong>Auto</strong>, the system tries the best
+                            available protocol (UDP &gt; TCP &gt; WSS) based on network
+                            conditions and browser support.
+                        </p>
+                    </div>
 
                     <div class="settings-field">
                         <label class="settings-label" for="admin-https-port">
                             HTTPS Port
                         </label>
-                        <input type="number" id="admin-https-port" class="settings-input"
-                               placeholder="443"
-                               value="${this.esc(String(this._httpsPort))}"
-                               min="1" max="65535" />
-                        <p class="settings-hint">
-                            Current HTTP redirect port: <strong>${this._httpPort}</strong>.
-                            Changing this value takes effect immediately.
-                        </p>
-                    </div>
-
-                    <div class="settings-actions">
-                        <button class="btn btn-save" id="btn-admin-save" disabled>
-                            Save &amp; Reload
-                        </button>
+                        <span class="setting-desc">
+                            Configure the server HTTPS port. Changes require a brief
+                            service interruption while the port is rebound.
+                        </span>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="number" id="admin-https-port" class="settings-input"
+                                   placeholder="443"
+                                   value="${this.esc(String(this._httpsPort))}"
+                                   min="1" max="65535"
+                                   style="flex: 1;" />
+                            <button class="btn btn-save" id="btn-admin-save" disabled
+                                    style="flex-shrink: 0;">
+                                Save &amp; Reload
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -221,19 +329,27 @@ export class AdminView {
     }
 
     bindEvents() {
-        // ── Tunnel checkbox toggle ──────────────────────────────────────────
-        const tunnelChk = this.container.querySelector('#chk-tunnel-enable');
-        if (tunnelChk) {
-            tunnelChk.addEventListener('change', async () => {
-                if (tunnelChk.checked) {
-                    await this._enableTunnel();
+        // Internet Access checkbox toggle
+        const internetChk = this.container.querySelector('#chk-internet-enable');
+        if (internetChk) {
+            internetChk.addEventListener('change', async () => {
+                if (internetChk.checked) {
+                    await this._enableInternet();
                 } else {
-                    await this._disableTunnel();
+                    await this._disableInternet();
                 }
             });
         }
 
-        // ── Port field dirty tracking ──────────────────────────────────────────
+        // Transport mode change
+        const transportSelect = this.container.querySelector('#select-transport-mode');
+        if (transportSelect) {
+            transportSelect.addEventListener('change', () => {
+                this._saveInternetPrefs();
+            });
+        }
+
+        // Port field dirty tracking
         const portInput = this.container.querySelector('#admin-https-port');
         if (portInput) {
             portInput.addEventListener('input', () => this._onFieldChange());
@@ -247,7 +363,7 @@ export class AdminView {
             });
         }
 
-        // ── Save Settings button ──────────────────────────────────────────────
+        // Save Settings button
         const saveBtn = this.container.querySelector('#btn-admin-save');
         if (saveBtn) {
             saveBtn.addEventListener('click', async () => {
@@ -292,7 +408,7 @@ export class AdminView {
             });
         }
 
-        // ── Close button ──────────────────────────────────────────────────────
+        // Close button
         const closeBtn = this.container.querySelector('#btn-admin-close');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
@@ -304,127 +420,131 @@ export class AdminView {
         }
     }
 
-    // ── Tunnel enable / disable ────────────────────────────────────────────────
+    // Internet Access enable / disable
 
-    async _enableTunnel() {
-        const seq = ++this._tunnelSeq;
-        this._tunnelState = 'starting';
-        this._refreshTunnelSection();
+    async _enableInternet() {
+        // GDPR consent gate — shown once per session
+        if (!this._gdprConsented && !this._internetEnabled) {
+            const consented = await this._showConsentDialog();
+            if (!consented) {
+                const chk = this.container.querySelector('#chk-internet-enable');
+                if (chk) chk.checked = false;
+                return;
+            }
+            this._gdprConsented = true;
+        }
 
         try {
-            const result = await BackendClient.configureTunnel({});
-            if (seq !== this._tunnelSeq) return;  // Cancelled by disable
-            if (result.status === 'configured') {
-                // Poll until tunnel becomes active
-                await this._pollTunnelActive(seq);
+            const result = await BackendClient.enableInternet({
+                internet_access_enabled: true,
+                auto_ip_detection: true,
+                transport_mode: this._transportMode
+            });
+            if (result.status === 'enabled') {
+                Toast.success('Internet Access enabled — domain: ' + (result.domain || '...'));
+                await this._loadInternetState();
+                this.render();
+                this.bindEvents();
+                if (this._pendingRegistration) {
+                    this._startDnsPolling();
+                }
             } else {
-                if (seq !== this._tunnelSeq) return;
-                this._tunnelState = 'error';
-                this._tunnelError = 'Backend returned unexpected status';
-                this._refreshTunnelSection();
+                Toast.error('Failed to enable Internet Access');
+                const chk = this.container.querySelector('#chk-internet-enable');
+                if (chk) chk.checked = false;
             }
         } catch (err) {
-            if (seq !== this._tunnelSeq) return;
-            console.error('[Admin] Failed to enable tunnel:', err);
-            this._tunnelState = 'error';
-            this._tunnelError = err.message || 'Failed to enable tunnel';
-            this._refreshTunnelSection();
+            console.error('[Admin] Failed to enable Internet Access:', err);
+            Toast.error('Failed to enable: ' + err.message);
+            const chk = this.container.querySelector('#chk-internet-enable');
+            if (chk) chk.checked = false;
         }
     }
 
-    async _disableTunnel() {
-        ++this._tunnelSeq;  // Cancel any active poll
+    /**
+     * Show GDPR consent dialog before enabling Internet Access.
+     * Returns a Promise that resolves to true if the user accepted.
+     */
+    _showConsentDialog() {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'consent-overlay';
+            overlay.innerHTML = `
+                <div class="consent-dialog">
+                    <h3>Enable Internet Access (optional)</h3>
+                    <div class="consent-body">
+                        <p>To allow remote access over the Internet, MWServer needs to:</p>
+                        <ul>
+                            <li>Share your <strong>public IP address</strong> with
+                                <strong>deSEC.io</strong> (a non-profit DNS provider) to create
+                                a secure subdomain pointing to your network.</li>
+                            <li>Optionally enable <strong>UPnP</strong> on your router to
+                                automatically open the required port.</li>
+                        </ul>
+                        <p>This data is used solely to make your server reachable.
+                           You can disable this feature at any time in Settings.</p>
+                    </div>
+                    <div class="consent-actions">
+                        <button class="btn btn-cancel" id="consent-cancel">Cancel</button>
+                        <button class="btn btn-primary" id="consent-confirm">Enable</button>
+                    </div>
+                </div>`;
+
+            document.body.appendChild(overlay);
+
+            const btnConfirm = overlay.querySelector('#consent-confirm');
+            const btnCancel = overlay.querySelector('#consent-cancel');
+
+            btnConfirm.addEventListener('click', () => {
+                overlay.remove();
+                resolve(true);
+            });
+
+            btnCancel.addEventListener('click', () => {
+                overlay.remove();
+                resolve(false);
+            });
+
+            // Close on overlay click (outside dialog)
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.remove();
+                    resolve(false);
+                }
+            });
+        });
+    }
+
+    async _disableInternet() {
         try {
-            await BackendClient.disableTunnel();
-            this._tunnelActive = false;
-            this._tunnelUrl = '';
-            this._tunnelState = 'idle';
-            this._tunnelError = '';
+            await BackendClient.disableInternet();
+            this._internetEnabled = false;
+            this._stopDnsPolling();
+            Toast.success('Internet Access disabled');
+            await this._loadInternetState();
+            this.render();
+            this.bindEvents();
         } catch (err) {
-            console.error('[Admin] Failed to disable tunnel:', err);
-            // Keep state as-is but log the error
+            console.error('[Admin] Failed to disable Internet Access:', err);
+            Toast.error('Failed to disable: ' + err.message);
+            const chk = this.container.querySelector('#chk-internet-enable');
+            if (chk) chk.checked = true;
         }
-        this._refreshTunnelSection();
     }
 
-    async _pollTunnelActive(seq, maxRetries = 15, interval = 1500) {
-        for (let i = 0; i < maxRetries; i++) {
-            if (seq !== this._tunnelSeq) return;  // Cancelled
-            await new Promise(r => setTimeout(r, interval));
-            if (seq !== this._tunnelSeq) return;  // Cancelled during sleep
-            try {
-                const status = await BackendClient.getTunnelStatus();
-                if (seq !== this._tunnelSeq) return;
-                if (status.active) {
-                    this._tunnelActive = true;
-                    this._tunnelUrl = status.public_url || '';
-                    this._tunnelSubdomain = status.subdomain || '';
-                    this._tunnelError = '';
-                    this._tunnelState = 'active';
-                    this._refreshTunnelSection();
-                    return;
-                }
-                // Check for errors during polling
-                if (status.error) {
-                    this._tunnelError = status.error;
-                }
-            } catch (err) {
-                console.warn('[Admin] Tunnel poll error:', err);
-            }
-        }
-        if (seq !== this._tunnelSeq) return;
-        // Timed out — check one final time for error
+    async _saveInternetPrefs() {
+        const transportSelect = this.container.querySelector('#select-transport-mode');
+
+        const prefs = {
+            internet_access_enabled: this._internetEnabled,
+            transport_mode: transportSelect ? transportSelect.value : this._transportMode
+        };
+
         try {
-            const status = await BackendClient.getTunnelStatus();
-            if (status.error) {
-                this._tunnelError = status.error;
-            }
-        } catch (_) {}
-        if (seq !== this._tunnelSeq) return;
-        this._tunnelState = 'error';
-        if (!this._tunnelError) {
-            this._tunnelError = 'Tunnel did not become active — check nport';
-        }
-        this._refreshTunnelSection();
-    }
-
-    // ── Partial DOM update for tunnel section ──────────────────────────────────
-
-    _refreshTunnelSection() {
-        // Update checkbox
-        const chk = this.container.querySelector('#chk-tunnel-enable');
-        if (chk) {
-            chk.disabled = (this._tunnelState === 'unavailable');
-            chk.checked = (this._tunnelState === 'active' || this._tunnelState === 'starting');
-        }
-
-        // Update domain URL
-        const domainRow = this.container.querySelector('.tunnel-domain-row');
-        if (domainRow) {
-            domainRow.innerHTML = `
-                <span class="tunnel-domain-label">Your secured public domain:</span>
-                ${this._tunnelUrlHtml()}`;
-        }
-
-        // Update info text
-        const infoEl = this.container.querySelector('.tunnel-info');
-        if (infoEl) {
-            const text = this._tunnelInfoText();
-            infoEl.className = `tunnel-info ${this._tunnelInfoClass()}`;
-            const textSpan = infoEl.querySelector('.tunnel-info-text');
-            if (textSpan) {
-                textSpan.innerHTML = text;
-            }
-            // Show if there is text, hide otherwise (idle state)
-            infoEl.style.display = text ? '' : 'none';
-            // Bind close button (×) to dismiss the message
-            const closeBtn = infoEl.querySelector('.tunnel-info-close');
-            if (closeBtn) {
-                closeBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    infoEl.style.display = 'none';
-                };
-            }
+            await BackendClient.enableInternet(prefs);
+            this._transportMode = prefs.transport_mode;
+        } catch (err) {
+            console.warn('[Admin] Failed to save transport prefs:', err);
         }
     }
 

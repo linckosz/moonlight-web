@@ -48,7 +48,10 @@ export class WebRtcDataChannel {
         // Fallback: Google public STUN if no message received before PC creation.
         this._dynamicIceServers = null;
         this._defaultIceServers = [
-            { urls: 'stun:stun.l.google.com:19302' }
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            { urls: 'stun:stun.nextcloud.com:443' },
+            { urls: 'stun:relay.metered.ca:80' }
         ];
 
         // Callbacks — set by the caller
@@ -406,22 +409,32 @@ export class WebRtcDataChannel {
         const iceServers = this._dynamicIceServers || this._defaultIceServers;
         const config = {
             iceServers: iceServers,
-            iceTransportPolicy: 'all'
+            iceTransportPolicy: 'all',
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
         };
         console.log('[WebRTC] ICE servers:', JSON.stringify(iceServers));
 
         this.pc = new RTCPeerConnection(config);
 
-        // --- ICE candidate handler ---
+        // --- ICE candidate handler (filter TURN, prioritize UDP) ---
         this.pc.onicecandidate = (evt) => {
-            if (evt.candidate && this.signalingWs &&
-                this.signalingWs.readyState === WebSocket.OPEN) {
-                this._sendSignaling({
-                    type: 'ice',
-                    candidate: evt.candidate.candidate,
-                    mid: evt.candidate.sdpMid || '0'
-                });
+            if (!evt.candidate || !this.signalingWs ||
+                this.signalingWs.readyState !== WebSocket.OPEN) {
+                return;
             }
+
+            // Drop TURN relay candidates — direct connection only
+            if (evt.candidate.candidate.indexOf(' typ relay ') !== -1) {
+                console.log('[WebRTC] Dropping TURN relay candidate');
+                return;
+            }
+
+            this._sendSignaling({
+                type: 'ice',
+                candidate: evt.candidate.candidate,
+                mid: evt.candidate.sdpMid || '0'
+            });
         };
 
         // --- ICE state ---

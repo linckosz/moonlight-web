@@ -39,7 +39,10 @@ export class WebRtcMedia {
         // Fallback: Google public STUN if no message received before PC creation.
         this._dynamicIceServers = null;
         this._defaultIceServers = [
-            { urls: 'stun:stun.l.google.com:19302' }
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun.cloudflare.com:3478' },
+            { urls: 'stun:stun.nextcloud.com:443' },
+            { urls: 'stun:relay.metered.ca:80' }
         ];
 
         // Video element for native decoding of RTP media track
@@ -235,22 +238,32 @@ export class WebRtcMedia {
         const iceServers = this._dynamicIceServers || this._defaultIceServers;
         const config = {
             iceServers: iceServers,
-            iceTransportPolicy: 'all'
+            iceTransportPolicy: 'all',
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
         };
         console.log('[WebRtcMedia] ICE servers:', JSON.stringify(iceServers));
 
         this.pc = new RTCPeerConnection(config);
 
-        // --- ICE candidate handler ---
+        // --- ICE candidate handler (filter TURN, prioritize UDP) ---
         this.pc.onicecandidate = (evt) => {
-            if (evt.candidate && this.signalingWs &&
-                this.signalingWs.readyState === WebSocket.OPEN) {
-                this._sendSignaling({
-                    type: 'ice',
-                    candidate: evt.candidate.candidate,
-                    mid: evt.candidate.sdpMid || '0'
-                });
+            if (!evt.candidate || !this.signalingWs ||
+                this.signalingWs.readyState !== WebSocket.OPEN) {
+                return;
             }
+
+            // Drop TURN relay candidates — direct connection only (no TURN server)
+            if (evt.candidate.candidate.indexOf(' typ relay ') !== -1) {
+                console.log('[WebRtcMedia] Dropping TURN relay candidate');
+                return;
+            }
+
+            this._sendSignaling({
+                type: 'ice',
+                candidate: evt.candidate.candidate,
+                mid: evt.candidate.sdpMid || '0'
+            });
         };
 
         // --- ICE state ---
@@ -271,6 +284,17 @@ export class WebRtcMedia {
         this.pc.ontrack = (event) => {
             console.log('[WebRtcMedia] Track received: kind=' + event.track.kind +
                 ' id=' + event.track.id);
+
+            // Set jitter buffer to 0 for minimum latency on all receivers
+            try {
+                for (const receiver of this.pc.getReceivers()) {
+                    if (receiver.jitterBufferTarget !== undefined) {
+                        receiver.jitterBufferTarget = 0;
+                    }
+                }
+            } catch (e) {
+                console.warn('[WebRtcMedia] Failed to set jitter buffer target:', e.message);
+            }
 
             if (event.track.kind === 'video') {
                 console.log('[WebRtcMedia] Video track received, attaching to <video> element');
@@ -405,11 +429,60 @@ export class WebRtcMedia {
         }
     }
 
+    /**
+     * Validate that the browser supports the video codec advertised in the SDP.
+     * Parses the m=video line and checks against RTCRtpReceiver.getCapabilities().
+     */
+    _validateCodecSupport(sdp) {
+        try {
+            const caps = RTCRtpReceiver.getCapabilities('video');
+            if (!caps) {
+                console.warn('[WebRtcMedia] Cannot check codec support — no capabilities');
+                return true; // Assume supported
+            }
+
+            // Extract codec names from the SDP offer
+            const rtpmapRe = /a=rtpmap:\d+\s+(\w+)/gi;
+            const sdpCodecs = new Set();
+            let m;
+            while ((m = rtpmapRe.exec(sdp)) !== null) {
+                sdpCodecs.add(m[1].toUpperCase());
+            }
+
+            const browserCodecs = new Set();
+            for (const c of caps.codecs) {
+                browserCodecs.add(c.mimeType.replace('video/', '').toUpperCase());
+            }
+
+            console.log('[WebRtcMedia] SDP codecs:', [...sdpCodecs],
+                'Browser codecs:', [...browserCodecs]);
+
+            for (const codec of sdpCodecs) {
+                if (browserCodecs.has(codec)) {
+                    console.log('[WebRtcMedia] Codec supported by browser:', codec);
+                    return true;
+                }
+            }
+
+            console.warn('[WebRtcMedia] No matching codec found — browser may not support this stream');
+            return false;
+        } catch (e) {
+            console.warn('[WebRtcMedia] Codec validation error:', e.message);
+            return true; // Don't block on validation errors
+        }
+    }
+
     async _handleSdpOffer(sdp) {
         console.log('[WebRtcMedia] Received SDP offer, length=' + sdp.length);
 
         try {
             console.log('[WebRtcMedia] SDP offer (first 200):', sdp.substring(0, 200));
+
+            // Validate codec support before committing
+            const codecOk = this._validateCodecSupport(sdp);
+            if (!codecOk) {
+                console.warn('[WebRtcMedia] Codec not supported by browser — transport may fail');
+            }
 
             const remoteDesc = new RTCSessionDescription({
                 type: 'offer',
@@ -418,10 +491,27 @@ export class WebRtcMedia {
             await this.pc.setRemoteDescription(remoteDesc);
             console.log('[WebRtcMedia] Remote description set (offer)');
 
-            // Create answer
-            const answer = await this.pc.createAnswer();
-            await this.pc.setLocalDescription(answer);
-            console.log('[WebRtcMedia] Local description set (answer), sending...');
+            // Create answer with receive-only constraints (lowest latency)
+            const answer = await this.pc.createAnswer({
+                offerToReceiveVideo: true,
+                offerToReceiveAudio: true
+            });
+
+            // Apply low-latency SDP transformations before setLocalDescription
+            let answerSdp = answer.sdp;
+            // Direction: receive only (client is viewer, never sends media)
+            answerSdp = answerSdp.replace(/a=sendrecv/g, 'a=recvonly');
+            // Minimal packetization time (reduces audio/video buffering)
+            answerSdp = answerSdp.replace(/a=ptime:\d+/g, 'a=ptime:10');
+            // Drop FEC — trades reliability for latency
+            answerSdp = answerSdp.replace(/ulpfec/g, '');
+
+            const modifiedAnswer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: answerSdp
+            });
+            await this.pc.setLocalDescription(modifiedAnswer);
+            console.log('[WebRtcMedia] Local description set (answer, low-latency), sending...');
 
             // Send answer via signaling WS
             this._sendSignaling({

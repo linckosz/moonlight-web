@@ -1,0 +1,1 @@
+REM This file is intentionally empty - use build_msvc.bat instead
