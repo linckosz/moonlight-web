@@ -166,6 +166,14 @@ export class StreamView {
         this._onPointerLockChange = () => this.handlePointerLockChange();
         this._onContextMenu = (e) => e.preventDefault();
 
+        // beforeunload: fire-and-forget quit when tab/window is closed
+        this._onBeforeUnload = () => {
+            if (this._quitting) return;
+            navigator.sendBeacon(
+                `/api/hosts/${this.host.uuid}/quit`,
+                new Blob(['{}'], { type: 'application/json' }));
+        };
+
         // IDR request state: if no keyframe arrives after buffering many frames
         // without decoder config, we ask the backend to request an IDR from Sunshine.
         // This is a safety net for the rare race where the initial IDR is lost.
@@ -1172,6 +1180,7 @@ export class StreamView {
         document.addEventListener('keyup', this._onKeyUp);
         this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
         this.canvas.addEventListener('contextmenu', this._onContextMenu);
+        window.addEventListener('beforeunload', this._onBeforeUnload);
 
         // Mode-specific events
         if (this._gamingMode) {
@@ -1249,6 +1258,7 @@ export class StreamView {
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener('keyup', this._onKeyUp);
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+        window.removeEventListener('beforeunload', this._onBeforeUnload);
         if (this.canvas) {
             this.canvas.removeEventListener('mousemove', this._onMouseMove);
             this.canvas.removeEventListener('mousedown', this._onMouseDown);

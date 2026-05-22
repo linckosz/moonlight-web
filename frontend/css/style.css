@@ -22,7 +22,32 @@
     --border: #2a2a4a;
 }
 
-html, body {
+html {
+    height: 100%;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-card) var(--bg-primary);
+}
+
+html::-webkit-scrollbar {
+    width: 8px;
+}
+
+html::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+html::-webkit-scrollbar-thumb {
+    background: var(--bg-card);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+}
+
+html::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
+}
+
+body {
     height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
                  Ubuntu, Cantarell, sans-serif;
@@ -35,8 +60,7 @@ html, body {
 #app {
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    overflow: clip;
+    min-height: 100vh;
 }
 
 /* Header */
@@ -69,7 +93,6 @@ html, body {
 
 #main-content {
     flex: 1;
-    overflow-y: auto;
     min-height: 0;
     padding: 24px;
     max-width: 960px;
@@ -301,17 +324,6 @@ html, body {
 .host-unreachable {
     font-size: 0.8rem;
     color: var(--text-secondary);
-}
-
-/* Overlay root — fullscreen container for admin/settings overlays */
-
-#overlay-root {
-    position: fixed;
-    inset: 0;
-    z-index: 500;
-    background: var(--bg-primary);
-    overflow-y: auto;
-    display: none;
 }
 
 /* Footer */
@@ -752,11 +764,9 @@ html, body {
 .settings-section-desc a:hover {
     color: var(--text-primary);
 }
-    font-size: 0.8rem;
-}
 
 .settings-field {
-    margin-bottom: 18px;
+    padding-top: 20px;
 }
 
 .settings-label {
@@ -765,6 +775,20 @@ html, body {
     font-weight: 500;
     margin-bottom: 6px;
     color: var(--text-primary);
+}
+
+/* Description text under setting labels — replaces previous tooltips */
+.setting-desc {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin-bottom: 8px;
+}
+
+/* Checkbox description: indent to align with checkbox text */
+.settings-checkbox-label + .setting-desc {
+    padding-left: 28px;
 }
 
 .settings-input {
@@ -815,6 +839,58 @@ html, body {
 .settings-select option {
     background-color: var(--bg-primary);
     color: var(--text-primary);
+}
+
+/* ── Range slider (bitrate) ────────────────────────────────────────────────────── */
+
+.settings-slider {
+    display: block;
+    width: 100%;
+    height: 6px;
+    margin: 10px 0 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-card);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.settings-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg-primary);
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    transition: transform 0.1s;
+}
+
+.settings-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+}
+
+.settings-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg-primary);
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.settings-slider-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    user-select: none;
 }
 
 .settings-hint {
@@ -944,7 +1020,7 @@ html, body {
     display: block;
 }
 
-/* ── nport tunnel (Internet Access) ────────────────────────────────────────── */
+/* ── Internet Access (deSEC dynamic DNS) ───────────────────────────────────── */
 
 /* Checkbox row: [ ] Internet Access */
 .tunnel-checkbox-row {
@@ -1090,4 +1166,174 @@ html, body {
     opacity: 1;
 }
 
+/* ── Internet Info Box (blue-ish info frame) ──────────────────────────────── */
+
+.internet-info-box {
+    background: rgba(33, 150, 243, 0.08);
+    border: 1px solid rgba(33, 150, 243, 0.2);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-top: 12px;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    color: var(--text-secondary);
+}
+
+.internet-info-box p {
+    margin-bottom: 4px;
+}
+
+.internet-info-box p:last-child {
+    margin-bottom: 0;
+}
+
+.internet-info-box code {
+    font-family: 'Consolas', 'Courier New', monospace;
+    background: rgba(33, 150, 243, 0.12);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+.internet-info-error {
+    background: rgba(244, 67, 54, 0.1);
+    border-color: rgba(244, 67, 54, 0.25);
+    color: #ef9a9a;
+}
+
+/* DNS propagation indicator */
+
+.dns-propagating {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-top: 12px;
+    background: rgba(255, 152, 0, 0.1);
+    border: 1px solid rgba(255, 152, 0, 0.2);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #ffcc80;
+    line-height: 1.4;
+}
+
+/* Inline text colors */
+
+.text-success {
+    color: #4caf50;
+}
+
+.text-muted {
+    color: var(--text-secondary);
+    opacity: 0.7;
+}
+
+/* ── GDPR Consent Dialog ──────────────────────────────────────────────────── */
+
+.consent-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    animation: consentFadeIn 0.2s ease;
+}
+
+@keyframes consentFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.consent-dialog {
+    background: #fff;
+    border-radius: 10px;
+    padding: 28px 32px 24px;
+    max-width: 520px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+}
+
+.consent-dialog h3 {
+    margin: 0 0 16px;
+    font-size: 1.2em;
+    color: #222;
+}
+
+.consent-body {
+    font-size: 0.93em;
+    color: #444;
+    line-height: 1.55;
+    margin-bottom: 18px;
+}
+
+.consent-body ul {
+    padding-left: 20px;
+    margin: 8px 0;
+}
+
+.consent-body li {
+    margin-bottom: 6px;
+}
+
+.consent-checks {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding: 12px 16px;
+    background: #f7f7f7;
+    border-radius: 6px;
+}
+
+.consent-checks label {
+    font-size: 0.93em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #333;
+}
+
+.consent-checks input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.consent-checks input[type="checkbox"]:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.consent-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.consent-actions .btn {
+    padding: 8px 22px;
+    border-radius: 6px;
+    font-size: 0.9em;
+    cursor: pointer;
+    border: 1px solid #ccc;
+}
+
+.consent-actions .btn-cancel {
+    background: #eee;
+    color: #555;
+}
+
+.consent-actions .btn-primary {
+    background: #1a73e8;
+    color: #fff;
+    border-color: #1a73e8;
+}
+
+.consent-actions .btn-primary:disabled {
+    background: #a0c4f0;
+    border-color: #a0c4f0;
+    cursor: not-allowed;
+}
 

@@ -3,14 +3,17 @@
  *
  * Navigation architecture:
  *
- *   Main views (with history entries):
+ *   Main views (in #main-content, with history entries):
  *     - hosts  at  "/"
  *     - apps   at  "/apps"  (with host context in history state)
  *
- *   Overlays (no persistent history entry):
+ *   Overlays (in #main-content, no persistent history entry):
  *     - admin     — guard pushState + URL "/admin"  (survives refresh)
- *     - settings  — guard pushState, no URL change
- *     - streaming — guard pushState, no URL change
+ *     - settings  — guard pushState + URL "/settings"
+ *     - streaming — guard pushState, no URL change (fullscreen via StreamView)
+ *
+ *   Switching overlays (e.g. settings → admin) uses replaceState
+ *   so a single Back returns to the underlying main view.
  *
  *   History stack possibilities:
  *     [{hosts}]                                         — on Hosts
@@ -21,7 +24,7 @@
  *   then main view transitions happen normally.
  *
  *   Refresh behavior:
- *     /admin     → stays on Admin (overlay on hosts)
+ *     /admin     → stays on Admin
  *     /          → stays on Hosts
  *     /apps      → redirect to Hosts
  *     /settings  → redirect to Hosts
@@ -92,21 +95,11 @@ const MoonlightApp = {
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
 
-        this._createOverlayRoot();
         this._initNavButtons();
         this._initRouter();
 
         // Background async housekeeping — never blocks the initial render.
         this._initAsync();
-    },
-
-    /**
-     * Create a fixed overlay container for admin/settings views.
-     */
-    _createOverlayRoot() {
-        const root = document.createElement('div');
-        root.id = 'overlay-root';
-        document.getElementById('app').appendChild(root);
     },
 
     // =========================================================================
@@ -126,11 +119,9 @@ const MoonlightApp = {
         window.addEventListener('popstate', (e) => {
             const state = e.state || {};
 
-            // ── Overlay guard was popped — close overlay, navigate to revealed state ──
+            // ── Overlay guard was popped — close overlay, restore main view ──
             if (this._nav.overlay) {
                 if (this._nav.overlay === 'streaming') {
-                    // Streaming: quit may be async — fire it, don't await.
-                    // Mark handled so _onStreamingQuit doesn't re-navigate.
                     if (this.streamView) {
                         if (!this.streamView._quitting) {
                             this.streamView.quit();
@@ -139,11 +130,10 @@ const MoonlightApp = {
                     }
                     this._nav.overlay = null;
                 } else {
-                    // Admin / settings: close synchronously
                     this._closeOverlay();
                 }
 
-                // Navigate to the main view revealed by popping the guard.
+                // Restore the main view revealed by popping the guard.
                 if (state.hostUuid) {
                     this._setMainView('apps', {
                         hostUuid: state.hostUuid,
@@ -244,9 +234,8 @@ const MoonlightApp = {
             this._updateNavHighlight('hosts');
         }
 
-        // Ensure URL is correct after navigation — admin overlay may leave
-        // URL at /admin when closing via refresh→close or popstate.
-        if (window.location.pathname === '/admin') {
+        // Fix URL if an overlay left it at /admin or /settings.
+        if (window.location.pathname === '/admin' || window.location.pathname === '/settings') {
             if (this._nav.mainView === 'apps' && this._nav.mainState.hostUuid) {
                 history.replaceState({
                     view: 'apps',
@@ -295,27 +284,35 @@ const MoonlightApp = {
     // =========================================================================
 
     /**
-     * Open an overlay (admin, settings) over the current main view.
-     * Pushes a guard state so pressing Back closes the overlay without
-     * leaving a history entry.
+     * Open an overlay (admin, settings) in #main-content, replacing the
+     * current main view.  Pushes (or replaces) a guard state so pressing
+     * Back closes the overlay and restores the underlying main view.
+     *
+     * When switching overlays (e.g. settings → admin), the old guard is
+     * replaced via replaceState so a single Back returns to the main view.
+     *
      * @param {string} type - 'admin' | 'settings'
      */
     _openOverlay(type) {
-        if (this._nav.overlay) {
-            console.warn('[MW] Overlay already open:', this._nav.overlay);
-            return;
+        const switching = !!this._nav.overlay;
+
+        if (switching) {
+            // Switching overlays: destroy the old one, replace guard state
+            this._destroyOverlayViews();
+        } else {
+            // Opening on top of a main view: save main view state for restoration
+            if (this.hostListView && typeof this.hostListView.stop === 'function') {
+                this.hostListView.stop();
+            }
+            this._destroyMainViews();
         }
+
         this._nav.overlay = type;
 
-        // Pause any main view timers (e.g. HostListView polling)
-        if (this.hostListView && typeof this.hostListView.stop === 'function') {
-            this.hostListView.stop();
-        }
+        const main = document.getElementById('main-content');
+        if (!main) return;
+        main.innerHTML = '';
 
-        const root = document.getElementById('overlay-root');
-        if (!root) return;
-
-        // Push a guard state so back closes the overlay
         const guardState = {
             view: this._GUARD_PREFIX + type,
             mainView: this._nav.mainView,
@@ -323,57 +320,51 @@ const MoonlightApp = {
             hostDisplayName: this._nav.mainState.hostDisplayName
         };
 
-        if (type === 'admin') {
-            history.pushState(guardState, '', '/admin');
+        const url = '/' + type;
+        if (switching) {
+            history.replaceState(guardState, '', url);
         } else {
-            history.pushState(guardState, '');
+            history.pushState(guardState, '', url);
         }
-
-        root.style.display = 'block';
-        root.innerHTML = '';
 
         if (type === 'admin') {
             this.transition('admin');
-            this.adminView = new AdminView(root, () => {
-                // Close the overlay, then pop the guard from history.
-                // history.back() fires popstate which navigates to the
-                // revealed main view.  _setMainView will fix any /admin URL.
-                this._closeOverlay();
-                history.back();
-            });
+            this.adminView = new AdminView(main, () => history.back());
             this.adminView.start();
             this._updateNavHighlight('admin');
-        } else if (type === 'settings') {
+        } else {
             this.transition('settings');
-            this.settingsView = new SettingsView(root, () => {
-                this._closeOverlay();
-                // Pop the guard so Back doesn't see a stale overlay state.
-                history.back();
-            });
+            this.settingsView = new SettingsView(main, () => history.back());
             this.settingsView.start();
             this._updateNavHighlight('settings');
         }
     },
 
     /**
-     * Close the current overlay (admin/settings) and reveal the underlying
-     * main view.  Does NOT handle streaming — streaming has its own async
-     * lifecycle managed by popstate handler and _onStreamingQuit.
-     * If called while streaming is active, it is a no-op (streaming must
-     * be handled via popstate or _onStreamingQuit).
+     * Close the current overlay (admin/settings) and destroy its view.
+     * Does NOT restore the main view — callers (popstate handler, button
+     * handlers) are responsible for restoring the main view afterwards.
      */
     _closeOverlay() {
         if (!this._nav.overlay) return;
 
-        // Streaming has its own lifecycle — never close via this path.
         if (this._nav.overlay === 'streaming') {
             console.warn('[MW] _closeOverlay called with streaming overlay — use popstate or Stop button');
             return;
         }
 
         this._nav.overlay = null;
+        this._destroyOverlayViews();
 
-        // Destroy overlay views
+        // Clear main content (caller will re-render the appropriate view)
+        const main = document.getElementById('main-content');
+        if (main) main.innerHTML = '';
+
+        this._updateNavHighlight(null);
+    },
+
+    /** Destroy admin/settings overlay views. */
+    _destroyOverlayViews() {
         if (this.adminView) {
             this.adminView.destroy();
             this.adminView = null;
@@ -382,20 +373,6 @@ const MoonlightApp = {
             this.settingsView.destroy();
             this.settingsView = null;
         }
-
-        // Clear overlay DOM
-        const root = document.getElementById('overlay-root');
-        if (root) {
-            root.innerHTML = '';
-            root.style.display = 'none';
-        }
-
-        // Resume main view timers
-        if (this.hostListView && typeof this.hostListView.start === 'function') {
-            this.hostListView.start();
-        }
-
-        this._updateNavHighlight(null);
     },
 
     // =========================================================================
@@ -425,10 +402,10 @@ const MoonlightApp = {
             }
             btnAdmin.addEventListener('click', () => {
                 if (this._nav.overlay === 'admin') {
-                    this._closeOverlay();
+                    history.back();
+                } else if (this._nav.overlay) {
+                    this._openOverlay('admin');  // replaces guard via replaceState
                 } else {
-                    // Close any current overlay before opening admin
-                    if (this._nav.overlay) this._closeOverlay();
                     this._openOverlay('admin');
                 }
             });
@@ -438,10 +415,10 @@ const MoonlightApp = {
         if (btnSettings) {
             btnSettings.addEventListener('click', () => {
                 if (this._nav.overlay === 'settings') {
-                    this._closeOverlay();
+                    history.back();
+                } else if (this._nav.overlay) {
+                    this._openOverlay('settings');  // replaces guard via replaceState
                 } else {
-                    // Close any current overlay before opening settings
-                    if (this._nav.overlay) this._closeOverlay();
                     this._openOverlay('settings');
                 }
             });

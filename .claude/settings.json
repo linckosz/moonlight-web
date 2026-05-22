@@ -15,12 +15,12 @@
       "Bash(find \"C:/Program Files/Microsoft Visual Studio\" -name \"nmake.exe\" 2>/dev/null | head -3)",
       "Read(//c/Program Files/Microsoft Visual Studio/**)",
       "Bash(export PATH=\"$PATH:/c/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64\")",
-      "Bash(cmd //c \"call \\\\\"C:\\\\\\\\Program Files\\\\\\\\Microsoft Visual Studio\\\\\\\\2022\\\\\\\\Community\\\\\\\\VC\\\\\\\\Auxiliary\\\\\\\\Build\\\\\\\\vcvars64.bat\\\\\" > nul 2>&1 && cd /d d:\\\\\\\\Code\\\\\\\\moonlight-web-deepseek\\\\\\\\backend && qmake && nmake 2>&1\")",
-      "Bash(cmd /c \"C:\\\\Users\\\\Minis\\\\AppData\\\\Local\\\\Temp\\\\build_msvc.bat\")",
+      "Bash(cmd //c \"call \\\"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\VC\\\\Auxiliary\\\\Build\\\\vcvars64.bat\\\" > nul 2>&1 && cd /d d:\\\\Code\\\\moonlight-web-deepseek\\\\backend && qmake && nmake 2>&1\")",
+      "Bash(cmd /c \"C:\\Users\\Minis\\AppData\\Local\\Temp\\build_msvc.bat\")",
       "Bash(where msbuild *)",
       "Bash(where MSBuild)",
-      "Bash(cmd.exe /c \"d:\\\\\\\\Code\\\\\\\\moonlight-web-deepseek\\\\\\\\backend\\\\\\\\build_msvc.bat\")",
-      "Bash(cmd.exe //c \"call \\\\\"C:\\\\\\\\Program Files\\\\\\\\Microsoft Visual Studio\\\\\\\\2022\\\\\\\\Community\\\\\\\\VC\\\\\\\\Auxiliary\\\\\\\\Build\\\\\\\\vcvars64.bat\\\\\" >nul 2>&1 && cd /d d:\\\\\\\\Code\\\\\\\\moonlight-web-deepseek\\\\\\\\backend && qmake && nmake\")",
+      "Bash(cmd.exe /c \"d:\\Code\\moonlight-web-deepseek\\backend\\build_msvc.bat\")",
+      "Bash(cmd.exe //c \"call \\\"C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat\\\" >nul 2>&1 && cd /d d:\\Code\\moonlight-web-deepseek\\backend && qmake && nmake\")",
       "Bash(cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat)",
       "Bash(rm -f d:/Code/moonlight-web-deepseek/backend/build/release/*.obj d:/Code/moonlight-web-deepseek/backend/build/release/*.moc d:/Code/moonlight-web-deepseek/backend/build/release/moc_*.cpp; echo \"Cleaned\")",
       "Bash(rm -f d:/Code/moonlight-web-deepseek/backend/build/debug/*.obj 2>/dev/null; cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat 2>&1 | tail -10)",
@@ -68,7 +68,8 @@
       "Bash(mkdir -p \"d:/Code/moonlight-web-deepseek/backend/build/release/plugins/tls\")",
       "Bash(cp \"/c/Qt/6.11.0/mingw_64/plugins/tls/\"*.dll \"d:/Code/moonlight-web-deepseek/backend/build/release/plugins/tls/\")",
       "Bash(cp \"d:/Code/moonlight-web-deepseek/backend/libs/windows/lib/x64/libssl-3-x64.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
-      "Bash(cp \"d:/Code/moonlight-web-deepseek/backend/libs/windows/lib/x64/libcrypto-3-x64.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")"
+      "Bash(cp \"d:/Code/moonlight-web-deepseek/backend/libs/windows/lib/x64/libcrypto-3-x64.dll\" \"d:/Code/moonlight-web-deepseek/backend/build/release/\")",
+      "Bash(cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat 2>&1 | tail -30)"
     ],
     "additionalDirectories": [
       "d:\\Code\\moonlight-web-deepseek\\backend\\build\\release",

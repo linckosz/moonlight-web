@@ -10,6 +10,8 @@ class PeerConnection;
 struct Configuration;
 }
 
+class MoonlightShim;
+
 /// Abstract base class for DataChannelRelay and MediaTrackRelay.
 ///
 /// Defines the common interface used by SignalingServer and Session.
@@ -49,6 +51,9 @@ public:
     // ── Status ────────────────────────────────────────────────────────────────
 
     virtual bool isConnected() const = 0;
+
+    /// Access the MoonlightShim for explicit stopConnection() before cleanup.
+    virtual MoonlightShim* moonlightShim() const = 0;
 
 signals:
     /// Local SDP description (offer) ready to send to the browser.

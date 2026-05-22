@@ -105,7 +105,7 @@ Ouvrir https://localhost dans un navigateur :
 - Serveur MW lance sur le reseau domestique
 - Routeur avec UPnP actif
 - Client sur un reseau 4G/5G ou reseau ami
-- nport tunnel actif (ou exposition directe)
+- tunnel public actif (ou exposition directe)
 
 **Procedure** :
 1. Verifier que UPnP discover trouve l'IGD :
@@ -114,7 +114,7 @@ Ouvrir https://localhost dans un navigateur :
    - Log : `[UPNP] Port mapping added successfully: 48010 UDP`
 3. Verifier l'IP publique :
    - Log : `[UPNP] External IP address: <PUBLIC_IP>`
-4. Depuis l'exterieur, ouvrir l'URL publique (via nport)
+4. Depuis l'exterieur, ouvrir l'URL publique
 5. Lancer un stream
 6. Verifier les logs :
    - `[DataChannelRelay] Rewrote host candidate: <LAN_IP> -> <PUBLIC_IP>:48010`

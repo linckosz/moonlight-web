@@ -50,15 +50,16 @@ public:
     // Check if a valid IGD was discovered and is available.
     bool isAvailable() const { return m_Available; }
 
+    // Get the local LAN IP address of this host by inspecting network interfaces.
+    // Returns true on success; buf is filled with a dotted-decimal IPv4 string.
+    static bool getLocalIP(char* buf, size_t bufsize);
+
 signals:
     void mappingAdded(uint16_t port);
     void mappingRemoved(uint16_t port);
     void error(const QString& message);
 
 private:
-    // Resolve the local IP address of the default network interface.
-    static bool getLocalIP(char* buf, size_t bufsize);
-
     void cleanup();
 
     bool m_Available = false;

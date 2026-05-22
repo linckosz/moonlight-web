@@ -26,6 +26,9 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                bool upnpEnabled,
                                const QString& transport,
                                const QString& stunServer,
+                               int streamHeight,
+                               int streamFps,
+                               int streamBitrateKbps,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -38,10 +41,23 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_UpnpEnabled(upnpEnabled)
     , m_Transport(transport)
     , m_StunServer(stunServer)
+    , m_StreamHeight(streamHeight)
+    , m_StreamFps(streamFps)
+    , m_StreamBitrateKbps(streamBitrateKbps)
 {
     // Apply video codec preference from settings (default Auto)
     m_Config.codec = videoCodec;
     qInfo() << "[Session] Video codec preference set to" << static_cast<int>(videoCodec);
+
+    // Calculate width from height using 16:9 aspect ratio.
+    // If height is 0 (Native Host resolution), pass 0 for both width and height
+    // so Sunshine uses the display's native resolution.
+    m_StreamWidth = (m_StreamHeight > 0) ? (m_StreamHeight * 16 / 9) : 0;
+
+    qInfo() << "[Session] Stream settings:" << m_StreamWidth << "x" << m_StreamHeight
+            << "@" << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps,"
+            << "gaming:" << (m_GamingMode ? "on" : "off")
+            << "codec:" << static_cast<int>(videoCodec);
 }
 
 StreamSession::~StreamSession()
@@ -118,13 +134,15 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert,
     qDebug() << "[Session] Launching app" << m_AppId << "on" << m_Host->name;
     qDebug() << "[Session]   address:" << m_Host->activeAddress.address()
              << "port:" << m_Host->activeHttpsPort;
+    qDebug() << "[Session]   stream:" << m_StreamWidth << "x" << m_StreamHeight
+             << "@" << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps";
 
     m_LaunchReply = m_Http->launchAppAsync(
         m_Host->activeAddress, m_Host->activeHttpsPort,
         m_AppId, IdentityManager::get()->getUniqueId(),
         m_Config.rikey, m_Config.rikeyid,
-        StreamConfig::kWidth, StreamConfig::kHeight, StreamConfig::kFps,
-        StreamConfig::kBitrateKbps,
+        m_StreamWidth, m_StreamHeight, m_StreamFps,
+        m_StreamBitrateKbps,
         clientCert, clientKey,
         (m_Config.hdr == HdrMode::HDR) ? 1 : 0);
 
@@ -330,7 +348,7 @@ void StreamSession::onLaunchReplyFinished()
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
 
-        // If an explicit WS URL was set (e.g. nport tunnel), apply it.
+        // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
             signaling->setOverrideWsUrl(m_ExplicitWsUrl);
             qInfo() << "[Session] Using explicit signaling URL:" << m_ExplicitWsUrl;
@@ -378,13 +396,13 @@ void StreamSession::onLaunchReplyFinished()
         auto* relay = new DataChannelRelay(m_Shim, this);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
-        // NonSecure mode: nport/Cloudflare provides TLS termination.
+        // NonSecure mode: external tunnel or Cloudflare provides TLS termination.
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
 
-        // If an explicit WS URL was set (e.g. nport tunnel), apply it.
+        // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
             signaling->setOverrideWsUrl(m_ExplicitWsUrl);
             qInfo() << "[Session] Using explicit signaling URL:" << m_ExplicitWsUrl;

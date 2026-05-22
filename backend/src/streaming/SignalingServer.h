@@ -43,10 +43,10 @@ public:
     quint16 port() const { return m_WsPort; }
 
     /// Returns the WebSocket URL for browser connections.
-    /// If an override URL is set (e.g. for nport tunnel), returns that instead.
+    /// If an override URL is set (e.g. for a public tunnel), returns that instead.
     QString wsUrl() const;
 
-    /// Override the WS URL (used when nport provides a public WSS endpoint).
+    /// Override the WS URL (used when a public tunnel provides a WSS endpoint).
     /// The browser will connect to this URL instead of the local ws://... one.
     void setOverrideWsUrl(const QString& url) { m_OverrideWsUrl = url; }
 

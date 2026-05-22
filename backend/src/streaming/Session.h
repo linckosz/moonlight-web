@@ -29,6 +29,9 @@ public:
                   bool upnpEnabled = true,
                   const QString& transport = "webrtc",
                   const QString& stunServer = "stun:stun.l.google.com:19302",
+                  int streamHeight = 1080,
+                  int streamFps = 60,
+                  int streamBitrateKbps = 20000,
                   QObject* parent = nullptr);
     ~StreamSession();
 
@@ -36,7 +39,7 @@ public:
     void quit();
 
     /// Override the signaling WS URL returned to the browser.
-    /// When nport tunnel is active, this is "wss://<subdomain>.nport.link".
+    /// When a public tunnel is active, this is the tunnel's WSS endpoint.
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
 
     /// Set the actual HTTPS port used by HttpServer (may differ from 443
@@ -71,6 +74,13 @@ private:
 
     StreamConfig m_Config;
     bool m_GamingMode = true;
+
+    // Streaming resolution, FPS and bitrate (read from AppSettings)
+    int m_StreamWidth = 1920;
+    int m_StreamHeight = 1080;
+    int m_StreamFps = 60;
+    int m_StreamBitrateKbps = 20000;
+
     bool m_UpnpEnabled = true;
     QString m_Transport = "webrtc";
     QString m_StunServer = "stun:stun.l.google.com:19302";

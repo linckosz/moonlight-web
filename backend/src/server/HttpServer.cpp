@@ -277,7 +277,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
     m_HttpsPort = preferredHttpsPort;
     bool hasHttps = loadCert();
 
-    // Start HTTP server with port fallback (must-have for nport).
+    // Start HTTP server with port fallback (required for tunnels).
     // Try the preferred port first, then scan from 49080 upward.
     {
         auto tryHttpPort = [this](quint16 port) -> bool {
@@ -433,7 +433,7 @@ bool HttpServer::isLanHost(const QString& host) const
         return true;
 
     QHostAddress addr(h);
-    if (addr.isNull()) return false;  // Not an IP → public domain (e.g. nport.link)
+    if (addr.isNull()) return false;  // Not an IP → public domain (e.g. tunnel endpoint)
 
     if (addr.isLoopback()) return true;
 
@@ -457,9 +457,9 @@ void HttpServer::onHttpConnection()
 {
     if (!m_HttpServer) return;
     while (QTcpSocket* socket = m_HttpServer->nextPendingConnection()) {
-        // Plain HTTP server: process requests directly (no redirect to HTTPS).
-        // This allows the nport/cloudflared tunnel to connect via HTTP
-        // (cloudflared uses http://localhost:<port> as the origin).
+        // Non-encrypted HTTP server: process requests directly (no redirect to HTTPS).
+        // This allows external tunnels (cloudflared etc.) to connect via HTTP
+        // (they use http://localhost:<port> as the origin).
         // External TLS access goes through the separate HTTPS listener.
         m_Buffers[socket] = QByteArray();
         connect(socket, &QTcpSocket::readyRead, this, &HttpServer::onReadyRead);
@@ -488,7 +488,7 @@ void HttpServer::onReadyReadSocket(QTcpSocket* socket)
 
     // WebSocket upgrade: proxy the connection to the local signaling server.
     // This allows both HTTPS and WebSocket signaling to share the same port 443,
-    // which is required for the nport tunnel to expose the full UI.
+    // which is required for the tunnel to expose the full UI.
     if (headerPart.contains("Upgrade: websocket", Qt::CaseInsensitive)) {
         handleWebSocketUpgrade(socket, buffer);
         return;
@@ -533,8 +533,8 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
     // HTTP→HTTPS redirect for plain HTTP connections from LAN/local clients.
     // Only redirect when the user typed http:// in their browser (LAN/localhost).
-    // Public hosts (nport tunnel) are NOT redirected — the client is already on
-    // HTTPS at the nport edge, and the tunnel forwards plain HTTP to us.
+    // Public tunnel connections are NOT redirected — the client is already on
+    // HTTPS at the tunnel edge, and the tunnel forwards plain HTTP to us.
     if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0) {
         QString host = req.headers.value("host");
         int portSep = host.lastIndexOf(':');
@@ -551,7 +551,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             sendResponse(socket, resp);
             return;
         }
-        // Public host (nport): fall through, serve directly
+        // Public host (tunnel): fall through, serve directly
     }
 
     if (!req.path.startsWith("/api/")) {

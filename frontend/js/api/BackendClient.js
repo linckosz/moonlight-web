@@ -55,9 +55,11 @@ export class BackendClient {
     static async getStreamingSettings()            { return this.get('/api/settings/streaming'); }
     static async saveStreamingSettings(settings)   { return this.post('/api/settings/streaming', settings); }
 
-    // ── Cloudflare tunnel (remote access via cloudflared) ──────────────────────────────────
+    // ── deSEC Internet Access ────────────────────────────────────────────────────────────
 
-    static async getTunnelStatus()                 { return this.get('/api/tunnel/status'); }
-    static async configureTunnel(options)           { return this.post('/api/tunnel/configure', options); }
-    static async disableTunnel()                    { return this.post('/api/tunnel/disable'); }
+    static async getInternetStatus()                { return this.get('/api/internet/status'); }
+    static async enableInternet(options)            { return this.post('/api/internet/enable', options); }
+    static async disableInternet()                  { return this.post('/api/internet/disable'); }
+    static async refreshInternet()                  { return this.post('/api/internet/refresh'); }
+    static async renewCert()                        { return this.post('/api/internet/renew-cert'); }
 }

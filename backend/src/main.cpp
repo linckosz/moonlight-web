@@ -16,10 +16,11 @@
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
 #include "streaming/Session.h"
+#include "streaming/MoonlightShim.h"
 #include "streaming/DataChannelRelay.h"
 #include "streaming/MediaTrackRelay.h"
 #include "streaming/StreamRelay.h"
-#include "network/NportClient.h"
+#include "network/InternetAccessManager.h"
 #include "TrayManager.h"
 
 #include <openssl/ssl.h>
@@ -101,7 +102,16 @@ int main(int argc, char* argv[])
     QPointer<DataChannelRelay> g_ActiveRelay;
     QPointer<MediaTrackRelay> g_ActiveMediaTrackRelay;
     QPointer<StreamRelay> g_ActiveStreamRelay;
-    NportClient nportClient;
+    InternetAccessManager internetAccess(&appSettings);
+
+    // Hot-reload TLS when certificate is renewed (no server restart needed)
+    QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged,
+        [&server](const QString& certPath) {
+            qInfo() << "[main] Certificate renewed, reloading TLS:" << certPath;
+            if (!server.reloadTls()) {
+                qWarning() << "[main] TLS reload failed — restart may be required";
+            }
+        });
 
     // Register API routes
     server.router()->get("/api/health", [](const HttpRequest&) {
@@ -205,7 +215,7 @@ int main(int argc, char* argv[])
     auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
 
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, &nportClient, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -227,16 +237,27 @@ int main(int argc, char* argv[])
         }
 
         // Determine signaling host from the browser's Host header.
-        // This works for both LAN and remote access:
-        //   LAN:    Host: localhost:443  → wss://localhost/ws
-        //   Remote: Host: moonlightweb-XXXX.nport.link → wss://moonlightweb-XXXX.nport.link/ws
-        // The browser already knows how to reach the server — use the same host.
+        // Works for both LAN (localhost:443) and remote access via deSEC domain.
         QString serverHost = req.headers.value("host");
         int colon = serverHost.indexOf(':');
         if (colon >= 0)
             serverHost = serverHost.left(colon);
 
-        QString transportPref = appSettings.transport();
+        // Resolve transport preference: new transport_mode takes priority
+        // over the legacy transport setting.
+        QString transportPref = appSettings.transportMode();
+        if (transportPref.isEmpty() || transportPref == "auto") {
+            transportPref = appSettings.transport();
+        }
+        if (transportPref == "webrtc-media-udp" || transportPref == "webrtc-media-tcp")
+            transportPref = "webrtc-media";
+        else if (transportPref == "webrtc-dc-udp" || transportPref == "webrtc-dc-tcp")
+            transportPref = "webrtc";
+        else if (transportPref == "wss")
+            ;
+        else if (transportPref != "webrtc" && transportPref != "webrtc-media" && transportPref != "wss")
+            transportPref = appSettings.transport();
+
         qInfo() << "[Session] Transport preference:" << transportPref;
 
         auto* session = new StreamSession(
@@ -249,25 +270,35 @@ int main(int argc, char* argv[])
             appSettings.gamingMode(),
             effectiveUpnpEnabled,
             transportPref,
-            stunServer
+            stunServer,
+            appSettings.streamHeight(),
+            appSettings.streamFps(),
+            appSettings.streamBitrate()
         );
 
-        // Inform the session about the effective HTTPS port (for wsUrl()
-        // construction when the WebSocket shares the same HTTPS port).
+        // Inform the session about the effective HTTPS port
         session->setHttpsPort(server.activeHttpsPort());
 
-        // Set the port for the legacy WSS StreamRelay (separate from signaling WS).
+        // Set the port for the legacy WSS StreamRelay
         session->setStreamRelayPort(signalingPort + 1);
 
         // Track StreamRelay for quit/cleanup (WSS mode)
         QObject::connect(session, &StreamSession::streamRelayCreated,
-            [&g_ActiveStreamRelay](StreamRelay* relay) {
+            [&g_ActiveStreamRelay, &computerManager, host](StreamRelay* relay) {
                 qInfo() << "[main] streamRelayCreated, relay=" << relay;
                 g_ActiveStreamRelay = relay;
 
                 QObject::connect(relay, &StreamRelay::sessionEnded,
-                    [relay, &g_ActiveStreamRelay]() {
+                    [relay, &g_ActiveStreamRelay, &computerManager, host]() {
                         qInfo() << "[main] StreamRelay sessionEnded, relay=" << relay;
+
+                        // Best-effort quit to Sunshine (session ended unexpectedly)
+                        auto* identity = IdentityManager::get();
+                        auto* quitReply = computerManager.http()->quitAppAsync(
+                            host->activeAddress, host->activeHttpsPort,
+                            identity->getCertificate(), identity->getPrivateKey());
+                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+
                         relay->stop();
                         relay->deleteLater();
                         if (g_ActiveStreamRelay == relay) {
@@ -278,20 +309,22 @@ int main(int argc, char* argv[])
 
         // Track the DataChannelRelay for quit/cleanup (WebRTC mode)
         QObject::connect(session, &StreamSession::relayCreated,
-            [&g_ActiveRelay, &nportClient](DataChannelRelay* relay) {
+            [&g_ActiveRelay, &computerManager, host](DataChannelRelay* relay) {
                 qInfo() << "[main] relayCreated, relay=" << relay;
                 g_ActiveRelay = relay;
 
-                // Resume nport refresh once signaling is done (data channels open)
-                QObject::connect(relay, &DataChannelRelay::dataChannelsOpen,
-                    &nportClient, &NportClient::resumeRefresh);
-
-                // Stop + clean relay whenever the session ends (DataChannel
-                // disconnect, stream error, etc.), NOT just null the pointer.
                 QObject::connect(relay, &DataChannelRelay::sessionEnded,
-                    [relay, &g_ActiveRelay]() {
+                    [relay, &g_ActiveRelay, &computerManager, host]() {
                         qInfo() << "[main] sessionEnded fired, relay=" << relay
                                 << "g_ActiveRelay=" << g_ActiveRelay.data();
+
+                        // Best-effort quit to Sunshine (session ended unexpectedly)
+                        auto* identity = IdentityManager::get();
+                        auto* quitReply = computerManager.http()->quitAppAsync(
+                            host->activeAddress, host->activeHttpsPort,
+                            identity->getCertificate(), identity->getPrivateKey());
+                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+
                         relay->stop();
                         relay->deleteLater();
                         if (g_ActiveRelay == relay) {
@@ -305,18 +338,21 @@ int main(int argc, char* argv[])
 
         // Track the MediaTrackRelay for quit/cleanup (WebRTC media mode)
         QObject::connect(session, &StreamSession::mediaTrackRelayCreated,
-            [&g_ActiveMediaTrackRelay, &nportClient](MediaTrackRelay* relay) {
+            [&g_ActiveMediaTrackRelay, &computerManager, host](MediaTrackRelay* relay) {
                 qInfo() << "[main] mediaTrackRelayCreated, relay=" << relay;
                 g_ActiveMediaTrackRelay = relay;
 
-                // Resume nport refresh once media tracks + DataChannels are open
-                QObject::connect(relay, &MediaTrackRelay::dataChannelsOpen,
-                    &nportClient, &NportClient::resumeRefresh);
-
-                // Stop + clean relay whenever the session ends
                 QObject::connect(relay, &MediaTrackRelay::sessionEnded,
-                    [relay, &g_ActiveMediaTrackRelay]() {
+                    [relay, &g_ActiveMediaTrackRelay, &computerManager, host]() {
                         qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << relay;
+
+                        // Best-effort quit to Sunshine (session ended unexpectedly)
+                        auto* identity = IdentityManager::get();
+                        auto* quitReply = computerManager.http()->quitAppAsync(
+                            host->activeAddress, host->activeHttpsPort,
+                            identity->getCertificate(), identity->getPrivateKey());
+                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+
                         relay->stop();
                         relay->deleteLater();
                         if (g_ActiveMediaTrackRelay == relay) {
@@ -324,13 +360,6 @@ int main(int argc, char* argv[])
                         }
                     });
             });
-
-        // Pause nport refresh during signaling to avoid breaking WS connection
-        nportClient.pauseRefresh();
-
-        // Resume refresh if the session fails before data channels open
-        QObject::connect(session, &StreamSession::sessionFailed,
-            &nportClient, &NportClient::resumeRefresh);
 
         session->start();
     });
@@ -364,6 +393,10 @@ int main(int argc, char* argv[])
             qInfo() << "[quit] WebRTC relay exists, stopping relay=" << g_ActiveRelay.data();
             DataChannelRelay* relay = g_ActiveRelay;
             g_ActiveRelay = nullptr;
+            // Explicitly stop MoonlightShim before relay cleanup so LiStopConnection
+            // runs on the main thread, not deferred to the relay destructor.
+            if (relay->moonlightShim())
+                relay->moonlightShim()->stopConnection();
             relay->stop();
             relay->deleteLater();
             relayStopped = true;
@@ -373,6 +406,9 @@ int main(int argc, char* argv[])
             qInfo() << "[quit] MediaTrackRelay exists, stopping relay=" << g_ActiveMediaTrackRelay.data();
             MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
             g_ActiveMediaTrackRelay = nullptr;
+            // Explicitly stop MoonlightShim before relay cleanup.
+            if (relay->moonlightShim())
+                relay->moonlightShim()->stopConnection();
             relay->stop();
             relay->deleteLater();
             relayStopped = true;
@@ -433,118 +469,84 @@ int main(int argc, char* argv[])
     }
 
     // Configure HttpServer to proxy WebSocket upgrades to the signaling server.
-    // Both HTTPS and WebSocket signaling now share the same port (443 by default),
-    // so the nport tunnel exposes the full UI to remote users.
+    // Both HTTPS and WebSocket signaling share the same port (443 by default).
     server.setSignalingPort(signalingPort);
     // Legacy WSS StreamRelay uses the next port for its local WS server.
     server.setStreamRelayPort(signalingPort + 1);
 
-    // ── nport tunnel ─────────────────────────────────────────────────────────────
+    // — Internet Access via deSEC —
 
-    // Load or auto-generate the nport subdomain at startup.
-    // Stored as 8 hex chars ("92b8d122"); "moonlightweb-" prefix is
-    // prepended by NportClient when launching nport.
-    QString nportSubdomain = appSettings.nportSubdomain();
-    if (nportSubdomain.isEmpty()) {
-        // Generate 8 random hex characters
-        QString hex(8, QChar('0'));
-        for (int i = 0; i < 8; ++i) {
-            hex[i] = QStringLiteral("0123456789abcdef")
-                     .at(QRandomGenerator::global()->bounded(16));
-        }
-        nportSubdomain = hex;
-        appSettings.setNportSubdomain(nportSubdomain);
-        qInfo() << "[main] Auto-generated nport subdomain:" << nportSubdomain;
-    }
-
-    // Connect nport signals for tunnel lifecycle
-    QObject::connect(&nportClient, &NportClient::tunnelReady,
-        [&](const QString& url) {
-            qInfo() << "[main] nport tunnel ready:" << url;
-        });
-    QObject::connect(&nportClient, &NportClient::tunnelError,
-        [&](const QString& err) {
-            qWarning() << "[main] nport tunnel error:" << err;
-        });
-
-    // Always set the persisted subdomain (auto-generated or previously saved)
-    nportClient.setSubdomain(nportSubdomain);
-    nportClient.setTargetPort(server.httpPort());
-    qInfo() << "[main] nport subdomain:" << nportSubdomain;
-
-    // API route: get tunnel status
-    server.router()->get("/api/tunnel/status", [&](const HttpRequest&) {
-        QJsonObject obj;
-        obj["active"] = nportClient.isActive();
-        obj["public_url"] = nportClient.isActive()
-            ? nportClient.publicUrl()
-            : QString();
-        obj["subdomain"] = nportClient.subdomain();
-        obj["available"] = nportClient.isAvailable();
-
-        // Last error (if any) — empty string if no error
-        QString err = nportClient.lastError();
-        if (!err.isEmpty())
-            obj["error"] = err;
-
-        return HttpResponse::json(obj);
+    // API route: get Internet Access status
+    server.router()->get("/api/internet/status", [&](const HttpRequest&) {
+        return HttpResponse::json(internetAccess.statusJson());
     });
 
-    // API route: configure/enable the nport tunnel
-    server.router()->post("/api/tunnel/configure", [&](const HttpRequest& req) {
+    // API route: enable/configure Internet Access
+    server.router()->post("/api/internet/enable", [&](const HttpRequest& req) {
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
-        QString subdomain = body["subdomain"].toString();
-        if (subdomain.isEmpty()) {
-            // Generate a subdomain based on hostname if none provided
-            subdomain = nportClient.subdomain();
-            if (subdomain.isEmpty()) {
-                // Generate a unique subdomain (hostname + random suffix)
-                const QString chars = QStringLiteral("abcdefghijklmnopqrstuvwxyz0123456789");
-                auto ts = QDateTime::currentMSecsSinceEpoch();
-                quint64 seed = (static_cast<quint64>(ts) << 16)
-                             ^ QRandomGenerator::global()->generate64();
-                QString shortId(8, QChar('a'));
-                for (int i = 0; i < 8; ++i) {
-                    shortId[i] = chars.at(static_cast<int>(seed % 36));
-                    seed /= 36;
-                }
-                subdomain = shortId;
-            }
-        }
+        if (body.contains("unique_id"))
+            appSettings.setUniqueId(body["unique_id"].toString());
+        if (body.contains("desec_token"))
+            appSettings.setDesecToken(body["desec_token"].toString());
+        if (body.contains("auto_ip_detection"))
+            appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
+        if (body.contains("transport_mode"))
+            appSettings.setTransportMode(body["transport_mode"].toString());
+        if (body.contains("public_ip"))
+            appSettings.setPublicIp(body["public_ip"].toString());
 
-        appSettings.setNportSubdomain(subdomain);
-        qInfo() << "[main] nport subdomain saved:" << subdomain;
+        if (body.contains("internet_access_enabled"))
+            appSettings.setInternetAccessEnabled(body["internet_access_enabled"].toBool());
+        if (body.contains("upnp_enabled"))
+            appSettings.setUpnpEnabled(body["upnp_enabled"].toBool());
 
-        // (Re)start the tunnel
-        nportClient.stop();
-        nportClient.setSubdomain(subdomain);
-        nportClient.setTargetPort(server.httpPort());
+        bool enabled = body.value("internet_access_enabled").toBool(
+            appSettings.internetAccessEnabled());
 
-        if (nportClient.isAvailable()) {
-            nportClient.start();
+        if (enabled) {
+            qInfo() << "[main] POST /api/internet/enable — calling internetAccess.start()...";
+            internetAccess.start();
+            QJsonObject obj = internetAccess.statusJson();
+            qInfo() << "[main] internetAccess.start() completed — active:" << internetAccess.isActive()
+                    << "lastError:" << obj.value("last_error").toString();
+            obj["status"] = "enabled";
+            return HttpResponse::json(obj);
         } else {
-            qWarning() << "[main] nport not available (binary not found) —"
-                       << "tunnel not started";
+            internetAccess.stop();
+            QJsonObject obj;
+            obj["status"] = "disabled";
+            obj["internet_access_enabled"] = false;
+            return HttpResponse::json(obj);
         }
-
-        QJsonObject obj;
-        obj["status"] = "configured";
-        obj["subdomain"] = subdomain;
-        return HttpResponse::json(obj);
     });
 
-    // API route: disable/stop the nport tunnel (keeps subdomain for re-enable)
-    server.router()->post("/api/tunnel/disable", [&](const HttpRequest&) {
-        nportClient.stop();
+    // API route: disable Internet Access
+    server.router()->post("/api/internet/disable", [&](const HttpRequest&) {
+        internetAccess.stop();
+        appSettings.setInternetAccessEnabled(false);
 
         QJsonObject obj;
         obj["status"] = "disabled";
         return HttpResponse::json(obj);
     });
 
-    // ── Admin settings (localhost only, server config) ────────────────────────
+    // API route: force refresh (re-check IP, DNS, certificate)
+    server.router()->post("/api/internet/refresh", [&](const HttpRequest&) {
+        internetAccess.forceRefresh();
+        return HttpResponse::json(internetAccess.statusJson());
+    });
+
+    // API route: renew TLS certificate
+    server.router()->post("/api/internet/renew-cert", [&](const HttpRequest&) {
+        internetAccess.renewCertificate();
+        QJsonObject obj;
+        obj["status"] = "renewing";
+        return HttpResponse::json(obj);
+    });
+
+    // — Admin settings (localhost only, server config) —
 
     server.router()->get("/api/admin/settings", [&server, &appSettings](const HttpRequest&) {
         QJsonObject obj;
@@ -561,19 +563,14 @@ int main(int argc, char* argv[])
             quint16 newPort = static_cast<quint16>(body["https_port"].toInt(443));
             quint16 oldPort = server.activeHttpsPort();
 
-            // Save to persistent settings
             appSettings.setHttpsPort(newPort);
 
             QJsonObject obj;
             obj["https_port"] = static_cast<int>(newPort);
 
             if (newPort == oldPort || oldPort == 0) {
-                // Same port or server not running — nothing to restart
                 obj["status"] = "saved";
             } else {
-                // Port changed: respond first, then restart the server.
-                // This ensures the HTTP response is flushed to the client
-                // before stop() closes all sockets.
                 obj["status"] = "saved";
                 obj["port_changed"] = true;
 
@@ -595,15 +592,30 @@ int main(int argc, char* argv[])
         return HttpResponse::error(400, "No supported settings provided");
     });
 
-    // ── Streaming settings ────────────────────────────────────────────────────
+    // — Streaming settings —
 
     server.router()->get("/api/settings/streaming", [&appSettings](const HttpRequest&) {
         QJsonObject obj;
-        obj["video_codec"] = AppSettings::videoCodecToString(appSettings.videoCodec());
+
+        // Normalise "auto" → "hevc" (the old "auto" default is replaced by explicit HEVC).
+        // Existing settings.json entries with "video_codec":"auto" are migrated on read.
+        VideoCodec codec = appSettings.videoCodec();
+        QString codecStr = AppSettings::videoCodecToString(codec);
+        if (codecStr == "auto")
+            codecStr = "hevc";
+        obj["video_codec"] = codecStr;
+
         obj["gaming_mode"] = appSettings.gamingMode();
+        obj["show_performance_stats"] = appSettings.showPerformanceStats();
         obj["upnp_enabled"] = appSettings.upnpEnabled();
         obj["transport"] = appSettings.transport();
         obj["stun_server"] = appSettings.stunServer();
+        obj["internet_access_enabled"] = appSettings.internetAccessEnabled();
+        obj["transport_mode"] = appSettings.transportMode();
+        obj["auto_ip_detection"] = appSettings.autoIpDetection();
+        obj["stream_bitrate"] = appSettings.streamBitrate();
+        obj["stream_height"] = appSettings.streamHeight();
+        obj["stream_fps"] = appSettings.streamFps();
         return HttpResponse::json(obj);
     });
 
@@ -630,32 +642,44 @@ int main(int argc, char* argv[])
             hadChange = true;
         }
 
+        if (body.contains("show_performance_stats")) {
+            bool enabled = body["show_performance_stats"].toBool();
+            appSettings.setShowPerformanceStats(enabled);
+            obj["show_performance_stats"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("stream_bitrate")) {
+            int kbps = body["stream_bitrate"].toInt(20000);
+            appSettings.setStreamBitrate(kbps);
+            obj["stream_bitrate"] = appSettings.streamBitrate();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("stream_height")) {
+            int height = body["stream_height"].toInt(1080);
+            appSettings.setStreamHeight(height);
+            obj["stream_height"] = appSettings.streamHeight();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("stream_fps")) {
+            int fps = body["stream_fps"].toInt(60);
+            appSettings.setStreamFps(fps);
+            obj["stream_fps"] = appSettings.streamFps();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
         if (body.contains("upnp_enabled")) {
             bool enabled = body["upnp_enabled"].toBool();
             appSettings.setUpnpEnabled(enabled);
             obj["upnp_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
-        }
-
-        if (body.contains("transport")) {
-            QString transport = body["transport"].toString();
-            if (transport == "webrtc" || transport == "wss" || transport == "webrtc-media") {
-                appSettings.setTransport(transport);
-                obj["transport"] = transport;
-                obj["status"] = "saved";
-                hadChange = true;
-            }
-        }
-
-        if (body.contains("stun_server")) {
-            QString url = body["stun_server"].toString().trimmed();
-            if (!url.isEmpty()) {
-                appSettings.setStunServer(url);
-                obj["stun_server"] = url;
-                obj["status"] = "saved";
-                hadChange = true;
-            }
         }
 
         if (!hadChange)
