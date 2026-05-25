@@ -56,7 +56,7 @@ SOURCES += \
     src/server/RestRouter.cpp \
     src/common/Logger.cpp \
     src/network/UPNPClient.cpp \
-    src/network/DeSecClient.cpp \
+    src/network/PdnsClient.cpp \
     src/network/StunClient.cpp \
     src/network/AcmeClient.cpp \
     src/network/InternetAccessManager.cpp \
@@ -116,7 +116,7 @@ HEADERS += \
     src/common/Logger.h \
     src/common/Types.h \
     src/network/UPNPClient.h \
-    src/network/DeSecClient.h \
+    src/network/PdnsClient.h \
     src/network/StunClient.h \
     src/network/AcmeClient.h \
     src/network/InternetAccessManager.h \

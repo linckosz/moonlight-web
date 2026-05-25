@@ -98,20 +98,48 @@ bool StunClient::queryServer(const StunServer& server, int timeoutMs, QString& p
         // Hostname — do a blocking DNS lookup
         QHostInfo info = QHostInfo::fromName(server.host);
         if (info.error() != QHostInfo::NoError || info.addresses().isEmpty()) {
-            qWarning() << "[StunClient] DNS resolution failed for:" << server.host;
+            qWarning() << "[StunClient] DNS resolution failed for"
+                       << server.host << ":" << info.errorString();
             return false;
         }
-        addr = info.addresses().first();
+        // Prefer IPv4 so the STUN server returns an IPv4 XOR-MAPPED-ADDRESS
+        const auto& addrs = info.addresses();
+        QHostAddress v6Fallback;
+        bool found = false;
+        for (const auto& a : addrs) {
+            if (a.protocol() == QAbstractSocket::IPv4Protocol) {
+                addr = a;
+                found = true;
+                break;
+            }
+            if (v6Fallback.isNull() && a.protocol() == QAbstractSocket::IPv6Protocol)
+                v6Fallback = a;
+        }
+        if (!found) {
+            if (!v6Fallback.isNull()) {
+                addr = v6Fallback;
+                qDebug() << "[StunClient] No IPv4 for" << server.host
+                         << ", falling back to IPv6";
+            } else {
+                qWarning() << "[StunClient] No usable address for" << server.host;
+                return false;
+            }
+        }
     }
 
     // Connect and send
     socket.connectToHost(addr, server.port);
     if (!socket.waitForConnected(timeoutMs)) {
+        qWarning() << "[StunClient] Connection timeout after"
+                   << timeoutMs << "ms to" << server.host << ":" << server.port;
         return false;
     }
 
     qint64 sent = socket.write(request);
     if (sent != request.size()) {
+        qWarning() << "[StunClient] Failed to send STUN request to"
+                   << server.host << ":" << server.port
+                   << "— wrote" << sent << "of" << request.size() << "bytes";
         return false;
     }
 
@@ -122,6 +150,9 @@ bool StunClient::queryServer(const StunServer& server, int timeoutMs, QString& p
 
     // Wait for response
     if (!socket.waitForReadyRead(timeoutMs)) {
+        qWarning() << "[StunClient] Read timeout waiting for STUN response from"
+                   << server.host << ":" << server.port
+                   << "(timeout:" << timeoutMs << "ms)";
         socket.disconnectFromHost();
         return false;
     }
@@ -130,6 +161,8 @@ bool StunClient::queryServer(const StunServer& server, int timeoutMs, QString& p
     socket.disconnectFromHost();
 
     if (response.isEmpty()) {
+        qWarning() << "[StunClient] Empty response from"
+                   << server.host << ":" << server.port;
         return false;
     }
 
@@ -181,6 +214,8 @@ QString StunClient::parseXorMappedAddress(const QByteArray& response,
         qWarning() << "[StunClient] Response too short:" << response.size();
         return {};
     }
+
+    QString ipv6Fallback;
 
     // Validate response type: should be Binding Response (0x0101)
     quint16 type = (static_cast<quint8>(response[0]) << 8)
@@ -260,10 +295,35 @@ QString StunClient::parseXorMappedAddress(const QByteArray& response,
                     .arg((addr >> 8) & 0xFF)
                     .arg(addr & 0xFF));
                 return ha.toString();
-            } else if (family == 0x02) {
-                // IPv6 — XOR with transaction ID (not supported for now)
-                qWarning() << "[StunClient] IPv6 XOR-MAPPED-ADDRESS not supported";
-                return {};
+            } else if (family == 0x02 && attrLength >= 20) {
+                // IPv6 — save as fallback in case no IPv4 is found
+                quint32 xorWords[4];
+                for (int i = 0; i < 4; ++i) {
+                    xorWords[i] = (static_cast<quint8>(response[pos + 4 + i*4]) << 24)
+                                | (static_cast<quint8>(response[pos + 5 + i*4]) << 16)
+                                | (static_cast<quint8>(response[pos + 6 + i*4]) << 8)
+                                | static_cast<quint8>(response[pos + 7 + i*4]);
+                }
+                quint32 words[4];
+                words[0] = xorWords[0] ^ kStunMagicCookie;
+                for (int i = 1; i < 4; ++i) {
+                    quint32 tidPart = (static_cast<quint8>(transactionId[(i-1)*4]) << 24)
+                                    | (static_cast<quint8>(transactionId[(i-1)*4+1]) << 16)
+                                    | (static_cast<quint8>(transactionId[(i-1)*4+2]) << 8)
+                                    | static_cast<quint8>(transactionId[(i-1)*4+3]);
+                    words[i] = xorWords[i] ^ tidPart;
+                }
+                QHostAddress ha;
+                ha.setAddress(QStringLiteral("%1:%2:%3:%4:%5:%6:%7:%8")
+                    .arg((words[0] >> 16) & 0xFFFF, 4, 16, QChar('0'))
+                    .arg(words[0] & 0xFFFF, 4, 16, QChar('0'))
+                    .arg((words[1] >> 16) & 0xFFFF, 4, 16, QChar('0'))
+                    .arg(words[1] & 0xFFFF, 4, 16, QChar('0'))
+                    .arg((words[2] >> 16) & 0xFFFF, 4, 16, QChar('0'))
+                    .arg(words[2] & 0xFFFF, 4, 16, QChar('0'))
+                    .arg((words[3] >> 16) & 0xFFFF, 4, 16, QChar('0'))
+                    .arg(words[3] & 0xFFFF, 4, 16, QChar('0')));
+                ipv6Fallback = ha.toString();
             }
         } else if (attrType == kAttrMappedAddress && attrLength >= 8) {
             // Non-XOR MAPPED-ADDRESS (RFC 3489 fallback)
@@ -291,6 +351,11 @@ QString StunClient::parseXorMappedAddress(const QByteArray& response,
         }
     }
 
+    if (!ipv6Fallback.isEmpty()) {
+        qDebug() << "[StunClient] No IPv4 XOR-MAPPED-ADDRESS, using IPv6 fallback:"
+                 << ipv6Fallback;
+        return ipv6Fallback;
+    }
     qWarning() << "[StunClient] No XOR-MAPPED-ADDRESS found in STUN response";
     return {};
 }

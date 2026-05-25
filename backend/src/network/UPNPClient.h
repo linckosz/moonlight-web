@@ -27,18 +27,29 @@ public:
     // Returns true if a valid IGD was found and is connected.
     bool discover(int timeoutMs = 2000);
 
-    // Add a UDP port mapping from externalPort to this host's internalPort.
+    // Add a port mapping from externalPort to this host's internalPort.
     // leaseDurationSec: 0 = permanent, 3600 = 1 hour (recommended for routers
     // that do not support permanent mappings).
     // desc: human-readable description shown in the router admin UI.
+    // protocol: "TCP" or "UDP" (default: "UDP" for backward compat).
     // Returns true if the mapping was added successfully.
     bool addPortMapping(uint16_t externalPort,
                         uint16_t internalPort,
                         uint32_t leaseDurationSec = 0,
-                        const std::string& desc = "Moonlight-Web WebRTC");
+                        const std::string& desc = "Moonlight-Web",
+                        const std::string& protocol = "UDP");
 
-    // Remove a UDP port mapping.
-    bool removePortMapping(uint16_t externalPort);
+    // Check if a port mapping already exists on the IGD.
+    // Returns true if a mapping exists; internalClient and internalPort are set.
+    // Returns false if no mapping exists or the IGD is not available.
+    bool getExistingPortMapping(uint16_t externalPort,
+                                const std::string& protocol,
+                                std::string& internalClient,
+                                std::string& internalPort);
+
+    // Remove a port mapping. protocol must match the original mapping.
+    bool removePortMapping(uint16_t externalPort,
+                           const std::string& protocol = "UDP");
 
     // Get the public IP address as seen by the IGD.
     // Returns empty string on failure or if no IGD is available.
@@ -46,6 +57,9 @@ public:
 
     // Get the local IP address of the IGD gateway.
     QHostAddress gatewayAddress() const { return m_GatewayAddr; }
+
+    // Get the LAN IP address of this host on the IGD-facing interface.
+    std::string lanAddress() const { return std::string(m_LanAddr); }
 
     // Check if a valid IGD was discovered and is available.
     bool isAvailable() const { return m_Available; }

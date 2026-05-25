@@ -2,7 +2,7 @@
  * Moonlight-Web — Server Settings
  *
  * Server administration functions (localhost only):
- *   - Internet Access (deSEC) with DNS propagation check
+ *   - Internet Access (Azure DNS) with DNS propagation check
  *   - HTTPS port configuration
  *   - Transport mode
  *
@@ -20,7 +20,7 @@ export class AdminView {
         this._httpsPort = 443;
         this._httpPort = 80;
 
-        // Internet Access state (deSEC)
+        // Internet Access state (Azure DNS)
         this._internetEnabled = false;
         this._domain = '';
         this._publicIp = '';
@@ -30,9 +30,6 @@ export class AdminView {
         this._upnpAvailable = false;
         this._pendingRegistration = false;
         this._lastError = '';
-
-        // GDPR consent gate (once per page load)
-        this._gdprConsented = false;
 
         // DNS propagation polling
         this._dnsPollTimer = null;
@@ -216,29 +213,29 @@ export class AdminView {
                 <div class="settings-section">
                     <h3 class="settings-section-title">Internet</h3>
 
-                    <label class="tunnel-checkbox-label">
-                        <input type="checkbox" id="chk-internet-enable"
-                               ${this._internetEnabled ? 'checked' : ''} />
-                        <span class="tunnel-checkbox-text">Enable Internet Access</span>
-                    </label>
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-internet-enable"
+                                   ${this._internetEnabled ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">Enable Internet Access</span>
+                        </label>
+                    </div>
 
                     ${showDomain ? `
-                        <div style="margin-top:12px;">
-                            <div class="settings-field">
                                 <div style="padding:6px 0;font-family:monospace;">
                                     ${this._internetEnabled && !this._pendingRegistration && domainUrl
                                         ? `<a href="${this.esc(domainUrl)}" target="_blank" rel="noopener" class="tunnel-url-link">${this.esc(domainUrl)}</a>`
                                         : `<span class="tunnel-url-disabled">${domainUrl ? this.esc(domainUrl) : ''}</span>`
                                     }
                                 </div>
-                            </div>
-                        </div>
                     ` : ''}
 
                     <!-- Info frame (always visible) -->
                     <div class="internet-info-box">
-                        <p>Activating sends your <strong>public IP</strong> to deSEC to create
-                        a DNS A record pointing to your network.</p>
+                        <p><strong class="internet-important-label">Important:</strong><br>
+                        By enabling Internet access, you authorize sending this server's
+                        <strong>public IP address</strong> to Azure DNS to create an A record
+                        pointing to your network.</p>
                         <p>Authorizes <strong>UPnP</strong> port mapping on your router
                         ${this._upnpAvailable ? '(available on this network).' : '(not available on this network).'}
                         You can also forward ports manually.</p>
@@ -423,17 +420,6 @@ export class AdminView {
     // Internet Access enable / disable
 
     async _enableInternet() {
-        // GDPR consent gate — shown once per session
-        if (!this._gdprConsented && !this._internetEnabled) {
-            const consented = await this._showConsentDialog();
-            if (!consented) {
-                const chk = this.container.querySelector('#chk-internet-enable');
-                if (chk) chk.checked = false;
-                return;
-            }
-            this._gdprConsented = true;
-        }
-
         try {
             const result = await BackendClient.enableInternet({
                 internet_access_enabled: true,
@@ -459,60 +445,6 @@ export class AdminView {
             const chk = this.container.querySelector('#chk-internet-enable');
             if (chk) chk.checked = false;
         }
-    }
-
-    /**
-     * Show GDPR consent dialog before enabling Internet Access.
-     * Returns a Promise that resolves to true if the user accepted.
-     */
-    _showConsentDialog() {
-        return new Promise((resolve) => {
-            const overlay = document.createElement('div');
-            overlay.className = 'consent-overlay';
-            overlay.innerHTML = `
-                <div class="consent-dialog">
-                    <h3>Enable Internet Access (optional)</h3>
-                    <div class="consent-body">
-                        <p>To allow remote access over the Internet, MWServer needs to:</p>
-                        <ul>
-                            <li>Share your <strong>public IP address</strong> with
-                                <strong>deSEC.io</strong> (a non-profit DNS provider) to create
-                                a secure subdomain pointing to your network.</li>
-                            <li>Optionally enable <strong>UPnP</strong> on your router to
-                                automatically open the required port.</li>
-                        </ul>
-                        <p>This data is used solely to make your server reachable.
-                           You can disable this feature at any time in Settings.</p>
-                    </div>
-                    <div class="consent-actions">
-                        <button class="btn btn-cancel" id="consent-cancel">Cancel</button>
-                        <button class="btn btn-primary" id="consent-confirm">Enable</button>
-                    </div>
-                </div>`;
-
-            document.body.appendChild(overlay);
-
-            const btnConfirm = overlay.querySelector('#consent-confirm');
-            const btnCancel = overlay.querySelector('#consent-cancel');
-
-            btnConfirm.addEventListener('click', () => {
-                overlay.remove();
-                resolve(true);
-            });
-
-            btnCancel.addEventListener('click', () => {
-                overlay.remove();
-                resolve(false);
-            });
-
-            // Close on overlay click (outside dialog)
-            overlay.addEventListener('click', (e) => {
-                if (e.target === overlay) {
-                    overlay.remove();
-                    resolve(false);
-                }
-            });
-        });
     }
 
     async _disableInternet() {

@@ -1,5 +1,6 @@
 #include "AcmeClient.h"
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -7,12 +8,18 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
-#include <QProcess>
-#include <QTemporaryFile>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <functional>
+
+// OpenSSL C API (replaces openssl CLI calls)
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <openssl/bn.h>
+#include <openssl/err.h>
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -25,10 +32,10 @@ static constexpr int kHttpTimeoutMs  = 30000;
 static constexpr int kPollIntervalMs = 5000;
 static constexpr int kMaxPollRetries = 36;     // 36 x 5s = 3 min
 static constexpr int kChallengeTtl   = 60;     // TXT record TTL
-static constexpr int kOpensslTimeout = 15000;  // 15s for openssl CLI
-
-static const QString kDeSecBase =
-    QStringLiteral("https://desec.io/api/v1");
+static const QString kPdnsApiBase =
+    QStringLiteral("https://api.moonlightweb.top/api/v1/servers/localhost");
+static const QString kPdnsZoneName =
+    QStringLiteral("moonlightweb.top.");
 
 // ---------------------------------------------------------------------------
 // Construction / Destruction
@@ -55,7 +62,7 @@ void AcmeClient::setDomainKeyPath(const QString& path)   { m_DomainKeyPath = pat
 void AcmeClient::setCertOutputDir(const QString& dir)    { m_CertOutputDir = dir; }
 void AcmeClient::setHost(const QString& host)            { m_Host = host; }
 void AcmeClient::setBaseDomain(const QString& domain)    { m_BaseDomain = domain; }
-void AcmeClient::setDesecToken(const QString& token)     { m_DesecToken = token; }
+void AcmeClient::setPdnsToken(const QString& token)     { m_PdnsToken = token; }
 
 void AcmeClient::start()
 {
@@ -103,92 +110,120 @@ bool AcmeClient::generateRsaKey(const QString& path)
 {
     QDir().mkpath(QFileInfo(path).absolutePath());
 
-    QProcess p;
-    p.start(QStringLiteral("openssl"),
-            { QStringLiteral("genrsa"), QStringLiteral("2048") });
-    if (!p.waitForStarted(5000)) {
-        qWarning() << "[AcmeClient] Cannot start openssl for keygen";
+    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+    if (!ctx) {
+        qWarning() << "[AcmeClient] Failed to create EVP_PKEY_CTX for keygen";
         return false;
     }
-    if (!p.waitForFinished(kOpensslTimeout)) {
-        p.kill(); p.waitForFinished(5000);
-        qWarning() << "[AcmeClient] openssl genrsa timed out";
+
+    if (EVP_PKEY_keygen_init(ctx) <= 0) {
+        qWarning() << "[AcmeClient] EVP_PKEY_keygen_init failed";
+        EVP_PKEY_CTX_free(ctx);
         return false;
     }
-    if (p.exitCode() != 0) {
-        qWarning() << "[AcmeClient] openssl genrsa failed:" << p.readAll();
+
+    if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048) <= 0) {
+        qWarning() << "[AcmeClient] EVP_PKEY_CTX_set_rsa_keygen_bits failed";
+        EVP_PKEY_CTX_free(ctx);
         return false;
     }
+
+    EVP_PKEY *pkey = nullptr;
+    if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
+        qWarning() << "[AcmeClient] EVP_PKEY_keygen failed";
+        EVP_PKEY_CTX_free(ctx);
+        return false;
+    }
+    EVP_PKEY_CTX_free(ctx);
+
+    // Write PEM to file
+    BIO *bio = BIO_new(BIO_s_mem());
+    if (!PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr)) {
+        qWarning() << "[AcmeClient] PEM_write_bio_PrivateKey failed";
+        BIO_free(bio);
+        EVP_PKEY_free(pkey);
+        return false;
+    }
+
+    char *data = nullptr;
+    long len = BIO_get_mem_data(bio, &data);
 
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         qWarning() << "[AcmeClient] Cannot write key:" << path;
+        BIO_free(bio);
+        EVP_PKEY_free(pkey);
         return false;
     }
-    f.write(p.readAllStandardOutput());
+    f.write(data, len);
     f.close();
+
+    BIO_free(bio);
+    EVP_PKEY_free(pkey);
+    qInfo() << "[AcmeClient] RSA key generated:" << path;
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// RSA helpers — parse modulus / exponent from "openssl rsa -pubout -text"
+// RSA helpers — native OpenSSL C API
 // ---------------------------------------------------------------------------
 
 QByteArray AcmeClient::parseRsaModulus()
 {
-    QProcess p;
-    p.start(QStringLiteral("openssl"),
-            { QStringLiteral("rsa"), QStringLiteral("-in"), m_AccountKeyPath,
-              QStringLiteral("-pubout"), QStringLiteral("-text"),
-              QStringLiteral("-noout") });
-    if (!p.waitForStarted(5000) || !p.waitForFinished(10000) || p.exitCode() != 0)
+    BIO *bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
+    if (!bio) {
+        qWarning() << "[AcmeClient] Cannot open account key:" << m_AccountKeyPath;
         return {};
+    }
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
+    if (!pkey) {
+        qWarning() << "[AcmeClient] Failed to parse account key for modulus";
+        return {};
+    }
 
-    QString out = QString::fromUtf8(p.readAllStandardOutput());
-    int idx = out.indexOf(QStringLiteral("Modulus:"));
-    if (idx < 0) return {};
-    QString hex = out.mid(idx + 8);
-    int eIdx = hex.indexOf(QStringLiteral("Exponent:"));
-    if (eIdx >= 0) hex = hex.left(eIdx);
+    BIGNUM *n = nullptr;
+    if (!EVP_PKEY_get_bn_param(pkey, "n", &n) || !n) {
+        qWarning() << "[AcmeClient] EVP_PKEY_get_bn_param(n) failed";
+        EVP_PKEY_free(pkey);
+        return {};
+    }
 
-    hex.remove(QLatin1Char(':'));
-    hex.remove(QLatin1Char(' '));
-    hex.remove(QLatin1Char('\t'));
-    hex.remove(QLatin1Char('\n'));
-    hex.remove(QLatin1Char('\r'));
-
-    return QByteArray::fromHex(hex.toUtf8());
+    int len = BN_num_bytes(n);
+    QByteArray modulus(len, Qt::Uninitialized);
+    BN_bn2bin(n, reinterpret_cast<unsigned char*>(modulus.data()));
+    BN_free(n);
+    EVP_PKEY_free(pkey);
+    return modulus;
 }
 
 QByteArray AcmeClient::parseRsaExponent()
 {
-    QProcess p;
-    p.start(QStringLiteral("openssl"),
-            { QStringLiteral("rsa"), QStringLiteral("-in"), m_AccountKeyPath,
-              QStringLiteral("-pubout"), QStringLiteral("-text"),
-              QStringLiteral("-noout") });
-    if (!p.waitForStarted(5000) || !p.waitForFinished(10000) || p.exitCode() != 0)
+    BIO *bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
+    if (!bio) {
+        qWarning() << "[AcmeClient] Cannot open account key:" << m_AccountKeyPath;
         return {};
-
-    QString out = QString::fromUtf8(p.readAllStandardOutput());
-    int idx = out.indexOf(QStringLiteral("Exponent:"));
-    if (idx < 0) return {};
-
-    // Format: "Exponent: 65537 (0x10001)"
-    QString expStr = out.mid(idx + 9).trimmed();
-    int sp = expStr.indexOf(QLatin1Char(' '));
-    if (sp > 0) expStr = expStr.left(sp);
-
-    bool ok = false;
-    quint64 val = expStr.toULongLong(&ok);
-    if (!ok) return {};
-
-    QByteArray result;
-    while (val > 0) {
-        result.prepend(static_cast<char>(val & 0xFF));
-        val >>= 8;
     }
-    return result;
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
+    if (!pkey) {
+        qWarning() << "[AcmeClient] Failed to parse account key for exponent";
+        return {};
+    }
+
+    BIGNUM *e = nullptr;
+    if (!EVP_PKEY_get_bn_param(pkey, "e", &e) || !e) {
+        qWarning() << "[AcmeClient] EVP_PKEY_get_bn_param(e) failed";
+        EVP_PKEY_free(pkey);
+        return {};
+    }
+
+    int len = BN_num_bytes(e);
+    QByteArray exponent(len, Qt::Uninitialized);
+    BN_bn2bin(e, reinterpret_cast<unsigned char*>(exponent.data()));
+    BN_free(e);
+    EVP_PKEY_free(pkey);
+    return exponent;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,21 +253,67 @@ QByteArray AcmeClient::accountKeyThumbprint()
 }
 
 // ---------------------------------------------------------------------------
-// JWS signing (RSA-SHA256 via openssl CLI)
+// JWS signing (RSA-SHA256 via native OpenSSL C API)
 // ---------------------------------------------------------------------------
 
 QByteArray AcmeClient::signRsaSha256(const QByteArray& data)
 {
-    QProcess p;
-    p.start(QStringLiteral("openssl"),
-            { QStringLiteral("dgst"), QStringLiteral("-sha256"),
-              QStringLiteral("-sign"), m_AccountKeyPath });
-    if (!p.waitForStarted(5000)) return {};
-    p.write(data);
-    p.closeWriteChannel();
-    if (!p.waitForFinished(10000)) return {};
-    if (p.exitCode() != 0) return {};
-    return p.readAllStandardOutput();
+    // Load the account private key from PEM file
+    BIO *bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
+    if (!bio) {
+        qWarning() << "[AcmeClient] Cannot open account key for signing:" << m_AccountKeyPath;
+        return {};
+    }
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
+    if (!pkey) {
+        qWarning() << "[AcmeClient] Failed to parse account key for signing";
+        return {};
+    }
+
+    EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+    if (!mdctx) {
+        EVP_PKEY_free(pkey);
+        return {};
+    }
+
+    if (EVP_DigestSignInit(mdctx, nullptr, EVP_sha256(), nullptr, pkey) <= 0) {
+        qWarning() << "[AcmeClient] EVP_DigestSignInit failed";
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
+        return {};
+    }
+
+    if (EVP_DigestSignUpdate(mdctx, data.constData(), data.size()) <= 0) {
+        qWarning() << "[AcmeClient] EVP_DigestSignUpdate failed";
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
+        return {};
+    }
+
+    // Get signature length
+    size_t sigLen = 0;
+    if (EVP_DigestSignFinal(mdctx, nullptr, &sigLen) <= 0) {
+        qWarning() << "[AcmeClient] EVP_DigestSignFinal (length) failed";
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
+        return {};
+    }
+
+    QByteArray signature(static_cast<int>(sigLen), Qt::Uninitialized);
+    if (EVP_DigestSignFinal(mdctx,
+                            reinterpret_cast<unsigned char*>(signature.data()),
+                            &sigLen) <= 0) {
+        qWarning() << "[AcmeClient] EVP_DigestSignFinal failed";
+        EVP_MD_CTX_free(mdctx);
+        EVP_PKEY_free(pkey);
+        return {};
+    }
+    signature.resize(static_cast<int>(sigLen));
+
+    EVP_MD_CTX_free(mdctx);
+    EVP_PKEY_free(pkey);
+    return signature;
 }
 
 QByteArray AcmeClient::buildJws(const QByteArray& payload, const QString& url, bool useKid)
@@ -365,60 +446,87 @@ void AcmeClient::acmePostAsGet(const QString& url,
 
 QByteArray AcmeClient::generateCsr()
 {
-    QTemporaryFile cfg(QDir::tempPath() + QStringLiteral("/acme-csr-XXXXXX.cnf"));
-    if (!cfg.open()) {
-        qWarning() << "[AcmeClient] Cannot create temporary openssl config";
+    // Load domain private key from PEM file
+    BIO *bio = BIO_new_file(m_DomainKeyPath.toUtf8().constData(), "r");
+    if (!bio) {
+        qWarning() << "[AcmeClient] Cannot open domain key for CSR:" << m_DomainKeyPath;
+        return {};
+    }
+    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
+    if (!pkey) {
+        qWarning() << "[AcmeClient] Failed to parse domain key for CSR";
         return {};
     }
 
-    QByteArray config =
-        "[req]\n"
-        "distinguished_name = req\n"
-        "prompt = no\n"
-        "req_extensions = v3_req\n"
-        "\n"
-        "[v3_req]\n"
-        "keyUsage = keyEncipherment, digitalSignature\n"
-        "extendedKeyUsage = serverAuth\n"
-        "subjectAltName = DNS:" + m_Host.toUtf8() + "\n";
-
-    cfg.write(config);
-    cfg.close();
-
-    QProcess p;
-    p.start(QStringLiteral("openssl"), {
-        QStringLiteral("req"), QStringLiteral("-new"),
-        QStringLiteral("-key"),  m_DomainKeyPath,
-        QStringLiteral("-subj"), QStringLiteral("/CN=") + m_Host,
-        QStringLiteral("-config"), cfg.fileName(),
-        QStringLiteral("-extensions"), QStringLiteral("v3_req"),
-        QStringLiteral("-outform"), QStringLiteral("DER")
-    });
-
-    if (!p.waitForStarted(5000) || !p.waitForFinished(kOpensslTimeout)) {
-        p.kill(); p.waitForFinished(5000);
-        qWarning() << "[AcmeClient] CSR generation failed";
-        return {};
-    }
-    if (p.exitCode() != 0) {
-        qWarning() << "[AcmeClient] openssl req failed:" << p.readAll();
+    X509_REQ *req = X509_REQ_new();
+    if (!req) {
+        qWarning() << "[AcmeClient] X509_REQ_new failed";
+        EVP_PKEY_free(pkey);
         return {};
     }
 
-    return p.readAllStandardOutput();  // DER-encoded CSR
+    X509_REQ_set_version(req, 0);
+    X509_REQ_set_pubkey(req, pkey);
+
+    // Subject: CN = host
+    X509_NAME *name = X509_NAME_new();
+    QByteArray cn = m_Host.toUtf8();
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>(cn.constData()),
+                               -1, -1, 0);
+    X509_REQ_set_subject_name(req, name);
+    X509_NAME_free(name);  // req holds its own copy
+
+    // Extension: subjectAltName = DNS:host
+    GENERAL_NAMES *gens = sk_GENERAL_NAME_new_null();
+    if (gens) {
+        GENERAL_NAME *gen = GENERAL_NAME_new();
+        if (gen) {
+            ASN1_IA5STRING *ia5 = ASN1_IA5STRING_new();
+            ASN1_STRING_set(ia5, cn.constData(), cn.size());
+            GENERAL_NAME_set0_value(gen, GEN_DNS, ia5);  // gen owns ia5
+            sk_GENERAL_NAME_push(gens, gen);               // gens owns gen
+
+            X509_EXTENSION *ext = X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
+            if (ext) {
+                STACK_OF(X509_EXTENSION) *exts = sk_X509_EXTENSION_new_null();
+                sk_X509_EXTENSION_push(exts, ext);
+                X509_REQ_add_extensions(req, exts);
+                sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+            }
+        }
+        sk_GENERAL_NAME_pop_free(gens, GENERAL_NAME_free);
+    }
+
+    // Sign with SHA256
+    X509_REQ_sign(req, pkey, EVP_sha256());
+
+    // Write DER output
+    BIO *out = BIO_new(BIO_s_mem());
+    i2d_X509_REQ_bio(out, req);
+
+    char *data = nullptr;
+    long dataLen = BIO_get_mem_data(out, &data);
+    QByteArray csrDer(data, static_cast<int>(dataLen));
+
+    BIO_free(out);
+    X509_REQ_free(req);
+    EVP_PKEY_free(pkey);
+    return csrDer;
 }
 
 // ---------------------------------------------------------------------------
-// DNS-01 challenge helpers (deSEC API, synchronous)
+// DNS-01 challenge helpers (PowerDNS API, synchronous)
 // ---------------------------------------------------------------------------
 
 bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
 {
     // Extract the label from m_Host by removing the base domain suffix.
-    // m_Host = "92b8d127.moonlightweb.dedyn.io"
-    // m_BaseDomain = "moonlightweb.dedyn.io"
+    // m_Host = "92b8d127.moonlightweb.top"
+    // m_BaseDomain = "moonlightweb.top"
     // label = "92b8d127"
-    // subname = "_acme-challenge.92b8d127"
+    // subname = "_acme-challenge.92b8d127.moonlightweb.top." (FQDN with trailing dot)
 
     if (m_Host.isEmpty() || m_BaseDomain.isEmpty()) {
         qWarning() << "[AcmeClient] Cannot create TXT: missing host or base domain";
@@ -430,29 +538,46 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
     if (label.endsWith(suffix))
         label = label.left(label.length() - suffix.length());
 
-    m_TxtSubname = QStringLiteral("_acme-challenge.") + label;
+    m_TxtSubname = QStringLiteral("_acme-challenge.") + label
+                   + QStringLiteral(".") + m_BaseDomain + QStringLiteral(".");
 
-    qInfo() << "[AcmeClient] Creating TXT record"
-            << m_TxtSubname << "." << m_BaseDomain;
+    qInfo() << "[AcmeClient] Creating TXT record" << m_TxtSubname;
 
-    // Build deSEC API request
-    QUrl apiUrl(kDeSecBase + QStringLiteral("/domains/") + m_BaseDomain
-                + QStringLiteral("/rrsets/"));
-    QNetworkRequest req{apiUrl};
-    req.setRawHeader("Authorization", (QStringLiteral("Token ") + m_DesecToken).toUtf8());
+    // Build PowerDNS PATCH body
+    QJsonObject record;
+    record[QStringLiteral("content")] = QChar('"') + dnsValue + QChar('"');
+    record[QStringLiteral("disabled")] = false;
+
+    QJsonArray records;
+    records.append(record);
+
+    QJsonObject rrset;
+    rrset[QStringLiteral("name")] = m_TxtSubname;
+    rrset[QStringLiteral("type")] = QStringLiteral("TXT");
+    rrset[QStringLiteral("ttl")] = kChallengeTtl;
+    rrset[QStringLiteral("changetype")] = QStringLiteral("REPLACE");
+    rrset[QStringLiteral("records")] = records;
+
+    QJsonArray rrsets;
+    rrsets.append(rrset);
+
+    QJsonObject body;
+    body[QStringLiteral("rrsets")] = rrsets;
+
+    QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
+
+    QUrl url(kPdnsApiBase + QStringLiteral("/zones/") + kPdnsZoneName);
+    QNetworkRequest req{url};
+    req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
+    req.setRawHeader("Accept", "application/json");
     req.setHeader(QNetworkRequest::ContentTypeHeader,
                   QStringLiteral("application/json"));
 
-    QJsonObject body;
-    body[QStringLiteral("subname")] = m_TxtSubname;
-    body[QStringLiteral("type")]    = QStringLiteral("TXT");
-    body[QStringLiteral("ttl")]     = kChallengeTtl;
-    QJsonArray records;
-    records.append(dnsValue);
-    body[QStringLiteral("records")] = records;
-
-    QNetworkReply* reply = m_Nam->post(req,
-        QJsonDocument(body).toJson(QJsonDocument::Compact));
+    QBuffer* buf = new QBuffer;
+    buf->setData(payload);
+    buf->open(QIODevice::ReadOnly);
+    QNetworkReply* reply = m_Nam->sendCustomRequest(req, "PATCH", buf);
+    buf->setParent(reply);
 
     // Synchronous wait
     QEventLoop loop;
@@ -465,42 +590,56 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
 
     if (!timer.isActive()) {
         reply->abort(); reply->deleteLater();
-        qWarning() << "[AcmeClient] deSEC TXT creation timed out";
+        qWarning() << "[AcmeClient] PowerDNS TXT creation timed out";
         return false;
     }
     timer.stop();
 
     int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    // Log deSEC rate limiting
-    if (code == 429) {
-        QByteArray retryAfter = reply->rawHeader("Retry-After");
-        qWarning() << "[AcmeClient] deSEC TXT creation HTTP 429 (Rate Limited) —"
-                   << "Retry-After:" << QString::fromUtf8(retryAfter);
-    }
     reply->deleteLater();
 
-    if (code == 201 || code == 200) {
-        qInfo() << "[AcmeClient] TXT record created (HTTP" << code << ")";
+    if (code == 204) {
+        qInfo() << "[AcmeClient] TXT record created (HTTP 204)";
         return true;
     }
-    qWarning() << "[AcmeClient] deSEC TXT creation failed (HTTP" << code << ")";
+    qWarning() << "[AcmeClient] PowerDNS TXT creation failed (HTTP" << code << ")";
     return false;
 }
 
 bool AcmeClient::deleteChallengeTxtRecord()
 {
-    if (m_TxtSubname.isEmpty() || m_BaseDomain.isEmpty())
+    if (m_TxtSubname.isEmpty())
         return false;
 
-    qInfo() << "[AcmeClient] Deleting TXT record"
-            << m_TxtSubname << "." << m_BaseDomain;
+    qInfo() << "[AcmeClient] Deleting TXT record" << m_TxtSubname;
 
-    QUrl url(kDeSecBase + QStringLiteral("/domains/") + m_BaseDomain
-             + QStringLiteral("/rrsets/") + m_TxtSubname + QStringLiteral("/TXT/"));
+    // Build PowerDNS PATCH DELETE body
+    QJsonObject rrset;
+    rrset[QStringLiteral("name")] = m_TxtSubname;
+    rrset[QStringLiteral("type")] = QStringLiteral("TXT");
+    rrset[QStringLiteral("changetype")] = QStringLiteral("DELETE");
+    rrset[QStringLiteral("records")] = QJsonArray();
+
+    QJsonArray rrsets;
+    rrsets.append(rrset);
+
+    QJsonObject body;
+    body[QStringLiteral("rrsets")] = rrsets;
+
+    QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
+
+    QUrl url(kPdnsApiBase + QStringLiteral("/zones/") + kPdnsZoneName);
     QNetworkRequest req{url};
-    req.setRawHeader("Authorization", (QStringLiteral("Token ") + m_DesecToken).toUtf8());
+    req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
+    req.setRawHeader("Accept", "application/json");
+    req.setHeader(QNetworkRequest::ContentTypeHeader,
+                  QStringLiteral("application/json"));
 
-    QNetworkReply* reply = m_Nam->deleteResource(req);
+    QBuffer* buf2 = new QBuffer;
+    buf2->setData(payload);
+    buf2->open(QIODevice::ReadOnly);
+    QNetworkReply* reply = m_Nam->sendCustomRequest(req, "PATCH", buf2);
+    buf2->setParent(reply);
 
     QEventLoop loop; QTimer timer;
     timer.setSingleShot(true);
@@ -516,19 +655,13 @@ bool AcmeClient::deleteChallengeTxtRecord()
     timer.stop();
 
     int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    // Log deSEC rate limiting
-    if (code == 429) {
-        QByteArray retryAfter = reply->rawHeader("Retry-After");
-        qWarning() << "[AcmeClient] deSEC TXT deletion HTTP 429 (Rate Limited) —"
-                   << "Retry-After:" << QString::fromUtf8(retryAfter);
-    }
     reply->deleteLater();
 
-    if (code == 200 || code == 204 || code == 404) {
+    if (code == 204 || code == 404 || code == 422) {
         qInfo() << "[AcmeClient] TXT record deleted (HTTP" << code << ")";
         return true;
     }
-    qWarning() << "[AcmeClient] deSEC TXT deletion failed (HTTP" << code << ")";
+    qWarning() << "[AcmeClient] PowerDNS TXT deletion failed (HTTP" << code << ")";
     return false;
 }
 
@@ -873,14 +1006,14 @@ void AcmeClient::stepRespondChallenge()
 
     qInfo() << "[AcmeClient] DNS-01 key authorization computed";
 
-    // Create the TXT record via deSEC (synchronous)
+    // Create the TXT record via PowerDNS (synchronous)
     if (!createChallengeTxtRecord(QString::fromUtf8(dnsValue))) {
         emit errorOccurred(QStringLiteral("Failed to create DNS TXT record for challenge"));
         emit finished(false);
         return;
     }
 
-    // Wait briefly for DNS propagation (deSEC is usually fast)
+    // Wait briefly for DNS propagation (PowerDNS is usually fast)
     emit progress(QStringLiteral("Waiting for DNS propagation (5s)..."));
     QTimer::singleShot(5000, this, [this]() {
         if (m_Cancelled) return;

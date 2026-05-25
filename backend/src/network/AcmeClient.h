@@ -7,11 +7,11 @@
 #include <functional>
 
 /**
- * @brief Native ACMEv2 client (RFC 8555) with DNS-01 via deSEC API.
+ * @brief Native ACMEv2 client (RFC 8555) with DNS-01 via PowerDNS API.
  *
  * Replaces the acme.sh shell-script dependency with a pure C++/Qt
  * implementation. Uses QNetworkAccessManager for async HTTP and
- * openssl CLI (QProcess) for RSA operations (key gen, signing, CSR).
+ * native OpenSSL C API for RSA operations (key gen, signing, CSR).
  *
  * Flow (all async — start() returns immediately):
  *   1. Ensure RSA keys exist (account + domain)
@@ -19,7 +19,7 @@
  *   3. Create/retrieve ACME account
  *   4. Create certificate order
  *   5. Get DNS-01 authorization challenge
- *   6. Create _acme-challenge TXT record via deSEC API
+ *   6. Create _acme-challenge TXT record via PowerDNS API
  *   7. Respond to challenge (POST to challenge URL)
  *   8. Poll authorization until valid
  *   9. Clean up TXT record
@@ -46,14 +46,14 @@ public:
     /// Output directory for cert.pem, key.pem, fullchain.pem.
     void setCertOutputDir(const QString& dir);
 
-    /// FQDN for the certificate, e.g. "92b8d127.moonlightweb.dedyn.io".
+    /// FQDN for the certificate, e.g. "92b8d127.moonlightweb.top".
     void setHost(const QString& host);
 
-    /// Base domain for deSEC DNS-01, e.g. "moonlightweb.dedyn.io".
+    /// Base domain for PowerDNS DNS-01 zone, e.g. "moonlightweb.top".
     void setBaseDomain(const QString& domain);
 
-    /// deSEC API token for DNS-01 TXT record creation/deletion.
-    void setDesecToken(const QString& token);
+    /// PowerDNS API key for DNS-01 TXT record creation/deletion.
+    void setPdnsToken(const QString& token);
 
     /// ACME directory URL (default: Let's Encrypt production).
     void setDirectoryUrl(const QString& url) { m_DirectoryUrl = url; }
@@ -117,7 +117,7 @@ private:
     /// Get a fresh Replay-Nonce via HEAD to newNonce endpoint.
     void fetchNonce(std::function<void(bool)> callback);
 
-    // ── RSA helpers (OpenSSL CLI via QProcess) ────────────────────────────────
+    // ── RSA helpers (native OpenSSL C API) ────────────────────────────────────
 
     /// Sign data with RSA-SHA256 using the account key (openssl CLI).
     QByteArray signRsaSha256(const QByteArray& data);
@@ -139,7 +139,7 @@ private:
     /// Compute JWK SHA-256 thumbprint (RFC 7638) for DNS-01 key authorization.
     QByteArray accountKeyThumbprint();
 
-    // ── DNS challenge helpers (deSEC API) ─────────────────────────────────────
+    // ── DNS challenge helpers (PowerDNS API) ──────────────────────────────────
 
     /// Create _acme-challenge.{subdomain} TXT record with DNS-01 value.
     bool createChallengeTxtRecord(const QString& dnsValue);
@@ -170,9 +170,9 @@ private:
     QString m_AccountKeyPath;
     QString m_DomainKeyPath;
     QString m_CertOutputDir;
-    QString m_Host;        // FQDN: "92b8d127.moonlightweb.dedyn.io"
-    QString m_BaseDomain;  // deSEC base: "moonlightweb.dedyn.io"
-    QString m_DesecToken;
+    QString m_Host;        // FQDN: "92b8d127.moonlightweb.top"
+    QString m_BaseDomain;  // PowerDNS zone (e.g. "moonlightweb.top")
+    QString m_PdnsToken;
 
     QString m_DirectoryUrl;
 

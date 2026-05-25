@@ -290,10 +290,26 @@ void AppSettings::setDomain(const QString& domain)
     writeAll(obj);
 }
 
-QString AppSettings::desecToken() const
+QString AppSettings::pdnsToken() const
 {
     QJsonObject obj = readAll();
-    QString raw = obj.value("desec_token").toString();
+
+    // Try the new key first
+    QString raw = obj.value("pdns_token").toString();
+
+    // Retro-compat: migrate old desec_token if pdns_token is not set
+    if (raw.isEmpty()) {
+        QString old = obj.value("desec_token").toString();
+        if (!old.isEmpty()) {
+            qInfo() << "[AppSettings] Migrating old desec_token to pdns_token";
+            // Migrate and save
+            QJsonObject mutableObj = obj;
+            mutableObj["pdns_token"] = old;
+            mutableObj.remove("desec_token");
+            const_cast<AppSettings*>(this)->writeAll(mutableObj);
+            raw = old;
+        }
+    }
 
     // "auto" / empty → not encrypted, use env var
     if (raw.isEmpty() || raw == QStringLiteral("auto"))
@@ -307,16 +323,18 @@ QString AppSettings::desecToken() const
     return decryptToken(raw.mid(4));
 }
 
-void AppSettings::setDesecToken(const QString& token)
+void AppSettings::setPdnsToken(const QString& token)
 {
     QJsonObject obj = readAll();
 
     // "auto" / empty → store as-is (no encryption needed)
     if (token.isEmpty() || token == QStringLiteral("auto")) {
-        obj["desec_token"] = token;
+        obj["pdns_token"] = token;
     } else {
-        obj["desec_token"] = QStringLiteral("enc:") + encryptToken(token);
+        obj["pdns_token"] = QStringLiteral("enc:") + encryptToken(token);
     }
+    // Remove old key on write
+    obj.remove("desec_token");
     writeAll(obj);
 }
 
@@ -401,12 +419,12 @@ void AppSettings::setCertExpiry(const QString& expiry)
     writeAll(obj);
 }
 
-// Compiled-in default deSEC token.
-// This is used when the user's desec_token is "auto" or empty.
+// Compiled-in default PowerDNS token.
+// This is used when the user's pdns_token is "auto" or empty.
 // NEVER log this value.
-QString AppSettings::defaultDesecToken()
+QString AppSettings::defaultPdnsToken()
 {
-    return qEnvironmentVariable("DESEC_TOKEN");
+    return qEnvironmentVariable("PDNS_TOKEN");
 }
 
 // ── Token encryption (Windows DPAPI) ───────────────────────────────────────
@@ -429,7 +447,7 @@ QString AppSettings::encryptToken(const QString& plain)
     ZeroMemory(&outBlob, sizeof(outBlob));
 
     // Encrypt with DPAPI (machine-level, current user)
-    if (CryptProtectData(&inBlob, L"MWServer deSEC token",
+    if (CryptProtectData(&inBlob, L"MWServer PowerDNS token",
                          nullptr, nullptr, nullptr,
                          CRYPTPROTECT_UI_FORBIDDEN, &outBlob))
     {

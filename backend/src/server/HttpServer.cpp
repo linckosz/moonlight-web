@@ -108,7 +108,7 @@ QString HttpServer::findCertDir()
     };
 
     for (const auto& d : candidates) {
-        if (QFile::exists(d + "cert.pem") && QFile::exists(d + "key.pem"))
+        if ((QFile::exists(d + "fullchain.pem") || QFile::exists(d + "cert.pem")) && QFile::exists(d + "key.pem"))
             return d;
     }
     return {};
@@ -116,15 +116,19 @@ QString HttpServer::findCertDir()
 
 bool HttpServer::loadCertFiles(const QString& certDir)
 {
-    QString certPath = certDir + "cert.pem";
     QString keyPath = certDir + "key.pem";
+
+    // Try fullchain.pem first (includes intermediate CA chain), fallback to cert.pem
+    QString certPath = certDir + "fullchain.pem";
+    if (!QFile::exists(certPath))
+        certPath = certDir + "cert.pem";
 
     QFile certFile(certPath);
     if (!certFile.open(QIODevice::ReadOnly)) {
         Logger::warning("Failed to open cert file: " + certFile.errorString());
         return false;
     }
-    QSslCertificate cert(&certFile, QSsl::Pem);
+    QList<QSslCertificate> chain = QSslCertificate::fromDevice(&certFile, QSsl::Pem);
     certFile.close();
 
     QFile keyFile(keyPath);
@@ -135,17 +139,17 @@ bool HttpServer::loadCertFiles(const QString& certDir)
     QSslKey key(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
     keyFile.close();
 
-    if (cert.isNull() || key.isNull()) {
-        Logger::warning("SSL cert/key invalid");
+    if (chain.isEmpty() || key.isNull()) {
+        Logger::warning("SSL cert chain / key invalid");
         return false;
     }
 
     m_SslConfig = QSslConfiguration::defaultConfiguration();
-    m_SslConfig.setLocalCertificate(cert);
+    m_SslConfig.setLocalCertificateChain(chain);
     m_SslConfig.setPrivateKey(key);
     m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
 
-    Logger::info("SSL certificate loaded from " + certDir);
+    Logger::info("SSL certificate (" + certPath.section('/', -1) + ") loaded from " + certDir);
     return true;
 }
 
@@ -738,6 +742,13 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     respData.append("Content-Length: " + QByteArray::number(response.body.size()) + "\r\n");
     respData.append("Access-Control-Allow-Origin: *\r\n");
     respData.append("Connection: close\r\n");
+
+    // Security headers
+    respData.append("X-Content-Type-Options: nosniff\r\n");
+    respData.append("X-Frame-Options: DENY\r\n");
+    respData.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
+    respData.append("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
+    respData.append("Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n");
 
     for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)
         respData.append(it.key().toUtf8() + ": " + it.value().toUtf8() + "\r\n");
