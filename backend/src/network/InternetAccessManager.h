@@ -7,7 +7,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 
-#include "DeSecClient.h"
+#include "PdnsClient.h"
 #include "StunClient.h"
 #include "UPNPClient.h"
 #include "AcmeClient.h"
@@ -18,9 +18,9 @@ class AppSettings;
  * @brief Orchestrates the full Internet Access feature.
  *
  * Responsibilities:
- *   1. Unique ID generation & deSEC domain registration
+ *   1. Unique ID generation & PowerDNS domain registration
  *   2. Public IP detection via STUN (with fallback chain)
- *   3. A record management through deSEC API
+ *   3. A record management through PowerDNS API
  *   4. Periodic checks every 5 minutes (IP change, DNS resolution)
  *   5. TLS certificate management via native ACMEv2 client (DNS-01)
  *   6. UPnP port mapping delegation
@@ -60,7 +60,7 @@ public:
     /// Whether the manager is currently active (Internet Access enabled).
     bool isActive() const { return m_Active; }
 
-    /// The registered domain name (e.g. "moonlightweb-abc123.dedyn.io").
+    /// The registered domain name (e.g. "92b8d127.moonlightweb.top").
     QString domain() const { return m_Domain; }
 
     /// Current public IP.
@@ -69,8 +69,12 @@ public:
     /// UPnP client (exposed for integration with existing session code).
     UPNPClient* upnpClient() { return &m_Upnp; }
 
-    /// DeSec client (for direct API access if needed).
-    DeSecClient* desecClient() { return &m_DeSec; }
+    /// PowerDNS client (for direct API access if needed).
+    PdnsClient* pdnsClient() { return &m_Pdns; }
+
+    /// Set the actual HTTP and HTTPS ports the server is listening on.
+    /// Must be called before start() so UPnP mappings use the correct ports.
+    void setPorts(quint16 httpPort, quint16 httpsPort);
 
 signals:
     /// Emitted when Internet Access becomes fully operational.
@@ -105,13 +109,20 @@ private:
     /// Generate a unique 8-char hex ID.
     QString generateUniqueId();
 
+    /// Eager init: ensure unique_id and domain exist, without touching DNS.
+    void ensureIdentifiers();
+
     /// Create or verify the A record under the existing parent domain.
     bool createOrUpdateARecord();
 
     /// Detect public IP via STUN (with fallback chain).
     bool detectPublicIp();
 
-    /// Update the A record on deSEC with the current public IP.
+    /// Fallback: detect public IP via HTTP (ipify.org / icanhazip.com).
+    /// Used when STUN servers all fail to respond.
+    QString detectPublicIpViaHttp();
+
+    /// Update the A record on PowerDNS with the current public IP.
     bool updateARecord();
 
     /// Issue a TLS certificate via the native ACME client.
@@ -120,7 +131,7 @@ private:
     /// Check certificate expiry and renew if < 30 days remaining.
     bool checkCertificate();
 
-    /// Load or resolve the effective deSEC token (handles "auto").
+    /// Load or resolve the effective PowerDNS token (handles "auto").
     QString effectiveToken() const;
 
     /// Build the domain name from unique ID.
@@ -133,7 +144,7 @@ private:
     bool pingDomain(const QString& domain);
 
     // Owned sub-clients
-    DeSecClient m_DeSec;
+    PdnsClient m_Pdns;
     StunClient m_Stun;
     UPNPClient m_Upnp;
     AcmeClient m_Acme;
@@ -149,6 +160,8 @@ private:
     QString m_UniqueId;
     QString m_LastError;
     bool m_CertIssuing = false;  ///< True while ACME issuance is in progress
+    quint16 m_HttpPort = 0;      ///< Actual HTTP server port
+    quint16 m_HttpsPort = 0;     ///< Actual HTTPS server port
 
     // Retry state
     int m_PendingRetryCount = 0;          ///< Current retry attempt (0..3) for pending registration

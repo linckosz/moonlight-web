@@ -237,7 +237,7 @@ int main(int argc, char* argv[])
         }
 
         // Determine signaling host from the browser's Host header.
-        // Works for both LAN (localhost:443) and remote access via deSEC domain.
+        // Works for both LAN (localhost:443) and remote access via moonlightweb.top.
         QString serverHost = req.headers.value("host");
         int colon = serverHost.indexOf(':');
         if (colon >= 0)
@@ -468,13 +468,28 @@ int main(int argc, char* argv[])
             appSettings.setHttpPort(activeHttp);
     }
 
+    // Sync UPnP port mapping port with the actual server port
+    internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
+
+    // Auto-start Internet Access if it was enabled before last shutdown.
+    // This handles DNS registration + public IP detection at boot without
+    // waiting for the user to toggle the checkbox in the UI.
+    if (appSettings.internetAccessEnabled()) {
+        qInfo() << "[main] internet_access_enabled is true — auto-starting...";
+        internetAccess.start();
+        QJsonObject st = internetAccess.statusJson();
+        qInfo() << "[main] auto-start completed — active:" << internetAccess.isActive()
+                << "domain:" << st.value("domain").toString()
+                << "lastError:" << st.value("last_error").toString();
+    }
+
     // Configure HttpServer to proxy WebSocket upgrades to the signaling server.
     // Both HTTPS and WebSocket signaling share the same port (443 by default).
     server.setSignalingPort(signalingPort);
     // Legacy WSS StreamRelay uses the next port for its local WS server.
     server.setStreamRelayPort(signalingPort + 1);
 
-    // — Internet Access via deSEC —
+    // — Internet Access via PowerDNS —
 
     // API route: get Internet Access status
     server.router()->get("/api/internet/status", [&](const HttpRequest&) {
@@ -488,8 +503,8 @@ int main(int argc, char* argv[])
 
         if (body.contains("unique_id"))
             appSettings.setUniqueId(body["unique_id"].toString());
-        if (body.contains("desec_token"))
-            appSettings.setDesecToken(body["desec_token"].toString());
+        if (body.contains("pdns_token"))
+            appSettings.setPdnsToken(body["pdns_token"].toString());
         if (body.contains("auto_ip_detection"))
             appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
         if (body.contains("transport_mode"))

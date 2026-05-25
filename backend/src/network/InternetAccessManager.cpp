@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QProcess>
 #include <QRandomGenerator>
+#include <QTcpSocket>
 #include <QDateTime>
 #include <QStandardPaths>
 
@@ -22,9 +23,9 @@ static constexpr int kPeriodicCheckMs = 5 * 60 * 1000;
 /// Pending registration retry interval: 30 seconds.
 static constexpr int kPendingRetryMs = 30 * 1000;
 
-/// Parent domain registered on deSEC (must already exist).
+/// Parent domain registered on PowerDNS.
 /// Subdomains are created as A records under this domain.
-static const QString kBaseDomain = QStringLiteral("moonlightweb.dedyn.io");
+static const QString kBaseDomain = QStringLiteral("moonlightweb.top");
 
 /// Default TTL for A records (5 minutes).
 static constexpr int kDefaultTtl = 300;
@@ -42,7 +43,7 @@ static const QString kAcmeCertDir = QStringLiteral("letsencrypt");
 InternetAccessManager::InternetAccessManager(AppSettings* settings, QObject* parent)
     : QObject(parent)
     , m_Settings(settings)
-    , m_DeSec(this)
+    , m_Pdns(this)
     , m_Stun(this)
     , m_Upnp(this)
     , m_Acme(this)
@@ -72,6 +73,10 @@ InternetAccessManager::InternetAccessManager(AppSettings* settings, QObject* par
     m_UniqueId = m_Settings->uniqueId();
     m_Domain = m_Settings->domain();
     m_PublicIp = m_Settings->publicIp();
+
+    // Eager init: ensure unique_id and domain exist even when Internet Access
+    // is disabled, so the UI can display the URL immediately.
+    ensureIdentifiers();
 
     // Eager UPnP discovery (deferred, non-blocking) so that upnp_available
     // is correctly reported even if Internet Access has never been enabled.
@@ -111,20 +116,16 @@ void InternetAccessManager::start()
             << "uniqueId:" << m_UniqueId
             << "fqdn:" << buildDomain();
 
-    // Step 1: Generate or reuse unique ID
-    if (m_UniqueId.isEmpty()) {
-        m_UniqueId = generateUniqueId();
-        m_Settings->setUniqueId(m_UniqueId);
-    }
-    m_Domain = buildDomain();
-    m_Settings->setDomain(m_Domain);
+    // Step 1: Ensure identifiers exist (already done eagerly at startup,
+    // but called again here in case setUniqueId was changed via API).
+    ensureIdentifiers();
     qInfo() << "[InternetAccess] Step 1 OK — domain:" << m_Domain;
 
-    // Step 2: Set up the deSEC token
+    // Step 2: Set up the PowerDNS token
     QString token = effectiveToken();
-    QString tokenSource = m_Settings->desecToken();
+    QString tokenSource = m_Settings->pdnsToken();
     if (tokenSource.isEmpty() || tokenSource == QStringLiteral("auto")) {
-        tokenSource = QStringLiteral("env var DESEC_TOKEN");
+        tokenSource = QStringLiteral("env var PDNS_TOKEN");
     } else {
         tokenSource = QStringLiteral("settings (encrypted)");
     }
@@ -134,14 +135,14 @@ void InternetAccessManager::start()
 
     if (token.isEmpty()) {
         m_LastError = QStringLiteral(
-            "deSEC token is empty. Set the DESEC_TOKEN environment variable "
+            "PowerDNS token is empty. Set the PDNS_TOKEN environment variable "
             "in Qt Creator (Projects → Run → Environment) or your shell.");
         qWarning() << "[InternetAccess]" << m_LastError;
         m_Settings->setPendingRegistration(true);
         m_PendingRegistrationTimer->start(kPendingRetryMs);
         return;
     }
-    m_DeSec.setToken(token);
+    m_Pdns.setToken(token);
 
     // Step 3: Detect public IP via STUN (before A record creation)
     if (m_Settings->autoIpDetection()) {
@@ -150,17 +151,38 @@ void InternetAccessManager::start()
         qInfo() << "[InternetAccess] Step 3 — public IP:" << m_PublicIp;
     }
 
-    // Step 4: Create or update A record (with real IP from STUN)
-    qInfo() << "[InternetAccess] Step 4 — creating/verifying A record...";
-    if (!createOrUpdateARecord()) {
-        qWarning() << "[InternetAccess] Step 4 FAILED — A record creation failed,"
-                   << "will retry in" << (kPendingRetryMs / 1000) << "s";
-        m_Settings->setPendingRegistration(true);
-        m_PendingRegistrationTimer->start(kPendingRetryMs);
-        return;
+    // Step 3.5: Pre-check DNS — if the domain already resolves, skip PowerDNS A record creation.
+    // This is critical when STUN fails (e.g. IPv6 XOR-MAPPED-ADDRESS not supported):
+    // the existing A record is still valid, so no need to touch PowerDNS at all.
+    {
+        bool skipARecordStep = false;
+        QString resolvedIp = resolveDomain(m_Domain);
+        if (!resolvedIp.isEmpty()) {
+            if (m_PublicIp.isEmpty() || resolvedIp == m_PublicIp) {
+                qInfo() << "[InternetAccess] Domain already resolves to" << resolvedIp
+                        << "via DNS — skipping PowerDNS A record creation";
+                m_Settings->setPendingRegistration(false);
+                skipARecordStep = true;
+            } else {
+                qInfo() << "[InternetAccess] Domain resolves to" << resolvedIp
+                        << "but public IP is" << m_PublicIp << "— will update via PowerDNS";
+            }
+        }
+
+        if (!skipARecordStep) {
+            // Step 4: Create or update A record (with real IP from STUN)
+            qInfo() << "[InternetAccess] Step 4 — creating/verifying A record...";
+            if (!createOrUpdateARecord()) {
+                qWarning() << "[InternetAccess] Step 4 FAILED — A record creation failed,"
+                           << "will retry in" << (kPendingRetryMs / 1000) << "s";
+                m_Settings->setPendingRegistration(true);
+                m_PendingRegistrationTimer->start(kPendingRetryMs);
+                return;
+            }
+            m_Settings->setPendingRegistration(false);
+            qInfo() << "[InternetAccess] Step 4 OK — A record exists";
+        }
     }
-    m_Settings->setPendingRegistration(false);
-    qInfo() << "[InternetAccess] Step 4 OK — A record exists";
 
     // Step 5: Initial DNS check (spaced to 24h thereafter)
     {
@@ -179,14 +201,49 @@ void InternetAccessManager::start()
     }
 
     // Step 6: Issue/renew TLS certificate
+    {
+        QString existingCert = m_Settings->certPath();
+        QString existingExpiry = m_Settings->certExpiry();
+        qInfo() << "[InternetAccess] Step 6 — checking certificate: certPath=\""
+                << existingCert << "\" certExpiry=\"" << existingExpiry << "\"";
+    }
     checkCertificate();
 
     // Step 7: UPnP port mapping
     if (m_Settings->upnpEnabled()) {
-        quint16 httpsPort = m_Settings->httpsPort(443);
+        // Use the real server port if set, otherwise fall back to settings
+        quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
         if (m_Upnp.discover()) {
-            m_Upnp.addPortMapping(httpsPort, httpsPort, 3600,
-                                  "Moonlight-Web HTTPS");
+            // Check for port conflicts before adding mappings
+            auto checkAndMap = [this](quint16 port, const std::string& protocol,
+                                      const char* desc) {
+                std::string existingClient, existingPort;
+                if (m_Upnp.getExistingPortMapping(port, protocol,
+                                                   existingClient, existingPort)) {
+                    if (existingClient != m_Upnp.lanAddress()) {
+                        qWarning() << "[InternetAccess] Port" << port << protocol.c_str()
+                                   << "already mapped to" << existingClient.c_str()
+                                   << ":" << existingPort.c_str()
+                                   << "— another device owns this mapping";
+                        m_LastError = QStringLiteral(
+                            "Port %1/%2 already forwarded to %3 on this router. "
+                            "Free it in your router settings or use a different port.")
+                            .arg(port)
+                            .arg(QString::fromStdString(protocol))
+                            .arg(QString::fromStdString(existingClient));
+                        emit error(m_LastError);
+                        return false;
+                    }
+                    // Same host — re-add to refresh the lease
+                    qInfo() << "[InternetAccess] Port" << port << protocol.c_str()
+                            << "already mapped to us (" << existingClient.c_str()
+                            << ") — refreshing lease";
+                }
+                return m_Upnp.addPortMapping(port, port, 3600, desc, protocol);
+            };
+
+            checkAndMap(httpsPort, "TCP", "Moonlight-Web HTTPS");
+            checkAndMap(47999, "UDP", "Moonlight-Web UDP Stream");
 
             // Capture local LAN IP for the UI (port mapping display)
             char buf[64] = {};
@@ -233,6 +290,13 @@ void InternetAccessManager::stop()
 
     m_Active = false;
     qInfo() << "[InternetAccess] Stopped";
+}
+
+void InternetAccessManager::setPorts(quint16 httpPort, quint16 httpsPort)
+{
+    m_HttpPort = httpPort;
+    m_HttpsPort = httpsPort;
+    qInfo() << "[InternetAccess] Ports set: http=" << m_HttpPort << "https=" << m_HttpsPort;
 }
 
 void InternetAccessManager::forceRefresh()
@@ -289,7 +353,7 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("cert_expiry")] = m_Settings->certExpiry();
     obj[QStringLiteral("cert_issuing")] = m_CertIssuing;
     obj[QStringLiteral("upnp_available")] = m_Upnp.isAvailable();
-    obj[QStringLiteral("https_port")] = m_Settings->httpsPort(443);
+    obj[QStringLiteral("https_port")] = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
 
     if (!m_LastError.isEmpty())
         obj[QStringLiteral("last_error")] = m_LastError;
@@ -303,9 +367,9 @@ QJsonObject InternetAccessManager::statusJson() const
 
 QString InternetAccessManager::effectiveToken() const
 {
-    QString stored = m_Settings->desecToken();
+    QString stored = m_Settings->pdnsToken();
     if (stored.isEmpty() || stored == QStringLiteral("auto")) {
-        return AppSettings::defaultDesecToken();
+        return AppSettings::defaultPdnsToken();
     }
     return stored;
 }
@@ -328,6 +392,44 @@ QString InternetAccessManager::generateUniqueId()
 }
 
 // ---------------------------------------------------------------------------
+// Identifiers — eagerly initialized at startup, without touching DNS
+// ---------------------------------------------------------------------------
+
+void InternetAccessManager::ensureIdentifiers()
+{
+    // If unique_id is missing, try to extract from saved domain first
+    if (m_UniqueId.isEmpty()) {
+        QString dotBaseDomain = QStringLiteral(".") + kBaseDomain;
+        if (!m_Domain.isEmpty() && m_Domain.endsWith(dotBaseDomain)) {
+            QString subname = m_Domain.left(m_Domain.length() - kBaseDomain.length() - 1);
+            if (subname.length() == 8) {
+                bool allHex = true;
+                for (const QChar& c : subname) {
+                    if ((c < QLatin1Char('0') || c > QLatin1Char('9')) &&
+                        (c < QLatin1Char('a') || c > QLatin1Char('f'))) {
+                        allHex = false;
+                        break;
+                    }
+                }
+                if (allHex) {
+                    m_UniqueId = subname;
+                    m_Settings->setUniqueId(m_UniqueId);
+                    qInfo() << "[InternetAccess] Reused unique ID from saved domain:" << m_UniqueId;
+                }
+            }
+        }
+        if (m_UniqueId.isEmpty()) {
+            m_UniqueId = generateUniqueId();
+            m_Settings->setUniqueId(m_UniqueId);
+        }
+    }
+
+    // Build/sync the full domain name
+    m_Domain = buildDomain();
+    m_Settings->setDomain(m_Domain);
+}
+
+// ---------------------------------------------------------------------------
 // A record management (subdomain under kBaseDomain)
 // ---------------------------------------------------------------------------
 
@@ -336,7 +438,7 @@ bool InternetAccessManager::createOrUpdateARecord()
     qInfo() << "[InternetAccess] Checking A record for subdomain:" << m_UniqueId;
 
     QString errorMsg;
-    bool available = m_DeSec.checkSubdomainAvailable(kBaseDomain, m_UniqueId, errorMsg);
+    bool available = m_Pdns.checkSubdomainAvailable(m_UniqueId, errorMsg);
 
     if (available) {
         // Subdomain is available — create it with the current public IP
@@ -349,7 +451,7 @@ bool InternetAccessManager::createOrUpdateARecord()
             return false;
         }
         qInfo() << "[InternetAccess] No existing A record, creating with" << m_PublicIp;
-        if (!m_DeSec.createSubdomain(kBaseDomain, m_UniqueId, m_PublicIp, kDefaultTtl, errorMsg)) {
+        if (!m_Pdns.createOrUpdateSubdomain(m_UniqueId, m_PublicIp, kDefaultTtl, errorMsg)) {
             m_LastError = errorMsg;
             qWarning() << "[InternetAccess] A record creation failed:" << errorMsg;
             emit error(errorMsg);
@@ -375,8 +477,80 @@ bool InternetAccessManager::createOrUpdateARecord()
 }
 
 // ---------------------------------------------------------------------------
-// Public IP detection via STUN
+// Public IP detection via STUN (with HTTP fallback)
 // ---------------------------------------------------------------------------
+
+QString InternetAccessManager::detectPublicIpViaHttp()
+{
+    // Try multiple HTTP services in order
+    struct HttpIpService {
+        QString host;
+        quint16 port;
+    };
+    const HttpIpService services[] = {
+        { QStringLiteral("api.ipify.org"), 80 },
+        { QStringLiteral("icanhazip.com"), 80 },
+        { QStringLiteral("checkip.amazonaws.com"), 80 },
+    };
+
+    for (const auto& svc : services) {
+        qInfo() << "[InternetAccess] Trying HTTP IP detection:" << svc.host;
+
+        QTcpSocket socket;
+        socket.connectToHost(svc.host, svc.port);
+        if (!socket.waitForConnected(5000)) {
+            qWarning() << "[InternetAccess] HTTP connection failed to" << svc.host
+                       << ":" << socket.errorString();
+            continue;
+        }
+
+        QByteArray request = QStringLiteral(
+            "GET / HTTP/1.1\r\n"
+            "Host: %1\r\n"
+            "User-Agent: Moonlight-Web/1.0\r\n"
+            "Connection: close\r\n\r\n").arg(svc.host).toUtf8();
+
+        socket.write(request);
+        socket.waitForBytesWritten();
+
+        if (!socket.waitForReadyRead(5000)) {
+            qWarning() << "[InternetAccess] HTTP read timeout from" << svc.host;
+            socket.disconnectFromHost();
+            continue;
+        }
+
+        QByteArray response = socket.readAll();
+        socket.disconnectFromHost();
+
+        // Parse HTTP response body (after \r\n\r\n)
+        int headerEnd = response.indexOf("\r\n\r\n");
+        if (headerEnd < 0) {
+            qWarning() << "[InternetAccess] Invalid HTTP response from" << svc.host;
+            continue;
+        }
+
+        QByteArray body = response.mid(headerEnd + 4).trimmed();
+
+        // Validate that it looks like an IPv4 address
+        QHostAddress ha;
+        if (!ha.setAddress(QString::fromUtf8(body))) {
+            qWarning() << "[InternetAccess] HTTP response is not a valid IP:" << body;
+            continue;
+        }
+        if (ha.protocol() != QAbstractSocket::IPv4Protocol) {
+            qWarning() << "[InternetAccess] HTTP response is not IPv4:" << body;
+            continue;
+        }
+
+        QString ip = ha.toString();
+        qInfo() << "[InternetAccess] Public IP detected via HTTP:" << ip
+                << "from" << svc.host;
+        return ip;
+    }
+
+    qWarning() << "[InternetAccess] All HTTP IP detection services failed";
+    return {};
+}
 
 bool InternetAccessManager::detectPublicIp()
 {
@@ -431,7 +605,16 @@ bool InternetAccessManager::detectPublicIp()
         return true;
     }
 
-    // Fallback to stored public IP if STUN fails
+    // Fallback 1: HTTP IP detection when STUN fails
+    qInfo() << "[InternetAccess] STUN failed, trying HTTP IP detection...";
+    QString httpIp = detectPublicIpViaHttp();
+    if (!httpIp.isEmpty()) {
+        m_PublicIp = httpIp;
+        m_Settings->setPublicIp(m_PublicIp);
+        return true;
+    }
+
+    // Fallback 2: stored public IP if all network detection fails
     QString stored = m_Settings->publicIp();
     if (!stored.isEmpty()) {
         m_PublicIp = stored;
@@ -446,7 +629,7 @@ bool InternetAccessManager::detectPublicIp()
 }
 
 // ---------------------------------------------------------------------------
-// A record update via deSEC
+// A record update via PowerDNS
 // ---------------------------------------------------------------------------
 
 bool InternetAccessManager::updateARecord()
@@ -459,7 +642,7 @@ bool InternetAccessManager::updateARecord()
     qInfo() << "[InternetAccess] Updating A record:" << m_Domain << "->" << m_PublicIp;
 
     QString errorMsg;
-    if (!m_DeSec.updateSubdomain(kBaseDomain, m_UniqueId, m_PublicIp, kDefaultTtl, errorMsg)) {
+    if (!m_Pdns.createOrUpdateSubdomain(m_UniqueId, m_PublicIp, kDefaultTtl, errorMsg)) {
         m_LastError = errorMsg;
         qWarning() << "[InternetAccess] A record update failed:" << errorMsg;
         emit error(errorMsg);
@@ -492,6 +675,11 @@ bool InternetAccessManager::issueCertificate()
     QString certDir = appData + QStringLiteral("/cert/") + kAcmeCertDir;
     QDir().mkpath(certDir);
 
+    qInfo() << "[InternetAccess] issueCertificate: domain=" << m_Domain
+            << "certDir=" << certDir
+            << "existing keys: account=" << QFile::exists(certDir + "/account_key.pem")
+            << "domain=" << QFile::exists(certDir + "/domain_key.pem");
+
     QString accountKeyPath = certDir + QStringLiteral("/account_key.pem");
     QString domainKeyPath  = certDir + QStringLiteral("/domain_key.pem");
 
@@ -501,7 +689,7 @@ bool InternetAccessManager::issueCertificate()
     m_Acme.setCertOutputDir(certDir);
     m_Acme.setHost(m_Domain);
     m_Acme.setBaseDomain(kBaseDomain);
-    m_Acme.setDesecToken(effectiveToken());
+    m_Acme.setPdnsToken(effectiveToken());
 
     m_CertIssuing = true;
     qInfo() << "[InternetAccess] Starting ACME certificate issuance for" << m_Domain;
@@ -515,34 +703,37 @@ bool InternetAccessManager::checkCertificate()
     QString certPath = m_Settings->certPath();
     QString certExpiry = m_Settings->certExpiry();
 
+    qInfo() << "[InternetAccess] checkCertificate: certPath=\"" << certPath
+            << "\" certExpiry=\"" << certExpiry << "\"";
+
     if (certPath.isEmpty() || certExpiry.isEmpty()) {
-        qInfo() << "[InternetAccess] No existing certificate — issuing new one";
+        qInfo() << "[InternetAccess] No existing certificate (empty path/expiry) — issuing new one";
         return issueCertificate();
     }
 
     // Check if certificate file exists
     if (!QFile::exists(certPath)) {
-        qInfo() << "[InternetAccess] Certificate file not found — issuing new one";
+        qInfo() << "[InternetAccess] Certificate file not found at" << certPath << "— issuing new one";
         return issueCertificate();
     }
 
     // Check expiry
     QDateTime expiry = QDateTime::fromString(certExpiry, Qt::ISODate);
     if (!expiry.isValid()) {
-        qInfo() << "[InternetAccess] Invalid certificate expiry — reissuing";
+        qInfo() << "[InternetAccess] Invalid certificate expiry string \"" << certExpiry << "\" — reissuing";
         return issueCertificate();
     }
 
     QDateTime now = QDateTime::currentDateTimeUtc();
     qint64 daysRemaining = now.daysTo(expiry);
+    qInfo() << "[InternetAccess] Certificate expires in" << daysRemaining << "days (threshold:" << kCertRenewalDays << ")";
 
     if (daysRemaining < kCertRenewalDays) {
-        qInfo() << "[InternetAccess] Certificate expires in" << daysRemaining
-                << "days (<" << kCertRenewalDays << ") — renewing";
+        qInfo() << "[InternetAccess] Certificate renewal needed — expires in" << daysRemaining << "days";
         return issueCertificate();
     }
 
-    qInfo() << "[InternetAccess] Certificate valid for" << daysRemaining << "more days";
+    qInfo() << "[InternetAccess] Certificate valid for" << daysRemaining << "more days — no action needed";
     return true;
 }
 
@@ -576,36 +767,68 @@ void InternetAccessManager::onAcmeFinished(bool success)
         QString srcDir  = appData + QStringLiteral("/cert/") + kAcmeCertDir;
         QString dstDir  = appData + QStringLiteral("/cert/");
 
+        qInfo() << "[InternetAccess] onAcmeFinished: appData=" << appData
+                << "srcDir=" << srcDir << "dstDir=" << dstDir;
+
         // Copy cert.pem to parent dir (for HttpServer discovery)
         QString srcCert = srcDir + QStringLiteral("/cert.pem");
         QString dstCert = dstDir + QStringLiteral("/cert.pem");
+        bool certCopied = false;
         if (QFile::exists(srcCert)) {
             QFile::remove(dstCert);
-            QFile::copy(srcCert, dstCert);
+            certCopied = QFile::copy(srcCert, dstCert);
         }
+        qInfo() << "[InternetAccess] cert.pem: src_exists=" << QFile::exists(srcCert)
+                << "copied=" << certCopied;
 
         // Copy key.pem to parent dir
         QString srcKey = srcDir + QStringLiteral("/key.pem");
         QString dstKey = dstDir + QStringLiteral("/key.pem");
+        bool keyCopied = false;
         if (QFile::exists(srcKey)) {
             QFile::remove(dstKey);
-            QFile::copy(srcKey, dstKey);
+            keyCopied = QFile::copy(srcKey, dstKey);
         }
+        qInfo() << "[InternetAccess] key.pem: src_exists=" << QFile::exists(srcKey)
+                << "copied=" << keyCopied;
 
-        // Update settings
-        m_Settings->setCertPath(srcDir + QStringLiteral("/fullchain.pem"));
+        // Copy fullchain.pem to parent dir (for HttpServer discovery with chain)
+        QString srcFullchain = srcDir + QStringLiteral("/fullchain.pem");
+        QString dstFullchain = dstDir + QStringLiteral("/fullchain.pem");
+        bool fullchainCopied = false;
+        if (QFile::exists(srcFullchain)) {
+            QFile::remove(dstFullchain);
+            fullchainCopied = QFile::copy(srcFullchain, dstFullchain);
+        }
+        qInfo() << "[InternetAccess] fullchain.pem: src_exists=" << QFile::exists(srcFullchain)
+                << "copied=" << fullchainCopied;
 
-        // Let's Encrypt certificates are valid for 90 days
-        QDateTime now = QDateTime::currentDateTimeUtc();
-        QDateTime expiry = now.addDays(89);
-        m_Settings->setCertExpiry(expiry.toString(Qt::ISODate));
+        // Verify fullchain.pem exists before saving path
+        QString fullchainPath = srcDir + QStringLiteral("/fullchain.pem");
+        bool fullchainExists = QFile::exists(fullchainPath);
+        qInfo() << "[InternetAccess] fullchain.pem exists=" << fullchainExists
+                << "path=" << fullchainPath;
 
-        qInfo() << "[InternetAccess] Certificate path:" << m_Settings->certPath()
-                << "expires:" << m_Settings->certExpiry();
+        if (fullchainExists) {
+            // Update settings
+            m_Settings->setCertPath(fullchainPath);
 
-        emit certificateChanged(m_Settings->certPath());
+            // Let's Encrypt certificates are valid for 90 days
+            QDateTime now = QDateTime::currentDateTimeUtc();
+            QDateTime expiry = now.addDays(89);
+            m_Settings->setCertExpiry(expiry.toString(Qt::ISODate));
+
+            qInfo() << "[InternetAccess] Certificate path set:" << m_Settings->certPath()
+                    << "expires:" << m_Settings->certExpiry();
+
+            emit certificateChanged(m_Settings->certPath());
+        } else {
+            qWarning() << "[InternetAccess] fullchain.pem NOT FOUND after ACME success — cert_path will remain empty";
+            m_LastError = QStringLiteral("ACME completed but certificate file missing at ") + fullchainPath;
+            emit error(m_LastError);
+        }
     } else {
-        qWarning() << "[InternetAccess] ACME issuance failed";
+        qWarning() << "[InternetAccess] ACME issuance failed — cert_path remains empty, check previous ACME errors";
     }
 
     emit statusChanged(statusJson());
@@ -664,9 +887,33 @@ void InternetAccessManager::onPeriodicCheck()
 
     // 4. Re-verify UPnP mappings
     if (m_Settings->upnpEnabled() && m_Upnp.isAvailable()) {
-        quint16 httpsPort = m_Settings->httpsPort(443);
-        m_Upnp.addPortMapping(httpsPort, httpsPort, 3600,
-                              "Moonlight-Web HTTPS (renew)");
+        // Same conflict check as in start() — detect if another device
+        // claimed the port since our last mapping.
+        auto checkAndRenew = [this](quint16 port, const std::string& protocol,
+                                     const char* desc) {
+            std::string existingClient, existingPort;
+            if (m_Upnp.getExistingPortMapping(port, protocol,
+                                               existingClient, existingPort)) {
+                if (existingClient != m_Upnp.lanAddress()) {
+                    qWarning() << "[InternetAccess] Port" << port << protocol.c_str()
+                               << "now mapped to" << existingClient.c_str()
+                               << "— port was taken over by another device";
+                    m_LastError = QStringLiteral(
+                        "Port %1/%2 has been taken over by %3. "
+                        "Free it in your router settings or use a different port.")
+                        .arg(port)
+                        .arg(QString::fromStdString(protocol))
+                        .arg(QString::fromStdString(existingClient));
+                    emit error(m_LastError);
+                    return;
+                }
+            }
+            m_Upnp.addPortMapping(port, port, 3600, desc, protocol);
+        };
+
+        quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
+        checkAndRenew(httpsPort, "TCP", "Moonlight-Web HTTPS (renew)");
+        checkAndRenew(47999, "UDP", "Moonlight-Web UDP Stream (renew)");
     }
 
     emit statusChanged(statusJson());
@@ -679,9 +926,9 @@ void InternetAccessManager::onPendingRegistrationRetry()
     if (m_PendingRetryCount > 3) {
         // Max retries exceeded — give up and disable Internet Access
         m_LastError = QStringLiteral(
-            "deSEC domain registration failed after 3 attempts. "
+            "PowerDNS domain registration failed after 3 attempts. "
             "Internet Access has been disabled. Check your network connectivity "
-            "and deSEC token, then re-enable Internet Access in Settings.");
+            "and PowerDNS token, then re-enable Internet Access in Settings.");
         qWarning() << "[InternetAccess]" << m_LastError;
 
         m_Settings->setPendingRegistration(false);
@@ -703,12 +950,8 @@ void InternetAccessManager::onPendingRegistrationRetry()
             << "attempt" << m_PendingRetryCount << "/3"
             << "next retry in" << delaySec << "s";
 
-    // Regenerate unique ID and domain for each retry
-    m_UniqueId = generateUniqueId();
-    m_Settings->setUniqueId(m_UniqueId);
-    m_Domain = buildDomain();
-    m_Settings->setDomain(m_Domain);
-
+    // Keep existing unique ID — do NOT regenerate on retry, otherwise
+    // a new subdomain is created each time and the old domain is abandoned.
     // Re-set token (env var may have been configured since last attempt)
     QString token = effectiveToken();
     if (token.isEmpty()) {
@@ -716,7 +959,7 @@ void InternetAccessManager::onPendingRegistrationRetry()
         m_PendingRegistrationTimer->start(delayMs);
         return;
     }
-    m_DeSec.setToken(token);
+    m_Pdns.setToken(token);
 
     if (m_Settings->autoIpDetection()) {
         detectPublicIp();

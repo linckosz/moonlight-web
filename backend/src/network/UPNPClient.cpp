@@ -112,8 +112,68 @@ bool UPNPClient::discover(int timeoutMs)
 #endif
 }
 
+bool UPNPClient::getExistingPortMapping(uint16_t externalPort,
+                                            const std::string& protocol,
+                                            std::string& internalClient,
+                                            std::string& internalPort)
+{
+#ifndef MW_HAVE_MINIUPNPC
+    Q_UNUSED(externalPort);
+    Q_UNUSED(protocol);
+    Q_UNUSED(internalClient);
+    Q_UNUSED(internalPort);
+    return false;
+#else
+    if (!m_Available || !m_Urls || !m_Data) {
+        return false;
+    }
+
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%u", externalPort);
+
+    char intClient[64] = {};
+    char intPort[8] = {};
+    char desc[128] = {};
+    char enabled[4] = {};
+    char leaseDur[16] = {};
+
+    int ret = UPNP_GetSpecificPortMappingEntry(
+        m_Urls->controlURL,
+        m_Data->first.servicetype,
+        portStr,
+        protocol.c_str(),
+        nullptr,        // remoteHost
+        intClient,
+        intPort,
+        desc,
+        enabled,
+        leaseDur);
+
+    if (ret != 0) {
+        // 714 = NoSuchEntryInArray (not an error, just means the port is free)
+        if (ret != 714) {
+            const char* errStr = strupnperror(ret);
+            qInfo() << "[UPNP] GetSpecificPortMappingEntry for port" << externalPort
+                    << protocol.c_str() << ":" << errStr << "(error=" << ret << ")";
+        }
+        return false;
+    }
+
+    internalClient = std::string(intClient);
+    internalPort = std::string(intPort);
+
+    qInfo() << "[UPNP] Existing port mapping found:" << externalPort
+            << protocol.c_str() << "->" << intClient << ":" << intPort
+            << "desc='" << desc << "' enabled='" << enabled
+            << "' lease='" << leaseDur << "'";
+
+    return true;
+#endif
+}
+
 bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
-                                 uint32_t leaseDurationSec, const std::string& desc)
+                                 uint32_t leaseDurationSec, const std::string& desc,
+                                 const std::string& protocol)
 {
 #ifndef MW_HAVE_MINIUPNPC
     Q_UNUSED(externalPort);
@@ -142,7 +202,7 @@ bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
     char intAddr[64] = {};
     strncpy(intAddr, m_LanAddr, sizeof(intAddr) - 1);
 
-    qInfo() << "[UPNP] Adding port mapping:" << externalPort << "UDP ->"
+    qInfo() << "[UPNP] Adding port mapping:" << externalPort << protocol.c_str() << "->"
             << intAddr << ":" << internalPort
             << "(lease=" << leaseDurationSec << "s, desc=" << desc.c_str() << ")";
 
@@ -153,7 +213,7 @@ bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
         internalPortStr,            // internal port (string)
         intAddr,                    // internal client address
         desc.c_str(),               // description
-        "UDP",                      // protocol
+        protocol.c_str(),           // protocol
         nullptr,                    // remote host (null = any)
         leaseDurationSec > 0 ? std::to_string(leaseDurationSec).c_str() : nullptr);
 
@@ -166,16 +226,17 @@ bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
         return false;
     }
 
-    qInfo() << "[UPNP] Port mapping added successfully:" << externalPort << "UDP";
+    qInfo() << "[UPNP] Port mapping added successfully:" << externalPort << protocol.c_str();
     emit mappingAdded(externalPort);
     return true;
 #endif
 }
 
-bool UPNPClient::removePortMapping(uint16_t externalPort)
+bool UPNPClient::removePortMapping(uint16_t externalPort, const std::string& protocol)
 {
 #ifndef MW_HAVE_MINIUPNPC
     Q_UNUSED(externalPort);
+    Q_UNUSED(protocol);
     return false;
 #else
     if (!m_Available || !m_Urls || !m_Data) {
@@ -186,13 +247,13 @@ bool UPNPClient::removePortMapping(uint16_t externalPort)
     char portStr[8];
     snprintf(portStr, sizeof(portStr), "%u", externalPort);
 
-    qInfo() << "[UPNP] Removing port mapping:" << externalPort << "UDP";
+    qInfo() << "[UPNP] Removing port mapping:" << externalPort << protocol.c_str();
 
     int ret = UPNP_DeletePortMapping(
         m_Urls->controlURL,
         m_Data->first.servicetype,
         portStr,      // external port
-        "UDP",        // protocol
+        protocol.c_str(), // protocol
         nullptr);     // remote host (null = any)
 
     if (ret != 0) {
@@ -203,7 +264,7 @@ bool UPNPClient::removePortMapping(uint16_t externalPort)
         return false;
     }
 
-    qInfo() << "[UPNP] Port mapping removed:" << externalPort << "UDP";
+    qInfo() << "[UPNP] Port mapping removed:" << externalPort << protocol.c_str();
     emit mappingRemoved(externalPort);
     return true;
 #endif

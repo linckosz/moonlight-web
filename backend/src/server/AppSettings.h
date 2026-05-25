@@ -105,23 +105,23 @@ public:
 
     // ── Internet Access ───────────────────────────────────────────────────────
 
-    /// Whether Internet Access via deSEC is enabled.
+    /// Whether Internet Access via PowerDNS is enabled.
     /// Default: false.
     bool internetAccessEnabled() const;
     void setInternetAccessEnabled(bool enabled);
 
-    /// Unique 8-char hex identifier for the deSEC domain.
+    /// Unique 8-char hex identifier for the PowerDNS subdomain.
     QString uniqueId() const;
     void setUniqueId(const QString& id);
 
-    /// Full domain name: "moonlightweb-{uniqueId}.dedyn.io"
+    /// Full domain name: "{uniqueId}.moonlightweb.top"
     QString domain() const;
     void setDomain(const QString& domain);
 
-    /// deSEC API token. "auto" or empty means the compiled-in default token
-    /// is used. The compiled token is never logged.
-    QString desecToken() const;
-    void setDesecToken(const QString& token);
+    /// PowerDNS API key. "auto" or empty means the compiled-in default key
+    /// is used. The compiled key is never logged.
+    QString pdnsToken() const;
+    void setPdnsToken(const QString& token);
 
     /// Resolved public IP (from STUN or manual entry).
     QString publicIp() const;
@@ -163,9 +163,9 @@ public:
     /// Full path to settings.json.
     QString filePath() const { return m_FilePath; }
 
-    /// Compiled-in default deSEC token (for "auto" mode).
+    /// Compiled-in default PowerDNS token (for "auto" mode).
     /// Never log this value.
-    static QString defaultDesecToken();
+    static QString defaultPdnsToken();
 
 private:
     /// Encrypt a token via Windows DPAPI (machine-level, current user).
