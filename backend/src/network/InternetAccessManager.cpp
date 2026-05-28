@@ -206,8 +206,8 @@ void InternetAccessManager::start()
 
     // Step 6: Issue/renew TLS certificate
     {
-        QString existingCert = m_Settings->certPath();
-        qInfo() << "[InternetAccess] Step 6 — checking certificate: certPath=\""
+        QString existingCert = m_Settings->certPem();
+        qInfo() << "[InternetAccess] Step 6 — checking certificate: cert_pem=\""
                 << existingCert << "\"";
     }
     checkCertificate();
@@ -352,8 +352,8 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("auto_ip_detection")] = m_Settings->autoIpDetection();
     obj[QStringLiteral("transport_mode")] = m_Settings->transportMode();
     obj[QStringLiteral("pending_registration")] = m_Settings->pendingRegistration();
-    obj[QStringLiteral("cert_path")] = m_Settings->certPath();
-    obj[QStringLiteral("cert_expiry")] = readCertExpiry(m_Settings->certPath());
+    obj[QStringLiteral("cert_pem")] = m_Settings->certPem();
+    obj[QStringLiteral("cert_key")] = m_Settings->certKey();
     obj[QStringLiteral("cert_issuing")] = m_CertIssuing;
     obj[QStringLiteral("upnp_available")] = m_Upnp.isAvailable();
     obj[QStringLiteral("https_port")] = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
@@ -727,16 +727,59 @@ QString InternetAccessManager::readCertExpiry(const QString& certPath)
 
 bool InternetAccessManager::checkCertificate()
 {
-    QString certPath = m_Settings->certPath();
-    QString certExpiry = readCertExpiry(certPath);
+    QString certPem = m_Settings->certPem();
+    QString certKey = m_Settings->certKey();
     QString currentDomain = m_Domain;
 
-    qInfo() << "[InternetAccess] checkCertificate: certPath=\"" << certPath
-            << "\" certExpiry=\"" << certExpiry
+    qInfo() << "[InternetAccess] checkCertificate: cert_pem=\"" << certPem
+            << "\" cert_key=\"" << certKey
             << "\" domain=\"" << currentDomain << "\"";
 
-    if (certPath.isEmpty() || certExpiry.isEmpty()) {
-        qInfo() << "[InternetAccess] No existing certificate (empty path/expiry) — issuing new one";
+    if (certPem.isEmpty()) {
+        qInfo() << "[InternetAccess] cert_pem is empty — issuing new certificate";
+        return issueCertificate();
+    }
+
+    // Case 1: cert_pem is an env var name (e.g. "MW_CERT_PEM") — try to resolve it
+    QByteArray certData = qgetenv(certPem.toUtf8());
+    if (!certData.isEmpty()) {
+        // Certificate is managed via environment variables — check the key too
+        QByteArray keyData = qgetenv(certKey.toUtf8());
+        if (keyData.isEmpty()) {
+            qInfo() << "[InternetAccess] cert_pem resolved from env var but cert_key ("
+                    << certKey << ") is empty — cannot validate, skipping ACME";
+            return false; // User manages certs manually, don't interfere
+        }
+
+        // Parse cert from env data to check CN
+        QList<QSslCertificate> certs = QSslCertificate::fromData(certData, QSsl::Pem);
+        if (certs.isEmpty()) {
+            qInfo() << "[InternetAccess] Invalid certificate data from env var" << certPem;
+            return false;
+        }
+
+        QString certCn = certs.first().subjectInfo(QSslCertificate::CommonName).value(0);
+        QDateTime expiry = certs.first().expiryDate();
+
+        qInfo() << "[InternetAccess] Env cert: CN=\"" << certCn
+                << "\" expires=" << expiry.toString(Qt::ISODate);
+
+        if (!currentDomain.isEmpty() && certCn.compare(currentDomain, Qt::CaseInsensitive) != 0) {
+            qInfo() << "[InternetAccess] Env cert CN mismatch — reissuing";
+            return issueCertificate();
+        }
+
+        // Don't auto-renew env-managed certs — user handles their own lifecycle
+        qInfo() << "[InternetAccess] Certificate managed via env vars — ACME skipped";
+        return false;
+    }
+
+    // Case 2: cert_pem is a file path (Let's Encrypt managed)
+    QString certPath = certPem;
+    QString certExpiry = readCertExpiry(certPath);
+
+    if (certExpiry.isEmpty()) {
+        qInfo() << "[InternetAccess] Cannot read expiry from" << certPath << "— issuing new one";
         return issueCertificate();
     }
 
@@ -746,65 +789,32 @@ bool InternetAccessManager::checkCertificate()
         return issueCertificate();
     }
 
-    // Verify a private key exists in the same directory as the certificate.
-    // Do NOT look in parent directories — a key from a different directory
-    // belongs to a different cert (cross-directory key mismatch).
+    // Verify the cert_key also points to a valid key file
     {
-        QFileInfo certFi(certPath);
-        // Scan all *.pem files in the cert directory for a valid private key
-        QString certDir = certFi.absolutePath();
-        QDirIterator it(certDir, {"*.pem"}, QDir::Files, QDirIterator::Subdirectories);
-        bool keyFound = false;
-        while (it.hasNext()) {
-            QFile f(it.next());
-            if (f.open(QIODevice::ReadOnly)) {
-                QByteArray content = f.readAll();
-                f.close();
-                if (content.contains("PRIVATE KEY")) {
-                    // Re-open to test QSslKey
-                    if (f.open(QIODevice::ReadOnly)) {
-                        QSslKey key(&f, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-                        f.close();
-                        if (key.isNull()) {
-                            if (f.open(QIODevice::ReadOnly)) {
-                                key = QSslKey(&f, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
-                                f.close();
-                            }
-                        }
-                        if (!key.isNull()) {
-                            keyFound = true;
-                            break;
-                        }
-                    }
-                }
+        QByteArray keyData = qgetenv(certKey.toUtf8());
+        if (keyData.isEmpty()) {
+            // cert_key is a file path — check it exists
+            if (!QFile::exists(certKey)) {
+                qInfo() << "[InternetAccess] Key file not found at" << certKey << "— reissuing";
+                return issueCertificate();
             }
-        }
-        if (!keyFound) {
-            qInfo() << "[InternetAccess] No private key found in" << certDir
-                    << "— reissuing certificate";
-            return issueCertificate();
         }
     }
 
-    // Parse the existing certificate to verify its Common Name matches the current domain.
-    // A cert_path from a previous domain (e.g. old unique_id) would have a mismatched CN,
-    // so we re-issue rather than using a stale cert.
+    // Parse certificate to verify CN
     QString certCn;
     {
         QFile f(certPath);
         if (f.open(QIODevice::ReadOnly)) {
             QList<QSslCertificate> certs = QSslCertificate::fromDevice(&f, QSsl::Pem);
             f.close();
-            if (!certs.isEmpty()) {
-                QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
-                certCn = cns.isEmpty() ? QString() : cns.first();
-            }
+            if (!certs.isEmpty())
+                certCn = certs.first().subjectInfo(QSslCertificate::CommonName).value(0);
         }
     }
 
     qInfo() << "[InternetAccess] Certificate CN=\"" << certCn << "\"";
 
-    // If domain is set, verify CN matches (case-insensitive)
     if (!currentDomain.isEmpty() && !certCn.isEmpty()) {
         if (certCn.compare(currentDomain, Qt::CaseInsensitive) != 0) {
             qInfo() << "[InternetAccess] Certificate CN mismatch: got \""
@@ -911,20 +921,23 @@ void InternetAccessManager::onAcmeFinished(bool success)
                 << "path=" << fullchainPath;
 
         if (fullchainExists) {
-            // Update settings
-            m_Settings->setCertPath(fullchainPath);
+            // Update settings with Let's Encrypt file paths
+            QString domainKeyPath = srcDir + QStringLiteral("/domain_key.pem");
+            m_Settings->setCertPem(fullchainPath);
+            m_Settings->setCertKey(QFile::exists(domainKeyPath) ? domainKeyPath : srcDir + QStringLiteral("/key.pem"));
 
-            qInfo() << "[InternetAccess] Certificate path set:" << m_Settings->certPath()
+            qInfo() << "[InternetAccess] cert_pem:" << m_Settings->certPem()
+                    << "cert_key:" << m_Settings->certKey()
                     << "expires:" << readCertExpiry(fullchainPath);
 
-            emit certificateChanged(m_Settings->certPath());
+            emit certificateChanged();
         } else {
-            qWarning() << "[InternetAccess] fullchain.pem NOT FOUND after ACME success — cert_path will remain empty";
+            qWarning() << "[InternetAccess] fullchain.pem NOT FOUND after ACME success — cert_pem will remain empty";
             m_LastError = QStringLiteral("ACME completed but certificate file missing at ") + fullchainPath;
             emit error(m_LastError);
         }
     } else {
-        qWarning() << "[InternetAccess] ACME issuance failed — cert_path remains empty, check previous ACME errors";
+        qWarning() << "[InternetAccess] ACME issuance failed — cert_pem/cert_key remain empty, check previous ACME errors";
     }
 
     emit statusChanged(statusJson());

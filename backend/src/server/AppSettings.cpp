@@ -396,16 +396,29 @@ void AppSettings::setPendingRegistration(bool pending)
     writeAll(obj);
 }
 
-QString AppSettings::certPath() const
+QString AppSettings::certPem() const
 {
     QJsonObject obj = readAll();
-    return obj.value("cert_path").toString();
+    return obj.value("cert_pem").toString(QStringLiteral("MW_CERT_PEM"));
 }
 
-void AppSettings::setCertPath(const QString& path)
+void AppSettings::setCertPem(const QString& value)
 {
     QJsonObject obj = readAll();
-    obj["cert_path"] = path;
+    obj["cert_pem"] = value;
+    writeAll(obj);
+}
+
+QString AppSettings::certKey() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("cert_key").toString(QStringLiteral("MW_CERT_KEY"));
+}
+
+void AppSettings::setCertKey(const QString& value)
+{
+    QJsonObject obj = readAll();
+    obj["cert_key"] = value;
     writeAll(obj);
 }
 

@@ -118,10 +118,11 @@ int main(int argc, char* argv[])
 
     HttpServer server(httpPort);
 
-    // Pass domain and cert path to HttpServer so loadCert() can find
-    // the correct certificate by CN matching (or load an explicit cert).
+    // Pass domain and cert settings to HttpServer so loadCert() can find
+    // the correct certificate by CN matching (or load from env var / file).
     server.setDomain(appSettings.domain());
-    server.setCertPath(appSettings.certPath());
+    server.setCertPem(appSettings.certPem());
+    server.setCertKey(appSettings.certKey());
 
     // Initialize ComputerManager (Phase 2: host discovery)
     ComputerManager computerManager(&app);
@@ -163,10 +164,10 @@ int main(int argc, char* argv[])
 
     // Hot-reload TLS when certificate is renewed (no server restart needed)
     QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged,
-        [&server](const QString& certPath) {
-            qInfo() << "[main] Certificate renewed, reloading TLS:" << certPath;
-            // Update the explicit cert path so reloadTls() loads the new file directly
-            server.setCertPath(certPath);
+        [&server, &appSettings]() {
+            qInfo() << "[main] Certificate renewed, reloading TLS";
+            server.setCertPem(appSettings.certPem());
+            server.setCertKey(appSettings.certKey());
             if (!server.reloadTls()) {
                 qWarning() << "[main] TLS reload failed — restart may be required";
             }
