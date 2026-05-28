@@ -61,14 +61,31 @@ static void loadEnvFile()
         if (value.size() >= 2 && value.startsWith('"') && value.endsWith('"'))
             value = value.mid(1, value.size() - 2);
 
-        // PEM block: accumulate BEGIN..END lines
+        // PEM block: accumulate BEGIN..END lines.
+        // After each END, check if another PEM block (e.g. intermediate
+        // certificate) follows on the next non-blank line.  Keep consuming
+        // until we hit a different variable or EOF.
         if (value.startsWith("-----BEGIN")) {
             QByteArray pem = value + '\n';
-            while (!f.atEnd()) {
+            bool more = true;
+            while (more && !f.atEnd()) {
                 QByteArray next = f.readLine().trimmed();
                 pem += next + '\n';
-                if (next.startsWith("-----END"))
-                    break;
+                if (next.startsWith("-----END")) {
+                    qint64 saved = f.pos();
+                    QByteArray peek;
+                    while (!f.atEnd()) {
+                        peek = f.readLine().trimmed();
+                        if (!peek.isEmpty() && !peek.startsWith('#'))
+                            break;
+                    }
+                    if (peek.startsWith("-----BEGIN")) {
+                        pem += peek + '\n';
+                    } else {
+                        f.seek(saved);
+                        more = false;
+                    }
+                }
             }
             qputenv(key, pem);
         } else {
