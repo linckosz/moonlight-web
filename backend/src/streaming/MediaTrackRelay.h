@@ -65,10 +65,17 @@ public:
     // Signals inherited from RelayBase: signalingSdpReady, signalingIceCandidate,
     // dataChannelsOpen, sessionEnded.
 
+signals:
+    // ICE connection did not reach Connected within 3s after setRemoteDescription().
+    // In auto mode this triggers fallback to the next transport; in explicit mode
+    // it triggers the existing WS fallback inside SignalingServer.
+    void iceTimedOut();
+
 private slots:
     void onVideoFrame(const QByteArray& data, int frameType, int frameNumber);
     void onAudioSample(const QByteArray& data);
     void onShimConnectionTerminated(int errorCode);
+    void onIceCheckTimeout();
 
 private:
     void setupPeerConnection(const rtc::Configuration& config);
@@ -109,6 +116,10 @@ private:
     uint16_t m_PublicPort = 0;
     bool m_ForceHostPublic = false;
     bool m_SuppressIPv6 = false;
+
+    // ── ICE connection timeout ──────────────────────────────────────────────
+    // Starts on setRemoteDescription(), cancelled on PC Connected or stop().
+    QTimer* m_IceCheckTimer = nullptr;
 
     // ── Stats timer (2s interval) ────────────────────────────────────────────
     QTimer* m_StatsTimer = nullptr;

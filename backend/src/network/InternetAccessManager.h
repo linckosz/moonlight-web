@@ -128,6 +128,10 @@ private:
     /// Issue a TLS certificate via the native ACME client.
     bool issueCertificate();
 
+    /// Read certificate expiry date directly from the PEM file.
+    /// Returns ISO 8601 string, or empty string if file missing/invalid.
+    static QString readCertExpiry(const QString& certPath);
+
     /// Check certificate expiry and renew if < 30 days remaining.
     bool checkCertificate();
 

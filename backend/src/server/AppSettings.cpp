@@ -67,8 +67,11 @@ quint16 AppSettings::httpsPort(quint16 fallback) const
 {
     QJsonObject obj = readAll();
     auto it = obj.find("https_port");
-    if (it != obj.end())
-        return static_cast<quint16>(it->toInt());
+    if (it != obj.end()) {
+        int v = it->toInt();
+        if (v > 0) // 0 is invalid — use fallback
+            return static_cast<quint16>(v);
+    }
     return fallback;
 }
 
@@ -403,19 +406,6 @@ void AppSettings::setCertPath(const QString& path)
 {
     QJsonObject obj = readAll();
     obj["cert_path"] = path;
-    writeAll(obj);
-}
-
-QString AppSettings::certExpiry() const
-{
-    QJsonObject obj = readAll();
-    return obj.value("cert_expiry").toString();
-}
-
-void AppSettings::setCertExpiry(const QString& expiry)
-{
-    QJsonObject obj = readAll();
-    obj["cert_expiry"] = expiry;
     writeAll(obj);
 }
 

@@ -84,12 +84,13 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc') {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined) {
         this.container = container;
         this.signalingUrl = signalingUrl;
         this.host = host;
         this.videoCodec = videoCodec || 'auto';
         this._transport = transport;
+        this._transportMode = transportMode || transport;
         this._gamingMode = gamingMode;
         this._upnpEnabled = upnpEnabled;
         this._upnpAvailable = upnpAvailable;
@@ -881,7 +882,7 @@ export class StreamView {
             fps + ' fps | ' +
             bitrateMbps.toFixed(1) + ' Mbps | ' +
             codec + ' | ' +
-            this._transport
+            this._transportMode
         );
 
         // Line 2: host RTT (backend ↔ Sunshine)

@@ -9,6 +9,7 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QRandomGenerator>
+#include <functional>
 #include "server/AppSettings.h"
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
@@ -26,12 +27,63 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+// Load KEY=VALUE pairs from a .env file into the process environment.
+// Supports PEM blocks: if a value starts with "-----BEGIN", lines are
+// accumulated until "-----END" is found (multi-line key support).
+// Called early in main() so that env vars (e.g. MW_CERT_KEY) are available
+// before any certificate loading happens.
+static void loadEnvFile()
+{
+    QString path = QCoreApplication::applicationDirPath() + "/.env";
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return;
+
+    int count = 0;
+    while (!f.atEnd()) {
+        QByteArray line = f.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#'))
+            continue;
+
+        int eq = line.indexOf('=');
+        if (eq <= 0)
+            continue;
+
+        QByteArray key = line.left(eq).trimmed();
+        QByteArray value = line.mid(eq + 1).trimmed();
+
+        // Strip surrounding quotes
+        if (value.size() >= 2 && value.startsWith('"') && value.endsWith('"'))
+            value = value.mid(1, value.size() - 2);
+
+        // PEM block: accumulate BEGIN..END lines
+        if (value.startsWith("-----BEGIN")) {
+            QByteArray pem = value + '\n';
+            while (!f.atEnd()) {
+                QByteArray next = f.readLine().trimmed();
+                pem += next + '\n';
+                if (next.startsWith("-----END"))
+                    break;
+            }
+            qputenv(key, pem);
+        } else {
+            qputenv(key, value);
+        }
+        count++;
+    }
+
+    Logger::info(QString("[.env] Loaded %1 variables from %2").arg(count).arg(path));
+}
+
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("Moonlight-Web");
     QCoreApplication::setApplicationVersion("0.1.0");
     QCoreApplication::setOrganizationName("Moonlight-Web");
+
+    // Load .env file before anything reads environment variables
+    loadEnvFile();
 
     // Parse command line
     QCommandLineParser parser;
@@ -65,6 +117,11 @@ int main(int argc, char* argv[])
         httpPort = parser.value("port").toUShort();
 
     HttpServer server(httpPort);
+
+    // Pass domain and cert path to HttpServer so loadCert() can find
+    // the correct certificate by CN matching (or load an explicit cert).
+    server.setDomain(appSettings.domain());
+    server.setCertPath(appSettings.certPath());
 
     // Initialize ComputerManager (Phase 2: host discovery)
     ComputerManager computerManager(&app);
@@ -108,6 +165,8 @@ int main(int argc, char* argv[])
     QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged,
         [&server](const QString& certPath) {
             qInfo() << "[main] Certificate renewed, reloading TLS:" << certPath;
+            // Update the explicit cert path so reloadTls() loads the new file directly
+            server.setCertPath(certPath);
             if (!server.reloadTls()) {
                 qWarning() << "[main] TLS reload failed — restart may be required";
             }
@@ -243,125 +302,464 @@ int main(int argc, char* argv[])
         if (colon >= 0)
             serverHost = serverHost.left(colon);
 
-        // Resolve transport preference: new transport_mode takes priority
-        // over the legacy transport setting.
-        QString transportPref = appSettings.transportMode();
-        if (transportPref.isEmpty() || transportPref == "auto") {
-            transportPref = appSettings.transport();
+        // ================================================================
+        // Resolve transport mode (from AppSettings).
+        //
+        // transport_mode values:
+        //   "auto"                 → automatic fallback chain (see below)
+        //   "webrtc-media-udp"     → MediaTrack + UDP only
+        //   "webrtc-dc-udp"       → DataChannel + UDP only
+        //   "webrtc-media-tcp"    → MediaTrack + UDP+TCP
+        //   "webrtc-dc-tcp"       → DataChannel + UDP+TCP
+        //   "wss"                 → StreamRelay (WebSocket, always works)
+        // ================================================================
+        QString transportMode = appSettings.transportMode();
+        if (transportMode.isEmpty())
+            transportMode = "auto";
+
+        bool isAutoMode = (transportMode == "auto");
+
+        // ── Auto-mode helpers: priority-ordered transport list ─────────
+        static const QStringList kAutoTransportOrder = {
+            QStringLiteral("webrtc-media-udp"),
+            QStringLiteral("webrtc-dc-udp"),
+            QStringLiteral("webrtc-media-tcp"),
+            QStringLiteral("webrtc-dc-tcp"),
+            QStringLiteral("wss")
+        };
+
+        // Helper: does the host support a given codec?
+        auto hostSupportsCodec = [](NvComputer* h, VideoCodec c) -> bool {
+            int support = h->serverCodecModeSupport;
+            switch (c) {
+            case VideoCodec::H264: return (support & 0x01) != 0; // SERVER_CODEC_MODE_H264
+            case VideoCodec::HEVC: return (support & 0x02) != 0; // SERVER_CODEC_MODE_H265
+            case VideoCodec::AV1:  return (support & 0x20) != 0; // SERVER_CODEC_MODE_AV1
+            default:               return true;
+            }
+        };
+
+        // Helper: filter transport list by codec compatibility.
+        //
+        // Rules:
+        //   - H.264 works on all transports.
+        //   - HEVC works on all transports (depends on host/browser support).
+        //   - AV1 is skipped for MediaTrack modes (browser <video> AV1
+        //     support varies across platforms; DataChannel WebCodecs
+        //     is more reliable).
+        //   - If the host doesn't support the selected codec, try H.264
+        //     instead (if host supports it).
+        auto filterTransportsByCodec = [&](const QStringList& transports,
+                                            VideoCodec codec,
+                                            NvComputer* h) -> QStringList {
+            // Determine effective codec (resolve Auto → HEVC if host supports)
+            VideoCodec effective = codec;
+            if (effective == VideoCodec::Auto) {
+                effective = hostSupportsCodec(h, VideoCodec::HEVC)
+                    ? VideoCodec::HEVC : VideoCodec::H264;
+            }
+
+            // If host doesn't support the effective codec, fall back to H.264
+            if (!hostSupportsCodec(h, effective)) {
+                if (hostSupportsCodec(h, VideoCodec::H264)) {
+                    qInfo() << "[Auto] Codec" << static_cast<int>(effective)
+                            << "not supported by host, falling back to H.264";
+                    effective = VideoCodec::H264;
+                } else {
+                    qWarning() << "[Auto] Host supports NO video codec!";
+                    return transports; // Return all, let it fail naturally
+                }
+            }
+
+            qInfo() << "[Auto] Effective codec:" << static_cast<int>(effective);
+
+            QStringList result;
+            for (const auto& t : transports) {
+                if (effective == VideoCodec::AV1 && t.startsWith("webrtc-media")) {
+                    qInfo() << "[Auto] Skipping" << t << "(AV1 + MediaTrack not reliable)";
+                    continue; // Skip AV1 on MediaTrack
+                }
+                result.append(t);
+            }
+            return result;
+        };
+
+        // ── Non-auto mode: resolve to internal transport + ICE config ─
+        QString internalTransport;
+        bool enableIceTcp = false;
+
+        auto resolveExplicitTransport = [&](const QString& mode) {
+            if (mode == "webrtc-media-udp") {
+                internalTransport = "webrtc-media";
+                enableIceTcp = false;
+            } else if (mode == "webrtc-dc-udp") {
+                internalTransport = "webrtc";
+                enableIceTcp = false;
+            } else if (mode == "webrtc-media-tcp") {
+                internalTransport = "webrtc-media";
+                enableIceTcp = true;
+            } else if (mode == "webrtc-dc-tcp") {
+                internalTransport = "webrtc";
+                enableIceTcp = true;
+            } else if (mode == "wss") {
+                internalTransport = "wss";
+                enableIceTcp = false;
+            } else {
+                // Unknown mode → fall back to legacy transport setting
+                QString legacy = appSettings.transport();
+                internalTransport = (legacy == "wss") ? "wss" : "webrtc";
+                enableIceTcp = false;
+            }
+        };
+
+        // Build ordered attempt list for auto mode (declared here so it's
+        // visible to both the log block below and the fallback chain block).
+        QStringList orderedTransports;
+        if (!isAutoMode) {
+            resolveExplicitTransport(transportMode);
+            qInfo() << "[Session] Transport: explicit mode=" << transportMode
+                    << "internal=" << internalTransport
+                    << "iceTcp=" << enableIceTcp;
+        } else {
+            qInfo() << "[Session] Transport: auto mode";
+            orderedTransports = filterTransportsByCodec(
+                kAutoTransportOrder, appSettings.videoCodec(), host);
+            qInfo() << "[Auto] Ordered transports after codec filter:" << orderedTransports;
         }
-        if (transportPref == "webrtc-media-udp" || transportPref == "webrtc-media-tcp")
-            transportPref = "webrtc-media";
-        else if (transportPref == "webrtc-dc-udp" || transportPref == "webrtc-dc-tcp")
-            transportPref = "webrtc";
-        else if (transportPref == "wss")
-            ;
-        else if (transportPref != "webrtc" && transportPref != "webrtc-media" && transportPref != "wss")
-            transportPref = appSettings.transport();
 
-        qInfo() << "[Session] Transport preference:" << transportPref;
+        // ── Helper: attach lifecycle relay tracking for a new session ───────────
+        // Adds the standard relay-created and session-ended connections that
+        // maintain the global relay pointers (g_ActiveRelay, etc.) and send a
+        // best-effort HTTPS quit to Sunshine when a session ends unexpectedly.
+        auto attachRelayTracking = [&](StreamSession* s) {
+            // WSS mode: StreamRelay tracking
+            QObject::connect(s, &StreamSession::streamRelayCreated,
+                [&g_ActiveStreamRelay, &computerManager, host](StreamRelay* r) {
+                    qInfo() << "[main] streamRelayCreated, relay=" << r;
+                    g_ActiveStreamRelay = r;
 
-        auto* session = new StreamSession(
-            host, appId,
-            computerManager.http(),
-            std::move(respond),
-            signalingPort,
-            serverHost,
-            appSettings.videoCodec(),
-            appSettings.gamingMode(),
-            effectiveUpnpEnabled,
-            transportPref,
-            stunServer,
-            appSettings.streamHeight(),
-            appSettings.streamFps(),
-            appSettings.streamBitrate()
-        );
+                    QObject::connect(r, &StreamRelay::sessionEnded,
+                        [r, &g_ActiveStreamRelay, &computerManager, host]() {
+                            qInfo() << "[main] StreamRelay sessionEnded";
+                            auto* identity = IdentityManager::get();
+                            auto* quitReply = computerManager.http()->quitAppAsync(
+                                host->activeAddress, host->activeHttpsPort,
+                                identity->getCertificate(), identity->getPrivateKey());
+                            QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+                            r->stop();
+                            r->deleteLater();
+                            if (g_ActiveStreamRelay == r) g_ActiveStreamRelay = nullptr;
+                        });
+                });
 
-        // Inform the session about the effective HTTPS port
-        session->setHttpsPort(server.activeHttpsPort());
+            // WebRTC DataChannel mode: DataChannelRelay tracking
+            QObject::connect(s, &StreamSession::relayCreated,
+                [&g_ActiveRelay, &computerManager, host](DataChannelRelay* r) {
+                    qInfo() << "[main] relayCreated, relay=" << r;
+                    g_ActiveRelay = r;
 
-        // Set the port for the legacy WSS StreamRelay
-        session->setStreamRelayPort(signalingPort + 1);
+                    QObject::connect(r, &DataChannelRelay::sessionEnded,
+                        [r, &g_ActiveRelay, &computerManager, host]() {
+                            qInfo() << "[main] sessionEnded fired, relay=" << r;
+                            auto* identity = IdentityManager::get();
+                            auto* quitReply = computerManager.http()->quitAppAsync(
+                                host->activeAddress, host->activeHttpsPort,
+                                identity->getCertificate(), identity->getPrivateKey());
+                            QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+                            r->stop();
+                            r->deleteLater();
+                            if (g_ActiveRelay == r) {
+                                g_ActiveRelay = nullptr;
+                            }
+                        });
+                });
 
-        // Track StreamRelay for quit/cleanup (WSS mode)
-        QObject::connect(session, &StreamSession::streamRelayCreated,
-            [&g_ActiveStreamRelay, &computerManager, host](StreamRelay* relay) {
-                qInfo() << "[main] streamRelayCreated, relay=" << relay;
-                g_ActiveStreamRelay = relay;
+            // WebRTC Media Track mode: MediaTrackRelay tracking
+            QObject::connect(s, &StreamSession::mediaTrackRelayCreated,
+                [&g_ActiveMediaTrackRelay, &computerManager, host](MediaTrackRelay* r) {
+                    qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
+                    g_ActiveMediaTrackRelay = r;
 
-                QObject::connect(relay, &StreamRelay::sessionEnded,
-                    [relay, &g_ActiveStreamRelay, &computerManager, host]() {
-                        qInfo() << "[main] StreamRelay sessionEnded, relay=" << relay;
+                    QObject::connect(r, &MediaTrackRelay::sessionEnded,
+                        [r, &g_ActiveMediaTrackRelay, &computerManager, host]() {
+                            qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << r;
+                            auto* identity = IdentityManager::get();
+                            auto* quitReply = computerManager.http()->quitAppAsync(
+                                host->activeAddress, host->activeHttpsPort,
+                                identity->getCertificate(), identity->getPrivateKey());
+                            QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+                            r->stop();
+                            r->deleteLater();
+                            if (g_ActiveMediaTrackRelay == r) g_ActiveMediaTrackRelay = nullptr;
+                        });
+                });
+        };
 
-                        // Best-effort quit to Sunshine (session ended unexpectedly)
-                        auto* identity = IdentityManager::get();
-                        auto* quitReply = computerManager.http()->quitAppAsync(
-                            host->activeAddress, host->activeHttpsPort,
-                            identity->getCertificate(), identity->getPrivateKey());
-                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+        // ── Helper: create a session with the given transport mode and attach tracking ─
+        // transportMode: full mode string ("webrtc-media-udp", "wss", etc.)
+        // iceTcp: whether to enable ICE-TCP candidates
+        auto createSession = [&](const QString& transportMode, bool iceTcp,
+                                  ResponseCallback rsp) -> StreamSession* {
+            // Map transport mode to internal transport string
+            QString internal;
+            if (transportMode == "webrtc-media-udp" || transportMode == "webrtc-media-tcp")
+                internal = "webrtc-media";
+            else if (transportMode == "webrtc-dc-udp" || transportMode == "webrtc-dc-tcp")
+                internal = "webrtc";
+            else
+                internal = transportMode; // "wss"
 
-                        relay->stop();
-                        relay->deleteLater();
-                        if (g_ActiveStreamRelay == relay) {
-                            g_ActiveStreamRelay = nullptr;
-                        }
+            auto* s = new StreamSession(
+                host, appId,
+                computerManager.http(),
+                std::move(rsp),
+                signalingPort,
+                serverHost,
+                appSettings.videoCodec(),
+                appSettings.gamingMode(),
+                effectiveUpnpEnabled,
+                internal,
+                stunServer,
+                appSettings.streamHeight(),
+                appSettings.streamFps(),
+                appSettings.streamBitrate()
+            );
+            s->setHttpsPort(server.activeHttpsPort());
+            s->setStreamRelayPort(signalingPort + 1);
+            s->setTransportMode(transportMode); // Full mode for response
+            s->setEnableIceTcp(iceTcp);
+            attachRelayTracking(s);
+            return s;
+        };
+
+        // ═════════════════════════════════════════════════════════════════════
+        // Fallback chain: auto mode tries transports in priority order,
+        // failing forward to the next on sessionFailed.
+        //
+        // Priority order: 1. MediaTrack UDP  2. DataChannel UDP
+        //                 3. MediaTrack TCP  4. DataChannel TCP  5. WSS
+        //
+        // Codec compatibility filters remove unsupported combos above.
+        // ═════════════════════════════════════════════════════════════════════
+        if (!isAutoMode) {
+            // ── Explicit transport: single attempt ──────────────────────────
+            auto* session = createSession(transportMode, enableIceTcp, std::move(respond));
+            session->start();
+        } else {
+            // ── Auto mode: try each transport in priority order ─────────────
+            struct AutoFallbackState {
+                ResponseCallback respond;
+                bool responded = false;
+                int currentAttempt = 0;
+                QStringList attempts;
+                NvComputer* host = nullptr;
+                int appId = 0;
+                HttpResponse deferredResponse;  // Kept for compilation, no longer populated
+                QString currentMode;
+            };
+
+            auto fbState = std::make_shared<AutoFallbackState>();
+            fbState->respond = std::move(respond);
+            fbState->attempts = orderedTransports;
+            fbState->host = host;
+            fbState->appId = appId;
+
+            // Use shared_ptr for tryNext so that relay sessionEnded handlers
+            // from orphan relays (parented to QApp, surviving the session) don't
+            // capture a dangling reference. The shared_ptr outlives the local scope.
+            auto tryNextFn = std::make_shared<std::function<void()>>();
+            std::function<void()> tryNext;
+            tryNext = [fbState, &computerManager, signalingPort, serverHost,
+                       &appSettings, effectiveUpnpEnabled, stunServer,
+                       &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
+                       &server, tryNextFn]() {
+                if (fbState->responded) return;
+
+                if (fbState->currentAttempt >= fbState->attempts.size()) {
+                    qWarning() << "[Auto] All transports exhausted";
+                    if (!fbState->responded) {
+                        fbState->responded = true;
+                        fbState->respond(HttpResponse::error(502,
+                            "All transport modes failed"));
+                    }
+                    return;
+                }
+
+                int idx = fbState->currentAttempt++;
+                QString mode = fbState->attempts[idx];
+                bool iceTcp = mode.endsWith(QStringLiteral("-tcp"));
+                qInfo() << "[Auto] Attempt" << idx + 1 << "/"
+                        << fbState->attempts.size() << ":" << mode
+                        << "iceTcp=" << iceTcp;
+
+                fbState->currentMode = mode;
+
+                // ── respond callback ─────────────────────────────────────
+                // Forward immediately for ALL transports.
+                // The frontend needs the signaling info (WebSocket URL) from this response
+                // to connect and complete the ICE handshake. Deferring would deadlock.
+                auto attemptRespond = [fbState, mode](HttpResponse resp) {
+                    if (fbState->responded) return;
+                    if (resp.statusCode >= 400) {
+                        qInfo() << "[Auto]" << mode
+                                << "failed (HTTP" << resp.statusCode << ") — retrying";
+                        return; // sessionFailed will trigger tryNext
+                    }
+                    qInfo() << "[Auto]" << mode << "succeeded — forwarding response";
+                    fbState->responded = true;
+                    fbState->respond(std::move(resp));
+                };
+
+                // Resolve internal transport string for StreamSession constructor
+                QString internalTransport;
+                if (mode.startsWith(QStringLiteral("webrtc-media")))
+                    internalTransport = QStringLiteral("webrtc-media");
+                else if (mode.startsWith(QStringLiteral("webrtc-dc")))
+                    internalTransport = QStringLiteral("webrtc");
+                else
+                    internalTransport = mode; // "wss"
+
+                auto* session = new StreamSession(
+                    fbState->host, fbState->appId,
+                    computerManager.http(),
+                    std::move(attemptRespond),
+                    signalingPort, serverHost,
+                    appSettings.videoCodec(),
+                    appSettings.gamingMode(),
+                    effectiveUpnpEnabled,
+                    internalTransport, stunServer,
+                    appSettings.streamHeight(),
+                    appSettings.streamFps(),
+                    appSettings.streamBitrate()
+                );
+                session->setHttpsPort(server.activeHttpsPort());
+                session->setStreamRelayPort(signalingPort + 1);
+                session->setTransportMode(mode);
+                session->setEnableIceTcp(iceTcp);
+                session->setAutoMode(true);  // Disable internal WS fallback → use auto chain
+
+                // ── Relay lifecycle tracking with auto-fallback integration ──
+                // Common cleanup for sessionEnded: quit Sunshine, clean global ptr,
+                // then if we haven't responded yet, try the next transport.
+                auto onSessionEnded = [fbState, tryNextFn](const QString& relayType) {
+                    qInfo() << "[Auto]" << relayType << "sessionEnded — responded="
+                            << fbState->responded;
+                    if (!fbState->responded) {
+                        // Use QueuedConnection to avoid re-entrancy from libdatachannel callbacks
+                        QMetaObject::invokeMethod(qApp, [fbState, tryNextFn]() {
+                            if (!fbState->responded && *tryNextFn) {
+                                qInfo() << "[Auto] Trying next transport after session ended";
+                                (*tryNextFn)();
+                            }
+                        }, Qt::QueuedConnection);
+                    }
+                };
+
+                // WSS mode: StreamRelay tracking
+                QObject::connect(session, &StreamSession::streamRelayCreated,
+                    [&g_ActiveStreamRelay, &computerManager, fbState, onSessionEnded](StreamRelay* r) {
+                        g_ActiveStreamRelay = r;
+                        // WSS: forward deferred response immediately (already done in
+                        // attemptRespond above, but ensure it here too).
+                        QObject::connect(r, &StreamRelay::sessionEnded,
+                            [r, &g_ActiveStreamRelay, &computerManager, fbState, onSessionEnded]() {
+                                auto* identity = IdentityManager::get();
+                                auto* quitReply = computerManager.http()->quitAppAsync(
+                                    fbState->host->activeAddress,
+                                    fbState->host->activeHttpsPort,
+                                    identity->getCertificate(),
+                                    identity->getPrivateKey());
+                                QObject::connect(quitReply, &QNetworkReply::finished,
+                                    quitReply, &QNetworkReply::deleteLater);
+                                r->stop();
+                                r->deleteLater();
+                                if (g_ActiveStreamRelay == r)
+                                    g_ActiveStreamRelay = nullptr;
+                                onSessionEnded(QStringLiteral("StreamRelay"));
+                            });
                     });
-            });
 
-        // Track the DataChannelRelay for quit/cleanup (WebRTC mode)
-        QObject::connect(session, &StreamSession::relayCreated,
-            [&g_ActiveRelay, &computerManager, host](DataChannelRelay* relay) {
-                qInfo() << "[main] relayCreated, relay=" << relay;
-                g_ActiveRelay = relay;
-
-                QObject::connect(relay, &DataChannelRelay::sessionEnded,
-                    [relay, &g_ActiveRelay, &computerManager, host]() {
-                        qInfo() << "[main] sessionEnded fired, relay=" << relay
-                                << "g_ActiveRelay=" << g_ActiveRelay.data();
-
-                        // Best-effort quit to Sunshine (session ended unexpectedly)
-                        auto* identity = IdentityManager::get();
-                        auto* quitReply = computerManager.http()->quitAppAsync(
-                            host->activeAddress, host->activeHttpsPort,
-                            identity->getCertificate(), identity->getPrivateKey());
-                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-
-                        relay->stop();
-                        relay->deleteLater();
-                        if (g_ActiveRelay == relay) {
-                            qInfo() << "[main] sessionEnded — clearing g_ActiveRelay (was us)";
-                            g_ActiveRelay = nullptr;
-                        } else {
-                            qInfo() << "[main] sessionEnded — g_ActiveRelay already cleared by quit handler";
-                        }
+                // WebRTC DataChannel mode: DataChannelRelay tracking
+                QObject::connect(session, &StreamSession::relayCreated,
+                    [&g_ActiveRelay, &computerManager, fbState, onSessionEnded](DataChannelRelay* r) {
+                        g_ActiveRelay = r;
+                        // Response already forwarded in attemptRespond (no more deferred response).
+                        // Log ICE connection for diagnostics only.
+                        QObject::connect(r, &DataChannelRelay::dataChannelsOpen,
+                            r, [fbState]() {
+                                qInfo() << "[Auto]" << fbState->currentMode
+                                        << "ICE connected (response already sent)";
+                            });
+                        QObject::connect(r, &DataChannelRelay::sessionEnded,
+                            [r, &g_ActiveRelay, &computerManager, fbState, onSessionEnded]() {
+                                auto* identity = IdentityManager::get();
+                                auto* quitReply = computerManager.http()->quitAppAsync(
+                                    fbState->host->activeAddress,
+                                    fbState->host->activeHttpsPort,
+                                    identity->getCertificate(),
+                                    identity->getPrivateKey());
+                                QObject::connect(quitReply, &QNetworkReply::finished,
+                                    quitReply, &QNetworkReply::deleteLater);
+                                r->stop();
+                                r->deleteLater();
+                                if (g_ActiveRelay == r)
+                                    g_ActiveRelay = nullptr;
+                                onSessionEnded(QStringLiteral("DataChannelRelay"));
+                            });
                     });
-            });
 
-        // Track the MediaTrackRelay for quit/cleanup (WebRTC media mode)
-        QObject::connect(session, &StreamSession::mediaTrackRelayCreated,
-            [&g_ActiveMediaTrackRelay, &computerManager, host](MediaTrackRelay* relay) {
-                qInfo() << "[main] mediaTrackRelayCreated, relay=" << relay;
-                g_ActiveMediaTrackRelay = relay;
-
-                QObject::connect(relay, &MediaTrackRelay::sessionEnded,
-                    [relay, &g_ActiveMediaTrackRelay, &computerManager, host]() {
-                        qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << relay;
-
-                        // Best-effort quit to Sunshine (session ended unexpectedly)
-                        auto* identity = IdentityManager::get();
-                        auto* quitReply = computerManager.http()->quitAppAsync(
-                            host->activeAddress, host->activeHttpsPort,
-                            identity->getCertificate(), identity->getPrivateKey());
-                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-
-                        relay->stop();
-                        relay->deleteLater();
-                        if (g_ActiveMediaTrackRelay == relay) {
-                            g_ActiveMediaTrackRelay = nullptr;
-                        }
+                // WebRTC Media Track mode: MediaTrackRelay tracking
+                QObject::connect(session, &StreamSession::mediaTrackRelayCreated,
+                    [&g_ActiveMediaTrackRelay, &computerManager, fbState, onSessionEnded](MediaTrackRelay* r) {
+                        g_ActiveMediaTrackRelay = r;
+                        // Response already forwarded in attemptRespond (no more deferred response).
+                        // Log ICE connection for diagnostics only.
+                        QObject::connect(r, &MediaTrackRelay::dataChannelsOpen,
+                            r, [fbState]() {
+                                qInfo() << "[Auto]" << fbState->currentMode
+                                        << "ICE connected (response already sent)";
+                            });
+                        QObject::connect(r, &MediaTrackRelay::sessionEnded,
+                            [r, &g_ActiveMediaTrackRelay, &computerManager, fbState, onSessionEnded]() {
+                                auto* identity = IdentityManager::get();
+                                auto* quitReply = computerManager.http()->quitAppAsync(
+                                    fbState->host->activeAddress,
+                                    fbState->host->activeHttpsPort,
+                                    identity->getCertificate(),
+                                    identity->getPrivateKey());
+                                QObject::connect(quitReply, &QNetworkReply::finished,
+                                    quitReply, &QNetworkReply::deleteLater);
+                                r->stop();
+                                r->deleteLater();
+                                if (g_ActiveMediaTrackRelay == r)
+                                    g_ActiveMediaTrackRelay = nullptr;
+                                onSessionEnded(QStringLiteral("MediaTrackRelay"));
+                            });
                     });
-            });
 
-        session->start();
+                // sessionFailed: launchApp error, RTSP failure, etc.
+                QObject::connect(session, &StreamSession::sessionFailed,
+                    session, [fbState, tryNextFn](const QString& error) {
+                        if (fbState->responded) return;
+                        qInfo() << "[Auto] sessionFailed:" << error
+                                << "— trying next transport";
+                        QMetaObject::invokeMethod(qApp, [tryNextFn]() {
+                            if (*tryNextFn) {
+                                (*tryNextFn)();
+                            }
+                        }, Qt::QueuedConnection);
+                    });
+
+                session->start();
+            };
+
+            // Store in shared_ptr so orphan-relay sessionEnded handlers
+            // always see a valid function, never a dangling reference.
+            *tryNextFn = tryNext;
+
+            // Start the chain with the first transport
+            tryNext();
+        }
     });
 
     // Phase 5: Quit running app
@@ -460,7 +858,7 @@ int main(int argc, char* argv[])
     // Persist active ports (may differ from preferred due to fallback)
     {
         quint16 activeHttps = server.activeHttpsPort();
-        if (appSettings.httpsPort(0) != activeHttps)
+        if (activeHttps > 0 && appSettings.httpsPort(0) != activeHttps)
             appSettings.setHttpsPort(activeHttps);
 
         quint16 activeHttp = server.httpPort();

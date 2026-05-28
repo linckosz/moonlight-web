@@ -43,6 +43,9 @@ backend/certs/
 # Local dev config (committed once, then ignored)
 .moonlight-web-dev
 
+# Private key embedding (never committed)
+.env
+
 # OS files
 .DS_Store
 Thumbs.db

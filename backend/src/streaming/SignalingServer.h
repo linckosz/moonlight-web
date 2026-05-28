@@ -59,6 +59,17 @@ public:
     /// Default: "stun:stun.l.google.com:19302"
     void setStunServer(const QString& url) { m_StunServerUrl = url; }
 
+    /// Enable/disable ICE-TCP candidates.
+    /// When true, ICE-TCP is enabled (UDP + TCP candidates).
+    /// When false (default), only UDP candidates are used.
+    void setEnableIceTcp(bool enable) { m_ForceIceTcp = enable; }
+
+    /// Control whether WS fallback is allowed on ICE timeout.
+    /// In auto mode (allow=false): iceTimedOut → sessionEnded() so the
+    /// auto fallback chain can try the next transport.
+    /// In explicit mode (allow=true, default): iceTimedOut → startWsFallback().
+    void setAllowWsFallback(bool allow) { m_AllowWsFallback = allow; }
+
 signals:
     void clientConnected();
     void clientDisconnected();
@@ -109,6 +120,7 @@ private:
     void forwardAudioViaWs(const QByteArray& data);
 
     bool m_WsFallbackActive = false;
+    bool m_AllowWsFallback = true;  ///< Default: WS fallback allowed. Auto mode sets false.
     bool m_ShimConnected = false;  ///< MoonlightShim signals connected for fallback
 
     /// ── Members ─────────────────────────────────────────────────────────────
@@ -133,6 +145,9 @@ private:
 
     /// STUN server URL for ICE configuration. Default: Google public STUN.
     QString m_StunServerUrl = QStringLiteral("stun:stun.l.google.com:19302");
+
+    /// Force ICE-TCP candidates (true = UDP + TCP, false = UDP only).
+    bool m_ForceIceTcp = false;
 
     // ── UPnP NAT traversal ──────────────────────────────────────────────────
 
@@ -160,7 +175,8 @@ private:
     /// Internet mode. UPnP sets a fixed port range and rewrites host candidates.
     static rtc::Configuration buildIceConfig(bool isInternet,
                                               uint16_t upnpMappedPort,
-                                              const QString& stunServerUrl);
+                                              const QString& stunServerUrl,
+                                              bool forceIceTcp = false);
 
     bool m_UseUPnP = true;
     UPNPClient* m_Upnp = nullptr;

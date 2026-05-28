@@ -1,6 +1,7 @@
 #include "SignalingServer.h"
 #include "RelayBase.h"
 #include "DataChannelRelay.h"
+#include "MediaTrackRelay.h"
 #include "MoonlightShim.h"
 #include "network/UPNPClient.h"
 
@@ -65,9 +66,11 @@ bool SignalingServer::start()
             this, &SignalingServer::onDataChannelsOpen);
 
     // ICE timeout → WebSocket fallback (when UDP is blocked)
-    // Only DataChannelRelay has the iceTimedOut signal; MediaTrackRelay doesn't.
     if (auto* dcRelay = qobject_cast<DataChannelRelay*>(m_Relay)) {
         connect(dcRelay, &DataChannelRelay::iceTimedOut,
+                this, &SignalingServer::onRelayIceTimedOut);
+    } else if (auto* mtRelay = qobject_cast<MediaTrackRelay*>(m_Relay)) {
+        connect(mtRelay, &MediaTrackRelay::iceTimedOut,
                 this, &SignalingServer::onRelayIceTimedOut);
     }
 
@@ -223,7 +226,9 @@ void SignalingServer::onNewWsConnection()
     sendIceConfig();
 
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
-    rtc::Configuration config = buildIceConfig(isInternet, m_UpnpMappedPort, m_StunServerUrl);
+    // m_ForceIceTcp controls whether ICE-TCP candidates are generated
+    // (true = UDP + TCP, false = UDP only).
+    rtc::Configuration config = buildIceConfig(isInternet, m_UpnpMappedPort, m_StunServerUrl, m_ForceIceTcp);
 
     // If UPnP is active, tell the relay to rewrite host candidates with the
     // public IP and mapped port so the browser sees a "host" candidate at
@@ -366,6 +371,17 @@ void SignalingServer::onRelayIceTimedOut()
                 << m_Stopping.load() << "fallbackActive=" << m_WsFallbackActive;
         return;
     }
+
+    if (!m_AllowWsFallback) {
+        // Auto mode: WS fallback is disabled so the auto fallback chain
+        // can try the next transport. sessionEnded() triggers relay tracking
+        // which calls tryNext().
+        qWarning() << "[SignalingServer] ICE timeout — WS fallback disabled (auto mode),"
+                    << "emitting sessionEnded for fallback chain";
+        emit sessionEnded();
+        return;
+    }
+
     qWarning() << "[SignalingServer] ICE timeout — starting WebSocket fallback";
     startWsFallback();
 }
@@ -737,7 +753,7 @@ bool SignalingServer::isPrivateAddress(const QString& ip) const
 
 // ── UPnP NAT traversal ─────────────────────────────────────────────────────────
 
-rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort, const QString& stunServerUrl)
+rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort, const QString& stunServerUrl, bool forceIceTcp)
 {
     rtc::Configuration config;
     config.iceTransportPolicy = rtc::TransportPolicy::All;
@@ -754,29 +770,35 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     //   - MediaTrackRelay: the video track triggers SRTP negotiation implicitly
     // config.forceMediaTransport is NOT set here.
 
-    if (isInternet) {
-        // Enable ICE-TCP as fallback — the browser generates TCP candidates
-        // automatically with lower ICE priority than UDP. TCP will only be
-        // chosen if all UDP candidates fail (e.g., restrictive firewall).
+    if (forceIceTcp) {
+        // TCP mode: enable ICE-TCP candidates so the browser has a TCP
+        // fallback path if UDP is blocked by a restrictive firewall.
+        // STUN is included to discover srflx addresses as well.
         config.enableIceTcp = true;
-
-        // STUN discovers the public srflx address. Without STUN, we'd have
-        // only host candidates (not reachable from outside the LAN).
-        // The STUN server URL is configurable via AppSettings (default: Google public STUN).
         config.iceServers.emplace_back(stunServerUrl.toStdString());
 
         if (upnpMappedPort > 0) {
-            // UPnP mode: fix the libdatachannel port to match the UPnP mapping.
-            // The host candidate (rewritten by DataChannelRelay to the public
-            // IP:port) will have higher ICE priority than srflx and be preferred.
             config.portRangeBegin = upnpMappedPort;
             config.portRangeEnd = upnpMappedPort;
-            qInfo() << "[SignalingServer] Internet ICE: UPnP port="
-                    << upnpMappedPort << " + STUN + ICE-TCP";
+        }
+
+        qInfo() << "[SignalingServer] ICE config: TCP mode"
+                << (upnpMappedPort > 0 ? "+ UPnP" : "") << stunServerUrl;
+    } else if (isInternet) {
+        // UDP-only mode on WAN: no ICE-TCP. The auto fallback chain will
+        // retry with TCP mode (forceIceTcp=true) if UDP-only fails.
+        // STUN discovers the public srflx address.
+        config.enableIceTcp = false;
+
+        config.iceServers.emplace_back(stunServerUrl.toStdString());
+
+        if (upnpMappedPort > 0) {
+            config.portRangeBegin = upnpMappedPort;
+            config.portRangeEnd = upnpMappedPort;
+            qInfo() << "[SignalingServer] Internet ICE (UDP-only): UPnP port="
+                    << upnpMappedPort << " + STUN";
         } else {
-            // No UPnP: srflx via STUN is the only way to discover the public
-            // address. ICE-TCP provides a TCP fallback path.
-            qInfo() << "[SignalingServer] Internet ICE: STUN only (no UPnP) + ICE-TCP";
+            qInfo() << "[SignalingServer] Internet ICE (UDP-only): STUN only (no UPnP)";
         }
     } else {
         // LAN: no STUN, no ICE-TCP. Host candidates are sufficient for

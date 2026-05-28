@@ -155,6 +155,19 @@ HEADERS += \
 DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"
 DEFINES += CERT_DIR=\\\"$$PWD/cert/\\\"
 
+# Embed private key at build time from .env file at project root.
+# The .env file is NEVER committed to git (add to .gitignore).
+ENV_FILE = $$PWD/../.env
+exists($$ENV_FILE) {
+    KEY = $$system(powershell -NoProfile -File $$PWD/scripts/read_env.ps1 $$ENV_FILE)
+    !isEmpty(KEY) {
+        DEFINES += MW_BUILTIN_CERT_KEY=\"$${KEY}\"
+        message(\"Built-in cert key embedded from $$ENV_FILE\")
+    } else {
+        message(\"MW_CERT_KEY not found in $$ENV_FILE\")
+    }
+}
+
 win32 {
     LIBS += -lWS2_32 -lwinmm -lBcrypt -lCrypt32
     LIBS += -L$$PWD/libs/windows/lib/x64 -llibssl -llibcrypto

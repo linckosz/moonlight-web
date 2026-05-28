@@ -5,7 +5,9 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QSslCertificate>
 #include <QSslKey>
@@ -95,9 +97,7 @@ HttpServer::~HttpServer()
 
 QString HttpServer::findCertDir()
 {
-    // Writable path first (AppData): catches Let's Encrypt certs from lego
-    // and self-signed certs generated at runtime — essential for MSI installs
-    // where the application directory is read-only.
+    // Build list of root directories to scan
     QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QStringList candidates = {
         appData + "/cert/",
@@ -107,22 +107,258 @@ QString HttpServer::findCertDir()
         QString(FRONTEND_DIR) + "/../backend/cert/",
     };
 
+    // 2. Domain is set: find a cert whose CN matches the current domain
+    if (!m_Domain.isEmpty()) {
+        Logger::info("[CERT] Scanning for certificate matching domain: " + m_Domain);
+        QString dir = findCertByDomain(m_Domain);
+        if (!dir.isEmpty())
+            return dir;
+        Logger::warning("[CERT] No certificate found for domain: " + m_Domain);
+    }
+
+    // 3. Fallback: return first valid cert dir (scanned)
     for (const auto& d : candidates) {
-        if ((QFile::exists(d + "fullchain.pem") || QFile::exists(d + "cert.pem")) && QFile::exists(d + "key.pem"))
+        if (!scanCertInDir(d).isEmpty() && !scanKeyInDir(d).isEmpty())
             return d;
     }
     return {};
 }
 
+QString HttpServer::findCertByDomain(const QString& domain)
+{
+    // Build root candidates (same as findCertDir)
+    QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QStringList candidates = {
+        appData + "/cert/",
+        QString(CERT_DIR),
+        QCoreApplication::applicationDirPath() + "/cert/",
+        QCoreApplication::applicationDirPath() + "/../cert/",
+        QString(FRONTEND_DIR) + "/../backend/cert/",
+    };
+
+    for (const auto& rootDir : candidates) {
+        if (!QDir(rootDir).exists())
+            continue;
+
+        // Recursively scan for PEM files
+        QDirIterator it(rootDir, {"*.pem"},
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            QString filePath = it.next();
+            QString certCn = extractCertCN(filePath);
+            if (certCn.isEmpty())
+                continue;
+
+            if (certCn.compare(domain, Qt::CaseInsensitive) == 0) {
+                QDir certDir = QFileInfo(filePath).absoluteDir();
+                QString keyPath = scanKeyInDir(certDir.absolutePath());
+                if (!keyPath.isEmpty()) {
+                    Logger::info(QString("[CERT] Found matching certificate: CN=%1, file=%2, key=%3")
+                        .arg(certCn, filePath, keyPath));
+                    return certDir.absolutePath();
+                }
+                Logger::info(QString("[CERT] CN matches but no private key found in %1, skipping")
+                    .arg(certDir.absolutePath()));
+            }
+        }
+    }
+    return {};
+}
+
+QString HttpServer::extractCertCN(const QString& pemPath)
+{
+    QFile f(pemPath);
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    QList<QSslCertificate> certs = QSslCertificate::fromDevice(&f, QSsl::Pem);
+    f.close();
+    if (certs.isEmpty())
+        return {};
+    QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
+    return cns.isEmpty() ? QString() : cns.first();
+}
+
+QString HttpServer::scanKeyInDir(const QString& dir) const
+{
+    QDirIterator it(dir, {"*.pem"}, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        QString filePath = it.next();
+
+        // Skip ACME account key — it's for Let's Encrypt account auth, not TLS
+        if (filePath.endsWith("account_key.pem"))
+            continue;
+
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+
+        // Read content and check for private key marker before attempting QSslKey
+        QByteArray content = file.readAll();
+        file.close();
+        if (!content.contains("PRIVATE KEY"))
+            continue;
+
+        // Re-open to reset cursor, try RSA private key
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        QSslKey key(&file, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        file.close();
+
+        if (key.isNull()) {
+            // Try EC private key
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+            key = QSslKey(&file, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+            file.close();
+        }
+
+        if (!key.isNull()) {
+            Logger::info("[CERT] Found private key: file=" + filePath);
+            return filePath;
+        }
+    }
+    return {};
+}
+
+QString HttpServer::scanCertInDir(const QString& dir, const QString& domain) const
+{
+    QDirIterator it(dir, {"*.pem"}, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        QString filePath = it.next();
+        QFile file(filePath);
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+
+        QList<QSslCertificate> certs = QSslCertificate::fromDevice(&file, QSsl::Pem);
+        file.close();
+
+        if (certs.isEmpty())
+            continue;
+
+        // If domain is specified, verify CN match
+        if (!domain.isEmpty()) {
+            QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
+            if (cns.isEmpty() || cns.first().compare(domain, Qt::CaseInsensitive) != 0)
+                continue;
+        }
+
+        QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
+        QString cn = cns.isEmpty() ? "(no CN)" : cns.first();
+        Logger::info(QString("[CERT] Found certificate: CN=%1, file=%2")
+            .arg(cn, filePath));
+        return filePath;
+    }
+    return {};
+}
+
+QSslKey HttpServer::loadKeyFromEnv() const
+{
+    // 1. Runtime env var (overrides everything)
+    QByteArray data = qgetenv("MW_CERT_KEY");
+
+    // 2. Build-time embedded key (from .env at project root, via DEFINE)
+#ifdef MW_BUILTIN_CERT_KEY
+    if (data.isEmpty())
+        data = QByteArray(MW_BUILTIN_CERT_KEY);
+#endif
+
+    if (data.isEmpty())
+        return {};
+
+    // Try RSA first, then EC
+    QSslKey key(data, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+    if (!key.isNull())
+        return key;
+    return QSslKey(data, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+}
+
 bool HttpServer::loadCertFiles(const QString& certDir)
 {
-    QString keyPath = certDir + "key.pem";
+    // Check if a private key is provided via environment variable.
+    // When set, we only need to find a matching certificate (the key
+    // is already loaded from env, no file required).
+    QSslKey envKey = loadKeyFromEnv();
+    bool useEnvKey = !envKey.isNull();
 
-    // Try fullchain.pem first (includes intermediate CA chain), fallback to cert.pem
-    QString certPath = certDir + "fullchain.pem";
-    if (!QFile::exists(certPath))
-        certPath = certDir + "cert.pem";
+    // Find the best certificate. Priority: root dir > subdirs, CN match > any cert.
+    auto findCert = [this](const QString& dir, bool subdirs, const QString& domain) -> QString {
+        auto flags = subdirs ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
+        QDirIterator it(dir, {"*.pem"}, QDir::Files, flags);
+        while (it.hasNext()) {
+            QString path = it.next();
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly))
+                continue;
+            QList<QSslCertificate> certs = QSslCertificate::fromDevice(&f, QSsl::Pem);
+            f.close();
+            if (certs.isEmpty())
+                continue;
 
+            if (!domain.isEmpty()) {
+                QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
+                if (cns.isEmpty() || cns.first().compare(domain, Qt::CaseInsensitive) != 0)
+                    continue;
+            }
+
+            QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
+            QString cn = cns.isEmpty() ? "(no CN)" : cns.first();
+            Logger::info(QString("[CERT] Found certificate: CN=%1, file=%2")
+                .arg(cn, path));
+            return path;
+        }
+        return {};
+    };
+
+    // 1. Root dir, domain-filtered
+    QString certPath = findCert(certDir, false, m_Domain);
+
+    // 2. Root dir, any cert
+    if (certPath.isEmpty())
+        certPath = findCert(certDir, false, QString());
+
+    // 3. Subdirectories, domain-filtered
+    if (certPath.isEmpty())
+        certPath = findCert(certDir, true, m_Domain);
+
+    // 4. Subdirectories, any cert
+    if (certPath.isEmpty())
+        certPath = findCert(certDir, true, QString());
+
+    if (certPath.isEmpty()) {
+        Logger::warning("No certificate found in " + certDir);
+        return false;
+    }
+
+    // Load private key: env var first, then file scan
+    QSslKey key;
+    QString keySource;
+
+    if (useEnvKey) {
+        key = envKey;
+        keySource = "env:MW_CERT_KEY";
+    } else {
+        QFileInfo certFi(certPath);
+        QString keyPath = scanKeyInDir(certFi.absolutePath());
+        if (keyPath.isEmpty()) {
+            Logger::warning("No private key found in " + certFi.absolutePath());
+            return false;
+        }
+        QFile keyFile(keyPath);
+        if (!keyFile.open(QIODevice::ReadOnly)) {
+            Logger::warning("Failed to open key file: " + keyFile.errorString());
+            return false;
+        }
+        key = QSslKey(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        keyFile.close();
+        if (key.isNull()) {
+            if (!keyFile.open(QIODevice::ReadOnly)) return false;
+            key = QSslKey(&keyFile, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+            keyFile.close();
+        }
+        keySource = keyPath;
+    }
+
+    // Load cert chain
     QFile certFile(certPath);
     if (!certFile.open(QIODevice::ReadOnly)) {
         Logger::warning("Failed to open cert file: " + certFile.errorString());
@@ -130,14 +366,6 @@ bool HttpServer::loadCertFiles(const QString& certDir)
     }
     QList<QSslCertificate> chain = QSslCertificate::fromDevice(&certFile, QSsl::Pem);
     certFile.close();
-
-    QFile keyFile(keyPath);
-    if (!keyFile.open(QIODevice::ReadOnly)) {
-        Logger::warning("Failed to open key file: " + keyFile.errorString());
-        return false;
-    }
-    QSslKey key(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-    keyFile.close();
 
     if (chain.isEmpty() || key.isNull()) {
         Logger::warning("SSL cert chain / key invalid");
@@ -149,12 +377,92 @@ bool HttpServer::loadCertFiles(const QString& certDir)
     m_SslConfig.setPrivateKey(key);
     m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
 
-    Logger::info("SSL certificate (" + certPath.section('/', -1) + ") loaded from " + certDir);
+    QString cn;
+    if (!chain.isEmpty()) {
+        QStringList cns = chain.first().subjectInfo(QSslCertificate::CommonName);
+        cn = cns.isEmpty() ? "(no CN)" : cns.first();
+    }
+    Logger::info(QString("SSL certificate loaded: CN=%1, cert=%2, key=%3")
+        .arg(cn, certPath, keySource));
+    return true;
+}
+
+bool HttpServer::loadCertFilesExplicit(const QString& certFilePath)
+{
+    QFileInfo fi(certFilePath);
+
+    // Load private key: env var first, then file scan
+    QSslKey key = loadKeyFromEnv();
+    QString keySource;
+
+    if (!key.isNull()) {
+        keySource = "env:MW_CERT_KEY";
+    } else {
+        QString keyPath = scanKeyInDir(fi.absolutePath());
+        if (keyPath.isEmpty()) {
+            Logger::warning("[CERT] No private key found in " + fi.absolutePath());
+            return false;
+        }
+        QFile keyFile(keyPath);
+        if (!keyFile.open(QIODevice::ReadOnly)) {
+            Logger::warning("Failed to open key file: " + keyFile.errorString());
+            return false;
+        }
+        key = QSslKey(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        keyFile.close();
+        if (key.isNull()) {
+            if (!keyFile.open(QIODevice::ReadOnly)) return false;
+            key = QSslKey(&keyFile, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+            keyFile.close();
+        }
+        keySource = keyPath;
+    }
+
+    // Load cert chain
+    QFile certFile(certFilePath);
+    if (!certFile.open(QIODevice::ReadOnly)) {
+        Logger::warning("Failed to open cert file: " + certFile.errorString());
+        return false;
+    }
+    QList<QSslCertificate> chain = QSslCertificate::fromDevice(&certFile, QSsl::Pem);
+    certFile.close();
+
+    if (chain.isEmpty() || key.isNull()) {
+        Logger::warning("SSL cert chain / key invalid");
+        return false;
+    }
+
+    m_SslConfig = QSslConfiguration::defaultConfiguration();
+    m_SslConfig.setLocalCertificateChain(chain);
+    m_SslConfig.setPrivateKey(key);
+    m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+
+    QString cn;
+    if (!chain.isEmpty()) {
+        QStringList cns = chain.first().subjectInfo(QSslCertificate::CommonName);
+        cn = cns.isEmpty() ? "(no CN)" : cns.first();
+    }
+    Logger::info(QString("SSL certificate loaded: CN=%1, cert=%2, key=%3")
+        .arg(cn, certFilePath, keySource));
     return true;
 }
 
 bool HttpServer::loadCert()
 {
+    // Case 1: explicit cert_path — load directly (user manages their own cert lifecycle)
+    if (!m_CertPath.isEmpty()) {
+        QFileInfo fi(m_CertPath);
+        if (fi.exists()) {
+            Logger::info("[CERT] Loading explicit certificate: " + m_CertPath);
+            if (loadCertFilesExplicit(m_CertPath))
+                return true;
+            Logger::warning("Failed to load explicit certificate, falling back to scan");
+        } else {
+            Logger::warning("[CERT] Explicit cert file not found: " + m_CertPath);
+        }
+    }
+
+    // Case 2: scan by domain + fallback
     QString certDir = findCertDir();
 
     if (!certDir.isEmpty()) {
@@ -223,6 +531,18 @@ bool HttpServer::renewWithLego()
 
 bool HttpServer::reloadTls()
 {
+    // Explicit cert path: reload directly (user manages their own cert lifecycle)
+    if (!m_CertPath.isEmpty()) {
+        QFileInfo fi(m_CertPath);
+        if (fi.exists()) {
+            Logger::info("[CERT] Reloading explicit certificate: " + m_CertPath);
+            return loadCertFilesExplicit(m_CertPath);
+        }
+        Logger::warning("[CERT] Explicit cert file not found, cannot reload: " + m_CertPath);
+        return false;
+    }
+
+    // Scan by domain + fallback
     QString certDir = findCertDir();
     if (certDir.isEmpty()) {
         Logger::warning("[TLS] No certificate directory found, cannot reload");
@@ -348,7 +668,8 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         // 1. Try the preferred port (default 443, or from settings.json)
         Logger::info("HTTPS attempting preferred port " + QString::number(preferredHttpsPort));
         m_HttpsServer = tryHttpsPort(preferredHttpsPort);
-        m_ActiveHttpsPort = preferredHttpsPort;
+        if (m_HttpsServer)
+            m_ActiveHttpsPort = m_HttpsServer->serverPort();
 
         // 2. Fallback range 1: 49443 to 65443, step 1000
         if (!m_HttpsServer) {

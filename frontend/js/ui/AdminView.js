@@ -466,17 +466,20 @@ export class AdminView {
 
     async _saveInternetPrefs() {
         const transportSelect = this.container.querySelector('#select-transport-mode');
+        const newMode = transportSelect ? transportSelect.value : this._transportMode;
 
         const prefs = {
             internet_access_enabled: this._internetEnabled,
-            transport_mode: transportSelect ? transportSelect.value : this._transportMode
+            transport_mode: newMode
         };
 
         try {
             await BackendClient.enableInternet(prefs);
-            this._transportMode = prefs.transport_mode;
+            this._transportMode = newMode;
+            Toast.success('Transport mode saved: ' + newMode);
         } catch (err) {
             console.warn('[Admin] Failed to save transport prefs:', err);
+            Toast.error('Failed to save transport mode');
         }
     }
 

@@ -24,6 +24,12 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
     connect(m_Shim, &MoonlightShim::connectionTerminated,
             this, &MediaTrackRelay::onShimConnectionTerminated);
 
+    // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
+    // Connected within 3s after setRemoteDescription().
+    m_IceCheckTimer = new QTimer(this);
+    m_IceCheckTimer->setSingleShot(true);
+    connect(m_IceCheckTimer, &QTimer::timeout, this, &MediaTrackRelay::onIceCheckTimeout);
+
     // Stats timer: sends periodic stats to the browser via Input DC.
     m_StatsTimer = new QTimer(this);
     m_StatsTimer->setInterval(2000);
@@ -55,6 +61,10 @@ bool MediaTrackRelay::setRemoteDescription(const std::string& sdp)
     }
     try {
         m_Pc->setRemoteDescription(rtc::Description(sdp));
+        qInfo() << "[MediaTrackRelay] Remote description set — starting ICE timeout (3s)";
+        if (m_IceCheckTimer) {
+            m_IceCheckTimer->start(3000);
+        }
         return true;
     } catch (const std::exception& e) {
         qWarning() << "[MediaTrackRelay] setRemoteDescription failed:" << e.what();
@@ -137,6 +147,9 @@ void MediaTrackRelay::setupPeerConnection(const rtc::Configuration& config)
         qInfo() << "[MediaTrackRelay] PC state changed to" << static_cast<int>(state);
         if (state == rtc::PeerConnection::State::Connected) {
             qInfo() << "[MediaTrackRelay] PeerConnection connected";
+            if (m_IceCheckTimer) {
+                m_IceCheckTimer->stop();
+            }
         } else if (state == rtc::PeerConnection::State::Disconnected ||
                    state == rtc::PeerConnection::State::Failed ||
                    state == rtc::PeerConnection::State::Closed) {
@@ -564,6 +577,25 @@ void MediaTrackRelay::onStatsTimerTick()
     }
 }
 
+// ── ICE timeout ────────────────────────────────────────────────────────────────
+
+void MediaTrackRelay::onIceCheckTimeout()
+{
+    if (m_Stopping.load()) return;
+    if (m_Connected) return;
+    if (m_Pc) {
+        auto state = m_Pc->state();
+        if (state == rtc::PeerConnection::State::Connected) return;
+    }
+
+    qWarning() << "[MediaTrackRelay] ICE timeout — PC did not reach Connected within 3s."
+               << "Emitting iceTimedOut().";
+
+    // In auto mode: the relay tracking will catch this and trigger tryNext().
+    // In explicit mode: SignalingServer will start WS fallback.
+    emit iceTimedOut();
+}
+
 // ── Stop ────────────────────────────────────────────────────────────────────────
 
 void MediaTrackRelay::stop()
@@ -575,7 +607,10 @@ void MediaTrackRelay::stop()
 
     qInfo() << "[MediaTrackRelay::stop] ENTER, frameCount=" << m_FrameCount;
 
-    // Stop stats timer
+    // Stop timers
+    if (m_IceCheckTimer) {
+        m_IceCheckTimer->stop();
+    }
     if (m_StatsTimer) {
         m_StatsTimer->stop();
     }

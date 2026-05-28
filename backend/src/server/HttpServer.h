@@ -48,6 +48,17 @@ public:
     /// All existing connections are closed during the transition.
     bool changeHttpsPort(quint16 newPort);
 
+    /// Set an explicit certificate path (full path to fullchain.pem or cert.pem).
+    /// When non-empty, loadCert() loads from this path instead of auto-discovering.
+    void setCertPath(const QString& path) { m_CertPath = path; }
+
+    /// Set the expected CN (Common Name) for certificate matching.
+    /// When set, findCertDir() filters certificates whose CN matches this domain.
+    void setDomain(const QString& domain) { m_Domain = domain; }
+
+    QString certPath() const { return m_CertPath; }
+    QString domain() const { return m_Domain; }
+
 signals:
     void started(quint16 port);
     void serverError(const QString& message);
@@ -67,6 +78,29 @@ private:
     bool loadCert();
     QString findCertDir();
     bool loadCertFiles(const QString& certDir);
+    bool loadCertFilesExplicit(const QString& certFilePath);
+
+    /// Recursively scan cert directories for a PEM file whose CN matches domain.
+    /// Returns the directory containing the matching cert + key.pem, or empty.
+    QString findCertByDomain(const QString& domain);
+
+    /// Extract the Common Name from a PEM certificate file. Returns empty if unparseable.
+    QString extractCertCN(const QString& pemPath);
+
+    /// Scan directory recursively for a *.pem file containing a valid private key.
+    /// Returns the file path or QString() if none found.
+    QString scanKeyInDir(const QString& dir) const;
+
+    /// Load a private key from non-file sources.
+    /// Priority: MW_CERT_KEY env var, then built-in key (MW_HAS_BUILTIN_KEY).
+    /// Returns a null QSslKey if neither is available.
+    QSslKey loadKeyFromEnv() const;
+
+    /// Scan directory recursively for a *.pem file containing a valid certificate.
+    /// If domain is non-empty, only certificates whose CN matches are considered.
+    /// Returns the file path or QString() if none found.
+    QString scanCertInDir(const QString& dir, const QString& domain = QString()) const;
+
     bool renewWithLego();
     bool generateSelfSignedCert();
 
@@ -84,5 +118,14 @@ private:
 
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;
+
+    /// Explicit certificate path (full path to fullchain.pem or cert.pem).
+    /// Set via setCertPath() before loadCert() or reloadTls().
+    QString m_CertPath;
+
+    /// Expected Common Name for certificate matching (e.g. "brunoocto.moonlightweb.top").
+    /// Set via setDomain() before loadCert() or reloadTls().
+    QString m_Domain;
+
     static constexpr int ASYNC_TIMEOUT_MS = 30000;
 };
