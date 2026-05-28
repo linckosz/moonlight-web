@@ -257,9 +257,9 @@ QSslKey HttpServer::loadKeyFromEnv() const
     QByteArray data = qgetenv("MW_CERT_KEY");
 
     // 2. Build-time embedded key (from .env at project root, via DEFINE)
-#ifdef MW_BUILTIN_CERT_KEY
+#ifdef MW_CERT_KEY
     if (data.isEmpty())
-        data = QByteArray(MW_BUILTIN_CERT_KEY);
+        data = QByteArray(MW_CERT_KEY);
 #endif
 
     if (data.isEmpty())
@@ -270,6 +270,24 @@ QSslKey HttpServer::loadKeyFromEnv() const
     if (!key.isNull())
         return key;
     return QSslKey(data, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+}
+
+QByteArray HttpServer::resolvePemValue(const QString& value)
+{
+    if (value.isEmpty())
+        return {};
+
+    // 1. Try env var — value IS the env var name (e.g. "MW_CERT_PEM")
+    QByteArray data = qgetenv(value.toUtf8());
+    if (!data.isEmpty())
+        return data;
+
+    // 2. Try file path
+    QFile f(value);
+    if (f.open(QIODevice::ReadOnly))
+        return f.readAll();
+
+    return {};
 }
 
 bool HttpServer::loadCertFiles(const QString& certDir)
@@ -449,20 +467,68 @@ bool HttpServer::loadCertFilesExplicit(const QString& certFilePath)
 
 bool HttpServer::loadCert()
 {
-    // Case 1: explicit cert_path — load directly (user manages their own cert lifecycle)
-    if (!m_CertPath.isEmpty()) {
-        QFileInfo fi(m_CertPath);
-        if (fi.exists()) {
-            Logger::info("[CERT] Loading explicit certificate: " + m_CertPath);
-            if (loadCertFilesExplicit(m_CertPath))
-                return true;
-            Logger::warning("Failed to load explicit certificate, falling back to scan");
-        } else {
-            Logger::warning("[CERT] Explicit cert file not found: " + m_CertPath);
+    // Case 1: cert_pem / cert_key resolve to PEM data directly (env var or file)
+    QByteArray certData = resolvePemValue(m_CertPem);
+    QByteArray keyData  = resolvePemValue(m_CertKey);
+
+    // Build-time embedded fallback (GitHub Actions / .env at qmake time)
+#ifdef MW_CERT_PEM
+    if (certData.isEmpty())
+        certData = QByteArray(MW_CERT_PEM);
+#endif
+#ifdef MW_CERT_KEY
+    if (keyData.isEmpty())
+        keyData = QByteArray(MW_CERT_KEY);
+#endif
+
+    if (!certData.isEmpty() && !keyData.isEmpty()) {
+        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
+
+        // If domain is set, verify CN matches. An embedded cert for a
+        // different domain (e.g. leftover from a previous unique_id) must
+        // not be used — fall through to Let's Encrypt file-based mode.
+        if (!m_Domain.isEmpty() && !chain.isEmpty()) {
+            QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
+            if (cn.compare(m_Domain, Qt::CaseInsensitive) != 0) {
+                Logger::warning(QString("[CERT] Embedded cert CN=%1 does not match domain=%2 — falling back to file scan")
+                    .arg(cn, m_Domain));
+                certData.clear();
+                keyData.clear();
+            }
         }
     }
 
-    // Case 2: scan by domain + fallback
+    if (!certData.isEmpty() && !keyData.isEmpty()) {
+        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
+        QSslKey key(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        if (key.isNull())
+            key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+
+        if (!chain.isEmpty() && !key.isNull()) {
+            m_SslConfig = QSslConfiguration::defaultConfiguration();
+            m_SslConfig.setLocalCertificateChain(chain);
+            m_SslConfig.setPrivateKey(key);
+            m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+
+            QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0, "(no CN)");
+            Logger::info(QString("SSL certificate loaded from source: CN=%1, cert_pem=%2, cert_key=%3")
+                .arg(cn, m_CertPem, m_CertKey));
+            return true;
+        }
+        Logger::warning("Failed to load certificate from cert_pem/cert_key sources");
+        // Fall through to scan
+    }
+
+    // Case 2: cert_pem is a file path (not an env var) → treat as explicit cert file
+    if (!certData.isEmpty() && keyData.isEmpty() && !m_CertPem.isEmpty()) {
+        // cert_pem resolved (file), cert_key didn't → look for key alongside the cert file
+        if (!m_CertKey.isEmpty()) {
+            // If cert_key is set but didn't resolve, the key file path may be wrong
+            Logger::warning("[CERT] cert_key did not resolve: " + m_CertKey);
+        }
+    }
+
+    // Case 3: scan by domain + fallback (only when cert_pem/cert_key are empty)
     QString certDir = findCertDir();
 
     if (!certDir.isEmpty()) {
@@ -531,15 +597,46 @@ bool HttpServer::renewWithLego()
 
 bool HttpServer::reloadTls()
 {
-    // Explicit cert path: reload directly (user manages their own cert lifecycle)
-    if (!m_CertPath.isEmpty()) {
-        QFileInfo fi(m_CertPath);
-        if (fi.exists()) {
-            Logger::info("[CERT] Reloading explicit certificate: " + m_CertPath);
-            return loadCertFilesExplicit(m_CertPath);
+    // Case 1: cert_pem / cert_key resolve to PEM data directly (env var or file)
+    QByteArray certData = resolvePemValue(m_CertPem);
+    QByteArray keyData  = resolvePemValue(m_CertKey);
+
+    // Build-time embedded fallback (GitHub Actions / .env at qmake time)
+#ifdef MW_CERT_PEM
+    if (certData.isEmpty())
+        certData = QByteArray(MW_CERT_PEM);
+#endif
+#ifdef MW_CERT_KEY
+    if (keyData.isEmpty())
+        keyData = QByteArray(MW_CERT_KEY);
+#endif
+
+    if (!certData.isEmpty() && !keyData.isEmpty()) {
+        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
+
+        if (!m_Domain.isEmpty() && !chain.isEmpty()) {
+            QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
+            if (cn.compare(m_Domain, Qt::CaseInsensitive) != 0) {
+                Logger::warning(QString("[CERT] Reload: embedded cert CN=%1 != domain=%2")
+                    .arg(cn, m_Domain));
+                certData.clear();
+                keyData.clear();
+            }
         }
-        Logger::warning("[CERT] Explicit cert file not found, cannot reload: " + m_CertPath);
-        return false;
+    }
+
+    if (!certData.isEmpty() && !keyData.isEmpty()) {
+        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
+        QSslKey key(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        if (key.isNull())
+            key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+
+        if (!chain.isEmpty() && !key.isNull()) {
+            m_SslConfig.setLocalCertificateChain(chain);
+            m_SslConfig.setPrivateKey(key);
+            Logger::info("TLS reloaded from cert_pem/cert_key sources");
+            return true;
+        }
     }
 
     // Scan by domain + fallback

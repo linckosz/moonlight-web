@@ -155,17 +155,34 @@ HEADERS += \
 DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"
 DEFINES += CERT_DIR=\\\"$$PWD/cert/\\\"
 
-# Embed private key at build time from .env file at project root.
-# The .env file is NEVER committed to git (add to .gitignore).
+# Embed cert + key at build time (never committed to git).
+# Priority: .env file (local dev), then env vars (GitHub Actions / CI).
 ENV_FILE = $$PWD/../.env
+
+# ── MW_CERT_PEM ──
+CERT_PEM =
 exists($$ENV_FILE) {
-    KEY = $$system(powershell -NoProfile -File $$PWD/scripts/read_env.ps1 $$ENV_FILE)
-    !isEmpty(KEY) {
-        DEFINES += MW_BUILTIN_CERT_KEY=\"$${KEY}\"
-        message(\"Built-in cert key embedded from $$ENV_FILE\")
-    } else {
-        message(\"MW_CERT_KEY not found in $$ENV_FILE\")
-    }
+    CERT_PEM = $$system(powershell -NoProfile -File $$PWD/scripts/read_env.ps1 MW_CERT_PEM $$ENV_FILE)
+}
+isEmpty(CERT_PEM) {
+    CERT_PEM = $$system(powershell -NoProfile -File $$PWD/scripts/read_env_var.ps1 MW_CERT_PEM)
+}
+!isEmpty(CERT_PEM) {
+    DEFINES += MW_CERT_PEM=\"$${CERT_PEM}\"
+    message(\"MW_CERT_PEM embedded at build time\")
+}
+
+# ── MW_CERT_KEY ──
+CERT_KEY =
+exists($$ENV_FILE) {
+    CERT_KEY = $$system(powershell -NoProfile -File $$PWD/scripts/read_env.ps1 MW_CERT_KEY $$ENV_FILE)
+}
+isEmpty(CERT_KEY) {
+    CERT_KEY = $$system(powershell -NoProfile -File $$PWD/scripts/read_env_var.ps1 MW_CERT_KEY)
+}
+!isEmpty(CERT_KEY) {
+    DEFINES += MW_CERT_KEY=\"$${CERT_KEY}\"
+    message(\"MW_CERT_KEY embedded at build time\")
 }
 
 win32 {

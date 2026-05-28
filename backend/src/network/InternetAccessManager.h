@@ -87,7 +87,7 @@ signals:
     void error(const QString& message);
 
     /// Emitted when TLS certificate is renewed or changed.
-    void certificateChanged(const QString& certPath);
+    void certificateChanged();
 
 private slots:
     /// Called every 5 minutes for periodic checks.

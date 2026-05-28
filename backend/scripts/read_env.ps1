@@ -1,7 +1,10 @@
-# read_env.ps1 — reads the MW_CERT_KEY value from a .env file and outputs
-# it as a single-line C string literal (with \n for newlines), ready for
-# qmake DEFINES.  Used by backend.pro at qmake time.  No files generated.
-param([Parameter(Mandatory=$true)] [string] $EnvPath)
+# read_env.ps1 — reads a named variable from a .env file and outputs
+# its value as a single-line C string literal (with \n for newlines),
+# ready for qmake DEFINES.  Used by backend.pro at qmake time.
+param(
+    [Parameter(Mandatory=$true)] [string] $VarName,
+    [Parameter(Mandatory=$true)] [string] $EnvPath
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -12,8 +15,9 @@ if (-not (Test-Path $EnvPath)) {
 
 $content = Get-Content $EnvPath -Raw
 
-# Find MW_CERT_KEY=... value (matches until end of file)
-if ($content -notmatch 'MW_CERT_KEY=(.+)$') {
+# Find VARNAME=... value in the file content
+$pattern = "$VarName=(.*?)(?:\r?\n\w+=|\r?\n\r?\n|\Z)"
+if ($content -notmatch $pattern) {
     exit 0
 }
 

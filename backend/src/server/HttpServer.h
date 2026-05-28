@@ -48,15 +48,17 @@ public:
     /// All existing connections are closed during the transition.
     bool changeHttpsPort(quint16 newPort);
 
-    /// Set an explicit certificate path (full path to fullchain.pem or cert.pem).
-    /// When non-empty, loadCert() loads from this path instead of auto-discovering.
-    void setCertPath(const QString& path) { m_CertPath = path; }
+    /// Set the cert_pem value from settings (env var name or file path).
+    /// When non-empty, loadCert() tries to resolve it before auto-discovering.
+    void setCertPem(const QString& value) { m_CertPem = value; }
+
+    /// Set the cert_key value from settings (env var name or file path).
+    void setCertKey(const QString& value) { m_CertKey = value; }
 
     /// Set the expected CN (Common Name) for certificate matching.
     /// When set, findCertDir() filters certificates whose CN matches this domain.
     void setDomain(const QString& domain) { m_Domain = domain; }
 
-    QString certPath() const { return m_CertPath; }
     QString domain() const { return m_Domain; }
 
 signals:
@@ -119,13 +121,20 @@ private:
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;
 
-    /// Explicit certificate path (full path to fullchain.pem or cert.pem).
-    /// Set via setCertPath() before loadCert() or reloadTls().
-    QString m_CertPath;
+    /// cert_pem value from settings: env var name or file path.
+    /// Set via setCertPem() before loadCert() or reloadTls().
+    QString m_CertPem;
+
+    /// cert_key value from settings: env var name or file path.
+    QString m_CertKey;
 
     /// Expected Common Name for certificate matching (e.g. "brunoocto.moonlightweb.top").
     /// Set via setDomain() before loadCert() or reloadTls().
     QString m_Domain;
+
+    /// Resolve a cert_pem/cert_key value to PEM data.
+    /// Tries qgetenv(value) first, then QFile(value).
+    static QByteArray resolvePemValue(const QString& value);
 
     static constexpr int ASYNC_TIMEOUT_MS = 30000;
 };
