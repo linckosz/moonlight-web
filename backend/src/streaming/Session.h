@@ -40,6 +40,19 @@ public:
 
     /// Override the signaling WS URL returned to the browser.
     /// When a public tunnel is active, this is the tunnel's WSS endpoint.
+    /// Set the full transport mode string (e.g. "webrtc-media-udp", "webrtc-dc-tcp").
+    /// Used for reporting back to the browser in the /start response.
+    void setTransportMode(const QString& mode) { m_TransportMode = mode; }
+
+    /// Enable/disable ICE-TCP candidates for WebRTC transport.
+    /// Set before start() to control whether TCP fallback candidates are generated.
+    void setEnableIceTcp(bool enable) { m_EnableIceTcp = enable; }
+
+    /// Enable auto-mode behavior: WS fallback is disabled so that ICE timeout
+    /// emits sessionEnded() instead of starting the internal WS fallback.
+    /// This allows the auto fallback chain in main.cpp to try the next transport.
+    void setAutoMode(bool autoMode) { m_AutoMode = autoMode; }
+
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
 
     /// Set the actual HTTPS port used by HttpServer (may differ from 443
@@ -83,6 +96,14 @@ private:
 
     bool m_UpnpEnabled = true;
     QString m_Transport = "webrtc";
+    /// Full transport mode string (e.g. "webrtc-media-udp", "webrtc-dc-tcp", "wss").
+    /// Echoed back to the browser in the /start response for display/debug.
+    QString m_TransportMode;
+    /// Enable ICE-TCP candidates (true for *-tcp modes, false for *-udp modes).
+    bool m_EnableIceTcp = false;
+    /// True when session is part of the auto fallback chain (main.cpp auto mode).
+    /// Disables internal WS fallback so ICE timeout → sessionEnded → tryNext().
+    bool m_AutoMode = false;
     QString m_StunServer = "stun:stun.l.google.com:19302";
     QNetworkReply* m_LaunchReply = nullptr;
     QString m_SessionUrl;

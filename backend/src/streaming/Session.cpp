@@ -40,6 +40,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     , m_GamingMode(gamingMode)
     , m_UpnpEnabled(upnpEnabled)
     , m_Transport(transport)
+    , m_TransportMode(transport) // default = internal transport; set explicitly for auto mode
     , m_StunServer(stunServer)
     , m_StreamHeight(streamHeight)
     , m_StreamFps(streamFps)
@@ -347,6 +348,8 @@ void StreamSession::onLaunchReplyFinished()
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
+        signaling->setEnableIceTcp(m_EnableIceTcp);
+        signaling->setAllowWsFallback(!m_AutoMode);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
@@ -401,6 +404,8 @@ void StreamSession::onLaunchReplyFinished()
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
+        signaling->setEnableIceTcp(m_EnableIceTcp);
+        signaling->setAllowWsFallback(!m_AutoMode);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
@@ -456,6 +461,7 @@ void StreamSession::onShimConnectionStarted()
     result["status"] = "streaming";
     result["sessionUrl"] = m_SessionUrl;
     result["transport"] = m_Transport;
+    result["transport_mode"] = m_TransportMode;
 
     if (m_Transport == "wss") {
         // WSS mode: provide the StreamRelay WS URL directly

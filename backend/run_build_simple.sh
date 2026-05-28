@@ -1,0 +1,1 @@
+cd "d:/Code/moonlight-web-deepseek/backend" && exec cmd //c do_build.bat

@@ -501,6 +501,8 @@ const MoonlightApp = {
                 };
                 history.pushState(guardState, '');
 
+                const internalTransport = result.transport || (result.signalingUrl ? 'webrtc' : 'wss');
+                const transportMode = result.transport_mode || internalTransport;
                 this.streamView = new StreamView(
                     document.getElementById('app'),
                     result.signalingUrl || result.wsUrl,
@@ -509,7 +511,8 @@ const MoonlightApp = {
                     result.gamingMode !== false,
                     upnpEnabled,
                     result.upnpAvailable !== false,
-                    result.transport || (result.signalingUrl ? 'webrtc' : 'wss')
+                    internalTransport,
+                    transportMode
                 );
 
                 // ── Callback when streaming quits (Stop button / disconnect) ─

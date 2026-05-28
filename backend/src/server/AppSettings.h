@@ -148,10 +148,6 @@ public:
     QString certPath() const;
     void setCertPath(const QString& path);
 
-    /// Certificate expiry timestamp (ISO 8601).
-    QString certExpiry() const;
-    void setCertExpiry(const QString& expiry);
-
     // ── Low-level access (for other one-off settings) ───────────────────────
 
     /// Read the entire settings JSON object.
