@@ -34,7 +34,12 @@
 // before any certificate loading happens.
 static void loadEnvFile()
 {
+    // Look for .env next to the executable first (production / installed build),
+    // then at the project root (Qt Creator dev build).
     QString path = QCoreApplication::applicationDirPath() + "/.env";
+    if (!QFile::exists(path)) {
+        path = QStringLiteral(PROJECT_ROOT) + ".env";
+    }
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
         return;
