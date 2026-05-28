@@ -152,6 +152,7 @@ HEADERS += \
     third_party/moonlight-common-c/src/ByteBuffer.h
 
 # Frontend directory (served as static files)
+DEFINES += PROJECT_ROOT=\\\"$$PWD/../\\\"
 DEFINES += FRONTEND_DIR=\\\"$$PWD/../frontend/\\\"
 DEFINES += CERT_DIR=\\\"$$PWD/cert/\\\"
 
