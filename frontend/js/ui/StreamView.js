@@ -199,6 +199,11 @@ export class StreamView {
             this.hintEl.style.display = 'none';
         }
 
+        // Pre-flight: non-blocking connectivity check for diagnostics.
+        // Runs in parallel with the WS connection — results help diagnose
+        // cases where HTTPS works but WSS doesn't (proxy, antivirus, TLS).
+        this._preflightConnectivityCheck();
+
         this.setupWebRtc();
         this.bindEvents();
         this.startRenderLoop();
@@ -236,6 +241,44 @@ export class StreamView {
         if (this._diagHandle) {
             clearInterval(this._diagHandle);
             this._diagHandle = null;
+        }
+    }
+
+    // --- Connectivity pre-flight (non-blocking diagnostic) ------------------
+
+    /**
+     * Non-blocking HTTP(S) health check that runs in parallel with the
+     * WebSocket connection attempt.  Logs the result to help diagnose
+     * network issues when HTTPS works but WSS does not.
+     *
+     * Common failure patterns:
+     *   - Timeout (5s) → firewall blocking port 443
+     *   - TypeError (Failed to fetch) → DNS resolution failure or TLS cert error
+     *   - OK + WS fails → proxy/antivirus intercepting WS upgrade specifically
+     */
+    async _preflightConnectivityCheck() {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+            const resp = await fetch('/api/health', { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (resp.ok) {
+                console.log('[PreFlight] HTTPS /api/health OK (status=' +
+                    resp.status + ') — server is reachable');
+            } else {
+                console.warn('[PreFlight] HTTPS /api/health returned ' +
+                    resp.status + ' — unexpected status');
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                console.warn('[PreFlight] HTTPS /api/health timed out (5s) — ' +
+                    'possible firewall blocking port 443');
+            } else {
+                console.warn('[PreFlight] HTTPS /api/health failed: "' +
+                    err.message + '" — possible DNS or TLS issue');
+            }
         }
     }
 

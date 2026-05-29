@@ -1,4 +1,26 @@
 /**
+ * Describe a WebSocket close code for diagnostic logging.
+ * Returns a human-readable English string suitable for console output.
+ */
+function wsCloseDescription(code) {
+    switch (code) {
+        case 1000: return 'normal closure';
+        case 1001: return 'endpoint going away';
+        case 1002: return 'protocol error';
+        case 1003: return 'unsupported data';
+        case 1005: return 'no status code (normal)';
+        case 1006: return 'abnormal closure — DNS / TLS / network timeout';
+        case 1007: return 'invalid frame payload data';
+        case 1008: return 'policy violation';
+        case 1009: return 'message too big';
+        case 1010: return 'mandatory extension';
+        case 1011: return 'internal server error';
+        case 1015: return 'TLS handshake failure — check system date/time';
+        default:   return 'code=' + code;
+    }
+}
+
+/**
  * WebRTC Media Track wrapper for Moonlight streaming.
  *
  * Alternative to WebRtcDataChannel that uses RTP media tracks for video
@@ -69,6 +91,10 @@ export class WebRtcMedia {
         // Guard
         this._stopping = false;
 
+        // WS open/error tracking for better error diagnostics
+        this._wsHadOpen = false;
+        this._wsHadError = false;
+
         // ICE state tracking
         this._iceConnected = false;
 
@@ -105,6 +131,7 @@ export class WebRtcMedia {
         this.signalingWs = new WebSocket(this.signalingUrl);
 
         this.signalingWs.onopen = () => {
+            this._wsHadOpen = true;
             console.log('[WebRtcMedia] Signaling WS connected, waiting for SDP offer...');
             this._createPeerConnection();
         };
@@ -120,14 +147,23 @@ export class WebRtcMedia {
         };
 
         this.signalingWs.onerror = (err) => {
-            console.error('[WebRtcMedia] Signaling WS error:', err);
+            console.error('[WebRtcMedia] Signaling WS onerror' +
+                (this._wsHadOpen ? ' (after open)' : ' (BEFORE open)'));
+            this._wsHadError = true;
             if (!this._stopping) {
-                this._onError('Signaling WebSocket error');
+                // onerror fires before onclose but carries no close code.
+                // Let onclose handle the user-facing error (it has the code).
+                // Only trigger now if we were already connected (runtime error).
+                if (this._wsHadOpen) {
+                    this._onError("Erreur de connexion au serveur de streaming");
+                }
             }
         };
 
         this.signalingWs.onclose = (evt) => {
-            console.log('[WebRtcMedia] Signaling WS closed: code=' + evt.code, 'reason=' + evt.reason);
+            const desc = wsCloseDescription(evt.code);
+            console.log('[WebRtcMedia] Signaling WS closed: ' + desc + ' (code=' + evt.code + ')' +
+                (evt.reason ? ', reason=' + evt.reason : ''));
 
             if (this.connected || this._stopping) return;
 
@@ -136,11 +172,22 @@ export class WebRtcMedia {
                     (this.WS_GRACE_PERIOD_MS / 1000) + 's for DataChannels...');
                 this._wsCloseTimer = setTimeout(() => {
                     if (!this.connected && !this._stopping) {
-                        this._onError('Timed out waiting for DataChannels after WS closed');
+                        this._onError('DataChannels not established after ' +
+                            (this.WS_GRACE_PERIOD_MS / 1000) + 's');
                     }
                 }, this.WS_GRACE_PERIOD_MS);
             } else {
-                this._onError('Signaling closed before WebRTC connection established');
+                // Close code tells us what went wrong
+                if (evt.code === 1015) {
+                    this._onError("Erreur de securite TLS. " +
+                        "Verifiez la date et l'heure du systeme.");
+                } else if (evt.code === 1006 || !this._wsHadOpen) {
+                    this._onError("Connexion au serveur de streaming impossible. " +
+                        "Verifiez votre pare-feu, antivirus (HTTPS Scanning), " +
+                        "ou proxy.");
+                } else {
+                    this._onError("Connexion au serveur de streaming interrompue");
+                }
             }
         };
 

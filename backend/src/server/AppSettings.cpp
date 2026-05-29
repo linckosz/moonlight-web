@@ -3,13 +3,9 @@
 
 #include <QDir>
 #include <QFile>
-
-#if defined(Q_OS_WIN)
-#include <windows.h>
-#include <dpapi.h>
-#endif
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStandardPaths>
 
 AppSettings::AppSettings()
@@ -280,64 +276,33 @@ void AppSettings::setUniqueId(const QString& id)
     writeAll(obj);
 }
 
+bool AppSettings::isValidFqdn(const QString& domain)
+{
+    static const QRegularExpression re(QStringLiteral("^[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9.-]*[a-zA-Z0-9]$"));
+    return re.match(domain).hasMatch();
+}
+
 QString AppSettings::domain() const
 {
-    QJsonObject obj = readAll();
-    return obj.value("domain").toString();
+    // Source of truth: compute domain from unique_id + base_domain.
+    // The stored "domain" field in settings.json is a write-only cache managed
+    // by InternetAccessManager — it is NOT the source of truth, because it can
+    // become stale when unique_id changes but the cache is not immediately updated.
+    QString baseDomain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
+    if (baseDomain.isEmpty())
+        baseDomain = QStringLiteral("moonlightweb.top");
+
+    QString uid = uniqueId();
+    if (uid.isEmpty())
+        return baseDomain;
+
+    return uid + QLatin1Char('.') + baseDomain;
 }
 
 void AppSettings::setDomain(const QString& domain)
 {
     QJsonObject obj = readAll();
     obj["domain"] = domain;
-    writeAll(obj);
-}
-
-QString AppSettings::pdnsToken() const
-{
-    QJsonObject obj = readAll();
-
-    // Try the new key first
-    QString raw = obj.value("pdns_token").toString();
-
-    // Retro-compat: migrate old desec_token if pdns_token is not set
-    if (raw.isEmpty()) {
-        QString old = obj.value("desec_token").toString();
-        if (!old.isEmpty()) {
-            qInfo() << "[AppSettings] Migrating old desec_token to pdns_token";
-            // Migrate and save
-            QJsonObject mutableObj = obj;
-            mutableObj["pdns_token"] = old;
-            mutableObj.remove("desec_token");
-            const_cast<AppSettings*>(this)->writeAll(mutableObj);
-            raw = old;
-        }
-    }
-
-    // "auto" / empty → not encrypted, use env var
-    if (raw.isEmpty() || raw == QStringLiteral("auto"))
-        return raw;
-
-    // Legacy plain-text token (no "enc:" prefix) — read as-is
-    if (!raw.startsWith(QStringLiteral("enc:")))
-        return raw;
-
-    // Encrypted token: "enc:<base64_blob>"
-    return decryptToken(raw.mid(4));
-}
-
-void AppSettings::setPdnsToken(const QString& token)
-{
-    QJsonObject obj = readAll();
-
-    // "auto" / empty → store as-is (no encryption needed)
-    if (token.isEmpty() || token == QStringLiteral("auto")) {
-        obj["pdns_token"] = token;
-    } else {
-        obj["pdns_token"] = QStringLiteral("enc:") + encryptToken(token);
-    }
-    // Remove old key on write
-    obj.remove("desec_token");
     writeAll(obj);
 }
 
@@ -422,85 +387,4 @@ void AppSettings::setCertKey(const QString& value)
     writeAll(obj);
 }
 
-// Compiled-in default PowerDNS token.
-// This is used when the user's pdns_token is "auto" or empty.
-// NEVER log this value.
-QString AppSettings::defaultPdnsToken()
-{
-    return qEnvironmentVariable("PDNS_TOKEN");
-}
-
-// ── Token encryption (Windows DPAPI) ───────────────────────────────────────
-
-QString AppSettings::encryptToken(const QString& plain)
-{
-    if (plain.isEmpty())
-        return {};
-
-#if defined(Q_OS_WIN)
-    // Convert to UTF-16 for DPAPI (DATA_BLOB uses raw bytes)
-    std::wstring wide = plain.toStdWString();
-    DWORD cbIn = static_cast<DWORD>(wide.size() * sizeof(wchar_t));
-
-    DATA_BLOB inBlob;
-    inBlob.pbData = reinterpret_cast<BYTE*>(const_cast<wchar_t*>(wide.data()));
-    inBlob.cbData = cbIn;
-
-    DATA_BLOB outBlob;
-    ZeroMemory(&outBlob, sizeof(outBlob));
-
-    // Encrypt with DPAPI (machine-level, current user)
-    if (CryptProtectData(&inBlob, L"MWServer PowerDNS token",
-                         nullptr, nullptr, nullptr,
-                         CRYPTPROTECT_UI_FORBIDDEN, &outBlob))
-    {
-        QByteArray encrypted = QByteArray::fromRawData(
-            reinterpret_cast<const char*>(outBlob.pbData),
-            static_cast<int>(outBlob.cbData));
-        LocalFree(outBlob.pbData);
-        return QString::fromLatin1(encrypted.toBase64());
-    }
-
-    qWarning("[AppSettings] CryptProtectData failed — storing token as plain text");
-    return plain;
-#else
-    // Non-Windows: store as base64 (not encrypted — DPAPI not available)
-    return QString::fromLatin1(plain.toUtf8().toBase64());
-#endif
-}
-
-QString AppSettings::decryptToken(const QString& encoded)
-{
-    if (encoded.isEmpty())
-        return {};
-
-#if defined(Q_OS_WIN)
-    QByteArray encrypted = QByteArray::fromBase64(encoded.toLatin1());
-
-    DATA_BLOB inBlob;
-    inBlob.pbData = reinterpret_cast<BYTE*>(encrypted.data());
-    inBlob.cbData = static_cast<DWORD>(encrypted.size());
-
-    DATA_BLOB outBlob;
-    ZeroMemory(&outBlob, sizeof(outBlob));
-
-    // Decrypt
-    if (CryptUnprotectData(&inBlob, nullptr, nullptr, nullptr, nullptr,
-                           CRYPTPROTECT_UI_FORBIDDEN, &outBlob))
-    {
-        QString result = QString::fromWCharArray(
-            reinterpret_cast<const wchar_t*>(outBlob.pbData),
-            static_cast<int>(outBlob.cbData / sizeof(wchar_t)));
-        LocalFree(outBlob.pbData);
-        return result;
-    }
-
-    // Decrypt failed — might be old base64-encoded (non-encrypted) format
-    qWarning("[AppSettings] CryptUnprotectData failed — trying legacy base64");
-    return QString::fromUtf8(QByteArray::fromBase64(encoded.toLatin1()));
-#else
-    // Non-Windows: decode base64
-    return QString::fromUtf8(QByteArray::fromBase64(encoded.toLatin1()));
-#endif
-}
 
