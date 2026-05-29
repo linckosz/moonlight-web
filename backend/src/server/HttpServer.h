@@ -5,6 +5,9 @@
 #include <QTcpSocket>
 #include <QSslSocket>
 #include <QSslConfiguration>
+#include <QNetworkInterface>
+#include <QList>
+#include <functional>
 #include "common/Types.h"
 
 class RestRouter;
@@ -106,9 +109,20 @@ private:
     bool renewWithLego();
     bool generateSelfSignedCert();
 
+    /// Ensure the local self-signed certificate exists in AppData/cert/ with
+    /// proper SANs (localhost, LAN IPs) and load it into m_LocalSslConfig.
+    /// Called after loadCert() to set up the second SSL configuration for SNI.
+    void ensureLocalSslConfig();
+
     QTcpServer* m_HttpServer;
     QTcpServer* m_HttpsServer;
+
+    /// Default SSL configuration (served to public-domain clients via PositiveSSL/LE).
     QSslConfiguration m_SslConfig;
+
+    /// Self-signed SSL configuration with LAN SANs (served to localhost / LAN IP clients).
+    QSslConfiguration m_LocalSslConfig;
+
     RestRouter* m_Router;
     StaticFileHandler* m_StaticFiles;
     quint16 m_HttpPort;

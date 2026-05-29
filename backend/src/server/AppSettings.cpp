@@ -284,10 +284,13 @@ bool AppSettings::isValidFqdn(const QString& domain)
 
 QString AppSettings::domain() const
 {
-    // Source of truth: compute domain from unique_id + base_domain.
-    // The stored "domain" field in settings.json is a write-only cache managed
-    // by InternetAccessManager — it is NOT the source of truth, because it can
-    // become stale when unique_id changes but the cache is not immediately updated.
+    // 1. Try stored FQDN from settings.json
+    QJsonObject obj = readAll();
+    QString stored = obj.value("domain").toString();
+    if (!stored.isEmpty() && stored != QStringLiteral("MW_DOMAIN") && isValidFqdn(stored))
+        return stored;
+
+    // 2. Fallback: compute from unique_id + base domain
     QString baseDomain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
     if (baseDomain.isEmpty())
         baseDomain = QStringLiteral("moonlightweb.top");
