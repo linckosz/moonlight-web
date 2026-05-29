@@ -67,6 +67,10 @@ public:
     int64_t lastDecodeLatencyUs() const { return m_LastDecodeLatencyUs.load(std::memory_order_acquire); }
     int64_t frameSubmitTimeUs() const { return m_FrameSubmitTimeUs.load(std::memory_order_acquire); }
 
+    // Negotiated video format set by drSetup during LiStartConnection.
+    // Returns the VIDEO_FORMAT_* mask chosen by Sunshine, or 0 before negotiation.
+    int negotiatedVideoFormat() const { return m_NegotiatedVideoFormat.load(std::memory_order_acquire); }
+
 signals:
     void stageChanged(int stage);
     void connectionStarted();
@@ -88,6 +92,10 @@ private:
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
     std::atomic<int64_t> m_FrameSubmitTimeUs{0};
     std::atomic<int64_t> m_IdrRequestTimeUs{0};
+
+    // Negotiated video format (set by drSetup during LiStartConnection).
+    // 0 = unknown, 0x0001 = H.264, 0x0100 = HEVC, 0x0200 = AV1.
+    std::atomic<int> m_NegotiatedVideoFormat{0};
 
     void finishCleanup();
     void blockingStopConnection();

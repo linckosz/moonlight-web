@@ -466,16 +466,24 @@ const MoonlightApp = {
         this.transition('launching');
         Toast.info(`Launching ${app.name}...`);
 
-        let upnpEnabled = true;
-        try {
-            const settings = await BackendClient.getStreamingSettings();
-            upnpEnabled = settings.upnp_enabled !== false;
-        } catch (err) {
-            console.warn('[MW] Failed to load streaming settings for UPnP check:', err);
+        // UPnP is enabled by default — the backend's upnpAvailable field
+        // in the launch response reports the actual availability to the UI.
+        const upnpEnabled = true;
+
+        // Read per-browser streaming settings from localStorage
+        // (defaults come from server on first visit via SettingsView)
+        let streamingSettings = {};
+        const stored = localStorage.getItem('mw-streaming-settings');
+        if (stored) {
+            try {
+                streamingSettings = JSON.parse(stored);
+            } catch (e) {
+                console.warn('[MW] Failed to parse streaming settings from localStorage:', e);
+            }
         }
 
         try {
-            const result = await BackendClient.launchApp(host.uuid, app.id);
+            const result = await BackendClient.launchApp(host.uuid, app.id, streamingSettings);
             console.log('[MW] Launch result:', result);
 
             if (result.status === 'streaming') {

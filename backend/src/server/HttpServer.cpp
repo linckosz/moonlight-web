@@ -62,10 +62,10 @@ protected:
         }
 
         // Select configuration based on SNI hostname.
-        // - Public domain (moonlightweb.top et al.) → PositiveSSL/LE cert
-        // - LAN/localhost/IP → self-signed cert with SANs for local addresses
-        bool isPublicSni = !sniHostname.isEmpty() && !isLanHostname(sniHostname);
-        const QSslConfiguration& config = isPublicSni ? m_PublicSslConfig : m_LocalSslConfig;
+        // Default to public config (PositiveSSL / Let's Encrypt) for all connections.
+        // Only use local self-signed cert when SNI explicitly indicates a LAN hostname.
+        bool isLanSni = !sniHostname.isEmpty() && isLanHostname(sniHostname);
+        const QSslConfiguration& config = isLanSni ? m_LocalSslConfig : m_PublicSslConfig;
 
         ssl->setSslConfiguration(config);
         ssl->setPeerVerifyMode(QSslSocket::VerifyNone);
@@ -1281,6 +1281,15 @@ bool HttpServer::isLanHost(const QString& host) const
     return false;
 }
 
+bool HttpServer::isLocalRequest(const QString& addr)
+{
+    if (addr.isEmpty()) return false;
+    return addr == "127.0.0.1"
+        || addr == "::1"
+        || addr == "::ffff:127.0.0.1"
+        || QHostAddress(addr).isLoopback();
+}
+
 // --- HTTP redirect ----------------------------------------------------------
 
 void HttpServer::onHttpConnection()
@@ -1360,6 +1369,7 @@ void HttpServer::onDisconnected()
 void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestData)
 {
     HttpRequest req = parseRequest(requestData);
+    req.clientAddress = socket->peerAddress().toString();
 
     // HTTP→HTTPS redirect for plain HTTP connections from LAN/local clients.
     // Only redirect when the user typed http:// in their browser (LAN/localhost).

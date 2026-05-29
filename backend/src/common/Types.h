@@ -14,6 +14,7 @@ struct HttpRequest {
     QMap<QString, QString> queryParams;
     QMap<QString, QString> pathParams;
     QByteArray body;
+    QString clientAddress;   // Populated by HttpServer from socket peer
 };
 
 struct HttpResponse {

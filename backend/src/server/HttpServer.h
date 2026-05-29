@@ -64,6 +64,10 @@ public:
 
     QString domain() const { return m_Domain; }
 
+    /// Check whether a client address (from peerAddress()) is localhost
+    /// or a loopback address (127.0.0.1, ::1, or any loopback).
+    static bool isLocalRequest(const QString& addr);
+
 signals:
     void started(quint16 port);
     void serverError(const QString& message);

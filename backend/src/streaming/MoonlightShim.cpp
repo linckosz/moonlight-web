@@ -242,6 +242,14 @@ int MoonlightShim::drSetup(int videoFormat, int width, int height, int redrawRat
 {
     fprintf(stderr, "[MoonlightShim] drSetup: videoFormat=0x%x %dx%d @%d\n",
             videoFormat, width, height, redrawRate);
+
+    // Store the negotiated video format so the session can report the
+    // actual codec to the frontend (not just the user preference).
+    MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
+    if (instance) {
+        instance->m_NegotiatedVideoFormat.store(videoFormat, std::memory_order_release);
+    }
+
     fflush(stderr);
     return 0;
 }
