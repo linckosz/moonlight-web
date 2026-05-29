@@ -712,9 +712,15 @@ void DataChannelRelay::onIceCheckTimeout()
                << "This likely indicates UDP is blocked (corporate firewall)."
                << "Emitting iceTimedOut() for WebSocket fallback.";
 
-    // Do NOT set m_Stopping or emit sessionEnded() — the SignalingServer
-    // will handle this by switching to WS data transport fallback.
     emit iceTimedOut();
+
+    // Also emit sessionEnded() so the auto fallback chain can progress to the
+    // next transport (webrtc-dc-tcp, then wss).
+    // Guard: only emit if m_Stopping wasn't already set by SignalingServer's
+    // onRelayIceTimedOut -> startWsFallback() in non-auto mode.
+    if (!m_Stopping.exchange(true)) {
+        emit sessionEnded();
+    }
 }
 
 void DataChannelRelay::setPublicAddress(const std::string& publicIP, uint16_t publicPort)

@@ -663,6 +663,19 @@ export class StreamView {
 
     flushPendingFrames() {
         console.log('[StreamView] flushPendingFrames: draining ' + this.pendingFrames.length + ' frames');
+        // After decoder configure, a keyframe MUST be the first frame fed.
+        // Delta frames can arrive before the keyframe (SCTP unordered delivery
+        // over high-latency links, e.g. remote UPnP). Feeding a delta first
+        // produces green/garbage output — the green-image bug.
+        if (this.pendingFrames.length > 1 && !this.pendingFrames[0].isKeyframe) {
+            const keyIdx = this.pendingFrames.findIndex(e => e.isKeyframe);
+            if (keyIdx > 0) {
+                console.log('[StreamView] flushPendingFrames: moving keyframe from index ' +
+                    keyIdx + ' to front (delta arrived first due to SCTP reordering)');
+                const [keyframe] = this.pendingFrames.splice(keyIdx, 1);
+                this.pendingFrames.unshift(keyframe);
+            }
+        }
         while (this.pendingFrames.length > 0) {
             const entry = this.pendingFrames.shift();
             this.decodeFrame(entry.data, entry.isKeyframe);

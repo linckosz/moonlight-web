@@ -304,6 +304,11 @@ void SignalingServer::onWsTextMessage(const QString& message)
             qWarning() << "[SignalingServer] Fallback WS already active, ignoring duplicate request";
             return;
         }
+        if (!m_AllowWsFallback) {
+            qWarning() << "[SignalingServer] Auto mode: ignoring browser fallback-ws-request,"
+                       << "letting auto chain decide next transport";
+            return;
+        }
         qWarning() << "[SignalingServer] Browser requested WS fallback (ICE disconnected/failed before connected)";
         // The browser detected ICE failure before ever reaching "connected"
         // (UDP blocked by corporate firewall). Transition to WS fallback

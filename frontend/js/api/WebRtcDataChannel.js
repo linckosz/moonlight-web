@@ -209,8 +209,7 @@ export class WebRtcDataChannel {
             // ── Normal WebRTC mode: wait for SDP offer ──────────────────────────
             this.signalingWs.onopen = () => {
                 this._wsHadOpen = true;
-                console.log('[WebRTC] Signaling WS connected, waiting for SDP offer...');
-                this._createPeerConnection();
+                console.log('[WebRTC] Signaling WS connected, waiting for ICE config...');
             };
 
             this.signalingWs.onmessage = (evt) => {
@@ -675,15 +674,11 @@ export class WebRtcDataChannel {
             // Overrides the default Google STUN with the user-configured server.
             console.log('[WebRTC] Received ice-config:', JSON.stringify(msg.iceServers));
             this._dynamicIceServers = msg.iceServers;
-            // If the PeerConnection is already created, update its ICE servers
-            // via setConfiguration() so subsequent ICE candidates use the new config.
-            if (this.pc) {
-                try {
-                    this.pc.setConfiguration({ iceServers: this._dynamicIceServers });
-                    console.log('[WebRTC] Updated PC ICE servers via setConfiguration');
-                } catch (e) {
-                    console.warn('[WebRTC] Failed to update PC ICE config:', e.message);
-                }
+            // Create the PeerConnection now that we have ICE servers.
+            // Previously this happened in onopen, but we need the ice-config
+            // to ensure proper ICE candidate generation from the start.
+            if (!this.pc) {
+                this._createPeerConnection();
             }
         } else {
             console.warn('[WebRTC] Unknown signaling message type:', msg.type);
@@ -692,6 +687,14 @@ export class WebRtcDataChannel {
 
     async _handleSdpOffer(sdp) {
         console.log('[WebRTC] Received SDP offer, length=' + sdp.length);
+
+        // Safety net: if ice-config never arrived, create PC now.
+        // This can happen if the backend sends the SDP offer before the
+        // ice-config message is processed (rare race on slow connections).
+        if (!this.pc) {
+            console.log('[WebRTC] Creating PC in SDP handler (ice-config not received)');
+            this._createPeerConnection();
+        }
 
         try {
             // Show first 200 chars of SDP for debugging

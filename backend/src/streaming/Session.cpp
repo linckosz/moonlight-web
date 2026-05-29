@@ -465,14 +465,11 @@ void StreamSession::onShimConnectionStarted()
 
     // Read the negotiated video format set by drSetup during LiStartConnection.
     // This is the codec Sunshine actually selected, NOT the user preference.
-    static constexpr int VIDEO_FORMAT_H264 = 0x0001;
-    static constexpr int VIDEO_FORMAT_H265 = 0x0100;
-    static constexpr int VIDEO_FORMAT_AV1  = 0x0200;
-
+    // (VIDEO_FORMAT_* macros come from moonlight-common-c's Limelight.h)
     m_NegotiatedVideoFormat = m_Shim ? m_Shim->negotiatedVideoFormat() : 0;
     if (m_NegotiatedVideoFormat == 0) {
         // Fallback: if drSetup hasn't fired yet (shouldn't happen), use config
-        m_NegotiatedVideoFormat = (m_Config.codec == VideoCodec::AV1)  ? VIDEO_FORMAT_AV1 :
+        m_NegotiatedVideoFormat = (m_Config.codec == VideoCodec::AV1)  ? VIDEO_FORMAT_AV1_MAIN8 :
                                   (m_Config.codec == VideoCodec::HEVC) ? VIDEO_FORMAT_H265 :
                                   VIDEO_FORMAT_H264;
     }
@@ -481,7 +478,7 @@ void StreamSession::onShimConnectionStarted()
     const char* codecName = "h264";
     if (m_NegotiatedVideoFormat & VIDEO_FORMAT_H265) {
         codecName = "hevc";
-    } else if (m_NegotiatedVideoFormat & VIDEO_FORMAT_AV1) {
+    } else if (m_NegotiatedVideoFormat & VIDEO_FORMAT_AV1_MAIN8) {
         codecName = "av1";
     }
     qInfo() << "[Session] Negotiated video codec:" << codecName
