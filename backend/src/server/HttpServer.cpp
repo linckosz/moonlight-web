@@ -22,16 +22,22 @@
 // Avoids descriptor-transfer hack (get descriptor → setSocketDescriptor(-1) →
 // recreate QSslSocket) which fails on Windows because QTcpSocket's
 // setSocketDescriptor(-1) calls closesocket(), invalidating the handle.
+//
+// Supports SNI (Server Name Indication): the TLS ClientHello is peeked before
+// starting encryption, the SNI hostname is extracted, and the matching SSL
+// configuration is selected (public PositiveSSL/LE cert vs self-signed LAN cert).
 class SslServer : public QTcpServer
 {
 public:
     using SslReadyCallback = std::function<void(QSslSocket*)>;
 
-    SslServer(const QSslConfiguration& sslConfig,
+    SslServer(const QSslConfiguration& publicConfig,
+              const QSslConfiguration& localConfig,
               SslReadyCallback onSslReady,
               QObject* parent = nullptr)
         : QTcpServer(parent)
-        , m_SslConfig(sslConfig)
+        , m_PublicSslConfig(publicConfig)
+        , m_LocalSslConfig(localConfig)
         , m_OnSslReady(std::move(onSslReady))
     {}
 
@@ -45,7 +51,23 @@ protected:
             return;
         }
 
-        ssl->setSslConfiguration(m_SslConfig);
+        // Peek at the TLS ClientHello to extract the SNI hostname before starting
+        // the handshake. waitForReadyRead() blocks briefly to ensure the ClientHello
+        // has arrived from the client (typically <1ms on localhost/LAN).
+        // peek() is non-destructive — data remains in the buffer for OpenSSL.
+        QString sniHostname;
+        if (ssl->waitForReadyRead(100)) {
+            QByteArray data = ssl->peek(4096);
+            sniHostname = parseSniHostname(data);
+        }
+
+        // Select configuration based on SNI hostname.
+        // - Public domain (moonlightweb.top et al.) → PositiveSSL/LE cert
+        // - LAN/localhost/IP → self-signed cert with SANs for local addresses
+        bool isPublicSni = !sniHostname.isEmpty() && !isLanHostname(sniHostname);
+        const QSslConfiguration& config = isPublicSni ? m_PublicSslConfig : m_LocalSslConfig;
+
+        ssl->setSslConfiguration(config);
         ssl->setPeerVerifyMode(QSslSocket::VerifyNone);
 
         connect(ssl, &QSslSocket::encrypted, this, [this, ssl]() {
@@ -68,9 +90,191 @@ protected:
     }
 
 private:
-    QSslConfiguration m_SslConfig;
+    /// Extract the SNI hostname from a raw TLS ClientHello handshake record.
+    /// Returns empty string if the data is not a ClientHello or has no SNI extension.
+    static QString parseSniHostname(const QByteArray& data)
+    {
+        // Minimum size for a ClientHello with SNI: ~50 bytes
+        if (data.size() < 50)
+            return {};
+
+        const uchar* d = reinterpret_cast<const uchar*>(data.constData());
+        int pos = 0;
+
+        // TLS Record: ContentType (1) + Version (2) + Length (2)
+        if (pos >= data.size() || d[pos++] != 0x16)   // Not a Handshake record
+            return {};
+        pos += 4;  // skip version + length
+        if (pos >= data.size()) return {};
+
+        // Handshake: Type (1) + Length (3)
+        if (d[pos] != 0x01) return {};  // Not ClientHello
+        pos += 4;  // skip type + length
+        if (pos >= data.size()) return {};
+
+        // ClientHello: Version (2) + Random (32) + SessionID (1 + var)
+        pos += 34;  // skip version + random
+        if (pos >= data.size()) return {};
+        int sidLen = d[pos++];
+        pos += sidLen;
+        if (pos >= data.size()) return {};
+
+        // Cipher Suites (2 + var)
+        if (pos + 2 > data.size()) return {};
+        int csLen = (d[pos] << 8) | d[pos + 1];
+        pos += 2 + csLen;
+        if (pos >= data.size()) return {};
+
+        // Compression Methods (1 + var)
+        if (pos >= data.size()) return {};
+        int compLen = d[pos++];
+        pos += compLen;
+        if (pos >= data.size()) return {};
+
+        // Extensions (2 + var)
+        if (pos + 2 > data.size()) return {};
+        int extLen = (d[pos] << 8) | d[pos + 1];
+        pos += 2;
+        int extEnd = pos + extLen;
+        if (extEnd > data.size()) return {};
+
+        while (pos + 4 <= extEnd) {
+            int extType = (d[pos] << 8) | d[pos + 1];
+            pos += 2;
+            int extLen = (d[pos] << 8) | d[pos + 1];
+            pos += 2;
+            int extDataEnd = pos + extLen;
+            if (extDataEnd > extEnd) break;
+
+            if (extType == 0x0000) {  // SNI extension
+                // ServerNameList: length (2) + ServerName entries
+                if (pos + 2 > extDataEnd) break;
+                int listLen = (d[pos] << 8) | d[pos + 1];
+                int sniEnd = pos + 2 + listLen;
+                if (sniEnd > extDataEnd) break;
+                pos += 2;
+
+                // First entry: NameType (1) + NameLength (2) + Hostname
+                if (pos + 3 > sniEnd) break;
+                int nameType = d[pos++];
+                if (nameType != 0x00) break;  // Not host_name
+                int nameLen = (d[pos] << 8) | d[pos + 1];
+                pos += 2;
+                if (pos + nameLen > sniEnd) break;
+
+                return QString::fromUtf8(data.constData() + pos, nameLen);
+            }
+
+            pos = extDataEnd;
+        }
+
+        return {};
+    }
+
+    /// Check whether a hostname is a LAN/localhost address.
+    /// Used instead of HttpServer::isLanHost because this is a static method.
+    static bool isLanHostname(const QString& host)
+    {
+        if (host.isEmpty()) return true;
+        QString h = host.toLower().trimmed();
+
+        // Strip IPv6 brackets: "[fe80::1]" → "fe80::1"
+        if (h.startsWith('[') && h.endsWith(']'))
+            h = h.mid(1, h.length() - 2);
+
+        if (h == "localhost" || h == "127.0.0.1" || h == "::1")
+            return true;
+
+        QHostAddress addr(h);
+        if (addr.isNull()) return false;
+        if (addr.isLoopback()) return true;
+
+        if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
+            quint32 ip = addr.toIPv4Address();
+            if ((ip & 0xFF000000) == 0x0A000000) return true;       // 10.0.0.0/8
+            if ((ip & 0xFFF00000) == 0xAC100000) return true;       // 172.16.0.0/12
+            if ((ip & 0xFFFF0000) == 0xC0A80000) return true;       // 192.168.0.0/16
+        } else if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
+            Q_IPV6ADDR ip6 = addr.toIPv6Address();
+            if (ip6[0] == 0xFE && (ip6[1] & 0xC0) == 0x80) return true;  // fe80::/10 link-local
+            if ((ip6[0] & 0xFE) == 0xFC) return true;                     // fc00::/7 ULA
+        }
+        return false;
+    }
+
+    QSslConfiguration m_PublicSslConfig;
+    QSslConfiguration m_LocalSslConfig;
     SslReadyCallback m_OnSslReady;
 };
+
+// --- Helpers -------------------------------------------------------------------
+
+/// Locate a native (non-MSYS) openssl executable.
+/// On Windows, the Git Bash openssl appears in PATH and its MSYS2 runtime
+/// converts POSIX-looking arguments (e.g. "/CN=Moonlight-Web") into Windows
+/// paths, breaking req -subj. Prefer the Windows-native install paths.
+static QString findOpenssl()
+{
+#ifdef Q_OS_WIN
+    // Force MSYS2_ARG_CONV_EXCL so that even if the MSYS openssl is picked,
+    // it won't mangle POSIX-looking arguments.
+    qputenv("MSYS2_ARG_CONV_EXCL", "*");
+
+    QStringList candidates = {
+        QDir::fromNativeSeparators("C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe"),
+        QDir::fromNativeSeparators("C:\\Program Files\\OpenSSL\\bin\\openssl.exe"),
+    };
+    for (const QString& path : candidates) {
+        if (QFile::exists(path)) {
+            Logger::info(QString("[CERT] Using native OpenSSL: %1").arg(path));
+            return path;
+        }
+    }
+    Logger::warning("[CERT] Native OpenSSL not found, falling back to PATH (MSYS2 may break -subj)");
+#endif
+    return "openssl";
+}
+
+/// Enumerate all private/local addresses on this machine (excluding loopback).
+/// Covers RFC 1918 IPv4 + IPv6 link-local (fe80::/10) and ULA (fc00::/7).
+/// Used to populate SANs in the self-signed certificate so local IP connections
+/// do not trigger hostname mismatch warnings.
+static QList<QHostAddress> getPrivateLanAddresses()
+{
+    QList<QHostAddress> result;
+    for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
+        if (!iface.flags().testFlag(QNetworkInterface::IsUp))
+            continue;
+        if (!iface.flags().testFlag(QNetworkInterface::IsRunning))
+            continue;
+        if (iface.flags().testFlag(QNetworkInterface::IsLoopBack))
+            continue;
+
+        for (const QNetworkAddressEntry& entry : iface.addressEntries()) {
+            QHostAddress addr = entry.ip();
+            if (addr.isLoopback())
+                continue;
+
+            if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
+                quint32 ip = addr.toIPv4Address();
+                // RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                if ((ip & 0xFF000000) == 0x0A000000 ||
+                    (ip & 0xFFF00000) == 0xAC100000 ||
+                    (ip & 0xFFFF0000) == 0xC0A80000) {
+                    result << addr;
+                }
+            } else if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
+                // IPv6 link-local (fe80::/10) and unique local / ULA (fc00::/7)
+                Q_IPV6ADDR ip6 = addr.toIPv6Address();
+                if (ip6[0] == 0xFE && (ip6[1] & 0xC0) == 0x80)  // fe80::/10 link-local
+                    result << addr;
+                else if ((ip6[0] & 0xFE) == 0xFC)               // fc00::/7 ULA
+                    result << addr;
+            }
+        }
+    }
+    return result;
+}
 
 // --- HttpServer --------------------------------------------------------------
 
@@ -654,14 +858,53 @@ bool HttpServer::generateSelfSignedCert()
     QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
     QDir().mkpath(certDir);
 
+    // Build SAN list dynamically: localhost, loopback, and all detected LAN IPs.
+    // This ensures the self-signed certificate matches all local access methods
+    // (localhost, 127.0.0.1, ::1, 192.168.x.x, 10.x.x.x, etc.) and the browser
+    // only shows a single "untrusted CA" warning (no hostname mismatch).
+    QStringList sans;
+    sans << "DNS:localhost"
+         << "DNS:*.local"
+         << "IP:127.0.0.1"
+         << "IP:::1";
+
+    for (const QHostAddress& addr : getPrivateLanAddresses()) {
+        QHostAddress clean(addr);
+        if (addr.protocol() == QAbstractSocket::IPv6Protocol)
+            clean.setScopeId(QString());
+        sans << "IP:" + clean.toString();
+    }
+
+    // Erase old cert/key/config before generating new ones
+    QFile::remove(certDir + "key.pem");
+    QFile::remove(certDir + "cert.pem");
+    QFile::remove(certDir + "openssl-san.cnf");
+
+    // Write a minimal OpenSSL config file for SANs (avoids -addext validation
+    // errors when the system openssl.cnf is not accessible).
+    QFile configFile(certDir + "openssl-san.cnf");
+    if (configFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QByteArray cnf = "[req]\n";
+        cnf += "distinguished_name = req_distinguished_name\n";
+        cnf += "x509_extensions = v3_req\n";
+        cnf += "prompt = no\n";
+        cnf += "[req_distinguished_name]\n";
+        cnf += "[v3_req]\n";
+        cnf += "subjectAltName = " + sans.join(",").toUtf8() + "\n";
+        configFile.write(cnf);
+        configFile.close();
+    }
+
     QProcess gen;
     gen.setProcessChannelMode(QProcess::MergedChannels);
-    gen.start("openssl", QStringList()
+    gen.start(findOpenssl(), QStringList()
         << "req" << "-x509" << "-newkey" << "rsa:2048"
         << "-keyout" << (certDir + "key.pem")
         << "-out" << (certDir + "cert.pem")
         << "-days" << "365" << "-nodes"
-        << "-subj" << "/CN=Moonlight-Web");
+        << "-subj" << "/CN=Moonlight-Web"
+        << "-config" << (certDir + "openssl-san.cnf")
+        << "-extensions" << "v3_req");
 
     if (!gen.waitForStarted(5000)) {
         Logger::error("openssl not found in PATH, cannot generate self-signed certificate");
@@ -678,14 +921,158 @@ bool HttpServer::generateSelfSignedCert()
     QByteArray output = gen.readAll();
 
     if (gen.exitCode() != 0) {
-        Logger::error(QString("openssl failed (exit %1): %2")
+        // Try without config file (older OpenSSL < 1.1.1 fallback)
+        Logger::warning(QString("openssl -config SAN failed (exit %1): %2")
             .arg(gen.exitCode())
             .arg(QString::fromUtf8(output).trimmed()));
-        return false;
+
+        QFile::remove(certDir + "key.pem");
+        QFile::remove(certDir + "cert.pem");
+
+        gen.start(findOpenssl(), QStringList()
+            << "req" << "-x509" << "-newkey" << "rsa:2048"
+            << "-keyout" << (certDir + "key.pem")
+            << "-out" << (certDir + "cert.pem")
+            << "-days" << "365" << "-nodes"
+            << "-subj" << "/CN=Moonlight-Web");
+
+        if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000)) {
+            Logger::error("openssl fallback failed");
+            return false;
+        }
+        if (gen.exitCode() != 0) {
+            Logger::error(QString("openssl fallback failed (exit %1): %2")
+                .arg(gen.exitCode())
+                .arg(QString::fromUtf8(gen.readAll()).trimmed()));
+            return false;
+        }
+
+        Logger::info("Self-signed certificate generated WITHOUT SANs (OpenSSL too old)");
+    } else {
+        Logger::info(QString("Self-signed certificate generated with %1 SANs in %2")
+            .arg(sans.size()).arg(certDir));
     }
 
-    Logger::info("Self-signed certificate generated in " + certDir);
     return loadCertFiles(certDir);
+}
+
+void HttpServer::ensureLocalSslConfig()
+{
+    // The local self-signed cert lives in AppData/cert/, separate from any
+    // public cert (Let's Encrypt certs are in .lego/ or a configured dir).
+    // This cert is ALWAYS regenerated with SANs for localhost + all current
+    // LAN IPs so that every local access method gets a hostname-matching
+    // certificate (DHCP changes are reflected on restart).
+    QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
+    QDir().mkpath(certDir);
+
+    QString certPath = certDir + "cert.pem";
+    QString keyPath = certDir + "key.pem";
+    QString configPath = certDir + "openssl-san.cnf";
+
+    // Delete old files and regenerate with fresh SANs and current LAN IPs
+    QFile::remove(certPath);
+    QFile::remove(keyPath);
+    QFile::remove(configPath);
+
+    // Build SAN list with current LAN IPs
+    QStringList sans;
+    sans << "DNS:localhost" << "DNS:*.local"
+         << "IP:127.0.0.1" << "IP:::1";
+    for (const QHostAddress& addr : getPrivateLanAddresses()) {
+        // Strip scope ID from IPv6 addresses (e.g. "%ethernet_32770")
+        // — OpenSSL SAN entries only accept bare IPv6 addresses.
+        QHostAddress clean(addr);
+        if (addr.protocol() == QAbstractSocket::IPv6Protocol)
+            clean.setScopeId(QString());
+        sans << "IP:" + clean.toString();
+    }
+
+    // Write a minimal OpenSSL config file to avoid the "Error checking x509
+    // extensions defined via -addext" validation error that occurs when the
+    // system openssl.cnf is not accessible or doesn't define the extensions.
+    QFile configFile(configPath);
+    if (configFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QByteArray cnf = "[req]\n";
+        cnf += "distinguished_name = req_distinguished_name\n";
+        cnf += "x509_extensions = v3_req\n";
+        cnf += "prompt = no\n";
+        cnf += "[req_distinguished_name]\n";
+        cnf += "[v3_req]\n";
+        cnf += "subjectAltName = " + sans.join(",").toUtf8() + "\n";
+        configFile.write(cnf);
+        configFile.close();
+    }
+
+    QProcess gen;
+    gen.setProcessChannelMode(QProcess::MergedChannels);
+    gen.start(findOpenssl(), QStringList()
+        << "req" << "-x509" << "-newkey" << "rsa:2048"
+        << "-keyout" << keyPath
+        << "-out" << certPath
+        << "-days" << "365" << "-nodes"
+        << "-subj" << "/CN=Moonlight-Web"
+        << "-config" << configPath
+        << "-extensions" << "v3_req");
+
+    if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000)
+        || gen.exitCode() != 0) {
+        QByteArray errOut = gen.readAll().trimmed();
+        Logger::warning(QString("[CERT] Local cert with SANs failed (exit=%1): %2")
+            .arg(gen.exitCode()).arg(QString::fromUtf8(errOut)));
+        Logger::warning("[CERT] Retrying without SANs...");
+        QFile::remove(certPath);
+        QFile::remove(keyPath);
+        gen.start(findOpenssl(), QStringList()
+            << "req" << "-x509" << "-newkey" << "rsa:2048"
+            << "-keyout" << keyPath
+            << "-out" << certPath
+            << "-days" << "365" << "-nodes"
+            << "-subj" << "/CN=Moonlight-Web");
+        if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000)
+            || gen.exitCode() != 0) {
+            QByteArray errOut2 = gen.readAll().trimmed();
+            Logger::error(QString("[CERT] Cannot generate local self-signed cert (exit=%1): %2")
+                .arg(gen.exitCode()).arg(QString::fromUtf8(errOut2)));
+            return;
+        }
+    }
+
+    // Load the local cert files into m_LocalSslConfig (separate from m_SslConfig)
+    QFile certFile(certPath);
+    if (!certFile.open(QIODevice::ReadOnly)) {
+        Logger::error("[CERT] Cannot open local cert: " + certFile.errorString());
+        return;
+    }
+    QList<QSslCertificate> chain = QSslCertificate::fromDevice(&certFile, QSsl::Pem);
+    certFile.close();
+    if (chain.isEmpty()) {
+        Logger::error("[CERT] Local cert chain is empty");
+        return;
+    }
+
+    QFile keyFile(keyPath);
+    if (!keyFile.open(QIODevice::ReadOnly)) {
+        Logger::error("[CERT] Cannot open local key: " + keyFile.errorString());
+        return;
+    }
+    QSslKey key(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+    keyFile.close();
+    if (key.isNull()) {
+        if (!keyFile.open(QIODevice::ReadOnly)) return;
+        key = QSslKey(&keyFile, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+        keyFile.close();
+    }
+    if (key.isNull()) {
+        Logger::error("[CERT] Cannot load local private key");
+        return;
+    }
+
+    m_LocalSslConfig = QSslConfiguration::defaultConfiguration();
+    m_LocalSslConfig.setLocalCertificateChain(chain);
+    m_LocalSslConfig.setPrivateKey(key);
+    m_LocalSslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    Logger::info("[CERT] Local self-signed config loaded: " + certPath);
 }
 
 bool HttpServer::start(quint16 preferredHttpsPort)
@@ -697,6 +1084,26 @@ bool HttpServer::start(quint16 preferredHttpsPort)
 
     m_HttpsPort = preferredHttpsPort;
     bool hasHttps = loadCert();
+
+    // Generate the local self-signed cert with LAN SANs for SNI support.
+    // When the public PositiveSSL/LE cert is loaded for public-domain clients,
+    // the SslServer selects this local cert for localhost/LAN connections.
+    // In the fallback case (no public cert, self-signed used as default),
+    // ensureLocalSslConfig() regenerates the cert from scratch — the ~300ms
+    // overhead is acceptable at startup and ensures SANs are always up-to-date.
+    if (hasHttps)
+        ensureLocalSslConfig();
+
+    // If the default SSL config is a self-signed cert (no public PositiveSSL/LE
+    // cert was found), sync the local config into the default config.
+    // ensureLocalSslConfig() already generated the freshest cert with SANs
+    // for current LAN IPs, so this gives the default config the same SANs.
+    if (hasHttps && !m_SslConfig.localCertificate().isNull()
+        && m_SslConfig.localCertificate().isSelfSigned()
+        && !m_LocalSslConfig.localCertificate().isNull()) {
+        m_SslConfig = m_LocalSslConfig;
+        Logger::info("[CERT] Default config synced to local self-signed cert with SANs");
+    }
 
     // Start HTTP server with port fallback (required for tunnels).
     // Try the preferred port first, then scan from 49080 upward.
@@ -747,6 +1154,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         auto tryHttpsPort = [this](quint16 port) -> SslServer* {
             auto* ssl = new SslServer(
                 m_SslConfig,
+                m_LocalSslConfig,
                 [this](QSslSocket* socket) {
                     m_Buffers[socket] = QByteArray();
                     connect(socket, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
