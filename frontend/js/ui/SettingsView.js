@@ -22,6 +22,7 @@ export class SettingsView {
         this._streamBitrateMbps = 20;
         this._streamHeight = 1080;
         this._streamFps = 60;
+        this._mediaTrackOnlyH264 = false;
 
         // Debounce timer to avoid rapid repeated saves
         this._saveTimer = null;
@@ -37,6 +38,7 @@ export class SettingsView {
         try {
             const data = await BackendClient.getStreamingSettings();
             this._videoCodec = data.video_codec || 'hevc';
+            this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
             this._gamingMode = data.gaming_mode === true;
             this._showPerformanceStats = data.show_performance_stats === true;
 
@@ -67,7 +69,10 @@ export class SettingsView {
         this._saveTimer = setTimeout(async () => {
             this._saveTimer = null;
 
-            const codec = this.container.querySelector('#settings-video-codec')?.value || this._videoCodec;
+            // When MediaTrack transport is forced, only H.264 is available
+            const codec = this._mediaTrackOnlyH264
+                ? 'h264'
+                : (this.container.querySelector('#settings-video-codec')?.value || this._videoCodec);
             const gamingMode = this.container.querySelector('#settings-gaming-mode')?.checked ?? this._gamingMode;
             const showPerf = this.container.querySelector('#settings-show-perf-stats')?.checked ?? this._showPerformanceStats;
             const bitrateMbps = parseInt(this.container.querySelector('#settings-stream-bitrate')?.value, 10) || this._streamBitrateMbps;
@@ -108,12 +113,15 @@ export class SettingsView {
         // Codec options (explicit, no "Auto")
         const codecs = [
             { value: 'h264', label: 'H.264 (Wide compatibility)' },
-            { value: 'hevc', label: 'HEVC (Efficient compression, recommended)' },
-            { value: 'av1',  label: 'AV1 (Best compression for modern GPUs)' }
+            { value: 'hevc', label: this._mediaTrackOnlyH264 ? 'HEVC (unavailable)' : 'HEVC (Efficient compression, recommended)' },
+            { value: 'av1',  label: this._mediaTrackOnlyH264 ? 'AV1 (unavailable)' : 'AV1 (Best compression for modern GPUs)' }
         ];
-        const codecOptions = codecs.map(c =>
-            `<option value="${c.value}" ${c.value === this._videoCodec ? 'selected' : ''}>${this.esc(c.label)}</option>`
-        ).join('');
+        const effectiveCodec = this._mediaTrackOnlyH264 ? 'h264' : this._videoCodec;
+        const codecOptions = codecs.map(c => {
+            const disabled = this._mediaTrackOnlyH264 && (c.value === 'hevc' || c.value === 'av1') ? ' disabled' : '';
+            const selected = c.value === effectiveCodec ? ' selected' : '';
+            return `<option value="${c.value}"${selected}${disabled}>${this.esc(c.label)}</option>`;
+        }).join('');
 
         // Resolution options (short labels: "1080p")
         const heights = [

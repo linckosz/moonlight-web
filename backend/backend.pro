@@ -136,6 +136,7 @@ HEADERS += \
     src/streaming/SignalingServer.h \
     src/streaming/MoonlightShim.h \
     src/streaming/StreamRelay.h \
+    src/streaming/TransportPriorities.h \
     # moonlight-common-c headers \
     third_party/moonlight-common-c/src/Platform.h \
     third_party/moonlight-common-c/src/PlatformSockets.h \

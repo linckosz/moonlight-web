@@ -27,6 +27,7 @@ export class AdminView {
         this._localIp = '';
         this._uniqueId = '';
         this._transportMode = 'auto';
+        this._availableTransports = [];
         this._upnpAvailable = false;
         this._pendingRegistration = false;
         this._lastError = '';
@@ -68,6 +69,7 @@ export class AdminView {
             this._localIp = status.local_ip || '';
             this._uniqueId = status.unique_id || '';
             this._transportMode = status.transport_mode || 'auto';
+            this._availableTransports = status.available_transports || [];
             this._upnpAvailable = status.upnp_available || false;
             this._pendingRegistration = status.pending_registration || false;
             this._lastError = status.last_error || '';
@@ -189,13 +191,19 @@ export class AdminView {
     }
 
     render() {
+        const transportLabels = {
+            'webrtc-media-udp': 'WebRTC MediaTrack (UDP)',
+            'webrtc-dc-udp':    'WebRTC DataChannel (UDP)',
+            'webrtc-media-tcp': 'WebRTC MediaTrack (TCP)',
+            'webrtc-dc-tcp':    'WebRTC DataChannel (TCP)',
+            'wss':              'WSS (WebSocket Secure)'
+        };
         const transportOptions = [
             { value: 'auto', label: 'Auto (prefer UDP)' },
-            { value: 'webrtc-media-udp', label: 'WebRTC MediaTrack (UDP)' },
-            { value: 'webrtc-dc-udp', label: 'WebRTC DataChannel (UDP)' },
-            { value: 'webrtc-media-tcp', label: 'WebRTC MediaTrack (TCP)' },
-            { value: 'webrtc-dc-tcp', label: 'WebRTC DataChannel (TCP)' },
-            { value: 'wss', label: 'WSS (WebSocket Secure)' }
+            ...this._availableTransports.map(t => ({
+                value: t,
+                label: transportLabels[t] || t
+            }))
         ];
 
         const domainUrl = this._buildDomainUrl();

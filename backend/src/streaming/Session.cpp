@@ -493,6 +493,17 @@ void StreamSession::onShimConnectionStarted()
     default:               result["videoCodec"] = "auto";  break;
     }
 
+    // If the codec was overridden (e.g. HEVC → H.264 for MediaTrack),
+    // report the original selection so the frontend can log or adapt.
+    if (m_CodecOverridden) {
+        result["codecOverridden"] = true;
+        switch (m_OriginalCodec) {
+        case VideoCodec::HEVC: result["originalCodec"] = QStringLiteral("hevc"); break;
+        case VideoCodec::AV1:  result["originalCodec"] = QStringLiteral("av1");  break;
+        default:               result["originalCodec"] = QStringLiteral("auto"); break;
+        }
+    }
+
     m_Respond(HttpResponse::json(result));
     emit sessionStarted();
 

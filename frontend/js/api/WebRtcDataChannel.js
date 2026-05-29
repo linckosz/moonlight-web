@@ -1,4 +1,26 @@
 /**
+ * Describe a WebSocket close code for diagnostic logging.
+ * Returns a human-readable English string suitable for console output.
+ */
+function wsCloseDescription(code) {
+    switch (code) {
+        case 1000: return 'normal closure';
+        case 1001: return 'endpoint going away';
+        case 1002: return 'protocol error';
+        case 1003: return 'unsupported data';
+        case 1005: return 'no status code (normal)';
+        case 1006: return 'abnormal closure — DNS / TLS / network timeout';
+        case 1007: return 'invalid frame payload data';
+        case 1008: return 'policy violation';
+        case 1009: return 'message too big';
+        case 1010: return 'mandatory extension';
+        case 1011: return 'internal server error';
+        case 1015: return 'TLS handshake failure — check system date/time';
+        default:   return 'code=' + code;
+    }
+}
+
+/**
  * WebRTC DataChannel wrapper for Moonlight streaming.
  *
  * Replaces the legacy WebSocket binary transport.  Uses the browser's native
@@ -84,6 +106,10 @@ export class WebRtcDataChannel {
         // Guard
         this._stopping = false;
 
+        // WS open/error tracking for better error diagnostics
+        this._wsHadOpen = false;          // set true once onopen fires
+        this._wsHadError = false;          // set true once onerror fires
+
         // WS fallback mode: when ICE times out (UDP blocked), the backend
         // sends video/audio data over the existing signaling WebSocket as
         // binary frames. Text frames carry input commands the other way.
@@ -138,6 +164,7 @@ export class WebRtcDataChannel {
             this.signalingWs.binaryType = 'arraybuffer';
 
             this.signalingWs.onopen = () => {
+                this._wsHadOpen = true;
                 console.log('[WSS] WS connected, stream ready');
                 this.connected = true;
                 if (this.onOpen) this.onOpen();
@@ -146,27 +173,42 @@ export class WebRtcDataChannel {
             this.signalingWs.onmessage = (evt) => this._onWssMessage(evt);
 
             this.signalingWs.onerror = (err) => {
-                console.error('[WSS] WS error:', err);
+                console.error('[WSS] WS onerror' +
+                    (this._wsHadOpen ? ' (after open)' : ' (BEFORE open)'));
+                this._wsHadError = true;
                 if (!this._stopping) {
-                    this._onError('WebSocket error');
+                    if (!this._wsHadOpen) {
+                        this._onError("Connexion au serveur de streaming impossible. " +
+                            "Verifiez votre pare-feu, antivirus (HTTPS Scanning), " +
+                            "ou proxy.");
+                    } else {
+                        this._onError("Erreur de connexion au serveur de streaming");
+                    }
                 }
             };
 
             this.signalingWs.onclose = (evt) => {
-                console.log('[WSS] WS closed: code=' + evt.code, 'reason=' + evt.reason);
-                if (!this._stopping) {
-                    if (this.connected) {
-                        // Unexpected close after being connected
-                        this._onError('WebSocket closed unexpectedly');
+                const desc = wsCloseDescription(evt.code);
+                console.log('[WSS] WS closed: ' + desc + ' (code=' + evt.code + ')' +
+                    (evt.reason ? ', reason=' + evt.reason : ''));
+                if (!this._stopping && !this._wsHadError) {
+                    // onerror may have already triggered — only act if it didn't.
+                    if (evt.code === 1015) {
+                        this._onError("Erreur de securite TLS. " +
+                            "Verifiez la date et l'heure du systeme.");
+                    } else if (this.connected) {
+                        this._onError("Connexion au serveur de streaming interrompue");
                     } else {
-                        // Closed before connecting
-                        this._onError('WebSocket closed before connection established');
+                        this._onError("Connexion au serveur de streaming impossible. " +
+                            "Verifiez votre pare-feu, antivirus (HTTPS Scanning), " +
+                            "ou proxy.");
                     }
                 }
             };
         } else {
             // ── Normal WebRTC mode: wait for SDP offer ──────────────────────────
             this.signalingWs.onopen = () => {
+                this._wsHadOpen = true;
                 console.log('[WebRTC] Signaling WS connected, waiting for SDP offer...');
                 this._createPeerConnection();
             };
@@ -182,14 +224,24 @@ export class WebRtcDataChannel {
             };
 
             this.signalingWs.onerror = (err) => {
-                console.error('[WebRTC] Signaling WS error:', err);
+                console.error('[WebRTC] Signaling WS onerror' +
+                    (this._wsHadOpen ? ' (after open)' : ' (BEFORE open)'));
+                this._wsHadError = true;
                 if (!this._stopping) {
-                    this._onError('Signaling WebSocket error');
+                    // onerror fires before onclose but carries no close code.
+                    // Let onclose handle the user-facing error (it has the code).
+                    // Only trigger now if we were already connected (runtime error).
+                    if (this._wsHadOpen) {
+                        this._onError("Erreur de connexion au serveur de streaming");
+                    }
                 }
             };
 
             this.signalingWs.onclose = (evt) => {
-                console.log('[WebRTC] Signaling WS closed: code=' + evt.code, 'reason=' + evt.reason);
+                const desc = wsCloseDescription(evt.code);
+                console.log('[WebRTC] Signaling WS closed: ' + desc + ' (code=' + evt.code + ')' +
+                    (evt.reason ? ', reason=' + evt.reason : ''));
+                this._wsHadError = false; // Reset so onclose can trigger its own error
 
                 // If already connected (DCs open) or stopping, WS close is expected
                 if (this.connected || this._stopping) return;
@@ -203,7 +255,17 @@ export class WebRtcDataChannel {
                         }
                     }, this.WS_GRACE_PERIOD_MS);
                 } else {
-                    this._onError('Signaling closed before WebRTC connection established');
+                    // Close code tells us what went wrong
+                    if (evt.code === 1015) {
+                        this._onError("Erreur de securite TLS. " +
+                            "Verifiez la date et l'heure du systeme.");
+                    } else if (evt.code === 1006 || !this._wsHadOpen) {
+                        this._onError("Connexion au serveur de streaming impossible. " +
+                            "Verifiez votre pare-feu, antivirus (HTTPS Scanning), " +
+                            "ou proxy.");
+                    } else {
+                        this._onError("Connexion au serveur de streaming interrompue");
+                    }
                 }
             };
 

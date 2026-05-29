@@ -53,6 +53,15 @@ public:
     /// This allows the auto fallback chain in main.cpp to try the next transport.
     void setAutoMode(bool autoMode) { m_AutoMode = autoMode; }
 
+    /// Mark the video codec as overridden for transport compatibility.
+    /// Example: MediaTrack forced but user selected HEVC → codec forced to H.264.
+    /// When set, onShimConnectionStarted() includes codecOverridden + originalCodec
+    /// in the JSON response so the frontend can adjust decoder expectations.
+    void setCodecOverridden(bool overridden, VideoCodec originalCodec) {
+        m_CodecOverridden = overridden;
+        m_OriginalCodec = originalCodec;
+    }
+
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
 
     /// Set the actual HTTPS port used by HttpServer (may differ from 443
@@ -104,6 +113,10 @@ private:
     /// True when session is part of the auto fallback chain (main.cpp auto mode).
     /// Disables internal WS fallback so ICE timeout → sessionEnded → tryNext().
     bool m_AutoMode = false;
+    /// True when the video codec was overridden for transport compatibility.
+    bool m_CodecOverridden = false;
+    /// The original codec selected by the user, before override.
+    VideoCodec m_OriginalCodec = VideoCodec::Auto;
     QString m_StunServer = "stun:stun.l.google.com:19302";
     QNetworkReply* m_LaunchReply = nullptr;
     QString m_SessionUrl;

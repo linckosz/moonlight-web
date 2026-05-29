@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSslCertificate>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QDateTime>
@@ -21,6 +22,7 @@
 #include "streaming/DataChannelRelay.h"
 #include "streaming/MediaTrackRelay.h"
 #include "streaming/StreamRelay.h"
+#include "streaming/TransportPriorities.h"
 #include "network/InternetAccessManager.h"
 #include "TrayManager.h"
 
@@ -184,14 +186,74 @@ int main(int argc, char* argv[])
     QPointer<StreamRelay> g_ActiveStreamRelay;
     InternetAccessManager internetAccess(&appSettings);
 
+    // Re-sync domain on HttpServer — ensureIdentifiers() (called in
+    // the InternetAccessManager constructor) may have just generated a
+    // new unique_id, which changes the computed domain.
+    server.setDomain(appSettings.domain());
+
+    // ── Startup cert domain sync ──────────────────────────────────────────────
+    // After ensureIdentifiers() has computed the correct domain from unique_id,
+    // check if the embedded cert (MW_CERT_PEM/MW_CERT_KEY)
+    // has a CN that matches this domain.
+    //
+    // If the CN matches, restore the env-var references in settings.json,
+    // overriding any file paths that were left over from a previous ACME run
+    // (e.g. after a unique_id change-and-revert cycle).
+    //
+    // If the CN does NOT match, leave settings as-is; loadCert() will fall
+    // through to file scan or trigger ACME issuance via InternetAccessManager.
+    {
+        QString domain = server.domain();
+        if (!domain.isEmpty()) {
+            // Resolve MW_CERT_PEM from process env (loadEnvFile already ran)
+            QByteArray certData = qgetenv("MW_CERT_PEM");
+    #ifdef MW_CERT_PEM
+            if (certData.isEmpty())
+                certData = QByteArray(MW_CERT_PEM);
+    #endif
+            QByteArray keyData = qgetenv("MW_CERT_KEY");
+    #ifdef MW_CERT_KEY
+            if (keyData.isEmpty())
+                keyData = QByteArray(MW_CERT_KEY);
+    #endif
+
+            if (!certData.isEmpty() && !keyData.isEmpty()) {
+                QList<QSslCertificate> certs = QSslCertificate::fromData(certData, QSsl::Pem);
+                if (!certs.isEmpty()) {
+                    QString cn = certs.first().subjectInfo(QSslCertificate::CommonName).value(0);
+                    if (!cn.isEmpty() && cn.compare(domain, Qt::CaseInsensitive) == 0) {
+                        // Embedded cert matches the computed domain — restore env var
+                        // references, overwriting any stale LE file paths from settings.
+                        Logger::info(QString("[main] Embedded cert CN=%1 matches domain=%2 "
+                                             "-- restoring cert_pem/cert_key to env var refs")
+                            .arg(cn, domain));
+                        appSettings.setCertPem(QStringLiteral("MW_CERT_PEM"));
+                        appSettings.setCertKey(QStringLiteral("MW_CERT_KEY"));
+                        server.setCertPem(QStringLiteral("MW_CERT_PEM"));
+                        server.setCertKey(QStringLiteral("MW_CERT_KEY"));
+                    } else {
+                        Logger::info(QString("[main] Embedded cert CN=%1 does not match "
+                                             "domain=%2 -- leaving settings as-is")
+                            .arg(cn, domain));
+                    }
+                }
+            }
+        }
+    }
+
     // Hot-reload TLS when certificate is renewed (no server restart needed)
     QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged,
         [&server, &appSettings]() {
             qInfo() << "[main] Certificate renewed, reloading TLS";
+            // Sync the domain on HttpServer too — it may have been updated since
+            // the initial setDomain() call (e.g. unique_id changed via API).
+            // Without this, reloadTls() uses the stale m_Domain and can reject
+            // the newly issued certificate due to CN mismatch.
+            server.setDomain(appSettings.domain());
             server.setCertPem(appSettings.certPem());
             server.setCertKey(appSettings.certKey());
             if (!server.reloadTls()) {
-                qWarning() << "[main] TLS reload failed — restart may be required";
+                qWarning() << "[main] TLS reload failed -- restart may be required";
             }
         });
 
@@ -342,14 +404,7 @@ int main(int argc, char* argv[])
 
         bool isAutoMode = (transportMode == "auto");
 
-        // ── Auto-mode helpers: priority-ordered transport list ─────────
-        static const QStringList kAutoTransportOrder = {
-            QStringLiteral("webrtc-media-udp"),
-            QStringLiteral("webrtc-dc-udp"),
-            QStringLiteral("webrtc-media-tcp"),
-            QStringLiteral("webrtc-dc-tcp"),
-            QStringLiteral("wss")
-        };
+        // ── Auto-mode: priority-ordered transport list from header ─────
 
         // Helper: does the host support a given codec?
         auto hostSupportsCodec = [](NvComputer* h, VideoCodec c) -> bool {
@@ -366,9 +421,8 @@ int main(int argc, char* argv[])
         //
         // Rules:
         //   - H.264 works on all transports.
-        //   - HEVC works on all transports (depends on host/browser support).
-        //   - AV1 is skipped for MediaTrack modes (browser <video> AV1
-        //     support varies across platforms; DataChannel WebCodecs
+        //   - HEVC and AV1 are skipped for MediaTrack modes (<video> element
+        //     codec support varies across browsers; DataChannel WebCodecs
         //     is more reliable).
         //   - If the host doesn't support the selected codec, try H.264
         //     instead (if host supports it).
@@ -398,9 +452,12 @@ int main(int argc, char* argv[])
 
             QStringList result;
             for (const auto& t : transports) {
-                if (effective == VideoCodec::AV1 && t.startsWith("webrtc-media")) {
-                    qInfo() << "[Auto] Skipping" << t << "(AV1 + MediaTrack not reliable)";
-                    continue; // Skip AV1 on MediaTrack
+                if ((effective == VideoCodec::AV1 || effective == VideoCodec::HEVC)
+                    && t.startsWith("webrtc-media")) {
+                    qInfo() << "[Auto] Skipping" << t
+                            << "(MediaTrack only supports H.264, codec is"
+                            << static_cast<int>(effective) << ")";
+                    continue; // Skip non-H.264 codecs on MediaTrack
                 }
                 result.append(t);
             }
@@ -446,7 +503,7 @@ int main(int argc, char* argv[])
         } else {
             qInfo() << "[Session] Transport: auto mode";
             orderedTransports = filterTransportsByCodec(
-                kAutoTransportOrder, appSettings.videoCodec(), host);
+                TransportPriorities::orderedTransports(), appSettings.videoCodec(), host);
             qInfo() << "[Auto] Ordered transports after codec filter:" << orderedTransports;
         }
 
@@ -522,7 +579,8 @@ int main(int argc, char* argv[])
         // transportMode: full mode string ("webrtc-media-udp", "wss", etc.)
         // iceTcp: whether to enable ICE-TCP candidates
         auto createSession = [&](const QString& transportMode, bool iceTcp,
-                                  ResponseCallback rsp) -> StreamSession* {
+                                  ResponseCallback rsp,
+                                  VideoCodec codecOverride = VideoCodec::Auto) -> StreamSession* {
             // Map transport mode to internal transport string
             QString internal;
             if (transportMode == "webrtc-media-udp" || transportMode == "webrtc-media-tcp")
@@ -538,7 +596,7 @@ int main(int argc, char* argv[])
                 std::move(rsp),
                 signalingPort,
                 serverHost,
-                appSettings.videoCodec(),
+                (codecOverride != VideoCodec::Auto) ? codecOverride : appSettings.videoCodec(),
                 appSettings.gamingMode(),
                 effectiveUpnpEnabled,
                 internal,
@@ -566,7 +624,29 @@ int main(int argc, char* argv[])
         // ═════════════════════════════════════════════════════════════════════
         if (!isAutoMode) {
             // ── Explicit transport: single attempt ──────────────────────────
-            auto* session = createSession(transportMode, enableIceTcp, std::move(respond));
+
+            // If admin forced MediaTrack transport but user selected HEVC/AV1,
+            // force H.264 since MediaTrackRelay only supports H.264.
+            VideoCodec effectiveCodec = appSettings.videoCodec();
+            bool codecOverridden = false;
+            VideoCodec originalCodec = VideoCodec::Auto;
+
+            if (internalTransport == "webrtc-media"
+                && (effectiveCodec == VideoCodec::HEVC
+                    || effectiveCodec == VideoCodec::AV1)) {
+                qInfo() << "[Session] MediaTrack forced but codec is"
+                        << AppSettings::videoCodecToString(effectiveCodec)
+                        << "- forcing H.264 (MediaTrack only supports H.264)";
+                originalCodec = effectiveCodec;
+                effectiveCodec = VideoCodec::H264;
+                codecOverridden = true;
+            }
+
+            auto* session = createSession(transportMode, enableIceTcp,
+                std::move(respond), effectiveCodec);
+            if (codecOverridden) {
+                session->setCodecOverridden(true, originalCodec);
+            }
             session->start();
         } else {
             // ── Auto mode: try each transport in priority order ─────────────
@@ -924,8 +1004,7 @@ int main(int argc, char* argv[])
 
         if (body.contains("unique_id"))
             appSettings.setUniqueId(body["unique_id"].toString());
-        if (body.contains("pdns_token"))
-            appSettings.setPdnsToken(body["pdns_token"].toString());
+        // pdns_token is no longer stored in settings; set MW_PDNS_TOKEN env var instead.
         if (body.contains("auto_ip_detection"))
             appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
         if (body.contains("transport_mode"))
@@ -1047,7 +1126,9 @@ int main(int argc, char* argv[])
         obj["transport"] = appSettings.transport();
         obj["stun_server"] = appSettings.stunServer();
         obj["internet_access_enabled"] = appSettings.internetAccessEnabled();
-        obj["transport_mode"] = appSettings.transportMode();
+        QString transportMode = appSettings.transportMode();
+        obj["transport_mode"] = transportMode;
+        obj["media_track_only_h264"] = (transportMode == "webrtc-media-udp" || transportMode == "webrtc-media-tcp");
         obj["auto_ip_detection"] = appSettings.autoIpDetection();
         obj["stream_bitrate"] = appSettings.streamBitrate();
         obj["stream_height"] = appSettings.streamHeight();

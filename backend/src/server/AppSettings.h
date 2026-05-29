@@ -114,14 +114,16 @@ public:
     QString uniqueId() const;
     void setUniqueId(const QString& id);
 
-    /// Full domain name: "{uniqueId}.moonlightweb.top"
+    /// Full domain name: "{uniqueId}.{MW_DOMAIN}" or the stored FQDN.
+    ///
+    /// Logic:
+    ///   1. Read "domain" from settings.json.
+    ///   2. If it is a valid FQDN (contains at least one dot), return it as-is.
+    ///   3. Otherwise construct "{uniqueId}.{MW_DOMAIN}" where MW_DOMAIN is
+    ///      read from the MW_DOMAIN env var (fallback "moonlightweb.top").
+    ///      If uniqueId is empty, returns just the base domain.
     QString domain() const;
     void setDomain(const QString& domain);
-
-    /// PowerDNS API key. "auto" or empty means the compiled-in default key
-    /// is used. The compiled key is never logged.
-    QString pdnsToken() const;
-    void setPdnsToken(const QString& token);
 
     /// Resolved public IP (from STUN or manual entry).
     QString publicIp() const;
@@ -167,15 +169,10 @@ public:
     /// Full path to settings.json.
     QString filePath() const { return m_FilePath; }
 
-    /// Compiled-in default PowerDNS token (for "auto" mode).
-    /// Never log this value.
-    static QString defaultPdnsToken();
-
-private:
-    /// Encrypt a token via Windows DPAPI (machine-level, current user).
-    static QString encryptToken(const QString& plain);
-    /// Decrypt a DPAPI-encrypted token.
-    static QString decryptToken(const QString& encoded);
+    /// Validate that a string looks like a real FQDN.
+    /// Criteria: non-empty, contains at least one dot, dot is not first/last,
+    /// only alphanumeric chars, dots, and hyphens.
+    static bool isValidFqdn(const QString& domain);
 
     QString m_FilePath;
 };

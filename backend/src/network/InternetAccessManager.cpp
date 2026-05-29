@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHostInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
@@ -13,9 +14,14 @@
 #include <QSslCertificate>
 #include <QSslKey>
 #include <QDirIterator>
+#include "streaming/TransportPriorities.h"
 #include <QTcpSocket>
 #include <QDateTime>
 #include <QStandardPaths>
+
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -27,9 +33,13 @@ static constexpr int kPeriodicCheckMs = 5 * 60 * 1000;
 /// Pending registration retry interval: 30 seconds.
 static constexpr int kPendingRetryMs = 30 * 1000;
 
-/// Parent domain registered on PowerDNS.
-/// Subdomains are created as A records under this domain.
-static const QString kBaseDomain = QStringLiteral("moonlightweb.top");
+/// Parent domain used as suffix for A records.
+/// Read from MW_DOMAIN env var (fallback: "moonlightweb.top").
+static QString baseDomain()
+{
+    QString env = QString::fromUtf8(qgetenv("MW_DOMAIN"));
+    return env.isEmpty() ? QStringLiteral("moonlightweb.top") : env;
+}
 
 /// Default TTL for A records (5 minutes).
 static constexpr int kDefaultTtl = 300;
@@ -116,7 +126,7 @@ void InternetAccessManager::start()
     }
 
     qInfo() << "[InternetAccess] ═══ STARTING Internet Access setup ═══";
-    qInfo() << "[InternetAccess] baseDomain:" << kBaseDomain
+    qInfo() << "[InternetAccess] baseDomain:" << baseDomain()
             << "uniqueId:" << m_UniqueId
             << "fqdn:" << buildDomain();
 
@@ -125,21 +135,15 @@ void InternetAccessManager::start()
     ensureIdentifiers();
     qInfo() << "[InternetAccess] Step 1 OK — domain:" << m_Domain;
 
-    // Step 2: Set up the PowerDNS token
-    QString token = effectiveToken();
-    QString tokenSource = m_Settings->pdnsToken();
-    if (tokenSource.isEmpty() || tokenSource == QStringLiteral("auto")) {
-        tokenSource = QStringLiteral("env var PDNS_TOKEN");
-    } else {
-        tokenSource = QStringLiteral("settings (encrypted)");
-    }
-    qInfo() << "[InternetAccess] Step 2 — token source:" << tokenSource
+    // Step 2: Read the PowerDNS token from MW_PDNS_TOKEN env var
+    QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN"));
+    qInfo() << "[InternetAccess] Step 2 — token source: env var MW_PDNS_TOKEN"
             << "empty:" << token.isEmpty()
             << "length:" << token.length();
 
     if (token.isEmpty()) {
         m_LastError = QStringLiteral(
-            "PowerDNS token is empty. Set the PDNS_TOKEN environment variable "
+            "PowerDNS token is empty. Set the MW_PDNS_TOKEN environment variable "
             "in Qt Creator (Projects → Run → Environment) or your shell.");
         qWarning() << "[InternetAccess]" << m_LastError;
         m_Settings->setPendingRegistration(true);
@@ -351,6 +355,8 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("upnp_enabled")] = m_Settings->upnpEnabled();
     obj[QStringLiteral("auto_ip_detection")] = m_Settings->autoIpDetection();
     obj[QStringLiteral("transport_mode")] = m_Settings->transportMode();
+    obj[QStringLiteral("available_transports")] = QJsonArray::fromStringList(
+        TransportPriorities::orderedTransports(m_Settings->transportMode()));
     obj[QStringLiteral("pending_registration")] = m_Settings->pendingRegistration();
     obj[QStringLiteral("cert_pem")] = m_Settings->certPem();
     obj[QStringLiteral("cert_key")] = m_Settings->certKey();
@@ -368,18 +374,9 @@ QJsonObject InternetAccessManager::statusJson() const
 // Token / ID helpers
 // ---------------------------------------------------------------------------
 
-QString InternetAccessManager::effectiveToken() const
-{
-    QString stored = m_Settings->pdnsToken();
-    if (stored.isEmpty() || stored == QStringLiteral("auto")) {
-        return AppSettings::defaultPdnsToken();
-    }
-    return stored;
-}
-
 QString InternetAccessManager::buildDomain() const
 {
-    return m_UniqueId + QStringLiteral(".") + kBaseDomain;
+    return m_UniqueId + QStringLiteral(".") + baseDomain();
 }
 
 QString InternetAccessManager::generateUniqueId()
@@ -387,7 +384,7 @@ QString InternetAccessManager::generateUniqueId()
     // Generate 8 random hex characters.
     QString hex(8, QChar('0'));
     for (int i = 0; i < 8; ++i) {
-        hex[i] = QStringLiteral("0123456789abcdef")
+        hex[i] = QStringLiteral("0123456789ABCDEF")
                  .at(QRandomGenerator::global()->bounded(16));
     }
     qInfo() << "[InternetAccess] Generated unique ID:" << hex;
@@ -402,9 +399,9 @@ void InternetAccessManager::ensureIdentifiers()
 {
     // If unique_id is missing, try to extract from saved domain first
     if (m_UniqueId.isEmpty()) {
-        QString dotBaseDomain = QStringLiteral(".") + kBaseDomain;
+        QString dotBaseDomain = QStringLiteral(".") + baseDomain();
         if (!m_Domain.isEmpty() && m_Domain.endsWith(dotBaseDomain)) {
-            QString subname = m_Domain.left(m_Domain.length() - kBaseDomain.length() - 1);
+            QString subname = m_Domain.left(m_Domain.length() - baseDomain().length() - 1);
             if (subname.length() == 8) {
                 bool allHex = true;
                 for (const QChar& c : subname) {
@@ -691,8 +688,8 @@ bool InternetAccessManager::issueCertificate()
     m_Acme.setDomainKeyPath(domainKeyPath);
     m_Acme.setCertOutputDir(certDir);
     m_Acme.setHost(m_Domain);
-    m_Acme.setBaseDomain(kBaseDomain);
-    m_Acme.setPdnsToken(effectiveToken());
+    m_Acme.setBaseDomain(baseDomain());
+    m_Acme.setPdnsToken(QString::fromUtf8(qgetenv("MW_PDNS_TOKEN")));
 
     m_CertIssuing = true;
     qInfo() << "[InternetAccess] Starting ACME certificate issuance for" << m_Domain;
@@ -849,6 +846,74 @@ bool InternetAccessManager::checkCertificate()
 }
 
 // ---------------------------------------------------------------------------
+// Key-certificate pair validation
+// ---------------------------------------------------------------------------
+
+/// Verify that the private key PEM file matches the certificate PEM file.
+/// Returns true if the key's public key matches the certificate's public key.
+static bool validateCertKeyPair(const QString& certPath, const QString& keyPath)
+{
+    if (certPath.isEmpty() || keyPath.isEmpty())
+        return false;
+
+    // Load certificate
+    BIO* certBio = BIO_new_file(certPath.toUtf8().constData(), "r");
+    if (!certBio) {
+        qWarning() << "[InternetAccess] Cannot open cert for validation:" << certPath;
+        return false;
+    }
+    X509* cert = PEM_read_bio_X509(certBio, nullptr, nullptr, nullptr);
+    BIO_free(certBio);
+    if (!cert) {
+        qWarning() << "[InternetAccess] Failed to parse certificate for validation:" << certPath;
+        return false;
+    }
+
+    // Extract public key from leaf certificate
+    EVP_PKEY* certPubKey = X509_get_pubkey(cert);
+    if (!certPubKey) {
+        qWarning() << "[InternetAccess] Failed to extract public key from certificate";
+        X509_free(cert);
+        return false;
+    }
+
+    // Load private key
+    BIO* keyBio = BIO_new_file(keyPath.toUtf8().constData(), "r");
+    if (!keyBio) {
+        qWarning() << "[InternetAccess] Cannot open key for validation:" << keyPath;
+        EVP_PKEY_free(certPubKey);
+        X509_free(cert);
+        return false;
+    }
+    EVP_PKEY* privKey = PEM_read_bio_PrivateKey(keyBio, nullptr, nullptr, nullptr);
+    BIO_free(keyBio);
+    if (!privKey) {
+        qWarning() << "[InternetAccess] Failed to parse private key for validation:" << keyPath;
+        EVP_PKEY_free(certPubKey);
+        X509_free(cert);
+        return false;
+    }
+
+    // Compare public keys: returns 1 if matching
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    int match = EVP_PKEY_eq(certPubKey, privKey);
+#else
+    int match = EVP_PKEY_cmp(certPubKey, privKey);
+#endif
+    bool ok = (match == 1);
+
+    if (!ok) {
+        qWarning() << "[InternetAccess] Key-cert MISMATCH: cert=" << certPath
+                    << "key=" << keyPath;
+    }
+
+    EVP_PKEY_free(privKey);
+    EVP_PKEY_free(certPubKey);
+    X509_free(cert);
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
 // ACME client signal handlers
 // ---------------------------------------------------------------------------
 
@@ -914,27 +979,71 @@ void InternetAccessManager::onAcmeFinished(bool success)
         qInfo() << "[InternetAccess] fullchain.pem: src_exists=" << QFile::exists(srcFullchain)
                 << "copied=" << fullchainCopied;
 
-        // Verify fullchain.pem exists before saving path
-        QString fullchainPath = srcDir + QStringLiteral("/fullchain.pem");
-        bool fullchainExists = QFile::exists(fullchainPath);
-        qInfo() << "[InternetAccess] fullchain.pem exists=" << fullchainExists
-                << "path=" << fullchainPath;
+        // Determine which cert+key pair to use.
+        // Priority: dstDir (copied to stable location) > srcDir (ACME working dir).
+        bool useDst = false;
+        QString fullchainPath;
+        QString certKeyPath;
 
-        if (fullchainExists) {
-            // Update settings with Let's Encrypt file paths
+        // Prefer dstDir fullchain if it was copied successfully
+        if (fullchainCopied && QFile::exists(dstFullchain)) {
+            fullchainPath = dstFullchain;
+            // Prefer dstDir key.pem if copied successfully; fall back to srcDir/domain_key.pem
+            if (keyCopied && QFile::exists(dstKey)) {
+                certKeyPath = dstKey;
+            } else {
+                QString dk = srcDir + QStringLiteral("/domain_key.pem");
+                certKeyPath = QFile::exists(dk) ? dk : srcDir + QStringLiteral("/key.pem");
+            }
+            useDst = true;
+        } else {
+            // Fallback: use srcDir directly (ACME output dir)
+            fullchainPath = srcDir + QStringLiteral("/fullchain.pem");
+            QString dk = srcDir + QStringLiteral("/domain_key.pem");
+            certKeyPath = QFile::exists(dk) ? dk : srcDir + QStringLiteral("/key.pem");
+        }
+
+        qInfo() << "[InternetAccess] final cert_pem=" << fullchainPath
+                << "cert_key=" << certKeyPath
+                << "useDst=" << useDst;
+
+        // Validate that the private key matches the certificate BEFORE updating settings.
+        // This catches the case where ACME issued a cert for one key but we're trying to
+        // pair it with a different key (e.g. stale domain_key.pem from a previous run).
+        if (!QFile::exists(fullchainPath)) {
+            qWarning() << "[InternetAccess] fullchain.pem NOT FOUND at" << fullchainPath;
+            m_LastError = QStringLiteral("ACME completed but certificate file missing at ") + fullchainPath;
+            emit error(m_LastError);
+        } else if (!QFile::exists(certKeyPath)) {
+            qWarning() << "[InternetAccess] Key file NOT FOUND at" << certKeyPath;
+            m_LastError = QStringLiteral("ACME completed but key file missing at ") + certKeyPath;
+            emit error(m_LastError);
+        } else if (!validateCertKeyPair(fullchainPath, certKeyPath)) {
+            // Key does not match certificate — this is a critical error.
+            // Do NOT update settings or emit certificateChanged, as it would cause
+            // the next reloadTls() to fail with "key values mismatch".
+            // Self-heal: delete the stale domain_key.pem so the NEXT ACME run
+            // generates a fresh keypair that matches the new certificate.
             QString domainKeyPath = srcDir + QStringLiteral("/domain_key.pem");
+            if (QFile::remove(domainKeyPath)) {
+                qInfo() << "[InternetAccess] Deleted stale domain_key.pem at" << domainKeyPath
+                        << "— next ACME issuance will generate a fresh keypair";
+            }
+            m_LastError = QStringLiteral(
+                "ACME issued a certificate but the private key does not match. "
+                "A fresh keypair will be generated on the next renewal attempt.");
+            qWarning() << "[InternetAccess]" << m_LastError;
+            emit error(m_LastError);
+        } else {
+            // Key-cert pair validated — persist the paths
             m_Settings->setCertPem(fullchainPath);
-            m_Settings->setCertKey(QFile::exists(domainKeyPath) ? domainKeyPath : srcDir + QStringLiteral("/key.pem"));
+            m_Settings->setCertKey(certKeyPath);
 
             qInfo() << "[InternetAccess] cert_pem:" << m_Settings->certPem()
                     << "cert_key:" << m_Settings->certKey()
                     << "expires:" << readCertExpiry(fullchainPath);
 
             emit certificateChanged();
-        } else {
-            qWarning() << "[InternetAccess] fullchain.pem NOT FOUND after ACME success — cert_pem will remain empty";
-            m_LastError = QStringLiteral("ACME completed but certificate file missing at ") + fullchainPath;
-            emit error(m_LastError);
         }
     } else {
         qWarning() << "[InternetAccess] ACME issuance failed — cert_pem/cert_key remain empty, check previous ACME errors";
@@ -1062,7 +1171,7 @@ void InternetAccessManager::onPendingRegistrationRetry()
     // Keep existing unique ID — do NOT regenerate on retry, otherwise
     // a new subdomain is created each time and the old domain is abandoned.
     // Re-set token (env var may have been configured since last attempt)
-    QString token = effectiveToken();
+    QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN"));
     if (token.isEmpty()) {
         qInfo() << "[InternetAccess] Token still empty — will retry in" << delaySec << "s";
         m_PendingRegistrationTimer->start(delayMs);

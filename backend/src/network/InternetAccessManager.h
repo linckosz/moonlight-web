@@ -60,7 +60,7 @@ public:
     /// Whether the manager is currently active (Internet Access enabled).
     bool isActive() const { return m_Active; }
 
-    /// The registered domain name (e.g. "92b8d127.moonlightweb.top").
+    /// The registered domain name (e.g. "92b8d127.example.com").
     QString domain() const { return m_Domain; }
 
     /// Current public IP.
@@ -134,9 +134,6 @@ private:
 
     /// Check certificate expiry and renew if < 30 days remaining.
     bool checkCertificate();
-
-    /// Load or resolve the effective PowerDNS token (handles "auto").
-    QString effectiveToken() const;
 
     /// Build the domain name from unique ID.
     QString buildDomain() const;
