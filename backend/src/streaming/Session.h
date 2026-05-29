@@ -130,6 +130,11 @@ private:
     /// Port for legacy WSS StreamRelay (separate from m_WsPort used for signaling).
     quint16 m_StreamRelayPort = 48002;
 
+    /// Negotiated video format from drSetup (0=unknown, 0x0001=H.264, 0x0100=HEVC, 0x0200=AV1).
+    /// Written by drSetup on the worker thread, read on the main thread during
+    /// onShimConnectionStarted(). The atomic in MoonlightShim guarantees up-to-date reads.
+    int m_NegotiatedVideoFormat = 0;
+
     MoonlightShim* m_Shim = nullptr;
     DataChannelRelay* m_Relay = nullptr;
     MediaTrackRelay* m_MediaTrackRelay = nullptr;

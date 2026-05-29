@@ -2,7 +2,8 @@
  * Moonlight-Web — Streaming Settings view
  *
  * Streaming-related user preferences (video codec, resolution, bitrate, etc.).
- * All settings are stored server-side per the project principle.
+ * Settings are stored in localStorage (per-browser) with default values
+ * fetched from the server on first visit.
  *
  * Layout:
  *   - Video section: codec, resolution, FPS, bitrate (grouped)
@@ -10,6 +11,8 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
+
+const STORAGE_KEY = 'mw-streaming-settings';
 
 export class SettingsView {
     constructor(container, onClose) {
@@ -35,20 +38,63 @@ export class SettingsView {
     }
 
     async _loadState() {
+        // 1. Try localStorage first (per-browser preferences)
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+            try {
+                const data = JSON.parse(stored);
+                this._applySettings(data);
+                return;
+            } catch (err) {
+                console.warn('[Settings] Failed to parse localStorage, falling back to server');
+            }
+        }
+
+        // 2. First visit: load defaults from server
         try {
             const data = await BackendClient.getStreamingSettings();
-            this._videoCodec = data.video_codec || 'hevc';
-            this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
-            this._gamingMode = data.gaming_mode === true;
-            this._showPerformanceStats = data.show_performance_stats === true;
-
-            const kbps = data.stream_bitrate || 20000;
-            this._streamBitrateMbps = Math.round(kbps / 1000);
-
-            this._streamHeight = data.stream_height || 1080;
-            this._streamFps = data.stream_fps || 60;
+            this._applySettings(data);
+            // Persist defaults to localStorage so next visit skips the server call
+            await this._saveToStorage();
         } catch (err) {
             console.warn('[Settings] Failed to load streaming settings:', err);
+        }
+    }
+
+    /** Apply a settings object to internal state (normalises field names). */
+    _applySettings(data) {
+        this._videoCodec = data.video_codec || 'hevc';
+        this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
+        this._gamingMode = data.gaming_mode !== false;
+        this._showPerformanceStats = data.show_performance_stats === true;
+        const kbps = data.stream_bitrate || 20000;
+        this._streamBitrateMbps = Math.round(kbps / 1000);
+        this._streamHeight = data.stream_height || 1080;
+        this._streamFps = data.stream_fps || 60;
+    }
+
+    /** Persist current internal state to localStorage (all clients)
+     *  and to the server (localhost only — updates defaults for all browsers). */
+    async _saveToStorage() {
+        const settings = {
+            video_codec: this._videoCodec,
+            gaming_mode: this._gamingMode,
+            show_performance_stats: this._showPerformanceStats,
+            stream_bitrate: this._streamBitrateMbps * 1000,
+            stream_height: this._streamHeight,
+            stream_fps: this._streamFps
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+
+        // Persist to server when on localhost, so settings.json is updated
+        // and all other clients get these defaults on first visit.
+        const host = window.location.hostname;
+        if (host === 'localhost' || host === '127.0.0.1') {
+            try {
+                await BackendClient.saveStreamingSettings(settings);
+            } catch (err) {
+                console.warn('[Settings] Failed to save to server:', err);
+            }
         }
     }
 
@@ -79,31 +125,18 @@ export class SettingsView {
             const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10) || this._streamHeight;
             const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10) || this._streamFps;
 
-            try {
-                const result = await BackendClient.saveStreamingSettings({
-                    video_codec: codec,
-                    gaming_mode: gamingMode,
-                    show_performance_stats: showPerf,
-                    stream_bitrate: bitrateMbps * 1000,
-                    stream_height: height,
-                    stream_fps: fps
-                });
-                if (result.status === 'saved') {
-                    this._videoCodec = result.video_codec || this._videoCodec;
-                    this._gamingMode = result.gaming_mode !== false;
-                    this._showPerformanceStats = result.show_performance_stats === true;
-                    if (result.stream_bitrate !== undefined)
-                        this._streamBitrateMbps = Math.round(result.stream_bitrate / 1000);
-                    if (result.stream_height !== undefined)
-                        this._streamHeight = result.stream_height;
-                    if (result.stream_fps !== undefined)
-                        this._streamFps = result.stream_fps;
-                    Toast.success('Saved');
-                }
-            } catch (err) {
-                console.error('[Settings] Auto-save failed:', err);
-                Toast.error('Save failed: ' + err.message);
-            }
+            // Update internal state
+            this._videoCodec = codec;
+            this._gamingMode = gamingMode;
+            this._showPerformanceStats = showPerf;
+            this._streamBitrateMbps = bitrateMbps;
+            this._streamHeight = height;
+            this._streamFps = fps;
+
+            // Save to localStorage and server (if localhost)
+            await this._saveToStorage();
+
+            Toast.success('Saved');
         }, 300);
     }
 

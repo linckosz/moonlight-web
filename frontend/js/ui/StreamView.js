@@ -132,17 +132,10 @@ export class StreamView {
         this.frameCount = 0;
         this.renderRunning = false;
 
-        // Frame reordering: SCTP unordered delivery on the video DataChannel
-        // can deliver frames (and chunks) out of order. The frameId from the
-        // backend's fragmentation header is monotonic; we buffer frames that
-        // arrive ahead of schedule and deliver them in order to the decoder.
-        // This prevents two decoder issues:
-        //   1. Delta frame decoded before its reference keyframe -> decode error
-        //   2. Stale SPS/PPS from an out-of-order keyframe configuring the
-        //      decoder with obsolete VUI parameters -> wrong colors (green image)
-        this._expectedFrameId = 0;
-        this._firstFrameIdSeen = false;
-        this._reorderBuffer = new Map();  // frameId -> {data, isKeyframe, backendTs}
+        // Note: frame reordering via a reorder buffer was removed after causing
+        // excessive IDR request flooding (every SCTP gap triggered a skip+IDR).
+        // The backend's stale-buffered-keyframe detection is sufficient for the
+        // green-image fix. Frames are processed in arrival order.
 
         // Stats
         this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0 };
@@ -1021,52 +1014,12 @@ export class StreamView {
             this._latestBackendTs = backendTs;
         }
 
-        // ── Frame reordering (defense against SCTP unordered delivery) ──────
-        //
-        // The backend's fragmentation header carries a monotonic frameId.
-        // SCTP unordered + no-retransmit (maxRetransmits=0) for the video DC
-        // means complete messages can arrive in ANY order. We must deliver
-        // frames to the decoder in order to prevent:
-        //   a) Decoder configured with stale SPS/PPS from a keyframe that
-        //      arrived before a newer one (wrong VUI -> green image)
-        //   b) Delta frame decoded before its reference keyframe -> decoder err
-        //
-        // Except for the very first keyframe (which must configure the
-        // decoder), we buffer out-of-order frames in _reorderBuffer and
-        // deliver them when the gap is filled.
-
-        // Establish baseline frameId from the first frame we see.
-        // The backend starts m_FrameId at 0, but the first frame the browser
-        // receives may have any frameId due to unordered delivery.
-        if (!this._firstFrameIdSeen) {
-            this._expectedFrameId = frameId;
-            this._firstFrameIdSeen = true;
-            console.log('[StreamView] Baseline frameId set to ' + frameId);
-        }
-
-        // Stale: frame is older than what we've already processed.
-        if (frameId < this._expectedFrameId) {
-            return;
-        }
-
-        // Future: frame arrived ahead of schedule — buffer it for later.
-        if (frameId > this._expectedFrameId) {
-            if (!this._reorderBuffer.has(frameId)) {
-                this._reorderBuffer.set(frameId, { data, isKeyframe, backendTs });
-                // Limit buffer to 60 frames (~1s at 60fps) to prevent OOM
-                // when many frames arrive out of order before the gap fills.
-                if (this._reorderBuffer.size > 60) {
-                    const oldestKey = this._reorderBuffer.keys().next().value;
-                    this._reorderBuffer.delete(oldestKey);
-                }
-            }
-            return;
-        }
-
-        // ── Expected frame — process and drain reorder buffer ───────────────
+        // Direct frame processing — no reordering.
+        // The backend's stale-buffered-keyframe detection handles the green-image
+        // case. SCTP unordered delivery occasional reordering is harmless because
+        // the VideoDecoder's internal DPB handles reference frame management,
+        // and we request an IDR on decoder errors.
         this._processVideoFrame(data, isKeyframe, backendTs);
-        this._expectedFrameId = frameId + 1;
-        this._drainReorderBuffer();
     }
 
     /**
@@ -1148,21 +1101,6 @@ export class StreamView {
 
         // Submit frame to decoder
         this.decodeFrame(data, isKeyframe);
-    }
-
-    /**
-     * Drain the reorder buffer after processing the expected frame.
-     * Processes all consecutive frames starting at _expectedFrameId.
-     */
-    _drainReorderBuffer() {
-        let frameId = this._expectedFrameId;
-        while (this._reorderBuffer.has(frameId)) {
-            const entry = this._reorderBuffer.get(frameId);
-            this._reorderBuffer.delete(frameId);
-            this._processVideoFrame(entry.data, entry.isKeyframe, entry.backendTs);
-            frameId++;
-        }
-        this._expectedFrameId = frameId;
     }
 
     // --- AV1 pipeline ---
@@ -1558,7 +1496,6 @@ export class StreamView {
         }
         this.frameQueue = [];
         this.pendingFrames = [];
-        this._reorderBuffer.clear();
 
         // Mark WebRTC as stopping before calling /quit so that DataChannel
         // "onclose" events from the backend closing its side are not treated
@@ -1621,7 +1558,6 @@ export class StreamView {
         }
         this.frameQueue = [];
         this.pendingFrames = [];
-        this._reorderBuffer.clear();
 
         const el = document.getElementById('stream-view');
         if (el) el.remove();

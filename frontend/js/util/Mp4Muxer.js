@@ -100,6 +100,32 @@ export class NalParser {
 }
 
 /**
+ * Remove H.264/HEVC emulation prevention bytes (00 00 03) from a NAL unit.
+ *
+ * Annex B requires inserting 0x03 after any 0x00 0x00 pair when the next
+ * byte could form a start code (0x00, 0x01, 0x02, 0x03).  The decoder
+ * must remove these before interpreting the RBSP.
+ *
+ * This function returns a NEW Uint8Array without the 0x03 bytes.
+ * It correctly handles the escape case 00 00 03 03 → 00 00 03.
+ */
+export function removeEmulationPrevention(buffer) {
+    const result = [];
+    let i = 0;
+    while (i < buffer.length) {
+        if (i + 2 < buffer.length && buffer[i] === 0 && buffer[i+1] === 0 && buffer[i+2] === 3) {
+            // Skip the emulation prevention byte (0x03), keep the two zeros
+            result.push(0, 0);
+            i += 3;
+        } else {
+            result.push(buffer[i]);
+            i++;
+        }
+    }
+    return new Uint8Array(result);
+}
+
+/**
  * Split an Annex B byte stream into individual NAL units (without start codes).
  * Handles both 3-byte (00 00 01) and 4-byte (00 00 00 01) start codes.
  */
@@ -192,7 +218,7 @@ export function buildHvcCDescription(vps, sps, pps) {
 
     // Build hvcC (HEVCDecoderConfigurationRecord) per ISO 14496-15.
     //
-    // SPS layout (after 2-byte NAL header):
+    // SPS layout (after 2-byte NAL header, with emulation prevention REMOVED):
     //   byte 2: sps_video_parameter_set_id(4) | sps_max_sub_layers_minus1(3) | temporal_id_nesting(1)
     //   bytes 3-14: profile_tier_level general fields (12 bytes, always present):
     //     byte 3:  general_profile_space(2) | general_tier_flag(1) | general_profile_idc(5)
@@ -202,6 +228,12 @@ export function buildHvcCDescription(vps, sps, pps) {
     //
     // Fixed hvcC header: 22 bytes (configurationVersion + PTL + fixed fields).
     // Each NAL array entry: 1 (type) + 2 (count) + 2 (length) = 5 + nal_unit.
+    //
+    // IMPORTANT: The SPS in the bitstream may contain emulation prevention
+    // bytes (00 00 03).  These MUST be removed before reading the PTL fields
+    // for the hvcC header (which stores raw PTL bytes, not a NAL unit).
+    // NAL arrays in the hvcC keep the original data (with emulation prevention)
+    // per ISO 14496-15.
 
     // Fixed header: 1 (version) + 12 (PTL) + 2 + 1 + 1 + 1 + 1 + 2 + 1 + 1 = 23
     // Each NAL array entry: 5 (1 type + 2 count + 2 length) + NAL data
@@ -212,8 +244,11 @@ export function buildHvcCDescription(vps, sps, pps) {
     // configurationVersion
     buf[off++] = 0x01;
 
-    // profile_tier_level general fields — copy directly from SPS bytes 3-14
-    buf.set(sps.slice(3, 15), off); off += 12;
+    // profile_tier_level general fields — extract from de-emulated SPS.
+    // Emulation prevention bytes (00 00 03) in the SPS would corrupt the
+    // fixed-field offsets, so we clean them first.
+    const cleanSps = removeEmulationPrevention(sps);
+    buf.set(cleanSps.slice(3, 15), off); off += 12;
 
     // min_spatial_segmentation_idc: reserved(4) + 0
     buf[off++] = 0xF0; buf[off++] = 0x00;
@@ -270,18 +305,34 @@ export function buildHvcCDescription(vps, sps, pps) {
 export function getHevcCodecString(sps) {
     if (!sps || sps.length < 6) return 'hvc1.1.6.L93.B0';
 
-    // After the 2-byte NAL header and 1 byte of SPS header fields,
-    // the profile_tier_level starts at bit offset within byte 3.
-    // general_profile_space(2) + tier_flag(1) + general_profile_idc(5)
-    // For compact HEVC streams, profile_space=0, tier=0.
-    const rbsp = sps.slice(2);
+    // The SPS from the bitstream may contain emulation prevention bytes
+    // (00 00 03).  These must be removed before reading byte-offset fields
+    // because they shift the RBSP layout.  The NAL header (2 bytes) is not
+    // affected.
+    const rbsp = removeEmulationPrevention(sps.slice(2));
+
+    // After the 2-byte NAL header and 1 byte of SPS header fields:
+    // rbsp[0]: sps_video_parameter_set_id(4) | sps_max_sub_layers_minus1(3) | temporal_id_nesting(1)
+    // rbsp[1]: general_profile_space(2) + tier_flag(1) + general_profile_idc(5)
+    // rbsp[2..5]: general_profile_compatibility_flags (4 bytes)
+    // rbsp[6..11]: general_constraint_indicator_flags (6 bytes)
+    // rbsp[12]: general_level_idc
+
     const profileIdc = rbsp.length > 1 ? (rbsp[1] & 0x1F) : 1;
 
-    // Constraint flags: byte at offset 4 in rbsp (first constraint byte)
-    const constraintByte = rbsp.length > 4 ? rbsp[4] : 0x60;
+    // First constraint/feature byte: rbsp[6] = first constraint indicator byte
+    const constraintByte = rbsp.length > 6 ? rbsp[6] : 0x60;
 
     // Level IDC: byte at offset 12 in rbsp
     const levelIdc = rbsp.length > 12 ? rbsp[12] : 93;
+
+    // Validate: level_idc < 30 (3.0) is invalid for HEVC.  This catches
+    // the case where emulation prevention shifting produces level=0.
+    // A valid level_idc >= 30 (Level 3.0) and <= 186 (Level 6.2).
+    if (levelIdc < 30) {
+        // Fall back to a safe default: Main, Level 5.1 (common for 1080p60)
+        return 'hvc1.1.6.L153.B0';
+    }
 
     return `hvc1.${profileIdc}.${constraintByte}.L${levelIdc}.B0`;
 }

@@ -380,6 +380,37 @@ int main(int argc, char* argv[])
             return;
         }
 
+        // ── Per-request streaming settings ─────────────────────────────────────
+        // The browser sends its per-browser preferences (from localStorage)
+        // alongside the launch request. These override AppSettings defaults
+        // for this session only.
+        VideoCodec reqCodec = appSettings.videoCodec();
+        if (body.contains("video_codec"))
+            reqCodec = AppSettings::videoCodecFromString(body["video_codec"].toString());
+
+        bool reqGamingMode = body.contains("gaming_mode")
+            ? body["gaming_mode"].toBool()
+            : appSettings.gamingMode();
+
+        int reqBitrate = body.contains("stream_bitrate") && body["stream_bitrate"].toInt() > 0
+            ? body["stream_bitrate"].toInt()
+            : appSettings.streamBitrate();
+
+        int reqHeight = body.contains("stream_height") && body["stream_height"].toInt() > 0
+            ? body["stream_height"].toInt()
+            : appSettings.streamHeight();
+
+        int reqFps = body.contains("stream_fps") && body["stream_fps"].toInt() > 0
+            ? body["stream_fps"].toInt()
+            : appSettings.streamFps();
+
+        qInfo() << "[Session] Per-request streaming settings:"
+                << "codec=" << AppSettings::videoCodecToString(reqCodec)
+                << "gaming=" << reqGamingMode
+                << "bitrate=" << reqBitrate
+                << "height=" << reqHeight
+                << "fps=" << reqFps;
+
         // Determine signaling host from the browser's Host header.
         // Works for both LAN (localhost:443) and remote access via moonlightweb.top.
         QString serverHost = req.headers.value("host");
@@ -503,7 +534,7 @@ int main(int argc, char* argv[])
         } else {
             qInfo() << "[Session] Transport: auto mode";
             orderedTransports = filterTransportsByCodec(
-                TransportPriorities::orderedTransports(), appSettings.videoCodec(), host);
+                TransportPriorities::orderedTransports(), reqCodec, host);
             qInfo() << "[Auto] Ordered transports after codec filter:" << orderedTransports;
         }
 
@@ -596,14 +627,14 @@ int main(int argc, char* argv[])
                 std::move(rsp),
                 signalingPort,
                 serverHost,
-                (codecOverride != VideoCodec::Auto) ? codecOverride : appSettings.videoCodec(),
-                appSettings.gamingMode(),
+                (codecOverride != VideoCodec::Auto) ? codecOverride : reqCodec,
+                reqGamingMode,
                 effectiveUpnpEnabled,
                 internal,
                 stunServer,
-                appSettings.streamHeight(),
-                appSettings.streamFps(),
-                appSettings.streamBitrate()
+                reqHeight,
+                reqFps,
+                reqBitrate
             );
             s->setHttpsPort(server.activeHttpsPort());
             s->setStreamRelayPort(signalingPort + 1);
@@ -627,7 +658,7 @@ int main(int argc, char* argv[])
 
             // If admin forced MediaTrack transport but user selected HEVC/AV1,
             // force H.264 since MediaTrackRelay only supports H.264.
-            VideoCodec effectiveCodec = appSettings.videoCodec();
+            VideoCodec effectiveCodec = reqCodec;
             bool codecOverridden = false;
             VideoCodec originalCodec = VideoCodec::Auto;
 
@@ -675,7 +706,8 @@ int main(int argc, char* argv[])
             tryNext = [fbState, &computerManager, signalingPort, serverHost,
                        &appSettings, effectiveUpnpEnabled, stunServer,
                        &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
-                       &server, tryNextFn]() {
+                       &server, tryNextFn,
+                       reqCodec, reqGamingMode, reqHeight, reqFps, reqBitrate]() {
                 if (fbState->responded) return;
 
                 if (fbState->currentAttempt >= fbState->attempts.size()) {
@@ -727,13 +759,13 @@ int main(int argc, char* argv[])
                     computerManager.http(),
                     std::move(attemptRespond),
                     signalingPort, serverHost,
-                    appSettings.videoCodec(),
-                    appSettings.gamingMode(),
+                    reqCodec,
+                    reqGamingMode,
                     effectiveUpnpEnabled,
                     internalTransport, stunServer,
-                    appSettings.streamHeight(),
-                    appSettings.streamFps(),
-                    appSettings.streamBitrate()
+                    reqHeight,
+                    reqFps,
+                    reqBitrate
                 );
                 session->setHttpsPort(server.activeHttpsPort());
                 session->setStreamRelayPort(signalingPort + 1);
@@ -999,6 +1031,10 @@ int main(int argc, char* argv[])
 
     // API route: enable/configure Internet Access
     server.router()->post("/api/internet/enable", [&](const HttpRequest& req) {
+        // Only localhost can modify internet access settings
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Internet access settings can only be modified from localhost");
+
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
@@ -1038,7 +1074,11 @@ int main(int argc, char* argv[])
     });
 
     // API route: disable Internet Access
-    server.router()->post("/api/internet/disable", [&](const HttpRequest&) {
+    server.router()->post("/api/internet/disable", [&](const HttpRequest& req) {
+        // Only localhost can modify internet access settings
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Internet access settings can only be modified from localhost");
+
         internetAccess.stop();
         appSettings.setInternetAccessEnabled(false);
 
@@ -1071,6 +1111,10 @@ int main(int argc, char* argv[])
     });
 
     server.router()->post("/api/admin/settings", [&server, &appSettings](const HttpRequest& req) {
+        // Only localhost can modify server admin settings
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Admin settings can only be modified from localhost");
+
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
@@ -1137,6 +1181,10 @@ int main(int argc, char* argv[])
     });
 
     server.router()->post("/api/settings/streaming", [&appSettings](const HttpRequest& req) {
+        // Only localhost can modify server-side streaming settings
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Streaming settings can only be modified from localhost");
+
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 

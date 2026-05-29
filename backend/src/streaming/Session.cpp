@@ -294,6 +294,12 @@ void StreamSession::onLaunchReplyFinished()
         StreamConfig::kAudioChannels,
         StreamConfig::kAudioChannelMask);
 
+    // Stream settings from user preferences
+    params.width = m_StreamWidth;
+    params.height = m_StreamHeight;
+    params.fps = m_StreamFps;
+    params.bitrateKbps = m_StreamBitrateKbps;
+
     // Create MoonlightShim BEFORE starting LiStartConnection. The relay must
     // be connected to all signals before frames arrive.
     m_Shim = new MoonlightShim(this);
@@ -457,6 +463,30 @@ void StreamSession::onShimConnectionStarted()
 {
     qDebug() << "[Session] LiStartConnection succeeded — sending response to browser";
 
+    // Read the negotiated video format set by drSetup during LiStartConnection.
+    // This is the codec Sunshine actually selected, NOT the user preference.
+    static constexpr int VIDEO_FORMAT_H264 = 0x0001;
+    static constexpr int VIDEO_FORMAT_H265 = 0x0100;
+    static constexpr int VIDEO_FORMAT_AV1  = 0x0200;
+
+    m_NegotiatedVideoFormat = m_Shim ? m_Shim->negotiatedVideoFormat() : 0;
+    if (m_NegotiatedVideoFormat == 0) {
+        // Fallback: if drSetup hasn't fired yet (shouldn't happen), use config
+        m_NegotiatedVideoFormat = (m_Config.codec == VideoCodec::AV1)  ? VIDEO_FORMAT_AV1 :
+                                  (m_Config.codec == VideoCodec::HEVC) ? VIDEO_FORMAT_H265 :
+                                  VIDEO_FORMAT_H264;
+    }
+
+    // Log the negotiated codec for debugging
+    const char* codecName = "h264";
+    if (m_NegotiatedVideoFormat & VIDEO_FORMAT_H265) {
+        codecName = "hevc";
+    } else if (m_NegotiatedVideoFormat & VIDEO_FORMAT_AV1) {
+        codecName = "av1";
+    }
+    qInfo() << "[Session] Negotiated video codec:" << codecName
+            << "(format=0x" + QString::number(m_NegotiatedVideoFormat, 16) + ")";
+
     QJsonObject result;
     result["status"] = "streaming";
     result["sessionUrl"] = m_SessionUrl;
@@ -485,13 +515,10 @@ void StreamSession::onShimConnectionStarted()
         }
     }
 
-    // Report the negotiated video codec back to the browser
-    switch (m_Config.codec) {
-    case VideoCodec::H264: result["videoCodec"] = "h264"; break;
-    case VideoCodec::HEVC: result["videoCodec"] = "hevc"; break;
-    case VideoCodec::AV1:  result["videoCodec"] = "av1";  break;
-    default:               result["videoCodec"] = "auto";  break;
-    }
+    // Report the NEGOTIATED video codec (from Sunshine), not the user preference.
+    // This ensures the frontend decodes with the correct codec type even when
+    // the auto-negotiation falls back from HEVC/AV1 to H.264.
+    result["videoCodec"] = QString::fromLatin1(codecName);
 
     // If the codec was overridden (e.g. HEVC → H.264 for MediaTrack),
     // report the original selection so the frontend can log or adapt.
