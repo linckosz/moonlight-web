@@ -424,9 +424,10 @@ void InternetAccessManager::ensureIdentifiers()
         }
     }
 
-    // Build/sync the full domain name
+    // Store sentinel — the real domain is always derivable from uniqueId + baseDomain.
+    // A custom FQDN (different from the computed one) would be stored by other paths.
     m_Domain = buildDomain();
-    m_Settings->setDomain(m_Domain);
+    m_Settings->setDomain(QStringLiteral("MW_DOMAIN"));
 }
 
 // ---------------------------------------------------------------------------

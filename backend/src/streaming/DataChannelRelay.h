@@ -121,8 +121,16 @@ private:
     // is open, we save it here and send it as soon as the DC opens.
     // This prevents a rare black-screen race where the browser receives only
     // delta frames because it missed the initial IDR.
+    //
+    // Stale buffer detection: tracks whether new frames were already sent
+    // before the buffered keyframe is flushed. When the DC opens, Sunshine
+    // may send a second IDR (with updated SPS/VUI) while the first is still
+    // in the buffer. Sending both creates a race where the browser's decoder
+    // configures with stale SPS/PSS, producing wrong colors (green image).
     QByteArray m_BufferedKeyframe;
     bool m_HaveBufferedKeyframe = false;
+    int m_FramesSentCount = 0;          // Total frames sent via sendFragmented()
+    int m_FramesSentAtBufferTime = 0;   // m_FramesSentCount when buffer was stored
 
     // ── UPnP NAT traversal ──────────────────────────────────────────────────
     std::string m_PublicIP;      // Public IP discovered via UPnP (or empty)
