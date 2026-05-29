@@ -301,8 +301,10 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
         m_BufferedKeyframe = data;
         m_HaveBufferedKeyframe = true;
+        m_FramesSentAtBufferTime = m_FramesSentCount;
         qInfo() << "[DataChannelRelay] Buffered keyframe size=" << data.size()
-                << "(DC ready=" << (m_VideoDc && m_VideoDc->isOpen()) << ")";
+                << "(DC ready=" << (m_VideoDc && m_VideoDc->isOpen())
+                << " framesSentAtBuffer=" << m_FramesSentAtBufferTime << ")";
         return;
     }
 
@@ -333,6 +335,24 @@ void DataChannelRelay::sendBufferedKeyframe()
 {
     if (!m_HaveBufferedKeyframe) return;
     if (m_Stopping.load() || !m_VideoDc || !m_VideoDc->isOpen()) return;
+
+    // Stale buffer guard: if new frames (keyframe or delta) were already sent
+    // directly since the buffer was stored, the buffered keyframe is stale.
+    // This race happens when Sunshine sends a second IDR before the initial
+    // onVideoFrame buffer is flushed. The stale keyframe carries outdated
+    // SPS/VUI parameters; configuring the browser decoder with them while
+    // stripping VPS/SPS/PSS from newer frames via toAvcc() causes wrong
+    // color interpretation (green image). The decoder recovers via the
+    // browser's 3-second IDR timeout or the next periodic IDR from Sunshine.
+    if (m_FramesSentCount > m_FramesSentAtBufferTime) {
+        qInfo() << "[DataChannelRelay] Stale buffered keyframe dropped —"
+                << (m_FramesSentCount - m_FramesSentAtBufferTime)
+                << "frames sent since buffer, discarding"
+                << m_BufferedKeyframe.size() << "bytes";
+        m_BufferedKeyframe.clear();
+        m_HaveBufferedKeyframe = false;
+        return;
+    }
 
     qInfo() << "[DataChannelRelay] Sending buffered keyframe, size="
             << m_BufferedKeyframe.size();
@@ -584,6 +604,7 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     }
 
     m_FrameCount++;
+    m_FramesSentCount++;
     if (m_FrameCount <= 3 || m_FrameCount % 300 == 0) {
         qInfo() << "[DataChannelRelay] Sent frame #" << m_FrameCount
                 << "totalSize=" << totalSize << "chunks=" << totalChunks

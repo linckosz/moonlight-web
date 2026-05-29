@@ -132,6 +132,18 @@ export class StreamView {
         this.frameCount = 0;
         this.renderRunning = false;
 
+        // Frame reordering: SCTP unordered delivery on the video DataChannel
+        // can deliver frames (and chunks) out of order. The frameId from the
+        // backend's fragmentation header is monotonic; we buffer frames that
+        // arrive ahead of schedule and deliver them in order to the decoder.
+        // This prevents two decoder issues:
+        //   1. Delta frame decoded before its reference keyframe -> decode error
+        //   2. Stale SPS/PPS from an out-of-order keyframe configuring the
+        //      decoder with obsolete VUI parameters -> wrong colors (green image)
+        this._expectedFrameId = 0;
+        this._firstFrameIdSeen = false;
+        this._reorderBuffer = new Map();  // frameId -> {data, isKeyframe, backendTs}
+
         // Stats
         this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0 };
 
@@ -605,26 +617,39 @@ export class StreamView {
         // Explicit BT.709 limited-range — the H.264 broadcast standard.
         // Some Chrome versions ignore VUI and default to BT.601 full-range,
         // causing color shifts (washed out / oversaturated).
-        // Only for H.264: Chrome WebCodecs rejects HEVC configs that include
-        // an explicit colorSpace (likely a Chrome bug / incomplete support).
-        const isH264 = (codecType === CODEC_H264);
-        const bt709 = isH264 ? {
+        const bt709 = {
             colorSpace: {
                 primaries: 'bt709',
                 transfer: 'bt709',
                 matrix: 'bt709',
                 fullRange: false
             }
-        } : {};
-
-        configsToTry.push({
+        };
+        // Chrome WebCodecs has historically rejected HEVC configs that include
+        // an explicit colorSpace. We attempt it as the primary config for HEVC
+        // too; if Chrome rejects it, the fallback chain skips to the next
+        // config (without colorSpace) automatically.
+        const colorConfig = {
             codec: codec,
             description: desc.buffer,
             codedWidth: 1920,
             codedHeight: 1080,
             optimizeForLatency: true,
             ...bt709
-        });
+        };
+
+        configsToTry.push(colorConfig);
+
+        // Fallback: HEVC without explicit colorSpace (Chrome bug workaround)
+        if (codecType === CODEC_HEVC) {
+            configsToTry.push({
+                codec: codec,
+                description: desc.buffer,
+                codedWidth: 1920,
+                codedHeight: 1080,
+                optimizeForLatency: true
+            });
+        }
 
         for (const fbCodec of fallbacks) {
             if (fbCodec === codec) continue;
@@ -887,7 +912,7 @@ export class StreamView {
         };
         // Video frames: DataChannel mode uses WebCodecs callbacks
         if (this._transport !== 'webrtc-media') {
-            this.webrtc.onVideo = (frame, isKeyframe, backendTs) => this.handleVideoFrame(frame, isKeyframe, backendTs);
+            this.webrtc.onVideo = (frame, isKeyframe, backendTs, frameId) => this.handleVideoFrame(frame, isKeyframe, backendTs, frameId);
         }
         // Audio samples (PCM16 stereo interleaved) -> AudioPipeline
         this.webrtc.onAudio = (sample) => this.handleAudioSample(sample);
@@ -978,7 +1003,7 @@ export class StreamView {
         }
     }
 
-    handleVideoFrame(data, isKeyframe, backendTs) {
+    handleVideoFrame(data, isKeyframe, backendTs, frameId = 0) {
         // Stop processing frames once quit() has started.  The DC may still
         // deliver queued messages during the async HTTP /quit call.
         if (this._quitting) return;
@@ -992,14 +1017,63 @@ export class StreamView {
         this._totalBytes += data.length;
 
         // Store the most recent backend timestamp for latency calculation.
-        // We use the latest value rather than per-frame matching because
-        // VideoDecoder decodes asynchronously — the simplest robust approach
-        // is to take the most recently submitted frame's backendTs as a
-        // proxy for the next decoded frame.  At 60fps the error is <16ms.
         if (backendTs !== undefined) {
             this._latestBackendTs = backendTs;
         }
 
+        // ── Frame reordering (defense against SCTP unordered delivery) ──────
+        //
+        // The backend's fragmentation header carries a monotonic frameId.
+        // SCTP unordered + no-retransmit (maxRetransmits=0) for the video DC
+        // means complete messages can arrive in ANY order. We must deliver
+        // frames to the decoder in order to prevent:
+        //   a) Decoder configured with stale SPS/PPS from a keyframe that
+        //      arrived before a newer one (wrong VUI -> green image)
+        //   b) Delta frame decoded before its reference keyframe -> decoder err
+        //
+        // Except for the very first keyframe (which must configure the
+        // decoder), we buffer out-of-order frames in _reorderBuffer and
+        // deliver them when the gap is filled.
+
+        // Establish baseline frameId from the first frame we see.
+        // The backend starts m_FrameId at 0, but the first frame the browser
+        // receives may have any frameId due to unordered delivery.
+        if (!this._firstFrameIdSeen) {
+            this._expectedFrameId = frameId;
+            this._firstFrameIdSeen = true;
+            console.log('[StreamView] Baseline frameId set to ' + frameId);
+        }
+
+        // Stale: frame is older than what we've already processed.
+        if (frameId < this._expectedFrameId) {
+            return;
+        }
+
+        // Future: frame arrived ahead of schedule — buffer it for later.
+        if (frameId > this._expectedFrameId) {
+            if (!this._reorderBuffer.has(frameId)) {
+                this._reorderBuffer.set(frameId, { data, isKeyframe, backendTs });
+                // Limit buffer to 60 frames (~1s at 60fps) to prevent OOM
+                // when many frames arrive out of order before the gap fills.
+                if (this._reorderBuffer.size > 60) {
+                    const oldestKey = this._reorderBuffer.keys().next().value;
+                    this._reorderBuffer.delete(oldestKey);
+                }
+            }
+            return;
+        }
+
+        // ── Expected frame — process and drain reorder buffer ───────────────
+        this._processVideoFrame(data, isKeyframe, backendTs);
+        this._expectedFrameId = frameId + 1;
+        this._drainReorderBuffer();
+    }
+
+    /**
+     * Process a single video frame (deliver to NAL parser / decoder).
+     * Called in monotonically-increasing frameId order.
+     */
+    _processVideoFrame(data, isKeyframe, backendTs) {
         // Log first frame details
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
@@ -1074,6 +1148,21 @@ export class StreamView {
 
         // Submit frame to decoder
         this.decodeFrame(data, isKeyframe);
+    }
+
+    /**
+     * Drain the reorder buffer after processing the expected frame.
+     * Processes all consecutive frames starting at _expectedFrameId.
+     */
+    _drainReorderBuffer() {
+        let frameId = this._expectedFrameId;
+        while (this._reorderBuffer.has(frameId)) {
+            const entry = this._reorderBuffer.get(frameId);
+            this._reorderBuffer.delete(frameId);
+            this._processVideoFrame(entry.data, entry.isKeyframe, entry.backendTs);
+            frameId++;
+        }
+        this._expectedFrameId = frameId;
     }
 
     // --- AV1 pipeline ---
@@ -1469,6 +1558,7 @@ export class StreamView {
         }
         this.frameQueue = [];
         this.pendingFrames = [];
+        this._reorderBuffer.clear();
 
         // Mark WebRTC as stopping before calling /quit so that DataChannel
         // "onclose" events from the backend closing its side are not treated
@@ -1531,6 +1621,7 @@ export class StreamView {
         }
         this.frameQueue = [];
         this.pendingFrames = [];
+        this._reorderBuffer.clear();
 
         const el = document.getElementById('stream-view');
         if (el) el.remove();

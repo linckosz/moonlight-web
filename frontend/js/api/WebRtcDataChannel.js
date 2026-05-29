@@ -874,7 +874,7 @@ export class WebRtcDataChannel {
 
         // Emit video frame with backend timestamp for latency calculations
         if (this.onVideo) {
-            this.onVideo(assembled, entry.keyframe, entry.backendTs);
+            this.onVideo(assembled, entry.keyframe, entry.backendTs, frameId);
         }
     }
 

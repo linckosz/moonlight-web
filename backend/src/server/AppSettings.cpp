@@ -284,22 +284,22 @@ bool AppSettings::isValidFqdn(const QString& domain)
 
 QString AppSettings::domain() const
 {
-    // 1. Try stored FQDN from settings.json
-    QJsonObject obj = readAll();
-    QString stored = obj.value("domain").toString();
-    if (!stored.isEmpty() && stored != QStringLiteral("MW_DOMAIN") && isValidFqdn(stored))
-        return stored;
-
-    // 2. Fallback: compute from unique_id + base domain
+    // Compute the default domain from unique_id + base domain
     QString baseDomain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
     if (baseDomain.isEmpty())
         baseDomain = QStringLiteral("moonlightweb.top");
 
     QString uid = uniqueId();
-    if (uid.isEmpty())
-        return baseDomain;
+    QString computed = uid.isEmpty() ? baseDomain : (uid + QLatin1Char('.') + baseDomain);
 
-    return uid + QLatin1Char('.') + baseDomain;
+    // If stored domain is a real FQDN different from the default → custom domain
+    QJsonObject obj = readAll();
+    QString stored = obj.value("domain").toString();
+    if (!stored.isEmpty() && stored != QStringLiteral("MW_DOMAIN")
+        && isValidFqdn(stored) && stored != computed)
+        return stored;
+
+    return computed;
 }
 
 void AppSettings::setDomain(const QString& domain)
