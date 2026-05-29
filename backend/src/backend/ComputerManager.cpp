@@ -1025,7 +1025,18 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
     });
 
     connect(reply, &QNetworkReply::finished, this,
-            [this, host, uuid, safeRespond, reply]() {
+            [this, uuid, safeRespond, reply]() {
+        // Re-resolve host pointer — the NvComputer may have been deleted
+        // (via handleDeleteHost) since handleGetAppList was called. Capturing
+        // the raw host pointer would cause a use-after-free crash if the host
+        // was removed during the async HTTPS request.
+        NvComputer* host = findHostByUuid(uuid);
+        if (!host) {
+            safeRespond(HttpResponse::error(404, "Host removed while fetching app list"));
+            reply->deleteLater();
+            return;
+        }
+
         int httpStatus = reply->attribute(
             QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
