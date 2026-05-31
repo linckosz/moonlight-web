@@ -76,6 +76,11 @@ public:
      */
     QList<SessionInfo> sessions() const;
 
+    /** Returns true if the PIN was auto-regenerated after being consumed
+     *  (i.e. a remote client validated it). When true, the admin UI should
+     *  display "--------" to force explicit manual generation. */
+    bool isPinConsumed() const { return m_pinConsumed; }
+
     // ── Auto-regenerate ─────────────────────────────────────────────────────
     /** Called after a successful PIN validation to auto-generate a new PIN. */
     void autoRegeneratePin();
@@ -136,6 +141,7 @@ private:
 
     AppSettings* m_settings = nullptr;
     QString m_currentPin;
+    bool m_pinConsumed = false;
     QByteArray m_hmacKey;
     QHash<QString, RateLimitEntry> m_rateLimits; // ip -> entry
     QHash<QString, SessionInfo> m_sessions;      // token -> SessionInfo

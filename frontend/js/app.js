@@ -576,7 +576,17 @@ const MoonlightApp = {
 
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id, streamingSettings);
-            console.log('[MW] Launch result:', result);
+            // Log only safe fields — never log the full response as it may contain
+            // internal IP info (e.g. sessionUrl exposes Sunshine's LAN address).
+            console.log('[MW] Launch result:', {
+                status: result.status,
+                videoCodec: result.videoCodec,
+                gamingMode: result.gamingMode,
+                transport: result.transport,
+                transport_mode: result.transport_mode,
+                upnpAvailable: result.upnpAvailable,
+                signalingUrl: result.signalingUrl
+            });
 
             if (result.status === 'streaming') {
                 Toast.success(`${app.name} started`);

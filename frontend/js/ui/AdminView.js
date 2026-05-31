@@ -41,6 +41,7 @@ export class AdminView {
 
         // Auth / PIN state (default "--------" = no valid PIN)
         this._pin = '--------';
+        this._pinConsumed = false;  // true when PIN was used by remote client
         this._activeSessions = 0;
         this._sessions = [];
         this._certAuthEnabled = false;
@@ -51,6 +52,9 @@ export class AdminView {
 
         // Sessions polling
         this._sessionsPollTimer = null;
+        // Pagination for sessions table
+        this._sessionPage = 0;
+        this._sessionsPerPage = 5;
     }
 
     async start() {
@@ -88,7 +92,11 @@ export class AdminView {
             this._upnpAvailable = status.upnp_available || false;
             this._pendingRegistration = status.pending_registration || false;
             this._lastError = status.last_error || '';
-            this._httpsPort = status.https_port || this._httpsPort;
+            // Do NOT overwrite _httpsPort from internet status.
+            // The authoritative source is /api/admin/settings (_loadState()).
+            // InternetAccessManager may have a stale port if setPorts()
+            // was not called after a changeHttpsPort() on the backend.
+            // this._httpsPort = status.https_port || this._httpsPort;
         } catch (err) {
             console.warn('[Admin] Failed to load internet status:', err);
         }
@@ -99,6 +107,9 @@ export class AdminView {
             const status = await BackendClient.getAuthStatus();
             if (status.pin) {
                 this._pin = status.pin;
+            }
+            if (status.pin_consumed !== undefined) {
+                this._pinConsumed = status.pin_consumed;
             }
             if (status.active_sessions !== undefined) {
                 this._activeSessions = status.active_sessions;
@@ -129,18 +140,49 @@ export class AdminView {
         // Poll every 3 seconds to pick up new sessions (e.g. remote PIN validation)
         // and GeoIP data updates. Quick enough to feel instant on the admin page
         this._sessionsPollTimer = setInterval(async () => {
+            // Refresh PIN: autoRegeneratePin() fires after each successful
+            // PIN validation, so the displayed PIN may be stale.
+            await this._loadAuthStatus();
             await this._loadSessions();
             const sessionsDisplay = this.container.querySelector('#admin-sessions-table');
             if (sessionsDisplay) {
                 this._renderSessionsTable();
             }
-            // Also keep the session count in the PIN section in sync
+            // Keep the session count header in the Active Sessions section in sync
             this._activeSessions = this._sessions.length;
-            const pinCount = this.container.querySelector('#pin-session-count');
-            if (pinCount) {
-                pinCount.textContent = this._activeSessions > 0
+            const sessionCount = this.container.querySelector('#admin-session-count');
+            if (sessionCount) {
+                sessionCount.textContent = this._activeSessions > 0
                     ? `${this._activeSessions} active session(s)`
                     : 'No active sessions';
+            }
+            // Update the PIN display. If the PIN was consumed (auto-regenerated
+            // after remote validation), show "--------" to force the admin to
+            // explicitly generate a fresh PIN.
+            const pinDisplay = this.container.querySelector('#admin-pin-display');
+            if (pinDisplay) {
+                const displayValue = this._pinConsumed ? '--------' : this._pin;
+                if (pinDisplay.textContent !== displayValue) {
+                    const oldPin = pinDisplay.textContent;
+                    pinDisplay.textContent = displayValue;
+                    pinDisplay.classList.toggle('pin-consumed', this._pinConsumed);
+
+                    // Update the consumed hint (show/hide)
+                    const hintArea = this.container.querySelector('.pin-consumed-hint');
+                    if (this._pinConsumed && !hintArea) {
+                        // PIN became consumed while view was open — insert hint
+                        const hint = document.createElement('p');
+                        hint.className = 'settings-hint pin-consumed-hint';
+                        hint.textContent = 'The previous PIN was used by a remote user. Generate a new PIN to allow another session.';
+                        pinCount.parentNode.insertBefore(hint, pinCount);
+                    } else if (!this._pinConsumed && hintArea) {
+                        hintArea.remove();
+                    }
+
+                    if (this._pinConsumed) {
+                        console.log('[Admin] PIN consumed by remote user — showing "--------"');
+                    }
+                }
             }
         }, 5000);
     }
@@ -249,13 +291,19 @@ export class AdminView {
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
     }
 
+    _buildLocalUrl() {
+        const ip = this._getLocalIpForDisplay();
+        if (!ip) return '';
+        const port = this._httpsPort !== 443 ? ':' + this._httpsPort : '';
+        return 'https://' + ip + port;
+    }
+
     _getLocalIpForDisplay() {
-        if (!this._isLocalhost()) return '';
-        if (this._localIp) return this._localIp;
-        return '192.168.?.?';
+        return this._localIp || '';
     }
 
     render() {
+        this._sessionPage = 0;
         const transportLabels = {
             'webrtc-media-udp': 'WebRTC MediaTrack (UDP)',
             'webrtc-dc-udp':    'WebRTC DataChannel (UDP)',
@@ -292,7 +340,10 @@ export class AdminView {
                                 The PIN is valid for one session only.
                             </p>
                             <div class="pin-display-area">
-                                <span class="pin-display" id="admin-pin-display">${this.esc(this._pin)}</span>
+                                <span class="pin-display ${this._pinConsumed ? 'pin-consumed' : ''}"
+                                      id="admin-pin-display">
+                                    ${this.esc(this._pinConsumed ? '--------' : this._pin)}
+                                </span>
                                 <button class="btn btn-secondary" id="btn-copy-pin" style="flex-shrink:0;"
                                         title="Copy PIN to clipboard">
                                     Copy
@@ -304,16 +355,17 @@ export class AdminView {
                                     Clear
                                 </button>
                             </div>
-                            <p class="settings-hint" id="pin-session-count">
-                                ${this._activeSessions > 0
-                                    ? `${this._activeSessions} active session(s)`
-                                    : 'No active sessions'}
-                            </p>
+                            ${this._pinConsumed ? `
+                                <p class="settings-hint pin-consumed-hint">
+                                    The previous PIN was used by a remote user.
+                                    Generate a new PIN to allow another session.
+                                </p>
+                            ` : ''}
                         </div>
                     </div>
                 ` : ''}
 
-                <!-- Active Sessions Table (localhost only) -->
+                <!-- Active Sessions (localhost only) -->
                 ${this._isLocalhost() ? `
                     <div class="settings-section">
                         <h3 class="settings-section-title">Active Sessions</h3>
@@ -321,10 +373,14 @@ export class AdminView {
                             <p class="setting-desc">
                                 Remote users currently connected to this server.
                             </p>
+                            <p class="settings-hint" id="admin-session-count"
+                               style="font-weight:500;margin-bottom:4px;">
+                                ${this._activeSessions > 0
+                                    ? `${this._activeSessions} active session(s)`
+                                    : 'No active sessions'}
+                            </p>
                             <div id="admin-sessions-table">
-                                ${this._sessions.length === 0
-                                    ? '<p class="settings-hint">No active sessions</p>'
-                                    : this._buildSessionsTableHtml()}
+                                ${this._buildSessionsAreaHtml()}
                             </div>
                         </div>
                     </div>
@@ -437,6 +493,22 @@ export class AdminView {
                     ` : ''}
                 </div>
 
+                <!-- Local Access -->
+                ${this._localIp ? `
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Local Access</h3>
+                    <div class="settings-field" style="padding-top:0;">
+                        <div style="padding:4px 0;font-family:monospace;">
+                            <a href="${this.esc(this._buildLocalUrl())}" target="_blank" rel="noopener"
+                               class="tunnel-url-link">${this.esc(this._buildLocalUrl())}</a>
+                        </div>
+                        <p class="settings-hint">
+                            Access this server from other devices on your local network.
+                        </p>
+                    </div>
+                </div>
+                ` : ''}
+
                 <!-- Server Configuration -->
                 <div class="settings-section">
                     <h3 class="settings-section-title">Server Configuration</h3>
@@ -484,17 +556,22 @@ export class AdminView {
         this._markClean();
     }
 
-    _buildSessionsTableHtml() {
-        const rows = this._sessions.map(s => {
+    _buildSessionsTableHtml(sessions) {
+        const list = sessions || this._sessions;
+        const rows = list.map(s => {
             let location = this.esc(s.location || '');
-            if (location !== 'Local' && s.city) {
+            let ip = this.esc(s.ip || '');
+            if (s.location === 'Local') {
+                location = 'Local Network';
+                ip = 'Local Network';
+            } else if (s.city) {
                 location = this.esc(s.city) + (s.country ? ', ' + this.esc(s.country) : '');
             }
             return `
             <tr data-token="${this.esc(s.token)}">
                 <td>${this.esc(s.machine_name || 'Unknown')}</td>
                 <td>${this._formatDate(s.created_at)}</td>
-                <td>${this.esc(s.ip || '')}</td>
+                <td>${ip}</td>
                 <td>${location}</td>
                 <td>
                     <button class="btn btn-danger btn-small btn-session-revoke"
@@ -524,21 +601,74 @@ export class AdminView {
         `;
     }
 
+    _getPaginatedSessions() {
+        const start = this._sessionPage * this._sessionsPerPage;
+        return this._sessions.slice(start, start + this._sessionsPerPage);
+    }
+
+    _buildPaginationHtml() {
+        const totalPages = Math.max(1, Math.ceil(this._sessions.length / this._sessionsPerPage));
+        const currentPage = this._sessionPage + 1;
+        return `
+            <div class="sessions-pagination">
+                <button class="btn btn-small btn-pagination" id="btn-page-prev"
+                        ${this._sessionPage === 0 ? 'disabled' : ''}>
+                    &laquo; Previous
+                </button>
+                <span class="pagination-info">Page ${currentPage} of ${totalPages}</span>
+                <button class="btn btn-small btn-pagination" id="btn-page-next"
+                        ${this._sessionPage >= totalPages - 1 ? 'disabled' : ''}>
+                    Next &raquo;
+                </button>
+            </div>
+        `;
+    }
+
+    _buildSessionsAreaHtml() {
+        if (this._sessions.length === 0) {
+            return '<p class="settings-hint">No active sessions</p>';
+        }
+        const pageSessions = this._getPaginatedSessions();
+        return this._buildSessionsTableHtml(pageSessions) + this._buildPaginationHtml();
+    }
+
     _renderSessionsTable() {
         const container = this.container.querySelector('#admin-sessions-table');
         if (!container) return;
 
-        if (this._sessions.length === 0) {
-            container.innerHTML = '<p class="settings-hint">No active sessions</p>';
-            return;
+        // Clamp page if needed after data refresh
+        const totalPages = Math.max(1, Math.ceil(this._sessions.length / this._sessionsPerPage));
+        if (this._sessionPage >= totalPages) {
+            this._sessionPage = totalPages - 1;
         }
 
-        container.innerHTML = this._buildSessionsTableHtml();
+        container.innerHTML = this._buildSessionsAreaHtml();
 
         // Re-bind revoke buttons
         container.querySelectorAll('.btn-session-revoke').forEach(btn => {
             btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
         });
+
+        // Re-bind pagination buttons
+        const prevBtn = container.querySelector('#btn-page-prev');
+        const nextBtn = container.querySelector('#btn-page-next');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                if (this._sessionPage > 0) {
+                    this._sessionPage--;
+                    this._renderSessionsTable();
+                }
+            });
+        }
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                const maxPage = Math.ceil(this._sessions.length / this._sessionsPerPage) - 1;
+                if (this._sessionPage < maxPage) {
+                    this._sessionPage++;
+                    this._renderSessionsTable();
+                }
+            });
+        }
     }
 
     _formatDate(timestamp) {
@@ -666,6 +796,7 @@ export class AdminView {
                 try {
                     const result = await BackendClient.generatePin();
                     this._pin = result.pin;
+                    this._pinConsumed = false;  // fresh PIN
                     this.render();
                     this.bindEvents();
                     Toast.success('New PIN: ' + result.pin);
@@ -687,6 +818,7 @@ export class AdminView {
                 try {
                     const result = await BackendClient.clearPin();
                     this._pin = result.pin || '--------';
+                    this._pinConsumed = false;
                     this.render();
                     this.bindEvents();
                     Toast.info('PIN cleared — remote access disabled');
@@ -778,6 +910,27 @@ export class AdminView {
             });
         }
 
+        // Pagination buttons (must be bound immediately after render, not only in _renderSessionsTable)
+        const prevBtn = this.container.querySelector('#btn-page-prev');
+        const nextBtn = this.container.querySelector('#btn-page-next');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                if (this._sessionPage > 0) {
+                    this._sessionPage--;
+                    this._renderSessionsTable();
+                }
+            });
+        }
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                const maxPage = Math.ceil(this._sessions.length / this._sessionsPerPage) - 1;
+                if (this._sessionPage < maxPage) {
+                    this._sessionPage++;
+                    this._renderSessionsTable();
+                }
+            });
+        }
+
         // Revoke session buttons
         this.container.querySelectorAll('.btn-session-revoke').forEach(btn => {
             btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
@@ -813,10 +966,10 @@ export class AdminView {
             this._activeSessions = this._sessions.length;
             this._renderSessionsTable();
 
-            // Update session count in PIN section
-            const pinCount = this.container.querySelector('#pin-session-count');
-            if (pinCount) {
-                pinCount.textContent = this._activeSessions > 0
+            // Update session count in Active Sessions section
+            const sessionCount = this.container.querySelector('#admin-session-count');
+            if (sessionCount) {
+                sessionCount.textContent = this._activeSessions > 0
                     ? `${this._activeSessions} active session(s)`
                     : 'No active sessions';
             }

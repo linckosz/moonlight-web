@@ -486,7 +486,8 @@ void StreamSession::onShimConnectionStarted()
 
     QJsonObject result;
     result["status"] = "streaming";
-    result["sessionUrl"] = m_SessionUrl;
+    // sessionUrl intentionally excluded — it contains the internal IP of Sunshine
+    // (e.g. rtspenc://192.168.x.x:port) which must not be exposed to the browser.
     result["transport"] = m_Transport;
     result["transport_mode"] = m_TransportMode;
 

@@ -92,19 +92,19 @@ InternetAccessManager::InternetAccessManager(AppSettings* settings, QObject* par
     // is disabled, so the UI can display the URL immediately.
     ensureIdentifiers();
 
+    // Synchronous local IP detection for admin UI display
+    char buf[64] = {};
+    if (UPNPClient::getLocalIP(buf, sizeof(buf))) {
+        m_LocalIp = QString::fromLatin1(buf);
+        qInfo() << "[InternetAccess] Local LAN IP:" << m_LocalIp;
+    }
+
     // Eager UPnP discovery (deferred, non-blocking) so that upnp_available
     // is correctly reported even if Internet Access has never been enabled.
     QTimer::singleShot(2000, this, [this]() {
         if (!m_Upnp.isAvailable()) {
             qInfo() << "[InternetAccess] Eager UPnP discovery (2s deferred)";
             m_Upnp.discover(2000);
-
-            // Capture local IP after UPnP discovery (or via fallback)
-            char buf[64] = {};
-            if (UPNPClient::getLocalIP(buf, sizeof(buf))) {
-                m_LocalIp = QString::fromLatin1(buf);
-                qInfo() << "[InternetAccess] Local LAN IP:" << m_LocalIp;
-            }
         }
     });
 }

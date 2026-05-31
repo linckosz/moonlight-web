@@ -128,6 +128,7 @@ void AuthManager::loadSessions()
 QString AuthManager::generatePin()
 {
     m_currentPin = generatePinInternal();
+    m_pinConsumed = false;  // fresh PIN, never used
     Logger::info("[Auth] New PIN generated");
     emit pinChanged(m_currentPin);
     return m_currentPin;
@@ -146,6 +147,7 @@ void AuthManager::autoRegeneratePin()
     // Generate a new PIN immediately after a successful validation.
     // Does NOT invalidate existing sessions — they remain active.
     m_currentPin = generatePinInternal();
+    m_pinConsumed = true;  // mark as consumed — admin must generate fresh PIN
     Logger::info("[Auth] PIN auto-regenerated after successful validation");
     emit pinChanged(m_currentPin);
 }
@@ -153,6 +155,7 @@ void AuthManager::autoRegeneratePin()
 void AuthManager::clearPin()
 {
     m_currentPin = QStringLiteral("--------");
+    m_pinConsumed = false;
     Logger::info("[Auth] PIN cleared");
     emit pinChanged(m_currentPin);
 }
