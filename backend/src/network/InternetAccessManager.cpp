@@ -250,6 +250,15 @@ void InternetAccessManager::start()
             };
 
             checkAndMap(httpsPort, "TCP", "Moonlight-Web HTTPS");
+
+            // Map HTTP port too, so the HTTP→HTTPS redirect works from the internet.
+            // Without this mapping, external clients cannot reach the HTTP redirect
+            // server through the NAT gateway.
+            {
+                quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
+                checkAndMap(httpPort, "TCP", "Moonlight-Web HTTP");
+            }
+
             checkAndMap(47999, "UDP", "Moonlight-Web UDP Stream");
 
             // Capture local LAN IP for the UI (port mapping display)
@@ -1132,6 +1141,12 @@ void InternetAccessManager::onPeriodicCheck()
 
         quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
         checkAndRenew(httpsPort, "TCP", "Moonlight-Web HTTPS (renew)");
+
+        {
+            quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
+            checkAndRenew(httpPort, "TCP", "Moonlight-Web HTTP (renew)");
+        }
+
         checkAndRenew(47999, "UDP", "Moonlight-Web UDP Stream (renew)");
     }
 

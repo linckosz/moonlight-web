@@ -1202,4 +1202,145 @@ body {
     opacity: 0.7;
 }
 
+/* ── Login: Machine Name field ──────────────────────────────────────────── */
+
+.login-field {
+    margin-bottom: 16px;
+    text-align: left;
+}
+
+.login-label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.login-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #222240;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.15s;
+    cursor: text;
+}
+
+.login-input:focus {
+    border-color: var(--accent);
+}
+
+.login-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+
+/* PIN input: visible border matching dark theme */
+.login-pin-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #222240;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.15s;
+    cursor: text;
+}
+
+.login-pin-input:focus {
+    border-color: var(--accent);
+}
+
+.login-pin-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+
+/* ── Sessions Table (AdminView) ──────────────────────────────────────────── */
+
+.sessions-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 0.82rem;
+}
+
+.sessions-table th {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sessions-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+    color: var(--text-primary);
+    vertical-align: middle;
+}
+
+.sessions-table tr:hover td {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.sessions-table th:last-child,
+.sessions-table td:last-child {
+    text-align: center;
+    width: 80px;
+}
+
+/* Small button variant */
+.btn-small {
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    border-radius: 4px;
+}
+
+.btn-danger {
+    background-color: var(--error);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.btn-danger:hover {
+    opacity: 0.85;
+}
+
+.btn-danger:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* PIN display with copy button */
+.pin-display-area {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+}
+
+.pin-display {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: 6px;
+    color: var(--text-primary);
+    user-select: all;
+    padding: 6px 14px;
+    background: rgba(233, 69, 96, 0.08);
+    border-radius: 6px;
+    border: 1px solid rgba(233, 69, 96, 0.2);
+}
 

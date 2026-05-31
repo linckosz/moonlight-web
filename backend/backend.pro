@@ -50,6 +50,7 @@ INCLUDEPATH += $$PWD/libs/windows/include/x64
 
 SOURCES += \
     src/main.cpp \
+    src/server/AuthManager.cpp \
     src/server/AppSettings.cpp \
     src/server/HttpServer.cpp \
     src/server/StaticFileHandler.cpp \
@@ -60,6 +61,7 @@ SOURCES += \
     src/network/StunClient.cpp \
     src/network/AcmeClient.cpp \
     src/network/InternetAccessManager.cpp \
+    src/network/GeoIpService.cpp \
     src/TrayManager.cpp \
     src/backend/NvHTTP.cpp \
     src/backend/NvComputer.cpp \
@@ -109,6 +111,7 @@ SOURCES += \
     third_party/moonlight-common-c/src/RtpAudioQueue.c
 
 HEADERS += \
+    src/server/AuthManager.h \
     src/server/AppSettings.h \
     src/server/HttpServer.h \
     src/server/StaticFileHandler.h \
@@ -120,6 +123,7 @@ HEADERS += \
     src/network/StunClient.h \
     src/network/AcmeClient.h \
     src/network/InternetAccessManager.h \
+    src/network/GeoIpService.h \
     src/TrayManager.h \
     src/backend/NvAddress.h \
     src/backend/NvApp.h \

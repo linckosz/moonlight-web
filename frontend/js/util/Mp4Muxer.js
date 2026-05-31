@@ -227,17 +227,33 @@ export function buildHvcCDescription(vps, sps, pps) {
     //     byte 14: general_level_idc
     //
     // Fixed hvcC header: 22 bytes (configurationVersion + PTL + fixed fields).
-    // Each NAL array entry: 1 (type) + 2 (count) + 2 (length) = 5 + nal_unit.
+    // Each NAL array entry: 5 (1 type + 2 count + 2 length) + nal_unit.
     //
-    // IMPORTANT: The SPS in the bitstream may contain emulation prevention
-    // bytes (00 00 03).  These MUST be removed before reading the PTL fields
-    // for the hvcC header (which stores raw PTL bytes, not a NAL unit).
-    // NAL arrays in the hvcC keep the original data (with emulation prevention)
-    // per ISO 14496-15.
+    // IMPORTANT: The raw NAL units in the bitstream may contain emulation
+    // prevention bytes (00 00 03).  The hvcC header PTL fields MUST be read
+    // after removing emulation prevention bytes (which shift byte offsets).
+    //
+    // The NAL arrays in the hvcC, per ISO 14496-15, keep emulation prevention
+    // bytes.  However, Chromium's WebCodecs implementation for HEVC validates
+    // the hvcC by re-parsing the SPS from the NAL array and comparing the PTL
+    // values against the header.  If the raw SPS has emulation prevention bytes
+    // in the PTL region, the re-parsed PTL values shift and do NOT match the
+    // cleaned header PTL, causing isConfigSupported() to reject the config.
+    //
+    // Workaround: use de-emulated NAL units in the NAL arrays too.  This is
+    // technically non-compliant with ISO 14496-15 but is required for Chrome
+    // compatibility when the bitstream has emulation prevention in the PTL
+    // byte range (bytes 3-14 of the SPS).
+
+    // Strip emulation prevention from all parameter sets for consistency
+    // between the PTL header and the NAL array data.
+    const cleanVps = removeEmulationPrevention(vps);
+    const cleanSps = removeEmulationPrevention(sps);
+    const cleanPps = removeEmulationPrevention(pps);
 
     // Fixed header: 1 (version) + 12 (PTL) + 2 + 1 + 1 + 1 + 1 + 2 + 1 + 1 = 23
     // Each NAL array entry: 5 (1 type + 2 count + 2 length) + NAL data
-    const hvcCLen = 23 + 5 + vps.length + 5 + sps.length + 5 + pps.length;
+    const hvcCLen = 23 + 5 + cleanVps.length + 5 + cleanSps.length + 5 + cleanPps.length;
     const buf = new Uint8Array(hvcCLen);
     let off = 0;
 
@@ -247,7 +263,6 @@ export function buildHvcCDescription(vps, sps, pps) {
     // profile_tier_level general fields — extract from de-emulated SPS.
     // Emulation prevention bytes (00 00 03) in the SPS would corrupt the
     // fixed-field offsets, so we clean them first.
-    const cleanSps = removeEmulationPrevention(sps);
     buf.set(cleanSps.slice(3, 15), off); off += 12;
 
     // min_spatial_segmentation_idc: reserved(4) + 0
@@ -274,26 +289,26 @@ export function buildHvcCDescription(vps, sps, pps) {
     // numOfArrays = 3 (VPS, SPS, PPS)
     buf[off++] = 0x03;
 
-    // VPS array
+    // VPS array (de-emulated)
     buf[off++] = 0x00 | HEVC_VPS;
     buf[off++] = 0x00; buf[off++] = 0x01;
-    buf[off++] = (vps.length >> 8) & 0xFF;
-    buf[off++] = vps.length & 0xFF;
-    buf.set(vps, off); off += vps.length;
+    buf[off++] = (cleanVps.length >> 8) & 0xFF;
+    buf[off++] = cleanVps.length & 0xFF;
+    buf.set(cleanVps, off); off += cleanVps.length;
 
-    // SPS array
+    // SPS array (de-emulated)
     buf[off++] = 0x00 | HEVC_SPS;
     buf[off++] = 0x00; buf[off++] = 0x01;
-    buf[off++] = (sps.length >> 8) & 0xFF;
-    buf[off++] = sps.length & 0xFF;
-    buf.set(sps, off); off += sps.length;
+    buf[off++] = (cleanSps.length >> 8) & 0xFF;
+    buf[off++] = cleanSps.length & 0xFF;
+    buf.set(cleanSps, off); off += cleanSps.length;
 
-    // PPS array
+    // PPS array (de-emulated)
     buf[off++] = 0x00 | HEVC_PPS;
     buf[off++] = 0x00; buf[off++] = 0x01;
-    buf[off++] = (pps.length >> 8) & 0xFF;
-    buf[off++] = pps.length & 0xFF;
-    buf.set(pps, off);
+    buf[off++] = (cleanPps.length >> 8) & 0xFF;
+    buf[off++] = cleanPps.length & 0xFF;
+    buf.set(cleanPps, off);
 
     return buf;
 }

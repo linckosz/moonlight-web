@@ -2,20 +2,39 @@
  * Moonlight-Web — REST API client
  */
 export class BackendClient {
-    static async _handleError(resp) {
+    static async _handleError(resp, path = '') {
         let msg = '';
+        let body = null;
         try {
-            const body = await resp.json();
+            body = await resp.json();
             msg = body.message || body.error || '';
         } catch (_) {
             // Response body is not JSON or empty
         }
-        throw new Error(msg || `Request failed (${resp.status})`);
+
+        // Force page reload on auth errors — session expired or revoked.
+        // Skip auth endpoints (expected to return 401) and use sessionStorage
+        // guard to prevent infinite reload loops.
+        const isAuthEndpoint = path.startsWith('/api/auth/');
+        if (!isAuthEndpoint && (resp.status === 401 || msg === 'authentication_required')) {
+            if (!sessionStorage.getItem('mw_auth_reload')) {
+                sessionStorage.setItem('mw_auth_reload', '1');
+                console.warn('[MW] Authentication required — reloading page');
+                window.location.reload();
+                return new Promise(() => {});
+            }
+            sessionStorage.removeItem('mw_auth_reload');
+        }
+
+        const error = new Error(msg || `Request failed (${resp.status})`);
+        error.statusCode = resp.status;
+        error.responseBody = body;
+        throw error;
     }
 
     static async get(path) {
         const resp = await fetch(path);
-        if (!resp.ok) return this._handleError(resp);
+        if (!resp.ok) return this._handleError(resp, path);
         return resp.json();
     }
 
@@ -25,13 +44,13 @@ export class BackendClient {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
-        if (!resp.ok) return this._handleError(resp);
+        if (!resp.ok) return this._handleError(resp, path);
         return resp.json();
     }
 
     static async del(path) {
         const resp = await fetch(path, { method: 'DELETE' });
-        if (!resp.ok) return this._handleError(resp);
+        if (!resp.ok) return this._handleError(resp, path);
         return resp.json();
     }
 
@@ -46,6 +65,49 @@ export class BackendClient {
         return this.post(`/api/hosts/${hostId}/start`, { appId, ...streamingSettings });
     }
     static async quitApp(hostId)          { return this.post(`/api/hosts/${hostId}/quit`); }
+
+    // ── Auth API ───────────────────────────────────────────────────────────
+
+    static async validatePin(pin, machineName, clientIp = '') {
+        const body = { pin, machine_name: machineName };
+        if (clientIp) body.client_ip = clientIp;
+        return this.post('/api/auth/validate', body);
+    }
+    static async generatePin()                  { return this.post('/api/admin/pin/generate'); }
+    static async regeneratePin()                { return this.post('/api/auth/regenerate'); }
+    static async clearPin()                     { return this.post('/api/admin/pin/clear'); }
+    static async getAuthStatus()                { return this.get('/api/auth/status'); }
+
+    // ── Certificate Authentication ─────────────────────────────────────────
+
+    /** Download the certificate token as a text file. Returns the raw text content. */
+    static async downloadCertificate() {
+        const resp = await fetch('/api/admin/certificate/download');
+        if (!resp.ok) return this._handleError(resp);
+        return resp.text();
+    }
+
+    /** Validate a certificate token (alternative to PIN). Sends the raw token content. */
+    static async validateCertificate(certificateContent, machineName, clientIp = '') {
+        const body = {
+            certificate: certificateContent,
+            machine_name: machineName
+        };
+        if (clientIp) body.client_ip = clientIp;
+        return this.post('/api/auth/validate', body);
+    }
+
+    /** Regenerate the certificate token (invalidates all existing certificates). */
+    static async regenerateCertificate()          { return this.post('/api/admin/certificate/regenerate'); }
+
+    // ── Sessions API (admin, localhost only) ──────────────────────────────
+
+    static async getAuthSessions()              { return this.get('/api/auth/sessions'); }
+    static async revokeSession(token)           { return this.post('/api/auth/sessions/revoke', { token }); }
+
+    // ── Server Info ──────────────────────────────────────────────────────────
+
+    static async getServerHostname()            { return this.get('/api/server/hostname'); }
 
     // ── Admin Settings ───────────────────────────────────────────────────────────
 

@@ -214,6 +214,24 @@ void AppSettings::setStunServer(const QString& url)
     writeAll(obj);
 }
 
+// ── HMAC key ────────────────────────────────────────────────────────────────────
+
+QByteArray AppSettings::hmacKey() const
+{
+    QJsonObject obj = readAll();
+    QString b64 = obj.value("hmac_key").toString();
+    if (b64.isEmpty())
+        return {};
+    return QByteArray::fromBase64(b64.toUtf8());
+}
+
+void AppSettings::setHmacKey(const QByteArray& key)
+{
+    QJsonObject obj = readAll();
+    obj["hmac_key"] = QString::fromLatin1(key.toBase64());
+    writeAll(obj);
+}
+
 // ── Transport preference ───────────────────────────────────────────────────────
 
 QString AppSettings::transport() const
@@ -390,4 +408,31 @@ void AppSettings::setCertKey(const QString& value)
     writeAll(obj);
 }
 
+// ── Certificate Authentication ────────────────────────────────────────────────
+
+QString AppSettings::certificateToken() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("certificate_token").toString();
+}
+
+void AppSettings::setCertificateToken(const QString& token)
+{
+    QJsonObject obj = readAll();
+    obj["certificate_token"] = token;
+    writeAll(obj);
+}
+
+bool AppSettings::certAuthEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("cert_auth_enabled").toBool(false);
+}
+
+void AppSettings::setCertAuthEnabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["cert_auth_enabled"] = enabled;
+    writeAll(obj);
+}
 

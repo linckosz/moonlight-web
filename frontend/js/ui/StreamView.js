@@ -28,6 +28,26 @@ import {
 } from '../util/Av1Utils.js';
 
 /**
+ * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
+ * VideoFrame drawn to a Canvas2D via drawImage(VideoFrame) reads the NV12
+ * UV plane from uninitialized GPU memory, producing a green image.
+ *
+ * Two-part fix:
+ *   1. ALWAYS use createImageBitmap() for rendering (never drawImage with
+ *      a VideoFrame directly).  This routes through the RGBA bitmap path
+ *      which does not hit the buggy YUV compositor pipeline.
+ *   2. For the first few NV12 frames, call frame.copyTo() before
+ *      createImageBitmap() to force a low-level D3D11 GPU readback that
+ *      fully reads both Y and UV planes into CPU memory.  This ensures
+ *      the GPU texture data is fully resident before createImageBitmap
+ *      reads it — some Windows GPU/driver combinations also have issues
+ *      with createImageBitmap(VideoFrame) on NV12 HEVC textures.
+ *
+ * Alt-Tab (GPU context loss/restore) also fixes the green image — confirming
+ * it's a compositor/driver initialization issue, not a decode problem.
+ */
+
+/**
  * Sliding window statistics tracker.
  * Maintains a fixed-duration window of samples and provides min/max/avg.
  */
@@ -131,6 +151,13 @@ export class StreamView {
         this.pendingFrames = [];    // frames buffered before decoder config
         this.frameCount = 0;
         this.renderRunning = false;
+        // Warm-up counter: first 3 NV12 frames get a copyTo readback before
+        // createImageBitmap to force full GPU texture read (Windows Chrome fix).
+        this._warmupFrames = 0;
+
+        // Recycled buffer for HEVC RGBA copyTo — avoids per-frame allocation
+        this._rgbaBuffer = null;
+        this._rgbaBufferSize = 0;
 
         // Note: frame reordering via a reorder buffer was removed after causing
         // excessive IDR request flooding (every SCTP gap triggered a skip+IDR).
@@ -171,6 +198,23 @@ export class StreamView {
         this._onWheel = (e) => this.handleWheel(e);
         this._onPointerLockChange = () => this.handlePointerLockChange();
         this._onContextMenu = (e) => e.preventDefault();
+
+        // Visibility change: when returning from Alt-Tab, force browser to
+        // re-composite all layers.  On Chrome Windows, the GPU compositor may
+        // cache a corrupt layer (green tint from NV12→RGB bug in Canvas2D).
+        // Invalidation via will-change toggle forces a fresh composite.
+        this._onVisibilityChange = () => {
+            if (document.visibilityState === 'visible' && !this._quitting) {
+                const header = document.querySelector('.stream-header');
+                if (header) {
+                    // Toggle will-change to force layer re-compositing
+                    header.style.willChange = 'transform, opacity';
+                    requestAnimationFrame(() => {
+                        header.style.willChange = '';
+                    });
+                }
+            }
+        };
 
         // beforeunload: fire-and-forget quit when tab/window is closed
         this._onBeforeUnload = () => {
@@ -360,7 +404,10 @@ export class StreamView {
         document.getElementById('app').appendChild(el);
 
         this.canvas = document.getElementById('stream-canvas');
-        this.ctx = this.canvas.getContext('2d');
+        // willReadFrequently: true disables GPU acceleration of Canvas2D on Chrome Windows.
+        // This avoids a GPU compositor bug where NV12→RGB conversion contaminates
+        // adjacent HTML overlay layers with a green tint (HEVC streams on Windows).
+        this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
@@ -656,6 +703,51 @@ export class StreamView {
             });
         }
 
+        // ── Additional fallback variants for HEVC ─────────────────────────────
+        // Chrome's HEVC decoder can be finicky about specific hvcC fields.
+        // Each variant removes exactly one variable to find a working config.
+        if (codecType === CODEC_HEVC) {
+            // Variant A: use Uint8Array directly (not desc.buffer / ArrayBuffer).
+            // Some Chrome versions reject bare ArrayBuffer for description.
+            configsToTry.push({
+                codec: codec,
+                description: desc,  // Uint8Array, not ArrayBuffer
+                codedWidth: 1920,
+                codedHeight: 1080,
+                optimizeForLatency: true
+            });
+            // Variant B: no explicit codedWidth/codedHeight.
+            // Let Chrome infer resolution from the SPS in the description.
+            configsToTry.push({
+                codec: codec,
+                description: desc.buffer,
+                optimizeForLatency: true
+            });
+            // Variant C: no optimizeForLatency (Chrome proprietary extension
+            // that may cause rejection for HEVC on some drivers).
+            configsToTry.push({
+                codec: codec,
+                description: desc.buffer,
+                codedWidth: 1920,
+                codedHeight: 1080
+            });
+            // Variant D: no optimizeForLatency, no codedWidth/codedHeight.
+            configsToTry.push({
+                codec: codec,
+                description: desc.buffer
+            });
+            // Last resort: bare codec string, no description at all.
+            // Only works on some platforms where Chrome can auto-detect the
+            // HEVC config from the bitstream itself (rare, but worth trying).
+            configsToTry.push({
+                codec: codec,
+                optimizeForLatency: true
+            });
+            configsToTry.push({
+                codec: codec
+            });
+        }
+
         console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs (' +
             (codecType === CODEC_HEVC ? 'HEVC' : 'H.264') + ')');
         tryCodecs(configsToTry, 0);
@@ -816,6 +908,19 @@ export class StreamView {
         const loop = (now) => {
             if (!this.renderRunning) return;
 
+            // Detect Canvas2D context loss (GPU driver crash, Alt-Tab on some GPUs).
+            // When lost, the canvas is permanently blank — we must recreate the context.
+            if (this.ctx && this.ctx.isContextLost()) {
+                console.warn('[StreamView] Canvas2D context lost, recreating...');
+                this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+                // Force re-composite all overlay layers by briefly toggling transform
+                const header = document.querySelector('.stream-header');
+                if (header) {
+                    header.style.transform = 'translateZ(0)';
+                    requestAnimationFrame(() => { header.style.transform = ''; });
+                }
+            }
+
             // Dequeue and render the latest frame
             while (this.frameQueue.length > 0) {
                 const frame = this.frameQueue.shift();
@@ -828,11 +933,12 @@ export class StreamView {
                     this.canvas.height = frame.displayHeight;
                 }
 
-                // Draw frame to canvas
-                this.ctx.drawImage(frame, 0, 0,
-                    this.canvas.width, this.canvas.height);
-                frame.close();
-                this.stats.rendered++;
+                // Always render via createImageBitmap (never direct drawImage with
+                // a VideoFrame).  On Windows Chrome, the direct VideoFrame draw path
+                // reads the NV12 UV plane from uninitialized GPU memory, producing
+                // a green image for HEVC streams.  createImageBitmap routes through
+                // a different pipeline that handles NV12->RGB correctly.
+                this._drawFrameWithBitmap(frame);
 
                 // Log stats periodically
                 if (this.stats.rendered % 60 === 0) {
@@ -853,6 +959,103 @@ export class StreamView {
 
     stopRenderLoop() {
         this.renderRunning = false;
+    }
+
+    /**
+     * Draw a VideoFrame to canvas via an intermediate ImageBitmap.
+     *
+     * For HEVC NV12 frames on Windows Chrome, uses a CPU-side RGBA copyTo
+     * + putImageData path that completely bypasses the GPU compositor's
+     * buggy NV12→RGBA conversion pipeline.  This is the only reliable
+     * workaround for certain GPU/driver combinations where createImageBitmap
+     * produces green-tinted output for HEVC streams.
+     *
+     * For H.264/AV1 frames (and non-NV12 formats), uses createImageBitmap
+     * which is fast and reliable.
+     *
+     * Async: returns immediately; the frame is always closed, even on error.
+     */
+    async _drawFrameWithBitmap(frame) {
+        const isHevcNv12 = (this.videoCodec === CODEC_HEVC && frame.format === 'NV12');
+
+        // ── HEVC NV12: CPU-side RGBA readback via copyTo + putImageData ──
+        // On Windows Chrome, the GPU NV12→RGBA conversion for HEVC can
+        // produce incorrect colors when the GPU compositor state is not
+        // fully initialized.  Using copyTo forces a CPU-side readback
+        // that bypasses the buggy GPU pipeline entirely.
+        if (isHevcNv12) {
+            try {
+                const w = frame.displayWidth || frame.codedWidth || 0;
+                const h = frame.displayHeight || frame.codedHeight || 0;
+                if (w > 0 && h > 0 && this.canvas && this.ctx) {
+                    const rgbaSize = w * h * 4;
+                    // Reuse buffer across frames to avoid GC pressure
+                    if (!this._rgbaBuffer || this._rgbaBufferSize < rgbaSize) {
+                        this._rgbaBuffer = new ArrayBuffer(rgbaSize);
+                        this._rgbaBufferSize = rgbaSize;
+                    }
+                    await frame.copyTo(this._rgbaBuffer, { format: 'RGBA' });
+                    const imageData = new ImageData(
+                        new Uint8ClampedArray(this._rgbaBuffer, 0, rgbaSize),
+                        w, h
+                    );
+                    this.ctx.putImageData(imageData, 0, 0);
+                }
+            } catch (e) {
+                console.warn('[StreamView] HEVC RGBA copyTo failed:', e.message);
+                // Fallback: use createImageBitmap with color space conversion disabled
+                // to bypass any browser color management bugs.
+                try {
+                    const bitmap = await createImageBitmap(frame, {
+                        colorSpaceConversion: 'none',
+                        premultiplyAlpha: 'none'
+                    });
+                    if (this.canvas && this.ctx) {
+                        this.ctx.drawImage(bitmap, 0, 0,
+                            this.canvas.width, this.canvas.height);
+                    }
+                    bitmap.close();
+                } catch (e2) {
+                    console.warn('[StreamView] HEVC createImageBitmap fallback also failed:', e2.message);
+                }
+            }
+            frame.close();
+            this.stats.rendered++;
+            return;
+        }
+
+        // ── H.264 / AV1 / non-NV12: standard createImageBitmap path ─────
+        // NV12 readback for warmup frames (forces GPU texture to be fully
+        // resident before createImageBitmap reads it).
+        if (this._warmupFrames < 3 && frame.format === 'NV12') {
+            try {
+                const size = frame.allocationSize({ format: 'NV12' });
+                if (size > 0) {
+                    const buf = new ArrayBuffer(size);
+                    await frame.copyTo(buf, { format: 'NV12' });
+                }
+            } catch (e) {
+                // copyTo may fail on some platforms — safe to ignore
+            }
+            this._warmupFrames++;
+        }
+
+        try {
+            const bitmap = await createImageBitmap(frame);
+            if (this.canvas && this.ctx) {
+                this.ctx.drawImage(bitmap, 0, 0,
+                    this.canvas.width, this.canvas.height);
+            }
+            bitmap.close();
+        } catch (e) {
+            console.warn('[StreamView] createImageBitmap failed:', e.message);
+            // Note: drawImage(VideoFrame) fallback intentionally omitted.
+            // On Windows Chrome with HEVC NV12, direct VideoFrame draw
+            // always produces a green image via the buggy compositor YUV
+            // pipeline.  Dropping the frame is preferable to showing green.
+        }
+        frame.close();
+        this.stats.rendered++;
     }
 
     // =========================================================================
@@ -1265,6 +1468,7 @@ export class StreamView {
         this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
         this.canvas.addEventListener('contextmenu', this._onContextMenu);
         window.addEventListener('beforeunload', this._onBeforeUnload);
+        document.addEventListener('visibilitychange', this._onVisibilityChange);
 
         // Mode-specific events
         if (this._gamingMode) {
@@ -1343,6 +1547,7 @@ export class StreamView {
         document.removeEventListener('keyup', this._onKeyUp);
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
+        document.removeEventListener('visibilitychange', this._onVisibilityChange);
         if (this.canvas) {
             this.canvas.removeEventListener('mousemove', this._onMouseMove);
             this.canvas.removeEventListener('mousedown', this._onMouseDown);

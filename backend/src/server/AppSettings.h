@@ -141,6 +141,13 @@ public:
     QString transportMode() const;
     void setTransportMode(const QString& mode);
 
+    // ── HMAC key for session tokens ──────────────────────────────────────────
+
+    /// Persisted HMAC signing key. Generated once, reused across restarts.
+    /// Stored as Base64 string. Empty if never set.
+    QByteArray hmacKey() const;
+    void setHmacKey(const QByteArray& key);
+
     /// Pending domain registration flag (set when no internet at install time).
     /// On each startup, if true, retry registration every 30s until success.
     bool pendingRegistration() const;
@@ -157,6 +164,25 @@ public:
     /// After Let's Encrypt issuance, set to a file path (e.g. letsencrypt/domain_key.pem).
     QString certKey() const;
     void setCertKey(const QString& value);
+
+    // ── Certificate Authentication (alternative to PIN) ──────────────────────
+    //
+    // Generates and persists a long random token used as a downloadable
+    // certificate file. Remote users can upload this file instead of entering
+    // a PIN. Generated once at first startup, never changes afterwards.
+
+    /// The certificate token (64+ random bytes, Base64-encoded). Empty if never generated.
+    QString certificateToken() const;
+
+    /// Persist the certificate token.
+    void setCertificateToken(const QString& token);
+
+    /// Whether certificate authentication is enabled (alternative to PIN).
+    /// Default: false.
+    bool certAuthEnabled() const;
+
+    /// Enable or disable certificate authentication.
+    void setCertAuthEnabled(bool enabled);
 
     // ── Low-level access (for other one-off settings) ───────────────────────
 
