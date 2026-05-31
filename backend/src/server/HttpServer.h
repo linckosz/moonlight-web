@@ -12,6 +12,7 @@
 
 class RestRouter;
 class StaticFileHandler;
+class AuthManager;
 
 class HttpServer : public QObject
 {
@@ -67,6 +68,14 @@ public:
     /// Check whether a client address (from peerAddress()) is localhost
     /// or a loopback address (127.0.0.1, ::1, or any loopback).
     static bool isLocalRequest(const QString& addr);
+
+    /// Set the AuthManager for PIN-based authentication of remote requests.
+    void setAuthManager(AuthManager* am) { m_AuthManager = am; }
+    AuthManager* authManager() const { return m_AuthManager; }
+
+    /// Check whether the request carries a valid session cookie.
+    /// Returns true if no AuthManager is set (auth disabled).
+    bool isAuthenticated(const HttpRequest& req) const;
 
 signals:
     void started(quint16 port);
@@ -149,6 +158,9 @@ private:
     /// Expected Common Name for certificate matching (e.g. "brunoocto.moonlightweb.top").
     /// Set via setDomain() before loadCert() or reloadTls().
     QString m_Domain;
+
+    /// PIN-based authentication manager (nullable — auth disabled when null).
+    AuthManager* m_AuthManager = nullptr;
 
     /// Resolve a cert_pem/cert_key value to PEM data.
     /// Tries qgetenv(value) first, then QFile(value).

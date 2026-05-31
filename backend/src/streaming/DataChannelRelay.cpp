@@ -293,6 +293,42 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 
     bool isKeyframe = (frameType == 1);
 
+    // ── DEBUG LOG: First frames detailed hex dump ──────────────────────────
+    static int debugFrameNumber = 0;
+    debugFrameNumber++;
+    if (debugFrameNumber <= 3 || debugFrameNumber % 120 == 0) {
+        qInfo() << "[DataChannelRelay] onVideoFrame #" << debugFrameNumber
+                << "type=" << frameType << "size=" << data.size()
+                << "dcOpen=" << (m_VideoDc && m_VideoDc->isOpen())
+                << "haveBuffered=" << m_HaveBufferedKeyframe
+                << "framesSent=" << m_FramesSentCount;
+        if (data.size() > 0) {
+            int dumpLen = qMin(48, data.size());
+            QByteArray hexDump;
+            for (int i = 0; i < dumpLen; i++) {
+                hexDump += QString::asprintf("%02x ", (unsigned char)data[i]).toUtf8();
+            }
+            qInfo() << "[DataChannelRelay]   HEX:" << hexDump;
+            // Log NAL unit types for debugging
+            QByteArray nalTypes;
+            for (int i = 0; i < qMin(data.size() - 3, 4096); i++) {
+                if (data[i] == 0 && data[i+1] == 0 &&
+                    (data[i+2] == 1 || (i+3 < data.size() && data[i+2] == 0 && data[i+3] == 1))) {
+                    int startCodeLen = (data[i+2] == 1) ? 3 : 4;
+                    if (i + startCodeLen < data.size()) {
+                        unsigned char nalByte = (unsigned char)data[i + startCodeLen];
+                        int nalType = (nalByte & 0x1F);
+                        int hevcType = (nalByte >> 1) & 0x3F;
+                        if (!nalTypes.isEmpty()) nalTypes += " ";
+                        nalTypes += QString::asprintf("H264:%d/HEVC:%d@%d", nalType, hevcType, i).toUtf8();
+                    }
+                }
+            }
+            if (!nalTypes.isEmpty())
+                qInfo() << "[DataChannelRelay]   NALs:" << nalTypes;
+        }
+    }
+
     // Buffer keyframes arriving before the Video DC is ready.
     // Sunshine starts sending the initial IDR immediately after launch,
     // before ICE negotiation and DataChannel creation complete (~1-2s).
@@ -301,10 +337,10 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
         m_BufferedKeyframe = data;
         m_HaveBufferedKeyframe = true;
-        m_FramesSentAtBufferTime = m_FramesSentCount;
-        qInfo() << "[DataChannelRelay] Buffered keyframe size=" << data.size()
+        m_NewKeyframeArrived = false;  // Reset — we have the latest buffer
+        qInfo() << "[DataChannelRelay] BUFFERED keyframe size=" << data.size()
                 << "(DC ready=" << (m_VideoDc && m_VideoDc->isOpen())
-                << " framesSentAtBuffer=" << m_FramesSentAtBufferTime << ")";
+                << " newKeyframeArrived=false)";
         return;
     }
 
@@ -319,11 +355,12 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
         return;  // DC exists but not yet open
     }
 
-    static int logCounter = 0;
-    logCounter++;
-    if (logCounter <= 5 || logCounter % 120 == 0) {
-        qInfo() << "[DataChannelRelay] Video frame #" << logCounter
-                << "size=" << data.size() << "type=" << frameType;
+    // If a new keyframe arrives directly while a buffered keyframe exists,
+    // mark it as stale. Delta frames do NOT invalidate the buffer — they
+    // are useless without a keyframe, so we must still send the buffered
+    // one when sendBufferedKeyframe() fires.
+    if (isKeyframe && m_HaveBufferedKeyframe) {
+        m_NewKeyframeArrived = true;
     }
 
     sendFragmented(data, isKeyframe, m_VideoDc);
@@ -336,29 +373,53 @@ void DataChannelRelay::sendBufferedKeyframe()
     if (!m_HaveBufferedKeyframe) return;
     if (m_Stopping.load() || !m_VideoDc || !m_VideoDc->isOpen()) return;
 
-    // Stale buffer guard: if new frames (keyframe or delta) were already sent
-    // directly since the buffer was stored, the buffered keyframe is stale.
-    // This race happens when Sunshine sends a second IDR before the initial
-    // onVideoFrame buffer is flushed. The stale keyframe carries outdated
+    // Stale buffer guard: if a NEW keyframe was already sent directly
+    // (from onVideoFrame on the open DC) since the buffer was stored,
+    // the buffered keyframe is stale and must be dropped.
+    // Delta frames alone do NOT make the buffer stale — they need a
+    // keyframe to be useful.
+    //
+    // This race happens when Sunshine sends a second IDR before the
+    // sendBufferedKeyframe() event (invokeMethod, Qt::QueuedConnection)
+    // is processed by the main loop. The stale keyframe carries outdated
     // SPS/VUI parameters; configuring the browser decoder with them while
     // stripping VPS/SPS/PSS from newer frames via toAvcc() causes wrong
-    // color interpretation (green image). The decoder recovers via the
-    // browser's 3-second IDR timeout or the next periodic IDR from Sunshine.
-    if (m_FramesSentCount > m_FramesSentAtBufferTime) {
-        qInfo() << "[DataChannelRelay] Stale buffered keyframe dropped —"
-                << (m_FramesSentCount - m_FramesSentAtBufferTime)
-                << "frames sent since buffer, discarding"
-                << m_BufferedKeyframe.size() << "bytes";
+    // color interpretation (green image).
+    if (m_NewKeyframeArrived) {
+        qInfo() << "[DataChannelRelay] STALE: buffered keyframe DROPPED —"
+                << "new keyframe arrived while buffer was held, discarding"
+                << m_BufferedKeyframe.size() << "bytes"
+                << "(framesSentCount=" << m_FramesSentCount << ")";
+        // HEX dump the stale keyframe for debugging
+        if (m_BufferedKeyframe.size() > 0) {
+            int dumpLen = qMin(48, m_BufferedKeyframe.size());
+            QByteArray hexDump;
+            for (int i = 0; i < dumpLen; i++) {
+                hexDump += QString::asprintf("%02x ", (unsigned char)m_BufferedKeyframe[i]).toUtf8();
+            }
+            qInfo() << "[DataChannelRelay]   STALE keyframe HEX:" << hexDump;
+        }
         m_BufferedKeyframe.clear();
         m_HaveBufferedKeyframe = false;
+        m_NewKeyframeArrived = false;
         return;
     }
 
     qInfo() << "[DataChannelRelay] Sending buffered keyframe, size="
             << m_BufferedKeyframe.size();
+    // HEX dump the buffered keyframe before sending
+    if (m_BufferedKeyframe.size() > 0) {
+        int dumpLen = qMin(48, m_BufferedKeyframe.size());
+        QByteArray hexDump;
+        for (int i = 0; i < dumpLen; i++) {
+            hexDump += QString::asprintf("%02x ", (unsigned char)m_BufferedKeyframe[i]).toUtf8();
+        }
+        qInfo() << "[DataChannelRelay]   BUFFERED keyframe HEX:" << hexDump;
+    }
     sendFragmented(m_BufferedKeyframe, true, m_VideoDc);
     m_BufferedKeyframe.clear();
     m_HaveBufferedKeyframe = false;
+    m_NewKeyframeArrived = false;
 }
 
 // --- Audio forwarding ---
@@ -545,6 +606,18 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
     uint32_t frameId = m_FrameId++;
 
+    // Log data being sent for first keyframes (debug)
+    if (isKeyframe && frameId <= 2) {
+        QByteArray hexDump;
+        int dumpLen = qMin(48, totalSize);
+        for (int i = 0; i < dumpLen; i++) {
+            hexDump += QString::asprintf("%02x ", (unsigned char)data[i]).toUtf8();
+        }
+        qInfo() << "[DataChannelRelay] sendFragmented keyframe frameId=" << frameId
+                << "totalSize=" << totalSize << "chunks=" << totalChunks
+                << "firstBytes:" << hexDump;
+    }
+
     // Capture a monotonic timestamp (ms since epoch, modulo 2^32) at send time.
     // The frontend uses this with Date.now() to estimate end-to-end latency.
     // Clocks must be roughly synchronized (NTP) for the estimate to be accurate.
@@ -670,6 +743,7 @@ void DataChannelRelay::stop()
     // Clear buffered keyframe (if any)
     m_BufferedKeyframe.clear();
     m_HaveBufferedKeyframe = false;
+    m_NewKeyframeArrived = false;
 
     m_Connected = false;
 

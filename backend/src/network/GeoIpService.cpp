@@ -1,0 +1,110 @@
+#include "GeoIpService.h"
+#include "common/Logger.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUrl>
+#include <QUrlQuery>
+
+GeoIpService::GeoIpService(QObject* parent)
+    : QObject(parent)
+    , m_nam(new QNetworkAccessManager(this))
+{
+}
+
+void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
+{
+    if (!callback) return;
+
+    // Skip local/private IPs — no geolocation possible
+    if (ip.isEmpty() || ip == "127.0.0.1" || ip == "::1"
+        || ip.startsWith("192.168.") || ip.startsWith("10.")
+        || ip.startsWith("172.16.") || ip.startsWith("172.17.")
+        || ip.startsWith("172.18.") || ip.startsWith("172.19.")
+        || ip.startsWith("172.20.") || ip.startsWith("172.21.")
+        || ip.startsWith("172.22.") || ip.startsWith("172.23.")
+        || ip.startsWith("172.24.") || ip.startsWith("172.25.")
+        || ip.startsWith("172.26.") || ip.startsWith("172.27.")
+        || ip.startsWith("172.28.") || ip.startsWith("172.29.")
+        || ip.startsWith("172.30.") || ip.startsWith("172.31.")
+        || ip.startsWith("169.254.")) {
+        callback(QString(), QString());
+        return;
+    }
+
+    // Check cache
+    auto it = m_cache.find(ip);
+    if (it != m_cache.end()) {
+        callback(it->first, it->second);
+        return;
+    }
+
+    // Check if there's already a pending request for this IP
+    auto pendingIt = m_pending.find(ip);
+    if (pendingIt != m_pending.end()) {
+        pendingIt->append(callback);
+        return;
+    }
+
+    // Start new request
+    m_pending[ip].append(callback);
+
+    QUrl url(QStringLiteral("http://ip-api.com/json/%1").arg(ip));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("fields"), QStringLiteral("city,country,status"));
+    url.setQuery(query);
+
+    QNetworkRequest req(url);
+    req.setRawHeader("User-Agent", "Moonlight-Web/1.0");
+    req.setTransferTimeout(5000);  // 5s timeout
+
+    QNetworkReply* reply = m_nam->get(req);
+
+    connect(reply, &QNetworkReply::finished, this, [this, ip, reply]() {
+        reply->deleteLater();
+
+        QString city;
+        QString country;
+
+        if (reply->error() == QNetworkReply::NoError) {
+            QByteArray data = reply->readAll();
+            QJsonDocument doc = QJsonDocument::fromJson(data);
+            if (doc.isObject()) {
+                QJsonObject obj = doc.object();
+                if (obj.value("status").toString() == "success") {
+                    city = obj.value("city").toString();
+                    country = obj.value("country").toString();
+                }
+            }
+        } else {
+            Logger::warning(QString("[GeoIp] Failed to lookup %1: %2")
+                .arg(ip, reply->errorString()));
+        }
+
+        // Cache result (even empty — avoids re-fetching unreachable IPs)
+        m_cache[ip] = qMakePair(city, country);
+
+        // Fire all pending callbacks for this IP
+        auto pendingIt = m_pending.find(ip);
+        if (pendingIt != m_pending.end()) {
+            for (const auto& cb : pendingIt.value()) {
+                if (cb) cb(city, country);
+            }
+            m_pending.erase(pendingIt);
+        }
+    });
+}
+
+QPair<QString, QString> GeoIpService::cachedLocation(const QString& ip) const
+{
+    auto it = m_cache.find(ip);
+    if (it != m_cache.end())
+        return *it;
+    return {};
+}
+
+void GeoIpService::clearCache()
+{
+    m_cache.clear();
+    Logger::info("[GeoIp] Cache cleared");
+}

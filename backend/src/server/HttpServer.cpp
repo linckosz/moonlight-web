@@ -1,6 +1,7 @@
 #include "HttpServer.h"
 #include "RestRouter.h"
 #include "StaticFileHandler.h"
+#include "server/AuthManager.h"
 #include "common/Logger.h"
 
 #include <QCoreApplication>
@@ -1290,6 +1291,29 @@ bool HttpServer::isLocalRequest(const QString& addr)
         || QHostAddress(addr).isLoopback();
 }
 
+bool HttpServer::isAuthenticated(const HttpRequest& req) const
+{
+    if (!m_AuthManager)
+        return true; // No auth manager = auth disabled
+
+    // Parse Cookie header for mw_session token
+    QString cookie = req.headers.value("cookie");
+    if (cookie.isEmpty())
+        return false;
+
+    // Cookies are separated by "; " or ";"
+    QStringList cookies = cookie.split(";");
+    for (const QString& c : cookies) {
+        QString trimmed = c.trimmed();
+        if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
+            QString token = trimmed.mid(QStringLiteral("mw_session=").length());
+            if (m_AuthManager->validateSession(token))
+                return true;
+        }
+    }
+    return false;
+}
+
 // --- HTTP redirect ----------------------------------------------------------
 
 void HttpServer::onHttpConnection()
@@ -1371,19 +1395,37 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     HttpRequest req = parseRequest(requestData);
     req.clientAddress = socket->peerAddress().toString();
 
-    // HTTP→HTTPS redirect for plain HTTP connections from LAN/local clients.
-    // Only redirect when the user typed http:// in their browser (LAN/localhost).
-    // Public tunnel connections are NOT redirected — the client is already on
-    // HTTPS at the tunnel edge, and the tunnel forwards plain HTTP to us.
+    // HTTP→HTTPS redirect for plain HTTP connections.
+    //
+    // Redirect ALL HTTP requests to HTTPS, regardless of whether the
+    // hostname is LAN (localhost, 192.168.x.x) or public domain.
+    //
+    // Exception: skip redirect when the client is localhost AND the Host
+    // header is a public domain — this indicates a TLS-terminating tunnel
+    // (e.g. cloudflared, nport TLS mode) that forwards decrypted traffic
+    // to our HTTP port. In that case the browser is already on HTTPS at
+    // the tunnel edge, and redirecting would create a loop.
+    //
+    // The redirect URL omits the port when it is the standard 443, so
+    // http://domain → https://domain (clean URL without :443).
     if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0) {
         QString host = req.headers.value("host");
         int portSep = host.lastIndexOf(':');
         QString hostname = (portSep >= 0) ? host.left(portSep) : host;
 
-        if (isLanHost(hostname)) {
-            QString location = QString("https://%1:%2%3")
+        bool isLocalClient = HttpServer::isLocalRequest(req.clientAddress);
+        bool isPublicDomain = !isLanHost(hostname);
+
+        // Skip redirect when behind a TLS-terminating tunnel (localhost
+        // client + public Host header = tunnel already handled TLS).
+        if (!(isLocalClient && isPublicDomain)) {
+            QString portPart;
+            if (m_ActiveHttpsPort != 443)
+                portPart = QString(":%1").arg(m_ActiveHttpsPort);
+
+            QString location = QString("https://%1%2%3")
                 .arg(hostname)
-                .arg(m_ActiveHttpsPort)
+                .arg(portPart)
                 .arg(req.path);
             HttpResponse resp;
             resp.statusCode = 307;
@@ -1391,7 +1433,6 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             sendResponse(socket, resp);
             return;
         }
-        // Public host (tunnel): fall through, serve directly
     }
 
     if (!req.path.startsWith("/api/")) {
@@ -1401,6 +1442,21 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         // the History API (e.g. /admin, /settings).
         if (resp.statusCode == 404)
             resp = m_StaticFiles->serveFile("/");
+        sendResponse(socket, resp);
+        return;
+    }
+
+    // ── Auth check for API routes ──────────────────────────────────────────
+    // Exemptions: localhost, /api/auth/*, /api/health, /api/server/*
+    if (m_AuthManager
+        && !HttpServer::isLocalRequest(req.clientAddress)
+        && req.path != "/api/health"
+        && !req.path.startsWith("/api/auth/")
+        && !req.path.startsWith("/api/server/")
+        && !isAuthenticated(req)) {
+        QJsonObject obj;
+        obj["error"] = "authentication_required";
+        HttpResponse resp = HttpResponse::json(obj, 401);
         sendResponse(socket, resp);
         return;
     }
@@ -1431,6 +1487,36 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
 void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)
 {
+    // ── Auth check: validate session cookie before proxying WS upgrade ────
+    if (m_AuthManager && !HttpServer::isLocalRequest(clientSocket->peerAddress().toString())) {
+        QString headerPart = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n\r\n")));
+        bool authenticated = false;
+        for (const QString& line : headerPart.split("\r\n")) {
+            if (line.startsWith("Cookie:", Qt::CaseInsensitive)) {
+                QString cookie = line.mid(7).trimmed();
+                QStringList cookies = cookie.split(";");
+                for (const QString& c : cookies) {
+                    QString trimmed = c.trimmed();
+                    if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
+                        QString token = trimmed.mid(QStringLiteral("mw_session=").length());
+                        if (m_AuthManager->validateSession(token)) {
+                            authenticated = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (authenticated) break;
+        }
+        if (!authenticated) {
+            QJsonObject obj;
+            obj["error"] = "authentication_required";
+            HttpResponse resp = HttpResponse::json(obj, 401);
+            sendResponse(clientSocket, resp);
+            return;
+        }
+    }
+
     // Parse the WebSocket path from the upgrade request to determine the target.
     //   GET /ws          → proxy to m_SignalingPort (WebRTC signaling)
     //   GET /ws/stream   → proxy to m_StreamRelayPort (legacy WSS StreamRelay)

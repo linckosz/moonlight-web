@@ -5,6 +5,8 @@
  *   - Internet Access (Azure DNS) with DNS propagation check
  *   - HTTPS port configuration
  *   - Transport mode
+ *   - Access PIN display with copy-to-clipboard
+ *   - Active sessions table with geo-location and revoke
  *
  * All settings stored server-side. Unsaved changes are discarded on close.
  */
@@ -37,17 +39,29 @@ export class AdminView {
         this._dnsPollAttempts = 0;
         this._maxDnsPollAttempts = 60; // 5 min at 5s interval
 
+        // Auth / PIN state (default "--------" = no valid PIN)
+        this._pin = '--------';
+        this._activeSessions = 0;
+        this._sessions = [];
+        this._certAuthEnabled = false;
+
         // Dirty tracking: snapshot of values at load time
         this._cleanState = {};
         this._dirty = false;
+
+        // Sessions polling
+        this._sessionsPollTimer = null;
     }
 
     async start() {
         await this._loadState();
         await this._loadInternetState();
+        await this._loadAuthStatus();
+        await this._loadSessions();
         this.render();
         this.bindEvents();
         this._startDnsPollingIfNeeded();
+        this._startSessionsPolling();
     }
 
     async _loadState() {
@@ -55,6 +69,7 @@ export class AdminView {
             const admin = await BackendClient.getAdminSettings();
             this._httpsPort = admin.https_port || 443;
             this._httpPort = admin.http_port || 80;
+            this._certAuthEnabled = admin.cert_auth_enabled || false;
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
@@ -79,8 +94,62 @@ export class AdminView {
         }
     }
 
+    async _loadAuthStatus() {
+        try {
+            const status = await BackendClient.getAuthStatus();
+            if (status.pin) {
+                this._pin = status.pin;
+            }
+            if (status.active_sessions !== undefined) {
+                this._activeSessions = status.active_sessions;
+            }
+        } catch (err) {
+            console.warn('[Admin] Failed to load auth status:', err);
+        }
+    }
+
+    async _loadSessions() {
+        try {
+            const result = await BackendClient.getAuthSessions();
+            this._sessions = result.sessions || [];
+        } catch (err) {
+            console.warn('[Admin] Failed to load sessions:', err);
+        }
+    }
+
     destroy() {
         this._stopDnsPolling();
+        this._stopSessionsPolling();
+    }
+
+    // --- Sessions Polling ---
+
+    _startSessionsPolling() {
+        this._stopSessionsPolling();
+        // Poll every 3 seconds to pick up new sessions (e.g. remote PIN validation)
+        // and GeoIP data updates. Quick enough to feel instant on the admin page
+        this._sessionsPollTimer = setInterval(async () => {
+            await this._loadSessions();
+            const sessionsDisplay = this.container.querySelector('#admin-sessions-table');
+            if (sessionsDisplay) {
+                this._renderSessionsTable();
+            }
+            // Also keep the session count in the PIN section in sync
+            this._activeSessions = this._sessions.length;
+            const pinCount = this.container.querySelector('#pin-session-count');
+            if (pinCount) {
+                pinCount.textContent = this._activeSessions > 0
+                    ? `${this._activeSessions} active session(s)`
+                    : 'No active sessions';
+            }
+        }, 5000);
+    }
+
+    _stopSessionsPolling() {
+        if (this._sessionsPollTimer) {
+            clearInterval(this._sessionsPollTimer);
+            this._sessionsPollTimer = null;
+        }
     }
 
     // --- DNS Propagation Polling ---
@@ -116,7 +185,7 @@ export class AdminView {
                     this._lastError = '';
                     this.render();
                     this.bindEvents();
-                    Toast.success('DNS propagated — your site is now available at ' + this._domain);
+                    Toast.success('DNS propagated -- your site is now available at ' + this._domain);
                 } else if (status.last_error && status.last_error !== this._lastError) {
                     this._lastError = status.last_error;
                     this._pendingRegistration = status.pending_registration !== false;
@@ -175,18 +244,14 @@ export class AdminView {
         return prefix;
     }
 
-    _getLocalIpForDisplay() {
-        // Only reveal the server LAN IP when accessing from localhost.
-        // Remote LAN clients already know the IP (they typed it in the URL).
+    _isLocalhost() {
         const hostname = window.location.hostname;
-        const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-        if (!isLocalhost) return '';
+        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    }
 
-        // Use the backend-discovered LAN IP (from GetAdaptersAddresses / UPnP).
+    _getLocalIpForDisplay() {
+        if (!this._isLocalhost()) return '';
         if (this._localIp) return this._localIp;
-
-        // On localhost the backend should have provided the IP via getLocalIP().
-        // If not, show a generic placeholder.
         return '192.168.?.?';
     }
 
@@ -217,6 +282,92 @@ export class AdminView {
                             title="Close (discards unsaved changes)">&times;</button>
                 </div>
 
+                <!-- PIN (localhost only) -->
+                ${this._isLocalhost() ? `
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">Access PIN</h3>
+                        <div class="settings-field" style="padding-top:0;">
+                            <p class="setting-desc">
+                                Share this PIN with remote users to grant them access to this server.
+                                The PIN is valid for one session only.
+                            </p>
+                            <div class="pin-display-area">
+                                <span class="pin-display" id="admin-pin-display">${this.esc(this._pin)}</span>
+                                <button class="btn btn-secondary" id="btn-copy-pin" style="flex-shrink:0;"
+                                        title="Copy PIN to clipboard">
+                                    Copy
+                                </button>
+                                <button class="btn btn-secondary" id="btn-regenerate-pin" style="flex-shrink:0;">
+                                    Generate
+                                </button>
+                                <button class="btn btn-secondary" id="btn-clear-pin" style="flex-shrink:0;">
+                                    Clear
+                                </button>
+                            </div>
+                            <p class="settings-hint" id="pin-session-count">
+                                ${this._activeSessions > 0
+                                    ? `${this._activeSessions} active session(s)`
+                                    : 'No active sessions'}
+                            </p>
+                        </div>
+                    </div>
+                ` : ''}
+
+                <!-- Active Sessions Table (localhost only) -->
+                ${this._isLocalhost() ? `
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">Active Sessions</h3>
+                        <div class="settings-field" style="padding-top:0;">
+                            <p class="setting-desc">
+                                Remote users currently connected to this server.
+                            </p>
+                            <div id="admin-sessions-table">
+                                ${this._sessions.length === 0
+                                    ? '<p class="settings-hint">No active sessions</p>'
+                                    : this._buildSessionsTableHtml()}
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+
+                <!-- Certificate Authentication (localhost only) -->
+                ${this._isLocalhost() ? `
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">Certificate Authentication</h3>
+                        <div class="settings-field" style="padding-top:0;">
+                            <label class="settings-checkbox-label">
+                                <input type="checkbox" id="chk-cert-auth"
+                                       ${this._certAuthEnabled ? 'checked' : ''} />
+                                <span class="settings-checkbox-text">Enable certificate authentication</span>
+                            </label>
+                            <p class="setting-desc">
+                                When enabled, remote users can upload a certificate file instead
+                                of entering a PIN. The certificate is a long random token that
+                                never changes — generate it once and share it securely.
+                            </p>
+                            <div id="cert-download-area" style="${this._certAuthEnabled ? '' : 'display:none;'}">
+                                <button class="btn btn-secondary" id="btn-download-cert"
+                                        style="margin-top:8px;">
+                                    Download certificate
+                                </button>
+                                <p class="settings-hint">
+                                    The certificate grants the same access as a PIN.
+                                    Share it only with trusted users. If compromised,
+                                    use the "Generate" button below to issue a new one.
+                                </p>
+                                <div style="margin-top:8px;">
+                                    <button class="btn btn-danger btn-small" id="btn-regenerate-cert">
+                                        Regenerate certificate
+                                    </button>
+                                    <span class="settings-hint" style="margin-left:8px;">
+                                        Invalidates all existing certificate files.
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+
                 <!-- Internet -->
                 <div class="settings-section">
                     <h3 class="settings-section-title">Internet</h3>
@@ -241,8 +392,8 @@ export class AdminView {
                     <!-- Info frame (always visible) -->
                     <div class="internet-info-box">
                         <p><strong class="internet-important-label">Important:</strong><br>
-                        By enabling Internet access, you authorize sending this server's
-                        <strong>public IP address</strong> to Azure DNS to create an A record
+                        By enabling Internet Access, you authorize sending this server's
+                        <strong>public IP address</strong> to PowerDNS to create an A record
                         pointing to your network.</p>
                         <p>Authorizes <strong>UPnP</strong> port mapping on your router
                         ${this._upnpAvailable ? '(available on this network).' : '(not available on this network).'}
@@ -333,6 +484,70 @@ export class AdminView {
         this._markClean();
     }
 
+    _buildSessionsTableHtml() {
+        const rows = this._sessions.map(s => {
+            let location = this.esc(s.location || '');
+            if (location !== 'Local' && s.city) {
+                location = this.esc(s.city) + (s.country ? ', ' + this.esc(s.country) : '');
+            }
+            return `
+            <tr data-token="${this.esc(s.token)}">
+                <td>${this.esc(s.machine_name || 'Unknown')}</td>
+                <td>${this._formatDate(s.created_at)}</td>
+                <td>${this.esc(s.ip || '')}</td>
+                <td>${location}</td>
+                <td>
+                    <button class="btn btn-danger btn-small btn-session-revoke"
+                            data-token="${this.esc(s.token)}"
+                            title="Revoke this session">
+                        Revoke
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        return `
+            <table class="sessions-table">
+                <thead>
+                    <tr>
+                        <th>Machine</th>
+                        <th>Authorized</th>
+                        <th>IP</th>
+                        <th>Location</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        `;
+    }
+
+    _renderSessionsTable() {
+        const container = this.container.querySelector('#admin-sessions-table');
+        if (!container) return;
+
+        if (this._sessions.length === 0) {
+            container.innerHTML = '<p class="settings-hint">No active sessions</p>';
+            return;
+        }
+
+        container.innerHTML = this._buildSessionsTableHtml();
+
+        // Re-bind revoke buttons
+        container.querySelectorAll('.btn-session-revoke').forEach(btn => {
+            btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
+        });
+    }
+
+    _formatDate(timestamp) {
+        if (!timestamp) return '-';
+        const d = new Date(timestamp * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
     bindEvents() {
         // Internet Access checkbox toggle
         const internetChk = this.container.querySelector('#chk-internet-enable');
@@ -413,6 +628,161 @@ export class AdminView {
             });
         }
 
+        // Copy PIN button (only copies a real PIN, not "--------")
+        const copyBtn = this.container.querySelector('#btn-copy-pin');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', async () => {
+                if (this._pin === '--------' || !this._pin) {
+                    Toast.warning('No valid PIN to copy — generate one first');
+                    return;
+                }
+                try {
+                    await navigator.clipboard.writeText(this._pin);
+                    Toast.success('PIN copied to clipboard');
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+                } catch (err) {
+                    console.warn('[Admin] Clipboard write failed:', err);
+                    // Fallback: select the PIN text
+                    const pinDisplay = this.container.querySelector('#admin-pin-display');
+                    if (pinDisplay) {
+                        const range = document.createRange();
+                        range.selectNodeContents(pinDisplay);
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                        Toast.info('PIN selected — press Ctrl+C to copy');
+                    }
+                }
+            });
+        }
+
+        // Generate PIN button (does NOT revoke existing sessions)
+        const regenBtn = this.container.querySelector('#btn-regenerate-pin');
+        if (regenBtn) {
+            regenBtn.addEventListener('click', async () => {
+                regenBtn.disabled = true;
+                regenBtn.textContent = 'Generating...';
+                try {
+                    const result = await BackendClient.generatePin();
+                    this._pin = result.pin;
+                    this.render();
+                    this.bindEvents();
+                    Toast.success('New PIN: ' + result.pin);
+                } catch (err) {
+                    console.error('[Admin] Failed to generate PIN:', err);
+                    Toast.error('Failed to generate: ' + err.message);
+                    regenBtn.disabled = false;
+                    regenBtn.textContent = 'Generate';
+                }
+            });
+        }
+
+        // Clear PIN button
+        const clearBtn = this.container.querySelector('#btn-clear-pin');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', async () => {
+                clearBtn.disabled = true;
+                clearBtn.textContent = 'Clearing...';
+                try {
+                    const result = await BackendClient.clearPin();
+                    this._pin = result.pin || '--------';
+                    this.render();
+                    this.bindEvents();
+                    Toast.info('PIN cleared — remote access disabled');
+                } catch (err) {
+                    console.error('[Admin] Failed to clear PIN:', err);
+                    Toast.error('Failed to clear: ' + err.message);
+                    clearBtn.disabled = false;
+                    clearBtn.textContent = 'Clear';
+                }
+            });
+        }
+
+        // ── Certificate Authentication ─────────────────────────────────────
+
+        // Certificate auth checkbox toggle
+        const certChk = this.container.querySelector('#chk-cert-auth');
+        if (certChk) {
+            certChk.addEventListener('change', async () => {
+                const enabled = certChk.checked;
+                try {
+                    await BackendClient.saveAdminSettings({ cert_auth_enabled: enabled });
+                    this._certAuthEnabled = enabled;
+                    const area = this.container.querySelector('#cert-download-area');
+                    if (area) {
+                        area.style.display = enabled ? '' : 'none';
+                    }
+                    Toast.success(enabled ? 'Certificate authentication enabled' : 'Certificate authentication disabled');
+                } catch (err) {
+                    console.error('[Admin] Failed to save cert auth setting:', err);
+                    Toast.error('Failed to save: ' + err.message);
+                    certChk.checked = !enabled; // revert
+                }
+            });
+        }
+
+        // Download certificate button
+        const downloadBtn = this.container.querySelector('#btn-download-cert');
+        if (downloadBtn) {
+            downloadBtn.addEventListener('click', async () => {
+                downloadBtn.disabled = true;
+                downloadBtn.textContent = 'Downloading...';
+                try {
+                    const content = await BackendClient.downloadCertificate();
+                    // Trigger file download via a temporary anchor
+                    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'moonlight-web-certificate.txt';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    Toast.success('Certificate downloaded');
+                } catch (err) {
+                    console.error('[Admin] Failed to download certificate:', err);
+                    Toast.error('Failed to download: ' + err.message);
+                } finally {
+                    downloadBtn.disabled = false;
+                    downloadBtn.textContent = 'Download certificate';
+                }
+            });
+        }
+
+        // Regenerate certificate button
+        const regenCertBtn = this.container.querySelector('#btn-regenerate-cert');
+        if (regenCertBtn) {
+            regenCertBtn.addEventListener('click', async () => {
+                if (!confirm('Regenerating the certificate will invalidate all existing certificate files. Continue?')) {
+                    return;
+                }
+                regenCertBtn.disabled = true;
+                regenCertBtn.textContent = 'Regenerating...';
+                try {
+                    const result = await BackendClient.regenerateCertificate();
+                    Toast.success('Certificate regenerated');
+                    if (this._certAuthEnabled) {
+                        // Re-enable the checkbox to trigger UI update
+                        const chk = this.container.querySelector('#chk-cert-auth');
+                        if (chk) chk.checked = true;
+                    }
+                } catch (err) {
+                    console.error('[Admin] Failed to regenerate certificate:', err);
+                    Toast.error('Failed to regenerate: ' + err.message);
+                } finally {
+                    regenCertBtn.disabled = false;
+                    regenCertBtn.textContent = 'Regenerate certificate';
+                }
+            });
+        }
+
+        // Revoke session buttons
+        this.container.querySelectorAll('.btn-session-revoke').forEach(btn => {
+            btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
+        });
+
         // Close button
         const closeBtn = this.container.querySelector('#btn-admin-close');
         if (closeBtn) {
@@ -422,6 +792,41 @@ export class AdminView {
                 }
                 this.onClose();
             });
+        }
+    }
+
+    async _revokeSession(token) {
+        if (!token) return;
+
+        const btn = this.container.querySelector(`.btn-session-revoke[data-token="${CSS.escape(token)}"]`);
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Revoking...';
+        }
+
+        try {
+            await BackendClient.revokeSession(token);
+            Toast.success('Session revoked');
+
+            // Remove from local list and re-render
+            this._sessions = this._sessions.filter(s => s.token !== token);
+            this._activeSessions = this._sessions.length;
+            this._renderSessionsTable();
+
+            // Update session count in PIN section
+            const pinCount = this.container.querySelector('#pin-session-count');
+            if (pinCount) {
+                pinCount.textContent = this._activeSessions > 0
+                    ? `${this._activeSessions} active session(s)`
+                    : 'No active sessions';
+            }
+        } catch (err) {
+            console.error('[Admin] Failed to revoke session:', err);
+            Toast.error('Failed to revoke: ' + err.message);
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Revoke';
+            }
         }
     }
 
@@ -435,7 +840,7 @@ export class AdminView {
                 transport_mode: this._transportMode
             });
             if (result.status === 'enabled') {
-                Toast.success('Internet Access enabled — domain: ' + (result.domain || '...'));
+                Toast.success('Internet Access enabled -- domain: ' + (result.domain || '...'));
                 await this._loadInternetState();
                 this.render();
                 this.bindEvents();
@@ -494,8 +899,9 @@ export class AdminView {
     // --- Helpers ---
 
     esc(text) {
+        if (typeof text !== 'string' && typeof text !== 'number') return '';
         const div = document.createElement('div');
-        div.textContent = text;
+        div.textContent = String(text);
         return div.innerHTML;
     }
 }

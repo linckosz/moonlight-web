@@ -35,6 +35,7 @@ import { AppListView } from './ui/AppListView.js';
 import { StreamView } from './ui/StreamView.js';
 import { SettingsView } from './ui/SettingsView.js';
 import { AdminView } from './ui/AdminView.js';
+import { LoginView } from './ui/LoginView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 
@@ -81,6 +82,7 @@ const MoonlightApp = {
     streamView: null,
     settingsView: null,
     adminView: null,
+    loginView: null,
 
     // ── Navigation state (never destroyed by overlays) ──────────────────────
     _nav: {
@@ -94,6 +96,14 @@ const MoonlightApp = {
 
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
+
+        // ── Hide admin/settings buttons upfront for non-localhost ─────────
+        // They will be revealed by _initNavButtons() if authenticated.
+        this._hideNavButtonsConditionally();
+
+        // ── Auth check: show login if remote and not authenticated ─────────
+        const authOk = await this._checkAuth();
+        if (!authOk) return;  // LoginView handles rendering, stop here
 
         this._initNavButtons();
         this._initRouter();
@@ -389,22 +399,100 @@ const MoonlightApp = {
     },
 
     // =========================================================================
+    // Auth Check
+    // =========================================================================
+
+    /**
+     * Check if the remote visitor is authenticated.
+     * Shows LoginView if not authenticated and not on localhost.
+     * Returns true if the app should continue initializing, false otherwise.
+     */
+    async _checkAuth() {
+        this.state = 'auth_check';
+        console.log('[MW] Checking authentication...');
+
+        const main = document.getElementById('main-content');
+        if (!main) return true;
+
+        try {
+            const status = await BackendClient.getAuthStatus();
+
+            // Localhost or already authenticated — proceed
+            if (status.is_localhost || status.authenticated) {
+                return true;
+            }
+
+            // Not authenticated and not localhost — show login
+            this.loginView = new LoginView(main, () => {
+                // On successful login, re-initialize the app
+                console.log('[MW] Authentication successful, re-initializing...');
+                this.loginView = null;
+                this._initNavButtons();
+                this._initRouter();
+                this._initAsync();
+            });
+
+            main.innerHTML = '';
+            this.transition('login');
+            this.loginView.start();
+            return false;
+        } catch (err) {
+            console.warn('[MW] Auth check failed:', err);
+            // If we can't reach the server, show error in main content
+            main.innerHTML = `
+                <div class="hosts-view">
+                    <div class="hosts-header"><h2>Connection Error</h2></div>
+                    <div class="hosts-error">
+                        <p>Unable to connect to server</p>
+                        <p class="hint">${err.message || 'Unknown error'}</p>
+                        <button class="btn" onclick="location.reload()">Retry</button>
+                    </div>
+                </div>
+            `;
+            return false;
+        }
+    },
+
+
+    // =========================================================================
     // Nav Buttons
     // =========================================================================
 
+    /**
+     * Hide admin/settings buttons on non-localhost before auth.
+     * Called from init() before _checkAuth(). The settings button
+     * is revealed by _initNavButtons() once authenticated.
+     */
+    _hideNavButtonsConditionally() {
+        if (window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.hostname === '[::1]') {
+            return;  // localhost: keep both visible
+        }
+        // Remote: hide admin always, settings until authenticated
+        const btnAdmin = document.getElementById('btn-admin');
+        if (btnAdmin) btnAdmin.style.display = 'none';
+        const btnSettings = document.getElementById('btn-settings');
+        if (btnSettings) btnSettings.style.display = 'none';
+    },
+
     _initNavButtons() {
+        const isLocal = window.location.hostname === 'localhost' ||
+                        window.location.hostname === '127.0.0.1' ||
+                        window.location.hostname === '[::1]';
+
         const btnAdmin = document.getElementById('btn-admin');
         if (btnAdmin) {
-            if (window.location.hostname !== 'localhost' &&
-                window.location.hostname !== '127.0.0.1' &&
-                window.location.hostname !== '[::1]') {
+            if (!isLocal) {
                 btnAdmin.style.display = 'none';
+            } else {
+                btnAdmin.style.display = '';
             }
             btnAdmin.addEventListener('click', () => {
                 if (this._nav.overlay === 'admin') {
                     history.back();
                 } else if (this._nav.overlay) {
-                    this._openOverlay('admin');  // replaces guard via replaceState
+                    this._openOverlay('admin');
                 } else {
                     this._openOverlay('admin');
                 }
@@ -413,11 +501,15 @@ const MoonlightApp = {
 
         const btnSettings = document.getElementById('btn-settings');
         if (btnSettings) {
+            // On remote: show settings only after authentication
+            if (!isLocal) {
+                btnSettings.style.display = '';
+            }
             btnSettings.addEventListener('click', () => {
                 if (this._nav.overlay === 'settings') {
                     history.back();
                 } else if (this._nav.overlay) {
-                    this._openOverlay('settings');  // replaces guard via replaceState
+                    this._openOverlay('settings');
                 } else {
                     this._openOverlay('settings');
                 }
@@ -586,6 +678,10 @@ const MoonlightApp = {
         if (this.appListView) {
             this.appListView.destroy();
             this.appListView = null;
+        }
+        if (this.loginView) {
+            this.loginView.destroy();
+            this.loginView = null;
         }
     },
 

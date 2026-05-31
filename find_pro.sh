@@ -1,0 +1,1 @@
+find "d:/Code/moonlight-web-deepseek/backend" -name "*.pro" -o -name "*.pri" 2>/dev/null | head -20
