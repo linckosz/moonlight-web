@@ -333,21 +333,12 @@ int main(int argc, char* argv[])
             QString certificate = body["certificate"].toString();
             QString machineName = body["machine_name"].toString();
 
-            // Use client-provided IP when socket shows NAT hairpin (private IP)
-            QString effectiveIp = req.clientAddress;
-            QString clientIp = body["client_ip"].toString();
-            if (!clientIp.isEmpty() && AuthManager::isPrivateIP(effectiveIp) == "Local") {
-                Logger::info(QString("[Auth] NAT hairpin detected — using client IP %1 instead of %2")
-                    .arg(clientIp, effectiveIp));
-                effectiveIp = clientIp;
-            }
-
             // ── Certificate authentication (alternative to PIN) ────────────
             if (!certificate.isEmpty() && authManager.certAuthEnabled()) {
                 if (authManager.validateCertificate(certificate)) {
                     // Certificate valid — create session (same flow as PIN success)
-                    QString token = authManager.createSession(effectiveIp, machineName);
-                    geoIpService.lookupIp(effectiveIp,
+                    QString token = authManager.createSession(req.clientAddress, machineName);
+                    geoIpService.lookupIp(req.clientAddress,
                         [&authManager, token](const QString& city, const QString& country) {
                             authManager.setSessionGeo(token, city, country);
                         });
@@ -379,10 +370,10 @@ int main(int argc, char* argv[])
             QJsonObject obj;
             switch (result.result) {
             case AuthManager::Valid: {
-                QString token = authManager.createSession(effectiveIp, machineName);
+                QString token = authManager.createSession(req.clientAddress, machineName);
 
                 // Look up the IP geolocation asynchronously and store in the session
-                geoIpService.lookupIp(effectiveIp,
+                geoIpService.lookupIp(req.clientAddress,
                     [&authManager, token](const QString& city, const QString& country) {
                         authManager.setSessionGeo(token, city, country);
                     });
@@ -464,6 +455,7 @@ int main(int argc, char* argv[])
             if (isLocal) {
                 obj["authenticated"] = true;  // localhost is always authenticated
                 obj["pin"] = authManager.currentPin();
+                obj["pin_consumed"] = authManager.isPinConsumed();
             } else {
                 // Check session cookie
                 bool auth = false;
@@ -1412,7 +1404,7 @@ int main(int argc, char* argv[])
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/admin/settings", [&server, &appSettings, &authManager](const HttpRequest& req) {
+    server.router()->post("/api/admin/settings", [&server, &appSettings, &authManager, &internetAccess](const HttpRequest& req) {
         // Only localhost can modify server admin settings
         if (!HttpServer::isLocalRequest(req.clientAddress))
             return HttpResponse::error(403, "Admin settings can only be modified from localhost");
@@ -1448,12 +1440,15 @@ int main(int argc, char* argv[])
                 qInfo() << "[admin] Scheduled deferred HTTPS port change from"
                         << oldPort << "to" << newPort;
 
-                QTimer::singleShot(0, [&server, newPort, oldPort]() {
+                QTimer::singleShot(0, [&server, &internetAccess, newPort, oldPort]() {
                     qInfo() << "[admin] Deferred: changing HTTPS port to" << newPort;
                     if (!server.changeHttpsPort(newPort)) {
                         qWarning() << "[admin] Port change failed, restoring" << oldPort;
                         server.changeHttpsPort(oldPort);
                     }
+                    // Sync the active port to InternetAccessManager so statusJson()
+                    // returns the correct https_port (used by the admin UI).
+                    internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
                 });
             }
 

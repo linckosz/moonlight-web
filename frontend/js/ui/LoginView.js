@@ -24,7 +24,6 @@ export class LoginView {
         this._lockoutTimer = null;
         this._submitting = false;
         this._machineName = '';
-        this._clientIp = '';             // Detected local IP via WebRTC
         this._certAuthAvailable = false;  // Server has cert auth enabled
         this._certMode = false;           // User chose cert upload mode
         this._selectedFileName = '';
@@ -93,42 +92,6 @@ export class LoginView {
         else if (ua.includes('OPR') || ua.includes('Opera')) browser = 'Opera';
 
         this._machineName = `${os} ${browser}`;
-    }
-
-    /**
-     * Detect the client's local IP address via WebRTC.
-     * Returns the first non-loopback IPv4 address, or empty string on failure.
-     */
-    async _detectLocalIP() {
-        try {
-            const pc = new RTCPeerConnection({ iceServers: [] });
-            pc.createDataChannel('');
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-
-            const ip = await new Promise((resolve) => {
-                const timeout = setTimeout(() => resolve(''), 2000);
-                pc.onicecandidate = (e) => {
-                    if (!e.candidate) {
-                        clearTimeout(timeout);
-                        resolve('');
-                        return;
-                    }
-                    // Look for IPv4 host candidates (private/LAN IPs)
-                    const match = e.candidate.candidate.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
-                    if (match && !match[1].startsWith('127.')) {
-                        console.log('[Login] Detected local IP:', match[1]);
-                        clearTimeout(timeout);
-                        resolve(match[1]);
-                    }
-                };
-            });
-
-            pc.close();
-            return ip;
-        } catch (_) {
-            return '';
-        }
     }
 
     render() {
@@ -301,6 +264,16 @@ export class LoginView {
             }
         });
 
+        // Enter on "Name this session" triggers submit too
+        if (machineInput) {
+            machineInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && input.value.length > 0 && !btn.disabled) {
+                    e.preventDefault();
+                    this._submitPin(input, machineInput, btn);
+                }
+            });
+        }
+
         btn.addEventListener('click', () => {
             if (input.value.length > 0) {
                 this._submitPin(input, machineInput, btn);
@@ -343,6 +316,16 @@ export class LoginView {
                 this._submitCertificate(certInput.files[0], machineInput, btn, certInput);
             }
         });
+
+        // Enter on "Name this session" triggers submit (with file selected)
+        if (machineInput) {
+            machineInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && certInput.files && certInput.files[0] && !btn.disabled) {
+                    e.preventDefault();
+                    this._submitCertificate(certInput.files[0], machineInput, btn, certInput);
+                }
+            });
+        }
     }
 
     async _submitPin(input, machineInput, btn) {
@@ -354,11 +337,8 @@ export class LoginView {
         const pin = input.value;
         const machineName = machineInput ? machineInput.value.trim() : '';
 
-        // Detect local IP now (user gesture avoids browser WebRTC restrictions)
-        if (!this._clientIp) this._clientIp = await this._detectLocalIP();
-
         try {
-            const result = await BackendClient.validatePin(pin, machineName, this._clientIp);
+            const result = await BackendClient.validatePin(pin, machineName);
 
             if (result.status === 'ok') {
                 Toast.success('Authentication successful');
@@ -378,15 +358,12 @@ export class LoginView {
 
         const machineName = machineInput ? machineInput.value.trim() : '';
 
-        // Detect local IP now (user gesture avoids browser WebRTC restrictions)
-        if (!this._clientIp) this._clientIp = await this._detectLocalIP();
-
         try {
             // Read the file content as text
             const content = await this._readFileAsText(file);
 
             // Send to server for validation
-            const result = await BackendClient.validateCertificate(content, machineName, this._clientIp);
+            const result = await BackendClient.validateCertificate(content, machineName);
 
             if (result.status === 'ok') {
                 Toast.success('Authentication successful');

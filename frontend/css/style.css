@@ -1299,6 +1299,40 @@ body {
     width: 80px;
 }
 
+/* Sessions pagination controls */
+.sessions-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(42, 42, 74, 0.5);
+}
+
+.pagination-info {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    min-width: 100px;
+    text-align: center;
+}
+
+.btn-pagination {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    min-width: 90px;
+}
+
+.btn-pagination:hover:not(:disabled) {
+    background-color: var(--border);
+}
+
+.btn-pagination:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
 /* Small button variant */
 .btn-small {
     padding: 4px 10px;
@@ -1342,5 +1376,19 @@ body {
     background: rgba(233, 69, 96, 0.08);
     border-radius: 6px;
     border: 1px solid rgba(233, 69, 96, 0.2);
+}
+
+/* PIN consumed state: dimmed dashes with a different border colour */
+.pin-consumed {
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed var(--border);
+    letter-spacing: 4px;
+    user-select: none;
+}
+
+.pin-consumed-hint {
+    color: var(--warning);
+    font-weight: 500;
 }
 

@@ -68,10 +68,8 @@ export class BackendClient {
 
     // ── Auth API ───────────────────────────────────────────────────────────
 
-    static async validatePin(pin, machineName, clientIp = '') {
-        const body = { pin, machine_name: machineName };
-        if (clientIp) body.client_ip = clientIp;
-        return this.post('/api/auth/validate', body);
+    static async validatePin(pin, machineName) {
+        return this.post('/api/auth/validate', { pin, machine_name: machineName });
     }
     static async generatePin()                  { return this.post('/api/admin/pin/generate'); }
     static async regeneratePin()                { return this.post('/api/auth/regenerate'); }
@@ -88,13 +86,11 @@ export class BackendClient {
     }
 
     /** Validate a certificate token (alternative to PIN). Sends the raw token content. */
-    static async validateCertificate(certificateContent, machineName, clientIp = '') {
-        const body = {
+    static async validateCertificate(certificateContent, machineName) {
+        return this.post('/api/auth/validate', {
             certificate: certificateContent,
             machine_name: machineName
-        };
-        if (clientIp) body.client_ip = clientIp;
-        return this.post('/api/auth/validate', body);
+        });
     }
 
     /** Regenerate the certificate token (invalidates all existing certificates). */
