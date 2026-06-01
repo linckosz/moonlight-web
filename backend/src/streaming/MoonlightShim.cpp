@@ -448,6 +448,12 @@ void MoonlightShim::sendMouseMove(short deltaX, short deltaY)
     LiSendMouseMoveEvent(deltaX, deltaY);
 }
 
+void MoonlightShim::sendMousePosition(short x, short y, short referenceWidth, short referenceHeight)
+{
+    if (!m_Connected.load(std::memory_order_acquire)) return;
+    LiSendMousePositionEvent(x, y, referenceWidth, referenceHeight);
+}
+
 void MoonlightShim::sendMouseButton(bool down, int button)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
