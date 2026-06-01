@@ -136,6 +136,10 @@ export class StreamView {
             this.webrtc = new WebRtcDataChannel(signalingUrl);
         }
         this.pointerLocked = false;
+        /** Gaming mode focus state: true when pointer lock is active (cursor captured).
+         *  false initially (cursor visible, absolute mouse tracking).
+         *  Set to true on first click, reset when pointer lock is lost. */
+        this._mouseFocused = false;
 
         // Audio pipeline (PCM16 -> AudioWorklet -> speakers)
         this.audioPipeline = new AudioPipeline();
@@ -1847,8 +1851,57 @@ export class StreamView {
 
     _bindGamingEvents() {
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
-        this.canvas.addEventListener('mousemove', this._onMouseMove);
-        this.canvas.addEventListener('click', () => this.requestPointerLock());
+
+        // Pre-focus: cursor visible (browser default — pointer lock hides it natively)
+        this.canvas.style.cursor = '';
+
+        // Unified mousemove: absolute tracking when visible (pre-focus),
+        // relative movement via pointer lock deltas when focused.
+        this._onGamingMouseMove = (e) => {
+            if (this._mouseFocused) {
+                this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
+            } else {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = Math.round(Math.max(0, Math.min(e.clientX - rect.left, rect.width)));
+                const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
+                const refW = Math.round(rect.width);
+                const refH = Math.round(rect.height);
+                this.webrtc.send({
+                    type: 'mousemove', x, y,
+                    referenceWidth: refW, referenceHeight: refH
+                });
+            }
+        };
+        this.canvas.addEventListener('mousemove', this._onGamingMouseMove);
+
+        // Click to capture focus: set host cursor at clicked position, then grab pointer.
+        this._onGamingClick = (e) => {
+            if (this._mouseFocused) return;  // Already focused — click handled by mousedown/mouseup
+            e.preventDefault();
+
+            // Send absolute position so the host cursor teleports to the clicked point
+            const rect = this.canvas.getBoundingClientRect();
+            const x = Math.round(Math.max(0, Math.min(e.clientX - rect.left, rect.width)));
+            const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
+            const refW = Math.round(rect.width);
+            const refH = Math.round(rect.height);
+            this.webrtc.send({
+                type: 'mousemove', x, y,
+                referenceWidth: refW, referenceHeight: refH
+            });
+            this.canvas.requestPointerLock();
+        };
+        this.canvas.addEventListener('click', this._onGamingClick);
+
+        // Mouse button events: only send when focused (pre-focus click only captures)
+        this._onGamingMouseDown = (e) => {
+            if (this._mouseFocused) this.handleMouseDown(e);
+        };
+        this._onGamingMouseUp = (e) => {
+            if (this._mouseFocused) this.handleMouseUp(e);
+        };
+        this.canvas.addEventListener('mousedown', this._onGamingMouseDown);
+        this.canvas.addEventListener('mouseup', this._onGamingMouseUp);
     }
 
     _setupNormalMouse() {
@@ -1917,8 +1970,17 @@ export class StreamView {
             this.canvas.removeEventListener('wheel', this._onWheel);
             this.canvas.removeEventListener('contextmenu', this._onContextMenu);
 
-            // Normal mouse listeners (only bound in non-gaming mode)
-            if (!this._gamingMode) {
+            // Mode-specific listeners
+            if (this._gamingMode) {
+                if (this._onGamingMouseMove)
+                    this.canvas.removeEventListener('mousemove', this._onGamingMouseMove);
+                if (this._onGamingClick)
+                    this.canvas.removeEventListener('click', this._onGamingClick);
+                if (this._onGamingMouseDown)
+                    this.canvas.removeEventListener('mousedown', this._onGamingMouseDown);
+                if (this._onGamingMouseUp)
+                    this.canvas.removeEventListener('mouseup', this._onGamingMouseUp);
+            } else {
                 if (this._onNormalMouseMove)
                     this.canvas.removeEventListener('mousemove', this._onNormalMouseMove);
                 if (this._onNormalMouseDown)
@@ -1945,6 +2007,16 @@ export class StreamView {
         if (e.shiftKey && e.ctrlKey && e.altKey && e.code === 'KeyE') {
             e.preventDefault();
             this.quit();
+            return;
+        }
+
+        // Unfocus combo (gaming mode): Ctrl/Cmd+Shift+Alt+Z = exit pointer lock
+        // Allows the user to release the mouse cursor back to the OS.
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.altKey && e.code === 'KeyZ') {
+            e.preventDefault();
+            if (document.pointerLockElement === this.canvas) {
+                document.exitPointerLock();
+            }
             return;
         }
 
@@ -1995,6 +2067,7 @@ export class StreamView {
 
     handlePointerLockChange() {
         this.pointerLocked = (document.pointerLockElement === this.canvas);
+        this._mouseFocused = this.pointerLocked;
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }
