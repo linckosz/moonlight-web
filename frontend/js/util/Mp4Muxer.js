@@ -395,7 +395,7 @@ export const H264_FALLBACK_CODEC_STRINGS = [
 ];
 
 /**
- * Common HEVC codec strings for fallback.
+ * Common HEVC codec strings for fallback (hvc1 — AVCC format with description).
  */
 export const HEVC_FALLBACK_CODEC_STRINGS = [
     'hvc1.1.6.L153.B0',  // Main, High tier, Level 5.1 (most common for 1080p60)
@@ -408,22 +408,61 @@ export const HEVC_FALLBACK_CODEC_STRINGS = [
 ];
 
 /**
- * Convert raw Annex B data (with start codes) to AVCC/HEVC format
- * (4-byte length prefixes per NAL unit).
- *
- * When stripParams is true, SPS/PPS (H.264) or VPS/SPS/PPS (HEVC) NAL units
- * are skipped because the decoder already has them via the description.
+ * HEVC codec strings with hev1 brand — used for no-description configs.
+ * hev1 allows Annex B stream data (start codes), which Chromium's
+ * keyframe validator (AnalyzeAnnexB) requires.
  */
-export function toAvcc(annexB, stripParams = false, codec = null) {
+export const HEVC_ANNEXB_CODEC_STRINGS = [
+    'hev1.1.6.L153.B0',
+    'hev1.1.6.L150.B0',
+    'hev1.1.6.L123.B0',
+    'hev1.1.6.L120.B0',
+    'hev1.1.6.L93.B0',
+    'hev1.1.2.L153.B0',
+    'hev1.1.2.L150.B0',
+];
+
+/**
+ * Convert raw Annex B data (with start codes) to the format expected by
+ * the VideoDecoder's EncodedVideoChunk.
+ *
+ * Two output modes:
+ *   Annex B (useAnnexB=true):  4-byte start codes, all NALs kept.
+ *      Used when no codec description is provided — the decoder
+ *      auto-detects the format.  Also required by Chromium's keyframe
+ *      validator (AnalyzeAnnexB) which only handles Annex B.
+ *   AVCC (useAnnexB=false):    4-byte length prefixes per NAL unit.
+ *      Used when a codec description (avcC/hvcC) is provided.
+ *
+ * When stripParams is true AND useAnnexB is false, SPS/PPS (H.264) or
+ * VPS/SPS/PPS + pre-IRAP NALs (HEVC) are stripped — the decoder already
+ * has them via the description.  The pre-IRAP strip is CRITICAL for
+ * Chrome/Edge which validate that the first NAL in AVCC data is an IRAP.
+ */
+export function toAvcc(annexB, stripParams = false, codec = null, useAnnexB = false) {
     const nals = splitNals(annexB);
     const parts = [];
+    let hevcFoundIrap = false;
+
     for (const n of nals) {
         if (n.length < 1) continue;
 
-        if (stripParams) {
+        // Stripping logic: only active for AVCC mode (not Annex B).
+        // In Annex B mode, all NALs are kept — the decoder auto-detects
+        // the format and AnalyzeAnnexB can parse start codes directly.
+        if (stripParams && !useAnnexB) {
             if (codec === CODEC_HEVC && n.length >= 2) {
                 const hevcType = (n[0] >> 1) & 0x3F;
+                // Strip VPS/SPS/PPS (always safe — they're in the description)
                 if (hevcType === HEVC_VPS || hevcType === HEVC_SPS || hevcType === HEVC_PPS) continue;
+                // Strip non-IRAP NALs before the first IRAP (types 16-21).
+                // Chrome/Edge check the first NAL in AVCC data: if it's not
+                // an IRAP, decode() synchronously rejects the chunk.
+                if (!hevcFoundIrap) {
+                    const isIrap = hevcType >= 16 && hevcType <= 21;
+                    if (!isIrap) continue;
+                    hevcFoundIrap = true;
+                }
             }
             if (codec === CODEC_H264 || (!codec && n.length < 2)) {
                 const type = n[0] & 0x1F;
@@ -432,8 +471,20 @@ export function toAvcc(annexB, stripParams = false, codec = null) {
         }
 
         const l = n.length;
-        parts.push((l>>24)&0xFF, (l>>16)&0xFF, (l>>8)&0xFF, l&0xFF);
+        if (useAnnexB && codec === CODEC_HEVC) {
+            // Annex B: 4-byte start codes
+            parts.push(0, 0, 0, 1);
+        } else {
+            // AVCC: 4-byte big-endian length prefix
+            parts.push((l>>24)&0xFF, (l>>16)&0xFF, (l>>8)&0xFF, l&0xFF);
+        }
         for (let i = 0; i < l; i++) parts.push(n[i]);
     }
+
+    if (parts.length === 0 && nals.length > 0) {
+        console.warn('[toAvcc] PARTS IS EMPTY after stripping ' + nals.length + ' NALs, ' +
+            'stripParams=' + stripParams + ' codec=' + codec + ' useAnnexB=' + useAnnexB);
+    }
+
     return new Uint8Array(parts);
 }

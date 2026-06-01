@@ -841,6 +841,12 @@ body {
     color: var(--text-primary);
 }
 
+.settings-select option:disabled {
+    color: var(--text-secondary);
+    opacity: 0.55;
+    font-style: italic;
+}
+
 /* ── Range slider (bitrate) ────────────────────────────────────────────────────── */
 
 .settings-slider {

@@ -6,3 +6,4 @@
 - [Nport Graceful Shutdown Fix](nport-graceful-shutdown-fix.md) — Ctrl+C graceux, pre-creation tunnel API, HTTP origin fix, suppression releaseSubdomain
 - [WebRTC PC Failed Fix](webrtc-pc-failed-fix.md) — forceMediaTransport=true cassait DTLS-SRTP handshake en DataChannel-only, maxRetransmits mismatch backend/browser
 - [Explicit Cert Key Missing Fix](explicit-cert-key-missing-fix.md) — key.pem manquant dans le dossier du certificat explicite, fallback self-signed silencieux
+- [HEVC AVCC Keyframe First NAL Type](hevc-avcc-keyframe-first-nall-type.md) — Fix Chrome/Edge ecran noir HEVC : AUD/SEI avant IRAP dans toAvcc()
