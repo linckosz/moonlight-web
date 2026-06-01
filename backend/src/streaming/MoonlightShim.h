@@ -55,6 +55,7 @@ public:
 
     void sendKeyEvent(short keyCode, bool down, char modifiers, char flags);
     void sendMouseMove(short deltaX, short deltaY);
+    void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
     void sendMouseButton(bool down, int button);
     void sendMouseScroll(short scrollAmount);
 

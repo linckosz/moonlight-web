@@ -168,14 +168,36 @@ void ComputerManager::saveHosts()
 
 void ComputerManager::startPolling()
 {
+    // Regular poll timer: every 5 seconds, quick check of all hosts
     m_PollTimer = new QTimer(this);
     m_PollTimer->setInterval(POLL_INTERVAL_MS);
     connect(m_PollTimer, &QTimer::timeout, this, &ComputerManager::onPollTick);
     m_PollTimer->start();
+
+    // Backup poll timer: every 30 seconds, unconditional full refresh
+    // Guarantees no host stays stuck in "offline" even if regular tracking stalls
+    m_BackupPollTimer = new QTimer(this);
+    m_BackupPollTimer->setInterval(30000);
+    connect(m_BackupPollTimer, &QTimer::timeout, this, &ComputerManager::onBackupPollTick);
+    m_BackupPollTimer->start();
 }
 
 void ComputerManager::onPollTick()
 {
+    // --- Stalled poll cleanup: force-remove hosts stuck in polling for >10s ---
+    QList<QString> stalled;
+    for (auto it = m_PollStartedAt.cbegin(); it != m_PollStartedAt.cend(); ++it) {
+        if (it->hasExpired(10000)) {
+            stalled.append(it.key());
+        }
+    }
+    for (const QString& uuid : stalled) {
+        Logger::warning(QString("Poll timeout for %1 — forcing cleanup").arg(uuid));
+        m_PollingHosts.remove(uuid);
+        m_PollStartedAt.remove(uuid);
+    }
+
+    // --- Main poll loop ---
     for (auto it = m_Hosts.begin(); it != m_Hosts.end(); ++it) {
         const QString& uuid = it.key();
         NvComputer* host = it.value();
@@ -203,8 +225,8 @@ void ComputerManager::onPollTick()
             }
         }
 
-        // Skip if already polling this host
-        if (m_PendingPolls.values().contains(uuid))
+        // Skip if this host is already being polled (robust tracking via QSet)
+        if (m_PollingHosts.contains(uuid))
             continue;
 
         QVector<NvAddress> addrs = host->uniqueAddresses();
@@ -216,11 +238,48 @@ void ComputerManager::onPollTick()
 
         QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
         m_PendingPolls[reply] = uuid;
+        m_PollingHosts.insert(uuid);
+        m_PollStartedAt[uuid].start();
 
         connect(reply, &QNetworkReply::finished,
                 this, &ComputerManager::onPollReplyFinished);
 
-        // 2-second timeout
+        // 2-second timeout (abort reply, onPollReplyFinished will fire)
+        QPointer<QNetworkReply> guard(reply);
+        QTimer::singleShot(NvHTTP::FAST_FAIL_TIMEOUT_MS, reply, [guard]() {
+            if (guard && !guard->isFinished())
+                guard->abort();
+        });
+    }
+}
+
+void ComputerManager::onBackupPollTick()
+{
+    Logger::debug("Backup poll tick — forcing unconditional refresh of all hosts");
+
+    // Unconditional refresh: poll every host regardless of tracking state.
+    // This guarantees no host stays stuck in "offline" if regular tracking stalls.
+    for (auto it = m_Hosts.begin(); it != m_Hosts.end(); ++it) {
+        const QString& uuid = it.key();
+        NvComputer* host = it.value();
+
+        QVector<NvAddress> addrs = host->uniqueAddresses();
+        if (addrs.isEmpty())
+            continue;
+
+        NvAddress addr = addrs.first();
+
+        // IMPORTANT: Do NOT check m_PollingHosts here — this backup timer
+        // sends a fresh poll unconditionally, even if the regular tick
+        // believes this host is already being polled.
+        QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
+        m_PendingPolls[reply] = uuid;
+        m_PollingHosts.insert(uuid);
+        m_PollStartedAt[uuid].start();
+
+        connect(reply, &QNetworkReply::finished,
+                this, &ComputerManager::onPollReplyFinished);
+
         QPointer<QNetworkReply> guard(reply);
         QTimer::singleShot(NvHTTP::FAST_FAIL_TIMEOUT_MS, reply, [guard]() {
             if (guard && !guard->isFinished())
@@ -235,6 +294,8 @@ void ComputerManager::onPollReplyFinished()
     if (!reply) return;
 
     QString uuid = m_PendingPolls.take(reply);
+    m_PollingHosts.remove(uuid);
+    m_PollStartedAt.remove(uuid);
     if (uuid.isEmpty()) {
         reply->deleteLater();
         return;

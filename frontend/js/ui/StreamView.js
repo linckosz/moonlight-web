@@ -1852,53 +1852,48 @@ export class StreamView {
     }
 
     _setupNormalMouse() {
-        // Track absolute mouse position to compute relative deltas
-        this._mouseX = -1;
-        this._mouseY = -1;
-        this._dragCount = 0;
-
-        // Hide cursor by default (like gaming mode), show during drag
+        // In non-gaming mode, mouse position is sent in absolute coordinates
+        // mapped to the host screen. The cursor on the host follows the client
+        // cursor position on the video canvas 1:1.
+        // Hide local cursor — the host cursor is visible in the video stream.
         this.canvas.style.cursor = 'none';
 
         this._onNormalMouseMove = (e) => {
             const rect = this.canvas.getBoundingClientRect();
-            const newX = e.clientX - rect.left;
-            const newY = e.clientY - rect.top;
+            // Absolute pixel position within the canvas element
+            const rawX = e.clientX - rect.left;
+            const rawY = e.clientY - rect.top;
 
-            // On first move after re-entering, skip delta (no reference point)
-            if (this._mouseX >= 0 && this._mouseY >= 0) {
-                const dx = newX - this._mouseX;
-                const dy = newY - this._mouseY;
-                this.webrtc.send({ type: 'mousemove', dx, dy });
-            }
+            // Clamp to canvas bounds to avoid sending out-of-range coordinates
+            const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
+            const y = Math.round(Math.max(0, Math.min(rawY, rect.height)));
+            const refW = Math.round(rect.width);
+            const refH = Math.round(rect.height);
 
-            this._mouseX = newX;
-            this._mouseY = newY;
+            // Send absolute position. LiSendMousePositionEvent() on the backend
+            // will scale (x, y) from the (refW, refH) plane to host screen coords.
+            this.webrtc.send({
+                type: 'mousemove',
+                x: x,
+                y: y,
+                referenceWidth: refW,
+                referenceHeight: refH
+            });
         };
 
         this._onNormalMouseDown = (e) => {
-            this._dragCount++;
-            this.canvas.style.cursor = 'default';
             this.handleMouseDown(e);
         };
 
         this._onNormalMouseUp = (e) => {
-            this._dragCount--;
-            if (this._dragCount <= 0) {
-                this._dragCount = 0;
-                this.canvas.style.cursor = 'none';
-            }
             this.handleMouseUp(e);
         };
 
         this._onNormalMouseEnter = () => {
-            // Reset tracking when mouse re-enters canvas
-            this._mouseX = -1;
-            this._mouseY = -1;
+            this.canvas.style.cursor = 'none';
         };
 
         this._onNormalMouseLeave = () => {
-            this._dragCount = 0;
             this.canvas.style.cursor = 'default';
         };
 

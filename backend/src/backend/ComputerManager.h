@@ -4,6 +4,7 @@
 #include <QMap>
 #include <QSet>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QSettings>
@@ -66,6 +67,7 @@ signals:
 private slots:
     void onPollTick();
     void onPollReplyFinished();
+    void onBackupPollTick();
 
     // mDNS
     void onMdnsServiceAdded(const QMdnsEngine::Service& service);
@@ -86,8 +88,15 @@ private:
     QNetworkAccessManager* m_Nam = nullptr;
     NvHTTP* m_Http = nullptr;
 
-    // Pending poll tracking: reply → uuid
+    // Robust polling tracking: which hosts are currently being polled + when they started
+    QSet<QString> m_PollingHosts;             // host UUIDs currently being polled
+    QHash<QString, QElapsedTimer> m_PollStartedAt;  // start time per host (for stalled detection)
+
+    // Pending poll tracking: reply → uuid (for callback routing only, not for "is polling?" check)
     QMap<QNetworkReply*, QString> m_PendingPolls;
+
+    // Backup polling timer — forces full refresh every 30s regardless of tracking state
+    QTimer* m_BackupPollTimer = nullptr;
 
     // HTTPS pair verification via /applist for paired hosts
     QMap<QString, QDateTime> m_LastPairCheck;
