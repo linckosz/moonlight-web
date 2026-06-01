@@ -1,12 +1,16 @@
 [submodule "backend/third_party/qmdnsengine/qmdnsengine"]
 	path = backend/third_party/qmdnsengine/qmdnsengine
 	url = https://github.com/cgutman/qmdnsengine.git
+	ignore = all
 [submodule "backend/third_party/moonlight-common-c"]
 	path = backend/third_party/moonlight-common-c
 	url = https://github.com/moonlight-stream/moonlight-common-c.git
+	ignore = all
 [submodule "backend/third_party/libdatachannel"]
 	path = backend/third_party/libdatachannel
 	url = https://github.com/paullouisageneau/libdatachannel.git
+	ignore = all
 [submodule "backend/third_party/miniupnp"]
 	path = backend/third_party/miniupnp
 	url = https://github.com/miniupnp/miniupnp.git
+	ignore = all
