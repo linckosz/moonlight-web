@@ -253,6 +253,10 @@ export class StreamView {
         // cases where HTTPS works but WSS doesn't (proxy, antivirus, TLS).
         this._preflightConnectivityCheck();
 
+        // Platform / feature detection — helps diagnose iOS WebKit issues
+        // where WebCodecs or Canvas rendering may behave differently.
+        this._logPlatformInfo();
+
         this.setupWebRtc();
         this.bindEvents();
         this.startRenderLoop();
@@ -278,7 +282,11 @@ export class StreamView {
                 ' rendered=' + this.stats.rendered +
                 ' dropped=' + this.stats.dropped +
                 ' canvas=' + this.canvas.width + 'x' + this.canvas.height +
-                ' decoder=' + (this.decoder ? 'exists' : 'null') +
+                ' decoder=' + (this.decoder ? this.decoder.state : 'null') +
+                ' ctx=' + (this.ctx ? 'ok' : 'null') +
+                ' recoveryAttempts=' + this._recoveryAttempts +
+                ' idrRequested=' + this._idrRequested +
+                ' totalBytes=' + this._totalBytes +
                 ' audio.ready=' + (this.audioPipeline ? this.audioPipeline.ready : 'no') +
                 ' audio.samples=' + (this.audioPipeline ? this.audioPipeline.getStats().writtenSamples : 0) +
                 ' audio.underrun=' + (this.audioPipeline ? this.audioPipeline.getStats().underrunCount : 0) +
@@ -328,6 +336,47 @@ export class StreamView {
                 console.warn('[PreFlight] HTTPS /api/health failed: "' +
                     err.message + '" — possible DNS or TLS issue');
             }
+        }
+    }
+
+    // --- Platform / feature detection ---------------------------------------
+
+    /** Log browser platform and WebCodecs feature availability for diagnostics.
+     *  Helps identify iOS WebKit limitations (createImageBitmap, AudioWorklet). */
+    _logPlatformInfo() {
+        const ua = navigator.userAgent || '';
+        const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+            (/Mac/.test(ua) && 'ontouchend' in document);
+        const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua);
+        const hasVideoDecoder = typeof VideoDecoder !== 'undefined';
+        const hasIsConfigSupported = hasVideoDecoder &&
+            typeof VideoDecoder.isConfigSupported === 'function';
+        const hasCreateImageBitmap = typeof createImageBitmap !== 'undefined';
+        const hasAudioWorklet = typeof AudioWorkletNode !== 'undefined';
+        const hasCanvas2D = typeof CanvasRenderingContext2D !== 'undefined';
+        const hasIsContextLost = hasCanvas2D &&
+            typeof CanvasRenderingContext2D.prototype.isContextLost === 'function';
+
+        if (!hasIsContextLost) {
+            console.warn('[Platform] CanvasRenderingContext2D.isContextLost() is NOT supported ' +
+                '— Safari/WebKit limitation. Context loss detection disabled.');
+        }
+
+        console.log('[Platform] iOS=' + isIOS +
+            ' Safari=' + isSafari +
+            ' VideoDecoder=' + hasVideoDecoder +
+            ' isConfigSupported=' + hasIsConfigSupported +
+            ' createImageBitmap=' + hasCreateImageBitmap +
+            ' AudioWorklet=' + hasAudioWorklet +
+            ' Canvas2D=' + hasCanvas2D +
+            ' isContextLost=' + hasIsContextLost +
+            ' UA: ' + ua.substring(0, 120));
+
+        if (isIOS || isSafari) {
+            console.log('[Platform] Running on Apple platform — ' +
+                'createImageBitmap(VideoFrame) requires iOS 17+ / Safari 17+. ' +
+                'If the screen is black, the rendering fallback in ' +
+                '_drawFrameWithBitmap() should handle this automatically.');
         }
     }
 
@@ -408,6 +457,12 @@ export class StreamView {
         // This avoids a GPU compositor bug where NV12→RGB conversion contaminates
         // adjacent HTML overlay layers with a green tint (HEVC streams on Windows).
         this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+        // Fallback: Safari iOS may not support willReadFrequently flag
+        if (!this.ctx) {
+            console.warn('[StreamView] getContext with willReadFrequently failed, ' +
+                'falling back to default 2d context');
+            this.ctx = this.canvas.getContext('2d');
+        }
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
@@ -693,6 +748,7 @@ export class StreamView {
 
         for (const fbCodec of fallbacks) {
             if (fbCodec === codec) continue;
+            // With colorSpace (works on Chrome desktop)
             configsToTry.push({
                 codec: fbCodec,
                 description: desc.buffer,
@@ -700,6 +756,14 @@ export class StreamView {
                 codedHeight: 1080,
                 optimizeForLatency: true,
                 ...bt709
+            });
+            // Without colorSpace (Safari iOS does not support colorSpace in configure())
+            configsToTry.push({
+                codec: fbCodec,
+                description: desc.buffer,
+                codedWidth: 1920,
+                codedHeight: 1080,
+                optimizeForLatency: true
             });
         }
 
@@ -748,6 +812,44 @@ export class StreamView {
             });
         }
 
+        // ── Additional fallback variants for H.264 ─────────────────────────
+        // Safari iOS (WebKit) may reject configs with optimizeForLatency (Chrome
+        // proprietary extension) or with explicit colorSpace (BT.709 in our configs).
+        // These variants strip one variable at a time, mirroring the HEVC fallback
+        // chain above.
+        if (codecType === CODEC_H264) {
+            // Variant A: no optimizeForLatency (not supported by Safari WebCodecs)
+            configsToTry.push({
+                codec: codec,
+                description: desc.buffer,
+                codedWidth: 1920,
+                codedHeight: 1080
+            });
+            // Variant B: no optimizeForLatency, no codedWidth/codedHeight
+            configsToTry.push({
+                codec: codec,
+                description: desc.buffer
+            });
+            // Variant C: use Uint8Array directly (some Safari versions reject
+            // ArrayBuffer-based description)
+            configsToTry.push({
+                codec: codec,
+                description: desc,
+                codedWidth: 1920,
+                codedHeight: 1080,
+                optimizeForLatency: true
+            });
+            // Last resort: bare codec string, no description at all.
+            // Safari iOS may auto-detect the H.264 config from the bitstream.
+            configsToTry.push({
+                codec: codec,
+                optimizeForLatency: true
+            });
+            configsToTry.push({
+                codec: codec
+            });
+        }
+
         console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs (' +
             (codecType === CODEC_HEVC ? 'HEVC' : 'H.264') + ')');
         tryCodecs(configsToTry, 0);
@@ -781,7 +883,9 @@ export class StreamView {
             if (this.pendingFrames.length < 120) {
                 this.pendingFrames.push({ data, isKeyframe });
                 if (this.pendingFrames.length === 1) {
-                    console.log('[StreamView] First frame buffered (pending), waiting for decoder config');
+                    console.log('[StreamView] First frame buffered (pending), waiting for decoder config, webrtc.video=' +
+                    (this.webrtc && this.webrtc.dataChannels && this.webrtc.dataChannels.video ?
+                        this.webrtc.dataChannels.video.readyState : '?'));
                 }
                 if (this.pendingFrames.length % 30 === 0) {
                     console.log('[StreamView] Buffered frames: ' + this.pendingFrames.length);
@@ -910,7 +1014,12 @@ export class StreamView {
 
             // Detect Canvas2D context loss (GPU driver crash, Alt-Tab on some GPUs).
             // When lost, the canvas is permanently blank — we must recreate the context.
-            if (this.ctx && this.ctx.isContextLost()) {
+            // Safari/WebKit does not support CanvasRenderingContext2D.isContextLost().
+            // Feature-detect the method before calling it to avoid TypeError.
+            const ctxLost = typeof this.ctx.isContextLost === 'function'
+                ? this.ctx.isContextLost()
+                : false;
+            if (this.ctx && ctxLost) {
                 console.warn('[StreamView] Canvas2D context lost, recreating...');
                 this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
                 // Force re-composite all overlay layers by briefly toggling transform
@@ -1040,6 +1149,19 @@ export class StreamView {
             this._warmupFrames++;
         }
 
+        // Render frame to canvas with progressive fallbacks.
+        //
+        //   Primary  path: createImageBitmap(VideoFrame)  — fastest, GPU->GPU.
+        //   Fallback 1:    ctx.drawImage(VideoFrame, ...)  — works everywhere
+        //                  except Windows Chrome HEVC NV12 (green-tint bug).
+        //   Fallback 2:    copyTo(RGBA) + putImageData     — universal CPU-side
+        //                  readback, works on all platforms including iOS WebKit.
+        //
+        // Fallback 1 is safe here because Windows Chrome HEVC NV12 frames are
+        // handled by the dedicated isHevcNv12 RGBA-readback path above, so
+        // this code only runs for H.264, AV1, and non-NV12 formats where the
+        // green-tint bug does not apply.
+        let rendered = false;
         try {
             const bitmap = await createImageBitmap(frame);
             if (this.canvas && this.ctx) {
@@ -1047,12 +1169,38 @@ export class StreamView {
                     this.canvas.width, this.canvas.height);
             }
             bitmap.close();
+            rendered = true;
         } catch (e) {
-            console.warn('[StreamView] createImageBitmap failed:', e.message);
-            // Note: drawImage(VideoFrame) fallback intentionally omitted.
-            // On Windows Chrome with HEVC NV12, direct VideoFrame draw
-            // always produces a green image via the buggy compositor YUV
-            // pipeline.  Dropping the frame is preferable to showing green.
+            console.warn('[StreamView] createImageBitmap failed: ' + e.message +
+                ' — trying drawImage(VideoFrame) fallback');
+            // Fallback 1: direct drawImage with VideoFrame.
+            // iOS WebKit (< iOS 17) does not support createImageBitmap(VideoFrame).
+            if (this.canvas && this.ctx) {
+                try {
+                    this.ctx.drawImage(frame, 0, 0,
+                        this.canvas.width, this.canvas.height);
+                    rendered = true;
+                } catch (e2) {
+                    console.warn('[StreamView] drawImage(VideoFrame) fallback failed: ' +
+                        e2.message + ' — trying copyTo RGBA readback');
+                    // Fallback 2: CPU-side RGBA readback (works universally).
+                    try {
+                        const w = frame.displayWidth || frame.codedWidth || 0;
+                        const h = frame.displayHeight || frame.codedHeight || 0;
+                        if (w > 0 && h > 0) {
+                            const size = w * h * 4;
+                            const buf = new ArrayBuffer(size);
+                            await frame.copyTo(buf, { format: 'RGBA' });
+                            const imageData = new ImageData(
+                                new Uint8ClampedArray(buf, 0, size), w, h);
+                            this.ctx.putImageData(imageData, 0, 0);
+                            rendered = true;
+                        }
+                    } catch (e3) {
+                        console.error('[StreamView] All rendering paths failed:', e3.message);
+                    }
+                }
+            }
         }
         frame.close();
         this.stats.rendered++;
