@@ -1,0 +1,1 @@
+find /d/Code/moonlight-web-deepseek -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.js" -o -name "*.html" \) | grep -v node_modules | grep -v build | sort | head -80
