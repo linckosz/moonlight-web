@@ -84,6 +84,12 @@ const MoonlightApp = {
     adminView: null,
     loginView: null,
 
+    // ── HEVC fallback guard ─────────────────────────────────────────────────
+    // Counts consecutive HEVC→H.264 fallback attempts to prevent infinite
+    // re-launch loops. Reset to 0 each time the user initiates a new stream
+    // (not a fallback). If H.264 also fails, stop falling back.
+    _fallbackAttemptCount: 0,
+
     // ── Navigation state (never destroyed by overlays) ──────────────────────
     _nav: {
         /** 'hosts' | 'apps' — the underlying main view */
@@ -550,17 +556,48 @@ const MoonlightApp = {
     },
 
     // =========================================================================
+    // Remote connection detection
+    // =========================================================================
+
+    /**
+     * Returns true if the current connection is from outside the local network.
+     * UPnP warnings and certain UI elements are only relevant for remote access.
+     */
+    _isRemoteConnection() {
+        const hostname = window.location.hostname;
+        // Localhost / loopback
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return false;
+        // Private IP ranges (LAN)
+        if (/^10\./.test(hostname)) return false;
+        if (/^192\.168\./.test(hostname)) return false;
+        if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)) return false;
+        // Everything else (domain, public IP) is remote
+        return true;
+    },
+
+    // =========================================================================
     // Streaming (fullscreen overlay)
     // =========================================================================
 
-    async launchApp(host, app) {
-        console.log(`[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}`);
+    async launchApp(host, app, codecOverride) {
+        console.log(`[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}` +
+            (codecOverride ? ` (forced codec: ${codecOverride})` : ''));
         this.transition('launching');
         Toast.info(`Launching ${app.name}...`);
+
+        // Reset fallback counter on user-initiated launch (not a fallback re-launch)
+        if (!codecOverride) {
+            this._fallbackAttemptCount = 0;
+        }
+
+        // Store host/app for HEVC fallback re-launch
+        this._lastStreamHost = host;
+        this._lastStreamApp = app;
 
         // UPnP is enabled by default — the backend's upnpAvailable field
         // in the launch response reports the actual availability to the UI.
         const upnpEnabled = true;
+        const isRemote = this._isRemoteConnection();
 
         // Read per-browser streaming settings from localStorage
         // (defaults come from server on first visit via SettingsView)
@@ -572,6 +609,11 @@ const MoonlightApp = {
             } catch (e) {
                 console.warn('[MW] Failed to parse streaming settings from localStorage:', e);
             }
+        }
+
+        // Override codec if provided (HEVC fallback to H.264)
+        if (codecOverride) {
+            streamingSettings.video_codec = codecOverride;
         }
 
         try {
@@ -589,6 +631,8 @@ const MoonlightApp = {
             });
 
             if (result.status === 'streaming') {
+                // Dismiss "Launching..." toast so only the current status is visible
+                await Toast.dismissAll();
                 Toast.success(`${app.name} started`);
 
                 // ── Streaming overlay guard ────────────────────────────────
@@ -622,7 +666,8 @@ const MoonlightApp = {
                     upnpEnabled,
                     result.upnpAvailable !== false,
                     internalTransport,
-                    transportMode
+                    transportMode,
+                    isRemote
                 );
 
                 // ── Callback when streaming quits (Stop button / disconnect) ─
@@ -636,9 +681,13 @@ const MoonlightApp = {
     },
 
     /**
-     * Called when streaming ends (Stop button, disconnect, or quit).
+     * Called when streaming ends (Stop button, disconnect, or HEVC fallback).
      * Popstate handler may have already cleaned up (if Back was pressed).
      * This method only acts if the overlay is still marked as 'streaming'.
+     *
+     * If the stream ended because HEVC is not supported (_codecFallbackRequested),
+     * automatically re-launch with H.264 forced. The fallback counter prevents
+     * infinite loops if H.264 also fails.
      */
     _onStreamingQuit() {
         // Guard: if popstate already handled cleanup, skip.
@@ -650,8 +699,56 @@ const MoonlightApp = {
             this.streamView = null;
             return;
         }
+
+        // Capture fallback state BEFORE nulling streamView
+        const fallbackRequested = this.streamView && this.streamView._codecFallbackRequested;
+        const fallbackHost = this._lastStreamHost;
+        const fallbackApp = this._lastStreamApp;
+
         this._nav.overlay = null;
         this.streamView = null;
+
+        // ── HEVC → H.264 fallback ─────────────────────────────────────────
+        // When the browser cannot decode HEVC (Windows Chrome), the stream
+        // quits with _codecFallbackRequested=true. Re-launch with H.264 forced.
+        if (fallbackRequested && fallbackHost && fallbackApp) {
+            this._fallbackAttemptCount++;
+            if (this._fallbackAttemptCount > 1) {
+                // H.264 fallback failed too — give up to prevent infinite loop
+                console.error('[MW] HEVC→H.264 fallback also failed, giving up');
+                this.transition('app_list');
+                if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
+                    history.back();
+                } else {
+                    this._renderMainView('apps', {
+                        hostUuid: fallbackHost.uuid,
+                        hostDisplayName: fallbackHost.displayName
+                    });
+                    history.replaceState({ view: 'apps', hostUuid: fallbackHost.uuid,
+                        hostDisplayName: fallbackHost.displayName }, '', '/apps');
+                }
+                Toast.error('HEVC and H.264 both unsupported by browser');
+                return;
+            }
+
+            console.warn('[MW] HEVC not supported by browser, re-launching with H.264 ' +
+                '(attempt ' + this._fallbackAttemptCount + ')');
+
+            // Pop the streaming guard from history
+            if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
+                history.back();
+            }
+
+            // Re-launch with H.264 forced. This pushes a new streaming guard
+            // on top of the revealed main view.
+            this.transition('app_list'); // Reset state for re-launch
+            this.launchApp(fallbackHost, fallbackApp, 'h264');
+            return;
+        }
+
+        // Reset fallback counter on successful non-fallback quit
+        this._fallbackAttemptCount = 0;
+
         this.transition('app_list');
 
         // Pop the streaming guard from history to reveal apps/hosts state below.

@@ -47,4 +47,34 @@ export class Toast {
     static error(message)   { this.show(message, 'error'); }
     static warning(message) { this.show(message, 'warning'); }
     static info(message)    { this.show(message, 'info'); }
+
+    /**
+     * Dismiss all visible toasts with a 500ms fade-out animation.
+     * Returns a Promise that resolves after the animation completes,
+     * so callers can await it before showing a new toast (e.g.:
+     *   await Toast.dismissAll();
+     *   Toast.success('New message');
+     * ).
+     *
+     * The 500ms delay gives the user time to briefly read the old
+     * message before it is replaced.
+     */
+    static dismissAll() {
+        return new Promise((resolve) => {
+            const container = document.getElementById('toast-container');
+            if (!container) { resolve(); return; }
+            const toasts = container.querySelectorAll('.toast');
+            if (toasts.length === 0) { resolve(); return; }
+            for (const toast of toasts) {
+                if (toast.parentNode) {
+                    toast.classList.add('toast-exit');
+                    setTimeout(() => {
+                        if (toast.parentNode) toast.remove();
+                    }, 300);
+                }
+            }
+            // Resolve after the exit animation completes (500ms total)
+            setTimeout(resolve, 500);
+        });
+    }
 }

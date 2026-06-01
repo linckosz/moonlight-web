@@ -18,6 +18,7 @@ import {
     toAvcc,
     H264_FALLBACK_CODEC_STRINGS,
     HEVC_FALLBACK_CODEC_STRINGS,
+    HEVC_ANNEXB_CODEC_STRINGS,
     CODEC_H264,
     CODEC_HEVC
 } from '../util/Mp4Muxer.js';
@@ -104,7 +105,7 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false) {
         this.container = container;
         this.signalingUrl = signalingUrl;
         this.host = host;
@@ -114,19 +115,17 @@ export class StreamView {
         this._gamingMode = gamingMode;
         this._upnpEnabled = upnpEnabled;
         this._upnpAvailable = upnpAvailable;
+        this._isRemote = isRemote;
 
         /** Callback invoked after quit() completes cleanup. Used by MoonlightApp
          *  to restore the underlying main view (apps/hosts). */
         this.onQuit = null;
 
-        // ── UPnP status toast ─────────────────────────────────────────────────
-        if (this._upnpEnabled) {
-            if (this._upnpAvailable) {
-                Toast.success('UPnP active — port mapped');
-            } else {
-                Toast.warning('UPnP not available — connections from outside your LAN will rely on STUN relay (may fail on strict NATs).');
-            }
-        }
+        // ── UPnP status ─────────────────────────────────────────────────────
+        // UPnP toasts intentionally suppressed: they have no value during a
+        // streaming session and only clutter the UI. The UPnP state is visible
+        // in the Admin/Settings UI before the stream starts, where the user can
+        // act on it. During streaming, the toast is pure distraction.
         if (this._transport === 'webrtc-media') {
             this.webrtc = new WebRtcMedia(signalingUrl);
         } else if (this._transport === 'wss') {
@@ -240,6 +239,18 @@ export class StreamView {
 
         // Guard flag to prevent re-entrant quit() calls
         this._quitting = false;
+
+        // HEVC fallback: set to true when the browser does not support HEVC decoding
+        // (e.g. Windows Chrome). The onQuit callback should detect this and re-launch
+        // with H.264 forced via MoonlightApp.launchApp(host, app, 'h264').
+        this._codecFallbackRequested = false;
+
+        // Annex B mode: true when the decoder was configured WITHOUT a description.
+        // In this mode, EncodedVideoChunk data uses Annex B format (start codes)
+        // instead of AVCC (length prefixes).  Chromium's keyframe validator
+        // (AnalyzeAnnexB) only parses Annex B — without this, HEVC keyframes
+        // are falsely rejected on Chrome/Edge.
+        this._noDescription = false;
 
         this.render();
 
@@ -646,15 +657,18 @@ export class StreamView {
             return;
         }
 
-        const applyConfig = (cfg) => {
+        const applyConfig = (cfg, noDescription = false) => {
             try {
                 console.log('[StreamView] Calling decoder.configure() with codec=' + cfg.codec +
-                    ' descriptionLen=' + (cfg.description ? cfg.description.byteLength : 0));
+                    ' descriptionLen=' + (cfg.description ? cfg.description.byteLength : 0) +
+                    ' noDescription=' + noDescription);
                 this.decoder.configure(cfg);
                 this.decoderConfigured = true;
                 this.decoderConfiguring = false;
+                this._noDescription = noDescription;
                 console.log('[StreamView] VideoDecoder configured OK with codec=' + cfg.codec +
                             ', state=' + this.decoder.state +
+                            ', noDescription=' + this._noDescription +
                             ', dequeuing ' + this.pendingFrames.length + ' pending frames');
                 this.flushPendingFrames();
                 return true;
@@ -668,50 +682,45 @@ export class StreamView {
             }
         };
 
-        // Try primary config first (with avcC description and SPS-derived codec)
-        const tryCodecs = (configs, index) => {
+        const tryCodecs = (configs, index, onExhausted) => {
             if (index >= configs.length) {
-                console.error('[StreamView] All codec configs rejected');
-                this.decoderConfiguring = false;
-                this.setStatus('error', 'Codec not supported by browser');
+                onExhausted();
                 return;
             }
 
             const cfg = configs[index];
-            console.log('[StreamView] Testing config[' + index + ']: codec=' + cfg.codec);
+            const noDescription = cfg._noDescription === true;
+            console.log('[StreamView] Testing config[' + index + ']: codec=' + cfg.codec +
+                ' hasDescription=' + (cfg.description ? 'yes' : 'no'));
             VideoDecoder.isConfigSupported(cfg).then((result) => {
                 console.log('[StreamView] isConfigSupported returned: supported=' +
                     result.supported + ' for codec=' + cfg.codec);
                 if (result.supported) {
                     console.log('[StreamView] Config supported: codec=' + cfg.codec +
                                 ' hasDescription=' + !!cfg.description);
-                    if (!applyConfig(cfg)) {
+                    if (!applyConfig(cfg, noDescription)) {
                         console.log('[StreamView] applyConfig failed, trying next config');
-                        tryCodecs(configs, index + 1);
+                        tryCodecs(configs, index + 1, onExhausted);
                     }
                 } else {
                     console.warn('[StreamView] Config NOT supported: codec=' + cfg.codec +
                                  ', trying next');
-                    tryCodecs(configs, index + 1);
+                    tryCodecs(configs, index + 1, onExhausted);
                 }
             }).catch((err) => {
                 console.error('[StreamView] isConfigSupported error for codec=' +
                               cfg.codec + ':', err.message, err);
-                tryCodecs(configs, index + 1);
+                tryCodecs(configs, index + 1, onExhausted);
             });
         };
 
-        // Build configs: primary + fallbacks, all with codec description (avcC or hvcC).
-        // Description data is in AVCC/HEVC format (4-byte length prefixes).
-        // decodeFrame() converts Annex B to this format when descriptor is enabled.
-        const configsToTry = [];
-        const fallbacks = (codecType === CODEC_HEVC)
-            ? HEVC_FALLBACK_CODEC_STRINGS
-            : H264_FALLBACK_CODEC_STRINGS;
+        // Shared config fields
+        const shared = {
+            codedWidth: 1920,
+            codedHeight: 1080,
+            optimizeForLatency: true
+        };
 
-        // Explicit BT.709 limited-range — the H.264 broadcast standard.
-        // Some Chrome versions ignore VUI and default to BT.601 full-range,
-        // causing color shifts (washed out / oversaturated).
         const bt709 = {
             colorSpace: {
                 primaries: 'bt709',
@@ -720,6 +729,15 @@ export class StreamView {
                 fullRange: false
             }
         };
+
+        // Build configs: for HEVC, try Annex B (no description) first.
+        // Chromium's keyframe validator (AnalyzeAnnexB) only parses start-code
+        // format — without Annex B, HEVC keyframes are falsely rejected on
+        // Chrome/Edge.  Non-Chromium browsers fall back to AVCC + description.
+        const configsToTry = [];
+        const fallbacks = (codecType === CODEC_HEVC)
+            ? HEVC_FALLBACK_CODEC_STRINGS
+            : H264_FALLBACK_CODEC_STRINGS;
         // Chrome WebCodecs has historically rejected HEVC configs that include
         // an explicit colorSpace. We attempt it as the primary config for HEVC
         // too; if Chrome rejects it, the fallback chain skips to the next
@@ -727,24 +745,36 @@ export class StreamView {
         const colorConfig = {
             codec: codec,
             description: desc.buffer,
-            codedWidth: 1920,
-            codedHeight: 1080,
-            optimizeForLatency: true,
+            ...shared,
             ...bt709
         };
 
-        configsToTry.push(colorConfig);
-
-        // Fallback: HEVC without explicit colorSpace (Chrome bug workaround)
+        // ── HEVC Annex B phase (no description) ──
+        // Chromium keyframe validator only handles start codes.  Try Annex B
+        // configs first; if all fail, fall back to AVCC with description.
         if (codecType === CODEC_HEVC) {
-            configsToTry.push({
-                codec: codec,
-                description: desc.buffer,
-                codedWidth: 1920,
-                codedHeight: 1080,
-                optimizeForLatency: true
+            const annexBCfgs = [];
+            const hev1Primary = codec.replace(/^hvc1/, 'hev1');
+            annexBCfgs.push({ codec: hev1Primary, ...shared, ...bt709, _noDescription: true });
+            annexBCfgs.push({ codec: hev1Primary, ...shared, _noDescription: true });
+            for (const fb of HEVC_ANNEXB_CODEC_STRINGS) {
+                if (fb === hev1Primary) continue;
+                annexBCfgs.push({ codec: fb, ...shared, ...bt709, _noDescription: true });
+                annexBCfgs.push({ codec: fb, ...shared, _noDescription: true });
+            }
+
+            console.log('[StreamView] Phase A: ' + annexBCfgs.length +
+                ' Annex B configs (no description, hev1)');
+
+            tryCodecs(annexBCfgs, 0, () => {
+                console.log('[StreamView] Annex B exhausted, Phase B: AVCC with description');
+                this._tryHevcAvccConfigs(codec, desc, fallbacks, shared, bt709);
             });
+            return;
         }
+
+        // H.264 path: AVCC with description (no Annex B needed)
+        configsToTry.push(colorConfig);
 
         for (const fbCodec of fallbacks) {
             if (fbCodec === codec) continue;
@@ -764,51 +794,6 @@ export class StreamView {
                 codedWidth: 1920,
                 codedHeight: 1080,
                 optimizeForLatency: true
-            });
-        }
-
-        // ── Additional fallback variants for HEVC ─────────────────────────────
-        // Chrome's HEVC decoder can be finicky about specific hvcC fields.
-        // Each variant removes exactly one variable to find a working config.
-        if (codecType === CODEC_HEVC) {
-            // Variant A: use Uint8Array directly (not desc.buffer / ArrayBuffer).
-            // Some Chrome versions reject bare ArrayBuffer for description.
-            configsToTry.push({
-                codec: codec,
-                description: desc,  // Uint8Array, not ArrayBuffer
-                codedWidth: 1920,
-                codedHeight: 1080,
-                optimizeForLatency: true
-            });
-            // Variant B: no explicit codedWidth/codedHeight.
-            // Let Chrome infer resolution from the SPS in the description.
-            configsToTry.push({
-                codec: codec,
-                description: desc.buffer,
-                optimizeForLatency: true
-            });
-            // Variant C: no optimizeForLatency (Chrome proprietary extension
-            // that may cause rejection for HEVC on some drivers).
-            configsToTry.push({
-                codec: codec,
-                description: desc.buffer,
-                codedWidth: 1920,
-                codedHeight: 1080
-            });
-            // Variant D: no optimizeForLatency, no codedWidth/codedHeight.
-            configsToTry.push({
-                codec: codec,
-                description: desc.buffer
-            });
-            // Last resort: bare codec string, no description at all.
-            // Only works on some platforms where Chrome can auto-detect the
-            // HEVC config from the bitstream itself (rare, but worth trying).
-            configsToTry.push({
-                codec: codec,
-                optimizeForLatency: true
-            });
-            configsToTry.push({
-                codec: codec
             });
         }
 
@@ -852,7 +837,113 @@ export class StreamView {
 
         console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs (' +
             (codecType === CODEC_HEVC ? 'HEVC' : 'H.264') + ')');
-        tryCodecs(configsToTry, 0);
+        tryCodecs(configsToTry, 0, () => {
+            console.error('[StreamView] All H.264 configs rejected');
+            this.decoderConfiguring = false;
+            this.setStatus('error', 'Codec not supported by browser');
+        });
+    }
+
+    /**
+     * Phase B for HEVC: try AVCC configs with codec description.
+     * Called when all Annex B (no-description) configs were exhausted.
+     * On total exhaustion, triggers H.264 fallback via _handleHevcFallback().
+     */
+    _tryHevcAvccConfigs(codec, desc, fallbacks, shared, bt709) {
+        const cfgs = [];
+
+        cfgs.push({ codec, description: desc.buffer, ...shared, ...bt709 });
+        cfgs.push({ codec, description: desc.buffer, ...shared });
+
+        for (const fb of fallbacks) {
+            if (fb === codec) continue;
+            cfgs.push({ codec: fb, description: desc.buffer, ...shared, ...bt709 });
+            cfgs.push({ codec: fb, description: desc.buffer, ...shared });
+        }
+
+        cfgs.push({ codec, description: desc, ...shared });
+        cfgs.push({ codec, description: desc.buffer, optimizeForLatency: true });
+        cfgs.push({ codec, description: desc.buffer, codedWidth: 1920, codedHeight: 1080 });
+        cfgs.push({ codec, description: desc.buffer });
+        cfgs.push({ codec, ...shared });
+        cfgs.push({ codec, optimizeForLatency: true });
+
+        console.log('[StreamView] Phase B: ' + cfgs.length + ' AVCC configs (with desc)');
+
+        const tryNext = (idx) => {
+            if (idx >= cfgs.length) {
+                console.warn('[StreamView] Phase B exhausted, H.264 fallback');
+                this.decoderConfiguring = false;
+                this._handleHevcFallback();
+                return;
+            }
+            const cfg = cfgs[idx];
+            console.log('[StreamView] Phase B[' + idx + ']: ' + cfg.codec +
+                ' desc=' + (cfg.description ? 'yes' : 'no'));
+            VideoDecoder.isConfigSupported(cfg).then((r) => {
+                if (r.supported) {
+                    try {
+                        this.decoder.configure(cfg);
+                        this.decoderConfigured = true;
+                        this.decoderConfiguring = false;
+                        this._noDescription = false;
+                        console.log('[StreamView] Phase B OK: ' + cfg.codec);
+                        this.flushPendingFrames();
+                    } catch (e) {
+                        console.error('[StreamView] Phase B configure() fail:', e.message);
+                        this.decoderConfiguring = false;
+                        // configure() throw leaves decoder in unknown state — abort
+                        this._handleHevcFallback();
+                    }
+                } else {
+                    tryNext(idx + 1);
+                }
+            }).catch((err) => {
+                console.error('[StreamView] Phase B isConfigSupported error:', err.message);
+                tryNext(idx + 1);
+            });
+        };
+        tryNext(0);
+    }
+
+    /**
+     * Handle HEVC decoder fallback when the browser does not support HEVC decoding.
+     *
+     * On Windows Chrome, VideoDecoder.isConfigSupported() returns false for all
+     * HEVC configurations because Chrome lacks the HEVC codec entirely (unlike
+     * Edge which licenses it from Microsoft).
+     *
+     * This method:
+     *   1. Sets _codecFallbackRequested so MoonlightApp can detect the fallback
+     *      and re-launch with H.264 forced.
+     *   2. Sends a diagnostic message via the DataChannel for backend logging.
+     *   3. Calls quit() to stop the current stream — the onQuit callback in
+     *      MoonlightApp._onStreamingQuit() will detect _codecFallbackRequested
+     *      and automatically re-launch with H.264.
+     */
+    _handleHevcFallback() {
+        this.decoderConfiguring = false;
+        this._codecFallbackRequested = true;
+
+        console.warn('[StreamView] HEVC fallback triggered — requesting H.264 re-launch');
+
+        // Send a diagnostic message via the DataChannel for backend logging.
+        // This is best-effort; the backend does not need to act on it.
+        try {
+            if (this.webrtc && typeof this.webrtc.send === 'function') {
+                this.webrtc.send({
+                    type: 'codec_fallback',
+                    from: 'hevc',
+                    to: 'h264'
+                });
+            }
+        } catch (e) {
+            // Ignore send errors — the stream is about to be torn down
+        }
+
+        // Quit the stream. MoonlightApp._onStreamingQuit() will detect
+        // _codecFallbackRequested and re-launch with H.264.
+        this.quit();
     }
 
     flushPendingFrames() {
@@ -915,8 +1006,27 @@ export class StreamView {
 
         const type = isKeyframe ? 'key' : 'delta';
 
-        // Convert Annex B (start codes) to AVCC (4-byte length prefixes).
-        const avccData = toAvcc(data, this.decoderConfigured, this.nalParser.codec);
+        // Convert Annex B (start codes) to the expected output format.
+        //   _noDescription=true  → Annex B (start codes), all NALs kept
+        //   _noDescription=false → AVCC (length prefixes), VPS/SPS/PPS stripped
+        const useAnnexB = this._noDescription && this.nalParser.codec === CODEC_HEVC;
+        const avccData = toAvcc(data, this.decoderConfigured, this.nalParser.codec, useAnnexB);
+
+        // Debug: catch empty AVCC data (all NALs stripped, including the IRAP)
+        if (avccData.length === 0) {
+            console.error('[StreamView] EMPTY AVCC DATA for ' + type + ' frame #' + this.frameCount +
+                ' — stripParams=' + this.decoderConfigured +
+                ' codec=' + this.nalParser.codec +
+                ' inputSize=' + data.length);
+            // Check if all NALs were stripped: split and log types
+            const nals = splitNals(data);
+            const types = nals.map(n => {
+                if (n.length >= 2 && this.nalParser.codec === CODEC_HEVC)
+                    return (n[0] >> 1) & 0x3F;
+                return n.length >= 1 ? (n[0] & 0x1F) : -1;
+            });
+            console.error('[StreamView] NAL types in empty-avcc frame:', types.join(', '));
+        }
 
         try {
             const chunk = new EncodedVideoChunk({
@@ -1399,6 +1509,19 @@ export class StreamView {
             const hex = Array.from(data.slice(0, Math.min(16, data.length)))
                 .map(b => b.toString(16).padStart(2, '0')).join(' ');
             console.log('[StreamView] First 16 bytes:', hex);
+
+            // Debug: log all NAL types in the first frame (HEVC-aware)
+            const nals = splitNals(data);
+            const nalInfo = nals.map(n => {
+                if (n.length >= 2) {
+                    const hevcType = (n[0] >> 1) & 0x3F;
+                    const h264Type = n[0] & 0x1F;
+                    return (hevcType === 32 || hevcType === 33 || hevcType === 34 || (hevcType >= 16 && hevcType <= 21))
+                        ? 'H:' + hevcType : 'A:' + h264Type;
+                }
+                return 'len=' + n.length;
+            });
+            console.log('[StreamView] First frame NAL types (H=HEVC type / A=H264 type):', nalInfo.join(', '));
         }
 
         // AV1 pipeline: no NAL units, no SPS/PPS, no Annex B start codes.
@@ -1872,7 +1995,8 @@ export class StreamView {
         try {
             await BackendClient.quitApp(this.host.uuid);
             this.webrtc.close();
-            Toast.success('Stream ended');
+            await Toast.dismissAll();
+            Toast.success('Stream end');
         } catch (err) {
             console.warn('[StreamView] Quit failed:', err);
             this.webrtc.close();
