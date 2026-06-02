@@ -48,6 +48,18 @@ public:
 
     void stop() override;
 
+    /// Retrieve and clear the buffered keyframe (if any).
+    /// Used by SignalingServer before stop() to preserve the keyframe for
+    /// WebSocket fallback — without this, the fallback starts with delta
+    /// frames and the browser's VideoDecoder can never configure.
+    QByteArray takeBufferedKeyframe() {
+        QByteArray kf = m_BufferedKeyframe;
+        m_BufferedKeyframe.clear();
+        m_HaveBufferedKeyframe = false;
+        m_NewKeyframeArrived = false;
+        return kf;
+    }
+
     void requestIdrFrame() override;
 
     // UPnP NAT traversal
