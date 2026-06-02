@@ -290,7 +290,14 @@ export class WebRtcDataChannel {
         if (this.dataChannels.input && this.dataChannels.input.readyState === 'open') {
             this.dataChannels.input.send(JSON.stringify(obj));
         } else {
-            // Input DataChannel not ready yet — silently drop
+            // Input DC not ready — try signaling WS as fallback (handles the
+            // race window during ICE→WS fallback transition where _wsFallback
+            // hasn't been set yet but the signaling WS is still open).
+            if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
+                this.signalingWs.send(JSON.stringify(obj));
+                return;
+            }
+            // No transport available — silently drop
             if (this._logCount < 5) {
                 console.warn('[WebRTC] Input DC not open, dropping message:', obj.type);
                 this._logCount++;
@@ -956,14 +963,15 @@ export class WebRtcDataChannel {
         }
     }
 
-    /** Request an IDR (key) frame from Sunshine via the input DataChannel or WS text (WSS mode). */
+    /** Request an IDR (key) frame from Sunshine via the input DataChannel or WS text (WSS/fallback mode). */
     _requestIdrFrame(reason) {
-        // WSS mode: send via signaling WS text message
-        if (this._wssMode) {
+        // WSS mode or WS fallback mode: send via signaling WS text message
+        if (this._wssMode || this._wsFallback) {
             if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
                 this._idrLogCount++;
                 if (this._idrLogCount <= 5 || this._idrLogCount % 10 === 0) {
-                    console.warn('[WSS] Requesting IDR frame (' + reason + ')');
+                    console.warn('[' + (this._wssMode ? 'WSS' : 'WebRTC') +
+                        '] Requesting IDR frame via WS fallback (' + reason + ')');
                 }
                 this.signalingWs.send(JSON.stringify({ type: 'requestidr' }));
             }

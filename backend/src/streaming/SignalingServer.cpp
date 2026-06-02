@@ -411,11 +411,25 @@ void SignalingServer::startWsFallback()
 
     m_WsFallbackActive = true;
 
-    // Step 1: Stop the DataChannelRelay (sets m_Stopping, its signal handlers
+    // Step 1: Save any buffered keyframe BEFORE stopping the relay.
+    // DataChannelRelay buffers the initial IDR from Sunshine (arrives before
+    // DataChannels open). When stop() is called, the buffer is cleared. If we
+    // don't save it here, the fallback WS starts with delta frames and the
+    // browser's VideoDecoder can never configure → permanent black screen.
+    QByteArray savedKeyframe;
+    if (auto* dcRelay = qobject_cast<DataChannelRelay*>(m_Relay)) {
+        savedKeyframe = dcRelay->takeBufferedKeyframe();
+        if (!savedKeyframe.isEmpty()) {
+            qInfo() << "[SignalingServer] Saved buffered keyframe for WS fallback, size="
+                    << savedKeyframe.size();
+        }
+    }
+
+    // Step 2: Stop the DataChannelRelay (sets m_Stopping, its signal handlers
     // become no-ops but remain connected to avoid Qt disconnect issues).
     m_Relay->stop();
 
-    // Step 2: Connect MoonlightShim video/audio signals to WS forwarding slots.
+    // Step 3: Connect MoonlightShim video/audio signals to WS forwarding slots.
     // These fire in ADDITION to DataChannelRelay's slots (which are no-ops now).
     if (!m_ShimConnected) {
         connect(m_Shim, &MoonlightShim::videoFrameReady,
@@ -425,7 +439,16 @@ void SignalingServer::startWsFallback()
         m_ShimConnected = true;
     }
 
-    // Step 3: Send fallback notification to browser — tells the frontend to
+    // Step 4: If we saved a buffered keyframe, send it as the first WS frame
+    // immediately (before any delta frames from the shim). This guarantees the
+    // browser's NAL parser extracts SPS/PPS and VideoDecoder configures on the
+    // very first frame, even if the shim is currently in a delta-only window.
+    if (!savedKeyframe.isEmpty()) {
+        qInfo() << "[SignalingServer] Sending saved keyframe as first WS fallback frame";
+        forwardVideoViaWs(savedKeyframe, 1, 0);  // frameType=1 = keyframe
+    }
+
+    // Step 5: Send fallback notification to browser — tells the frontend to
     // repurpose this WS for data transport (binary frames arrive immediately).
     QJsonObject fallbackMsg;
     fallbackMsg["type"] = "fallback-ws";
@@ -433,7 +456,7 @@ void SignalingServer::startWsFallback()
     m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
     qInfo() << "[SignalingServer] Sent fallback-ws notification to browser";
 
-    // Step 4: Emit dataChannelsOpen — signals StreamView that the transport
+    // Step 6: Emit dataChannelsOpen — signals StreamView that the transport
     // is ready (same as when WebRTC DataChannels open normally).
     // This triggers the browser to start rendering.
     onDataChannelsOpen();
@@ -798,6 +821,15 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     //   - MediaTrackRelay: the video track triggers SRTP negotiation implicitly
     // config.forceMediaTransport is NOT set here.
 
+    // When UPnP is active, force libdatachannel to bind to the mapped port
+    // in ALL modes (not just TCP or WAN). Without this, libdatachannel picks
+    // an ephemeral port that the router's UPnP mapping cannot reach, and the
+    // host candidate rewrite will point to a port nobody is listening on.
+    if (upnpMappedPort > 0) {
+        config.portRangeBegin = upnpMappedPort;
+        config.portRangeEnd = upnpMappedPort;
+    }
+
     if (forceIceTcp) {
         // TCP mode: enable ICE-TCP candidates so the browser has a TCP
         // fallback path if UDP is blocked by a restrictive firewall.
@@ -805,13 +837,9 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
         config.enableIceTcp = true;
         config.iceServers.emplace_back(stunServerUrl.toStdString());
 
-        if (upnpMappedPort > 0) {
-            config.portRangeBegin = upnpMappedPort;
-            config.portRangeEnd = upnpMappedPort;
-        }
-
         qInfo() << "[SignalingServer] ICE config: TCP mode"
-                << (upnpMappedPort > 0 ? "+ UPnP" : "") << stunServerUrl;
+                << (upnpMappedPort > 0 ? "+ UPnP port=" + QString::number(upnpMappedPort) : "")
+                << stunServerUrl;
     } else if (isInternet) {
         // UDP-only mode on WAN: no ICE-TCP. The auto fallback chain will
         // retry with TCP mode (forceIceTcp=true) if UDP-only fails.
@@ -821,8 +849,6 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
         config.iceServers.emplace_back(stunServerUrl.toStdString());
 
         if (upnpMappedPort > 0) {
-            config.portRangeBegin = upnpMappedPort;
-            config.portRangeEnd = upnpMappedPort;
             qInfo() << "[SignalingServer] Internet ICE (UDP-only): UPnP port="
                     << upnpMappedPort << " + STUN";
         } else {
@@ -833,7 +859,12 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
         // loopback/LAN connectivity. ICE-TCP is unnecessary and was found
         // to cause PeerConnection failures in some libdatachannel versions.
         config.enableIceTcp = false;
-        qInfo() << "[SignalingServer] LAN ICE: no STUN, no UPnP, no ICE-TCP";
+        if (upnpMappedPort > 0) {
+            qInfo() << "[SignalingServer] LAN ICE: UPnP port=" << upnpMappedPort
+                    << "(no STUN, no ICE-TCP)";
+        } else {
+            qInfo() << "[SignalingServer] LAN ICE: no STUN, no UPnP, no ICE-TCP";
+        }
     }
 
     return config;
