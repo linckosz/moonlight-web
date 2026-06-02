@@ -1,0 +1,1 @@
+cd d:/Code/moonlight-web-deepseek && bash .claude/list_results.sh 2>&1

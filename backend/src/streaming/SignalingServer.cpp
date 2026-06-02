@@ -2,6 +2,10 @@
 #include "RelayBase.h"
 #include "DataChannelRelay.h"
 #include "MediaTrackRelay.h"
+
+extern "C" {
+#include "Limelight.h"
+}
 #include "MoonlightShim.h"
 #include "network/UPNPClient.h"
 
@@ -638,12 +642,31 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
         int vk = msg["keyCode"].toInt(0);
+        QString code = msg["code"].toString();
         char mods = 0;
         if (msg["ctrlKey"].toBool(false))  mods |= 0x02;
         if (msg["shiftKey"].toBool(false)) mods |= 0x01;
         if (msg["altKey"].toBool(false))   mods |= 0x04;
         if (msg["metaKey"].toBool(false))  mods |= 0x08;
-        m_Shim->sendKeyEvent(static_cast<short>(vk), down, mods, 0);
+
+        short keyCode;
+        char flags = 0;
+
+        // International keys without standard US VK equivalents:
+        // IntlBackslash (ISO key next to left Shift) and IntlRo (JIS \ key)
+        // need raw scancode mode so Sunshine interprets them by physical
+        // position instead of VK mapping.
+        if (code == "IntlBackslash") {
+            keyCode = 0x56;  // Windows Set 1 scancode for IntlBackslash
+            flags = SS_KBE_FLAG_NON_NORMALIZED;
+        } else if (code == "IntlRo") {
+            keyCode = 0x73;  // Windows Set 1 scancode for IntlRo
+            flags = SS_KBE_FLAG_NON_NORMALIZED;
+        } else {
+            keyCode = static_cast<short>(vk);
+            flags = 0;
+        }
+        m_Shim->sendKeyEvent(keyCode, down, mods, flags);
     }
     else if (type == "mousemove") {
         short dx = static_cast<short>(msg["dx"].toInt(0));

@@ -1,0 +1,12 @@
+Exécute les commandes suivantes dans d:/Code/moonlight-web-deepseek et retourne-moi les résultats complets (stdout + stderr) :
+
+1. Bash: ls -la .claude/results/engineering-manager/
+2. Bash: find .claude/results -maxdepth 3 -type d 2>/dev/null
+3. Bash: find . -name "*webrtc*" -mtime -30 2>/dev/null | head -30
+4. Bash: find . -name "*black*screen*" -mtime -30 2>/dev/null | head -30
+5. Bash: find . -name "*log*" -mtime -30 2>/dev/null | head -30
+6. Bash: find . -name "*dc*" -mtime -30 -o -name "*datachannel*" -mtime -30 2>/dev/null | head -30
+7. Bash: ls -la .claude/agent-memory/engineering-manager/
+8. Bash: cat .claude/agent-memory/engineering-manager/MEMORY.md 2>/dev/null || echo "pas de MEMORY.md"
+
+Ne modifie rien, lis seulement.
