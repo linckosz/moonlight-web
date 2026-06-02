@@ -1,0 +1,1 @@
+@cd /d D:\Code\moonlight-qt\app\streaming && dir /B /S *input* *Input* *Input* > D:\Code\moonlight-web-deepseek\mqt_input_files.txt

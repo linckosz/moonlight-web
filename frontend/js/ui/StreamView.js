@@ -2001,6 +2001,77 @@ export class StreamView {
         }
     }
 
+    // Maps KeyboardEvent.code (layout-independent physical key position)
+    // to Windows Virtual Key codes.
+    //
+    // This is a fallback/supplement for browsers where e.keyCode may be
+    // unreliable (deprecated in some specs). On Chrome/Edge, e.keyCode
+    // already returns correct Windows VK codes — this table covers the
+    // same keys so codeToWindowsVk(e.code) can be used as a fallback
+    // when e.keyCode is 0.
+    //
+    // IMPORTANT: The VK codes here do NOT include the 0x8000 modifier bit
+    // (VK_RAW). MoonlightShim::sendKeyEvent() adds 0x8000 internally.
+    static codeToWindowsVk(code) {
+        const map = {
+            // Letters (A-Z) — VK_A=0x41 through VK_Z=0x5A
+            'KeyA': 0x41, 'KeyB': 0x42, 'KeyC': 0x43, 'KeyD': 0x44,
+            'KeyE': 0x45, 'KeyF': 0x46, 'KeyG': 0x47, 'KeyH': 0x48,
+            'KeyI': 0x49, 'KeyJ': 0x4A, 'KeyK': 0x4B, 'KeyL': 0x4C,
+            'KeyM': 0x4D, 'KeyN': 0x4E, 'KeyO': 0x4F, 'KeyP': 0x50,
+            'KeyQ': 0x51, 'KeyR': 0x52, 'KeyS': 0x53, 'KeyT': 0x54,
+            'KeyU': 0x55, 'KeyV': 0x56, 'KeyW': 0x57, 'KeyX': 0x58,
+            'KeyY': 0x59, 'KeyZ': 0x5A,
+            // Digits — VK_0=0x30 through VK_9=0x39
+            'Digit1': 0x31, 'Digit2': 0x32, 'Digit3': 0x33, 'Digit4': 0x34,
+            'Digit5': 0x35, 'Digit6': 0x36, 'Digit7': 0x37, 'Digit8': 0x38,
+            'Digit9': 0x39, 'Digit0': 0x30,
+            // Special keys
+            'Enter': 0x0D, 'Escape': 0x1B, 'Backspace': 0x08, 'Tab': 0x09,
+            'Space': 0x20,
+            'Minus': 0xBD, 'Equal': 0xBB,
+            'BracketLeft': 0xDB, 'BracketRight': 0xDD, 'Backslash': 0xDC,
+            'IntlBackslash': 0xE2,  // VK_OEM_102 — ISO key; backend applies SS_KBE_FLAG_NON_NORMALIZED
+            'Semicolon': 0xBA, 'Quote': 0xDE, 'Backquote': 0xC0,
+            'Comma': 0xBC, 'Period': 0xBE, 'Slash': 0xBF,
+            'CapsLock': 0x14,
+            // Function keys — VK_F1=0x70 through VK_F24=0x87
+            'F1': 0x70, 'F2': 0x71, 'F3': 0x72, 'F4': 0x73,
+            'F5': 0x74, 'F6': 0x75, 'F7': 0x76, 'F8': 0x77,
+            'F9': 0x78, 'F10': 0x79, 'F11': 0x7A, 'F12': 0x7B,
+            'F13': 0x7C, 'F14': 0x7D, 'F15': 0x7E, 'F16': 0x7F,
+            'F17': 0x80, 'F18': 0x81, 'F19': 0x82, 'F20': 0x83,
+            'F21': 0x84, 'F22': 0x85, 'F23': 0x86, 'F24': 0x87,
+            // Navigation cluster
+            'PrintScreen': 0x2C, 'ScrollLock': 0x91, 'Pause': 0x13,
+            'Insert': 0x2D, 'Home': 0x24, 'PageUp': 0x21,
+            'Delete': 0x2E, 'End': 0x23, 'PageDown': 0x22,
+            // Arrow keys
+            'ArrowRight': 0x27, 'ArrowLeft': 0x25, 'ArrowDown': 0x28, 'ArrowUp': 0x26,
+            // Numpad
+            'NumLock': 0x90, 'NumpadDivide': 0x6F, 'NumpadMultiply': 0x6A,
+            'NumpadSubtract': 0x6D, 'NumpadAdd': 0x6B, 'NumpadEnter': 0x0D,
+            'Numpad1': 0x61, 'Numpad2': 0x62, 'Numpad3': 0x63,
+            'Numpad4': 0x64, 'Numpad5': 0x65, 'Numpad6': 0x66,
+            'Numpad7': 0x67, 'Numpad8': 0x68, 'Numpad9': 0x69,
+            'Numpad0': 0x60, 'NumpadDecimal': 0x6E,
+            // Modifiers (physical position — logical state sent via ctrlKey etc.)
+            'ControlLeft': 0x11, 'ShiftLeft': 0x10, 'AltLeft': 0x12, 'MetaLeft': 0x5B,
+            'ControlRight': 0x11, 'ShiftRight': 0x10, 'AltRight': 0x12, 'MetaRight': 0x5C,
+            // Context menu
+            'ContextMenu': 0x5D,
+            // International
+            'IntlRo': 0x73,         // JIS \ key — backend applies SS_KBE_FLAG_NON_NORMALIZED
+            'IntlYen': 0xFF,        // VK_OEM_AUTO (yen sign)
+            'Lang1': 0xF2,          // VK_HANGUL
+            'Lang2': 0xF1,          // VK_HANJA
+            'Lang3': 0xF4,          // VK_KATAKANA
+            'Lang4': 0xF3,          // VK_HIRAGANA
+            'Lang5': 0xF5,          // VK_ZENKAKU
+        };
+        return map[code] !== undefined ? map[code] : 0;
+    }
+
     handleKeyDown(e) {
         // Quit combo: Shift+Ctrl+Alt+E (Windows/Linux) / Shift+Ctrl+Option+E (Mac)
         // Works in both gaming and normal mode.
@@ -2021,11 +2092,18 @@ export class StreamView {
         }
 
         e.preventDefault();
+        // Use physical-position-based VK code (like moonlight-qt's SDL scancode→VK).
+        // e.code is always layout-independent ("KeyQ" = top-left letter row).
+        // e.keyCode may be layout-dependent on some browsers (VK_A for 'a' on
+        // AZERTY instead of VK_Q), which breaks Sunshine's layout correction.
+        // Fall back to e.keyCode only for unmapped codes.
+        const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
         this.webrtc.send({
             type: 'keydown',
-            key: e.key,
+            keyCode: vkCode,
+            // Keep e.code for backend to detect IntlBackslash/IntlRo
             code: e.code,
-            keyCode: e.keyCode,
+            key: e.key,
             ctrlKey: e.ctrlKey,
             shiftKey: e.shiftKey,
             altKey: e.altKey,
@@ -2035,11 +2113,12 @@ export class StreamView {
 
     handleKeyUp(e) {
         e.preventDefault();
+        const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
         this.webrtc.send({
             type: 'keyup',
-            key: e.key,
+            keyCode: vkCode,
             code: e.code,
-            keyCode: e.keyCode,
+            key: e.key,
             ctrlKey: e.ctrlKey,
             shiftKey: e.shiftKey,
             altKey: e.altKey,
