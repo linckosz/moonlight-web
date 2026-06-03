@@ -12,8 +12,251 @@ extern "C" {
 #include <QDebug>
 #include <QDateTime>
 #include <QMap>
+#include <QVector>
 #include <mutex>
 #include <chrono>
+#include <cstring>
+
+// ============================================================================
+// HEVC VPS/SPS patching helpers
+// Chrome Windows HEVC decoder may produce a black frame from the initial
+// VPS/SPS/IDR if the encoder uses a high level_idc (> 5.1/153) or multi-layer
+// temporal sublayers.  We patch these parameters to safe defaults before
+// forwarding the keyframe to the browser.
+//
+// NAL data layout (Annex B byte stream):
+//   [00 00 00 01][NAL header + RBSP][00 00 00 01][NAL header + RBSP]...
+// ============================================================================
+
+/// Strip HEVC emulation prevention bytes (00 00 03) from RBSP data.
+/// Returns cleaned data with 0x03 removal bytes omitted.
+static QByteArray removeHvcEp(const QByteArray& data) {
+    QByteArray result;
+    result.reserve(data.size());
+    for (int i = 0; i < data.size(); i++) {
+        if (i + 2 < data.size() &&
+            static_cast<unsigned char>(data[i]) == 0x00 &&
+            static_cast<unsigned char>(data[i+1]) == 0x00 &&
+            static_cast<unsigned char>(data[i+2]) == 0x03) {
+            result.append('\x00');
+            result.append('\x00');
+            i += 2;  // skip the 0x03 — for loop increments past it
+        } else {
+            result.append(data[i]);
+        }
+    }
+    return result;
+}
+
+/// Re-insert HEVC emulation prevention bytes (00 00 03) after modifying RBSP.
+/// Inserts 0x03 after any 00 00 pair followed by 00, 01, 02, or 03.
+static QByteArray addHvcEp(const QByteArray& rbsp) {
+    QByteArray result;
+    result.reserve(rbsp.size() + 16);
+    int zeroRun = 0;
+    for (int i = 0; i < rbsp.size(); i++) {
+        unsigned char b = static_cast<unsigned char>(rbsp[i]);
+        if (zeroRun >= 2 && b <= 0x03) {
+            result.append('\x03');
+            zeroRun = 0;
+        }
+        result.append(rbsp[i]);
+        if (b == 0x00)
+            zeroRun++;
+        else
+            zeroRun = 0;
+    }
+    return result;
+}
+
+/// Represents one NAL unit found in an Annex B byte stream.
+struct NalLocation {
+    int startOffset;  // offset of start code in the data
+    int startLen;     // start code length (3 or 4)
+    int nalOffset;    // offset of NAL data (after start code)
+    int nalLen;       // length of NAL data
+};
+
+/// Scan an Annex B byte stream and return all NAL unit locations.
+/// Assumes valid Annex B structure (may be corrupt for invalid streams).
+static QVector<NalLocation> scanNals(const QByteArray& data) {
+    QVector<NalLocation> nals;
+    int i = 0;
+    const unsigned char* d = reinterpret_cast<const unsigned char*>(data.constData());
+    while (i < data.size() - 3) {
+        if (d[i] == 0 && d[i+1] == 0) {
+            int scLen = 0;
+            if (d[i+2] == 1)
+                scLen = 3;
+            else if (i + 3 < data.size() && d[i+2] == 0 && d[i+3] == 1)
+                scLen = 4;
+            if (scLen) {
+                NalLocation loc;
+                loc.startOffset = i;
+                loc.startLen = scLen;
+                loc.nalOffset = i + scLen;
+                // End of this NAL = next start code or end of buffer
+                int end = data.size();
+                for (int j = i + scLen; j < data.size() - 3; j++) {
+                    if (d[j] == 0 && d[j+1] == 0 &&
+                        (d[j+2] == 1 || (j + 3 < data.size() && d[j+2] == 0 && d[j+3] == 1))) {
+                        end = j;
+                        break;
+                    }
+                }
+                loc.nalLen = end - loc.nalOffset;
+                nals.append(loc);
+                i = end;
+                continue;
+            }
+        }
+        i++;
+    }
+    return nals;
+}
+
+/// Extract the HEVC NAL unit type from a NAL unit (after start code, without EP removal).
+static int hevcNalType(const QByteArray& nal) {
+    if (nal.size() < 2) return -1;
+    return (static_cast<unsigned char>(nal[0]) >> 1) & 0x3F;
+}
+
+/// Log HEVC VPS/SPS/PPS parameters for debugging.
+static void logHevcParameters(const QByteArray& vps, const QByteArray& sps,
+                               const QByteArray& pps, const QString& label)
+{
+    if (!sps.isEmpty()) {
+        QByteArray cleanSps = removeHvcEp(sps);
+        if (cleanSps.size() >= 15) {
+            const unsigned char* s = reinterpret_cast<const unsigned char*>(cleanSps.constData());
+            int subLayers = (s[2] >> 1) & 0x07;
+            int profileIdc = s[3] & 0x1F;
+            int tierFlag = (s[3] >> 5) & 0x01;
+            int levelIdc = s[14];
+            uint32_t compatFlags = (static_cast<uint32_t>(s[4]) << 24) |
+                                   (static_cast<uint32_t>(s[5]) << 16) |
+                                   (static_cast<uint32_t>(s[6]) << 8) |
+                                   static_cast<uint32_t>(s[7]);
+
+            qInfo().noquote()
+                << QString("[HEVC-PARAM %1] SPS: subLayers=%2 profile=%3 tier=%4 level=%5 compat=0x%6")
+                       .arg(label)
+                       .arg(subLayers)
+                       .arg(profileIdc)
+                       .arg(tierFlag)
+                       .arg(levelIdc)
+                       .arg(compatFlags, 8, 16, QChar('0'));
+        }
+    }
+    if (!vps.isEmpty()) {
+        QByteArray cleanVps = removeHvcEp(vps);
+        if (cleanVps.size() >= 3) {
+            const unsigned char* v = reinterpret_cast<const unsigned char*>(cleanVps.constData());
+            int subLayers = (v[2] >> 1) & 0x07;
+            qInfo().noquote()
+                << QString("[HEVC-PARAM %1] VPS: subLayers=%2").arg(label).arg(subLayers);
+        }
+    }
+}
+
+/// Patch VPS/SPS in the first HEVC keyframe to fix Chrome Windows black screen.
+///
+/// Modifications applied (only if beneficial):
+///   1. general_level_idc → capped to 153 (Level 5.1)
+///   2. sps_max_sub_layers_minus1 → 0
+///   3. vps_max_sub_layers_minus1 → 0
+///
+/// Returns true if any byte was modified.
+static bool patchHevcKeyframe(QByteArray& data)
+{
+    auto nals = scanNals(data);
+
+    // Find VPS, SPS, PPS NAL indices
+    int vpsIdx = -1, spsIdx = -1;
+    for (int i = 0; i < nals.size(); i++) {
+        QByteArray nal = data.mid(nals[i].nalOffset, nals[i].nalLen);
+        int type = hevcNalType(nal);
+        if (type == 32) vpsIdx = i;       // HEVC_VPS
+        else if (type == 33) spsIdx = i;  // HEVC_SPS
+    }
+
+    bool patched = false;
+
+    // ── Patch SPS ──────────────────────────────────────────────────────────
+    if (spsIdx >= 0) {
+        NalLocation& spsLoc = nals[spsIdx];
+        QByteArray spsNal = data.mid(spsLoc.nalOffset, spsLoc.nalLen);
+        QByteArray clean = removeHvcEp(spsNal);
+
+        if (clean.size() >= 15) {
+            unsigned char* sps = reinterpret_cast<unsigned char*>(clean.data());
+
+            // sps_max_sub_layers_minus1 in bits 4-6 of byte 2
+            int subLayers = (sps[2] >> 1) & 0x07;
+            if (subLayers > 0) {
+                qInfo() << "[HEVC-Patch] SPS: sps_max_sub_layers_minus1" << subLayers << "→ 0";
+                sps[2] = (sps[2] & 0xF1) | (0 << 1);
+                patched = true;
+            }
+
+            // general_level_idc at byte 14
+            int levelIdc = sps[14];
+            if (levelIdc > 153) {
+                qInfo() << "[HEVC-Patch] SPS: general_level_idc" << levelIdc << "→ 153 (Level 5.1)";
+                sps[14] = 153;
+                patched = true;
+            } else if (levelIdc > 0 && levelIdc < 30) {
+                // Corrupted — likely shifted by emulation prevention
+                qInfo() << "[HEVC-Patch] SPS: general_level_idc too low" << levelIdc << "→ 153";
+                sps[14] = 153;
+                patched = true;
+            }
+
+            if (patched) {
+                QByteArray patchedNal = addHvcEp(clean);
+                data.replace(spsLoc.nalOffset, spsLoc.nalLen, patchedNal);
+            }
+        }
+    }
+
+    // ── Patch VPS ──────────────────────────────────────────────────────────
+    if (vpsIdx >= 0) {
+        NalLocation& vpsLoc = nals[vpsIdx];
+        QByteArray vpsNal = data.mid(vpsLoc.nalOffset, vpsLoc.nalLen);
+        QByteArray clean = removeHvcEp(vpsNal);
+
+        if (clean.size() >= 3) {
+            unsigned char* vps = reinterpret_cast<unsigned char*>(clean.data());
+            int subLayers = (vps[2] >> 1) & 0x07;
+            if (subLayers > 0) {
+                qInfo() << "[HEVC-Patch] VPS: vps_max_sub_layers_minus1" << subLayers << "→ 0";
+                vps[2] = (vps[2] & 0xF1) | (0 << 1);
+                patched = true;
+
+                QByteArray patchedVps = addHvcEp(clean);
+                data.replace(vpsLoc.nalOffset, vpsLoc.nalLen, patchedVps);
+            }
+        }
+    }
+
+    return patched;
+}
+
+/// Extract VPS/SPS/PPS from a HEVC keyframe for logging.
+static void extractHevcParameterSets(const QByteArray& data,
+                                      QByteArray& vps, QByteArray& sps, QByteArray& pps)
+{
+    auto nals = scanNals(data);
+    for (const auto& loc : nals) {
+        QByteArray nal = data.mid(loc.nalOffset, loc.nalLen);
+        int type = hevcNalType(nal);
+        if (type == 32 && vps.isEmpty()) vps = nal;
+        else if (type == 33 && sps.isEmpty()) sps = nal;
+        else if (type == 34 && pps.isEmpty()) pps = nal;
+    }
+}
+
+// ============================================================================
 
 DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
     : RelayBase(parent)
@@ -333,16 +576,59 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
         }
     }
 
+    // ── HEVC VPS/SPS patch for Chrome Windows black screen ────────────────
+    // Only apply to the first keyframe, once per session.
+    // Makes a mutable copy so we can patch VPS/SPS parameters that Chrome's
+    // decoder has trouble with (high level_idc, temporal sublayers).
+    QByteArray frameData = data;
+    if (isKeyframe && !m_HevcPatched) {
+        // Detect if this is HEVC by checking the first NAL type
+        auto nals = scanNals(frameData);
+        bool isHevc = false;
+        for (const auto& loc : nals) {
+            QByteArray nal = frameData.mid(loc.nalOffset, loc.nalLen);
+            int type = hevcNalType(nal);
+            if (type == 32) { // HEVC_VPS
+                isHevc = true;
+                break;
+            }
+        }
+
+        if (isHevc) {
+            // Log original (unpatched) parameter sets
+            QByteArray origVps, origSps, origPps;
+            extractHevcParameterSets(frameData, origVps, origSps, origPps);
+            logHevcParameters(origVps, origSps, origPps, "ORIG");
+
+            // Apply patch
+            if (patchHevcKeyframe(frameData)) {
+                qInfo() << "[DataChannelRelay] HEVC VPS/SPS patch applied to first keyframe";
+                m_HevcPatched = true;
+
+                // Log patched parameter sets for comparison
+                QByteArray patchedVps, patchedSps, patchedPps;
+                extractHevcParameterSets(frameData, patchedVps, patchedSps, patchedPps);
+                logHevcParameters(patchedVps, patchedSps, patchedPps, "PATCHED");
+            } else {
+                qInfo() << "[DataChannelRelay] HEVC VPS/SPS: parameters already safe, no patch needed";
+                m_HevcPatched = true;  // Don't re-check every keyframe
+            }
+        } else {
+            qInfo() << "[DataChannelRelay] HEVC VPS/SPS: not HEVC, skipping patch";
+            m_HevcPatched = true;  // No need to check again for H.264
+        }
+    }
+
     // Buffer keyframes arriving before the Video DC is ready.
     // Sunshine starts sending the initial IDR immediately after launch,
     // before ICE negotiation and DataChannel creation complete (~1-2s).
     // Without this buffer, the keyframe (containing SPS/PPS) is lost, the
     // browser's VideoDecoder can never configure, and we get decoder=null.
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
-        m_BufferedKeyframe = data;
+        m_BufferedKeyframe = frameData;
         m_HaveBufferedKeyframe = true;
         m_NewKeyframeArrived = false;  // Reset — we have the latest buffer
-        qInfo() << "[DataChannelRelay] BUFFERED keyframe size=" << data.size()
+        qInfo() << "[DataChannelRelay] BUFFERED keyframe size=" << frameData.size()
                 << "(DC ready=" << (m_VideoDc && m_VideoDc->isOpen())
                 << " newKeyframeArrived=false)";
         return;
@@ -367,7 +653,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
         m_NewKeyframeArrived = true;
     }
 
-    sendFragmented(data, isKeyframe, m_VideoDc);
+    sendFragmented(frameData, isKeyframe, m_VideoDc);
 }
 
 // --- Buffered keyframe ---

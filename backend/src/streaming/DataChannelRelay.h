@@ -152,6 +152,11 @@ private:
     bool m_ForceHostPublic = false;
     bool m_SuppressIPv6 = false; // Suppress IPv6 candidates when UPnP active
 
+    // ── HEVC VPS/SPS patching ──────────────────────────────────────────────
+    // Applied once to the first HEVC keyframe.  Patches level_idc and
+    // max_sub_layers to fix Chrome Windows black screen on decode.
+    bool m_HevcPatched = false;
+
     // ── ICE timeout ──────────────────────────────────────────────────────────
     QTimer* m_IceCheckTimer = nullptr;
 

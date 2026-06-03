@@ -115,3 +115,86 @@
     justify-content: center;
     border: 1px solid rgba(255, 255, 255, 0.15);
 }
+
+/* ── Keyboard shortcuts slide (startup overlay) ────────────────────── */
+.stream-shortcuts-slide {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(10, 10, 10, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 14px 20px;
+    z-index: 100;
+    pointer-events: none;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: shortcuts-fade-in 0.3s ease-out;
+}
+
+@keyframes shortcuts-fade-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.shortcuts-slide-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.shortcuts-slide-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    white-space: nowrap;
+}
+
+.shortcut-action {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.shortcut-keys {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.shortcut-plus {
+    display: flex;
+    align-items: center;
+    height: 22px;
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 11px;
+    line-height: 1;
+}
+
+.shortcut-keys kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+    font-family: inherit;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    line-height: 1;
+    box-sizing: border-box;
+}
