@@ -233,6 +233,9 @@ export class StreamView {
         this._idrRequested = false;
         this._idrTimeout = null;
 
+        // Shortcuts slide auto-hide timer (5s after first frame)
+        this._shortcutsTimeout = null;
+
         // Decoder recovery guard: prevents re-entrant recovery when the error
         // callback fires during setupDecoder() (called from within recovery).
         this._decoderRecovering = false;
@@ -525,6 +528,14 @@ export class StreamView {
 
         // Start overlay update timer (every 500ms)
         this._overlayInterval = setInterval(() => this._updateOverlay(), 500);
+
+        // ── Keyboard shortcuts slide ────────────────────────────────────────
+        this._shortcutsSlide = document.createElement('div');
+        this._shortcutsSlide.id = 'stream-shortcuts-slide';
+        this._shortcutsSlide.className = 'stream-shortcuts-slide';
+        this._shortcutsSlide.style.display = 'none';
+        this._buildShortcutsSlideContent();
+        document.getElementById('stream-view').appendChild(this._shortcutsSlide);
     }
 
     // =========================================================================
@@ -1128,6 +1139,8 @@ export class StreamView {
             this._firstFrameRendered = true;
             // Show stats overlay
             if (this._overlayEl) this._overlayEl.style.display = '';
+            // Show keyboard shortcuts slide (5s auto-hide)
+            this._showShortcutsSlide();
         }
     }
 
@@ -1448,6 +1461,8 @@ export class StreamView {
                             if (w > 0) this._resolution = w + '×' + h;
                             this.setStatus('live', 'Live');
                             if (this._overlayEl) this._overlayEl.style.display = '';
+                            // Show keyboard shortcuts slide (5s auto-hide)
+                            this._showShortcutsSlide();
                         }
                     };
                 }
@@ -2073,21 +2088,96 @@ export class StreamView {
     }
 
     handleKeyDown(e) {
-        // Quit combo: Shift+Ctrl+Alt+E (Windows/Linux) / Shift+Ctrl+Option+E (Mac)
-        // Works in both gaming and normal mode.
-        if (e.shiftKey && e.ctrlKey && e.altKey && e.code === 'KeyE') {
-            e.preventDefault();
-            this.quit();
-            return;
+        // Ignore all keyboard input while the stream is being shut down
+        if (this._quitting) return;
+
+        // ── Ctrl/Cmd+Alt+{Shift|Ctrl} combos ──
+        //   Win: Ctrl+Alt+Shift+{Q,X,Z,M}
+        //   Mac: Cmd+Option+Ctrl+{Q,X,Z,M}
+        // Mac replaces Shift with Ctrl because Shift combos conflict with
+        // system-level macOS keyboard shortcuts.
+        const modCtrl = e.ctrlKey || e.metaKey;
+        const isMac = /Mac/.test(navigator.platform);
+        const modThird = isMac ? e.ctrlKey : e.shiftKey;  // Ctrl on Mac, Shift elsewhere
+
+        // Debug: log potential combo key events so we can see exactly what
+        // modifiers and key values the browser reports. Only logs when at
+        // least Ctrl+Alt (or Meta+Alt) are pressed — avoids spam.
+        // TODO: remove after debugging shortcut regression (2026-06-03).
+        if (modCtrl && e.altKey) {
+            console.log('[StreamView] Combo candidate:', {
+                key: e.key,
+                code: e.code,
+                ctrlKey: e.ctrlKey,
+                altKey: e.altKey,
+                shiftKey: e.shiftKey,
+                metaKey: e.metaKey,
+                platform: navigator.platform,
+                isMac: isMac,
+                modThird: modThird,
+                modThirdExpected: isMac ? 'ctrlKey' : 'shiftKey'
+            });
         }
 
-        // Unfocus combo (gaming mode): Ctrl/Cmd+Shift+Alt+Z = exit pointer lock
-        // Allows the user to release the mouse cursor back to the OS.
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.altKey && e.code === 'KeyZ') {
+        // ── Escape key ────────────────────────────────────────────────────
+        // Prevent the browser from exiting fullscreen or releasing pointer
+        // lock. The Fullscreen API defaults to exiting on Escape — we must
+        // intercept it here so the key is forwarded to the host session as
+        // a normal VK_ESCAPE keypress instead.
+        if (e.key === 'Escape') {
             e.preventDefault();
-            if (document.pointerLockElement === this.canvas) {
-                document.exitPointerLock();
+            // Fall through to normal keydown handling below — VK_ESCAPE
+            // (0x1B) will be sent to the host.
+        }
+
+        // ── Combo key detection ───────────────────────────────────────────
+        // Dual detection: e.key (layout label) + e.code (physical position).
+        //
+        // Primary:   e.key — e.g. AZERTY Q key → e.key='q' → matches.
+        // Fallback:  e.code — only used when e.key is NOT a simple a-z letter
+        //            (AltGr on Windows can turn Q into ä on US-Intl layouts).
+        //            This prevents false positives on AZERTY where pressing A
+        //            at the physical KeyQ position would otherwise trigger Q.
+        if (modCtrl && e.altKey && modThird) {
+            const k = e.key.toLowerCase();
+            const c = e.code;
+            // e.code fallback only if AltGr altered e.key to a non-letter
+            const isLetter = /^[a-z]$/.test(k);
+            const chk = (letter, code) => k === letter || (!isLetter && c === code);
+
+            // Quit: Ctrl+Alt+Shift+Q (Win) / Cmd+Option+Ctrl+Q (Mac)
+            if (chk('q', 'KeyQ')) {
+                e.preventDefault();
+                this.quit();
+                return;
             }
+            // Fullscreen toggle: Ctrl+Alt+Shift+X (Win) / Cmd+Option+Ctrl+X (Mac)
+            if (chk('x', 'KeyX')) {
+                e.preventDefault();
+                this.toggleFullscreen();
+                return;
+            }
+            // Unfocus: Ctrl+Alt+Shift+Z (Win) / Cmd+Option+Ctrl+Z (Mac)
+            // Releases the mouse cursor back to the OS (gaming mode only).
+            if (chk('z', 'KeyZ')) {
+                e.preventDefault();
+                if (document.pointerLockElement === this.canvas) {
+                    document.exitPointerLock();
+                }
+                return;
+            }
+            // Mouse mode toggle: Ctrl+Alt+Shift+M (Win) / Cmd+Option+Ctrl+M (Mac)
+            if (chk('m', 'KeyM')) {
+                e.preventDefault();
+                this.toggleMouseMode();
+                return;
+            }
+
+            // Block ANY other triple-modifier combo from reaching the host.
+            // Ctrl+Alt+Shift (Win) / Cmd+Option+Ctrl (Mac) combos that are NOT
+            // mapped above are still streaming-control territory — they must not
+            // be forwarded as regular keystrokes to the remote host.
+            e.preventDefault();
             return;
         }
 
@@ -2153,6 +2243,84 @@ export class StreamView {
     }
 
     // =========================================================================
+    // Keyboard shortcut actions
+    // =========================================================================
+
+    /**
+     * Toggle browser fullscreen mode for the streaming view.
+     * Uses the Fullscreen API — requestFullscreen / exitFullscreen.
+     */
+    toggleFullscreen() {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(err => {
+                console.warn('[StreamView] exitFullscreen failed:', err.message);
+            });
+        } else {
+            document.documentElement.requestFullscreen().catch(err => {
+                console.warn('[StreamView] requestFullscreen failed:', err.message);
+            });
+        }
+    }
+
+    /**
+     * Toggle mouse mode between gaming (relative, pointer lock) and
+     * desktop (absolute coordinates, no pointer lock).
+     *
+     * Gaming mode:   pointer-lock-based relative mouse, click to capture
+     * Desktop mode:  absolute mouse coordinates, cursor visible, no capture
+     *
+     * Re-binds mouse event handlers for the new mode.
+     */
+    toggleMouseMode() {
+        // ── Remove current mouse event listeners ─────────────────────────
+        if (this._gamingMode) {
+            if (this._onGamingMouseMove)
+                this.canvas.removeEventListener('mousemove', this._onGamingMouseMove);
+            if (this._onGamingClick)
+                this.canvas.removeEventListener('click', this._onGamingClick);
+            if (this._onGamingMouseDown)
+                this.canvas.removeEventListener('mousedown', this._onGamingMouseDown);
+            if (this._onGamingMouseUp)
+                this.canvas.removeEventListener('mouseup', this._onGamingMouseUp);
+        } else {
+            if (this._onNormalMouseMove)
+                this.canvas.removeEventListener('mousemove', this._onNormalMouseMove);
+            if (this._onNormalMouseDown)
+                this.canvas.removeEventListener('mousedown', this._onNormalMouseDown);
+            if (this._onNormalMouseUp)
+                this.canvas.removeEventListener('mouseup', this._onNormalMouseUp);
+            if (this._onNormalMouseEnter)
+                this.canvas.removeEventListener('mouseenter', this._onNormalMouseEnter);
+            if (this._onNormalMouseLeave)
+                this.canvas.removeEventListener('mouseleave', this._onNormalMouseLeave);
+        }
+
+        // ── Exit pointer lock if leaving gaming mode ────────────────────
+        if (this._gamingMode && document.pointerLockElement === this.canvas) {
+            document.exitPointerLock();
+        }
+
+        // ── Toggle mode ─────────────────────────────────────────────────
+        this._gamingMode = !this._gamingMode;
+
+        // ── Bind new mode's event handlers ──────────────────────────────
+        if (this._gamingMode) {
+            this._bindGamingEvents();
+            // Show hint so user knows to click to capture
+            if (this.hintEl) this.hintEl.style.display = 'flex';
+        } else {
+            this._setupNormalMouse();
+            // Hide hint — no pointer lock in desktop mode
+            if (this.hintEl) this.hintEl.style.display = 'none';
+        }
+
+        console.log('[StreamView] Mouse mode toggled: ' +
+            (this._gamingMode ? 'gaming (relative+lock)' : 'desktop (absolute)'));
+
+        Toast.info('Mouse mode: ' + (this._gamingMode ? 'Gaming' : 'Desktop'));
+    }
+
+    // =========================================================================
     // Status
     // =========================================================================
 
@@ -2163,6 +2331,78 @@ export class StreamView {
             dot.className = 'stream-status-dot status-' + state;
         }
         this.statusEl.childNodes[1].textContent = ' ' + text;
+    }
+
+    // =========================================================================
+    // Keyboard shortcuts slide (startup overlay, 5s auto-hide)
+    // =========================================================================
+
+    /**
+     * Build the shortcuts-slide HTML content, adapting modifier key labels
+     * to the current platform (Windows vs macOS).
+     */
+    _buildShortcutsSlideContent() {
+        const isMac = /Mac/.test(navigator.platform);
+        const modA = isMac ? 'Cmd' : 'Ctrl';          // Primary modifier
+        const modB = isMac ? 'Option' : 'Alt';         // Secondary modifier
+        const modC = isMac ? 'Ctrl' : 'Shift';         // Tertiary modifier
+
+        // Win order: Shift + Ctrl + Alt + ?
+        // Mac order: Ctrl  + Option + Cmd + ?
+        const comboWin  = [modC, modA, modB];
+        const comboMac  = [modC, modB, modA];
+        const comboMods = isMac ? comboMac : comboWin;
+
+        const rows = [
+            ['Quit session',             ...comboMods, 'Q'],
+            ['Fullscreen',               ...comboMods, 'X'],
+            ['Release mouse/keyboard',   ...comboMods, 'Z'],
+            ['Change mouse mode',        ...comboMods, 'M'],
+        ];
+
+        let html = '<div class="shortcuts-slide-title">Keyboard shortcuts</div>';
+        html += '<div class="shortcuts-slide-grid">';
+        for (const [action, ...keys] of rows) {
+            html += '<div class="shortcut-row">';
+            html += '<span class="shortcut-action">' + action + '</span>';
+            html += '<span class="shortcut-keys">';
+            for (let i = 0; i < keys.length; i++) {
+                if (i > 0) html += '<span class="shortcut-plus">+</span>';
+                html += '<kbd>' + keys[i] + '</kbd>';
+            }
+            html += '</span></div>';
+        }
+        html += '</div>';
+        this._shortcutsSlide.innerHTML = html;
+    }
+
+    /**
+     * Show the shortcuts slide and set a 5-second auto-hide timer.
+     * Safe to call multiple times — resets the timer each call.
+     */
+    _showShortcutsSlide() {
+        if (!this._shortcutsSlide) return;
+        this._shortcutsSlide.style.display = '';
+
+        if (this._shortcutsTimeout) {
+            clearTimeout(this._shortcutsTimeout);
+        }
+        this._shortcutsTimeout = setTimeout(() => {
+            this._hideShortcutsSlide();
+        }, 5000);
+    }
+
+    /**
+     * Immediately hide the shortcuts slide and clear the auto-hide timer.
+     */
+    _hideShortcutsSlide() {
+        if (this._shortcutsTimeout) {
+            clearTimeout(this._shortcutsTimeout);
+            this._shortcutsTimeout = null;
+        }
+        if (this._shortcutsSlide) {
+            this._shortcutsSlide.style.display = 'none';
+        }
     }
 
     // =========================================================================
@@ -2186,6 +2426,9 @@ export class StreamView {
         if (this._overlayEl) {
             this._overlayEl.style.display = 'none';
         }
+
+        // Hide shortcuts slide immediately (session is ending)
+        this._hideShortcutsSlide();
 
         // Clear ping timer
         if (this._pingInterval) {
