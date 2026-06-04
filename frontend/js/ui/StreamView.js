@@ -549,16 +549,10 @@ export class StreamView {
         document.getElementById('app').appendChild(el);
 
         this.canvas = document.getElementById('stream-canvas');
-        // willReadFrequently: true disables GPU acceleration of Canvas2D on Chrome Windows.
-        // This avoids a GPU compositor bug where NV12→RGB conversion contaminates
-        // adjacent HTML overlay layers with a green tint (HEVC streams on Windows).
-        this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
-        // Fallback: Safari iOS may not support willReadFrequently flag
-        if (!this.ctx) {
-            console.warn('[StreamView] getContext with willReadFrequently failed, ' +
-                'falling back to default 2d context');
-            this.ctx = this.canvas.getContext('2d');
-        }
+        // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
+        // Mac Chrome handles NV12→RGBA correctly via Metal; Windows Chrome
+        // should do the same via D3D11.
+        this.ctx = this.canvas.getContext('2d');
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
@@ -1314,7 +1308,7 @@ export class StreamView {
                 : false;
             if (this.ctx && ctxLost) {
                 console.warn('[StreamView] Canvas2D context lost, recreating...');
-                this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+                this.ctx = this.canvas.getContext('2d');
                 // Force re-composite all overlay layers by briefly toggling transform
                 const header = document.querySelector('.stream-header');
                 if (header) {
@@ -1389,15 +1383,14 @@ export class StreamView {
      * Async: returns immediately; the frame is always closed, even on error.
      */
     async _drawFrameWithBitmap(frame) {
-        // HEVC NV12 RGBA copyTo path: RESTRICTED to Chrome Windows only.
-        // Windows Chrome D3D11 compositor has a GPU NV12→RGBA conversion bug
-        // for HEVC (green-tint).  CPU-side copyTo bypasses the GPU pipeline.
-        //
-        // Chrome macOS/iOS has a stride bug in frame.copyTo({ format: 'RGBA' })
-        // for HEVC NV12 frames that produces 4x horizontal stretch.  These
-        // platforms use the standard createImageBitmap path which is correct.
-        const isHevcNv12 = (this.videoCodec === CODEC_HEVC && frame.format === 'NV12')
-            && this._isChromeWindowsHevc === true;
+        // HEVC NV12: ctx.drawImage for ALL Chrome platforms.
+        // ctx.drawImage(VideoFrame) works correctly for HEVC NV12 on both
+        // Mac and Windows Chrome. The canvas 2D GPU compositing path handles
+        // NV12→RGBA conversion correctly.
+        //   Mac Chrome: drawImage is the standard working path (no stride bug here).
+        //   Win Chrome: same path as Mac — fixes the green-tint bug.
+        // This unifies the render path across platforms.
+        const isHevcNv12 = this.videoCodec === CODEC_HEVC && frame.format === 'NV12';
 
         if (this.stats.rendered < 5) {
             console.log('[debug] _drawFrameWithBitmap entry' +
@@ -1406,40 +1399,23 @@ export class StreamView {
                 ' displaySize=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
                 ' codedSize=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
                 ' isHevcNv12=' + isHevcNv12 +
-                ' chromeWinHevc=' + this._isChromeWindowsHevc +
                 ' warmup=' + this._warmupFrames +
                 ' nalParser.codec=' + this.nalParser.codec);
         }
 
-        // ── Log render path decision ─────────────────────────────────────
-        if (this.stats.rendered < 3) {
-            const ua = navigator.userAgent || '';
-            const isChromeNonWin = /Chrome\//.test(ua) && !/Edg\//.test(ua)
-                && !/OPR\//.test(ua) && !/Windows/.test(ua);
-            const shouldDrawImageFirst = (this.videoCodec === CODEC_HEVC
-                && frame.format === 'NV12' && isChromeNonWin);
-            console.log('[RENDER-PATH] frame#' + this.stats.rendered +
-                ' isHevcNv12=' + isHevcNv12 +
-                ' shouldDrawImageFirst=' + shouldDrawImageFirst +
-                ' _isChromeWindowsHevc=' + this._isChromeWindowsHevc +
-                ' videoCodec=' + this.videoCodec +
-                ' _noDescription=' + this._noDescription +
-                ' nalParser.codec=' + this.nalParser.codec);
-        }
-
-        // ── HEVC NV12 on Chrome Windows: use drawImage (GPU compositing)
-        // The copyTo(RGBA) + putImageData path produced green frames on Chrome
-        // Windows because the GPU compositor applies a wrong color matrix during
-        // NV12→RGBA conversion.  The canvas 2D path (drawImage) uses the browser's
-        // GPU pipeline which handles NV12→RGBA correctly.
+        // ── HEVC NV12: ctx.drawImage (same path for all Chrome platforms) ──
+        // ctx.drawImage(VideoFrame) is the browser's GPU compositing path.
+        // It handles NV12→RGBA conversion correctly, with no green tint.
+        // Fallback chain: createImageBitmap → copyTo(RGBA).
         if (isHevcNv12) {
             const dbgRendered = this.stats.rendered;
             if (dbgRendered < 3) {
-                console.log('[HEVC-RENDER] drawImage path, rendered=' + dbgRendered +
+                console.log('[HEVC-RENDER] Chrome HEVC NV12 path, rendered=' + dbgRendered +
                     ' decoded=' + this.stats.decoded + ' w=' + (frame.displayWidth || frame.codedWidth) +
                     ' h=' + (frame.displayHeight || frame.codedHeight));
             }
-            // Resize canvas if needed to match the incoming frame
+
+            // Resize canvas if needed
             const w = frame.displayWidth || frame.codedWidth || 0;
             const h = frame.displayHeight || frame.codedHeight || 0;
             if (w > 0 && h > 0) {
@@ -1448,15 +1424,100 @@ export class StreamView {
                     this.canvas.height = h;
                 }
             }
-            // drawImage uses the browser's GPU pipeline — correct NV12→RGBA conversion
-            // without the green-tint bug in copyTo(RGBA) compositor on Chrome Windows.
-            this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
+
+            // ── NV12 raw diagnostic: capture Y-plane + UV-plane directly ─────
+            // This tells us whether the green tint is a decoder issue (Y-plane
+            // zeroed for delta frames) or a canvas rendering issue.
+            // Y-plane: full resolution (w×h), UV-plane: half resolution (w/2×h/2).
+            // Sample the TOP-LEFT pixel (0,0) to avoid sampling desktop UI.
             if (dbgRendered < 3) {
-                // Sample a pixel to verify the drawImage result is not green/black
+                try {
+                    const ySize = frame.allocationSize({ format: 'NV12' });
+                    const nv12Buf = new ArrayBuffer(ySize);
+                    const transferred = await frame.copyTo(nv12Buf);
+                    if (transferred) {
+                        const dv = new DataView(nv12Buf);
+                        const yTL = dv.getUint8(0);              // Y at top-left
+                        const uvTL = dv.getUint8(w);             // U at top-left row (first UV byte)
+                        const uvMid = dv.getUint8(Math.floor(w * h * 1.25)); // UV at center-ish
+                        const ySample = dv.getUint8(Math.floor(w * h / 2)); // Y at center
+                        console.log('[NV12-DIAG] frame#' + dbgRendered +
+                            ' ySize=' + ySize +
+                            ' yTL(0,0)=' + yTL +
+                            ' uvTL(w,0)=' + uvTL +
+                            ' yCenter=' + ySample +
+                            ' uvCenter=' + uvMid);
+                    }
+                } catch (eDiag) {
+                    console.warn('[NV12-DIAG] failed: ' + eDiag.message);
+                }
+            }
+
+            // Force full canvas invalidation before each draw.
+            // Canvas 2D caches the previous frame internally; without an explicit
+            // clear, stale pixels from the prior frame may persist on-screen
+            // (visible as green tint until the new frame fully overwrites them).
+            this.ctx.save();
+            this.ctx.globalCompositeOperation = 'copy';
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.restore();
+
+            let success = false;
+
+            // Primary: createImageBitmap → drawImage(bitmap)
+            // Mac Chrome uses this path successfully for HEVC NV12.
+            // If it works on Windows too, both platforms share the same path.
+            try {
+                const bitmap = await createImageBitmap(frame);
+                this.ctx.drawImage(bitmap, 0, 0,
+                    this.canvas.width, this.canvas.height);
+                bitmap.close();
+                success = true;
+                if (dbgRendered < 3) {
+                    console.log('[HEVC-RENDER] createImageBitmap SUCCESS, frame#' + dbgRendered);
+                }
+            } catch (e) {
+                console.warn('[HEVC-RENDER] createImageBitmap failed: ' + e.message +
+                    ' — trying ctx.drawImage fallback');
+            }
+
+            // Fallback: ctx.drawImage(VideoFrame) direct
+            if (!success) {
+                try {
+                    this.ctx.drawImage(frame, 0, 0,
+                        this.canvas.width, this.canvas.height);
+                    success = true;
+                    if (dbgRendered < 3) {
+                        console.log('[HEVC-RENDER] ctx.drawImage fallback SUCCESS, frame#' + dbgRendered);
+                    }
+                } catch (e2) {
+                    console.warn('[HEVC-RENDER] ctx.drawImage failed: ' + e2.message +
+                        ' — trying copyTo(RGBA) last resort');
+                }
+            }
+
+            // Last resort: copyTo(RGBA) + putImageData (CPU-side readback)
+            if (!success) {
+                try {
+                    const size = w * h * 4;
+                    const buf = new ArrayBuffer(size);
+                    await frame.copyTo(buf, { format: 'RGBA' });
+                    const imageData = new ImageData(
+                        new Uint8ClampedArray(buf, 0, size), w, h);
+                    this.ctx.putImageData(imageData, 0, 0);
+                    if (dbgRendered < 3) {
+                        console.log('[HEVC-RENDER] copyTo(RGBA) fallback SUCCESS');
+                    }
+                } catch (e3) {
+                    console.error('[HEVC-RENDER] All render paths failed for HEVC NV12:', e3.message);
+                }
+            }
+
+            if (dbgRendered < 3) {
                 const pixels = this.ctx.getImageData(
                     Math.floor((frame.displayWidth || frame.codedWidth) / 2),
                     Math.floor((frame.displayHeight || frame.codedHeight) / 2), 1, 1).data;
-                console.log('[RGBA-SAMPLE] drawImage center R=' + pixels[0] +
+                console.log('[RGBA-SAMPLE] center R=' + pixels[0] +
                     ' G=' + pixels[1] + ' B=' + pixels[2] +
                     ' (frame#' + dbgRendered + ' totalDecoded=' + this.stats.decoded + ')');
             }
@@ -1465,9 +1526,9 @@ export class StreamView {
             return;
         }
 
-        // ── H.264 / AV1 / non-NV12: standard createImageBitmap path ─────
-        // NV12 readback for warmup frames (forces GPU texture to be fully
-        // resident before createImageBitmap reads it).
+        // ── Standard path (H.264 / AV1 / non-NV12 / Safari) ──────────────
+        // NV12 warmup readback: for the first few NV12 frames, call copyTo(NV12)
+        // before createImageBitmap to force GPU texture to be fully resident.
         if (this._warmupFrames < 3 && frame.format === 'NV12') {
             if (this.stats.rendered < 5) {
                 console.log('[HEVC-RENDER] warmup NV12 readback #'+this._warmupFrames);
@@ -1484,109 +1545,48 @@ export class StreamView {
             this._warmupFrames++;
         }
 
-        // ── Chrome macOS/iOS HEVC NV12: drawImage(VideoFrame) FIRST ─────
-        // Chrome on macOS and iOS (Chromium-based) has a stride bug where
-        // createImageBitmap(VideoFrame) for HEVC NV12 frames returns a bitmap
-        // whose width is 1/4 of the expected value, producing exactly 4x
-        // horizontal stretch.  Direct ctx.drawImage(VideoFrame) uses a
-        // different code path (GPU compositor via Metal on macOS) that handles
-        // the NV12 stride correctly.
-        //
-        // This does NOT apply to Windows Chrome (the green-tint bug there
-        // is gated separately via the isHevcNv12 RGBA copyTo path above).
-        // Safari/WebKit does NOT have this createImageBitmap stride bug.
-        const ua = navigator.userAgent || '';
-        const isChromeNonWin = /Chrome\//.test(ua) && !/Edg\//.test(ua)
-            && !/OPR\//.test(ua) && !/Windows/.test(ua);
-        const shouldDrawImageFirst = (this.videoCodec === CODEC_HEVC
-            && frame.format === 'NV12' && isChromeNonWin);
-
-        if (this.stats.rendered < 5) {
-            console.log('[HEVC-RENDER] standard path decision' +
-                ' isChromeNonWin=' + isChromeNonWin +
-                ' shouldDrawImageFirst=' + shouldDrawImageFirst +
-                ' canvasSize=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?'));
-        }
-
+        // Standard rendering: createImageBitmap → drawImage(VideoFrame) → copyTo RGBA.
         let rendered = false;
-        if (shouldDrawImageFirst) {
+        try {
+            const bitmap = await createImageBitmap(frame);
             if (this.stats.rendered < 5) {
-                console.log('[debug] PATH: drawImage(VideoFrame) direct (Chrome non-Win HEVC NV12)' +
-                    ' dst=' + this.canvas?.width + 'x' + this.canvas?.height);
+                console.log('[debug] PATH: createImageBitmap' +
+                    ' bitmapSize=' + bitmap.width + 'x' + bitmap.height +
+                    ' canvasSize=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?'));
             }
-            try {
-                if (this.canvas && this.ctx) {
+            if (this.canvas && this.ctx) {
+                this.ctx.drawImage(bitmap, 0, 0,
+                    this.canvas.width, this.canvas.height);
+            }
+            bitmap.close();
+            rendered = true;
+        } catch (e) {
+            console.warn('[StreamView] createImageBitmap failed: ' + e.message +
+                ' — trying drawImage(VideoFrame) fallback');
+            // Fallback 1: direct drawImage with VideoFrame
+            if (this.canvas && this.ctx) {
+                try {
                     this.ctx.drawImage(frame, 0, 0,
                         this.canvas.width, this.canvas.height);
                     rendered = true;
-                    if (this.stats.rendered < 5) {
-                        console.log('[debug] drawImage(VideoFrame) SUCCESS');
-                    }
-                }
-            } catch (e) {
-                console.warn('[StreamView] drawImage(VideoFrame) for Chrome HEVC NV12 ' +
-                    'failed: ' + e.message + ' — falling back to createImageBitmap');
-                if (this.stats.rendered < 5) {
-                    console.log('[debug] drawImage(VideoFrame) FAILED: ' + e.message);
-                }
-            }
-        }
-
-        // Standard rendering: createImageBitmap → drawImage(VideoFrame) → copyTo RGBA.
-        //
-        // Primary  path: createImageBitmap(VideoFrame)  — fastest, GPU->GPU.
-        // Fallback 1:    ctx.drawImage(VideoFrame, ...)  — works everywhere
-        //                except Windows Chrome HEVC NV12 (green-tint bug).
-        // Fallback 2:    copyTo(RGBA) + putImageData     — universal CPU-side
-        //                readback, works on all platforms including iOS WebKit.
-        //
-        // For Chrome macOS/iOS HEVC NV12 (shouldDrawImageFirst=true), this block
-        // serves as the fallback if drawImage(VideoFrame) above failed.
-        if (!rendered) {
-            try {
-                const bitmap = await createImageBitmap(frame);
-                if (this.stats.rendered < 5) {
-                    console.log('[debug] PATH: createImageBitmap' +
-                        ' bitmapSize=' + bitmap.width + 'x' + bitmap.height +
-                        ' canvasSize=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?') +
-                        ' drawDst=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?'));
-                }
-                if (this.canvas && this.ctx) {
-                    this.ctx.drawImage(bitmap, 0, 0,
-                        this.canvas.width, this.canvas.height);
-                }
-                bitmap.close();
-                rendered = true;
-            } catch (e) {
-                console.warn('[StreamView] createImageBitmap failed: ' + e.message +
-                    ' — trying drawImage(VideoFrame) fallback');
-                // Fallback 1: direct drawImage with VideoFrame (skip if already tried above).
-                // For shouldDrawImageFirst, createImageBitmap was the fallback, so
-                // drawImage(VideoFrame) was already attempted first — no point retrying.
-                if (!shouldDrawImageFirst && this.canvas && this.ctx) {
+                } catch (e2) {
+                    console.warn('[StreamView] drawImage(VideoFrame) failed: ' +
+                        e2.message + ' — trying copyTo RGBA readback');
+                    // Fallback 2: CPU-side RGBA readback
                     try {
-                        this.ctx.drawImage(frame, 0, 0,
-                            this.canvas.width, this.canvas.height);
-                        rendered = true;
-                    } catch (e2) {
-                        console.warn('[StreamView] drawImage(VideoFrame) fallback failed: ' +
-                            e2.message + ' — trying copyTo RGBA readback');
-                        // Fallback 2: CPU-side RGBA readback (works universally).
-                        try {
-                            const w = frame.displayWidth || frame.codedWidth || 0;
-                            const h = frame.displayHeight || frame.codedHeight || 0;
-                            if (w > 0 && h > 0) {
-                                const size = w * h * 4;
-                                const buf = new ArrayBuffer(size);
-                                await frame.copyTo(buf, { format: 'RGBA' });
-                                const imageData = new ImageData(
-                                    new Uint8ClampedArray(buf, 0, size), w, h);
-                                this.ctx.putImageData(imageData, 0, 0);
-                                rendered = true;
-                            }
-                        } catch (e3) {
-                            console.error('[StreamView] All rendering paths failed:', e3.message);
+                        const w = frame.displayWidth || frame.codedWidth || 0;
+                        const h = frame.displayHeight || frame.codedHeight || 0;
+                        if (w > 0 && h > 0) {
+                            const size = w * h * 4;
+                            const buf = new ArrayBuffer(size);
+                            await frame.copyTo(buf, { format: 'RGBA' });
+                            const imageData = new ImageData(
+                                new Uint8ClampedArray(buf, 0, size), w, h);
+                            this.ctx.putImageData(imageData, 0, 0);
+                            rendered = true;
                         }
+                    } catch (e3) {
+                        console.error('[StreamView] All rendering paths failed:', e3.message);
                     }
                 }
             }
