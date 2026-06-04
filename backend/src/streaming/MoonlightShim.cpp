@@ -277,6 +277,36 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
             submitTime.time_since_epoch()).count(),
         std::memory_order_release);
 
+    // ── End-to-end latency tracking ─────────────────────────────────────────
+    // Extract the frame's presentation time from the decode unit.
+    // presentationTimeUs has its epoch at the first captured frame (set to 0).
+    // The frame's capture time on the steady_clock:
+    //   captureSteadyMs = (firstFrameArrivalTimeUs + presentationTimeUs) / 1000
+    instance->m_FramePresentationTimeUs.store(
+        decodeUnit->presentationTimeUs,
+        std::memory_order_release);
+
+    // Track host processing latency (capture → encode delay on Sunshine).
+    // FrameHostProcessingLatency is in 1/10 ms units. Value is 0 when unknown.
+    instance->m_FrameHostProcessingLatencyTenthMs.store(
+        decodeUnit->frameHostProcessingLatency,
+        std::memory_order_release);
+
+    // Track the steady_clock arrival time of the first frame.
+    // This serves as the reference epoch for capture time calculation:
+    //   captureSteadyMs = (firstFrameArrivalTimeUs + presentationTimeUs) / 1000
+    // The frontend estimates current steady_clock time from periodic stats
+    // messages (streamSteadyMs + performance.now() delta) and subtracts
+    // the capture time to get end-to-end latency.
+    if (instance->m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire) == 0) {
+        int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            submitTime.time_since_epoch()).count();
+        instance->m_FirstFrameArrivalTimeUs.store(nowUs, std::memory_order_release);
+        qInfo() << "[MoonlightShim] First frame arrival at steadyUs=" << nowUs
+                << "presentationTimeUs=" << decodeUnit->presentationTimeUs
+                << "hostProcessingLatency=" << decodeUnit->frameHostProcessingLatency;
+    }
+
     // If a keyframe arrives and we had an outstanding IDR request, measure RTT.
     // hostRttMs = round-trip / 2 (one-way latency from backend to Sunshine).
     if (decodeUnit->frameType == 1) { // FRAME_TYPE_IDR

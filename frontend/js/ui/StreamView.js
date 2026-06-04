@@ -28,6 +28,10 @@ import {
     CODEC_AV1
 } from '../util/Av1Utils.js';
 
+/** True when the browser supports touch events (mobile/tablet, touchscreen laptop). */
+const IS_TOUCH_DEVICE = 'ontouchstart' in window ||
+    (typeof navigator.maxTouchPoints !== 'undefined' && navigator.maxTouchPoints > 0);
+
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
  * VideoFrame drawn to a Canvas2D via drawImage(VideoFrame) reads the NV12
@@ -105,7 +109,7 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true) {
         this.container = container;
         this.signalingUrl = signalingUrl;
         this.host = host;
@@ -113,9 +117,15 @@ export class StreamView {
         this._transport = transport;
         this._transportMode = transportMode || transport;
         this._gamingMode = gamingMode;
+        // Force gaming mode off on touch devices — pointer lock and mouse
+        // capture are irrelevant when input is touch-based.
+        if (IS_TOUCH_DEVICE) {
+            this._gamingMode = false;
+        }
         this._upnpEnabled = upnpEnabled;
         this._upnpAvailable = upnpAvailable;
         this._isRemote = isRemote;
+        this._showPerfStats = showPerformanceStats;
 
         /** Callback invoked after quit() completes cleanup. Used by MoonlightApp
          *  to restore the underlying main view (apps/hosts). */
@@ -181,10 +191,14 @@ export class StreamView {
         this._fpsTimestamps = [];           // performance.now() per decoded frame
         this._latencySamples = [];          // { time: perfNow, latency: ms }
 
-        // ── Stats overlay (Amelioration 2) ───────────────────────────────────
-        this._hostRttStats = new SlidingStats(5000);       // backed RTT (ms)
-        this._browserRttStats = new SlidingStats(5000);    // browser ping/pong RTT (ms)
-        this._decodeLatencyStats = new SlidingStats(5000); // backend decode latency (ms)
+        // ── Stats overlay ───────────────────────────────────────────────────
+        this._hostRttStats = new SlidingStats(5000);          // backend ↔ Sunshine one-way (ms)
+        this._browserRttStats = new SlidingStats(5000);       // browser ↔ backend RTT (ms)
+        this._decodeLatencyStats = new SlidingStats(5000);    // backend pipeline latency (ms)
+        this._e2eLatencyStats = new SlidingStats(5000);       // Sunshine capture → canvas display (ms)
+        this._streamTimeMs = 0;                              // Last known steady_clock ms from backend stats
+        this._streamTimeReceiptTime = 0;                     // performance.now() when _streamTimeMs was received
+        this._steadyToPerfOffset = null;                     // perfTime = steadyTime - offset (set once)
         this._pingSeq = 0;
         this._pingInterval = null;
 
@@ -201,6 +215,35 @@ export class StreamView {
         this._onWheel = (e) => this.handleWheel(e);
         this._onPointerLockChange = () => this.handlePointerLockChange();
         this._onContextMenu = (e) => e.preventDefault();
+
+        // ── Touch event handlers (mobile) ─────────────────────────────────
+        this._onTouchStart = (e) => this.handleTouchStart(e);
+        this._onTouchMove = (e) => this.handleTouchMove(e);
+        this._onTouchEnd = (e) => this.handleTouchEnd(e);
+
+        // Touch state
+        this._touchActive = false;
+        this._touchStartX = 0;
+        this._touchStartY = 0;
+        this._touchLastX = 0;
+        this._touchLastY = 0;
+        this._touchStartTime = 0;
+        this._touchFingerCount = 0;
+        this._touchTapThreshold = 10;        // px max distance for a tap (vs drag)
+        this._touchTapTimeThreshold = 300;   // ms max duration for a tap
+        this._touchHadTwoFingers = false;     // true if 2 fingers were active during the current touch sequence
+
+        // ── Touch cursor (mobile overlay) ──────────────────────────────────
+        /** Overlay cursor diameter in CSS pixels — large enough for mobile
+         *  visibility while leaving most of the content uncovered. */
+        this._touchCursorSize = 44;
+        /** Reference to the DOM overlay element shown on touch. */
+        this._touchCursorEl = null;
+        /** Auto-hide timer handle for touch cursor. */
+        this._touchCursorTimeout = null;
+        /** How long (ms) the cursor stays visible after the last touch ends.
+         *  The user needs to see where the pointer is between gestures. */
+        this._touchCursorHideDelay = 3000;
 
         // Visibility change: when returning from Alt-Tab, force browser to
         // re-composite all layers.  On Chrome Windows, the GPU compositor may
@@ -264,6 +307,9 @@ export class StreamView {
         this._noDescription = false;
 
         this.render();
+
+        // Show step 1 immediately (before WebRTC connection)
+        this._updateStartupStep(1);
 
         // Hide the "click to capture" hint in normal mode (no pointer lock)
         if (!this._gamingMode && this.hintEl) {
@@ -464,17 +510,13 @@ export class StreamView {
         el.className = 'stream-overlay';
         el.innerHTML = `
             <div class="stream-header">
-                <div class="stream-status" id="stream-status">
-                    <span class="stream-status-dot status-connecting"></span>
-                    Connecting...
-                </div>
-                <div class="stream-codec-badge" id="stream-codec-badge">${this.videoCodec.toUpperCase()}</div>
                 <button class="btn stream-quit-btn" id="btn-stream-quit">Stop Streaming</button>
             </div>
             <div class="stream-canvas-area">
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
                 <video id="stream-video" class="stream-video" autoplay muted playsinline
                        style="width:100%;height:100%;object-fit:contain;display:none;"></video>
+                <div class="stream-touch-cursor" id="stream-touch-cursor"></div>
                 <div class="stream-click-hint" id="stream-hint">
                     Click to capture mouse & keyboard
                 </div>
@@ -496,6 +538,8 @@ export class StreamView {
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
+        // Prevent browser default touch behaviors (scroll, zoom, pull-to-refresh)
+        this.canvas.style.touchAction = 'none';
 
         // Video element for native RTP media track mode (webrtc-media)
         this.videoEl = document.getElementById('stream-video');
@@ -508,22 +552,18 @@ export class StreamView {
             }
         }
 
-        this.statusEl = document.getElementById('stream-status');
+        // statusEl kept for backward compatibility — setStatus() is now a no-op
+        this.statusEl = null;
         this.hintEl = document.getElementById('stream-hint');
+        this._touchCursorEl = document.getElementById('stream-touch-cursor');
 
         document.getElementById('btn-stream-quit').onclick = () => this.quit();
 
-        // ── Streaming stats overlay (top-right, semi-transparent) ──────────
+        // ── Streaming stats overlay (top-center card, elegant styling) ─────
         this._overlayEl = document.createElement('div');
         this._overlayEl.id = 'stream-stats-overlay';
-        this._overlayEl.style.cssText =
-            'position:fixed;top:10px;right:10px;' +
-            'background:rgba(0,0,0,0.55);color:#ccc;' +
-            'font:11px monospace;' +
-            'padding:6px 10px;border-radius:6px;' +
-            'z-index:100;pointer-events:none;' +
-            'white-space:pre;display:none;';
-        this._overlayEl.textContent = 'Waiting...';
+        this._overlayEl.className = 'stream-stats-overlay';
+        this._overlayEl.innerHTML = '<div class="stats-waiting">Connecting...</div>';
         document.getElementById('stream-view').appendChild(this._overlayEl);
 
         // Start overlay update timer (every 500ms)
@@ -536,6 +576,26 @@ export class StreamView {
         this._shortcutsSlide.style.display = 'none';
         this._buildShortcutsSlideContent();
         document.getElementById('stream-view').appendChild(this._shortcutsSlide);
+
+        // ── Startup overlay (centered 3-step status) ───────────────────────
+        this._startupOverlay = document.createElement('div');
+        this._startupOverlay.id = 'stream-startup-overlay';
+        this._startupOverlay.className = 'stream-startup-overlay';
+        this._startupOverlay.innerHTML = [
+            '<div class="startup-step active" data-step="1">',
+            '  <span class="startup-step-dot"></span>',
+            '  <span class="startup-step-label">Connecting...</span>',
+            '</div>',
+            '<div class="startup-step" data-step="2">',
+            '  <span class="startup-step-dot"></span>',
+            '  <span class="startup-step-label">Starting video stream...</span>',
+            '</div>',
+            '<div class="startup-step" data-step="3">',
+            '  <span class="startup-step-dot"></span>',
+            '  <span class="startup-step-label">Stream ready!</span>',
+            '</div>'
+        ].join('');
+        document.getElementById('stream-view').appendChild(this._startupOverlay);
     }
 
     // =========================================================================
@@ -1090,11 +1150,19 @@ export class StreamView {
         // FPS tracking: record decode timestamp (2s sliding window in _updateOverlay)
         this._fpsTimestamps.push(performance.now());
 
-        // Latency: compute e2e delay from backend timestamp to now
-        if (this._latestBackendTs !== undefined) {
-            const latency = performance.now() - this._latestBackendTs;
+        // ── End-to-end latency ──────────────────────────────────────────────
+        // Total time from Sunshine capture to browser decode+display.
+        // Backend sends captureSteadyMs (= firstFrameArrivalSteadyMs + presTimeUs/1000)
+        // in the steady_clock domain. The offset between steady_clock and
+        // performance.now() is established on the first video frame (fallback)
+        // and refined by periodic stats messages.
+        //   capturePerfTime = captureSteadyMs - _steadyToPerfOffset
+        //   e2eLatency = performance.now() - capturePerfTime
+        if (this._latestBackendTs !== undefined && this._steadyToPerfOffset !== null) {
+            const capturePerfTime = this._latestBackendTs - this._steadyToPerfOffset;
+            const latency = performance.now() - capturePerfTime;
             if (latency > 0 && latency < 5000) { // ignore outliers
-                this._latencySamples.push({ time: performance.now(), latency });
+                this._e2eLatencyStats.addSample(latency);
             }
         }
 
@@ -1137,8 +1205,11 @@ export class StreamView {
             if (w > 0) this._resolution = w + '×' + h;
             this.setStatus('live', 'Live');
             this._firstFrameRendered = true;
-            // Show stats overlay
-            if (this._overlayEl) this._overlayEl.style.display = '';
+            // Show stats overlay (only if enabled in settings)
+            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+            // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
+            this._updateStartupStep(3);
+            setTimeout(() => this._hideStartupOverlay(), 1500);
             // Show keyboard shortcuts slide (5s auto-hide)
             this._showShortcutsSlide();
         }
@@ -1438,6 +1509,7 @@ export class StreamView {
             if (this._quitting) return;
             this.connected = true;
             this.setStatus('connecting', 'Waiting for stream...');
+            this._updateStartupStep(2);
 
             // Start ping timer for browser-side RTT measurement.
             // Sends a ping every 2s on the input DC; backend echoes back a pong.
@@ -1460,7 +1532,10 @@ export class StreamView {
                             const h = this.videoEl.videoHeight || 0;
                             if (w > 0) this._resolution = w + '×' + h;
                             this.setStatus('live', 'Live');
-                            if (this._overlayEl) this._overlayEl.style.display = '';
+                            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+                            // Mark startup step 3 ("Stream prêt !") and hide overlay after 1.5s
+                            this._updateStartupStep(3);
+                            setTimeout(() => this._hideStartupOverlay(), 1500);
                             // Show keyboard shortcuts slide (5s auto-hide)
                             this._showShortcutsSlide();
                         }
@@ -1506,6 +1581,19 @@ export class StreamView {
     _updateOverlay() {
         if (!this._overlayEl) return;
 
+        // Hide entire overlay when performance stats are disabled in settings
+        if (!this._showPerfStats) {
+            this._overlayEl.style.display = 'none';
+            return;
+        }
+
+        // Before first frame: show minimal waiting state
+        if (!this._firstFrameRendered) {
+            this._overlayEl.innerHTML = '<div class="stats-waiting">Connecting...</div>';
+            this._overlayEl.style.display = '';
+            return;
+        }
+
         const now = performance.now();
         const elapsed = (now - this._startTime) / 1000;
         let fps = 0;
@@ -1523,48 +1611,51 @@ export class StreamView {
 
         const codec = this.videoCodec === 'auto' ? 'h264' : this.videoCodec;
 
-        // Build enriched overlay lines
-        const lines = [];
+        // Build styled overlay HTML — each stat on its own line with a descriptive label
+        let html = '<div class="stats-body">';
 
-        // Line 1: basic stream info
-        lines.push(
-            (this._resolution || '?') + ' | ' +
-            fps + ' fps | ' +
-            bitrateMbps.toFixed(1) + ' Mbps | ' +
-            codec + ' | ' +
-            this._transportMode
-        );
+        // Resolution
+        html += '<div class="stats-row">' +
+            '<span class="stats-label">Resolution:</span>' +
+            '<span class="stats-value">' + (this._resolution || '?') + '</span>' +
+            '</div>';
 
-        // Line 2: host RTT (backend ↔ Sunshine)
-        if (this._hostRttStats.count > 0) {
-            const avg = this._hostRttStats.avg.toFixed(1);
-            const min = this._hostRttStats.min.toFixed(1);
-            const max = this._hostRttStats.max.toFixed(1);
-            lines.push('RTT host: ' + avg + 'ms [' + min + '-' + max + ']');
-        }
+        // Framerate
+        html += '<div class="stats-row">' +
+            '<span class="stats-label">Framerate:</span>' +
+            '<span class="stats-value">' + fps + ' fps</span>' +
+            '</div>';
 
-        // Line 3: browser RTT (browser ↔ backend)
-        if (this._browserRttStats.count > 0) {
-            const avg = this._browserRttStats.avg.toFixed(1);
-            const min = this._browserRttStats.min.toFixed(1);
-            const max = this._browserRttStats.max.toFixed(1);
-            lines.push('RTT browser: ' + avg + 'ms [' + min + '-' + max + ']');
-        }
+        // Bitrate
+        html += '<div class="stats-row">' +
+            '<span class="stats-label">Bitrate:</span>' +
+            '<span class="stats-value">' + bitrateMbps.toFixed(1) + ' Mbps</span>' +
+            '</div>';
 
-        // Line 4: decode latency
-        if (this._decodeLatencyStats.count > 0) {
-            const avg = this._decodeLatencyStats.avg.toFixed(1);
-            const min = this._decodeLatencyStats.min.toFixed(1);
-            const max = this._decodeLatencyStats.max.toFixed(1);
-            lines.push('Decode: ' + avg + 'ms [' + min + '-' + max + ']');
-        }
+        // Codec
+        html += '<div class="stats-row">' +
+            '<span class="stats-label">Codec:</span>' +
+            '<span class="stats-value">' + codec.toUpperCase() + '</span>' +
+            '</div>';
 
-        // Line 5: frame counts
-        lines.push('Frames: R:' + this.stats.received +
-            ' D:' + this.stats.decoded +
-            ' Dr:' + this.stats.dropped);
+        // Transport
+        html += '<div class="stats-row">' +
+            '<span class="stats-label">Transport:</span>' +
+            '<span class="stats-value">' + this._transportMode + '</span>' +
+            '</div>';
 
-        this._overlayEl.textContent = lines.join('\n');
+        // End-to-end latency
+        const avgLatency = this._e2eLatencyStats.count > 0
+            ? this._e2eLatencyStats.avg.toFixed(1) + 'ms'
+            : '--';
+        html += '<div class="stats-row stats-latency-row">' +
+            '<span class="stats-label">Latency:</span>' +
+            '<span class="stats-value stats-latency">' + avgLatency + '</span>' +
+            '</div>';
+
+        html += '</div>';
+
+        this._overlayEl.innerHTML = html;
     }
 
     // ── Stats message handler (ping/pong + periodic backend stats) ─────────
@@ -1581,6 +1672,30 @@ export class StreamView {
             }
             if (msg.decodeLatencyUs !== undefined && msg.decodeLatencyUs > 0) {
                 this._decodeLatencyStats.addSample(msg.decodeLatencyUs / 1000);
+            }
+            // Track steady_clock reference for end-to-end latency calculation.
+            // Refine the clock domain offset when a stats message arrives.
+            // The offset may already be estimated from the first video frame;
+            // stats provide a more accurate measurement (no pipeline guesswork).
+            if (msg.streamTimeMs !== undefined && msg.streamTimeMs >= 0) {
+                this._streamTimeMs = msg.streamTimeMs;
+                this._streamTimeReceiptTime = performance.now();
+                // Refine offset: steadyTime ≈ streamTimeMs + RTT/2 at receive
+                const rtt = this._browserRttStats.count > 0 ? this._browserRttStats.avg : 0;
+                const refinedOffset = msg.streamTimeMs - this._streamTimeReceiptTime + rtt / 2;
+                if (this._steadyToPerfOffset === null) {
+                    this._steadyToPerfOffset = refinedOffset;
+                    console.log('[StreamView] Clock offset (stats): steadyToPerfOffset=' +
+                        Math.round(this._steadyToPerfOffset) +
+                        ' streamTimeMs=' + msg.streamTimeMs +
+                        ' perf=' + Math.round(this._streamTimeReceiptTime) +
+                        ' rtt=' + rtt.toFixed(1));
+                } else {
+                    // Blend new measurement with existing offset (80% old, 20% new)
+                    // to smooth out jitter while adapting to clock drift.
+                    this._steadyToPerfOffset =
+                        this._steadyToPerfOffset * 0.8 + refinedOffset * 0.2;
+                }
             }
         }
     }
@@ -1599,8 +1714,22 @@ export class StreamView {
         this._totalBytes += data.length;
 
         // Store the most recent backend timestamp for latency calculation.
-        if (backendTs !== undefined) {
+        if (backendTs !== undefined && backendTs > 0) {
             this._latestBackendTs = backendTs;
+
+            // Establish the steady_clock → performance.now() offset as early as
+            // possible — no need to wait for the periodic stats message.
+            // The pipeline latency from capture to browser-receive is unknown
+            // (encode + LAN + SCTP), but ~30ms is a reasonable LAN floor.
+            // This offset is refined when the first stats message arrives.
+            if (this._steadyToPerfOffset === null) {
+                const pipelineFloor = 30; // ms — conservative LAN pipeline minimum
+                this._steadyToPerfOffset = backendTs - performance.now() - pipelineFloor;
+                console.log('[StreamView] Clock offset (frame-based): steadyToPerfOffset=' +
+                    Math.round(this._steadyToPerfOffset) +
+                    ' backendTs=' + backendTs +
+                    ' perf=' + Math.round(performance.now()));
+            }
         }
 
         // Direct frame processing — no reordering.
@@ -1853,6 +1982,10 @@ export class StreamView {
         document.addEventListener('keyup', this._onKeyUp);
         this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
         this.canvas.addEventListener('contextmenu', this._onContextMenu);
+        // Touch events (mobile)
+        this.canvas.addEventListener('touchstart', this._onTouchStart, { passive: false });
+        this.canvas.addEventListener('touchmove', this._onTouchMove, { passive: false });
+        this.canvas.addEventListener('touchend', this._onTouchEnd, { passive: false });
         window.addEventListener('beforeunload', this._onBeforeUnload);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
 
@@ -1924,7 +2057,11 @@ export class StreamView {
         // mapped to the host screen. The cursor on the host follows the client
         // cursor position on the video canvas 1:1.
         // Hide local cursor — the host cursor is visible in the video stream.
-        this.canvas.style.cursor = 'none';
+        // On touch devices, the overlay cursor (#stream-touch-cursor) provides
+        // visual feedback — keep the CSS cursor at default.
+        if (!IS_TOUCH_DEVICE) {
+            this.canvas.style.cursor = 'none';
+        }
 
         this._onNormalMouseMove = (e) => {
             const rect = this.canvas.getBoundingClientRect();
@@ -1958,11 +2095,15 @@ export class StreamView {
         };
 
         this._onNormalMouseEnter = () => {
-            this.canvas.style.cursor = 'none';
+            if (!IS_TOUCH_DEVICE) {
+                this.canvas.style.cursor = 'none';
+            }
         };
 
         this._onNormalMouseLeave = () => {
-            this.canvas.style.cursor = 'default';
+            if (!IS_TOUCH_DEVICE) {
+                this.canvas.style.cursor = 'default';
+            }
         };
 
         this.canvas.addEventListener('mousemove', this._onNormalMouseMove);
@@ -1984,6 +2125,10 @@ export class StreamView {
             this.canvas.removeEventListener('mouseup', this._onMouseUp);
             this.canvas.removeEventListener('wheel', this._onWheel);
             this.canvas.removeEventListener('contextmenu', this._onContextMenu);
+            // Touch events (mobile)
+            this.canvas.removeEventListener('touchstart', this._onTouchStart);
+            this.canvas.removeEventListener('touchmove', this._onTouchMove);
+            this.canvas.removeEventListener('touchend', this._onTouchEnd);
 
             // Mode-specific listeners
             if (this._gamingMode) {
@@ -2234,6 +2379,199 @@ export class StreamView {
         this.webrtc.send({ type: 'mousewheel', delta: e.deltaY });
     }
 
+    // =========================================================================
+    // Touch cursor overlay
+    // =========================================================================
+
+    /**
+     * Position and show the touch cursor overlay at the given client coordinates.
+     * The overlay provides visual feedback of where the finger is pointing,
+     * which is essential on mobile where the CSS cursor is hidden.
+     *
+     * Coordinates are converted from client space to the canvas-area parent
+     * space (the cursor element is positioned relative to .stream-canvas-area).
+     * Cancels any pending auto-hide timer so the cursor stays visible during
+     * an active touch sequence.
+     *
+     * @param {number} clientX - Pointer clientX from the TouchEvent.
+     * @param {number} clientY - Pointer clientY from the TouchEvent.
+     */
+    _showTouchCursor(clientX, clientY) {
+        if (!this._touchCursorEl || !this.canvas) return;
+
+        const rect = this.canvas.getBoundingClientRect();
+        // Center the cursor on the touch point (offset by half its size)
+        const x = clientX - rect.left - this._touchCursorSize / 2;
+        const y = clientY - rect.top - this._touchCursorSize / 2;
+
+        this._touchCursorEl.style.transform = `translate(${x}px, ${y}px)`;
+        this._touchCursorEl.style.display = 'block';
+
+        // Cancel any pending auto-hide so the cursor stays during active touch
+        if (this._touchCursorTimeout) {
+            clearTimeout(this._touchCursorTimeout);
+            this._touchCursorTimeout = null;
+        }
+    }
+
+    /**
+     * Schedule hiding the touch cursor after the configured delay.
+     * Called when the user lifts all fingers — the cursor stays visible
+     * at the last known position for a moment so the user can see where
+     * the pointer ended up between gestures.
+     *
+     * If a new touch starts before the timeout fires, _showTouchCursor()
+     * cancels this timer and the cursor remains visible.
+     */
+    _scheduleHideTouchCursor() {
+        if (!this._touchCursorEl) return;
+        if (this._touchCursorTimeout) {
+            clearTimeout(this._touchCursorTimeout);
+        }
+        this._touchCursorTimeout = setTimeout(() => {
+            if (this._touchCursorEl) {
+                this._touchCursorEl.style.display = 'none';
+            }
+            this._touchCursorTimeout = null;
+        }, this._touchCursorHideDelay);
+    }
+
+    // =========================================================================
+    // Touch input (mobile) — trackpad-like behaviour
+    // =========================================================================
+
+    /**
+     * Handle touch start on the streaming canvas.
+     *
+     * Behaviour:
+     *   1 finger → track mouse position for drag/tap detection.
+     *   2 fingers → immediate right click (mousedown+mouseup button=3).
+     */
+    handleTouchStart(e) {
+        e.preventDefault();
+        const prevCount = this._touchFingerCount;
+        const newCount = e.touches.length;
+        this._touchFingerCount = newCount;
+        const touch = e.touches[0];
+        this._touchStartX = touch.clientX;
+        this._touchStartY = touch.clientY;
+        this._touchLastX = touch.clientX;
+        this._touchLastY = touch.clientY;
+        this._touchStartTime = performance.now();
+        this._touchActive = true;
+
+        // Show touch cursor at finger position immediately
+        this._showTouchCursor(touch.clientX, touch.clientY);
+
+        // Two fingers only when starting simultaneously (prevCount === 0) → right click.
+        // If the second finger is added mid-drag (prevCount === 1 → 2), we just switch
+        // to scroll mode without firing a click.
+        if (newCount === 2 && prevCount === 0) {
+            this._touchHadTwoFingers = true;
+            this.webrtc.send({ type: 'mousedown', button: 3 });
+            this.webrtc.send({ type: 'mouseup', button: 3 });
+            // Clear start time so touchend doesn't also fire a left click
+            this._touchStartTime = 0;
+            // Store average Y so first two-finger touchmove delta is correct
+            const t0 = e.touches[0], t1 = e.touches[1];
+            this._touchLastY = (t0.clientY + t1.clientY) / 2;
+        } else if (newCount === 2 && prevCount === 1) {
+            // Second finger added mid-drag — mark to prevent tap on final finger lift
+            this._touchHadTwoFingers = true;
+        }
+    }
+
+    /**
+     * Handle touch move (drag).
+     *
+     * 1 finger → absolute mouse move (like desktop mouse, mapped to canvas).
+     * 2 fingers → vertical scroll via mousewheel delta.
+     */
+    handleTouchMove(e) {
+        e.preventDefault();
+        if (!this._touchActive) return;
+
+        const count = e.touches.length;
+        this._touchFingerCount = count;
+
+        if (count === 1) {
+            // Single finger: absolute mouse move (trackpad mode)
+            const touch = e.touches[0];
+            const rect = this.canvas.getBoundingClientRect();
+            const x = Math.round(Math.max(0, Math.min(touch.clientX - rect.left, rect.width)));
+            const y = Math.round(Math.max(0, Math.min(touch.clientY - rect.top, rect.height)));
+            const refW = Math.round(rect.width);
+            const refH = Math.round(rect.height);
+
+            this.webrtc.send({
+                type: 'mousemove',
+                x: x,
+                y: y,
+                referenceWidth: refW,
+                referenceHeight: refH
+            });
+
+            // Move touch cursor to follow the finger
+            this._showTouchCursor(touch.clientX, touch.clientY);
+            this._touchLastX = touch.clientX;
+            this._touchLastY = touch.clientY;
+        } else if (count === 2) {
+            // Two finger vertical swipe → scroll
+            const t1 = e.touches[0];
+            const t2 = e.touches[1];
+            const avgY = (t1.clientY + t2.clientY) / 2;
+            const deltaY = this._touchLastY ? avgY - this._touchLastY : 0;
+
+            if (Math.abs(deltaY) > 1) {
+                this.webrtc.send({ type: 'mousewheel', delta: deltaY });
+            }
+
+            // Track average Y for next delta
+            this._touchLastX = t1.clientX;
+            this._touchLastY = avgY;
+        }
+    }
+
+    /**
+     * Handle touch end.
+     *
+     * 1→0 finger transition with minimal movement → left click (tap).
+     */
+    handleTouchEnd(e) {
+        e.preventDefault();
+
+        // Update finger count before processing
+        this._touchFingerCount = e.touches.length;
+
+        // Tap detection: 1→0 finger transition, no two-finger gesture seen, no significant drag
+        if (e.touches.length === 0 &&
+            !this._touchHadTwoFingers &&
+            e.changedTouches.length > 0) {
+            const touch = e.changedTouches[0];
+            const dx = touch.clientX - this._touchStartX;
+            const dy = touch.clientY - this._touchStartY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const elapsed = performance.now() - this._touchStartTime;
+
+            // Tap: minimal movement + short duration → left click
+            if (dist < this._touchTapThreshold &&
+                elapsed < this._touchTapTimeThreshold &&
+                this._touchStartTime > 0) {
+                this.webrtc.send({ type: 'mousedown', button: 1 });
+                this.webrtc.send({ type: 'mouseup', button: 1 });
+            }
+        }
+
+        // Reset state when all fingers are lifted
+        if (e.touches.length === 0) {
+            this._touchActive = false;
+            this._touchHadTwoFingers = false;
+            this._touchFingerCount = 0;
+            // Keep cursor visible at last position, hide after delay
+            this._scheduleHideTouchCursor();
+        }
+    }
+
     handlePointerLockChange() {
         this.pointerLocked = (document.pointerLockElement === this.canvas);
         this._mouseFocused = this.pointerLocked;
@@ -2325,12 +2663,10 @@ export class StreamView {
     // =========================================================================
 
     setStatus(state, text) {
-        if (!this.statusEl) return;
-        const dot = this.statusEl.querySelector('.stream-status-dot');
-        if (dot) {
-            dot.className = 'stream-status-dot status-' + state;
-        }
-        this.statusEl.childNodes[1].textContent = ' ' + text;
+        // No-op — status indicators in the header were removed.
+        // Connection state is conveyed through the stats overlay
+        // (shown after first frame) or the "Waiting..." / "Connecting..."
+        // state before the first frame arrives in _updateOverlay().
     }
 
     // =========================================================================
@@ -2406,6 +2742,46 @@ export class StreamView {
     }
 
     // =========================================================================
+    // Startup overlay (3-step connection status, centered)
+    // =========================================================================
+
+    /**
+     * Advance the startup overlay to the given step and mark previous
+     * steps as completed. Step 1 = connecting, step 2 = video starting,
+     * step 3 = stream ready. After step 3, call _hideStartupOverlay().
+     * @param {number} step - 1-indexed step to activate.
+     */
+    _updateStartupStep(step) {
+        if (!this._startupOverlay) return;
+        const items = this._startupOverlay.querySelectorAll('.startup-step');
+        items.forEach((el) => {
+            const idx = parseInt(el.getAttribute('data-step'), 10);
+            el.classList.remove('active', 'done');
+            if (idx < step) {
+                el.classList.add('done');
+            } else if (idx === step) {
+                // Step 3 is the final state — mark as done (green), not active (yellow pulse)
+                el.classList.add(step >= 3 ? 'done' : 'active');
+            }
+        });
+    }
+
+    /**
+     * Fade out and hide the startup overlay.
+     * Called ~1.5s after the first video frame is decoded (step 3).
+     */
+    _hideStartupOverlay() {
+        if (!this._startupOverlay) return;
+        this._startupOverlay.classList.add('hidden');
+        // Remove from DOM after the CSS transition completes
+        setTimeout(() => {
+            if (this._startupOverlay) {
+                this._startupOverlay.style.display = 'none';
+            }
+        }, 500);
+    }
+
+    // =========================================================================
     // Quit / Cleanup
     // =========================================================================
 
@@ -2430,6 +2806,9 @@ export class StreamView {
         // Hide shortcuts slide immediately (session is ending)
         this._hideShortcutsSlide();
 
+        // Hide startup overlay if still visible
+        this._hideStartupOverlay();
+
         // Clear ping timer
         if (this._pingInterval) {
             clearInterval(this._pingInterval);
@@ -2440,6 +2819,15 @@ export class StreamView {
         if (this._idrTimeout) {
             clearTimeout(this._idrTimeout);
             this._idrTimeout = null;
+        }
+
+        // Clear touch cursor timer and hide the overlay
+        if (this._touchCursorTimeout) {
+            clearTimeout(this._touchCursorTimeout);
+            this._touchCursorTimeout = null;
+        }
+        if (this._touchCursorEl) {
+            this._touchCursorEl.style.display = 'none';
         }
 
         if (document.pointerLockElement === this.canvas) {
@@ -2512,6 +2900,11 @@ export class StreamView {
         if (this._idrTimeout) {
             clearTimeout(this._idrTimeout);
             this._idrTimeout = null;
+        }
+
+        if (this._touchCursorTimeout) {
+            clearTimeout(this._touchCursorTimeout);
+            this._touchCursorTimeout = null;
         }
 
         if (document.pointerLockElement === this.canvas) {

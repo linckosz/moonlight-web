@@ -24,7 +24,8 @@ QUrl NvHTTP::buildUrl(const NvAddress& address, const QString& command,
     QUrl url;
     url.setScheme("http");
     url.setHost(address.address());
-    url.setPort(address.port());
+    // Fallback to MW_HTTP_PORT if port is 0 or invalid
+    url.setPort(address.port() > 0 ? address.port() : MW_HTTP_PORT);
     url.setPath("/" + command);
 
     QString query = "uniqueid=" + uniqueId

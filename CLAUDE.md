@@ -17,13 +17,13 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 
 | Agent | Modèle | Rôle |
 |---|---|---|
-| `engineering-manager` | Opus (Deepseek-v4-pro) | Orchestrateur, unique interlocuteur, parle français |
-| `backend-dev` | Sonnet (Deepseek-v4-flash) | Développe le backend C++/Qt |
-| `frontend-dev` | Sonnet (Deepseek-v4-flash) | Développe le frontend Vanilla JS |
-| `code-reviewer` | Opus (Deepseek-v4-pro) | Revue de code, validation architecture, sécurité |
-| `expert-moonlight-qt` | Opus (Deepseek-v4-pro) | Explique le code de référence moonlight-qt |
-| `expert-moonlight-xbox` | Opus (Deepseek-v4-pro) | Explique le code de référence moonlight-xbox |
-| `expert-moonlight-web-stream` | Opus (Deepseek-v4-pro) | Explique le code de référence moonlight-web-stream (Rust, WebRTC) |
+| `engineering-manager` | Opus (ou deepseek-v4-pro) | Orchestrateur, unique interlocuteur, parle français |
+| `backend-dev` | Sonnet (ou deepseek-v4-flash) | Développe le backend C++/Qt |
+| `frontend-dev` | Sonnet (ou deepseek-v4-flash) | Développe le frontend Vanilla JS |
+| `code-reviewer` | Opus (ou deepseek-v4-pro) | Revue de code, validation architecture, sécurité |
+| `expert-moonlight-qt` | Opus (ou deepseek-v4-pro) | Explique le code de référence moonlight-qt |
+| `expert-moonlight-xbox` | Opus (ou deepseek-v4-pro) | Explique le code de référence moonlight-xbox |
+| `expert-moonlight-web-stream` | Opus (ou deepseek-v4-pro) | Explique le code de référence moonlight-web-stream (Rust, WebRTC) |
 
 ## Skills
 

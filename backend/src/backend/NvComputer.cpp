@@ -63,7 +63,7 @@ NvComputer::NvComputer(const QString& serverInfo, const NvAddress& activeAddr)
     QString httpsPortStr = NvHTTP::getXmlString(serverInfo, "HttpsPort");
     activeHttpsPort = httpsPortStr.isEmpty() ? 0 : httpsPortStr.toUShort();
     if (activeHttpsPort == 0)
-        activeHttpsPort = 47984;  // GFE default port; Sunshine overrides via HttpsPort XML
+        activeHttpsPort = MW_HTTPS_PORT;  // Sunshine HTTPS port fallback
 }
 
 // --- Construction from QSettings --------------------------------------------
@@ -77,15 +77,15 @@ NvComputer::NvComputer(QSettings& settings)
 
     localAddress = NvAddress(
         settings.value("localaddress").toString(),
-        settings.value("localport", 0).toUInt());
+        settings.value("localport", MW_HTTP_PORT).toUInt());
 
     remoteAddress = NvAddress(
         settings.value("remoteaddress").toString(),
-        settings.value("remoteport", 0).toUInt());
+        settings.value("remoteport", MW_HTTP_PORT).toUInt());
 
     manualAddress = NvAddress(
         settings.value("manualaddress").toString(),
-        settings.value("manualport", 0).toUInt());
+        settings.value("manualport", MW_HTTP_PORT).toUInt());
 
     serverCertPem = settings.value("serverCert").toByteArray();
     activeHttpsPort = static_cast<quint16>(
@@ -190,16 +190,18 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
 {
     QVector<NvAddress> addrs;
 
+    // Active address first — this is the address that last responded successfully
+    // (updated in onPollReplyFinished from the URL used in the poll request).
+    // It is more reliable than localAddress (from XML <LocalIP>) which may differ
+    // from the mDNS-resolved address in multi-homed / Docker / VPN setups.
+    if (!activeAddress.isNull())
+        addrs.append(activeAddress);
     if (!localAddress.isNull())
         addrs.append(localAddress);
     if (!manualAddress.isNull())
         addrs.append(manualAddress);
     if (!remoteAddress.isNull())
         addrs.append(remoteAddress);
-
-    // If no address is set, use the active one
-    if (addrs.isEmpty() && !activeAddress.isNull())
-        addrs.append(activeAddress);
 
     return addrs;
 }
