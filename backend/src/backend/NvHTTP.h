@@ -34,7 +34,7 @@ public:
     // Async server info fetch — caller owns the returned QNetworkReply
     QNetworkReply* getServerInfoAsync(const NvAddress& address, const QString& uniqueId);
 
-    // HTTPS variant for paired hosts (port 47990) — returns real PairStatus
+    // HTTPS variant for paired hosts (port 47989) — returns real PairStatus
     QNetworkReply* getServerInfoAsyncHttps(const NvAddress& address, const QString& uniqueId,
                                             const QByteArray& clientCertPem,
                                             const QByteArray& clientKeyPem);

@@ -657,6 +657,8 @@ const MoonlightApp = {
 
                 const internalTransport = result.transport || (result.signalingUrl ? 'webrtc' : 'wss');
                 const transportMode = result.transport_mode || internalTransport;
+                // Respect the "show performance stats" setting (default: true)
+                const showPerfStats = streamingSettings.show_performance_stats !== false;
                 this.streamView = new StreamView(
                     document.getElementById('app'),
                     result.signalingUrl || result.wsUrl,
@@ -667,7 +669,8 @@ const MoonlightApp = {
                     result.upnpAvailable !== false,
                     internalTransport,
                     transportMode,
-                    isRemote
+                    isRemote,
+                    showPerfStats
                 );
 
                 // ── Callback when streaming quits (Stop button / disconnect) ─

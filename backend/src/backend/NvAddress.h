@@ -4,7 +4,7 @@
 #include <QHostAddress>
 
 #define MW_HTTP_PORT  47989
-#define MW_HTTPS_PORT 47990
+#define MW_HTTPS_PORT 47989
 
 class NvAddress
 {

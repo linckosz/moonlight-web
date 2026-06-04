@@ -12,6 +12,10 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 
+/** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
+const IS_TOUCH_DEVICE = 'ontouchstart' in window ||
+    (typeof navigator.maxTouchPoints !== 'undefined' && navigator.maxTouchPoints > 0);
+
 const STORAGE_KEY = 'mw-streaming-settings';
 
 export class SettingsView {
@@ -362,6 +366,7 @@ export class SettingsView {
                 <div class="settings-section">
                     <h3 class="settings-section-title">Advanced</h3>
 
+                    ${IS_TOUCH_DEVICE ? '' : `
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-gaming-mode"
@@ -371,7 +376,7 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">Locks mouse pointer for seamless camera control in games</span>
-                    </div>
+                    </div>`}
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">

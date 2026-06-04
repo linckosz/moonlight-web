@@ -150,28 +150,184 @@ static void logHevcParameters(const QByteArray& vps, const QByteArray& sps,
     }
     if (!vps.isEmpty()) {
         QByteArray cleanVps = removeHvcEp(vps);
-        if (cleanVps.size() >= 3) {
+        if (cleanVps.size() >= 4) {
             const unsigned char* v = reinterpret_cast<const unsigned char*>(cleanVps.constData());
-            int subLayers = (v[2] >> 1) & 0x07;
+            // vps_max_sub_layers_minus1 at RBSP byte 1 bits 3-1 = clean[3] bits 3-1
+            int subLayers = (v[3] >> 1) & 0x07;
             qInfo().noquote()
                 << QString("[HEVC-PARAM %1] VPS: subLayers=%2").arg(label).arg(subLayers);
         }
     }
 }
 
+/// Rebuild HEVC VPS NAL unit with vps_max_sub_layers_minus1=0.
+///
+/// Takes the EP-removed VPS NAL unit (including 2-byte NAL header) and returns
+/// a rebuilt minimal VPS with:
+///   - vps_max_sub_layers_minus1 set to 0
+///   - Only the general profile/tier/level fields preserved
+///   - All sub-layer specific data removed
+///   - Minimal safe values for remaining VPS fields
+///
+/// Returns empty QByteArray if the original already has vps_max_sub_layers=0.
+static QByteArray rebuildVpsNoSubLayers(const QByteArray& cleanVps)
+{
+    // Minimum size: NAL header(2) + VPS fixed header(4) + PTL general(12) = 18
+    if (cleanVps.size() < 18) return {};
+
+    const unsigned char* vps = reinterpret_cast<const unsigned char*>(cleanVps.constData());
+
+    // RBSP byte 1 (= clean[3]) bits 3-1 = vps_max_sub_layers_minus1
+    int origSubLayers = (vps[3] >> 1) & 0x07;
+    if (origSubLayers == 0) return {};
+
+    qInfo() << "[HEVC-Rebuild] VPS: sub_layers" << origSubLayers << "→ 0 (rebuild)";
+
+    QByteArray result;
+    result.reserve(24);
+
+    // 1. NAL header (2 bytes) — copy verbatim
+    result.append(cleanVps.constData(), 2);
+
+    // 2. VPS fixed header (RBSP bytes 0-3 = clean[2..5])
+    //    RBSP byte 0: vps_id(4) | base_internal(1) | base_available(1) | max_layers_hi(2)
+    result.append(cleanVps[2]);
+    //    RBSP byte 1: max_layers_lo(4) | max_sub_layers(3)=000 | temporal_nest(1)
+    result.append(static_cast<char>(vps[3] & 0xF1));
+    //    RBSP bytes 2-3: vps_reserved_0xffff — copy verbatim
+    result.append(cleanVps[4]);
+    result.append(cleanVps[5]);
+
+    // 3. profile_tier_level(1, 0) — general fields only (12 bytes: clean[6..17])
+    //    PTL layout: profile_space/tier/idc(1B) + compatibility_flags(4B)
+    //    + constraint_indicators(6B) + level_idc(1B) = 12 bytes
+    if (cleanVps.size() < 18) return {};
+    result.append(cleanVps.constData() + 6, 12);
+
+    // 4. Reserved zeros for maxSubLayersMinus1=0
+    //    For maxSubLayersMinus1=0, no sub-layer present flags,
+    //    8 iterations of reserved_zero_2bits = 16 bits = 2 bytes
+    result.append(static_cast<char>(0x00));
+    result.append(static_cast<char>(0x00));
+
+    // 5. VPS tail (after PTL) — minimal safe values
+    //    Bit layout (MSB first, 2 bytes total):
+    //    Byte 0: vps_sub_layer_ordering_info_present_flag=0
+    //            vps_max_dec_pic_buffering_minus1[0]=0 (ue(v)="1")
+    //            vps_max_num_reorder_pics[0]=0 (ue(v)="1")
+    //            vps_max_latency_increase_plus1[0]=0 (ue(v)="1")
+    //            vps_max_layer_id hi=0 (2 bits)
+    //    Byte 1: vps_max_layer_id lo=0 (4 bits)
+    //            vps_num_layer_sets_minus1=0 (ue(v)="1")
+    //            vps_timing_info_present_flag=0
+    //            vps_extension_flag=0
+    //            rbsp_stop_one_bit=1 + alignment zeros
+    //
+    //    Assembled: [0][1][1][1][0000][1][0][0][1][00]
+    //    Byte 0: 0111 0000 = 0x70
+    //    Byte 1: 0010 0100 = 0x24
+    result.append(static_cast<char>(0x70));
+    result.append(static_cast<char>(0x24));
+
+    qInfo() << "[HEVC-Rebuild] VPS:" << cleanVps.size() << "→" << result.size() << "bytes";
+    return result;
+}
+
+/// Rebuild HEVC SPS NAL unit with sps_max_sub_layers_minus1=0.
+///
+/// Takes the EP-removed SPS NAL unit (including 2-byte NAL header) and returns
+/// a rebuilt SPS with:
+///   - sps_max_sub_layers_minus1 set to 0
+///   - profile_tier_level truncated to remove sub-layer data
+///   - All SPS-specific fields after PTL preserved verbatim
+///
+/// Returns empty QByteArray if original already has sps_max_sub_layers=0.
+static QByteArray rebuildSpsNoSubLayers(const QByteArray& cleanSps)
+{
+    // Minimum: NAL header(2) + SPS header(1) + PTL general(12) + flags(2) = 17
+    if (cleanSps.size() < 17) return {};
+
+    const unsigned char* sps = reinterpret_cast<const unsigned char*>(cleanSps.constData());
+
+    // RBSP byte 0 (= clean[2]) bits 3-1 = sps_max_sub_layers_minus1
+    int origSubLayers = (sps[2] >> 1) & 0x07;
+    if (origSubLayers == 0) return {};
+
+    // PTL general fields: clean[3..14] (12 bytes).
+    // After level_idc (clean[14]) comes:
+    //   - present flags: origSubLayers * 2 bits
+    //   - reserved: (8 - origSubLayers) * 2 bits
+    //   Total flags+reserved = 16 bits = 2 bytes regardless of origSubLayers
+    //
+    // After flags+reserved: sub-layer data (variable length):
+    //   For each j where profile_present[j]=1: 12 bytes (full profile struct)
+    //   For each j where level_present[j]=1: 1 byte (level_idc)
+
+    // Parse present flags from clean[15..16]
+    unsigned char flagsByte0 = static_cast<unsigned char>(sps[15]);
+    unsigned char flagsByte1 = static_cast<unsigned char>(sps[16]);
+
+    int subLayerDataBytes = 0;
+    for (int j = 0; j < origSubLayers; j++) {
+        bool profilePresent, levelPresent;
+        if (j < 4) {
+            // Byte 0: bit 7=p[0],6=l[0],5=p[1],4=l[1],3=p[2],2=l[2],1=p[3],0=l[3]
+            profilePresent = (flagsByte0 >> (7 - j * 2)) & 1;
+            levelPresent   = (flagsByte0 >> (6 - j * 2)) & 1;
+        } else {
+            // Byte 1: bit 7=p[4],6=l[4],5=p[5],4=l[5],3..0=reserved
+            profilePresent = (flagsByte1 >> (15 - j * 2)) & 1;
+            levelPresent   = (flagsByte1 >> (14 - j * 2)) & 1;
+        }
+        if (profilePresent)
+            subLayerDataBytes += 12;
+        if (levelPresent)
+            subLayerDataBytes += 1;
+    }
+
+    // Original PTL end offset in cleanSps (index past the PTL)
+    int ptlEnd = 15 + 2 + subLayerDataBytes;
+    if (ptlEnd > cleanSps.size()) ptlEnd = cleanSps.size();
+
+    qInfo() << "[HEVC-Rebuild] SPS: sub_layers" << origSubLayers
+            << "→ 0 (subLayerData=" << subLayerDataBytes << "bytes)";
+
+    QByteArray result;
+    result.reserve(cleanSps.size() - subLayerDataBytes);
+
+    // 1. NAL header (2 bytes)
+    result.append(cleanSps.constData(), 2);
+
+    // 2. SPS header with sub_layers=0
+    result.append(static_cast<char>(sps[2] & 0xF1));
+
+    // 3. PTL general fields (12 bytes: clean[3..14])
+    result.append(cleanSps.constData() + 3, 12);
+
+    // 4. Reserved zeros (2 bytes)
+    result.append(static_cast<char>(0x00));
+    result.append(static_cast<char>(0x00));
+
+    // 5. SPS fields after original PTL (preserve verbatim)
+    if (ptlEnd < cleanSps.size())
+        result.append(cleanSps.constData() + ptlEnd, cleanSps.size() - ptlEnd);
+
+    qInfo() << "[HEVC-Rebuild] SPS:" << cleanSps.size() << "→" << result.size() << "bytes";
+    return result;
+}
+
 /// Patch VPS/SPS in the first HEVC keyframe to fix Chrome Windows black screen.
 ///
 /// Modifications applied (only if beneficial):
-///   1. general_level_idc → capped to 153 (Level 5.1)
-///   2. sps_max_sub_layers_minus1 → 0
-///   3. vps_max_sub_layers_minus1 → 0
+///   1. general_level_idc capped to 153 (Level 5.1)
+///   2. sps_max_sub_layers_minus1 → 0 (with PTL truncation)
+///   3. vps_max_sub_layers_minus1 → 0 (with full VPS rebuild)
 ///
 /// Returns true if any byte was modified.
 static bool patchHevcKeyframe(QByteArray& data)
 {
     auto nals = scanNals(data);
 
-    // Find VPS, SPS, PPS NAL indices
     int vpsIdx = -1, spsIdx = -1;
     for (int i = 0; i < nals.size(); i++) {
         QByteArray nal = data.mid(nals[i].nalOffset, nals[i].nalLen);
@@ -182,60 +338,44 @@ static bool patchHevcKeyframe(QByteArray& data)
 
     bool patched = false;
 
-    // ── Patch SPS ──────────────────────────────────────────────────────────
-    if (spsIdx >= 0) {
-        NalLocation& spsLoc = nals[spsIdx];
-        QByteArray spsNal = data.mid(spsLoc.nalOffset, spsLoc.nalLen);
-        QByteArray clean = removeHvcEp(spsNal);
-
-        if (clean.size() >= 15) {
-            unsigned char* sps = reinterpret_cast<unsigned char*>(clean.data());
-
-            // sps_max_sub_layers_minus1 in bits 4-6 of byte 2
-            int subLayers = (sps[2] >> 1) & 0x07;
-            if (subLayers > 0) {
-                qInfo() << "[HEVC-Patch] SPS: sps_max_sub_layers_minus1" << subLayers << "→ 0";
-                sps[2] = (sps[2] & 0xF1) | (0 << 1);
-                patched = true;
-            }
-
-            // general_level_idc at byte 14
-            int levelIdc = sps[14];
-            if (levelIdc > 153) {
-                qInfo() << "[HEVC-Patch] SPS: general_level_idc" << levelIdc << "→ 153 (Level 5.1)";
-                sps[14] = 153;
-                patched = true;
-            } else if (levelIdc > 0 && levelIdc < 30) {
-                // Corrupted — likely shifted by emulation prevention
-                qInfo() << "[HEVC-Patch] SPS: general_level_idc too low" << levelIdc << "→ 153";
-                sps[14] = 153;
-                patched = true;
-            }
-
-            if (patched) {
-                QByteArray patchedNal = addHvcEp(clean);
-                data.replace(spsLoc.nalOffset, spsLoc.nalLen, patchedNal);
-            }
-        }
-    }
-
-    // ── Patch VPS ──────────────────────────────────────────────────────────
+    // ── VPS: rebuild with max_sub_layers=0 ─────────────────────────────────
     if (vpsIdx >= 0) {
         NalLocation& vpsLoc = nals[vpsIdx];
         QByteArray vpsNal = data.mid(vpsLoc.nalOffset, vpsLoc.nalLen);
         QByteArray clean = removeHvcEp(vpsNal);
+        QByteArray rebuilt = rebuildVpsNoSubLayers(clean);
+        if (!rebuilt.isEmpty()) {
+            QByteArray patchedVps = addHvcEp(rebuilt);
+            data.replace(vpsLoc.nalOffset, vpsLoc.nalLen, patchedVps);
+            patched = true;
+        }
+    }
 
-        if (clean.size() >= 3) {
-            unsigned char* vps = reinterpret_cast<unsigned char*>(clean.data());
-            int subLayers = (vps[2] >> 1) & 0x07;
-            if (subLayers > 0) {
-                qInfo() << "[HEVC-Patch] VPS: vps_max_sub_layers_minus1" << subLayers << "→ 0";
-                vps[2] = (vps[2] & 0xF1) | (0 << 1);
-                patched = true;
-
-                QByteArray patchedVps = addHvcEp(clean);
-                data.replace(vpsLoc.nalOffset, vpsLoc.nalLen, patchedVps);
+    // ── SPS: rebuild with max_sub_layers=0 + cap level_idc ────────────────
+    if (spsIdx >= 0) {
+        NalLocation& spsLoc = nals[spsIdx];
+        QByteArray spsNal = data.mid(spsLoc.nalOffset, spsLoc.nalLen);
+        QByteArray clean = removeHvcEp(spsNal);
+        QByteArray rebuilt = rebuildSpsNoSubLayers(clean);
+        if (!rebuilt.isEmpty()) {
+            // general_level_idc at byte 14 (same offset as in the original)
+            if (rebuilt.size() > 14) {
+                unsigned char* spsRebuilt = reinterpret_cast<unsigned char*>(rebuilt.data());
+                int levelIdc = spsRebuilt[14];
+                int cappedLevel = levelIdc;
+                if (levelIdc > 153) {
+                    cappedLevel = 153;
+                    qInfo() << "[HEVC-Patch] SPS: general_level_idc" << levelIdc << "→ 153";
+                } else if (levelIdc > 0 && levelIdc < 30) {
+                    cappedLevel = 153;
+                    qInfo() << "[HEVC-Patch] SPS: general_level_idc too low" << levelIdc << "→ 153";
+                }
+                spsRebuilt[14] = static_cast<unsigned char>(cappedLevel);
             }
+
+            QByteArray patchedSps = addHvcEp(rebuilt);
+            data.replace(spsLoc.nalOffset, spsLoc.nalLen, patchedSps);
+            patched = true;
         }
     }
 
@@ -938,11 +1078,26 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
                 << "firstBytes:" << hexDump;
     }
 
-    // Capture a monotonic timestamp (ms since epoch, modulo 2^32) at send time.
-    // The frontend uses this with Date.now() to estimate end-to-end latency.
-    // Clocks must be roughly synchronized (NTP) for the estimate to be accurate.
-    uint32_t backendTs = static_cast<uint32_t>(
-        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+    // ── End-to-end latency timestamp ───────────────────────────────────────
+    // Send the frame's capture time in steady_clock domain (monotonic ms).
+    //   captureSteadyMs = (firstFrameArrivalTimeUs + presentationTimeUs) / 1000
+    // The frontend estimates current steady_clock time from periodic stats
+    // (streamSteadyMs + performance.now() delta) and subtracts captureSteadyMs.
+    // Both steady_clock and performance.now() are monotonic — the delta works.
+    uint32_t backendTs = 0;
+    if (m_Shim) {
+        int64_t firstArrivalSteadyMs = m_Shim->firstFrameArrivalSteadyMs();
+        int64_t presTimeUs = m_Shim->framePresentationTimeUs();
+        if (firstArrivalSteadyMs > 0 && presTimeUs >= 0) {
+            int64_t captureSteadyMs = firstArrivalSteadyMs + (presTimeUs / 1000);
+            backendTs = static_cast<uint32_t>(captureSteadyMs & 0xFFFFFFFF);
+        }
+    }
+    // Fallback: use current wall time if steady_clock not yet initialized
+    if (backendTs == 0) {
+        backendTs = static_cast<uint32_t>(
+            QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+    }
 
     for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
         int offset = chunkIdx * kMaxPayloadSize;
@@ -1023,6 +1178,17 @@ void DataChannelRelay::onStatsTimerTick()
     stats["type"] = "stats";
     stats["hostRttMs"] = hostRttMs;
     stats["decodeLatencyUs"] = decodeLatUs;
+
+    // Send steady_clock reference for end-to-end latency calculation.
+    // The frontend uses this + performance.now() delta to estimate current
+    // steady time, then subtracts the frame's captureSteadyMs to get e2e latency.
+    {
+        using namespace std::chrono;
+        int64_t nowMs = duration_cast<milliseconds>(
+            steady_clock::now().time_since_epoch()).count();
+        stats["streamTimeMs"] = nowMs;
+    }
+
     QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);
 
     try {
