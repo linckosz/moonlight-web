@@ -121,10 +121,42 @@ static int hevcNalType(const QByteArray& nal) {
     return (static_cast<unsigned char>(nal[0]) >> 1) & 0x3F;
 }
 
+/// Format a hex dump string from up to maxLen bytes of a QByteArray.
+static QString hevcHexDump(const QByteArray& data, int maxLen = 64) {
+    QByteArray hex;
+    int len = qMin(maxLen, data.size());
+    for (int i = 0; i < len; i++) {
+        hex += QString::asprintf("%02x ", (unsigned char)data[i]).toUtf8();
+    }
+    return hex;
+}
+
 /// Log HEVC VPS/SPS/PPS parameters for debugging.
+/// Logs both parsed values AND raw hex bytes for bit-level analysis.
 static void logHevcParameters(const QByteArray& vps, const QByteArray& sps,
                                const QByteArray& pps, const QString& label)
 {
+    if (!vps.isEmpty()) {
+        QByteArray cleanVps = removeHvcEp(vps);
+        if (cleanVps.size() >= 4) {
+            const unsigned char* v = reinterpret_cast<const unsigned char*>(cleanVps.constData());
+            // vps_max_sub_layers_minus1 at RBSP byte 1 bits 3-1 = clean[3] bits 3-1
+            int subLayers = (v[3] >> 1) & 0x07;
+            int profileIdc = v[6] & 0x1F;
+            int tierFlag = (v[6] >> 5) & 0x01;
+            int levelIdc = v[17];
+            qInfo().noquote()
+                << QString("[HEVC-PARAM %1] VPS: subLayers=%2 profile=%3 tier=%4 level=%5 "
+                           "size=%6 raw=[%7...]")
+                       .arg(label)
+                       .arg(subLayers)
+                       .arg(profileIdc)
+                       .arg(tierFlag)
+                       .arg(levelIdc)
+                       .arg(cleanVps.size())
+                       .arg(QString(hevcHexDump(cleanVps, 24)));
+        }
+    }
     if (!sps.isEmpty()) {
         QByteArray cleanSps = removeHvcEp(sps);
         if (cleanSps.size() >= 15) {
@@ -139,23 +171,16 @@ static void logHevcParameters(const QByteArray& vps, const QByteArray& sps,
                                    static_cast<uint32_t>(s[7]);
 
             qInfo().noquote()
-                << QString("[HEVC-PARAM %1] SPS: subLayers=%2 profile=%3 tier=%4 level=%5 compat=0x%6")
+                << QString("[HEVC-PARAM %1] SPS: subLayers=%2 profile=%3 tier=%4 level=%5 "
+                           "compat=0x%6 size=%7 raw=[%8...]")
                        .arg(label)
                        .arg(subLayers)
                        .arg(profileIdc)
                        .arg(tierFlag)
                        .arg(levelIdc)
-                       .arg(compatFlags, 8, 16, QChar('0'));
-        }
-    }
-    if (!vps.isEmpty()) {
-        QByteArray cleanVps = removeHvcEp(vps);
-        if (cleanVps.size() >= 4) {
-            const unsigned char* v = reinterpret_cast<const unsigned char*>(cleanVps.constData());
-            // vps_max_sub_layers_minus1 at RBSP byte 1 bits 3-1 = clean[3] bits 3-1
-            int subLayers = (v[3] >> 1) & 0x07;
-            qInfo().noquote()
-                << QString("[HEVC-PARAM %1] VPS: subLayers=%2").arg(label).arg(subLayers);
+                       .arg(compatFlags, 8, 16, QChar('0'))
+                       .arg(cleanSps.size())
+                       .arg(QString(hevcHexDump(cleanSps, 24)));
         }
     }
 }
@@ -173,15 +198,23 @@ static void logHevcParameters(const QByteArray& vps, const QByteArray& sps,
 static QByteArray rebuildVpsNoSubLayers(const QByteArray& cleanVps)
 {
     // Minimum size: NAL header(2) + VPS fixed header(4) + PTL general(12) = 18
-    if (cleanVps.size() < 18) return {};
+    if (cleanVps.size() < 18) {
+        qWarning() << "[HEVC-VPS-REBUILD] VPS too small:" << cleanVps.size() << "bytes (need 18)";
+        return {};
+    }
 
     const unsigned char* vps = reinterpret_cast<const unsigned char*>(cleanVps.constData());
 
     // RBSP byte 1 (= clean[3]) bits 3-1 = vps_max_sub_layers_minus1
     int origSubLayers = (vps[3] >> 1) & 0x07;
-    if (origSubLayers == 0) return {};
+    if (origSubLayers == 0) {
+        qInfo() << "[HEVC-VPS-REBUILD] VPS already has max_sub_layers=0, skipping";
+        return {};
+    }
 
-    qInfo() << "[HEVC-Rebuild] VPS: sub_layers" << origSubLayers << "→ 0 (rebuild)";
+    qInfo() << "[HEVC-VPS-REBUILD] Input VPS:" << cleanVps.size() << "bytes"
+            << "RBSP[0..8]=" << hevcHexDump(cleanVps, 9)
+            << "subLayers=" << origSubLayers << "→ 0";
 
     QByteArray result;
     result.reserve(24);
@@ -229,7 +262,9 @@ static QByteArray rebuildVpsNoSubLayers(const QByteArray& cleanVps)
     result.append(static_cast<char>(0x70));
     result.append(static_cast<char>(0x24));
 
-    qInfo() << "[HEVC-Rebuild] VPS:" << cleanVps.size() << "→" << result.size() << "bytes";
+    qInfo() << "[HEVC-VPS-REBUILD] Output VPS:" << cleanVps.size() << "→" << result.size() << "bytes"
+            << "RBSP[0..8]=" << hevcHexDump(result, 9)
+            << "(sub_layers forced to 0)";
     return result;
 }
 
@@ -245,13 +280,19 @@ static QByteArray rebuildVpsNoSubLayers(const QByteArray& cleanVps)
 static QByteArray rebuildSpsNoSubLayers(const QByteArray& cleanSps)
 {
     // Minimum: NAL header(2) + SPS header(1) + PTL general(12) + flags(2) = 17
-    if (cleanSps.size() < 17) return {};
+    if (cleanSps.size() < 17) {
+        qWarning() << "[HEVC-SPS-REBUILD] SPS too small:" << cleanSps.size() << "bytes (need 17)";
+        return {};
+    }
 
     const unsigned char* sps = reinterpret_cast<const unsigned char*>(cleanSps.constData());
 
     // RBSP byte 0 (= clean[2]) bits 3-1 = sps_max_sub_layers_minus1
     int origSubLayers = (sps[2] >> 1) & 0x07;
-    if (origSubLayers == 0) return {};
+    if (origSubLayers == 0) {
+        qInfo() << "[HEVC-SPS-REBUILD] SPS already has max_sub_layers=0, skipping";
+        return {};
+    }
 
     // PTL general fields: clean[3..14] (12 bytes).
     // After level_idc (clean[14]) comes:
@@ -289,8 +330,13 @@ static QByteArray rebuildSpsNoSubLayers(const QByteArray& cleanSps)
     int ptlEnd = 15 + 2 + subLayerDataBytes;
     if (ptlEnd > cleanSps.size()) ptlEnd = cleanSps.size();
 
-    qInfo() << "[HEVC-Rebuild] SPS: sub_layers" << origSubLayers
-            << "→ 0 (subLayerData=" << subLayerDataBytes << "bytes)";
+    qInfo() << "[HEVC-SPS-REBUILD] Input SPS:" << cleanSps.size() << "bytes"
+            << "RBSP[0..8]=" << hevcHexDump(cleanSps, 9)
+            << "subLayers=" << origSubLayers << "→ 0"
+            << "subLayerDataBytes=" << subLayerDataBytes
+            << "ptlEnd=" << ptlEnd
+            << "flagsB0=0x" << QString::number(flagsByte0, 16)
+            << "flagsB1=0x" << QString::number(flagsByte1, 16);
 
     QByteArray result;
     result.reserve(cleanSps.size() - subLayerDataBytes);
@@ -312,7 +358,9 @@ static QByteArray rebuildSpsNoSubLayers(const QByteArray& cleanSps)
     if (ptlEnd < cleanSps.size())
         result.append(cleanSps.constData() + ptlEnd, cleanSps.size() - ptlEnd);
 
-    qInfo() << "[HEVC-Rebuild] SPS:" << cleanSps.size() << "→" << result.size() << "bytes";
+    qInfo() << "[HEVC-SPS-REBUILD] Output SPS:" << cleanSps.size() << "→" << result.size() << "bytes"
+            << "RBSP[0..8]=" << hevcHexDump(result, 9)
+            << "(sub_layers forced to 0)";
     return result;
 }
 
@@ -328,6 +376,22 @@ static bool patchHevcKeyframe(QByteArray& data)
 {
     auto nals = scanNals(data);
 
+    qInfo() << "[HEVC-PATCH] NAL scan found" << nals.size() << "NALs in keyframe"
+            << "(total frame size=" << data.size() << "bytes)";
+
+    // Log NAL types and locations
+    for (int i = 0; i < nals.size() && i < 20; i++) {
+        const auto& loc = nals[i];
+        QByteArray nal = data.mid(loc.nalOffset, qMin(loc.nalLen, 8));
+        int type = hevcNalType(nal);
+        qInfo() << "[HEVC-PATCH]   NAL[" << i << "]"
+                << "type=" << type
+                << "offset=" << loc.nalOffset
+                << "len=" << loc.nalLen
+                << "startCode=" << loc.startLen
+                << "headerHex=" << hevcHexDump(nal, 4);
+    }
+
     int vpsIdx = -1, spsIdx = -1;
     for (int i = 0; i < nals.size(); i++) {
         QByteArray nal = data.mid(nals[i].nalOffset, nals[i].nalLen);
@@ -336,6 +400,8 @@ static bool patchHevcKeyframe(QByteArray& data)
         else if (type == 33) spsIdx = i;  // HEVC_SPS
     }
 
+    qInfo() << "[HEVC-PATCH] VPS at NAL[" << vpsIdx << "], SPS at NAL[" << spsIdx << "]";
+
     bool patched = false;
 
     // ── VPS: rebuild with max_sub_layers=0 ─────────────────────────────────
@@ -343,12 +409,21 @@ static bool patchHevcKeyframe(QByteArray& data)
         NalLocation& vpsLoc = nals[vpsIdx];
         QByteArray vpsNal = data.mid(vpsLoc.nalOffset, vpsLoc.nalLen);
         QByteArray clean = removeHvcEp(vpsNal);
+        qInfo() << "[HEVC-PATCH] VPS: original NAL size=" << vpsLoc.nalLen
+                << "clean size=" << clean.size()
+                << "clean[0..8]=" << hevcHexDump(clean, 9);
         QByteArray rebuilt = rebuildVpsNoSubLayers(clean);
         if (!rebuilt.isEmpty()) {
             QByteArray patchedVps = addHvcEp(rebuilt);
+            qInfo() << "[HEVC-PATCH] VPS: REPLACED" << vpsLoc.nalLen << "→" << patchedVps.size() << "bytes"
+                    << "patched[0..8]=" << hevcHexDump(patchedVps, 9);
             data.replace(vpsLoc.nalOffset, vpsLoc.nalLen, patchedVps);
             patched = true;
+        } else {
+            qInfo() << "[HEVC-PATCH] VPS: no rebuild needed (sub_layers already 0 or error)";
         }
+    } else {
+        qWarning() << "[HEVC-PATCH] VPS NOT FOUND in keyframe — NAL type 32 missing!";
     }
 
     // ── SPS: rebuild with max_sub_layers=0 + cap level_idc ────────────────
@@ -356,6 +431,9 @@ static bool patchHevcKeyframe(QByteArray& data)
         NalLocation& spsLoc = nals[spsIdx];
         QByteArray spsNal = data.mid(spsLoc.nalOffset, spsLoc.nalLen);
         QByteArray clean = removeHvcEp(spsNal);
+        qInfo() << "[HEVC-PATCH] SPS: original NAL size=" << spsLoc.nalLen
+                << "clean size=" << clean.size()
+                << "clean[0..8]=" << hevcHexDump(clean, 9);
         QByteArray rebuilt = rebuildSpsNoSubLayers(clean);
         if (!rebuilt.isEmpty()) {
             // general_level_idc at byte 14 (same offset as in the original)
@@ -374,9 +452,19 @@ static bool patchHevcKeyframe(QByteArray& data)
             }
 
             QByteArray patchedSps = addHvcEp(rebuilt);
+            qInfo() << "[HEVC-PATCH] SPS: REPLACED" << spsLoc.nalLen << "→" << patchedSps.size() << "bytes"
+                    << "patched[0..8]=" << hevcHexDump(patchedSps, 9);
             data.replace(spsLoc.nalOffset, spsLoc.nalLen, patchedSps);
             patched = true;
+        } else {
+            qInfo() << "[HEVC-PATCH] SPS: no rebuild needed (sub_layers already 0 or error)";
         }
+    } else {
+        qWarning() << "[HEVC-PATCH] SPS NOT FOUND in keyframe — NAL type 33 missing!";
+    }
+
+    if (patched) {
+        qInfo() << "[HEVC-PATCH] Final frame size:" << data.size() << "bytes";
     }
 
     return patched;
@@ -722,17 +810,26 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     // decoder has trouble with (high level_idc, temporal sublayers).
     QByteArray frameData = data;
     if (isKeyframe && !m_HevcPatched) {
+        qInfo() << "[HEVC-DIAG] === FIRST KEYFRAME DETECTED === frame#"
+                << debugFrameNumber << "size=" << data.size();
+
         // Detect if this is HEVC by checking the first NAL type
         auto nals = scanNals(frameData);
         bool isHevc = false;
-        for (const auto& loc : nals) {
-            QByteArray nal = frameData.mid(loc.nalOffset, loc.nalLen);
+        int vpsIdx = -1, spsIdx = -1, ppsIdx = -1;
+        for (int i = 0; i < nals.size(); i++) {
+            const auto& loc = nals[i];
+            QByteArray nal = frameData.mid(loc.nalOffset, qMin(loc.nalLen, 16));
             int type = hevcNalType(nal);
-            if (type == 32) { // HEVC_VPS
-                isHevc = true;
-                break;
-            }
+            qInfo() << "[HEVC-DIAG]   NAL[" << i << "] type=" << type
+                    << "offset=" << loc.nalOffset << "len=" << loc.nalLen;
+            if (type == 32) { isHevc = true; vpsIdx = i; }
+            else if (type == 33) { spsIdx = i; }
+            else if (type == 34) { ppsIdx = i; }
         }
+        qInfo() << "[HEVC-DIAG] HEVC detected=" << isHevc
+                << "VPS=" << vpsIdx << "SPS=" << spsIdx << "PPS=" << ppsIdx
+                << "totalNALs=" << nals.size();
 
         if (isHevc) {
             // Log original (unpatched) parameter sets
@@ -742,7 +839,8 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 
             // Apply patch
             if (patchHevcKeyframe(frameData)) {
-                qInfo() << "[DataChannelRelay] HEVC VPS/SPS patch applied to first keyframe";
+                qInfo() << "[HEVC-DIAG] *** PATCH APPLIED *** frameData now"
+                        << frameData.size() << "bytes";
                 m_HevcPatched = true;
 
                 // Log patched parameter sets for comparison
@@ -750,11 +848,11 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
                 extractHevcParameterSets(frameData, patchedVps, patchedSps, patchedPps);
                 logHevcParameters(patchedVps, patchedSps, patchedPps, "PATCHED");
             } else {
-                qInfo() << "[DataChannelRelay] HEVC VPS/SPS: parameters already safe, no patch needed";
+                qInfo() << "[HEVC-DIAG] No patch applied (already safe or error)";
                 m_HevcPatched = true;  // Don't re-check every keyframe
             }
         } else {
-            qInfo() << "[DataChannelRelay] HEVC VPS/SPS: not HEVC, skipping patch";
+            qInfo() << "[HEVC-DIAG] Not HEVC (H.264), skipping patch";
             m_HevcPatched = true;  // No need to check again for H.264
         }
     }

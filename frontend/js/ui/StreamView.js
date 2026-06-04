@@ -359,6 +359,16 @@ export class StreamView {
                 ' audio.samples=' + (this.audioPipeline ? this.audioPipeline.getStats().writtenSamples : 0) +
                 ' audio.underrun=' + (this.audioPipeline ? this.audioPipeline.getStats().underrunCount : 0) +
                 (this._lastFrameColorSpace ? ' cs=' + JSON.stringify(this._lastFrameColorSpace) : ''));
+            // HEVC-specific diagnostics
+            console.log('[DIAG-HEVC] codec=' + (this.nalParser.codec || 'null') +
+                ' vps.len=' + (this.nalParser.vps ? this.nalParser.vps.length : 0) +
+                ' sps.len=' + (this.nalParser.sps ? this.nalParser.sps.length : 0) +
+                ' pps.len=' + (this.nalParser.pps ? this.nalParser.pps.length : 0) +
+                ' isChromeWin=' + this._isChromeWindowsHevc +
+                ' _noDescription=' + this._noDescription +
+                ' patched=' + (this._hevcPatched || false) +
+                ' warmupFrames=' + this._warmupFrames +
+                ' videoCodec=' + this.videoCodec);
         }, 2000);
     }
 
@@ -453,6 +463,20 @@ export class StreamView {
                 'createImageBitmap(VideoFrame) requires iOS 17+ / Safari 17+. ' +
                 'If the screen is black, the rendering fallback in ' +
                 '_drawFrameWithBitmap() should handle this automatically.');
+        }
+
+        // HEVC codec capability check for diagnostics
+        if (typeof VideoDecoder !== 'undefined' && typeof VideoDecoder.isConfigSupported === 'function') {
+            const hevcCodecs = ['hev1.1.6.L153.B0', 'hvc1.1.6.L153.B0', 'hev1.1.2.L153.B0'];
+            Promise.all(hevcCodecs.map(c => VideoDecoder.isConfigSupported({
+                codec: c,
+                codedWidth: 1920,
+                codedHeight: 1080
+            }))).then(results => {
+                hevcCodecs.forEach((c, i) => {
+                    console.log('[Platform-HEVC] ' + c + ' isConfigSupported: ' + results[i].supported);
+                });
+            }).catch(() => {});
         }
     }
 
@@ -715,6 +739,28 @@ export class StreamView {
         }
         this.decoderConfiguring = true;
         const codecType = this.nalParser.codec;
+
+        // Log HEVC parser state before configuring
+        console.log('[HEVC-CONFIG] nalParser state:' +
+            ' codec=' + codecType +
+            ' vps.len=' + (this.nalParser.vps?.length || 0) +
+            ' sps.len=' + (this.nalParser.sps?.length || 0) +
+            ' pps.len=' + (this.nalParser.pps?.length || 0) +
+            ' videoCodec=' + this.videoCodec +
+            ' _noDescription=' + this._noDescription);
+
+        // Log raw parameter set bytes for first-time diagnostics
+        if (this.stats.decoded === 0) {
+            if (this.nalParser.vps) {
+                console.log('[HEVC-CONFIG] VPS raw bytes:',
+                    Array.from(this.nalParser.vps.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+            }
+            if (this.nalParser.sps) {
+                console.log('[HEVC-CONFIG] SPS raw bytes:',
+                    Array.from(this.nalParser.sps.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+            }
+        }
+
         console.log('[StreamView] configureDecoder STARTED, codec=' + codecType +
             ', decoder state=' + (this.decoder ? this.decoder.state : 'null'));
 
@@ -748,15 +794,17 @@ export class StreamView {
             try {
                 console.log('[StreamView] Calling decoder.configure() with codec=' + cfg.codec +
                     ' descriptionLen=' + (cfg.description ? cfg.description.byteLength : 0) +
-                    ' noDescription=' + noDescription);
+                    ' noDescription=' + noDescription +
+                    ' isChromeWin=' + this._isChromeWindowsHevc +
+                    ' nalParser.codec=' + this.nalParser.codec);
                 this.decoder.configure(cfg);
                 this.decoderConfigured = true;
                 this.decoderConfiguring = false;
                 this._noDescription = noDescription;
-                console.log('[StreamView] VideoDecoder configured OK with codec=' + cfg.codec +
-                            ', state=' + this.decoder.state +
-                            ', noDescription=' + this._noDescription +
-                            ', dequeuing ' + this.pendingFrames.length + ' pending frames');
+                console.log('[HEVC-CONFIG-OK] *** VideoDecoder CONFIGURED *** codec=' + cfg.codec +
+                    ' state=' + this.decoder.state +
+                    ' noDescription=' + this._noDescription +
+                    ' dequeuing ' + this.pendingFrames.length + ' pending frames');
                 this.flushPendingFrames();
                 return true;
             } catch (e) {
@@ -777,11 +825,15 @@ export class StreamView {
 
             const cfg = configs[index];
             const noDescription = cfg._noDescription === true;
-            console.log('[StreamView] Testing config[' + index + ']: codec=' + cfg.codec +
-                ' hasDescription=' + (cfg.description ? 'yes' : 'no'));
+            console.log('[HEVC-CONFIG] Testing config[' + index + ']: codec=' + cfg.codec +
+                ' hasDescription=' + (cfg.description ? 'yes' : 'no') +
+                ' hasColorSpace=' + (cfg.colorSpace ? 'yes' : 'no') +
+                ' _noDescription=' + noDescription +
+                ' coded=' + (cfg.codedWidth || '?') + 'x' + (cfg.codedHeight || '?'));
             VideoDecoder.isConfigSupported(cfg).then((result) => {
-                console.log('[StreamView] isConfigSupported returned: supported=' +
-                    result.supported + ' for codec=' + cfg.codec);
+                console.log('[HEVC-CONFIG] isConfigSupported for ' + cfg.codec +
+                    ': supported=' + result.supported +
+                    ' (desc=' + (cfg.description ? 'yes' : 'no') + ')');
                 if (result.supported) {
                     console.log('[StreamView] Config supported: codec=' + cfg.codec +
                                 ' hasDescription=' + !!cfg.description);
@@ -1093,11 +1145,38 @@ export class StreamView {
 
         const type = isKeyframe ? 'key' : 'delta';
 
+        // HEVC NAL type logging for first 5 keyframes
+        if (isKeyframe && this.frameCount <= 6) {
+            const nals = splitNals(data);
+            const typeNames = nals.map(n => {
+                if (n.length >= 2 && this.nalParser.codec === CODEC_HEVC) {
+                    const t = (n[0] >> 1) & 0x3F;
+                    const names = {32:'VPS',33:'SPS',34:'PPS',39:'AUD',40:'EOS',41:'EOB',19:'IDR',20:'IDR_W_RADL',21:'IDR_W_NUT',22:'CRA',1:'TRAIL_N',0:'TRAIL_R'};
+                    return (names[t] || 'T'+t) + '(' + n.length + 'B)';
+                }
+                return 'H264:' + (n[0] & 0x1F) + '(' + n.length + 'B)';
+            });
+            console.log('[HEVC-NALS] frame#' + this.frameCount + ' keyframe=' + isKeyframe +
+                ' nals=[' + typeNames.join(',') + '] inputSize=' + data.length +
+                ' codec=' + this.nalParser.codec + ' _noDescription=' + this._noDescription);
+        }
+
         // Convert Annex B (start codes) to the expected output format.
         //   _noDescription=true  → Annex B (start codes), all NALs kept
         //   _noDescription=false → AVCC (length prefixes), VPS/SPS/PPS stripped
         const useAnnexB = this._noDescription && this.nalParser.codec === CODEC_HEVC;
         const avccData = toAvcc(data, this.decoderConfigured, this.nalParser.codec, useAnnexB);
+
+        // Log AVCC conversion for first frames
+        if (this.frameCount <= 6) {
+            console.log('[HEVC-AVCC] frame#' + this.frameCount +
+                ' keyframe=' + isKeyframe +
+                ' inputSize=' + data.length +
+                ' avccSize=' + avccData.length +
+                ' stripParams=' + this.decoderConfigured +
+                ' useAnnexB=' + useAnnexB +
+                ' codec=' + this.nalParser.codec);
+        }
 
         // Debug: catch empty AVCC data (all NALs stripped, including the IRAP)
         if (avccData.length === 0) {
@@ -1168,9 +1247,9 @@ export class StreamView {
 
         if (this.stats.decoded <= 3) {
             const cs = frame.colorSpace;
-            console.log('[StreamView] onDecodedFrame #' + this.stats.decoded +
-                ' displaySize=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
-                ' codedSize=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
+            console.log('[HEVC-FRAME-' + this.stats.decoded + ']' +
+                ' display=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
+                ' coded=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
                 ' format=' + (frame.format || '?') +
                 ' visibleRect=' + JSON.stringify(frame.visibleRect || 'none') +
                 ' colorSpace=' + JSON.stringify({
@@ -1178,7 +1257,9 @@ export class StreamView {
                     transfer: cs?.transfer,
                     matrix: cs?.matrix,
                     fullRange: cs?.fullRange
-                }));
+                }) +
+                ' timestamp=' + frame.timestamp +
+                ' duration=' + frame.duration);
         }
         if (this.stats.decoded === 1) {
             const cs = frame.colorSpace;
@@ -1325,48 +1406,59 @@ export class StreamView {
                 ' displaySize=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
                 ' codedSize=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
                 ' isHevcNv12=' + isHevcNv12 +
-                ' chromeWinHevc=' + this._isChromeWindowsHevc);
+                ' chromeWinHevc=' + this._isChromeWindowsHevc +
+                ' warmup=' + this._warmupFrames +
+                ' nalParser.codec=' + this.nalParser.codec);
         }
 
-        // ── HEVC NV12: CPU-side RGBA readback via copyTo + putImageData ──
+        // ── Log render path decision ─────────────────────────────────────
+        if (this.stats.rendered < 3) {
+            const ua = navigator.userAgent || '';
+            const isChromeNonWin = /Chrome\//.test(ua) && !/Edg\//.test(ua)
+                && !/OPR\//.test(ua) && !/Windows/.test(ua);
+            const shouldDrawImageFirst = (this.videoCodec === CODEC_HEVC
+                && frame.format === 'NV12' && isChromeNonWin);
+            console.log('[RENDER-PATH] frame#' + this.stats.rendered +
+                ' isHevcNv12=' + isHevcNv12 +
+                ' shouldDrawImageFirst=' + shouldDrawImageFirst +
+                ' _isChromeWindowsHevc=' + this._isChromeWindowsHevc +
+                ' videoCodec=' + this.videoCodec +
+                ' _noDescription=' + this._noDescription +
+                ' nalParser.codec=' + this.nalParser.codec);
+        }
+
+        // ── HEVC NV12 on Chrome Windows: use drawImage (GPU compositing)
+        // The copyTo(RGBA) + putImageData path produced green frames on Chrome
+        // Windows because the GPU compositor applies a wrong color matrix during
+        // NV12→RGBA conversion.  The canvas 2D path (drawImage) uses the browser's
+        // GPU pipeline which handles NV12→RGBA correctly.
         if (isHevcNv12) {
-            if (this.stats.rendered < 5) {
-                console.log('[debug] PATH: copyTo RGBA (Chrome Windows HEVC NV12)');
+            const dbgRendered = this.stats.rendered;
+            if (dbgRendered < 3) {
+                console.log('[HEVC-RENDER] drawImage path, rendered=' + dbgRendered +
+                    ' decoded=' + this.stats.decoded + ' w=' + (frame.displayWidth || frame.codedWidth) +
+                    ' h=' + (frame.displayHeight || frame.codedHeight));
             }
-            try {
-                const w = frame.displayWidth || frame.codedWidth || 0;
-                const h = frame.displayHeight || frame.codedHeight || 0;
-                if (w > 0 && h > 0 && this.canvas && this.ctx) {
-                    const rgbaSize = w * h * 4;
-                    // Reuse buffer across frames to avoid GC pressure
-                    if (!this._rgbaBuffer || this._rgbaBufferSize < rgbaSize) {
-                        this._rgbaBuffer = new ArrayBuffer(rgbaSize);
-                        this._rgbaBufferSize = rgbaSize;
-                    }
-                    await frame.copyTo(this._rgbaBuffer, { format: 'RGBA' });
-                    const imageData = new ImageData(
-                        new Uint8ClampedArray(this._rgbaBuffer, 0, rgbaSize),
-                        w, h
-                    );
-                    this.ctx.putImageData(imageData, 0, 0);
+            // Resize canvas if needed to match the incoming frame
+            const w = frame.displayWidth || frame.codedWidth || 0;
+            const h = frame.displayHeight || frame.codedHeight || 0;
+            if (w > 0 && h > 0) {
+                if (this.canvas.width !== w || this.canvas.height !== h) {
+                    this.canvas.width = w;
+                    this.canvas.height = h;
                 }
-            } catch (e) {
-                console.warn('[StreamView] HEVC RGBA copyTo failed:', e.message);
-                // Fallback: use createImageBitmap with color space conversion disabled
-                // to bypass any browser color management bugs.
-                try {
-                    const bitmap = await createImageBitmap(frame, {
-                        colorSpaceConversion: 'none',
-                        premultiplyAlpha: 'none'
-                    });
-                    if (this.canvas && this.ctx) {
-                        this.ctx.drawImage(bitmap, 0, 0,
-                            this.canvas.width, this.canvas.height);
-                    }
-                    bitmap.close();
-                } catch (e2) {
-                    console.warn('[StreamView] HEVC createImageBitmap fallback also failed:', e2.message);
-                }
+            }
+            // drawImage uses the browser's GPU pipeline — correct NV12→RGBA conversion
+            // without the green-tint bug in copyTo(RGBA) compositor on Chrome Windows.
+            this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
+            if (dbgRendered < 3) {
+                // Sample a pixel to verify the drawImage result is not green/black
+                const pixels = this.ctx.getImageData(
+                    Math.floor((frame.displayWidth || frame.codedWidth) / 2),
+                    Math.floor((frame.displayHeight || frame.codedHeight) / 2), 1, 1).data;
+                console.log('[RGBA-SAMPLE] drawImage center R=' + pixels[0] +
+                    ' G=' + pixels[1] + ' B=' + pixels[2] +
+                    ' (frame#' + dbgRendered + ' totalDecoded=' + this.stats.decoded + ')');
             }
             frame.close();
             this.stats.rendered++;
@@ -1377,6 +1469,9 @@ export class StreamView {
         // NV12 readback for warmup frames (forces GPU texture to be fully
         // resident before createImageBitmap reads it).
         if (this._warmupFrames < 3 && frame.format === 'NV12') {
+            if (this.stats.rendered < 5) {
+                console.log('[HEVC-RENDER] warmup NV12 readback #'+this._warmupFrames);
+            }
             try {
                 const size = frame.allocationSize({ format: 'NV12' });
                 if (size > 0) {
@@ -1407,7 +1502,7 @@ export class StreamView {
             && frame.format === 'NV12' && isChromeNonWin);
 
         if (this.stats.rendered < 5) {
-            console.log('[debug] path decision' +
+            console.log('[HEVC-RENDER] standard path decision' +
                 ' isChromeNonWin=' + isChromeNonWin +
                 ' shouldDrawImageFirst=' + shouldDrawImageFirst +
                 ' canvasSize=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?'));
