@@ -494,7 +494,7 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
 
     // Enable HEVC debug test mode via environment variable (1-4)
     {
-        QByteArray envVal = "4";//qgetenv("MW_HEVC_TEST");
+        QByteArray envVal = "6";//qgetenv("MW_HEVC_TEST");
         if (!envVal.isEmpty()) {
             bool ok = false;
             int mode = envVal.toInt(&ok);
