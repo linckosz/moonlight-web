@@ -157,6 +157,17 @@ private:
     // max_sub_layers to fix Chrome Windows black screen on decode.
     bool m_HevcPatched = false;
 
+    // ── HEVC Debug Test Modes ──────────────────────────────────────────────
+    // 0 = normal, 1-4 = debug test modes (see below)
+    // 1: Send only first keyframe, then stop
+    // 2: Repeat first keyframe at every frame (frontend gets 60fps same frame)
+    // 3: Mark every frame as a keyframe (isKeyframe=true for all)
+    // 4: Sequence normal → full black → full white → normal → repeat
+    int m_HevcTestMode = 0;
+    QByteArray m_FirstKeyframe;  // Saved for Test 2
+    int m_Test4State = 0;        // State machine for Test 4
+    bool m_StaleBufferCheckDisabled = false;  // Disable stale check in test mode 3
+
     // ── ICE timeout ──────────────────────────────────────────────────────────
     QTimer* m_IceCheckTimer = nullptr;
 

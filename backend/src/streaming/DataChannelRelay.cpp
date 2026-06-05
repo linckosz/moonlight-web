@@ -492,6 +492,23 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
 {
     qInfo() << "[DataChannelRelay] Created";
 
+    // Enable HEVC debug test mode via environment variable (1-4)
+    {
+        QByteArray envVal = "4";//qgetenv("MW_HEVC_TEST");
+        if (!envVal.isEmpty()) {
+            bool ok = false;
+            int mode = envVal.toInt(&ok);
+            if (ok && mode >= 1 && mode <= 4) {
+                m_HevcTestMode = mode;
+                if (mode == 3) {
+                    m_StaleBufferCheckDisabled = true;  // Test 3: don't drop buffered keyframe
+                    qInfo() << "[DataChannelRelay] HEVC TEST MODE 3: stale buffer check DISABLED";
+                }
+                qInfo() << "[DataChannelRelay] HEVC TEST MODE" << mode << "ENABLED";
+            }
+        }
+    }
+
     connect(m_Shim, &MoonlightShim::videoFrameReady,
             this, &DataChannelRelay::onVideoFrame);
     connect(m_Shim, &MoonlightShim::audioSampleReady,
@@ -858,8 +875,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     }
 
     // Buffer keyframes arriving before the Video DC is ready.
-    // Sunshine starts sending the initial IDR immediately after launch,
-    // before ICE negotiation and DataChannel creation complete (~1-2s).
+    // NOTE: Must be BEFORE test mode code — test mode modifies frameData.
     // Without this buffer, the keyframe (containing SPS/PPS) is lost, the
     // browser's VideoDecoder can never configure, and we get decoder=null.
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
@@ -883,11 +899,92 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
         return;  // DC exists but not yet open
     }
 
+    // ── HEVC Debug Test Modes ────────────────────────────────────────────────
+    // NOTE: Buffer was checked ABOVE before this block.
+    // Test mode code below modifies frameData for delta frames only.
+    // Keyframes (already buffered above) are NOT affected.
+
+    // Detect HEVC to enable test modes
+    static int testModeFrameCount = 0;
+    static int testModeLogged = 0;
+    bool isHevcFrame = false;
+    {
+        auto nals = scanNals(data);
+        for (int i = 0; i < nals.size() && i < 10; i++) {
+            QByteArray nal = data.mid(nals[i].nalOffset, qMin(nals[i].nalLen, 4));
+            int type = hevcNalType(nal);
+            if (type >= 0) { isHevcFrame = true; break; }
+        }
+    }
+
+    if (m_HevcTestMode > 0 && isHevcFrame) {
+        testModeFrameCount++;
+        if (testModeLogged == 0) {
+            qInfo() << "[HEVC-TEST] Mode" << m_HevcTestMode << "active — frameCount=" << testModeFrameCount
+                    << "isKeyframe=" << isKeyframe << "isHevc=" << isHevcFrame;
+            testModeLogged = 1;
+        }
+
+        // Test 1: Stop sending after first keyframe (freeze on frame #1)
+        if (m_HevcTestMode == 1 && testModeFrameCount > 1) {
+            if (testModeFrameCount <= 3)
+                qInfo() << "[HEVC-TEST1] Dropping frame (sending only frame #1), count=" << testModeFrameCount;
+            return;  // Drop all subsequent frames
+        }
+
+        // Test 2: Repeat first keyframe at every frame rate
+        if (m_HevcTestMode == 2) {
+            if (testModeFrameCount == 1) {
+                m_FirstKeyframe = frameData;
+                qInfo() << "[HEVC-TEST2] Saved first keyframe size=" << frameData.size()
+                        << ", will repeat it every frame";
+            }
+            if (!m_FirstKeyframe.isEmpty()) {
+                frameData = m_FirstKeyframe;
+                isKeyframe = true;  // Treat as keyframe so decoder doesn't drop it
+                if (testModeFrameCount <= 3)
+                    qInfo() << "[HEVC-TEST2] Sending repeated keyframe frame#" << testModeFrameCount;
+            }
+        }
+
+        // Test 3: Force all frames as keyframes
+        if (m_HevcTestMode == 3) {
+            if (!isKeyframe) {
+                qInfo() << "[HEVC-TEST3] Frame" << testModeFrameCount << "forced to keyframe";
+                isKeyframe = true;
+            }
+        }
+
+        // Test 4: Sequence test — inject colored frames
+        if (m_HevcTestMode == 4) {
+            // State machine: 0=normal, 1=black, 2=white
+            const int kFramesPerState = 60;  // ~1 second at 60fps per state
+            int newState = (testModeFrameCount / kFramesPerState) % 3;
+            if (newState != m_Test4State) {
+                const char* stateNames[] = {"NORMAL", "BLACK", "WHITE"};
+                qInfo() << "[HEVC-TEST4] State:" << m_Test4State << "->" << stateNames[newState];
+                m_Test4State = newState;
+            }
+
+            if (m_Test4State == 1) {
+                // Inject full black frame: zero out the data
+                frameData.fill(0);
+                qInfo() << "[HEVC-TEST4] Sending BLACK frame";
+            } else if (m_Test4State == 2) {
+                // Inject full white frame: fill with 0xFF
+                frameData.fill(0xFF);
+                qInfo() << "[HEVC-TEST4] Sending WHITE frame";
+            }
+        }
+    }
+
     // If a new keyframe arrives directly while a buffered keyframe exists,
     // mark it as stale. Delta frames do NOT invalidate the buffer — they
     // are useless without a keyframe, so we must still send the buffered
     // one when sendBufferedKeyframe() fires.
-    if (isKeyframe && m_HaveBufferedKeyframe) {
+    // NOTE: Disabled in Test 3 — every frame is forced as keyframe, which
+    // would incorrectly mark the buffer as stale.
+    if (isKeyframe && m_HaveBufferedKeyframe && !m_StaleBufferCheckDisabled) {
         m_NewKeyframeArrived = true;
     }
 
