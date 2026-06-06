@@ -91,6 +91,12 @@ export class WebRtcDataChannel {
         this._reassembly = new Map();
         this._cleanupTimer = null;
 
+        // TEST B: Debug — capture first keyframe bytes for DC vs WSS comparison
+        // Use window-level flags so captures survive across stream restarts
+        if (window._dcKfCaptured === undefined) window._dcKfCaptured = false;
+        if (window._wssKfCaptured === undefined) window._wssKfCaptured = false;
+        window._webRtcRef = this;
+
         // Logging
         this._logCount = 0;
         this._frameLogCount = 0;
@@ -554,6 +560,10 @@ export class WebRtcDataChannel {
         // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=0.
         // Real-time video: stale retransmitted data is worse than a dropped packet,
         // the decoder recovers from the next keyframe.
+        // Video DataChannel (ID=0, ordered=false, maxRetransmits=0 — no retransmits)
+        // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=0.
+        // Real-time video: stale retransmitted data is worse than a dropped packet,
+        // the decoder recovers from the next keyframe.
         const videoInit = {
             negotiated: true,
             id: 0,
@@ -781,6 +791,12 @@ export class WebRtcDataChannel {
     _onVideoChunk(data) {
         this.stats.chunksReceived++;
 
+        // TEST B: Log first ~20 chunks for debugging reassembly
+        if (this.stats.chunksReceived <= 20) {
+            console.log('[TEST-B DC CHUNK] #' + this.stats.chunksReceived +
+                ' byteLength=' + (data.byteLength || data.length));
+        }
+
         // Any chunk arrival means the stream is alive — reset starvation detector
         this._starvationRequested = false;
 
@@ -873,6 +889,77 @@ export class WebRtcDataChannel {
 
         // Track last assembled frame time for starvation detection
         this._lastAssembledTime = performance.now();
+
+        // TEST B: Capture first DC keyframe bytes + hex dump
+        if (entry.keyframe && !window._dcKfCaptured) {
+            window._dcKfCaptured = true;
+            window._dcFirstKeyframe = assembled;
+            const hex = Array.from(assembled.subarray(0, 48))
+                .map(b => b.toString(16).padStart(2, '0')).join(' ');
+            // FNV-1a 32-bit hash for end-to-end integrity check
+            // Use Math.imul() for correct 32-bit integer multiplication.
+            // Plain `*` uses IEEE 754 double and loses lower bits above 2^53.
+            let hash = 0x811c9dc5;
+            for (let i = 0; i < assembled.length; i++) {
+                hash ^= assembled[i];
+                hash = Math.imul(hash, 0x01000193);
+            }
+            // Also hash first 1KB and last 1KB to locate corruption
+            let hash1k = 0x811c9dc5, hashLast1k = 0x811c9dc5;
+            const first1kEnd = Math.min(1024, assembled.length);
+            const last1kStart = Math.max(0, assembled.length - 1024);
+            for (let i = 0; i < first1kEnd; i++) {
+                hash1k ^= assembled[i];
+                hash1k = Math.imul(hash1k, 0x01000193);
+            }
+            for (let i = last1kStart; i < assembled.length; i++) {
+                hashLast1k ^= assembled[i];
+                hashLast1k = Math.imul(hashLast1k, 0x01000193);
+            }
+            // Log last 16 bytes as hex
+            const tailStart = Math.max(0, assembled.length - 16);
+            const tailHex = Array.from(assembled.subarray(tailStart))
+                .map(b => b.toString(16).padStart(2, '0')).join(' ');
+            console.log('[TEST-B DC KEYFRAME] size=' + assembled.length +
+                ' first48hex=' + hex +
+                ' tail16hex=' + tailHex +
+                ' fnv1a=0x' + hash.toString(16).padStart(8, '0') +
+                ' fnv1a_1st1k=0x' + hash1k.toString(16).padStart(8, '0') +
+                ' fnv1a_last1k=0x' + hashLast1k.toString(16).padStart(8, '0'));
+            // Check Annex B start codes
+            let nalCount = 0;
+            for (let i = 0; i < assembled.length - 4; i++) {
+                if (assembled[i] === 0 && assembled[i+1] === 0) {
+                    if (assembled[i+2] === 0 && assembled[i+3] === 1) {
+                        const nalType = (assembled[i+4] >> 1) & 0x3f;
+                        console.log('[TEST-B DC NAL] at offset ' + i +
+                            ' type=' + nalType + ' (' +
+                            (nalType === 32 ? 'VPS' : nalType === 33 ? 'SPS' :
+                             nalType === 34 ? 'PPS' : nalType === 19 ? 'IDR_W_RADL' :
+                             nalType === 20 ? 'IDR_N_LP' : 'OTHER') + ')');
+                        nalCount++;
+                    } else if (assembled[i+2] === 1) {
+                        const nalType = (assembled[i+3] >> 1) & 0x3f;
+                        console.log('[TEST-B DC NAL] at offset ' + i +
+                            ' type=' + nalType + ' (startCode=0001)');
+                        nalCount++;
+                    }
+                }
+            }
+            console.log('[TEST-B DC KEYFRAME] total NALs found: ' + nalCount);
+        }
+
+        // TEST H: FNV-1a hash for all frames (first 20)
+        if (this.stats.framesAssembled < 20) {
+            let hash = 0x811c9dc5;
+            for (let i = 0; i < assembled.length; i++) {
+                hash ^= assembled[i];
+                hash = Math.imul(hash, 0x01000193);
+            }
+            console.log('[DC-FRAME] frameId=' + frameId +
+                ' size=' + assembled.length + ' keyframe=' + entry.keyframe +
+                ' fnv1a=' + (hash >>> 0).toString(16).padStart(8, '0'));
+        }
 
         if (this.stats.framesAssembled <= 3 || this.stats.framesAssembled % 60 === 0) {
             console.log('[WebRTC] Assembled frame #' + frameId +
@@ -1112,6 +1199,38 @@ export class WebRtcDataChannel {
             if (channel === 0x01) {
                 // Video frame
                 const isKeyframe = (flags & 0x01) !== 0;
+
+                // TEST B: Capture first WSS keyframe bytes + hex dump
+                if (isKeyframe && !window._wssKfCaptured) {
+                    window._wssKfCaptured = true;
+                    window._wssFirstKeyframe = payload;
+                    const hex = Array.from(payload.subarray(0, 48))
+                        .map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    console.log('[TEST-B WSS KEYFRAME] size=' + payload.length +
+                        ' first48hex=' + hex);
+                    // Check Annex B start codes
+                    let nalCount = 0;
+                    for (let i = 0; i < payload.length - 4; i++) {
+                        if (payload[i] === 0 && payload[i+1] === 0) {
+                            if (payload[i+2] === 0 && payload[i+3] === 1) {
+                                const nalType = (payload[i+4] >> 1) & 0x3f;
+                                console.log('[TEST-B WSS NAL] at offset ' + i +
+                                    ' type=' + nalType + ' (' +
+                                    (nalType === 32 ? 'VPS' : nalType === 33 ? 'SPS' :
+                                     nalType === 34 ? 'PPS' : nalType === 19 ? 'IDR_W_RADL' :
+                                     nalType === 20 ? 'IDR_N_LP' : 'OTHER') + ')');
+                                nalCount++;
+                            } else if (payload[i+2] === 1) {
+                                const nalType = (payload[i+3] >> 1) & 0x3f;
+                                console.log('[TEST-B WSS NAL] at offset ' + i +
+                                    ' type=' + nalType + ' (startCode=0001)');
+                                nalCount++;
+                            }
+                        }
+                    }
+                    console.log('[TEST-B WSS KEYFRAME] total NALs found: ' + nalCount);
+                }
+
                 this._wssFrameCount++;
                 if (this._wssFrameCount <= 3 || this._wssFrameCount % 60 === 0) {
                     console.log('[WSS] Video frame #' + this._wssFrameCount +
@@ -1143,3 +1262,42 @@ export class WebRtcDataChannel {
         this.close();
     }
 }
+
+// =========================================================================
+// TEST B: Console utility — compare DC vs WSS first keyframes
+// =========================================================================
+// Usage in Chrome console after running both WSS and DC streams:
+//   _compareKeyframes()
+// Reset captures to re-test:
+//   _resetKeyframes()
+window._resetKeyframes = function() {
+    window._dcKfCaptured = false;
+    window._wssKfCaptured = false;
+    window._dcFirstKeyframe = null;
+    window._wssFirstKeyframe = null;
+    console.log('Keyframe captures reset. Run streams again.');
+};
+window._compareKeyframes = function() {
+    const dc = window._dcFirstKeyframe;
+    const wss = window._wssFirstKeyframe;
+    if (!dc) { console.log('No DC keyframe captured yet'); return; }
+    if (!wss) { console.log('No WSS keyframe captured yet'); return; }
+    console.log('DC  size=' + dc.length + ' first48=' +
+        Array.from(dc.subarray(0, 48)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+    console.log('WSS size=' + wss.length + ' first48=' +
+        Array.from(wss.subarray(0, 48)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+    let diffs = 0;
+    const minLen = Math.min(dc.length, wss.length);
+    for (let i = 0; i < minLen; i++) {
+        if (dc[i] !== wss[i]) {
+            diffs++;
+            if (diffs <= 20) console.log('DIFF at byte ' + i + ': DC=' + dc[i] + ' WSS=' + wss[i]);
+        }
+    }
+    console.log('Total byte diffs: ' + diffs + ' / ' + minLen + ' (DC=' + dc.length + ' WSS=' + wss.length + ')');
+    if (diffs === 0 && dc.length === wss.length) {
+        console.log('✅ IDENTICAL — reassembly is perfect, bug is elsewhere');
+    } else {
+        console.log('❌ DIFFER — reassembly/data corruption confirmed');
+    }
+};

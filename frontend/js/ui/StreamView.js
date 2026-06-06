@@ -164,6 +164,7 @@ export class StreamView {
         this.pendingFrames = [];    // frames buffered before decoder config
         this.frameCount = 0;
         this.renderRunning = false;
+        this._rendering = false;     // Guard: prevents overlapping GPU render ops
         // Warm-up counter: first 3 NV12 frames get a copyTo readback before
         // createImageBitmap to force full GPU texture read (Windows Chrome fix).
         this._warmupFrames = 0;
@@ -1262,11 +1263,14 @@ export class StreamView {
             } : null;
         }
 
-        // Limit queue depth to 3 to keep latency low
+        // Limit queue depth to prevent unbounded memory growth.
+        // Drop the NEW frame instead of closing an old one — the old frame
+        // may still be rendering in _drawFrameWithBitmap() (async + not awaited).
+        // Closing it mid-render zeroes its NV12 buffer → green screen on Chrome.
         if (this.frameQueue.length >= 3) {
-            const old = this.frameQueue.shift();
-            old.close();
+            frame.close();
             this.stats.dropped++;
+            return;
         }
 
         this.frameQueue.push(frame);
@@ -1317,8 +1321,37 @@ export class StreamView {
                 }
             }
 
-            // Dequeue and render the latest frame
-            while (this.frameQueue.length > 0) {
+            // ── Render ONE frame per rAF to serialize GPU access ─────────
+            // HEVC NV12 on Chrome Windows fails when two VideoFrame objects
+            // are accessed concurrently (createImageBitmap / copyTo race).
+            // Processing one frame per rAF (~60fps) with a guard prevents
+            // overlapping GPU operations. When frames arrive in bursts
+            // (DC mode), we drop intermediate frames to keep latency low.
+            if (this._rendering) {
+                // Previous render still in flight — skip this rAF tick.
+                // Drop intermediate frames to prevent queue buildup.
+                if (this.frameQueue.length > 1) {
+                    while (this.frameQueue.length > 1) {
+                        const old = this.frameQueue.shift();
+                        old.close();
+                        this.stats.dropped++;
+                    }
+                }
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            if (this.frameQueue.length > 1) {
+                // Drop all but the latest frame — only render the freshest
+                while (this.frameQueue.length > 1) {
+                    const old = this.frameQueue.shift();
+                    old.close();
+                    this.stats.dropped++;
+                }
+            }
+
+            if (this.frameQueue.length === 1) {
+                this._rendering = true;
                 const frame = this.frameQueue.shift();
 
                 // Resize canvas to match frame dimensions if needed
@@ -1341,7 +1374,10 @@ export class StreamView {
                         ' codec=' + this.videoCodec);
                 }
 
-                this._drawFrameWithBitmap(frame);
+                // Fire-and-forget with guard: mark rendering complete when done
+                this._drawFrameWithBitmap(frame).finally(() => {
+                    this._rendering = false;
+                });
 
                 // Log stats periodically
                 if (this.stats.rendered % 60 === 0) {
@@ -1462,26 +1498,50 @@ export class StreamView {
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             this.ctx.restore();
 
+            // TEST I: Chrome Windows HEVC — try CPU copyTo(RGBA) FIRST.
+            // createImageBitmap on Chrome Windows produces green output for
+            // HEVC delta frames (GPU compositor bug?).  The CPU readback path
+            // (copyTo RGBA + putImageData) bypasses the GPU pipeline entirely.
+            // We try it first, then fall back to GPU paths if it fails.
             let success = false;
 
-            // Primary: createImageBitmap → drawImage(bitmap)
-            // Mac Chrome uses this path successfully for HEVC NV12.
-            // If it works on Windows too, both platforms share the same path.
+            // Primary (Chrome Windows): copyTo(RGBA) + putImageData
             try {
-                const bitmap = await createImageBitmap(frame);
-                this.ctx.drawImage(bitmap, 0, 0,
-                    this.canvas.width, this.canvas.height);
-                bitmap.close();
+                const size = w * h * 4;
+                const buf = new ArrayBuffer(size);
+                await frame.copyTo(buf, { format: 'RGBA' });
+                const imageData = new ImageData(
+                    new Uint8ClampedArray(buf, 0, size), w, h);
+                this.ctx.putImageData(imageData, 0, 0);
                 success = true;
                 if (dbgRendered < 3) {
-                    console.log('[HEVC-RENDER] createImageBitmap SUCCESS, frame#' + dbgRendered);
+                    console.log('[HEVC-RENDER] copyTo(RGBA) SUCCESS, frame#' + dbgRendered);
                 }
-            } catch (e) {
-                console.warn('[HEVC-RENDER] createImageBitmap failed: ' + e.message +
-                    ' — trying ctx.drawImage fallback');
+            } catch (e3) {
+                if (dbgRendered < 3) {
+                    console.warn('[HEVC-RENDER] copyTo(RGBA) failed: ' + e3.message +
+                        ' — trying createImageBitmap');
+                }
             }
 
-            // Fallback: ctx.drawImage(VideoFrame) direct
+            // Fallback 1: createImageBitmap → drawImage(bitmap)
+            if (!success) {
+                try {
+                    const bitmap = await createImageBitmap(frame);
+                    this.ctx.drawImage(bitmap, 0, 0,
+                        this.canvas.width, this.canvas.height);
+                    bitmap.close();
+                    success = true;
+                    if (dbgRendered < 3) {
+                        console.log('[HEVC-RENDER] createImageBitmap SUCCESS, frame#' + dbgRendered);
+                    }
+                } catch (e) {
+                    console.warn('[HEVC-RENDER] createImageBitmap failed: ' + e.message +
+                        ' — trying ctx.drawImage fallback');
+                }
+            }
+
+            // Fallback 2: ctx.drawImage(VideoFrame) direct
             if (!success) {
                 try {
                     this.ctx.drawImage(frame, 0, 0,
@@ -1491,25 +1551,7 @@ export class StreamView {
                         console.log('[HEVC-RENDER] ctx.drawImage fallback SUCCESS, frame#' + dbgRendered);
                     }
                 } catch (e2) {
-                    console.warn('[HEVC-RENDER] ctx.drawImage failed: ' + e2.message +
-                        ' — trying copyTo(RGBA) last resort');
-                }
-            }
-
-            // Last resort: copyTo(RGBA) + putImageData (CPU-side readback)
-            if (!success) {
-                try {
-                    const size = w * h * 4;
-                    const buf = new ArrayBuffer(size);
-                    await frame.copyTo(buf, { format: 'RGBA' });
-                    const imageData = new ImageData(
-                        new Uint8ClampedArray(buf, 0, size), w, h);
-                    this.ctx.putImageData(imageData, 0, 0);
-                    if (dbgRendered < 3) {
-                        console.log('[HEVC-RENDER] copyTo(RGBA) fallback SUCCESS');
-                    }
-                } catch (e3) {
-                    console.error('[HEVC-RENDER] All render paths failed for HEVC NV12:', e3.message);
+                    console.error('[HEVC-RENDER] All render paths failed for HEVC NV12:', e2.message);
                 }
             }
 
