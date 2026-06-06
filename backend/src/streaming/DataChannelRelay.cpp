@@ -494,7 +494,7 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
 
     // Enable HEVC debug test mode via environment variable (1-4)
     {
-        QByteArray envVal = "6";//qgetenv("MW_HEVC_TEST");
+        QByteArray envVal = qgetenv("MW_HEVC_TEST");
         if (!envVal.isEmpty()) {
             bool ok = false;
             int mode = envVal.toInt(&ok);
@@ -1261,16 +1261,17 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
     uint32_t frameId = m_FrameId++;
 
-    // Log data being sent for first keyframes (debug)
-    if (isKeyframe && frameId <= 2) {
-        QByteArray hexDump;
-        int dumpLen = qMin(48, totalSize);
-        for (int i = 0; i < dumpLen; i++) {
-            hexDump += QString::asprintf("%02x ", (unsigned char)data[i]).toUtf8();
+    // Log FNV-1a hash for ALL frames (first 20) for end-to-end comparison
+    if (frameId < 20) {
+        // FNV-1a 32-bit hash
+        uint32_t hash = 0x811c9dc5;
+        for (int i = 0; i < totalSize; i++) {
+            hash ^= (unsigned char)data[i];
+            hash *= 0x01000193;
         }
-        qInfo() << "[DataChannelRelay] sendFragmented keyframe frameId=" << frameId
-                << "totalSize=" << totalSize << "chunks=" << totalChunks
-                << "firstBytes:" << hexDump;
+        qInfo() << "[DC-FRAME] frameId=" << frameId
+                << "size=" << totalSize << "keyframe=" << isKeyframe
+                << "fnv1a=" << Qt::hex << hash << Qt::dec;
     }
 
     // ── End-to-end latency timestamp ───────────────────────────────────────
