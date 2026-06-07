@@ -177,7 +177,7 @@ void AppSettings::setStreamFps(int fps)
 {
     QJsonObject obj = readAll();
     // Clamp to allowed range (30–240) and round to nearest valid value
-    if (fps < 30) fps = 30;
+    if (fps < 1) fps = 1;
     if (fps > 240) fps = 240;
     obj["stream_fps"] = fps;
     writeAll(obj);

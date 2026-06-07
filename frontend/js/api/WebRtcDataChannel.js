@@ -66,6 +66,13 @@ export class WebRtcDataChannel {
         // input commands as JSON text, without any WebRTC PeerConnection.
         this._wssMode = options.wssMode === true;
 
+        // WSS fragmentation mode: when true, the backend sends video/audio with
+        // a 17-byte fragmentation header matching the DataChannel protocol
+        // (same format as the WS fallback path).  Each binary message:
+        //   [channel:1][frag_header:17][payload...]
+        // When false (legacy): [channel:1][flags:1][payload...]
+        this._wssFragmented = options.wssFragmented === true;
+
         // ICE config — populated dynamically by backend ice-config message.
         // Fallback: Google public STUN if no message received before PC creation.
         this._dynamicIceServers = null;
@@ -1193,6 +1200,26 @@ export class WebRtcDataChannel {
             if (raw.length < 2) return;
 
             const channel = raw[0];
+
+            // ── Fragmented mode (same format as WS fallback) ────────────────
+            // Protocol: [channel:1][frag_header:17][payload...]
+            // Routes to existing _onVideoChunk / _onAudioChunk reassembly logic.
+            if (this._wssFragmented) {
+                const fragData = raw.subarray(1);  // Strip channel prefix byte
+                if (fragData.length < this.FRAG_HEADER_SIZE) return;
+
+                if (channel === 0x01) {
+                    this._onVideoChunk(fragData);
+                } else if (channel === 0x02) {
+                    this._onAudioChunk(fragData);
+                } else {
+                    console.warn('[WSS] Fragmented: unknown channel byte: 0x' + channel.toString(16));
+                }
+                return;
+            }
+
+            // ── Legacy mode (2-byte header) ──────────────────────────────────
+            // Protocol: [channel:1][flags:1][payload...]
             const flags = raw[1];
             const payload = raw.subarray(2);
 

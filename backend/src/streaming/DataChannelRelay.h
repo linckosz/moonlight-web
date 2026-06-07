@@ -94,7 +94,7 @@ private:
     // used by the frontend to compute end-to-end latency.
     // Max payload per chunk: kMaxPayloadSize (under SCTP 16KB limit).
     static constexpr int kFragHeaderSize = 17;
-    static constexpr int kMaxPayloadSize = 14000;
+    static constexpr int kMaxPayloadSize = 262144;
 
     // Backpressure: if the SCTP send buffer exceeds this threshold, drop
     // incoming delta frames to prevent main-thread blocking on dc->send().

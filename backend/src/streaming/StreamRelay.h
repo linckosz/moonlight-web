@@ -46,6 +46,25 @@ private slots:
     void onShimConnectionTerminated(int errorCode);
 
 private:
+    /// Enable/disable WSS video fragmentation (same format as DataChannelRelay).
+    /// When true, video frames are split into chunks with a 17-byte header
+    /// matching the DataChannelRelay protocol, sent over the WebSocket with
+    /// a 1-byte channel prefix.  This allows testing whether the green image
+    /// bug is in SCTP transport or in the fragmentation/reassembly itself.
+    /// Toggle this and the frontend WSS_FRAGMENTED flag together for comparison.
+    void setVideoFragmentationEnabled(bool enabled) { m_UseVideoFragmentation = enabled; }
+    bool isVideoFragmentationEnabled() const { return m_UseVideoFragmentation; }
+
+    // Fragmentation constants — same values as DataChannelRelay
+    static constexpr int kFragHeaderSize = 17;
+    static constexpr int kMaxPayloadSize = 14000;
+
+    /// Send a video frame using the DataChannelRelay fragmentation protocol
+    /// but over the WebSocket.  Header: [frame_id:4][chunk_index:2][total_chunks:2]
+    /// [is_keyframe:1][payload_size:4][backend_ts:4], then the chunk payload.
+    /// Each WS binary message: [channel:1][frag_header:17][chunk_payload...].
+    void sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe);
+
     MoonlightShim* m_Shim;
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;
@@ -55,6 +74,8 @@ private:
     bool m_Running = false;
     bool m_Stopping = false;
     bool m_StreamStarted = false;
+    bool m_UseVideoFragmentation = false;  // WSS fragmentation OFF — full frames sent as single WS messages
+    uint32_t m_FrameId = 0;              // Monotonic frame ID for fragmentation
     QList<QByteArray> m_PendingVideoFrames;
     QList<QByteArray> m_PendingAudioFrames;
     int m_FrameCount = 0;
