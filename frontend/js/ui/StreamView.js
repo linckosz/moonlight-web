@@ -1314,6 +1314,18 @@ export class StreamView {
         if (this._transport === 'webrtc-media') return;
         this.renderRunning = true;
 
+        // ── Immediate canvas clear at render loop start ──────────────────────
+        // Forces Chrome's compositor to discard any cached layer texture from a
+        // previous stream (willChange compositor layer cache). Without this, the
+        // GPU compositor may show stale frame content until the first real frame
+        // is decoded and rendered.
+        // getImageData() inserts a GPU sync point that flushes the command buffer,
+        // ensuring the compositor re-composites with the cleared canvas content.
+        this.ctx.globalCompositeOperation = 'source-over';
+        this.ctx.fillStyle = '#000000';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.getImageData(0, 0, 1, 1);
+
         const loop = (now) => {
             if (!this.renderRunning) return;
 
@@ -3097,6 +3109,14 @@ export class StreamView {
         this.stopDiagnostics();
         this.unbindEvents();
         this.webrtc.close();
+
+        // Drop Chrome GPU compositor layer BEFORE removing the canvas.
+        // Without this, the compositor may cache the rendered texture and
+        // reuse it when a new StreamView canvas is created with the same
+        // willChange property (ghosting: stale frame from previous stream).
+        if (this.canvas) {
+            this.canvas.style.willChange = 'auto';
+        }
 
         if (this._pingInterval) {
             clearInterval(this._pingInterval);
