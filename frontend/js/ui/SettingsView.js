@@ -298,7 +298,7 @@ export class SettingsView {
         ).join('');
 
         // FPS options
-        const fpsValues = [30, 60, 75, 90, 120, 144, 165, 240];
+        const fpsValues = [1, 30, 60, 75, 90, 120, 144, 165, 240];
         const fpsOptions = fpsValues.map(f =>
             `<option value="${f}" ${f === this._streamFps ? 'selected' : ''}>${f} FPS</option>`
         ).join('');

@@ -127,6 +127,14 @@ export class StreamView {
         this._isRemote = isRemote;
         this._showPerfStats = showPerformanceStats;
 
+        // Backend timestamp tracking for stale frame detection.
+        // WebRTC SCTP unordered delivery (ordered=false) can reassemble frames
+        // out of order.  An older frame arriving after a newer one would
+        // overwrite current canvas content with stale pixels ("ghosting").
+        // We track the maximum backend timestamp seen and drop frames whose
+        // timestamp is behind it, unless they are bootstrapping keyframes.
+        this._maxBackendTs = undefined;
+
         /** Callback invoked after quit() completes cleanup. Used by MoonlightApp
          *  to restore the underlying main view (apps/hosts). */
         this.onQuit = null;
@@ -141,7 +149,7 @@ export class StreamView {
         } else if (this._transport === 'wss') {
             // Legacy WSS mode: direct WebSocket passthrough via StreamRelay,
             // without any WebRTC PeerConnection or DataChannels.
-            this.webrtc = new WebRtcDataChannel(signalingUrl, { wssMode: true });
+            this.webrtc = new WebRtcDataChannel(signalingUrl, { wssMode: true, wssFragmented: false });
         } else {
             this.webrtc = new WebRtcDataChannel(signalingUrl);
         }
@@ -559,6 +567,12 @@ export class StreamView {
         this.canvas.height = 1080;
         // Prevent browser default touch behaviors (scroll, zoom, pull-to-refresh)
         this.canvas.style.touchAction = 'none';
+        // Force the canvas onto its own GPU compositor layer permanently.
+        // Chrome's compositor caches the rendered output of each layer; without
+        // this hint, canvas content changes may not trigger a re-composite on
+        // every frame, causing stale pixels ("ghosting") on HEVC WebRTC where
+        // frame content changes rapidly (minimize/restore windows).
+        this.canvas.style.willChange = 'transform';
 
         // Video element for native RTP media track mode (webrtc-media)
         this.videoEl = document.getElementById('stream-video');
@@ -1419,16 +1433,10 @@ export class StreamView {
      * Async: returns immediately; the frame is always closed, even on error.
      */
     async _drawFrameWithBitmap(frame) {
-        // HEVC NV12: ctx.drawImage for ALL Chrome platforms.
-        // ctx.drawImage(VideoFrame) works correctly for HEVC NV12 on both
-        // Mac and Windows Chrome. The canvas 2D GPU compositing path handles
-        // NV12→RGBA conversion correctly.
-        //   Mac Chrome: drawImage is the standard working path (no stride bug here).
-        //   Win Chrome: same path as Mac — fixes the green-tint bug.
-        // This unifies the render path across platforms.
         const isHevcNv12 = this.videoCodec === CODEC_HEVC && frame.format === 'NV12';
+        const dbgFirstFew = this.stats.rendered < 5;
 
-        if (this.stats.rendered < 5) {
+        if (dbgFirstFew) {
             console.log('[debug] _drawFrameWithBitmap entry' +
                 ' codec=' + this.videoCodec +
                 ' format=' + (frame.format || '?') +
@@ -1439,155 +1447,192 @@ export class StreamView {
                 ' nalParser.codec=' + this.nalParser.codec);
         }
 
-        // ── HEVC NV12: ctx.drawImage (same path for all Chrome platforms) ──
-        // ctx.drawImage(VideoFrame) is the browser's GPU compositing path.
-        // It handles NV12→RGBA conversion correctly, with no green tint.
-        // Fallback chain: createImageBitmap → copyTo(RGBA).
-        if (isHevcNv12) {
-            const dbgRendered = this.stats.rendered;
-            if (dbgRendered < 3) {
-                console.log('[HEVC-RENDER] Chrome HEVC NV12 path, rendered=' + dbgRendered +
-                    ' decoded=' + this.stats.decoded + ' w=' + (frame.displayWidth || frame.codedWidth) +
-                    ' h=' + (frame.displayHeight || frame.codedHeight));
-            }
+        // ── HEVC NV12: createImageBitmap(VideoFrame) as PRIMARY path ──────
+        //
+        // ROOT CAUSE of persistent ghosting after canvas-level fixes:
+        //
+        // The previous primary path used frame.copyTo(buf, {format:'RGBA'})
+        // to convert NV12→RGBA on CPU, then createImageBitmap(ImageData) to
+        // upload back to GPU.  If Chrome silently ignores the 'RGBA' format
+        // hint and writes NV12 (1.5 bytes/pixel) into a 4-byte/pixel buffer,
+        // the ImageData has alpha=0 on ~3/4 of pixels.  Even with
+        // globalCompositeOperation='copy', zero-alpha pixels may not fully
+        // overwrite the destination — and getImageData(1x1) can't detect this.
+        //
+        // Fix: use createImageBitmap(VideoFrame) as PRIMARY.  This keeps the
+        // NV12→RGBA conversion on the GPU (no CPU round-trip, no buffer size
+        // mismatch), and the resulting RGBA bitmap has alpha=255 everywhere.
+        // The 'copy' composite mode then correctly overwrites all pixels.
+        //
+        // Fallback chain:
+        //   1. createImageBitmap(VideoFrame) → drawImage(bitmap, 'copy')
+        //   2. ctx.drawImage(VideoFrame, 'copy')          (some Safari)
+        //   3. copyTo(RGBA) → ImageData → putImageData     (last resort)
+        //
+        // Warmup: first 3 NV12 frames get a copyTo(NV12) readback to force
+        // GPU texture initialization (Chrome Windows green-tint fix).
 
-            // Resize canvas if needed
-            const w = frame.displayWidth || frame.codedWidth || 0;
-            const h = frame.displayHeight || frame.codedHeight || 0;
-            if (w > 0 && h > 0) {
-                if (this.canvas.width !== w || this.canvas.height !== h) {
-                    this.canvas.width = w;
-                    this.canvas.height = h;
-                }
+        // ── NV12 warmup readback (all platforms, all codecs) ───────────────
+        // Force the GPU to fully allocate and write the NV12 texture before
+        // createImageBitmap reads it.  Without this, Chrome Windows D3D11 may
+        // return uninitialized GPU memory for the UV plane → green tint.
+        if (this._warmupFrames < 3 && frame.format === 'NV12') {
+            if (dbgFirstFew) {
+                console.log('[NV12-WARMUP] readback #' + (this._warmupFrames + 1));
             }
-
-            // ── NV12 raw diagnostic: capture Y-plane + UV-plane directly ─────
-            // This tells us whether the green tint is a decoder issue (Y-plane
-            // zeroed for delta frames) or a canvas rendering issue.
-            // Y-plane: full resolution (w×h), UV-plane: half resolution (w/2×h/2).
-            // Sample the TOP-LEFT pixel (0,0) to avoid sampling desktop UI.
-            if (dbgRendered < 3) {
-                try {
-                    const ySize = frame.allocationSize({ format: 'NV12' });
+            try {
+                const ySize = frame.allocationSize({ format: 'NV12' });
+                if (ySize > 0) {
                     const nv12Buf = new ArrayBuffer(ySize);
-                    const transferred = await frame.copyTo(nv12Buf);
-                    if (transferred) {
+                    await frame.copyTo(nv12Buf, { format: 'NV12' });
+
+                    // Diagnostic: sample first few Y/UV bytes
+                    if (dbgFirstFew) {
                         const dv = new DataView(nv12Buf);
-                        const yTL = dv.getUint8(0);              // Y at top-left
-                        const uvTL = dv.getUint8(w);             // U at top-left row (first UV byte)
-                        const uvMid = dv.getUint8(Math.floor(w * h * 1.25)); // UV at center-ish
-                        const ySample = dv.getUint8(Math.floor(w * h / 2)); // Y at center
-                        console.log('[NV12-DIAG] frame#' + dbgRendered +
-                            ' ySize=' + ySize +
-                            ' yTL(0,0)=' + yTL +
-                            ' uvTL(w,0)=' + uvTL +
-                            ' yCenter=' + ySample +
-                            ' uvCenter=' + uvMid);
+                        const w = frame.displayWidth || frame.codedWidth || 0;
+                        const yTL = dv.getUint8(0);
+                        const uvTL = w > 0 ? dv.getUint8(Math.min(w, ySize - 1)) : 0;
+                        console.log('[NV12-WARMUP] Y(0,0)=' + yTL + ' UV(0,0)=' + uvTL +
+                            ' size=' + ySize);
                     }
-                } catch (eDiag) {
-                    console.warn('[NV12-DIAG] failed: ' + eDiag.message);
+                }
+            } catch (e) {
+                if (dbgFirstFew) {
+                    console.warn('[NV12-WARMUP] copyTo failed: ' + e.message);
                 }
             }
+            this._warmupFrames++;
+        }
 
-            // Force full canvas invalidation before each draw.
-            // Canvas 2D caches the previous frame internally; without an explicit
-            // clear, stale pixels from the prior frame may persist on-screen
-            // (visible as green tint until the new frame fully overwrites them).
+        // ── GPU-synced canvas clear BEFORE any render path ────────────────
+        // Standard clearRect + fillRect may be cached by Chrome's command
+        // buffer.  We insert getImageData() to force a GPU flush, ensuring
+        // the clear is committed before the drawImage below.
+        // This is OUTSIDE the save/restore so 'copy' mode is not affected.
+        this.ctx.globalCompositeOperation = 'source-over';
+        this.ctx.fillStyle = '#000000';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        // Force GPU sync: getImageData reads back, flushing the command buffer
+        this.ctx.getImageData(0, 0, 1, 1);
+
+        // ── HEVC NV12: render with 'copy' composite mode ─────────────────
+        // globalCompositeOperation='copy' replaces ALL destination pixels,
+        // regardless of alpha — no blending at all.
+        // The standard path below handles non-HEVC without 'copy' mode.
+        if (isHevcNv12) {
             this.ctx.save();
             this.ctx.globalCompositeOperation = 'copy';
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            this.ctx.restore();
 
-            // TEST I: Chrome Windows HEVC — try CPU copyTo(RGBA) FIRST.
-            // createImageBitmap on Chrome Windows produces green output for
-            // HEVC delta frames (GPU compositor bug?).  The CPU readback path
-            // (copyTo RGBA + putImageData) bypasses the GPU pipeline entirely.
-            // We try it first, then fall back to GPU paths if it fails.
+            // Also clear under 'copy' mode for safety
+            this.ctx.fillStyle = '#000000';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
             let success = false;
 
-            // Primary (Chrome Windows): copyTo(RGBA) + putImageData
+            // ── PRIMARY: createImageBitmap(VideoFrame) → drawImage(bitmap) ─
+            // GPU-side NV12→RGBA conversion.  The resulting ImageBitmap always
+            // has alpha=255 everywhere, so 'copy' mode cleanly overwrites.
             try {
-                const size = w * h * 4;
-                const buf = new ArrayBuffer(size);
-                await frame.copyTo(buf, { format: 'RGBA' });
-                const imageData = new ImageData(
-                    new Uint8ClampedArray(buf, 0, size), w, h);
-                this.ctx.putImageData(imageData, 0, 0);
+                const bitmap = await createImageBitmap(frame);
+                this.ctx.drawImage(bitmap, 0, 0,
+                    this.canvas.width, this.canvas.height);
+                bitmap.close();
                 success = true;
-                if (dbgRendered < 3) {
-                    console.log('[HEVC-RENDER] copyTo(RGBA) SUCCESS, frame#' + dbgRendered);
+                if (dbgFirstFew) {
+                    console.log('[HEVC-RENDER] createImageBitmap(VideoFrame) SUCCESS, frame#' +
+                        this.stats.rendered);
                 }
-            } catch (e3) {
-                if (dbgRendered < 3) {
-                    console.warn('[HEVC-RENDER] copyTo(RGBA) failed: ' + e3.message +
-                        ' — trying createImageBitmap');
-                }
-            }
-
-            // Fallback 1: createImageBitmap → drawImage(bitmap)
-            if (!success) {
-                try {
-                    const bitmap = await createImageBitmap(frame);
-                    this.ctx.drawImage(bitmap, 0, 0,
-                        this.canvas.width, this.canvas.height);
-                    bitmap.close();
-                    success = true;
-                    if (dbgRendered < 3) {
-                        console.log('[HEVC-RENDER] createImageBitmap SUCCESS, frame#' + dbgRendered);
-                    }
-                } catch (e) {
-                    console.warn('[HEVC-RENDER] createImageBitmap failed: ' + e.message +
-                        ' — trying ctx.drawImage fallback');
+            } catch (e) {
+                if (dbgFirstFew) {
+                    console.warn('[HEVC-RENDER] createImageBitmap(VideoFrame) failed: ' +
+                        e.message + ' — trying ctx.drawImage(VideoFrame)');
                 }
             }
 
-            // Fallback 2: ctx.drawImage(VideoFrame) direct
+            // ── FALLBACK 1: ctx.drawImage(VideoFrame) direct ──────────────
             if (!success) {
                 try {
                     this.ctx.drawImage(frame, 0, 0,
                         this.canvas.width, this.canvas.height);
                     success = true;
-                    if (dbgRendered < 3) {
-                        console.log('[HEVC-RENDER] ctx.drawImage fallback SUCCESS, frame#' + dbgRendered);
+                    if (dbgFirstFew) {
+                        console.log('[HEVC-RENDER] ctx.drawImage(VideoFrame) SUCCESS, frame#' +
+                            this.stats.rendered);
                     }
-                } catch (e2) {
-                    console.error('[HEVC-RENDER] All render paths failed for HEVC NV12:', e2.message);
+                } catch (e) {
+                    console.warn('[HEVC-RENDER] ctx.drawImage(VideoFrame) failed: ' + e.message);
                 }
             }
 
-            if (dbgRendered < 3) {
-                const pixels = this.ctx.getImageData(
-                    Math.floor((frame.displayWidth || frame.codedWidth) / 2),
-                    Math.floor((frame.displayHeight || frame.codedHeight) / 2), 1, 1).data;
-                console.log('[RGBA-SAMPLE] center R=' + pixels[0] +
-                    ' G=' + pixels[1] + ' B=' + pixels[2] +
-                    ' (frame#' + dbgRendered + ' totalDecoded=' + this.stats.decoded + ')');
+            // ── FALLBACK 2: copyTo(RGBA) → ImageData → putImageData ──────
+            // CPU-side NV12→RGBA conversion.  Last resort when GPU paths fail.
+            if (!success) {
+                try {
+                    const w = frame.displayWidth || frame.codedWidth || 0;
+                    const h = frame.displayHeight || frame.codedHeight || 0;
+                    if (w > 0 && h > 0) {
+                        const size = w * h * 4;
+                        const buf = new ArrayBuffer(size);
+                        const layouts = await frame.copyTo(buf, { format: 'RGBA' });
+                        if (layouts && layouts.length !== 1) {
+                            throw new Error('copyTo RGBA expected 1 plane, got ' + layouts.length);
+                        }
+                        const imageData = new ImageData(
+                            new Uint8ClampedArray(buf, 0, size), w, h);
+
+                        // Diagnostic: sample RGBA pixels before rendering
+                        if (dbgFirstFew) {
+                            const midX = Math.floor(w / 2);
+                            const midY = Math.floor(h / 2);
+                            const off = (midY * w + midX) * 4;
+                            const rgba = imageData.data;
+                            console.log('[RGBA-DEBUG] copyTo sample center: R=' +
+                                rgba[off] + ' G=' + rgba[off+1] + ' B=' + rgba[off+2] +
+                                ' A=' + rgba[off+3]);
+                            let alphaZeroCount = 0;
+                            for (let i = 3; i < Math.min(size, 4096); i += 4) {
+                                if (rgba[i] === 0) alphaZeroCount++;
+                            }
+                            console.log('[RGBA-DEBUG] copyTo alpha=0 count (1K pixels): ' +
+                                alphaZeroCount + '/' + Math.min(Math.floor(size/4), 1024));
+                        }
+
+                        this.ctx.putImageData(imageData, 0, 0);
+                        success = true;
+                        if (dbgFirstFew) {
+                            console.log('[HEVC-RENDER] copyTo(RGBA)+putImageData SUCCESS, frame#' +
+                                this.stats.rendered);
+                        }
+                    }
+                } catch (e) {
+                    console.error('[HEVC-RENDER] All render paths failed:', e.message);
+                }
             }
+
+            this.ctx.restore();
+
+            // Force GPU sync after render
+            this.ctx.getImageData(0, 0, 1, 1);
+
+            // Diagnostic
+            if (dbgFirstFew) {
+                const w = frame.displayWidth || frame.codedWidth || 0;
+                const h = frame.displayHeight || frame.codedHeight || 0;
+                if (w > 0 && h > 0) {
+                    const pixels = this.ctx.getImageData(
+                        Math.floor(w / 2), Math.floor(h / 2), 1, 1).data;
+                    console.log('[RGBA-DEBUG] Canvas center after render: R=' +
+                        pixels[0] + ' G=' + pixels[1] + ' B=' + pixels[2] + ' A=' + pixels[3] +
+                        ' (frame#' + this.stats.rendered + ')');
+                }
+            }
+
             frame.close();
             this.stats.rendered++;
             return;
         }
 
         // ── Standard path (H.264 / AV1 / non-NV12 / Safari) ──────────────
-        // NV12 warmup readback: for the first few NV12 frames, call copyTo(NV12)
-        // before createImageBitmap to force GPU texture to be fully resident.
-        if (this._warmupFrames < 3 && frame.format === 'NV12') {
-            if (this.stats.rendered < 5) {
-                console.log('[HEVC-RENDER] warmup NV12 readback #'+this._warmupFrames);
-            }
-            try {
-                const size = frame.allocationSize({ format: 'NV12' });
-                if (size > 0) {
-                    const buf = new ArrayBuffer(size);
-                    await frame.copyTo(buf, { format: 'NV12' });
-                }
-            } catch (e) {
-                // copyTo may fail on some platforms — safe to ignore
-            }
-            this._warmupFrames++;
-        }
-
-        // Standard rendering: createImageBitmap → drawImage(VideoFrame) → copyTo RGBA.
         let rendered = false;
         try {
             const bitmap = await createImageBitmap(frame);
@@ -1605,7 +1650,6 @@ export class StreamView {
         } catch (e) {
             console.warn('[StreamView] createImageBitmap failed: ' + e.message +
                 ' — trying drawImage(VideoFrame) fallback');
-            // Fallback 1: direct drawImage with VideoFrame
             if (this.canvas && this.ctx) {
                 try {
                     this.ctx.drawImage(frame, 0, 0,
@@ -1614,7 +1658,6 @@ export class StreamView {
                 } catch (e2) {
                     console.warn('[StreamView] drawImage(VideoFrame) failed: ' +
                         e2.message + ' — trying copyTo RGBA readback');
-                    // Fallback 2: CPU-side RGBA readback
                     try {
                         const w = frame.displayWidth || frame.codedWidth || 0;
                         const h = frame.displayHeight || frame.codedHeight || 0;
@@ -1847,6 +1890,36 @@ export class StreamView {
             return;
         }
 
+        // ── Stale frame detection (SCTP unordered delivery) ──────────────────
+        // WebRTC DataChannel uses ordered=false, maxRetransmits=0 for video,
+        // which allows SCTP chunks to arrive out of order.  The chunk reassembly
+        // in WebRtcDataChannel emits frames as soon as they complete, regardless
+        // of their original frameId sequence.  When an older frame (lower
+        // backendTs) completes reassembly after a newer frame (higher backendTs)
+        // has already been decoded and rendered, the old pixels overwrite the
+        // current canvas content — this is the "ghosting" bug.
+        //
+        // We track the monotonic maximum backend timestamp.  Any frame with a
+        // lower backendTs than the max is stale and is dropped, EXCEPT for
+        // bootstrapping keyframes needed to configure the VideoDecoder for the
+        // first time (they arrive early in the stream before _maxBackendTs is
+        // meaningful).  Once the decoder is configured, all out-of-order frames
+        // of any type are dropped.
+        if (backendTs !== undefined && backendTs > 0) {
+            if (this._maxBackendTs === undefined || backendTs > this._maxBackendTs) {
+                this._maxBackendTs = backendTs;
+            } else if (backendTs < this._maxBackendTs) {
+                // Out-of-order: frame is older than the newest seen
+                if (this.decoderConfigured || !isKeyframe) {
+                    // Decoder is configured or this isn't a keyframe — drop safely
+                    this.stats.dropped++;
+                    return;
+                }
+                // Keyframe before decoder config: let through to bootstrap decoder
+            }
+            // Equal timestamps: pass through (same-ms frames)
+        }
+
         // Track cumulative video bytes for bitrate calculation
         this._totalBytes += data.length;
 
@@ -1870,10 +1943,6 @@ export class StreamView {
         }
 
         // Direct frame processing — no reordering.
-        // The backend's stale-buffered-keyframe detection handles the green-image
-        // case. SCTP unordered delivery occasional reordering is harmless because
-        // the VideoDecoder's internal DPB handles reference frame management,
-        // and we request an IDR on decoder errors.
         this._processVideoFrame(data, isKeyframe, backendTs);
     }
 

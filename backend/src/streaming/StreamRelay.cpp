@@ -129,6 +129,95 @@ QString StreamRelay::wsUrl() const
     return QString("wss://%1/ws/stream").arg(host);
 }
 
+// --- Fragmented send (same format as DataChannelRelay) -------------------------
+// Splits data into chunks of up to kMaxPayloadSize bytes.
+// Each WebSocket message: [channel:1][frag_header:17][chunk_payload...]
+// Header format (17 bytes total):
+//   [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
+// All multi-byte fields in network byte order (big endian).
+
+void StreamRelay::sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe)
+{
+    if (!m_WsClient || m_Stopping) return;
+    if (data.isEmpty()) return;
+
+    int totalSize = data.size();
+    int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
+    uint32_t frameId = m_FrameId++;
+
+    // Compute backend timestamp for end-to-end latency
+    uint32_t backendTs = static_cast<uint32_t>(
+        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+
+    // Log FNV-1a hash for first frames
+    if (frameId < 20) {
+        uint32_t hash = 0x811c9dc5;
+        for (int i = 0; i < totalSize; i++) {
+            hash ^= static_cast<unsigned char>(data[i]);
+            hash *= 0x01000193;
+        }
+        qInfo() << "[WS-FRAME] frameId=" << frameId
+                << "size=" << totalSize << "keyframe=" << isKeyframe
+                << "fnv1a=" << Qt::hex << hash << Qt::dec;
+    }
+
+    for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+        int offset = chunkIdx * kMaxPayloadSize;
+        int payloadSize = std::min(kMaxPayloadSize, totalSize - offset);
+
+        QByteArray msg;
+        msg.reserve(1 + kFragHeaderSize + payloadSize);
+
+        // Channel byte (0x01 = video)
+        msg.append(static_cast<char>(0x01));
+
+        // Frame ID (4 bytes, big endian)
+        msg.append(static_cast<char>((frameId >> 24) & 0xFF));
+        msg.append(static_cast<char>((frameId >> 16) & 0xFF));
+        msg.append(static_cast<char>((frameId >> 8) & 0xFF));
+        msg.append(static_cast<char>(frameId & 0xFF));
+
+        // Chunk index (2 bytes, big endian)
+        uint16_t chunkIdx16 = static_cast<uint16_t>(chunkIdx);
+        msg.append(static_cast<char>((chunkIdx16 >> 8) & 0xFF));
+        msg.append(static_cast<char>(chunkIdx16 & 0xFF));
+
+        // Total chunks (2 bytes, big endian)
+        uint16_t totalChunks16 = static_cast<uint16_t>(totalChunks);
+        msg.append(static_cast<char>((totalChunks16 >> 8) & 0xFF));
+        msg.append(static_cast<char>(totalChunks16 & 0xFF));
+
+        // Is keyframe (1 byte)
+        msg.append(static_cast<char>(isKeyframe ? 0x01 : 0x00));
+
+        // Payload size (4 bytes, big endian)
+        uint32_t payloadSize32 = static_cast<uint32_t>(payloadSize);
+        msg.append(static_cast<char>((payloadSize32 >> 24) & 0xFF));
+        msg.append(static_cast<char>((payloadSize32 >> 16) & 0xFF));
+        msg.append(static_cast<char>((payloadSize32 >> 8) & 0xFF));
+        msg.append(static_cast<char>(payloadSize32 & 0xFF));
+
+        // Backend timestamp (4 bytes, big endian) — same value for all chunks
+        msg.append(static_cast<char>((backendTs >> 24) & 0xFF));
+        msg.append(static_cast<char>((backendTs >> 16) & 0xFF));
+        msg.append(static_cast<char>((backendTs >> 8) & 0xFF));
+        msg.append(static_cast<char>(backendTs & 0xFF));
+
+        // Chunk payload
+        msg.append(data.constData() + offset, payloadSize);
+
+        m_WsClient->sendBinaryMessage(msg);
+    }
+
+    m_FrameCount++;
+
+    if (m_FrameCount <= 3 || m_FrameCount % 300 == 0) {
+        qInfo() << "[StreamRelay] Fragmented sent frame #" << m_FrameCount
+                << "totalSize=" << totalSize << "chunks=" << totalChunks
+                << "isKeyframe=" << isKeyframe << "frameId=" << frameId;
+    }
+}
+
 // --- Video/audio forwarding -------------------------------------------------
 
 void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber)
@@ -162,6 +251,19 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
         return;
     }
 
+    bool isKeyframe = (frameType == 1);
+
+    if (m_UseVideoFragmentation) {
+        // Flush pending frames using fragmentation protocol
+        while (!m_PendingVideoFrames.isEmpty()) {
+            sendVideoFragmentedWss(m_PendingVideoFrames.takeFirst(), true);
+        }
+        sendVideoFragmentedWss(data, isKeyframe);
+        return;  // Fragmented path handles its own logging
+    }
+
+    // --- Legacy non-fragmented path (2-byte header) ---
+
     // Flush pending frames (assume they could be keyframes)
     if (!m_PendingVideoFrames.isEmpty()) {
         qInfo() << "[StreamRelay] Flushing" << m_PendingVideoFrames.size() << "pending video frames";
@@ -179,7 +281,7 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
     // flags bit0: 1=IDR keyframe, 0=P-frame
     QByteArray msg;
     msg.append(static_cast<char>(0x01));
-    msg.append(static_cast<char>(frameType == 1 ? 0x01 : 0x00));
+    msg.append(static_cast<char>(isKeyframe ? 0x01 : 0x00));
     msg.append(data);
 
     // Log first WS message sent
@@ -237,6 +339,65 @@ void StreamRelay::onAudioSample(const QByteArray& data)
         }
         return;
     }
+
+    // Helper to send a single audio frame with 17-byte frag header (matching _onAudioChunk)
+    auto sendAudioFragmented = [this](const QByteArray& audioData) {
+        uint32_t frameId = m_FrameId++;
+        uint32_t backendTs = static_cast<uint32_t>(
+            QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+
+        QByteArray msg;
+        msg.reserve(1 + kFragHeaderSize + audioData.size());
+
+        // Channel byte (0x02 = audio)
+        msg.append(static_cast<char>(0x02));
+
+        // Frame ID (4 bytes, big endian)
+        msg.append(static_cast<char>((frameId >> 24) & 0xFF));
+        msg.append(static_cast<char>((frameId >> 16) & 0xFF));
+        msg.append(static_cast<char>((frameId >> 8) & 0xFF));
+        msg.append(static_cast<char>(frameId & 0xFF));
+
+        // Chunk index (2 bytes, always 0 for single-chunk audio)
+        msg.append(static_cast<char>(0x00));
+        msg.append(static_cast<char>(0x00));
+
+        // Total chunks (2 bytes, always 1 for single-chunk audio)
+        msg.append(static_cast<char>(0x00));
+        msg.append(static_cast<char>(0x01));
+
+        // Is keyframe (1 byte, always 0 for audio)
+        msg.append(static_cast<char>(0x00));
+
+        // Payload size (4 bytes, big endian)
+        uint32_t payloadSize32 = static_cast<uint32_t>(audioData.size());
+        msg.append(static_cast<char>((payloadSize32 >> 24) & 0xFF));
+        msg.append(static_cast<char>((payloadSize32 >> 16) & 0xFF));
+        msg.append(static_cast<char>((payloadSize32 >> 8) & 0xFF));
+        msg.append(static_cast<char>(payloadSize32 & 0xFF));
+
+        // Backend timestamp (4 bytes, big endian)
+        msg.append(static_cast<char>((backendTs >> 24) & 0xFF));
+        msg.append(static_cast<char>((backendTs >> 16) & 0xFF));
+        msg.append(static_cast<char>((backendTs >> 8) & 0xFF));
+        msg.append(static_cast<char>(backendTs & 0xFF));
+
+        // Audio payload
+        msg.append(audioData);
+
+        m_WsClient->sendBinaryMessage(msg);
+    };
+
+    if (m_UseVideoFragmentation) {
+        // Flush pending audio using fragmented format
+        while (!m_PendingAudioFrames.isEmpty()) {
+            sendAudioFragmented(m_PendingAudioFrames.takeFirst());
+        }
+        sendAudioFragmented(data);
+        return;
+    }
+
+    // --- Legacy non-fragmented path (2-byte header) ---
 
     while (!m_PendingAudioFrames.isEmpty()) {
         QByteArray msg;

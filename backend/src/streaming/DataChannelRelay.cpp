@@ -774,7 +774,7 @@ void DataChannelRelay::createDataChannels()
 
 // --- Video/Audio forwarding (from MoonlightShim signals, on main thread) ---
 
-void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int)
+void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber)
 {
     if (m_Stopping.load()) {
         static int dropCount = 0;
