@@ -1,0 +1,41 @@
+Tu es frontend-dev. Tu travailles sur moonlight-web-deepseek.
+
+## TÂCHE : Analyser le pipeline vidéo frontend pour un cache persistant
+
+BUG CRITIQUE : Un stream HEVC WebRTC montre la dernière frame du stream d'HIER en première image. C'est un cache persistant qui traverse les sessions.
+
+### Ce que tu dois faire
+
+1. **Lis COMPLÈTEMENT** `d:\Code\moonlight-web-deepseek\frontend\js\api\StreamView.js`
+   - Lis aussi `d:\Code\moonlight-web-deepseek\frontend\js\api\WebRtcMedia.js` (ou tout fichier qui gère la réception vidéo)
+
+2. Identifie TOUS les caches/buffers potentiels dans le pipeline vidéo :
+
+   a. **VideoDecoder** : Est-il recréé à chaque stream ou réutilisé ?
+      - Regarde `videoDecoder.configure()` et `videoDecoder.close()` — sont-ils appelés correctement ?
+      - Est-ce que `close()` puis un nouveau `configure()` avec une nouvelle instance suffit ?
+
+   b. **Canvas** : Le canvas <canvas> conserve-t-il son contenu entre deux streams ?
+      - Est-ce qu'un `clearRect()` ou `fillRect('black')` est fait au début d'un nouveau stream ?
+      - Est-ce que le même élément canvas est réutilisé ?
+
+   c. **createImageBitmap / GPU Chrome** :
+      - Chrome GPU process peut cacher des textures de frames décodées
+      - Est-ce que `willReadFrequently: true` est utilisé ?
+      - Y a-t-il un cache d'ImageBitmap qui pourrait survivre ?
+
+   d. **renderLoop** : Continue-t-il de tourner entre les streams ?
+      - `requestAnimationFrame` est-il bien arrêté à la fin du stream ?
+      - Une frame orpheline pourrait-elle être affichée après le cleanup ?
+
+3. **Analyse le flux exact d'une frame** : WebRTC → onmessage → decode → render → canvas
+   - Où sont stockées les données entre chaque étape ?
+   - Quelque chose peut-il survivre à un stop/start ?
+
+4. Regarde aussi `d:\Code\moonlight-web-deepseek\frontend\js\ui\StreamView.js` pour la partie UI
+
+### Résultat attendu
+
+Un listing de TOUS les buffers/caches potentiellement problématiques côté frontend, avec fichier, ligne, et explication.
+
+Écris ton résumé dans `.claude/results/frontend-dev/2026-06-07-hevc-ghosting-cache/Resume-2026-06-07.md`
