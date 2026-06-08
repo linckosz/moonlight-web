@@ -48,6 +48,9 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 - **Documentation API Sunshine** : [docs/sunshine-api.md](docs/sunshine-api.md)
 - **Plan de développement** : [docs/moonlight-web-plan.md](docs/moonlight-web-plan.md)
 
+## Frontend source tree
+- `frontend/js/stream/` — streaming components
+
 ## Standards de code
 
 - Code propre, modulaire, prêt pour la production

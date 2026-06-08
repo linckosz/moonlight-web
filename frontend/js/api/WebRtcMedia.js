@@ -332,11 +332,11 @@ export class WebRtcMedia {
             console.log('[WebRtcMedia] Track received: kind=' + event.track.kind +
                 ' id=' + event.track.id);
 
-            // Set jitter buffer to 0 for minimum latency on all receivers
+            // Set jitter buffer to 12ms for resilience against packet reordering/loss
             try {
                 for (const receiver of this.pc.getReceivers()) {
                     if (receiver.jitterBufferTarget !== undefined) {
-                        receiver.jitterBufferTarget = 0;
+                        receiver.jitterBufferTarget = 12;
                     }
                 }
             } catch (e) {
@@ -360,6 +360,17 @@ export class WebRtcMedia {
                     this.videoElement.onloadedmetadata = () => {
                         console.log('[WebRtcMedia] Video resolution: ' +
                             this.videoElement.videoWidth + 'x' + this.videoElement.videoHeight);
+                    };
+                }
+
+                // Proactive IDR request 250ms after playback starts.
+                // The first keyframe may have been lost during ICE negotiation;
+                // this ensures the decoder has a clean reference frame to start from.
+                if (this.videoElement) {
+                    this.videoElement.oncanplay = () => {
+                        setTimeout(() => {
+                            this.send({ type: "request_idr" });
+                        }, 250);
                     };
                 }
             }
@@ -550,8 +561,6 @@ export class WebRtcMedia {
             answerSdp = answerSdp.replace(/a=sendrecv/g, 'a=recvonly');
             // Minimal packetization time (reduces audio/video buffering)
             answerSdp = answerSdp.replace(/a=ptime:\d+/g, 'a=ptime:10');
-            // Drop FEC — trades reliability for latency
-            answerSdp = answerSdp.replace(/ulpfec/g, '');
 
             const modifiedAnswer = new RTCSessionDescription({
                 type: 'answer',
