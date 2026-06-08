@@ -285,6 +285,11 @@ export class StreamView {
         this._idrRequested = false;
         this._idrTimeout = null;
 
+        // Proactive IDR scheduling: after the VideoDecoder is first configured,
+        // request a clean keyframe to overwrite any green/corrupted first decode.
+        // Only fires once per stream session (set true after scheduling).
+        this._proactiveIdrScheduled = false;
+
         // Shortcuts slide auto-hide timer (5s after first frame)
         this._shortcutsTimeout = null;
 
@@ -815,6 +820,23 @@ export class StreamView {
                     ' noDescription=' + this._noDescription +
                     ' dequeuing ' + this.pendingFrames.length + ' pending frames');
                 this.flushPendingFrames();
+
+                // Proactive IDR after initial decoder configuration.
+                // The first decoded frame from a freshly configured decoder may
+                // contain green/corrupted pixels because the decoder's internal
+                // buffers (reference frames, MV predictors) are uninitialized.
+                // We request an IDR ~250ms after config so Sunshine sends a clean
+                // keyframe that overwrites any corrupted first-frame output.
+                if (!this._proactiveIdrScheduled) {
+                    this._proactiveIdrScheduled = true;
+                    setTimeout(() => {
+                        if (!this._quitting && this.webrtc) {
+                            console.log('[StreamView] Proactive IDR after initial decoder config');
+                            this.webrtc.send({ type: 'requestidr' });
+                        }
+                    }, 250);
+                }
+
                 return true;
             } catch (e) {
                 console.error('[StreamView] decoder.configure() failed:', e.message, e);
@@ -3110,11 +3132,33 @@ export class StreamView {
         this.unbindEvents();
         this.webrtc.close();
 
-        // Drop Chrome GPU compositor layer BEFORE removing the canvas.
-        // Without this, the compositor may cache the rendered texture and
-        // reuse it when a new StreamView canvas is created with the same
-        // willChange property (ghosting: stale frame from previous stream).
+        // Force Chrome GPU compositor cache eviction BEFORE removing the canvas.
+        // Chrome's compositor caches the GPU texture of any element with
+        // willChange set.  If we just remove the element, the compositor may
+        // keep the cached texture alive and reuse it when a new canvas with
+        // willChange is created in the next StreamView — this is the "ghosting"
+        // bug where the old session's last frame briefly appears on the new canvas.
+        //
+        // Three-part eviction:
+        //   1. Clear canvas content + GPU sync (getImageData flushes the command
+        //      buffer so Chrome commits the black fill to the GPU texture).
+        //   2. Set canvas dimensions to 0, which forces Chrome to release the
+        //      internal GPU texture allocation (D3D11/Vulkan/Metal resource).
+        //   3. Remove willChange so the compositor no longer treats this element
+        //      as a cached layer — the texture is fully disassociated.
         if (this.canvas) {
+            // Clear canvas with GPU sync to flush any pending compositor work
+            const ctx = this.canvas.getContext('2d');
+            if (ctx) {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                ctx.getImageData(0, 0, 1, 1); // Force GPU sync — commits the clear
+            }
+            // Force Chrome to release the GPU texture by zeroing dimensions
+            this.canvas.width = 0;
+            this.canvas.height = 0;
+            // Drop the compositor layer hint so the old texture is not kept alive
             this.canvas.style.willChange = 'auto';
         }
 

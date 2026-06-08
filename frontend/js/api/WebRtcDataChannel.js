@@ -575,7 +575,7 @@ export class WebRtcDataChannel {
             negotiated: true,
             id: 0,
             ordered: false,
-            maxRetransmits: 0
+            maxRetransmits: 3
         };
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
         this._setupDataChannel('video', this.dataChannels.video);
@@ -1041,7 +1041,7 @@ export class WebRtcDataChannel {
         // Proactive IDR request: if multiple frames went stale, the decoder
         // may be starved for data. Ask the backend to request an IDR from
         // Sunshine so we can recover quickly.
-        if (staleCount >= 3) {
+        if (staleCount >= 1) {
             this._requestIdrFrame('stale frames (' + staleCount + ' dropped)');
         }
 

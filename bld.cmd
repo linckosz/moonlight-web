@@ -1,0 +1,1 @@
+cd /d "d:\Code\moonlight-web-deepseek\backend" && build_msvc.bat
