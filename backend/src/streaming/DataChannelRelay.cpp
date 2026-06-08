@@ -988,66 +988,6 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
         m_NewKeyframeArrived = true;
     }
 
-    // ── Frame-interval throttling ────────────────────────────────────────────
-    // At very high frame rates (120fps), the SCTP send buffer fills faster than
-    // the browser's VideoDecoder can drain it.  If we're sending delta frames
-    // faster than kFrameThrottleIntervalUs apart AND the SCTP buffer is already
-    // above half the watermark, skip this delta frame entirely — before
-    // fragmentation, allocation, or any SCTP send overhead.
-    //
-    // This is NOT redundant with the backpressure check in sendFragmented():
-    // that check drops AFTER fragmentation (wasted CPU).  This check prevents
-    // fragmented data from being created in the first place.
-    if (!isKeyframe) {
-        qint64 nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        qint64 interval = m_LastVideoFrameTimeUs > 0
-            ? nowUs - m_LastVideoFrameTimeUs : 0;
-        m_LastVideoFrameTimeUs = nowUs;
-
-        if (interval > 0 && interval < kFrameThrottleIntervalUs) {
-            size_t bufAmt = m_VideoDc ? m_VideoDc->bufferedAmount() : 0;
-            if (bufAmt > kHighWatermark / 2) {
-                m_ThrottleSkipCounter++;
-                // Drop every OTHER frame when the SCTP buffer is under pressure
-                // and frames arrive faster than ~60fps.  This smoothly throttles
-                // 120fps → 60fps without the sawtooth pattern of "drop all →
-                // drain → burst → drop all".  Every other frame passes through,
-                // keeping the browser decoder fed with fresh reference frames.
-                if (m_ThrottleSkipCounter % 2 == 1) {
-                    m_DeltaDroppedCount++;
-                    m_ConsecutiveDeltaDrops++;
-
-                    if (m_BackpressureDropCount == 0 && m_Shim) {
-                        m_Shim->requestIdrFrame();
-                        qInfo() << "[DataChannelRelay] Throttle: IDR requested (frame interval="
-                                << interval << "us, bufAmt=" << bufAmt << ")";
-                    }
-                    m_BackpressureDropCount++;
-
-                    if (m_ConsecutiveDeltaDrops > 60 && m_Shim) {
-                        m_ConsecutiveDeltaDrops = 0;
-                        m_Shim->requestIdrFrame();
-                        qInfo() << "[DataChannelRelay] Throttle: sustained — re-requesting IDR";
-                    }
-
-                    if (m_DeltaDroppedCount <= 5 || m_DeltaDroppedCount % 300 == 0) {
-                        qInfo() << "[DataChannelRelay] Throttle: skipped delta frame (1/2 throttle)"
-                                << "interval=" << interval << "us"
-                                << "bufAmt=" << bufAmt
-                                << "totalDropped=" << m_DeltaDroppedCount;
-                    }
-                    return;  // Skip this frame — the next will pass through
-                }
-                // Let every OTHER frame through (even counter values)
-                m_ConsecutiveDeltaDrops = 0;  // Break the consecutive-drop chain
-            } else {
-                // Buffer has drained — reset throttle counter
-                m_ThrottleSkipCounter = 0;
-            }
-        }
-    }
-
     sendFragmented(frameData, isKeyframe, m_VideoDc);
 }
 
@@ -1295,58 +1235,20 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         size_t bufAmt = dc->bufferedAmount();
         if (bufAmt > kHighWatermark) {
             m_DeltaDroppedCount++;
-            m_ConsecutiveDeltaDrops++;
 
-            // Delta pass-through: let 1 out of every kDeltaPassInterval delta
-            // frames through even when the buffer is full.  This prevents the
-            // continuous IDR-request loop at very high frame rates (120fps)
-            // where the buffer stays full permanently and ALL deltas are
-            // dropped — without this, the browser decoder receives only
-            // occasional keyframes and produces no viable output between them.
-            //
-            // The pass-through frame gives the decoder a fresh reference frame,
-            // breaking the cycle of "all deltas dropped → decoder stalls →
-            // IDR requested → keyframe arrives → buffer still full → repeat".
-            m_BackpressureDeltaPassCounter++;
-            if (m_BackpressureDeltaPassCounter < kDeltaPassInterval) {
-                // Request IDR only on first drop of each backpressure episode
-                if (m_BackpressureDropCount == 0 && m_Shim) {
-                    m_Shim->requestIdrFrame();
-                    qInfo() << "[DataChannelRelay] Backpressure IDR request sent (delta frame dropped)";
-                }
-                m_BackpressureDropCount++;
-
-                // Sustained backpressure: if we've dropped 60+ consecutive
-                // delta frames (~0.5s at 120fps) without a keyframe, the
-                // decoder is completely starved.  Request another IDR to
-                // force a fresh keyframe even if the buffer is still full.
-                if (m_ConsecutiveDeltaDrops > 60 && m_Shim) {
-                    m_ConsecutiveDeltaDrops = 0;  // Reset to avoid spam
-                    m_Shim->requestIdrFrame();
-                    qInfo() << "[DataChannelRelay] Sustained backpressure — re-requesting IDR";
-                }
-
-                if (m_DeltaDroppedCount <= 3 || m_DeltaDroppedCount % 120 == 0) {
-                    qInfo() << "[DataChannelRelay] Dropped delta frame (SCTP full)"
-                            << "bufferedAmount=" << bufAmt
-                            << "totalDropped=" << m_DeltaDroppedCount
-                            << "consecutiveDrops=" << m_ConsecutiveDeltaDrops
-                            << "kHighWatermark=" << kHighWatermark;
-                }
-                return;
+            // Request IDR only on first drop of each backpressure episode
+            if (m_BackpressureDropCount == 0 && m_Shim) {
+                m_Shim->requestIdrFrame();
+                qInfo() << "[DataChannelRelay] Backpressure IDR request sent (delta frame dropped)";
             }
-            // Reset pass counter and let this frame through
-            m_BackpressureDeltaPassCounter = 0;
-            // Log the pass-through event sparingly
-            if (m_DeltaDroppedCount <= 5 || m_DeltaDroppedCount % 300 == 0) {
-                qInfo() << "[DataChannelRelay] Delta pass-through (buffer full, frame passes anyway)"
-                        << "bufAmt=" << bufAmt
+            m_BackpressureDropCount++;
+
+            if (m_DeltaDroppedCount <= 3 || m_DeltaDroppedCount % 120 == 0) {
+                qInfo() << "[DataChannelRelay] Dropped delta frame (SCTP full)"
+                        << "bufferedAmount=" << bufAmt
                         << "totalDropped=" << m_DeltaDroppedCount;
             }
-        } else {
-            // Buffer has drained below watermark — reset all counters
-            m_ConsecutiveDeltaDrops = 0;
-            m_BackpressureDeltaPassCounter = 0;
+            return;
         }
     } else {
         // Log a warning if a keyframe arrives while the buffer is above the
@@ -1362,9 +1264,6 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         }
         // Reset backpressure counters on keyframe — Sunshine responded
         m_BackpressureDropCount = 0;
-        m_ConsecutiveDeltaDrops = 0;
-        m_BackpressureDeltaPassCounter = 0;
-        m_ThrottleSkipCounter = 0;
     }
 
     int totalSize = data.size();
@@ -1531,9 +1430,6 @@ void DataChannelRelay::stop()
     m_DeltaDroppedCount = 0;
     m_KeyframeBackpressureWarnings = 0;
     m_BackpressureDropCount = 0;
-    m_BackpressureDeltaPassCounter = 0;
-    m_ConsecutiveDeltaDrops = 0;
-    m_ThrottleSkipCounter = 0;
     m_LastDecodeLatencyUs.store(0, std::memory_order_release);
 
     // Clear buffered keyframe (if any)

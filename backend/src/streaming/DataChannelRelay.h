@@ -96,29 +96,10 @@ private:
     static constexpr int kFragHeaderSize = 17;
     static constexpr int kMaxPayloadSize = 64000;
 
-    // Frame interval throttle: when frames arrive faster than this interval
-    // (in microseconds) AND the SCTP buffer is filling, we skip delta frames
-    // at the onVideoFrame level BEFORE fragmentation overhead.
-    // At 120fps, frames arrive every ~8300 us; we throttle to ~60fps
-    // (~16667 us) under backpressure to give SCTP time to drain.
-    static constexpr qint64 kFrameThrottleIntervalUs = 16000;  // ~62fps max
-
     // Backpressure: if the SCTP send buffer exceeds this threshold, drop
     // incoming delta frames to prevent main-thread blocking on dc->send().
-    // Keyframes always pass through.  The SCTP association's send buffer is
-    // typically ~256 KB; we set the watermark at 512 KB so there is ample
-    // room for large keyframes (up to ~500 KB at 120fps 1080p) without
-    // triggering backpressure on every keyframe arrival.
-    static constexpr size_t kHighWatermark = 512 * 1024;
-
-    // Delta pass-through: when backpressure is active (buffer above watermark),
-    // we still let 1 out of every N delta frames through to keep the browser
-    // decoder alive with fresh reference frames.  Without this, sustained
-    // backpressure at 120fps drops ALL delta frames and the decoder stalls
-    // until a new keyframe arrives — causing a continuous IDR request loop.
-    // A value of 10 means ~12fps get through at 120fps input, which is enough
-    // for the decoder to maintain reference frames without overflowing SCTP.
-    static constexpr int kDeltaPassInterval = 10;
+    // Keyframes always pass through.
+    static constexpr size_t kHighWatermark = 128 * 1024;
 
     void sendFragmented(const QByteArray& data, bool isKeyframe,
                         std::shared_ptr<rtc::DataChannel>& dc);
@@ -143,9 +124,6 @@ private:
     int m_DeltaDroppedCount = 0;           // Delta frames dropped due to full SCTP buffer
     int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
     int m_BackpressureDropCount = 0;       // IDR request guard — only 1 IDR request per episode
-    int m_BackpressureDeltaPassCounter = 0; // Counts delta sends under backpressure; at kDeltaPassInterval, lets one through
-    int m_ConsecutiveDeltaDrops = 0;       // Consecutive delta drops — triggers IDR re-request at threshold
-
     // Decode latency tracking (microseconds)
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
 
@@ -176,10 +154,6 @@ private:
     // Applied once to the first HEVC keyframe.  Patches level_idc and
     // max_sub_layers to fix Chrome Windows black screen on decode.
     bool m_HevcPatched = false;
-
-    // ── Frame throttle state ────────────────────────────────────────────────
-    qint64 m_LastVideoFrameTimeUs = 0;  // Steady-clock microseconds of last onVideoFrame call
-    int m_ThrottleSkipCounter = 0;      // Throttle: skips every other frame when active
 
     // ── HEVC Debug Test Modes ──────────────────────────────────────────────
     // 0 = normal, 1-4 = debug test modes (see below)

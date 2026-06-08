@@ -173,10 +173,6 @@ export class StreamView {
         this.frameCount = 0;
         this.renderRunning = false;
         this._rendering = false;     // Guard: prevents overlapping GPU render ops
-        // Warm-up counter: first 3 NV12 frames get a copyTo readback before
-        // createImageBitmap to force full GPU texture read (Windows Chrome fix).
-        this._warmupFrames = 0;
-
         // Recycled buffer for HEVC RGBA copyTo — avoids per-frame allocation
         this._rgbaBuffer = null;
         this._rgbaBufferSize = 0;
@@ -381,7 +377,6 @@ export class StreamView {
                 ' isChromeWin=' + this._isChromeWindowsHevc +
                 ' _noDescription=' + this._noDescription +
                 ' patched=' + (this._hevcPatched || false) +
-                ' warmupFrames=' + this._warmupFrames +
                 ' videoCodec=' + this.videoCodec);
         }, 2000);
     }
@@ -572,13 +567,6 @@ export class StreamView {
         this.canvas.height = 1080;
         // Prevent browser default touch behaviors (scroll, zoom, pull-to-refresh)
         this.canvas.style.touchAction = 'none';
-        // Force the canvas onto its own GPU compositor layer permanently.
-        // Chrome's compositor caches the rendered output of each layer; without
-        // this hint, canvas content changes may not trigger a re-composite on
-        // every frame, causing stale pixels ("ghosting") on HEVC WebRTC where
-        // frame content changes rapidly (minimize/restore windows).
-        this.canvas.style.willChange = 'transform';
-
         // Video element for native RTP media track mode (webrtc-media)
         this.videoEl = document.getElementById('stream-video');
         if (this._transport === 'webrtc-media') {
@@ -1336,18 +1324,6 @@ export class StreamView {
         if (this._transport === 'webrtc-media') return;
         this.renderRunning = true;
 
-        // ── Immediate canvas clear at render loop start ──────────────────────
-        // Forces Chrome's compositor to discard any cached layer texture from a
-        // previous stream (willChange compositor layer cache). Without this, the
-        // GPU compositor may show stale frame content until the first real frame
-        // is decoded and rendered.
-        // getImageData() inserts a GPU sync point that flushes the command buffer,
-        // ensuring the compositor re-composites with the cleared canvas content.
-        this.ctx.globalCompositeOperation = 'source-over';
-        this.ctx.fillStyle = '#000000';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-        this.ctx.getImageData(0, 0, 1, 1);
-
         const loop = (now) => {
             if (!this.renderRunning) return;
 
@@ -1477,7 +1453,6 @@ export class StreamView {
                 ' displaySize=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
                 ' codedSize=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
                 ' isHevcNv12=' + isHevcNv12 +
-                ' warmup=' + this._warmupFrames +
                 ' nalParser.codec=' + this.nalParser.codec);
         }
 
@@ -1502,52 +1477,6 @@ export class StreamView {
         //   1. createImageBitmap(VideoFrame) → drawImage(bitmap, 'copy')
         //   2. ctx.drawImage(VideoFrame, 'copy')          (some Safari)
         //   3. copyTo(RGBA) → ImageData → putImageData     (last resort)
-        //
-        // Warmup: first 3 NV12 frames get a copyTo(NV12) readback to force
-        // GPU texture initialization (Chrome Windows green-tint fix).
-
-        // ── NV12 warmup readback (all platforms, all codecs) ───────────────
-        // Force the GPU to fully allocate and write the NV12 texture before
-        // createImageBitmap reads it.  Without this, Chrome Windows D3D11 may
-        // return uninitialized GPU memory for the UV plane → green tint.
-        if (this._warmupFrames < 3 && frame.format === 'NV12') {
-            if (dbgFirstFew) {
-                console.log('[NV12-WARMUP] readback #' + (this._warmupFrames + 1));
-            }
-            try {
-                const ySize = frame.allocationSize({ format: 'NV12' });
-                if (ySize > 0) {
-                    const nv12Buf = new ArrayBuffer(ySize);
-                    await frame.copyTo(nv12Buf, { format: 'NV12' });
-
-                    // Diagnostic: sample first few Y/UV bytes
-                    if (dbgFirstFew) {
-                        const dv = new DataView(nv12Buf);
-                        const w = frame.displayWidth || frame.codedWidth || 0;
-                        const yTL = dv.getUint8(0);
-                        const uvTL = w > 0 ? dv.getUint8(Math.min(w, ySize - 1)) : 0;
-                        console.log('[NV12-WARMUP] Y(0,0)=' + yTL + ' UV(0,0)=' + uvTL +
-                            ' size=' + ySize);
-                    }
-                }
-            } catch (e) {
-                if (dbgFirstFew) {
-                    console.warn('[NV12-WARMUP] copyTo failed: ' + e.message);
-                }
-            }
-            this._warmupFrames++;
-        }
-
-        // ── GPU-synced canvas clear BEFORE any render path ────────────────
-        // Standard clearRect + fillRect may be cached by Chrome's command
-        // buffer.  We insert getImageData() to force a GPU flush, ensuring
-        // the clear is committed before the drawImage below.
-        // This is OUTSIDE the save/restore so 'copy' mode is not affected.
-        this.ctx.globalCompositeOperation = 'source-over';
-        this.ctx.fillStyle = '#000000';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-        // Force GPU sync: getImageData reads back, flushing the command buffer
-        this.ctx.getImageData(0, 0, 1, 1);
 
         // ── HEVC NV12: render with 'copy' composite mode ─────────────────
         // globalCompositeOperation='copy' replaces ALL destination pixels,
@@ -1607,10 +1536,7 @@ export class StreamView {
                     if (w > 0 && h > 0) {
                         const size = w * h * 4;
                         const buf = new ArrayBuffer(size);
-                        const layouts = await frame.copyTo(buf, { format: 'RGBA' });
-                        if (layouts && layouts.length !== 1) {
-                            throw new Error('copyTo RGBA expected 1 plane, got ' + layouts.length);
-                        }
+                        await frame.copyTo(buf, { format: 'RGBA' });
                         const imageData = new ImageData(
                             new Uint8ClampedArray(buf, 0, size), w, h);
 
@@ -3131,36 +3057,6 @@ export class StreamView {
         this.stopDiagnostics();
         this.unbindEvents();
         this.webrtc.close();
-
-        // Force Chrome GPU compositor cache eviction BEFORE removing the canvas.
-        // Chrome's compositor caches the GPU texture of any element with
-        // willChange set.  If we just remove the element, the compositor may
-        // keep the cached texture alive and reuse it when a new canvas with
-        // willChange is created in the next StreamView — this is the "ghosting"
-        // bug where the old session's last frame briefly appears on the new canvas.
-        //
-        // Three-part eviction:
-        //   1. Clear canvas content + GPU sync (getImageData flushes the command
-        //      buffer so Chrome commits the black fill to the GPU texture).
-        //   2. Set canvas dimensions to 0, which forces Chrome to release the
-        //      internal GPU texture allocation (D3D11/Vulkan/Metal resource).
-        //   3. Remove willChange so the compositor no longer treats this element
-        //      as a cached layer — the texture is fully disassociated.
-        if (this.canvas) {
-            // Clear canvas with GPU sync to flush any pending compositor work
-            const ctx = this.canvas.getContext('2d');
-            if (ctx) {
-                ctx.globalCompositeOperation = 'source-over';
-                ctx.fillStyle = '#000000';
-                ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                ctx.getImageData(0, 0, 1, 1); // Force GPU sync — commits the clear
-            }
-            // Force Chrome to release the GPU texture by zeroing dimensions
-            this.canvas.width = 0;
-            this.canvas.height = 0;
-            // Drop the compositor layer hint so the old texture is not kept alive
-            this.canvas.style.willChange = 'auto';
-        }
 
         if (this._pingInterval) {
             clearInterval(this._pingInterval);
