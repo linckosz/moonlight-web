@@ -6,6 +6,8 @@ extern "C" {
 }
 
 #include <rtc/rtc.hpp>
+#include <rtc/plihandler.hpp>
+#include <rtc/rtcpnackresponder.hpp>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
@@ -199,6 +201,17 @@ void MediaTrackRelay::createTracksAndChannels()
             auto packetizer = std::make_shared<rtc::H264RtpPacketizer>(
                 rtc::H264RtpPacketizer::Separator::LongStartSequence,
                 rtpConfig);
+            // Chain: packetizer → RtcpNackResponder → PliHandler
+            // NACK responder re-transmits lost RTP packets (up to 512).
+            // PLI handler requests a keyframe from Sunshine on decoder PLI.
+            auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(512);
+            auto pliHandler = std::make_shared<rtc::PliHandler>([this]() {
+                if (m_Shim && !m_Stopping.load()) {
+                    m_Shim->requestIdrFrame();
+                }
+            });
+            packetizer->addToChain(nackResponder);
+            nackResponder->addToChain(pliHandler);
             m_VideoTrack->setMediaHandler(packetizer);
 
             m_VideoTrack->onOpen([this]() {
@@ -475,6 +488,10 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
+    }
+    else if (type == "request_idr") {
+        qInfo() << "[MediaTrackRelay] Requesting IDR frame via DataChannel (browser)";
+        m_Shim->requestIdrFrame();
     }
     else if (type == "requestidr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame from Sunshine (browser request)";
