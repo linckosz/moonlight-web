@@ -573,7 +573,9 @@ export class StreamView {
         // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
         // Mac Chrome handles NV12→RGBA correctly via Metal; Windows Chrome
         // should do the same via D3D11.
-        this.ctx = this.canvas.getContext('2d');
+        // desynchronized: true reduces compositor latency on Android by avoiding
+        // an intermediate GPU copy. Only safe when willReadFrequently is false (default).
+        this.ctx = this.canvas.getContext('2d', { desynchronized: true });
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
@@ -846,46 +848,67 @@ export class StreamView {
         }
 
         const applyConfig = (cfg, noDescription = false) => {
+            // Try hardware-accelerated decoder first (GPU decoding on Android)
+            const _doConfigure = (config, hwAccel) => {
+                const cfgToUse = hwAccel
+                    ? { ...config, hardwareAcceleration: 'prefer-hardware' }
+                    : config;
+                try {
+                    console.log('[StreamView] Calling decoder.configure() with codec=' + cfgToUse.codec +
+                        ' descriptionLen=' + (cfgToUse.description ? cfgToUse.description.byteLength : 0) +
+                        ' noDescription=' + noDescription +
+                        ' hwAccel=' + (cfgToUse.hardwareAcceleration || 'default') +
+                        ' isChromeWin=' + this._isChromeWindowsHevc +
+                        ' nalParser.codec=' + this.nalParser.codec);
+                    this.decoder.configure(cfgToUse);
+                    this.decoderConfigured = true;
+                    this.decoderConfiguring = false;
+                    this._noDescription = noDescription;
+                    console.log('[HEVC-CONFIG-OK] *** VideoDecoder CONFIGURED *** codec=' + cfgToUse.codec +
+                        ' state=' + this.decoder.state +
+                        ' noDescription=' + this._noDescription +
+                        ' hwAccel=' + (cfgToUse.hardwareAcceleration || 'none') +
+                        ' dequeuing ' + this.pendingFrames.length + ' pending frames');
+                    this.flushPendingFrames();
+
+                    // Proactive IDR after initial decoder configuration.
+                    // The first decoded frame from a freshly configured decoder may
+                    // contain green/corrupted pixels because the decoder's internal
+                    // buffers (reference frames, MV predictors) are uninitialized.
+                    // We request an IDR ~250ms after config so Sunshine sends a clean
+                    // keyframe that overwrites any corrupted first-frame output.
+                    if (!this._proactiveIdrScheduled) {
+                        this._proactiveIdrScheduled = true;
+                        setTimeout(() => {
+                            if (!this._quitting && this.webrtc) {
+                                console.log('[StreamView] Proactive IDR after initial decoder config');
+                                this.webrtc.send({ type: 'requestidr' });
+                            }
+                        }, 250);
+                    }
+
+                    return true;
+                } catch (e) {
+                    console.error('[StreamView] decoder.configure() failed:', e.message, e);
+                    if (this.decoder) {
+                        console.log('[StreamView] Decoder state after failed configure: ' + this.decoder.state);
+                    }
+                    this.decoderConfiguring = false;
+                    // Re-throw NotSupportedError to trigger HW fallback
+                    if (hwAccel && e.name === 'NotSupportedError') {
+                        throw e;
+                    }
+                    return false;
+                }
+            };
+
             try {
-                console.log('[StreamView] Calling decoder.configure() with codec=' + cfg.codec +
-                    ' descriptionLen=' + (cfg.description ? cfg.description.byteLength : 0) +
-                    ' noDescription=' + noDescription +
-                    ' isChromeWin=' + this._isChromeWindowsHevc +
-                    ' nalParser.codec=' + this.nalParser.codec);
-                this.decoder.configure(cfg);
-                this.decoderConfigured = true;
-                this.decoderConfiguring = false;
-                this._noDescription = noDescription;
-                console.log('[HEVC-CONFIG-OK] *** VideoDecoder CONFIGURED *** codec=' + cfg.codec +
-                    ' state=' + this.decoder.state +
-                    ' noDescription=' + this._noDescription +
-                    ' dequeuing ' + this.pendingFrames.length + ' pending frames');
-                this.flushPendingFrames();
-
-                // Proactive IDR after initial decoder configuration.
-                // The first decoded frame from a freshly configured decoder may
-                // contain green/corrupted pixels because the decoder's internal
-                // buffers (reference frames, MV predictors) are uninitialized.
-                // We request an IDR ~250ms after config so Sunshine sends a clean
-                // keyframe that overwrites any corrupted first-frame output.
-                if (!this._proactiveIdrScheduled) {
-                    this._proactiveIdrScheduled = true;
-                    setTimeout(() => {
-                        if (!this._quitting && this.webrtc) {
-                            console.log('[StreamView] Proactive IDR after initial decoder config');
-                            this.webrtc.send({ type: 'requestidr' });
-                        }
-                    }, 250);
-                }
-
-                return true;
-            } catch (e) {
-                console.error('[StreamView] decoder.configure() failed:', e.message, e);
-                if (this.decoder) {
-                    console.log('[StreamView] Decoder state after failed configure: ' + this.decoder.state);
-                }
-                this.decoderConfiguring = false;
-                return false;
+                // Phase 1: try with hardware acceleration
+                return _doConfigure(cfg, true);
+            } catch (hwErr) {
+                // Phase 2: fallback to software when prefer-hardware is not supported
+                console.warn('[GPU] prefer-hardware rejected (' + hwErr.message + '), falling back to software');
+                return _doConfigure(cfg, false);
             }
         };
 
@@ -1049,9 +1072,19 @@ export class StreamView {
         console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs (' +
             (codecType === CODEC_HEVC ? 'HEVC' : 'H.264') + ')');
         tryCodecs(configsToTry, 0, () => {
-            console.error('[StreamView] All H.264 configs rejected');
-            this.decoderConfiguring = false;
-            this.setStatus('error', 'Codec not supported by browser');
+            // All avc1 configs exhausted — try avc3 (in-band SPS/PPS).
+            // Some browsers/devices prefer avc3 over avc1 for hardware decoding.
+            console.warn('[GPU] All avc1 configs rejected, trying avc3 (in-band SPS/PPS)');
+            const avc3Configs = [
+                { codec: 'avc3.42E01E', ...shared, ...bt709, optimizeForLatency: true },
+                { codec: 'avc3.42E01E', ...shared, optimizeForLatency: true },
+                { codec: 'avc3.42E01E', ...shared }
+            ];
+            tryCodecs(avc3Configs, 0, () => {
+                console.error('[StreamView] All H.264 configs (including avc3) rejected');
+                this.decoderConfiguring = false;
+                this.setStatus('error', 'Codec not supported by browser');
+            });
         });
     }
 
@@ -1390,7 +1423,7 @@ export class StreamView {
                 : false;
             if (this.ctx && ctxLost) {
                 console.warn('[StreamView] Canvas2D context lost, recreating...');
-                this.ctx = this.canvas.getContext('2d');
+                this.ctx = this.canvas.getContext('2d', { desynchronized: true });
                 // Force re-composite all overlay layers by briefly toggling transform
                 const header = document.querySelector('.stream-header');
                 if (header) {
@@ -1648,44 +1681,66 @@ export class StreamView {
 
         // ── Standard path (H.264 / AV1 / non-NV12 / Safari) ──────────────
         let rendered = false;
-        try {
-            const bitmap = await createImageBitmap(frame);
-            if (this.stats.rendered < 5) {
-                console.log('[debug] PATH: createImageBitmap' +
-                    ' bitmapSize=' + bitmap.width + 'x' + bitmap.height +
-                    ' canvasSize=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?'));
-            }
-            if (this.canvas && this.ctx) {
-                this.ctx.drawImage(bitmap, 0, 0,
-                    this.canvas.width, this.canvas.height);
-            }
-            bitmap.close();
-            rendered = true;
-        } catch (e) {
-            console.warn('[StreamView] createImageBitmap failed: ' + e.message +
-                ' — trying drawImage(VideoFrame) fallback');
-            if (this.canvas && this.ctx) {
-                try {
+
+        // H.264: try direct drawImage(VideoFrame) first to skip the
+        // createImageBitmap copy — reduces GPU round-trips on Android.
+        // HEVC NV12 uses the dedicated path above; for H.264 the direct
+        // path is faster and avoids a CPU-side bitmap allocation.
+        if (this.nalParser.codec === CODEC_H264) {
+            try {
+                if (this.canvas && this.ctx) {
+                    console.log('[GPU] H.264 direct drawImage(VideoFrame), frame#' +
+                        this.stats.rendered);
                     this.ctx.drawImage(frame, 0, 0,
                         this.canvas.width, this.canvas.height);
                     rendered = true;
-                } catch (e2) {
-                    console.warn('[StreamView] drawImage(VideoFrame) failed: ' +
-                        e2.message + ' — trying copyTo RGBA readback');
+                }
+            } catch (e) {
+                console.warn('[GPU] H.264 drawImage(VideoFrame) failed: ' + e.message +
+                    ' — falling back to createImageBitmap');
+            }
+        }
+
+        if (!rendered) {
+            try {
+                const bitmap = await createImageBitmap(frame);
+                if (this.stats.rendered < 5) {
+                    console.log('[debug] PATH: createImageBitmap' +
+                        ' bitmapSize=' + bitmap.width + 'x' + bitmap.height +
+                        ' canvasSize=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?'));
+                }
+                if (this.canvas && this.ctx) {
+                    this.ctx.drawImage(bitmap, 0, 0,
+                        this.canvas.width, this.canvas.height);
+                }
+                bitmap.close();
+                rendered = true;
+            } catch (e) {
+                console.warn('[StreamView] createImageBitmap failed: ' + e.message +
+                    ' — trying drawImage(VideoFrame) fallback');
+                if (this.canvas && this.ctx) {
                     try {
-                        const w = frame.displayWidth || frame.codedWidth || 0;
-                        const h = frame.displayHeight || frame.codedHeight || 0;
-                        if (w > 0 && h > 0) {
-                            const size = w * h * 4;
-                            const buf = new ArrayBuffer(size);
-                            await frame.copyTo(buf, { format: 'RGBA' });
-                            const imageData = new ImageData(
-                                new Uint8ClampedArray(buf, 0, size), w, h);
-                            this.ctx.putImageData(imageData, 0, 0);
-                            rendered = true;
+                        this.ctx.drawImage(frame, 0, 0,
+                            this.canvas.width, this.canvas.height);
+                        rendered = true;
+                    } catch (e2) {
+                        console.warn('[StreamView] drawImage(VideoFrame) failed: ' +
+                            e2.message + ' — trying copyTo RGBA readback');
+                        try {
+                            const w = frame.displayWidth || frame.codedWidth || 0;
+                            const h = frame.displayHeight || frame.codedHeight || 0;
+                            if (w > 0 && h > 0) {
+                                const size = w * h * 4;
+                                const buf = new ArrayBuffer(size);
+                                await frame.copyTo(buf, { format: 'RGBA' });
+                                const imageData = new ImageData(
+                                    new Uint8ClampedArray(buf, 0, size), w, h);
+                                this.ctx.putImageData(imageData, 0, 0);
+                                rendered = true;
+                            }
+                        } catch (e3) {
+                            console.error('[StreamView] All rendering paths failed:', e3.message);
                         }
-                    } catch (e3) {
-                        console.error('[StreamView] All rendering paths failed:', e3.message);
                     }
                 }
             }

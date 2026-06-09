@@ -7,3 +7,4 @@
 - [WebRTC PC Failed Fix](webrtc-pc-failed-fix.md) — forceMediaTransport=true cassait DTLS-SRTP handshake en DataChannel-only, maxRetransmits mismatch backend/browser
 - [Explicit Cert Key Missing Fix](explicit-cert-key-missing-fix.md) — key.pem manquant dans le dossier du certificat explicite, fallback self-signed silencieux
 - [HEVC AVCC Keyframe First NAL Type](hevc-avcc-keyframe-first-nall-type.md) — Fix Chrome/Edge ecran noir HEVC : AUD/SEI avant IRAP dans toAvcc()
+- [Android GPU Acceleration](android-gpu-acceleration-corrections.md) — 4 correctifs H.264 Android : prefer-hardware, drawImage direct, avc3 fallback, desynchronized canvas
