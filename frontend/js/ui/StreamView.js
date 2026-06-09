@@ -28,9 +28,7 @@ import {
     CODEC_AV1
 } from '../util/Av1Utils.js';
 
-/** True when the browser supports touch events (mobile/tablet, touchscreen laptop). */
-const IS_TOUCH_DEVICE = 'ontouchstart' in window ||
-    (typeof navigator.maxTouchPoints !== 'undefined' && navigator.maxTouchPoints > 0);
+import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET } from '../util/BrowserDetect.js';
 
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
@@ -249,6 +247,20 @@ export class StreamView {
         /** How long (ms) the cursor stays visible after the last touch ends.
          *  The user needs to see where the pointer is between gestures. */
         this._touchCursorHideDelay = 3000;
+
+        // DEBUG: orientation debug overlay state — remove after diagnosis
+        this._debugOrientationEl = null;
+        this._debugOrientationInterval = null;
+        this._debugFullscreenSucceeded = false;
+        this._debugFullscreenFailed = false;
+        // DEBUG end
+
+        // Mobile fullscreen button state
+        this._mobileFsBtn = null;
+
+        // CSS fallback fullscreen (when Fullscreen API fails, e.g. iOS canvas)
+        this._cssFullscreen = false;
+        this._exitFsBtn = null;
 
         // Visibility change: when returning from Alt-Tab, force browser to
         // re-composite all layers.  On Chrome Windows, the GPU compositor may
@@ -622,6 +634,47 @@ export class StreamView {
             '</div>'
         ].join('');
         document.getElementById('stream-view').appendChild(this._startupOverlay);
+
+        // DEBUG: orientation debug badge — remove after diagnosis
+        if (IS_MOBILE_OR_TABLET) {
+            this._debugOrientationEl = document.createElement('div');
+            this._debugOrientationEl.id = 'stream-debug-orientation';
+            this._debugOrientationEl.style.cssText = [
+                'position:fixed',
+                'bottom:8px',
+                'right:8px',
+                'background:rgba(0,0,0,0.65)',
+                'color:#fff',
+                'font:11px/1.4 monospace',
+                'padding:4px 8px',
+                'border-radius:4px',
+                'z-index:9999',
+                'pointer-events:none',
+                'user-select:none',
+                'white-space:pre-wrap',
+            ].join(';');
+            document.body.appendChild(this._debugOrientationEl);
+            this._updateDebugOrientation();
+            this._debugOrientationInterval = setInterval(() => this._updateDebugOrientation(), 200);
+        }
+        // DEBUG end
+
+        // ── Header fullscreen button (always visible, desktop+mobile) ──────
+        this._mobileFsBtn = document.createElement('button');
+        this._mobileFsBtn.id = 'btn-stream-fs';
+        this._mobileFsBtn.className = 'btn-stream-fs';
+        this._mobileFsBtn.textContent = '⛶ Fullscreen';
+        this._mobileFsBtn.title = 'Enter fullscreen';
+        this._mobileFsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._requestFullscreen();
+        });
+        const header = document.querySelector('.stream-header');
+        if (header) {
+            // Insert before the quit button (first child)
+            header.insertBefore(this._mobileFsBtn, header.firstChild);
+        }
+        // ── End header fullscreen button ─────────────────────────────────----
     }
 
     // =========================================================================
@@ -1315,6 +1368,7 @@ export class StreamView {
             setTimeout(() => this._hideStartupOverlay(), 1500);
             // Show keyboard shortcuts slide (5s auto-hide)
             this._showShortcutsSlide();
+
         }
     }
 
@@ -1678,6 +1732,7 @@ export class StreamView {
                             setTimeout(() => this._hideStartupOverlay(), 1500);
                             // Show keyboard shortcuts slide (5s auto-hide)
                             this._showShortcutsSlide();
+
                         }
                     };
                 }
@@ -1694,6 +1749,9 @@ export class StreamView {
                     }
                 }, 3000);
             }
+
+            // Mobile fullscreen/button init (all transport modes)
+            this._initMobileFullscreen();
         };
         this.webrtc.onClose = () => {
             if (this._quitting) return;
@@ -2402,6 +2460,15 @@ export class StreamView {
         // Ignore all keyboard input while the stream is being shut down
         if (this._quitting) return;
 
+        // ── CSS fallback fullscreen Escape ─────────────────────────────────
+        // When in CSS fake fullscreen (no native Fullscreen API), Escape
+        // exits the CSS fullscreen rather than being forwarded to the host.
+        if (this._cssFullscreen && e.key === 'Escape') {
+            e.preventDefault();
+            this._exitCssFallbackFullscreen();
+            return;
+        }
+
         // ── Ctrl/Cmd+Alt+{Shift|Ctrl} combos ──
         //   Win: Ctrl+Alt+Shift+{Q,X,Z,M}
         //   Mac: Cmd+Option+Ctrl+{Q,X,Z,M}
@@ -2603,6 +2670,257 @@ export class StreamView {
     }
 
     // =========================================================================
+    // Mobile orientation-based fullscreen (iOS Safari native player / Android)
+    // =========================================================================
+
+    /**
+     * Set up a matchMedia listener for orientation changes on mobile devices.
+     * Landscape → enters native fullscreen on the <video> element (webrtc-media mode).
+     * Portrait  → exits fullscreen.
+     *
+     * Only activates on mobile/tablet platforms (detected via User-Agent in
+     * BrowserDetect.js) to avoid triggering on touchscreen laptops (Surface, Chromebooks).
+     * Silently ignored when the transport is not webrtc-media or when the video element
+     * does not exist (DataChannel SCTP mode).
+     */
+    _initMobileFullscreen() {
+        // Mobile or tablet only (excludes touchscreen laptops via User-Agent detection)
+        if (!IS_MOBILE_OR_TABLET) return;
+
+        // Orientation change listener
+        this._orientationMql = window.matchMedia('(orientation: landscape)');
+        this._onOrientationChange = (e) => {
+            if (e.matches) {
+                this._requestFullscreen();
+            } else {
+                this._exitMobileFullscreen();
+            }
+            this._updateMobileFsButtonVisibility();
+        };
+        this._orientationMql.addEventListener('change', this._onOrientationChange);
+
+        // Fullscreen change listener (for button visibility)
+        this._onFullscreenChange = () => {
+            this._updateMobileFsButtonVisibility();
+        };
+        document.addEventListener('fullscreenchange', this._onFullscreenChange);
+        if (this.videoEl) {
+            this.videoEl.addEventListener('webkitbeginfullscreen', this._onFullscreenChange);
+            this.videoEl.addEventListener('webkitendfullscreen', this._onFullscreenChange);
+        }
+
+        // If the constructor was called from a user click (app launch), the user
+        // gesture is still active — webkitEnterFullscreen() may succeed on iOS.
+        // Only auto-fullscreen if already in landscape; in portrait, let the user
+        // rotate first (orientation change listener handles landscape→FS).
+        if (window.matchMedia('(orientation: landscape)').matches) {
+            this._requestMobileFullscreen();
+        }
+
+        // Initial button state
+        this._updateMobileFsButtonVisibility();
+    }
+
+    /**
+     * Enter fullscreen on the <video> element.
+     *
+     * Priority order:
+     *   1. webkitEnterFullscreen() — native video player fullscreen (iOS Safari).
+     *      Only works from a user-gesture-initiated call chain. Orientation change
+     *      events are NOT user gestures, so this silently fails on rotation.
+     *   2. requestFullscreen() — standard Fullscreen API (Android Chrome, others).
+     */
+    _requestMobileFullscreen() {
+        // iOS Safari / Chrome iOS: native video player fullscreen
+        if (this.videoEl && typeof this.videoEl.webkitEnterFullscreen === 'function') {
+            try {
+                this.videoEl.webkitEnterFullscreen();
+                this._debugFullscreenSucceeded = true;
+                this._debugFullscreenFailed = false;
+            } catch (e) {
+                // Silently ignored — rejected when not from a user gesture
+                // (orientation change events are not user-initiated on iOS).
+                this._debugFullscreenFailed = true;
+                this._debugFullscreenSucceeded = false;
+            }
+            this._updateMobileFsButtonVisibility();
+            return;
+        }
+
+        // Standard Fullscreen API on the document element
+        // Works for Android Chrome, DataChannel mode, etc.
+        if (document.documentElement.requestFullscreen) {
+            this._debugFullscreenSucceeded = true; // assume success until catch
+            document.documentElement.requestFullscreen()
+                .then(() => {
+                    this._debugFullscreenSucceeded = true;
+                    this._debugFullscreenFailed = false;
+                    this._updateMobileFsButtonVisibility();
+                })
+                .catch((err) => {
+                    console.warn('[StreamView] requestFullscreen failed:', err.message);
+                    this._debugFullscreenFailed = true;
+                    this._debugFullscreenSucceeded = false;
+                    this._updateMobileFsButtonVisibility();
+
+                    // Fallback: try video element fullscreen
+                    if (this.videoEl && this.videoEl.requestFullscreen) {
+                        return this.videoEl.requestFullscreen()
+                            .then(() => {
+                                this._debugFullscreenSucceeded = true;
+                                this._debugFullscreenFailed = false;
+                                this._updateMobileFsButtonVisibility();
+                            })
+                            .catch(() => {
+                                this._debugFullscreenFailed = true;
+                                this._debugFullscreenSucceeded = false;
+                                this._updateMobileFsButtonVisibility();
+                            });
+                    }
+                });
+        }
+    }
+
+    /**
+     * Request fullscreen for any transport mode, with CSS fallback on failure.
+     *
+     * Priority:
+     *   1. webkitEnterFullscreen() — native video player fullscreen (iOS Safari, video mode only).
+     *   2. document.documentElement.requestFullscreen() — standard Fullscreen API.
+     *   3. _enterCssFallbackFullscreen() — fake fullscreen via CSS when API fails
+     *      (iOS Safari/Chrome with canvas mode where Fullscreen API is unavailable).
+     */
+    _requestFullscreen() {
+        if (this._cssFullscreen) return;
+
+        // ── Mode <video> (webrtc-media) — native video fullscreen ────────────
+        if (this.videoEl && typeof this.videoEl.webkitEnterFullscreen === 'function') {
+            try {
+                this.videoEl.webkitEnterFullscreen();
+                return;
+            } catch (e) {
+                // Silently ignored — not from a user gesture or not supported
+            }
+        }
+
+        // ── Standard Fullscreen API ──────────────────────────────────────────
+        if (document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen()
+                .then(() => {
+                    // Success — button visibility handled by fullscreenchange
+                })
+                .catch((err) => {
+                    console.warn('[StreamView] requestFullscreen failed:', err.message);
+                    this._enterCssFallbackFullscreen();
+                });
+            return;
+        }
+
+        // ── No fullscreen API available — CSS fallback ───────────────────────
+        this._enterCssFallbackFullscreen();
+    }
+
+    /**
+     * Enter CSS-based "fake" fullscreen when the Fullscreen API is unavailable
+     * (iOS Safari canvas mode). Hides the header, stretches canvas fullscreen,
+     * adds a small "Exit fullscreen" overlay button.
+     */
+    _enterCssFallbackFullscreen() {
+        if (this._cssFullscreen || this._quitting) return;
+        this._cssFullscreen = true;
+
+        // Add CSS class to the stream-view container
+        const streamView = document.getElementById('stream-view');
+        if (streamView) streamView.classList.add('stream-css-fs');
+
+        // Hide the header fullscreen button
+        if (this._mobileFsBtn) this._mobileFsBtn.style.display = 'none';
+
+        // Create exit button
+        if (!this._exitFsBtn) {
+            this._exitFsBtn = document.createElement('button');
+            this._exitFsBtn.className = 'stream-fs-exit-btn';
+            this._exitFsBtn.textContent = 'Exit FS';
+            this._exitFsBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._exitCssFallbackFullscreen();
+            });
+            document.body.appendChild(this._exitFsBtn);
+        }
+    }
+
+    /**
+     * Exit CSS fallback fullscreen. Restores header, canvas area, removes
+     * exit button.
+     */
+    _exitCssFallbackFullscreen() {
+        if (!this._cssFullscreen) return;
+        this._cssFullscreen = false;
+
+        // Remove CSS class from the stream-view container
+        const streamView = document.getElementById('stream-view');
+        if (streamView) streamView.classList.remove('stream-css-fs');
+
+        // Restore header fullscreen button visibility
+        if (this._mobileFsBtn) this._mobileFsBtn.style.display = '';
+
+        // Remove exit button
+        if (this._exitFsBtn) {
+            this._exitFsBtn.remove();
+            this._exitFsBtn = null;
+        }
+    }
+
+    /**
+     * Exit fullscreen on mobile.
+     *
+     * Tries both APIs:
+     *   1. webkitExitFullscreen() — exits native video player fullscreen (iOS Safari).
+     *   2. document.exitFullscreen() — standard Fullscreen API exit.
+     *   3. _exitCssFallbackFullscreen() — CSS fallback exit.
+     */
+    _exitMobileFullscreen() {
+        // Also clean up CSS fallback fullscreen if active
+        this._exitCssFallbackFullscreen();
+
+        // iOS Safari: exit native video player fullscreen
+        if (this.videoEl && typeof this.videoEl.webkitExitFullscreen === 'function') {
+            try {
+                this.videoEl.webkitExitFullscreen();
+            } catch (e) { /* silently ignored */ }
+        }
+
+        // Standard Fullscreen API exit
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        }
+    }
+
+    /**
+     * Show/hide the header fullscreen button based on current state.
+     *
+     * Visible when: NOT in fullscreen, NOT in CSS fallback fullscreen,
+     * AND in landscape orientation. Hidden when fullscreen is active,
+     * CSS fallback is active, or portrait mode (mobile users should
+     * rotate to landscape to enter fullscreen).
+     * Always visible on desktop (no orientation constraint).
+     */
+    _updateMobileFsButtonVisibility() {
+        if (!this._mobileFsBtn) return;
+
+        const inFullscreen = !!document.fullscreenElement ||
+            (this.videoEl && this.videoEl.webkitDisplayingFullscreen) ||
+            this._cssFullscreen;
+
+        // Hide in portrait orientation — mobile users must rotate to landscape
+        // before entering fullscreen. Desktop (no matchMedia) passes through.
+        const isPortrait = window.matchMedia &&
+            window.matchMedia('(orientation: portrait)').matches;
+
+        this._mobileFsBtn.style.display = (inFullscreen || isPortrait) ? 'none' : '';
+    }
+
+    // =========================================================================
     // Touch input (mobile) — trackpad-like behaviour
     // =========================================================================
 
@@ -2760,9 +3078,18 @@ export class StreamView {
                 console.warn('[StreamView] exitFullscreen failed:', err.message);
             });
         } else {
-            document.documentElement.requestFullscreen().catch(err => {
-                console.warn('[StreamView] requestFullscreen failed:', err.message);
-            });
+            // DEBUG: track fullscreen success/failure for debug badge
+            this._debugFullscreenSucceeded = true; // assume success until catch // DEBUG
+            document.documentElement.requestFullscreen()
+                .then(() => {                                                       // DEBUG
+                    this._debugFullscreenSucceeded = true;                           // DEBUG
+                    this._debugFullscreenFailed = false;                             // DEBUG
+                })                                                                   // DEBUG
+                .catch(err => {                                                      // DEBUG
+                    console.warn('[StreamView] requestFullscreen failed:', err.message);
+                    this._debugFullscreenFailed = true;                              // DEBUG
+                    this._debugFullscreenSucceeded = false;                          // DEBUG
+                });                                                                  // DEBUG
         }
     }
 
@@ -2947,6 +3274,22 @@ export class StreamView {
         }, 500);
     }
 
+    // DEBUG: orientation debug badge — real-time update (called every 200ms)
+    _updateDebugOrientation() {
+        if (!this._debugOrientationEl) return;
+        const mql = window.matchMedia('(orientation: landscape)');
+        const orient = mql.matches ? 'landscape' : 'portrait';
+        const screenType = screen?.orientation?.type || 'N/A';
+        const fsOk = this._debugFullscreenSucceeded ? 'OK'
+            : this._debugFullscreenFailed ? 'FAIL' : '--';
+        this._debugOrientationEl.textContent =
+            'orient: ' + orient +
+            '\nmql:    ' + mql.matches +
+            '\nscreen: ' + screenType +
+            '\nfs:     ' + fsOk;
+    }
+    // DEBUG end
+
     // =========================================================================
     // Quit / Cleanup
     // =========================================================================
@@ -2956,7 +3299,11 @@ export class StreamView {
         if (this._quitting) return;
         this._quitting = true;
 
-        // Exit fullscreen if active (before unbinding events)
+        // Exit fullscreen if active (before unbinding events).
+        // Covers both standard Fullscreen API and iOS webkitExitFullscreen.
+        // Also exit CSS fallback fullscreen if active.
+        this._exitCssFallbackFullscreen();
+        this._exitMobileFullscreen();
         if (document.fullscreenElement) {
             document.exitFullscreen().catch(() => {});
         }
@@ -2999,6 +3346,40 @@ export class StreamView {
         }
         if (this._touchCursorEl) {
             this._touchCursorEl.style.display = 'none';
+        }
+
+        // Remove mobile orientation fullscreen listener
+        if (this._orientationMql && this._onOrientationChange) {
+            this._orientationMql.removeEventListener('change', this._onOrientationChange);
+            this._orientationMql = null;
+            this._onOrientationChange = null;
+        }
+
+        // DEBUG: clean up orientation debug overlay
+        if (this._debugOrientationInterval) {
+            clearInterval(this._debugOrientationInterval);
+            this._debugOrientationInterval = null;
+        }
+        if (this._debugOrientationEl) {
+            this._debugOrientationEl.remove();
+            this._debugOrientationEl = null;
+        }
+        // DEBUG end
+
+        // Clean up fullscreen change listener
+        if (this._onFullscreenChange) {
+            document.removeEventListener('fullscreenchange', this._onFullscreenChange);
+            if (this.videoEl) {
+                this.videoEl.removeEventListener('webkitbeginfullscreen', this._onFullscreenChange);
+                this.videoEl.removeEventListener('webkitendfullscreen', this._onFullscreenChange);
+            }
+            this._onFullscreenChange = null;
+        }
+
+        // Remove mobile fullscreen button
+        if (this._mobileFsBtn) {
+            this._mobileFsBtn.remove();
+            this._mobileFsBtn = null;
         }
 
         if (document.pointerLockElement === this.canvas) {
@@ -3058,6 +3439,7 @@ export class StreamView {
     }
 
     destroy() {
+        this._exitCssFallbackFullscreen();
         this.stopRenderLoop();
         this.stopDiagnostics();
         this.unbindEvents();
@@ -3076,6 +3458,40 @@ export class StreamView {
         if (this._touchCursorTimeout) {
             clearTimeout(this._touchCursorTimeout);
             this._touchCursorTimeout = null;
+        }
+
+        // Remove mobile orientation fullscreen listener
+        if (this._orientationMql && this._onOrientationChange) {
+            this._orientationMql.removeEventListener('change', this._onOrientationChange);
+            this._orientationMql = null;
+            this._onOrientationChange = null;
+        }
+
+        // DEBUG: clean up orientation debug overlay
+        if (this._debugOrientationInterval) {
+            clearInterval(this._debugOrientationInterval);
+            this._debugOrientationInterval = null;
+        }
+        if (this._debugOrientationEl) {
+            this._debugOrientationEl.remove();
+            this._debugOrientationEl = null;
+        }
+        // DEBUG end
+
+        // Clean up fullscreen change listener
+        if (this._onFullscreenChange) {
+            document.removeEventListener('fullscreenchange', this._onFullscreenChange);
+            if (this.videoEl) {
+                this.videoEl.removeEventListener('webkitbeginfullscreen', this._onFullscreenChange);
+                this.videoEl.removeEventListener('webkitendfullscreen', this._onFullscreenChange);
+            }
+            this._onFullscreenChange = null;
+        }
+
+        // Remove mobile fullscreen button
+        if (this._mobileFsBtn) {
+            this._mobileFsBtn.remove();
+            this._mobileFsBtn = null;
         }
 
         if (document.pointerLockElement === this.canvas) {
