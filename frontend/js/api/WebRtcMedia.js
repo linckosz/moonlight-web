@@ -332,14 +332,14 @@ export class WebRtcMedia {
             console.log('[WebRtcMedia] Track received: kind=' + event.track.kind +
                 ' id=' + event.track.id);
 
-            // Set jitter buffer to 12ms for resilience against packet reordering/loss
+            // Disable jitter buffer entirely for minimum latency.
+            // jitterBufferTarget=0 tells Chrome's WebRTC engine to deliver
+            // frames as soon as they arrive, accepting occasional packet
+            // reordering artifacts in exchange for the lowest possible delay.
             try {
                 for (const receiver of this.pc.getReceivers()) {
                     if (receiver.jitterBufferTarget !== undefined) {
-                        // 4ms jitter buffer: enough for LAN jitter (1-3ms) while keeping latency minimal.
-                        // Previously 12ms — reduced because it added ~72% of a frame interval
-                        // (16.67ms at 60fps) as constant latency on every frame.
-                        receiver.jitterBufferTarget = 4;
+                        receiver.jitterBufferTarget = 0;
                     }
                 }
             } catch (e) {
@@ -562,6 +562,8 @@ export class WebRtcMedia {
             let answerSdp = answer.sdp;
             // Direction: receive only (client is viewer, never sends media)
             answerSdp = answerSdp.replace(/a=sendrecv/g, 'a=recvonly');
+            // Strip ULPFEC — redundant FEC packets add bandwidth & latency
+            answerSdp = answerSdp.replace(/ulpfec/g, '');
             // Minimal packetization time (reduces audio/video buffering)
             answerSdp = answerSdp.replace(/a=ptime:\d+/g, 'a=ptime:10');
 
