@@ -202,15 +202,15 @@ void MediaTrackRelay::createTracksAndChannels()
                 rtc::H264RtpPacketizer::Separator::LongStartSequence,
                 rtpConfig);
             // Chain: packetizer → RtcpNackResponder → PliHandler
-            // NACK responder re-transmits lost RTP packets (up to 512).
+            // RtcpNackResponder retransmits RTP packets on NACK with a 128-packet buffer.
+            auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(128);
+            packetizer->addToChain(nackResponder);
             // PLI handler requests a keyframe from Sunshine on decoder PLI.
-            auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(512);
             auto pliHandler = std::make_shared<rtc::PliHandler>([this]() {
                 if (m_Shim && !m_Stopping.load()) {
                     m_Shim->requestIdrFrame();
                 }
             });
-            packetizer->addToChain(nackResponder);
             nackResponder->addToChain(pliHandler);
             m_VideoTrack->setMediaHandler(packetizer);
 
