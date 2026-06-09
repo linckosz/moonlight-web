@@ -336,7 +336,10 @@ export class WebRtcMedia {
             try {
                 for (const receiver of this.pc.getReceivers()) {
                     if (receiver.jitterBufferTarget !== undefined) {
-                        receiver.jitterBufferTarget = 12;
+                        // 4ms jitter buffer: enough for LAN jitter (1-3ms) while keeping latency minimal.
+                        // Previously 12ms — reduced because it added ~72% of a frame interval
+                        // (16.67ms at 60fps) as constant latency on every frame.
+                        receiver.jitterBufferTarget = 4;
                     }
                 }
             } catch (e) {
