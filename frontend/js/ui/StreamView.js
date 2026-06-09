@@ -305,18 +305,6 @@ export class StreamView {
         // with H.264 forced via MoonlightApp.launchApp(host, app, 'h264').
         this._codecFallbackRequested = false;
 
-        // Fullscreen state
-        this._fullscreenMode = false;
-        this._videoWidth = 0;
-        this._videoHeight = 0;
-        this._onFullscreenChange = () => this.handleFullscreenChange();
-
-        // Auto-fullscreen on mobile orientation change
-        this._autoFsBlocked = false;   // true after user manually exits fullscreen
-        this._autoFsExiting = false;   // true during programmatic exit (prevent _autoFsBlocked)
-        this._orientationMedia = null; // MediaQueryList for '(orientation: landscape)'
-        this._onOrientationChange = () => this._handleOrientationChange();
-
         // Platform flag: Chrome Windows — gates the HEVC NV12 RGBA copyTo path
         // (green-tint workaround). Set by _logPlatformInfo() before first frame.
         this._isChromeWindowsHevc = false;
@@ -351,7 +339,6 @@ export class StreamView {
         this.bindEvents();
         this.startRenderLoop();
         this.startDiagnostics();
-        this._setupAutoFullscreen();
         this.initAudioAsync();
     }
 
@@ -499,69 +486,6 @@ export class StreamView {
                     console.log('[Platform-HEVC] ' + c + ' isConfigSupported: ' + results[i].supported);
                 });
             }).catch(() => {});
-        }
-    }
-
-    // =========================================================================
-    // Auto-fullscreen on mobile orientation change
-    // =========================================================================
-
-    /**
-     * Set up automatic fullscreen on mobile when the device is rotated to
-     * landscape orientation.  Uses matchMedia to detect orientation changes.
-     *
-     * Only active on touch devices (IS_TOUCH_DEVICE).
-     * - Landscape → enter fullscreen so the stream fills the screen.
-     * - Portrait  → exit fullscreen so the user can reach the Stop button.
-     *
-     * After the user manually exits fullscreen, _autoFsBlocked prevents
-     * re-entering fullscreen on the next landscape rotation.  The block
-     * resets if the user manually enters fullscreen again.
-     */
-    _setupAutoFullscreen() {
-        if (!IS_TOUCH_DEVICE) return;
-
-        this._orientationMedia = window.matchMedia('(orientation: landscape)');
-        this._orientationMedia.addEventListener('change', this._onOrientationChange);
-
-        // Immediately check current orientation — landscape at startup should
-        // also trigger fullscreen (e.g. device already held in landscape).
-        if (this._orientationMedia.matches && !document.fullscreenElement && !this._autoFsBlocked) {
-            this.canvas.requestFullscreen().catch(err => {
-                console.warn('[StreamView] Auto-fullscreen (initial landscape):', err.message);
-            });
-        }
-
-        console.log('[StreamView] Auto-fullscreen listener registered (touch=' +
-            IS_TOUCH_DEVICE + ', landscape=' + this._orientationMedia.matches + ')');
-    }
-
-    /**
-     * Handle orientation change events from the matchMedia listener.
-     *
-     * Landscape → requestFullscreen() on the canvas element (if not blocked).
-     * Portrait  → exitFullscreen() so the user can reach the Stop button.
-     *
-     * Uses _autoFsExiting to distinguish our programmatic exit from a user-initiated
-     * exit (e.g. pressing Escape).  Only the latter sets _autoFsBlocked.
-     */
-    _handleOrientationChange() {
-        if (this._quitting) return;
-        if (!IS_TOUCH_DEVICE || !this._orientationMedia) return;
-
-        const isLandscape = this._orientationMedia.matches;
-
-        if (isLandscape && !document.fullscreenElement && !this._autoFsBlocked) {
-            // Landscape with fullscreen not active → enter fullscreen
-            this.canvas.requestFullscreen().catch(err => {
-                console.warn('[StreamView] Auto-fullscreen failed:', err.message);
-            });
-        } else if (!isLandscape && document.fullscreenElement && !this._autoFsExiting) {
-            // Portrait with fullscreen active → exit so user can reach UI
-            this._autoFsExiting = true;
-            document.exitFullscreen().catch(() => {}).finally(() => {
-                this._autoFsExiting = false;
-            });
         }
     }
 
@@ -1455,25 +1379,13 @@ export class StreamView {
                 const frame = this.frameQueue.shift();
 
                 // Resize canvas to match frame dimensions if needed.
-                // Skip in fullscreen mode — canvas buffer is set to native
-                // screen resolution for HiDPI pixel-perfect rendering.
                 const canvasWBefore = this.canvas.width;
                 const canvasHBefore = this.canvas.height;
-                if (!this._fullscreenMode) {
-                    if (frame.displayWidth && frame.displayHeight &&
-                        (this.canvas.width !== frame.displayWidth ||
-                         this.canvas.height !== frame.displayHeight)) {
-                        this.canvas.width = frame.displayWidth;
-                        this.canvas.height = frame.displayHeight;
-                    }
-                }
-
-                // Store video resolution for restore on fullscreen exit
-                if (frame.displayWidth && frame.displayHeight) {
-                    if (this._videoWidth === 0 && this._videoHeight === 0) {
-                        this._videoWidth = frame.displayWidth;
-                        this._videoHeight = frame.displayHeight;
-                    }
+                if (frame.displayWidth && frame.displayHeight &&
+                    (this.canvas.width !== frame.displayWidth ||
+                     this.canvas.height !== frame.displayHeight)) {
+                    this.canvas.width = frame.displayWidth;
+                    this.canvas.height = frame.displayHeight;
                 }
 
                 if (this.stats.rendered < 5) {
@@ -2242,7 +2154,6 @@ export class StreamView {
         this.canvas.addEventListener('touchend', this._onTouchEnd, { passive: false });
         window.addEventListener('beforeunload', this._onBeforeUnload);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
-        document.addEventListener('fullscreenchange', this._onFullscreenChange);
 
         // Mode-specific events
         if (this._gamingMode) {
@@ -2374,7 +2285,6 @@ export class StreamView {
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         document.removeEventListener('visibilitychange', this._onVisibilityChange);
-        document.removeEventListener('fullscreenchange', this._onFullscreenChange);
         if (this.canvas) {
             this.canvas.removeEventListener('mousemove', this._onMouseMove);
             this.canvas.removeEventListener('mousedown', this._onMouseDown);
@@ -2850,52 +2760,9 @@ export class StreamView {
                 console.warn('[StreamView] exitFullscreen failed:', err.message);
             });
         } else {
-            this.canvas.requestFullscreen().catch(err => {
-                console.warn('[StreamView] canvas.requestFullscreen failed:', err.message);
+            document.documentElement.requestFullscreen().catch(err => {
+                console.warn('[StreamView] requestFullscreen failed:', err.message);
             });
-        }
-    }
-
-    /**
-     * Handle fullscreenchange events for the canvas element.
-     * On enter: set canvas buffer to native screen resolution (HiDPI).
-     * On exit: restore canvas buffer to the original video resolution.
-     */
-    handleFullscreenChange() {
-        if (document.fullscreenElement === this.canvas) {
-            this._fullscreenMode = true;
-
-            // HiDPI: set canvas buffer to native screen resolution so the
-            // rendered image is pixel-perfect (no blur on Retina displays).
-            this.canvas.width = Math.round(window.innerWidth * (window.devicePixelRatio || 1));
-            this.canvas.height = Math.round(window.innerHeight * (window.devicePixelRatio || 1));
-
-            console.log('[StreamView] Fullscreen entered, canvas=' +
-                this.canvas.width + 'x' + this.canvas.height +
-                ' devicePixelRatio=' + (window.devicePixelRatio || 1) +
-                ' screen=' + window.innerWidth + 'x' + window.innerHeight);
-
-            // Auto-fullscreen: user manually entered fullscreen → reset block so
-            // future orientation changes can auto-fullscreen again.
-            this._autoFsBlocked = false;
-        } else {
-            this._fullscreenMode = false;
-
-            // Restore canvas buffer to video resolution (if known)
-            if (this._videoWidth > 0 && this._videoHeight > 0) {
-                this.canvas.width = this._videoWidth;
-                this.canvas.height = this._videoHeight;
-            }
-
-            console.log('[StreamView] Fullscreen exited, canvas restored to ' +
-                this.canvas.width + 'x' + this.canvas.height);
-
-            // Auto-fullscreen: if the user manually exited (not our programmatic
-            // exit from _handleOrientationChange on portrait rotation), block
-            // auto-fullscreen so we don't fight the user's choice.
-            if (!this._autoFsExiting) {
-                this._autoFsBlocked = true;
-            }
         }
     }
 
@@ -3134,12 +3001,6 @@ export class StreamView {
             this._touchCursorEl.style.display = 'none';
         }
 
-        // Remove orientation change listener (auto-fullscreen)
-        if (this._orientationMedia) {
-            this._orientationMedia.removeEventListener('change', this._onOrientationChange);
-            this._orientationMedia = null;
-        }
-
         if (document.pointerLockElement === this.canvas) {
             document.exitPointerLock();
         }
@@ -3219,12 +3080,6 @@ export class StreamView {
 
         if (document.pointerLockElement === this.canvas) {
             document.exitPointerLock();
-        }
-
-        // Remove orientation change listener (auto-fullscreen)
-        if (this._orientationMedia) {
-            this._orientationMedia.removeEventListener('change', this._onOrientationChange);
-            this._orientationMedia = null;
         }
 
         if (this.decoder) {
