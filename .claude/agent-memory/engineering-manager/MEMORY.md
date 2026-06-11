@@ -8,3 +8,5 @@
 - [Explicit Cert Key Missing Fix](explicit-cert-key-missing-fix.md) — key.pem manquant dans le dossier du certificat explicite, fallback self-signed silencieux
 - [HEVC AVCC Keyframe First NAL Type](hevc-avcc-keyframe-first-nall-type.md) — Fix Chrome/Edge ecran noir HEVC : AUD/SEI avant IRAP dans toAvcc()
 - [Android GPU Acceleration](android-gpu-acceleration-corrections.md) — 4 correctifs H.264 Android : prefer-hardware, drawImage direct, avc3 fallback, desynchronized canvas
+- [Android SCTP Corruption Fixes](2026-06-10-android-sctp-corruption-fixes.md) — 5 correctifs H.264 Android DC : payload 14KB, zero-fill delta, IDR immediat, NAL validation, dirty mode
+- [Android Freeze Fix](2026-06-10-android-freeze-fix.md) — kMaxPayloadSize 14000→32000, keyframes passe stale check en dirty mode, auto-exit dirty mode 5s
