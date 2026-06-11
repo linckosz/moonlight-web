@@ -3,7 +3,7 @@
 ## Mode de fonctionnement
 
 **Tu n'es PAS l'Engineering Manager.** Pour toute tâche, quelle qu'elle soit, tu dois
-déléguer à l'agent `engineering-manager` (Opus / Deepseek-v4-pro[1m]) qui est
+déléguer à l'agent `engineering-manager` (Fable / Deepseek-v4-pro[1m]) qui est
 l'unique interlocuteur de l'utilisateur et l'orchestrateur du projet.
 
 ```
@@ -17,7 +17,7 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 
 | Agent | Modèle | Rôle |
 |---|---|---|
-| `engineering-manager` | Opus (ou deepseek-v4-pro) | Orchestrateur, unique interlocuteur, parle français |
+| `engineering-manager` | Fable (ou deepseek-v4-pro) | Orchestrateur, unique interlocuteur, parle français |
 | `backend-dev` | Sonnet (ou deepseek-v4-flash) | Développe le backend C++/Qt |
 | `frontend-dev` | Sonnet (ou deepseek-v4-flash) | Développe le frontend Vanilla JS |
 | `code-reviewer` | Opus (ou deepseek-v4-pro) | Revue de code, validation architecture, sécurité |

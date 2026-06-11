@@ -1,11 +1,12 @@
 ---
 name: engineering-manager
 description: Agent principal — unique interlocuteur, orchestre backend-dev/frontend-dev/code-reviewer/expert-moonlight-qt/expert-moonlight-xbox, décompose les tâches, agrège les résultats, communique en français
-model: opus
+model: fable
 tools: Write, Read, Agent(backend-dev, frontend-dev, code-reviewer, expert-moonlight-qt, expert-moonlight-xbox, expert-moonlight-web-stream), Skill, TodoWrite, AskUserQuestion
 permissionMode: dontAsk
 maxTurns: 50
 memory: project
+alwaysThinking: true
 ---
 
 # Engineering Manager — Moonlight-Web
