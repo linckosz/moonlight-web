@@ -341,6 +341,10 @@ export class WebRtcMedia {
                     if (receiver.jitterBufferTarget !== undefined) {
                         receiver.jitterBufferTarget = 0;
                     }
+                    // Standard API: also set minimum jitter buffer delay to 0
+                    if (typeof receiver.setJitterBufferMinimumDelay === 'function') {
+                        receiver.setJitterBufferMinimumDelay(0);
+                    }
                 }
             } catch (e) {
                 console.warn('[WebRtcMedia] Failed to set jitter buffer target:', e.message);
@@ -351,6 +355,10 @@ export class WebRtcMedia {
                 if (this.videoElement) {
                     const stream = new MediaStream([event.track]);
                     this.videoElement.srcObject = stream;
+                    // Minimize playout delay for real-time streaming
+                    if ('playoutDelayHint' in this.videoElement) {
+                        this.videoElement.playoutDelayHint = 0;
+                    }
                     this.videoElement.play().catch(e => {
                         console.warn('[WebRtcMedia] <video> play() failed:', e.message);
                     });
@@ -562,10 +570,15 @@ export class WebRtcMedia {
             let answerSdp = answer.sdp;
             // Direction: receive only (client is viewer, never sends media)
             answerSdp = answerSdp.replace(/a=sendrecv/g, 'a=recvonly');
-            // Strip ULPFEC — redundant FEC packets add bandwidth & latency
-            answerSdp = answerSdp.replace(/ulpfec/g, '');
+            // Strip ULPFEC, RED and their fmtp lines — redundant FEC packets add bandwidth & latency
+            answerSdp = answerSdp.replace(/^a=rtpmap:\d+\s+ulpfec.*$/gim, '');
+            answerSdp = answerSdp.replace(/^a=rtpmap:\d+\s+RED.*$/gim, '');
+            answerSdp = answerSdp.replace(/^a=fmtp:\d+.*$/gim, '');
+            answerSdp = answerSdp.replace(/\n{2,}/g, '\n');
             // Minimal packetization time (reduces audio/video buffering)
             answerSdp = answerSdp.replace(/a=ptime:\d+/g, 'a=ptime:10');
+            // Strip NACK retransmission (keep nack pli for keyframe requests)
+            answerSdp = answerSdp.replace(/^a=rtcp-fb:\*\s+nack\s*$/gim, '');
 
             const modifiedAnswer = new RTCSessionDescription({
                 type: 'answer',

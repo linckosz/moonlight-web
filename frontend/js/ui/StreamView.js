@@ -586,6 +586,10 @@ export class StreamView {
         if (this._transport === 'webrtc-media') {
             this.canvas.style.display = 'none';
             this.videoEl.style.display = 'block';
+            // Minimize playout delay for real-time streaming
+            if ('playoutDelayHint' in this.videoEl) {
+                this.videoEl.playoutDelayHint = 0;
+            }
             // Pass video element to WebRtcMedia for media track rendering
             if (this.webrtc && typeof this.webrtc.setVideoElement === 'function') {
                 this.webrtc.setVideoElement(this.videoEl);
