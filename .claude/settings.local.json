@@ -77,7 +77,9 @@
       "Bash(curl -s --max-time 5 \"http://192.168.1.9:47989/pair?uniqueid=test123&uuid=abc&devicename=roth&updateState=1&phrase=getservercert&salt=abcd&clientcert=abcd\")",
       "Bash(echo \"Exit: $?\")",
       "Edit(d:/Code/moonlight-web-deepseek/backend/src/**)",
-      "Write(d:/Code/moonlight-web-deepseek/backend/src/**)"
+      "Write(d:/Code/moonlight-web-deepseek/backend/src/**)",
+      "Write(.claude/results/**)",
+      "Edit(.claude/results/**)"
     ]
   }
 }
