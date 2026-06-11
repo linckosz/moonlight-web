@@ -50,3 +50,12 @@ backend/certs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Claude Code
+.claude/
+!.claude/config.json
+!.claude/agents/
+!.claude/skills/
+
+# Graphify
+graphify-out/
