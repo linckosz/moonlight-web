@@ -79,7 +79,12 @@
       "Edit(d:/Code/moonlight-web-deepseek/backend/src/**)",
       "Write(d:/Code/moonlight-web-deepseek/backend/src/**)",
       "Write(.claude/results/**)",
-      "Edit(.claude/results/**)"
+      "Edit(.claude/results/**)",
+      "Bash(node --check frontend/js/api/WebRtcDataChannel.js)",
+      "Bash(node --check frontend/js/ui/StreamView.js)",
+      "Bash(node --check frontend/js/util/Mp4Muxer.js)",
+      "Bash(cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat)",
+      "Bash(powershell *)"
     ]
   }
 }

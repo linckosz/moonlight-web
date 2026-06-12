@@ -222,6 +222,14 @@ void StreamRelay::sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe
 
 void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber)
 {
+    // Balance the worker→main pending counter (incremented before each emit).
+    // Consume the worker-drop flag: recovery on this transport relies on
+    // client-side IDR requests (starvation/stale detection in the browser).
+    if (m_Shim) {
+        m_Shim->videoFrameDelivered();
+        m_Shim->takeWorkerDroppedDelta();
+    }
+
     // Log first few frames and then every 120
     static int logCounter = 0;
     logCounter++;

@@ -289,6 +289,14 @@ void MediaTrackRelay::createTracksAndChannels()
 
 void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 {
+    // Balance the worker→main pending counter (incremented before each emit).
+    // Consume the worker-drop flag: recovery on this transport relies on the
+    // browser's proactive periodic IDR requests (no PLI API available).
+    if (m_Shim) {
+        m_Shim->videoFrameDelivered();
+        m_Shim->takeWorkerDroppedDelta();
+    }
+
     if (m_Stopping.load()) {
         static int dropCount = 0;
         if (++dropCount <= 3)

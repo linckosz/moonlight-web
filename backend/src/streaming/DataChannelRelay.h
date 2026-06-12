@@ -2,6 +2,7 @@
 
 #include "RelayBase.h"
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QMutex>
 #include <QTimer>
 #include <memory>
@@ -92,14 +93,15 @@ private:
     // Header: [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
     // backend_ts: monotonic millisecond timestamp (mod 2^32) taken at send time,
     // used by the frontend to compute end-to-end latency.
-    // Max payload per chunk: kMaxPayloadSize (under SCTP 16KB limit).
+    // Max payload per chunk: kMaxPayloadSize (stays under SCTP 16KB fragment limit).
     static constexpr int kFragHeaderSize = 17;
-    static constexpr int kMaxPayloadSize = 64000;
+    static constexpr int kMaxPayloadSize = 16000;
 
     // Backpressure: if the SCTP send buffer exceeds this threshold, drop
     // incoming delta frames to prevent main-thread blocking on dc->send().
-    // Keyframes always pass through.
-    static constexpr size_t kHighWatermark = 128 * 1024;
+    // Keyframes always pass through. 48KB ≈ 3 chunks in flight — keeps the
+    // send queue short so latency cannot build up in the SCTP buffer.
+    static constexpr size_t kHighWatermark = 48 * 1024;
 
     void sendFragmented(const QByteArray& data, bool isKeyframe,
                         std::shared_ptr<rtc::DataChannel>& dc);
@@ -107,6 +109,11 @@ private:
     // Send a previously buffered keyframe (arrived before Video DC was open).
     // Called from the Video DC onOpen callback (marshaled to main thread).
     void sendBufferedKeyframe();
+
+    // Coalescing IDR throttle: all IDR requests (frontend + internal) go through
+    // this method. Requests arriving within 300 ms of the last effective request
+    // are absorbed to prevent LiRequestIdrFrame flooding.
+    void sendIdrRequestThrottled();
 
     MoonlightShim* m_Shim;
 
@@ -123,9 +130,18 @@ private:
     // Backpressure counters (diagnostic logging)
     int m_DeltaDroppedCount = 0;           // Delta frames dropped due to full SCTP buffer
     int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
-    int m_BackpressureDropCount = 0;       // IDR request guard — only 1 IDR request per episode
+    int m_BackpressureDropCount = 0;       // Frames dropped in current backpressure episode
     // Decode latency tracking (microseconds)
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
+
+    // IDR coalescing: cooldown 300 ms between effective LiRequestIdrFrame calls.
+    // All IDR sources (frontend requestidr, backpressure) converge here.
+    QElapsedTimer m_IdrCooldownTimer;  // Monotonic timer; invalid until first request
+
+    // Awaiting IDR: true when a delta was dropped (backpressure or DC not ready).
+    // All delta frames are dropped and IDR requested until a keyframe is sent.
+    // Plain bool is safe — all accesses are on the Qt main thread.
+    bool m_AwaitingIdr = false;
 
     // Buffered keyframe: if the first IDR arrives before the Video DataChannel
     // is open, we save it here and send it as soon as the DC opens.

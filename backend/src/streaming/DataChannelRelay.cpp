@@ -696,7 +696,7 @@ void DataChannelRelay::createDataChannels()
     // is worse than lost data. The decoder can recover from the next keyframe.
     rtc::DataChannelInit videoConfig;
     videoConfig.reliability.unordered = true;
-    videoConfig.reliability.maxRetransmits = 3;  // Allow 3 retransmits for video
+    videoConfig.reliability.maxRetransmits = 0;  // No retransmits — loss is handled by IDR recovery
     videoConfig.negotiated = true;
     videoConfig.id = 0;
 
@@ -717,8 +717,11 @@ void DataChannelRelay::createDataChannels()
     }
 
     // --- Audio DataChannel (server->browser, PCM samples) ---
+    // Unordered + 100ms lifetime (must match browser): real-time PCM, a late
+    // packet is a glitch either way — don't block the stream waiting for it.
     rtc::DataChannelInit audioConfig;
-    // Default reliability: ordered + reliable (no maxRetransmits, no maxPacketLifeTime)
+    audioConfig.reliability.unordered = true;
+    audioConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(100);
     audioConfig.negotiated = true;
     audioConfig.id = 1;
 
@@ -776,6 +779,19 @@ void DataChannelRelay::createDataChannels()
 
 void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber)
 {
+    // Balance the worker→main pending counter (incremented before each emit).
+    // m_Shim lifetime is guaranteed: the shim is Qt-parented to this relay
+    // (Session.cpp), so it cannot be destroyed while this slot runs.
+    if (m_Shim) {
+        m_Shim->videoFrameDelivered();
+        // Worker dropped deltas due to main-thread backlog — enter awaiting-IDR
+        // recovery (guards inside are no-ops when stopping).
+        if (m_Shim->takeWorkerDroppedDelta()) {
+            m_AwaitingIdr = true;
+            sendIdrRequestThrottled();
+        }
+    }
+
     if (m_Stopping.load()) {
         static int dropCount = 0;
         if (++dropCount <= 3)
@@ -888,15 +904,30 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
         return;
     }
 
-    // Drop non-keyframes before DC is ready
+    // Drop non-keyframes before DC is ready; flag awaiting IDR so we skip
+    // deltas until the decoder has a reference frame.
     if (!m_VideoDc) {
+        if (!isKeyframe) {
+            m_AwaitingIdr = true;
+            sendIdrRequestThrottled();
+        }
         static int noDcCount = 0;
         if (++noDcCount <= 5)
             qInfo() << "[DataChannelRelay] onVideoFrame dropped — m_VideoDc is null (DCs not created yet?)";
         return;
     }
     if (!m_VideoDc->isOpen()) {
+        if (!isKeyframe) {
+            m_AwaitingIdr = true;
+            sendIdrRequestThrottled();
+        }
         return;  // DC exists but not yet open
+    }
+
+    // Awaiting IDR: drop all deltas until a keyframe resets the decoder reference.
+    if (m_AwaitingIdr && !isKeyframe) {
+        sendIdrRequestThrottled();  // Throttle absorbs bursts; keeps requesting until IDR arrives
+        return;
     }
 
     // ── HEVC Debug Test Modes ────────────────────────────────────────────────
@@ -904,11 +935,12 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
     // Test mode code below modifies frameData for delta frames only.
     // Keyframes (already buffered above) are NOT affected.
 
-    // Detect HEVC to enable test modes
+    // Detect HEVC to enable test modes.
+    // Gated on test mode — the per-frame NAL scan is wasted work otherwise.
     static int testModeFrameCount = 0;
     static int testModeLogged = 0;
     bool isHevcFrame = false;
-    {
+    if (m_HevcTestMode > 0) {
         auto nals = scanNals(data);
         for (int i = 0; i < nals.size() && i < 10; i++) {
             QByteArray nal = data.mid(nals[i].nalOffset, qMin(nals[i].nalLen, 4));
@@ -1171,7 +1203,8 @@ void DataChannelRelay::onInputMessage(const std::string& message)
     }
     else if (type == "requestidr") {
         qInfo() << "[DataChannelRelay] Requesting IDR frame from Sunshine (browser request)";
-        m_Shim->requestIdrFrame();
+        m_AwaitingIdr = true;
+        sendIdrRequestThrottled();
     }
     else if (type == "ping") {
         // Respond with pong on the input DataChannel.
@@ -1235,13 +1268,11 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         size_t bufAmt = dc->bufferedAmount();
         if (bufAmt > kHighWatermark) {
             m_DeltaDroppedCount++;
-
-            // Request IDR only on first drop of each backpressure episode
-            if (m_BackpressureDropCount == 0 && m_Shim) {
-                m_Shim->requestIdrFrame();
-                qInfo() << "[DataChannelRelay] Backpressure IDR request sent (delta frame dropped)";
-            }
             m_BackpressureDropCount++;
+
+            // Set sticky awaiting state and request IDR (throttled — absorbs bursts).
+            m_AwaitingIdr = true;
+            sendIdrRequestThrottled();
 
             if (m_DeltaDroppedCount <= 3 || m_DeltaDroppedCount % 120 == 0) {
                 qInfo() << "[DataChannelRelay] Dropped delta frame (SCTP full)"
@@ -1262,7 +1293,8 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
                         << "warnCount=" << m_KeyframeBackpressureWarnings;
             }
         }
-        // Reset backpressure counters on keyframe — Sunshine responded
+        // Keyframe sent successfully: clear sticky state and backpressure counters.
+        m_AwaitingIdr = false;
         m_BackpressureDropCount = 0;
     }
 
@@ -1426,11 +1458,13 @@ void DataChannelRelay::stop()
         m_StatsTimer->stop();
     }
 
-    // Reset backpressure counters for next session
+    // Reset backpressure counters and IDR state for next session
     m_DeltaDroppedCount = 0;
     m_KeyframeBackpressureWarnings = 0;
     m_BackpressureDropCount = 0;
     m_LastDecodeLatencyUs.store(0, std::memory_order_release);
+    m_AwaitingIdr = false;
+    m_IdrCooldownTimer.invalidate();  // Reset throttle state
 
     // Clear buffered keyframe (if any)
     m_BufferedKeyframe.clear();
@@ -1465,7 +1499,23 @@ void DataChannelRelay::stop()
 void DataChannelRelay::requestIdrFrame()
 {
     if (m_Stopping.load() || !m_Shim) return;
-    qInfo() << "[DataChannelRelay] requestIdrFrame: forwarding to MoonlightShim";
+    m_AwaitingIdr = true;
+    sendIdrRequestThrottled();
+}
+
+void DataChannelRelay::sendIdrRequestThrottled()
+{
+    if (m_Stopping.load() || !m_Shim) return;
+
+    // Cooldown: absorb requests arriving within 300 ms of the last effective call.
+    static constexpr qint64 kIdrCooldownMs = 300;
+    if (m_IdrCooldownTimer.isValid() &&
+        m_IdrCooldownTimer.elapsed() < kIdrCooldownMs) {
+        return;  // Absorbed — cooldown not elapsed yet
+    }
+
+    m_IdrCooldownTimer.restart();
+    qInfo() << "[DataChannelRelay] IDR request → MoonlightShim (throttled)";
     m_Shim->requestIdrFrame();
 }
 

@@ -269,6 +269,22 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
         return DR_OK;
     }
 
+    // Worker→main queue bound: if the Qt main thread is backed up, drop deltas
+    // here (before the buffer copy) so latency cannot build in the event queue.
+    // Keyframes always pass; the relay arms awaiting-IDR via the dropped flag.
+    static constexpr int kMaxPendingVideoFrames = 3;
+    if (decodeUnit->frameType != 1 &&
+        instance->m_PendingVideoFrames.load(std::memory_order_acquire) >= kMaxPendingVideoFrames) {
+        instance->m_WorkerDroppedDelta.store(true, std::memory_order_release);
+        static int workerDropCount = 0;
+        workerDropCount++;
+        if (workerDropCount <= 3 || workerDropCount % 120 == 0) {
+            fprintf(stderr, "[MoonlightShim] Dropped delta worker-side (main thread backlog), total=%d\n",
+                    workerDropCount);
+        }
+        return DR_OK;
+    }
+
     // Record frame submit time for decode latency measurement.
     // The relay reads this in sendFragmented() to compute end-to-end pipeline latency.
     auto submitTime = std::chrono::steady_clock::now();
@@ -381,6 +397,8 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
         std::memory_order_release);
 
     // Use the local copy — safe even if main thread clears s_Instance concurrently.
+    // Count the in-flight frame before emitting (decremented in relay onVideoFrame).
+    instance->m_PendingVideoFrames.fetch_add(1, std::memory_order_acq_rel);
     emit instance->videoFrameReady(frameData, decodeUnit->frameType, decodeUnit->frameNumber);
     return DR_OK;
 }
@@ -454,8 +472,8 @@ void MoonlightShim::clLogMessage(const char* format, ...)
     va_start(args, format);
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
+    // No fflush: stderr is unbuffered by default and this path can be hot.
     fprintf(stderr, "[moonlight] %s", buffer);
-    fflush(stderr);
 }
 
 void MoonlightShim::clRumble(unsigned short, unsigned short, unsigned short) {}
