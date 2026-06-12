@@ -503,6 +503,19 @@ void StreamRelay::onWsTextMessage(const QString& message)
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
     }
+    else if (type == "requestidr") {
+        // Browser lost its reference picture — forward to Sunshine (throttled).
+        // Without this, a single decode-queue overflow freezes the WSS stream
+        // forever (deltas dropped until a keyframe that never comes).
+        if (!m_IdrCooldownTimer.isValid() || m_IdrCooldownTimer.elapsed() >= 300) {
+            m_IdrCooldownTimer.restart();
+            qInfo() << "[StreamRelay] IDR request from browser — forwarding to Sunshine";
+            m_Shim->requestIdrFrame();
+        }
+    }
+    else if (type == "ping") {
+        // Keepalive — no action needed
+    }
     else {
         qWarning() << "[StreamRelay] Unknown input type:" << type;
     }

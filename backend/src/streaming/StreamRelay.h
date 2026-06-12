@@ -4,6 +4,7 @@
 #include <QWebSocketServer>
 #include <QWebSocket>
 #include <QSslConfiguration>
+#include <QElapsedTimer>
 
 class MoonlightShim;
 
@@ -66,6 +67,7 @@ private:
     void sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe);
 
     MoonlightShim* m_Shim;
+    QElapsedTimer m_IdrCooldownTimer;  // Throttle browser IDR requests (300ms)
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;
     quint16 m_WsPort = 48001;

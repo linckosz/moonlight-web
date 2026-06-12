@@ -165,6 +165,14 @@ export class WebRtcDataChannel {
 
         // Callback: (frameId, wasKeyframe) — fired when an assembled frame is dropped incomplete.
         this.onFrameLoss = null;
+
+        // Diagnostics: classify skipped frameIds at assembly time.
+        // - missNoChunk: no chunk ever arrived for the frameId (message lost whole)
+        // - missPartial: some chunks arrived but frame is incomplete (packet loss)
+        this._lastAssembledFrameId = -1;
+        this._missNoChunk = 0;
+        this._missPartial = 0;
+        this._diagTick = 0;
     }
 
     /**
@@ -417,6 +425,14 @@ export class WebRtcDataChannel {
         if (this._stopping) return;
         this._stopping = true;
         console.log('[WebRTC] Closing...');
+
+        // Stop the cleanup timer in ALL modes — the WSS early-return below
+        // used to leak it, leaving a zombie [DC-PIPE] logger running forever.
+        if (this._cleanupTimer) {
+            clearInterval(this._cleanupTimer);
+            this._cleanupTimer = null;
+        }
+        this._reassembly.clear();
 
         if (this._wssMode) {
             // WSS mode: only the WS needs closing
@@ -901,6 +917,15 @@ export class WebRtcDataChannel {
         this.stats.framesAssembled++;
         this.stats.framesReceived++;
 
+        // Diagnostics: classify frameIds skipped since the last assembled frame.
+        if (this._lastAssembledFrameId >= 0 && frameId > this._lastAssembledFrameId + 1) {
+            for (let id = this._lastAssembledFrameId + 1; id < frameId; id++) {
+                if (this._reassembly.has(id)) this._missPartial++;
+                else this._missNoChunk++;
+            }
+        }
+        if (frameId > this._lastAssembledFrameId) this._lastAssembledFrameId = frameId;
+
         // Track last assembled frame time for starvation detection.
         // Re-arm here (assembled frame), not on chunk arrival — a stream stuck
         // delivering chunks of incomplete frames must still trigger starvation.
@@ -1055,6 +1080,16 @@ export class WebRtcDataChannel {
         // Sunshine so we can recover quickly.
         if (staleCount >= 1) {
             this._requestIdrFrame('stale frames (' + staleCount + ' dropped)');
+        }
+
+        // Diagnostics: pipeline summary every 2s (cleanup runs every 100ms).
+        if (++this._diagTick % 20 === 0 && this.stats.chunksReceived > 0) {
+            console.log('[DC-PIPE] chunks=' + this.stats.chunksReceived +
+                ' assembled=' + this.stats.framesAssembled +
+                ' dropped=' + this.stats.framesDropped +
+                ' missNoChunk=' + this._missNoChunk +
+                ' missPartial=' + this._missPartial +
+                ' pending=' + this._reassembly.size);
         }
 
         // Starvation detection: if no frame was assembled for STARVATION_TIMEOUT_MS
