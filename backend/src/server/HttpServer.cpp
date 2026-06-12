@@ -1462,8 +1462,6 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     }
 
     m_PendingAsyncSockets.insert(socket);
-    qInfo() << "[HttpServer] processRequest — dispatching async, socket=" << socket
-            << "method=" << req.method << "path=" << req.path;
 
     QTimer::singleShot(ASYNC_TIMEOUT_MS, socket, [this, socket]() {
         if (m_PendingAsyncSockets.contains(socket)) {
@@ -1640,11 +1638,15 @@ HttpRequest HttpServer::parseRequest(const QByteArray& raw) const
 
 void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
 {
-    qInfo() << "[HttpServer] sendResponse, status=" << response.statusCode
-            << "bodySize=" << response.body.size()
-            << "socket=" << socket
-            << "peer=" << (socket ? socket->peerAddress().toString() : "null")
-            << "state=" << (socket ? socket->state() : -1);
+    // Only log failures — per-request logging floods the console with the
+    // periodic /api/hosts polling.
+    if (response.statusCode >= 400) {
+        qInfo() << "[HttpServer] sendResponse, status=" << response.statusCode
+                << "bodySize=" << response.body.size()
+                << "socket=" << socket
+                << "peer=" << (socket ? socket->peerAddress().toString() : "null")
+                << "state=" << (socket ? socket->state() : -1);
+    }
 
     QByteArray respData;
     QString statusText;

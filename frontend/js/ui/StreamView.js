@@ -293,10 +293,13 @@ export class StreamView {
         // Last seen frameId for gap detection (frameId is optional per transport).
         this._lastFrameId = -1;
 
-        // Decoder queue backpressure: drop deltas when decodeQueueSize reaches
-        // this threshold (latency is building up); reset decoder if stalled >200ms.
-        this.DECODE_QUEUE_MAX = 4;
+        // Decoder queue backpressure: a saturated decodeQueueSize is tolerated
+        // for QUEUE_STALL_MS (transient bursts: TCP delivery on WSS, keyframe
+        // decode cost on mobile) before deltas are dropped; the decoder is only
+        // reset after QUEUE_RESET_MS of sustained saturation.
+        this.DECODE_QUEUE_MAX = 8;
         this.QUEUE_STALL_MS = 200;
+        this.QUEUE_RESET_MS = 1000;
         this._queueStallStart = 0;
         // Last EncodedVideoChunk timestamp (µs) — enforces monotonicity.
         this._lastChunkTs = -1;
@@ -306,6 +309,8 @@ export class StreamView {
         // This is a safety net for the rare race where the initial IDR is lost.
         this._idrRequested = false;
         this._idrTimeout = null;
+        // Timestamp of the last requestidr sent — drives the 1s retry in _requestIdr().
+        this._lastIdrRequestMs = 0;
 
         // Proactive IDR scheduling: after the VideoDecoder is first configured,
         // request a clean keyframe to overwrite any green/corrupted first decode.
@@ -395,16 +400,7 @@ export class StreamView {
                 ' audio.samples=' + (this.audioPipeline ? this.audioPipeline.getStats().writtenSamples : 0) +
                 ' audio.underrun=' + (this.audioPipeline ? this.audioPipeline.getStats().underrunCount : 0) +
                 (this._lastFrameColorSpace ? ' cs=' + JSON.stringify(this._lastFrameColorSpace) : ''));
-            // HEVC-specific diagnostics
-            console.log('[DIAG-HEVC] codec=' + (this.nalParser.codec || 'null') +
-                ' vps.len=' + (this.nalParser.vps ? this.nalParser.vps.length : 0) +
-                ' sps.len=' + (this.nalParser.sps ? this.nalParser.sps.length : 0) +
-                ' pps.len=' + (this.nalParser.pps ? this.nalParser.pps.length : 0) +
-                ' isChromeWin=' + this._isChromeWindowsHevc +
-                ' _noDescription=' + this._noDescription +
-                ' patched=' + (this._hevcPatched || false) +
-                ' videoCodec=' + this.videoCodec);
-        }, 2000);
+        }, 10000);
     }
 
     stopDiagnostics() {
@@ -587,9 +583,10 @@ export class StreamView {
         // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
         // Mac Chrome handles NV12→RGBA correctly via Metal; Windows Chrome
         // should do the same via D3D11.
-        // desynchronized: true reduces compositor latency on Android by avoiding
-        // an intermediate GPU copy. Only safe when willReadFrequently is false (default).
-        this.ctx = this.canvas.getContext('2d', { desynchronized: true });
+        // NO desynchronized:true — it bypasses vsync composition on Android
+        // (where it is actually honored) and causes visible tearing bands and
+        // partially-written buffers. Desktop Chrome ignores it for 2D anyway.
+        this.ctx = this.canvas.getContext('2d');
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
@@ -713,10 +710,15 @@ export class StreamView {
         console.log('[StreamView] Creating new VideoDecoder');
         this.decoder = new VideoDecoder({
             output: (frame) => {
-                console.log('[StreamView] Decoder OUTPUT callback fired, frame=' +
-                    (frame.displayWidth || frame.codedWidth) + 'x' + (frame.displayHeight || frame.codedHeight) +
-                    ' format=' + (frame.format || 'null') +
-                    ' timestamp=' + frame.timestamp);
+                // Log only the first decoded frame: per-frame logging floods
+                // the console at 60fps and costs CPU on mobile.
+                if (!this._firstDecoderOutputLogged) {
+                    this._firstDecoderOutputLogged = true;
+                    console.log('[StreamView] First decoded frame: ' +
+                        (frame.displayWidth || frame.codedWidth) + 'x' +
+                        (frame.displayHeight || frame.codedHeight) +
+                        ' format=' + (frame.format || 'null'));
+                }
                 this.onDecodedFrame(frame);
             },
             error: (err) => {
@@ -795,15 +797,25 @@ export class StreamView {
         this.setupDecoder();
 
         // 6. Request an IDR so Sunshine sends a clean keyframe
-        this._idrRequested = true;
-        if (this.webrtc) {
-            console.log('[StreamView] Requesting IDR after decoder error');
-            this.webrtc.send({ type: 'requestidr' });
-        }
+        this._requestIdr('decoder error');
 
         this.setStatus('connecting', 'Recovering...');
 
         this._decoderRecovering = false;
+    }
+
+    // Request an IDR from Sunshine via the backend. Level-triggered with a
+    // 1s retry: a one-shot flag deadlocks the stream forever if the recovery
+    // keyframe is lost or the backend 300ms throttle swallows a request
+    // (frozen-stream bug on mobile WSS).
+    _requestIdr(reason) {
+        if (!this.webrtc) return;
+        const now = performance.now();
+        if (this._idrRequested && now - this._lastIdrRequestMs < 1000) return;
+        this._idrRequested = true;
+        this._lastIdrRequestMs = now;
+        console.log('[StreamView] Requesting IDR (' + reason + ')');
+        this.webrtc.send({ type: 'requestidr' });
     }
 
     configureDecoder() {
@@ -1269,32 +1281,36 @@ export class StreamView {
         // Keyframes always pass through — they restore the reference.
         if (!isKeyframe && !this._referenceValid) {
             this.stats.dropped++;
+            // Retry while waiting — the original request may have been lost.
+            this._requestIdr('reference invalid');
             return;
         }
 
-        // Decoder queue backpressure: when decodeQueueSize saturates, decoding
-        // latency builds up. Drop deltas (keyframes always pass), invalidate the
-        // reference and request an IDR; reset the decoder if stalled too long.
+        // Decoder queue backpressure: transient saturation is absorbed by
+        // decoding through (instant delta-dropping caused a perpetual
+        // IDR/stutter cycle on mobile WSS). Only SUSTAINED saturation drops
+        // deltas + requests an IDR; a decoder reset needs an even longer stall.
         if (!isKeyframe && this.decoder.decodeQueueSize >= this.DECODE_QUEUE_MAX) {
-            this.stats.dropped++;
-            this._referenceValid = false;
             const now = performance.now();
-            if (this._queueStallStart === 0) {
-                this._queueStallStart = now;
-            } else if (now - this._queueStallStart > this.QUEUE_STALL_MS) {
-                console.warn('[StreamView] Decode queue stalled >' + this.QUEUE_STALL_MS +
+            if (this._queueStallStart === 0) this._queueStallStart = now;
+            const saturatedMs = now - this._queueStallStart;
+            if (saturatedMs > this.QUEUE_RESET_MS) {
+                console.warn('[StreamView] Decode queue stalled >' + this.QUEUE_RESET_MS +
                     'ms (queueSize=' + this.decoder.decodeQueueSize + ') — resetting decoder');
                 this._queueStallStart = 0;
                 this._handleDecoderError(new Error('Decode queue stalled'));
                 return;
             }
-            if (!this._idrRequested && this.webrtc) {
-                this._idrRequested = true;
-                this.webrtc.send({ type: 'requestidr' });
+            if (saturatedMs > this.QUEUE_STALL_MS) {
+                this.stats.dropped++;
+                this._referenceValid = false;
+                this._requestIdr('decode queue overflow');
+                return;
             }
-            return;
+            // Transient burst: fall through and decode, the queue absorbs it.
+        } else {
+            this._queueStallStart = 0;
         }
-        this._queueStallStart = 0;
 
         // Timestamp from the backend capture clock (ms → µs) when available —
         // reflects real frame pacing instead of a synthetic 60fps clock.
@@ -1308,38 +1324,11 @@ export class StreamView {
 
         const type = isKeyframe ? 'key' : 'delta';
 
-        // HEVC NAL type logging for first 5 keyframes
-        if (isKeyframe && this.frameCount <= 6) {
-            const nals = splitNals(data);
-            const typeNames = nals.map(n => {
-                if (n.length >= 2 && this.nalParser.codec === CODEC_HEVC) {
-                    const t = (n[0] >> 1) & 0x3F;
-                    const names = {32:'VPS',33:'SPS',34:'PPS',39:'AUD',40:'EOS',41:'EOB',19:'IDR',20:'IDR_W_RADL',21:'IDR_W_NUT',22:'CRA',1:'TRAIL_N',0:'TRAIL_R'};
-                    return (names[t] || 'T'+t) + '(' + n.length + 'B)';
-                }
-                return 'H264:' + (n[0] & 0x1F) + '(' + n.length + 'B)';
-            });
-            console.log('[HEVC-NALS] frame#' + this.frameCount + ' keyframe=' + isKeyframe +
-                ' nals=[' + typeNames.join(',') + '] inputSize=' + data.length +
-                ' codec=' + this.nalParser.codec + ' _noDescription=' + this._noDescription);
-        }
-
         // Convert Annex B (start codes) to the expected output format.
         //   _noDescription=true  → Annex B (start codes), all NALs kept
         //   _noDescription=false → AVCC (length prefixes), VPS/SPS/PPS stripped
         const useAnnexB = this._noDescription && this.nalParser.codec === CODEC_HEVC;
         const avccData = toAvcc(data, this.decoderConfigured, this.nalParser.codec, useAnnexB);
-
-        // Log AVCC conversion for first frames
-        if (this.frameCount <= 6) {
-            console.log('[HEVC-AVCC] frame#' + this.frameCount +
-                ' keyframe=' + isKeyframe +
-                ' inputSize=' + data.length +
-                ' avccSize=' + avccData.length +
-                ' stripParams=' + this.decoderConfigured +
-                ' useAnnexB=' + useAnnexB +
-                ' codec=' + this.nalParser.codec);
-        }
 
         // Debug: catch empty AVCC data (all NALs stripped, including the IRAP)
         if (avccData.length === 0) {
@@ -1364,24 +1353,15 @@ export class StreamView {
                 duration: 16667,
                 data: avccData
             });
-            if (this.frameCount <= 6) {
-                console.log('[StreamView] Decoding frame #' + this.frameCount +
-                    ' type=' + type + ' avccSize=' + avccData.length +
-                    ' decoderState=' + this.decoder.state);
-            }
             this.decoder.decode(chunk);
             this.stats.received++;
             // Keyframe successfully submitted: reference is valid again.
+            // Also restart the saturation clock — the stale value would count
+            // the recovery wait as queue stall and trigger an instant reset.
             if (isKeyframe) {
                 this._referenceValid = true;
                 this._idrRequested = false;
-            }
-            // Log after every 60th frame
-            if (this.frameCount % 60 === 0) {
-                console.log('[StreamView] Stats: frameCount=' + this.frameCount +
-                    ' received=' + this.stats.received +
-                    ' decoded=' + this.stats.decoded +
-                    ' rendered=' + this.stats.rendered);
+                this._queueStallStart = 0;
             }
         } catch (err) {
             console.error('[StreamView] decode() error:', err.message, err);
@@ -1488,7 +1468,7 @@ export class StreamView {
                 : false;
             if (this.ctx && ctxLost) {
                 console.warn('[StreamView] Canvas2D context lost, recreating...');
-                this.ctx = this.canvas.getContext('2d', { desynchronized: true });
+                this.ctx = this.canvas.getContext('2d');
                 // Force re-composite all overlay layers by briefly toggling transform
                 const header = document.querySelector('.stream-header');
                 if (header) {
@@ -1555,8 +1535,8 @@ export class StreamView {
                     this._rendering = false;
                 });
 
-                // Log stats periodically
-                if (this.stats.rendered % 60 === 0) {
+                // Log stats periodically (every ~5s at 60fps)
+                if (this.stats.rendered % 300 === 0) {
                     console.log('[StreamView] Stats:',
                         'received=' + this.stats.received,
                         'decoded=' + this.stats.decoded,
@@ -1595,7 +1575,11 @@ export class StreamView {
      * Async: returns immediately; the frame is always closed, even on error.
      */
     async _drawFrameWithBitmap(frame) {
-        const isHevcNv12 = this.videoCodec === CODEC_HEVC && frame.format === 'NV12';
+        // Chrome Windows only: the bitmap-primary path works around a D3D11
+        // compositor ghosting bug. On Android/iOS/Mac it just adds a costly
+        // per-frame GPU copy — those platforms use the standard path below.
+        const isHevcNv12 = this.videoCodec === CODEC_HEVC && frame.format === 'NV12' &&
+            this._isChromeWindowsHevc;
         const dbgFirstFew = this.stats.rendered < 5;
 
         if (dbgFirstFew) {
@@ -1751,15 +1735,15 @@ export class StreamView {
         // ── Standard path (H.264 / AV1 / non-NV12 / Safari) ──────────────
         let rendered = false;
 
-        // H.264: try direct drawImage(VideoFrame) first to skip the
-        // createImageBitmap copy — reduces GPU round-trips on Android.
-        // HEVC NV12 uses the dedicated path above; for H.264 the direct
-        // path is faster and avoids a CPU-side bitmap allocation.
-        if (this.nalParser.codec === CODEC_H264) {
+        // Try direct drawImage(VideoFrame) first for ALL codecs: it skips the
+        // per-frame await createImageBitmap (GPU copy + microtask gap) — the
+        // main fluidity cost on Android/iOS. createImageBitmap remains the
+        // fallback for browsers where direct VideoFrame drawing fails.
+        {
             try {
                 if (this.canvas && this.ctx) {
                     if (this.stats.rendered < 6) {
-                        console.log('[GPU] H.264 direct drawImage(VideoFrame), frame#' +
+                        console.log('[GPU] direct drawImage(VideoFrame), frame#' +
                             this.stats.rendered);
                     }
                     this.ctx.drawImage(frame, 0, 0,
@@ -1767,7 +1751,7 @@ export class StreamView {
                     rendered = true;
                 }
             } catch (e) {
-                console.warn('[GPU] H.264 drawImage(VideoFrame) failed: ' + e.message +
+                console.warn('[GPU] drawImage(VideoFrame) failed: ' + e.message +
                     ' — falling back to createImageBitmap');
             }
         }
@@ -1868,10 +1852,9 @@ export class StreamView {
 
                 // Safety timeout: if no decoder config after 3 seconds, request an IDR.
                 this._idrTimeout = setTimeout(() => {
-                    if (!this.nalParser.isReady() && !this._idrRequested) {
-                        this._idrRequested = true;
+                    if (!this.nalParser.isReady()) {
                         console.warn('[StreamView] No keyframe after 3s, requesting IDR from backend');
-                        this.webrtc.send({ type: 'requestidr' });
+                        this._requestIdr('no keyframe after 3s');
                     }
                 }, 3000);
             }
@@ -2086,10 +2069,7 @@ export class StreamView {
                 console.warn('[StreamView] Frame gap: expected ' + (this._lastFrameId + 1) +
                     ' got ' + frameId + ' — invalidating reference, requesting IDR');
                 this._referenceValid = false;
-                if (!this._idrRequested && this.webrtc) {
-                    this._idrRequested = true;
-                    this.webrtc.send({ type: 'requestidr' });
-                }
+                this._requestIdr('frame gap');
             }
             if (frameId > this._lastFrameId) this._lastFrameId = frameId;
         }
@@ -2194,11 +2174,10 @@ export class StreamView {
 
                 // Request an IDR if we've buffered too many delta frames without decoder config.
                 // Threshold: 30 frames (~0.5s at 60fps) without a keyframe.
-                if (this.pendingFrames.length > 30 && !this._idrRequested) {
-                    this._idrRequested = true;
+                if (this.pendingFrames.length > 30) {
                     console.warn('[StreamView] No keyframe after ' + this.pendingFrames.length +
                         ' frames, requesting IDR from backend');
-                    this.webrtc.send({ type: 'requestidr' });
+                    this._requestIdr('no keyframe while buffering');
                 }
             }
         }
@@ -2244,11 +2223,10 @@ export class StreamView {
                 }
 
                 // Request an IDR if we've buffered too many delta frames
-                if (this.pendingFrames.length > 30 && !this._idrRequested) {
-                    this._idrRequested = true;
+                if (this.pendingFrames.length > 30) {
                     console.warn('[StreamView] AV1: No keyframe after ' +
                         this.pendingFrames.length + ' frames, requesting IDR');
-                    this.webrtc.send({ type: 'requestidr' });
+                    this._requestIdr('AV1 no keyframe while buffering');
                 }
                 return;
             }

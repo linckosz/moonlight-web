@@ -1422,7 +1422,8 @@ void DataChannelRelay::onStatsTimerTick()
     if (!m_InputDc || !m_InputDc->isOpen()) return;
 
     // Pipeline diagnostics: localize where frames are lost (every 2s).
-    if (m_FramesInCount > 0) {
+    // Gated behind test mode — too verbose for normal operation.
+    if (m_HevcTestMode > 0 && m_FramesInCount > 0) {
         size_t vidBuf = (m_VideoDc && m_VideoDc->isOpen()) ? m_VideoDc->bufferedAmount() : 0;
         qInfo() << "[DC-PIPE] in=" << m_FramesInCount
                 << "sent=" << m_FramesSentCount

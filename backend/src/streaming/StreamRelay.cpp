@@ -230,10 +230,10 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
         m_Shim->takeWorkerDroppedDelta();
     }
 
-    // Log first few frames and then every 120
+    // Log first few frames only — periodic logging floods the console
     static int logCounter = 0;
     logCounter++;
-    bool shouldLog = (logCounter <= 5) || (logCounter % 120 == 0);
+    bool shouldLog = (logCounter <= 5);
 
     if (shouldLog) {
         qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -457,6 +457,21 @@ void StreamRelay::onNewWsConnection()
 
     qInfo() << "[StreamRelay] WebSocket client connected OK, m_StreamStarted=" << m_StreamStarted
             << "pending video=" << m_PendingVideoFrames.size();
+
+    // Drop frames buffered before the client connected: flushing them would
+    // send stale deltas mislabeled as keyframes, poisoning strict mobile
+    // decoders and saturating their decode queue. Start clean from a fresh IDR.
+    if (!m_PendingVideoFrames.isEmpty() || !m_PendingAudioFrames.isEmpty()) {
+        qInfo() << "[StreamRelay] Discarding" << m_PendingVideoFrames.size()
+                << "stale video /" << m_PendingAudioFrames.size()
+                << "audio frames, requesting fresh IDR";
+        m_PendingVideoFrames.clear();
+        m_PendingAudioFrames.clear();
+    }
+    if (m_Shim) {
+        m_Shim->requestIdrFrame();
+    }
+
     emit clientConnected();
 }
 
@@ -511,6 +526,9 @@ void StreamRelay::onWsTextMessage(const QString& message)
             m_IdrCooldownTimer.restart();
             qInfo() << "[StreamRelay] IDR request from browser — forwarding to Sunshine";
             m_Shim->requestIdrFrame();
+        } else {
+            // Swallowed by cooldown — the browser retries every 1s, so log only.
+            qInfo() << "[StreamRelay] IDR request throttled (cooldown)";
         }
     }
     else if (type == "ping") {
