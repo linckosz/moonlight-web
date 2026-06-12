@@ -114,7 +114,7 @@ export class WebRtcDataChannel {
         // to kick-start the decoder.
         this._lastAssembledTime = 0;
         this._starvationRequested = false;
-        this.STARVATION_TIMEOUT_MS = 200;  // 200ms without a frame indicates trouble
+        this.STARVATION_TIMEOUT_MS = 1000;  // 1s without a frame — avoids false positives at 60fps with jitter
 
         // Guard
         this._stopping = false;
@@ -161,7 +161,7 @@ export class WebRtcDataChannel {
         // Shared IDR request throttle: minimum interval between any requestidr sent.
         // Covers stale-frame drops, starvation, and onFrameLoss — one timestamp for all.
         this._lastIdrRequestTime = 0;
-        this.IDR_THROTTLE_MS = 200;  // minimum ms between IDR requests from this client
+        this.IDR_THROTTLE_MS = 500;  // minimum ms between IDR requests (> backend 300ms cooldown)
 
         // Callback: (frameId, wasKeyframe) — fired when an assembled frame is dropped incomplete.
         this.onFrameLoss = null;
@@ -571,15 +571,15 @@ export class WebRtcDataChannel {
     }
 
     _createDataChannels() {
-        // Video DataChannel (ID=0, ordered=false, maxRetransmits=0 — no retransmits)
-        // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=0.
-        // Real-time video: stale retransmitted data is worse than a dropped packet,
-        // the decoder recovers from the next keyframe.
+        // Video DataChannel (ID=0, ordered=false, maxRetransmits=3)
+        // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=3.
+        // Partial reliability: a keyframe spans ~140 UDP packets, so with zero
+        // retransmits a single loss kills the whole frame and forces IDR recovery.
         const videoInit = {
             negotiated: true,
             id: 0,
             ordered: false,
-            maxRetransmits: 0
+            maxRetransmits: 3
         };
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
         this._setupDataChannel('video', this.dataChannels.video);
