@@ -2,65 +2,65 @@
 
 ## Mode de fonctionnement
 
-**Tu n'es PAS l'Engineering Manager.** Pour toute tâche, quelle qu'elle soit, tu dois
-déléguer à l'agent `engineering-manager` (Fable / Deepseek-v4-pro[1m]) qui est
-l'unique interlocuteur de l'utilisateur et l'orchestrateur du projet.
+**Traite chaque demande directement, en une seule passe.** Tu n'invoques un
+subagent que si l'utilisateur le demande explicitement par son nom. L'agent
+`engineering-manager` n'est plus le point d'entrée par défaut — il ne sert que
+pour les chantiers multi-domaines lourds, sur demande explicite.
 
-```
-Utilisateur → [Toi — simple dispatcher] → Agent "engineering-manager"
-```
+## Optimisation de coût et de contexte — RÈGLES OBLIGATOIRES
 
-Ne traite jamais une demande directement. Contente-toi de transmettre la demande
-de l'utilisateur à l'Engineering Manager via l'outil Agent.
+- **Subagents = exception.** Jamais de subagent pour ce qu'un Read/Edit/Grep
+  direct résout. Jamais de chaîne manager → dev → reviewer automatique.
+  Maximum 1 subagent par tâche, sauf demande explicite de l'utilisateur.
+- **Une seule passe** : Grep ciblé → lire le minimum de fichiers → éditer →
+  builder → conclure. Pas d'exploration multi-étapes spéculative.
+- **Pas de relecture inutile** : ne jamais recharger un fichier déjà lu dans la
+  session ; pour les gros fichiers, lire uniquement les sections utiles
+  (offset/limit). Ne jamais recopier le contenu d'un fichier dans la réponse.
+- **Limiter les chaînes d'outils** : regrouper les appels indépendants en un
+  seul bloc parallèle ; pas d'allers-retours outil par outil.
+- **Réponses directes et diffs** : conclusion d'abord, pas de rapport long,
+  pas de duplication d'information déjà dans le contexte.
+- **Sessions courtes et spécialisées** : une session = un domaine (backend OU
+  frontend OU config). `/compact` dès ~80k tokens de contexte, `/clear` à
+  chaque changement de sujet. Pas de session longue multi-domaines.
+- **Modèles** : `engineering-manager` = fable ; les autres subagents = opus par
+  défaut, sonnet acceptable pour une tâche légère bien cadrée.
 
-## Architecture d'agents
+## Agents (usage exceptionnel, sur demande explicite)
 
 | Agent | Modèle | Rôle |
 |---|---|---|
-| `engineering-manager` | Fable (ou deepseek-v4-pro) | Orchestrateur, unique interlocuteur, parle français |
-| `backend-dev` | Sonnet (ou deepseek-v4-flash) | Développe le backend C++/Qt |
-| `frontend-dev` | Sonnet (ou deepseek-v4-flash) | Développe le frontend Vanilla JS |
-| `code-reviewer` | Opus (ou deepseek-v4-pro) | Revue de code, validation architecture, sécurité |
-| `expert-moonlight-qt` | Opus (ou deepseek-v4-pro) | Explique le code de référence moonlight-qt |
-| `expert-moonlight-xbox` | Opus (ou deepseek-v4-pro) | Explique le code de référence moonlight-xbox |
-| `expert-moonlight-web-stream` | Opus (ou deepseek-v4-pro) | Explique le code de référence moonlight-web-stream (Rust, WebRTC) |
+| `engineering-manager` | fable | Orchestration de chantiers multi-domaines lourds uniquement |
+| `backend-dev` | opus (sonnet si léger) | Backend C++/Qt |
+| `frontend-dev` | opus (sonnet si léger) | Frontend Vanilla JS |
+| `code-reviewer` | opus (sonnet si léger) | Revue de code — uniquement sur demande |
+| `expert-moonlight-refs` | opus (sonnet si léger) | Référence moonlight-qt / xbox / web-stream ⚠️ autorisation requise |
 
-## Skills
+⚠️ **Codebases externes** (`moonlight-qt`, `moonlight-xbox`, `moonlight-web-stream`,
+sources Sunshine) : ne jamais les scanner sans autorisation explicite de
+l'utilisateur. Pour l'API Sunshine, le skill `sunshine-api` suffit.
+
+## Skills projet
 
 | Skill | Usage |
 |---|---|
-| `build` | Build backend C++ (MSVC nmake) |
+| `build` | Build backend C++ (MSVC qmake+nmake), rapport d'erreurs |
 | `test-stream` | Test E2E — lance le serveur et vérifie les endpoints |
-| `phase-review` | Vérifie les critères d'acceptation d'une phase |
-| `sync-moonlight-qt` | Référence croisée moonlight-qt → moonlight-web |
-| `sync-moonlight-xbox` | Référence croisée moonlight-xbox → moonlight-web |
 | `sunshine-api` | Référence API Sunshine — endpoints, pairing, launch, RTSP, XML |
 
-## Présentation du projet
+## Projet
 
-- **Nom** : Moonlight-Web (MW)
-- **Stack backend** : C++17 avec Qt 6.11 (MSVC 2022)
-- **Stack frontend** : Application web vanilla (HTML/CSS/JS, modules ES6)
-- **Objectif** : Client de streaming vidéo H.264 communiquant avec Sunshine, interface multi-hôtes et affichage canvas-based via WebCodecs
-- **Référence C++/Qt** : [moonlight-qt](D:\Code\moonlight-qt\app)
-- **Référence DirectX/Xbox** : [moonlight-xbox](D:\Code\moonlight-xbox)
-- **Documentation architecture** : [docs/moonlight-qt-architecture.md](docs/moonlight-qt-architecture.md)
-- **Documentation API Sunshine** : [docs/sunshine-api.md](docs/sunshine-api.md)
-- **Plan de développement** : [docs/moonlight-web-plan.md](docs/moonlight-web-plan.md)
+- **Stack** : backend C++17 / Qt 6.11 (MSVC 2022) ; frontend Vanilla JS (modules ES6), HTML/CSS
+- **Objectif** : client de streaming Sunshine dans le navigateur — WebCodecs + canvas, transport WebRTC (DataChannels + media tracks) avec fallback WSS, multi-hôtes, pairing, audio AudioWorklet, input clavier/souris/touch
+- **État** : phases 1–6 terminées (HTTP, découverte, pairing, apps, RTSP, vidéo, audio) ; input avancé et polish en cours
+- **Docs** : [plan](docs/moonlight-web-plan.md) · [API Sunshine](docs/sunshine-api.md) · [architecture moonlight-qt](docs/moonlight-qt-architecture.md)
 
-## Frontend source tree
-- `frontend/js/stream/` — streaming components
+## Standards
 
-## Standards de code
-
-- Code propre, modulaire, prêt pour la production
-- Technologies simples, robustes et performantes — éviter la sur-ingénierie
-- Commentaires dans le code : **toujours en anglais**, très concis (1-2 lignes max)
-
-## Règles de communication
-
-- Répondre **toujours en français**
-- Commentaires dans le code **toujours en anglais**
+- Code propre, simple, robuste — éviter la sur-ingénierie
+- Commentaires dans le code : **toujours en anglais**, concis (1-2 lignes max)
+- Réponses à l'utilisateur : **toujours en français**
 
 ## Commandes utiles
 
@@ -68,39 +68,17 @@ de l'utilisateur à l'Engineering Manager via l'outil Agent.
 # Build backend (MSVC)
 cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat
 
-# Lancer le serveur (port 48 HTTP, 443 HTTPS)
+# Lancer / arrêter le serveur (HTTP 48000, HTTPS 443)
 cd backend/build/release && ./mw-server.exe
-
-# Arrêter le serveur
 powershell -Command "Stop-Process -Name mw-server -Force"
-
-# Servir le frontend (développement)
-npx serve frontend/
 
 # Test rapide API
 curl -k http://127.0.0.1:48000/api/hosts
 ```
 
-## Phases de développement
+## graphify (optionnel — pas de chaîne obligatoire)
 
-| Phase | Statut |
-|---|---|
-| 1 — Squelette + HTTP | ✅ |
-| 2 — Découverte hôtes + API | ✅ |
-| 3 — Pairing | ✅ |
-| 4 — Liste des applications | ✅ |
-| 5a — RTSP Handshake | ✅ |
-| 5b — Pipeline Vidéo | ✅ |
-| 6 — Pipeline Audio | ✅ |
-| 7 — Input | ⏳ |
-| 8 — Polish & erreurs | ⏳ |
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+Graphe de connaissance dans `graphify-out/`. Utiliser `graphify query "<question>"`
+**seulement** pour les questions d'architecture larges où un Grep ciblé ne suffit
+pas. Après une série de modifications significatives (pas après chaque édition),
+lancer `graphify update .` (AST-only, sans coût API).
