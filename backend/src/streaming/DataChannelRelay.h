@@ -127,10 +127,15 @@ private:
     std::atomic<bool> m_Connected{false};
     std::atomic<bool> m_Stopping{false};
     int m_FrameCount = 0;
-    uint32_t m_FrameId = 0;  // Monotonic counter for fragmentation headers
+    uint32_t m_FrameId = 0;      // Monotonic counter for VIDEO fragmentation headers
+    uint32_t m_AudioFrameId = 0; // Separate counter for audio — audio must not
+                                 // consume video frameIds (frontend gap detection
+                                 // relies on contiguous video ids)
 
     // Backpressure counters (diagnostic logging)
     int m_DeltaDroppedCount = 0;           // Delta frames dropped due to full SCTP buffer
+    int m_FramesInCount = 0;               // Frames entering onVideoFrame (diag)
+    int m_AwaitingDropCount = 0;           // Deltas dropped while awaiting IDR (diag)
     int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
     int m_BackpressureDropCount = 0;       // Frames dropped in current backpressure episode
     // Decode latency tracking (microseconds)

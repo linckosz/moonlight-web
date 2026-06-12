@@ -751,11 +751,15 @@ void DataChannelRelay::createDataChannels()
             // (they all open together as part of SCTP association)
             emit dataChannelsOpen();
 
-            // Start periodic stats timer
-            if (m_StatsTimer) {
-                m_StatsTimer->start();
-                qInfo() << "[DataChannelRelay] Stats timer started (2s interval)";
-            }
+            // Start periodic stats timer — marshal to the Qt main thread:
+            // this callback runs on a libdatachannel thread and QTimer::start()
+            // is thread-affine (silently fails otherwise).
+            QMetaObject::invokeMethod(this, [this]() {
+                if (m_StatsTimer && !m_Stopping.load()) {
+                    m_StatsTimer->start();
+                    qInfo() << "[DataChannelRelay] Stats timer started (2s interval)";
+                }
+            }, Qt::QueuedConnection);
         });
         m_InputDc->onClosed([this]() {
             qInfo() << "[DataChannelRelay] Input DataChannel closed";
@@ -801,6 +805,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
     }
 
     bool isKeyframe = (frameType == 1);
+    m_FramesInCount++;
 
     // ── DEBUG LOG: First frames detailed hex dump (test mode only) ────────
     // Gated behind m_HevcTestMode: hex/NAL formatting is too expensive for
@@ -929,6 +934,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
 
     // Awaiting IDR: drop all deltas until a keyframe resets the decoder reference.
     if (m_AwaitingIdr && !isKeyframe) {
+        m_AwaitingDropCount++;
         sendIdrRequestThrottled();  // Throttle absorbs bursts; keeps requesting until IDR arrives
         return;
     }
@@ -1303,10 +1309,15 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
 
     int totalSize = data.size();
     int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
-    uint32_t frameId = m_FrameId++;
+
+    // Audio shares this path but uses its own id counter: at ~200 Opus pkt/s it
+    // would otherwise punch permanent holes in the video frameId sequence and
+    // trip the frontend gap detection on nearly every video frame (IDR loop).
+    const bool isAudio = (dc == m_AudioDc);
+    uint32_t frameId = isAudio ? m_AudioFrameId++ : m_FrameId++;
 
     // Log FNV-1a hash for ALL frames (first 20) for end-to-end comparison
-    if (frameId < 20) {
+    if (!isAudio && frameId < 20) {
         // FNV-1a 32-bit hash
         uint32_t hash = 0x811c9dc5;
         for (int i = 0; i < totalSize; i++) {
@@ -1391,12 +1402,15 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         }
     }
 
-    m_FrameCount++;
-    m_FramesSentCount++;
-    if (m_FrameCount <= 3 || m_FrameCount % 300 == 0) {
-        qInfo() << "[DataChannelRelay] Sent frame #" << m_FrameCount
-                << "totalSize=" << totalSize << "chunks=" << totalChunks
-                << "isKeyframe=" << isKeyframe << "frameId=" << frameId;
+    // Video-only counters: audio packets are not "frames" for diagnostics.
+    if (!isAudio) {
+        m_FrameCount++;
+        m_FramesSentCount++;
+        if (m_FrameCount <= 3 || m_FrameCount % 300 == 0) {
+            qInfo() << "[DataChannelRelay] Sent frame #" << m_FrameCount
+                    << "totalSize=" << totalSize << "chunks=" << totalChunks
+                    << "isKeyframe=" << isKeyframe << "frameId=" << frameId;
+        }
     }
 }
 
@@ -1406,6 +1420,18 @@ void DataChannelRelay::onStatsTimerTick()
 {
     if (m_Stopping.load() || !m_Connected) return;
     if (!m_InputDc || !m_InputDc->isOpen()) return;
+
+    // Pipeline diagnostics: localize where frames are lost (every 2s).
+    if (m_FramesInCount > 0) {
+        size_t vidBuf = (m_VideoDc && m_VideoDc->isOpen()) ? m_VideoDc->bufferedAmount() : 0;
+        qInfo() << "[DC-PIPE] in=" << m_FramesInCount
+                << "sent=" << m_FramesSentCount
+                << "dropAwait=" << m_AwaitingDropCount
+                << "dropBackpressure=" << m_DeltaDroppedCount
+                << "nextFrameId=" << m_FrameId
+                << "bufferedAmount=" << vidBuf
+                << "awaitingIdr=" << m_AwaitingIdr;
+    }
 
     double hostRttMs = 0.0;
     int64_t decodeLatUs = m_LastDecodeLatencyUs.load(std::memory_order_acquire);

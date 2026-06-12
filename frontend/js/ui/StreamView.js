@@ -1635,20 +1635,26 @@ export class StreamView {
         // regardless of alpha — no blending at all.
         // The standard path below handles non-HEVC without 'copy' mode.
         if (isHevcNv12) {
+            // ── PRIMARY: createImageBitmap(VideoFrame) BEFORE touching canvas.
+            // The await must happen before any canvas mutation: painting black
+            // then awaiting let the compositor present an all-black canvas
+            // (visible black flashes on Android where the bitmap is slow).
+            // No black pre-fill is needed — 'copy' mode replaces every pixel.
+            let bitmap = null;
+            try {
+                bitmap = await createImageBitmap(frame);
+            } catch (e) {
+                if (dbgFirstFew) {
+                    console.warn('[HEVC-RENDER] createImageBitmap(VideoFrame) failed: ' +
+                        e.message + ' — trying ctx.drawImage(VideoFrame)');
+                }
+            }
+
             this.ctx.save();
             this.ctx.globalCompositeOperation = 'copy';
 
-            // Also clear under 'copy' mode for safety
-            this.ctx.fillStyle = '#000000';
-            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
             let success = false;
-
-            // ── PRIMARY: createImageBitmap(VideoFrame) → drawImage(bitmap) ─
-            // GPU-side NV12→RGBA conversion.  The resulting ImageBitmap always
-            // has alpha=255 everywhere, so 'copy' mode cleanly overwrites.
-            try {
-                const bitmap = await createImageBitmap(frame);
+            if (bitmap) {
                 this.ctx.drawImage(bitmap, 0, 0,
                     this.canvas.width, this.canvas.height);
                 bitmap.close();
@@ -1656,11 +1662,6 @@ export class StreamView {
                 if (dbgFirstFew) {
                     console.log('[HEVC-RENDER] createImageBitmap(VideoFrame) SUCCESS, frame#' +
                         this.stats.rendered);
-                }
-            } catch (e) {
-                if (dbgFirstFew) {
-                    console.warn('[HEVC-RENDER] createImageBitmap(VideoFrame) failed: ' +
-                        e.message + ' — trying ctx.drawImage(VideoFrame)');
                 }
             }
 
@@ -2078,7 +2079,10 @@ export class StreamView {
         // Disabled for WSS transport: TCP does not lose frames, so a frameId
         // discontinuity there is a false positive that would freeze the stream.
         if (this._transport !== 'wss' && frameId !== undefined && frameId !== 0) {
-            if (this._lastFrameId !== -1 && frameId !== this._lastFrameId + 1) {
+            // Only forward jumps are gaps. A frameId <= lastFrameId is a late
+            // out-of-order frame (already filtered by the backendTs check above
+            // in most cases) — never a loss signal.
+            if (this._lastFrameId !== -1 && frameId > this._lastFrameId + 1) {
                 console.warn('[StreamView] Frame gap: expected ' + (this._lastFrameId + 1) +
                     ' got ' + frameId + ' — invalidating reference, requesting IDR');
                 this._referenceValid = false;
@@ -2087,7 +2091,7 @@ export class StreamView {
                     this.webrtc.send({ type: 'requestidr' });
                 }
             }
-            this._lastFrameId = frameId;
+            if (frameId > this._lastFrameId) this._lastFrameId = frameId;
         }
 
         // Track cumulative video bytes for bitrate calculation
