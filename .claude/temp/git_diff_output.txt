@@ -1,5 +1,0 @@
-This file would contain the output of:
-git diff 5f0f588..a52f2cf -- frontend/js/ui/StreamView.js
-
-I need to determine what changed in the "Fix UDP" commit and whether it affected
-the keyboard shortcut handling code.

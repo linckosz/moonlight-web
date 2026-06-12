@@ -1,1 +1,0 @@
-cd d:/Code/moonlight-web-deepseek && find . -name "HttpServer*" -type f 2>/dev/null

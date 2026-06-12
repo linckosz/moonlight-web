@@ -1,1 +1,0 @@
-ls -la d:/Code/moonlight-web-deepseek/frontend/

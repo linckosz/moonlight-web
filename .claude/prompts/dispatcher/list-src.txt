@@ -1,1 +1,0 @@
-Lance `cmd //c "dir /s /b d:\Code\moonlight-web-deepseek\backend\src\"` via bash (noting that on Windows we use powershell or cmd). Use `ls -R d:/Code/moonlight-web-deepseek/backend/src/` in bash (Git bash style). Just show the directory listing.

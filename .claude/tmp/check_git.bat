@@ -1,1 +1,0 @@
-cd /d d:\Code\moonlight-web-deepseek && git diff HEAD -- frontend/css/style.css frontend/index.html frontend/js/app.js
