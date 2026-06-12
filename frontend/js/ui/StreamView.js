@@ -287,6 +287,20 @@ export class StreamView {
                 new Blob(['{}'], { type: 'application/json' }));
         };
 
+        // Reference validity: false after a gap/error, true once a keyframe is decoded.
+        // Delta frames are dropped when false to avoid corrupted output.
+        this._referenceValid = true;
+        // Last seen frameId for gap detection (frameId is optional per transport).
+        this._lastFrameId = -1;
+
+        // Decoder queue backpressure: drop deltas when decodeQueueSize reaches
+        // this threshold (latency is building up); reset decoder if stalled >200ms.
+        this.DECODE_QUEUE_MAX = 4;
+        this.QUEUE_STALL_MS = 200;
+        this._queueStallStart = 0;
+        // Last EncodedVideoChunk timestamp (µs) — enforces monotonicity.
+        this._lastChunkTs = -1;
+
         // IDR request state: if no keyframe arrives after buffering many frames
         // without decoder config, we ask the backend to request an IDR from Sunshine.
         // This is a safety net for the rare race where the initial IDR is lost.
@@ -759,6 +773,8 @@ export class StreamView {
         }
         this.decoderConfigured = false;
         this.decoderConfiguring = false;
+        // Decoder error invalidates the reference: drop deltas until next keyframe.
+        this._referenceValid = false;
 
         // 2. Clear frame queue — frames output by the old decoder are invalid
         //    once the decoder is closed
@@ -1211,16 +1227,16 @@ export class StreamView {
         }
         while (this.pendingFrames.length > 0) {
             const entry = this.pendingFrames.shift();
-            this.decodeFrame(entry.data, entry.isKeyframe);
+            this.decodeFrame(entry.data, entry.isKeyframe, entry.backendTs);
         }
         console.log('[StreamView] flushPendingFrames done, decoder state=' + this.decoder.state);
     }
 
-    decodeFrame(data, isKeyframe) {
+    decodeFrame(data, isKeyframe, backendTs) {
         if (!this.decoderConfigured) {
             // Buffer until decoder is ready (limit to avoid OOM)
             if (this.pendingFrames.length < 120) {
-                this.pendingFrames.push({ data, isKeyframe });
+                this.pendingFrames.push({ data, isKeyframe, backendTs });
                 if (this.pendingFrames.length === 1) {
                     console.log('[StreamView] First frame buffered (pending), waiting for decoder config, webrtc.video=' +
                     (this.webrtc && this.webrtc.dataChannels && this.webrtc.dataChannels.video ?
@@ -1249,7 +1265,45 @@ export class StreamView {
             return;
         }
 
-        const timestamp = this.frameCount * 16667; // ~60 fps in microseconds
+        // Drop delta frames when the reference picture is invalid (gap or decoder error).
+        // Keyframes always pass through — they restore the reference.
+        if (!isKeyframe && !this._referenceValid) {
+            this.stats.dropped++;
+            return;
+        }
+
+        // Decoder queue backpressure: when decodeQueueSize saturates, decoding
+        // latency builds up. Drop deltas (keyframes always pass), invalidate the
+        // reference and request an IDR; reset the decoder if stalled too long.
+        if (!isKeyframe && this.decoder.decodeQueueSize >= this.DECODE_QUEUE_MAX) {
+            this.stats.dropped++;
+            this._referenceValid = false;
+            const now = performance.now();
+            if (this._queueStallStart === 0) {
+                this._queueStallStart = now;
+            } else if (now - this._queueStallStart > this.QUEUE_STALL_MS) {
+                console.warn('[StreamView] Decode queue stalled >' + this.QUEUE_STALL_MS +
+                    'ms (queueSize=' + this.decoder.decodeQueueSize + ') — resetting decoder');
+                this._queueStallStart = 0;
+                this._handleDecoderError(new Error('Decode queue stalled'));
+                return;
+            }
+            if (!this._idrRequested && this.webrtc) {
+                this._idrRequested = true;
+                this.webrtc.send({ type: 'requestidr' });
+            }
+            return;
+        }
+        this._queueStallStart = 0;
+
+        // Timestamp from the backend capture clock (ms → µs) when available —
+        // reflects real frame pacing instead of a synthetic 60fps clock.
+        // Monotonicity is enforced (WebCodecs dislikes duplicate timestamps).
+        let timestamp = (backendTs !== undefined && backendTs > 0)
+            ? backendTs * 1000
+            : this.frameCount * 16667;
+        if (timestamp <= this._lastChunkTs) timestamp = this._lastChunkTs + 1;
+        this._lastChunkTs = timestamp;
         this.frameCount++;
 
         const type = isKeyframe ? 'key' : 'delta';
@@ -1310,11 +1364,18 @@ export class StreamView {
                 duration: 16667,
                 data: avccData
             });
-            console.log('[StreamView] Decoding frame #' + this.frameCount +
-                ' type=' + type + ' avccSize=' + avccData.length +
-                ' decoderState=' + this.decoder.state);
+            if (this.frameCount <= 6) {
+                console.log('[StreamView] Decoding frame #' + this.frameCount +
+                    ' type=' + type + ' avccSize=' + avccData.length +
+                    ' decoderState=' + this.decoder.state);
+            }
             this.decoder.decode(chunk);
             this.stats.received++;
+            // Keyframe successfully submitted: reference is valid again.
+            if (isKeyframe) {
+                this._referenceValid = true;
+                this._idrRequested = false;
+            }
             // Log after every 60th frame
             if (this.frameCount % 60 === 0) {
                 console.log('[StreamView] Stats: frameCount=' + this.frameCount +
@@ -1662,8 +1723,11 @@ export class StreamView {
 
             this.ctx.restore();
 
-            // Force GPU sync after render
-            this.ctx.getImageData(0, 0, 1, 1);
+            // Force GPU sync after render — only needed on the first frames to
+            // flush stale compositor caches; per-frame readback costs ~1-3ms.
+            if (this.stats.rendered < 30) {
+                this.ctx.getImageData(0, 0, 1, 1);
+            }
 
             // Diagnostic
             if (dbgFirstFew) {
@@ -1693,8 +1757,10 @@ export class StreamView {
         if (this.nalParser.codec === CODEC_H264) {
             try {
                 if (this.canvas && this.ctx) {
-                    console.log('[GPU] H.264 direct drawImage(VideoFrame), frame#' +
-                        this.stats.rendered);
+                    if (this.stats.rendered < 6) {
+                        console.log('[GPU] H.264 direct drawImage(VideoFrame), frame#' +
+                            this.stats.rendered);
+                    }
                     this.ctx.drawImage(frame, 0, 0,
                         this.canvas.width, this.canvas.height);
                     rendered = true;
@@ -1827,6 +1893,11 @@ export class StreamView {
         // Video frames: DataChannel mode uses WebCodecs callbacks
         if (this._transport !== 'webrtc-media') {
             this.webrtc.onVideo = (frame, isKeyframe, backendTs, frameId) => this.handleVideoFrame(frame, isKeyframe, backendTs, frameId);
+            // Frame loss from reassembly: invalidate reference until next keyframe.
+            // IDR is already requested by WebRtcDataChannel (throttled) — don't double it.
+            this.webrtc.onFrameLoss = (frameId, wasKeyframe) => {
+                this._referenceValid = false;
+            };
         }
         // Audio samples (PCM16 stereo interleaved) -> AudioPipeline
         this.webrtc.onAudio = (sample) => this.handleAudioSample(sample);
@@ -1986,8 +2057,12 @@ export class StreamView {
             if (this._maxBackendTs === undefined || backendTs > this._maxBackendTs) {
                 this._maxBackendTs = backendTs;
             } else if (backendTs < this._maxBackendTs) {
-                // Out-of-order: frame is older than the newest seen
-                if (this.decoderConfigured || !isKeyframe) {
+                // Out-of-order: frame is older than the newest seen.
+                // Recovery keyframes always pass when the reference is invalid —
+                // recovery takes priority over anti-ghosting.
+                if (isKeyframe && !this._referenceValid) {
+                    // Let through to restore the reference
+                } else if (this.decoderConfigured || !isKeyframe) {
                     // Decoder is configured or this isn't a keyframe — drop safely
                     this.stats.dropped++;
                     return;
@@ -1995,6 +2070,22 @@ export class StreamView {
                 // Keyframe before decoder config: let through to bootstrap decoder
             }
             // Equal timestamps: pass through (same-ms frames)
+        }
+
+        // Gap detection: frameId is provided by WebRtcDataChannel (optional).
+        // A non-consecutive frameId means packets were lost — drop deltas until
+        // the next keyframe restores the reference picture.
+        if (frameId !== undefined && frameId !== 0) {
+            if (this._lastFrameId !== -1 && frameId !== this._lastFrameId + 1) {
+                console.warn('[StreamView] Frame gap: expected ' + (this._lastFrameId + 1) +
+                    ' got ' + frameId + ' — invalidating reference, requesting IDR');
+                this._referenceValid = false;
+                if (!this._idrRequested && this.webrtc) {
+                    this._idrRequested = true;
+                    this.webrtc.send({ type: 'requestidr' });
+                }
+            }
+            this._lastFrameId = frameId;
         }
 
         // Track cumulative video bytes for bitrate calculation
@@ -2114,7 +2205,7 @@ export class StreamView {
         }
 
         // Submit frame to decoder
-        this.decodeFrame(data, isKeyframe);
+        this.decodeFrame(data, isKeyframe, backendTs);
     }
 
     // --- AV1 pipeline ---

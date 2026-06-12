@@ -38,13 +38,13 @@ function wsCloseDescription(code) {
  * Fragmentation protocol (backend sends video/audio in chunks):
  *   Header: [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
  *   backend_ts: backend monotonic ms timestamp (mod 2^32) for end-to-end latency.
- *   Max payload per chunk: 14000 bytes (under SCTP 16KB limit).
+ *   Max payload per chunk: 16000 bytes (under SCTP 16KB limit).
  *
  * Reassembly:
  *   - Buffers chunks per frame_id in a Map.
  *   - Completes frame when all chunks received (total_chunks == chunk_index + 1).
- *   - I-frames (keyframes): all chunks required, otherwise DROP.
- *   - P-frames (delta): missing chunks filled with 0x00.
+ *   - Incomplete frames (keyframe or delta) are DROPPED — a partial bitstream
+ *     would crash the VideoDecoder. IDR recovery handles the gap.
  *   - Frames older than 500ms are dropped (cleanup timer).
  */
 export class WebRtcDataChannel {
@@ -147,7 +147,7 @@ export class WebRtcDataChannel {
 
         // Constants (must match backend)
         this.FRAG_HEADER_SIZE = 17;
-        this.CLEANUP_INTERVAL_MS = 500;
+        this.CLEANUP_INTERVAL_MS = 100;  // Fast stale-frame detection (was 500)
         this.FRAME_TIMEOUT_MS = 500;
 
         // Channel labels (must match backend)
@@ -157,6 +157,14 @@ export class WebRtcDataChannel {
 
         // WSS mode received frame count (for logging only)
         this._wssFrameCount = 0;
+
+        // Shared IDR request throttle: minimum interval between any requestidr sent.
+        // Covers stale-frame drops, starvation, and onFrameLoss — one timestamp for all.
+        this._lastIdrRequestTime = 0;
+        this.IDR_THROTTLE_MS = 200;  // minimum ms between IDR requests from this client
+
+        // Callback: (frameId, wasKeyframe) — fired when an assembled frame is dropped incomplete.
+        this.onFrameLoss = null;
     }
 
     /**
@@ -567,24 +575,22 @@ export class WebRtcDataChannel {
         // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=0.
         // Real-time video: stale retransmitted data is worse than a dropped packet,
         // the decoder recovers from the next keyframe.
-        // Video DataChannel (ID=0, ordered=false, maxRetransmits=0 — no retransmits)
-        // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=0.
-        // Real-time video: stale retransmitted data is worse than a dropped packet,
-        // the decoder recovers from the next keyframe.
         const videoInit = {
             negotiated: true,
             id: 0,
             ordered: false,
-            maxRetransmits: 3
+            maxRetransmits: 0
         };
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
         this._setupDataChannel('video', this.dataChannels.video);
 
-        // Audio DataChannel (ID=1, ordered=true, reliable)
+        // Audio DataChannel (ID=1, unordered, 100ms lifetime — must match backend).
+        // Real-time PCM: a late packet is a glitch either way, don't block on it.
         const audioInit = {
             negotiated: true,
             id: 1,
-            ordered: true
+            ordered: false,
+            maxPacketLifeTime: 100
         };
         this.dataChannels.audio = this.pc.createDataChannel('audio', audioInit);
         this._setupDataChannel('audio', this.dataChannels.audio);
@@ -804,9 +810,6 @@ export class WebRtcDataChannel {
                 ' byteLength=' + (data.byteLength || data.length));
         }
 
-        // Any chunk arrival means the stream is alive — reset starvation detector
-        this._starvationRequested = false;
-
         if (data instanceof ArrayBuffer) {
             data = new Uint8Array(data);
         } else if (data instanceof Blob) {
@@ -875,6 +878,10 @@ export class WebRtcDataChannel {
                     ': got ' + entry.received + '/' + entry.total + ' chunks');
                 this._frameLogCount++;
             }
+            // Notify StreamView so it can invalidate decoder reference state
+            if (this.onFrameLoss) this.onFrameLoss(frameId, entry.keyframe);
+            // Request IDR via shared throttle — backend also throttles server-side
+            this._requestIdrFrame('incomplete frame #' + frameId);
             return;
         }
 
@@ -894,8 +901,11 @@ export class WebRtcDataChannel {
         this.stats.framesAssembled++;
         this.stats.framesReceived++;
 
-        // Track last assembled frame time for starvation detection
+        // Track last assembled frame time for starvation detection.
+        // Re-arm here (assembled frame), not on chunk arrival — a stream stuck
+        // delivering chunks of incomplete frames must still trigger starvation.
         this._lastAssembledTime = performance.now();
+        this._starvationRequested = false;
 
         // TEST B: Capture first DC keyframe bytes + hex dump
         if (entry.keyframe && !window._dcKfCaptured) {
@@ -1029,6 +1039,8 @@ export class WebRtcDataChannel {
                         ': age=' + Math.round(age) + 'ms, got ' + entry.received + '/' + entry.total);
                     this._frameLogCount++;
                 }
+                // Notify StreamView so it can invalidate decoder reference state
+                if (this.onFrameLoss) this.onFrameLoss(frameId, entry.keyframe);
 
                 toDelete.push(frameId);
             }
@@ -1057,8 +1069,15 @@ export class WebRtcDataChannel {
         }
     }
 
-    /** Request an IDR (key) frame from Sunshine via the input DataChannel or WS text (WSS/fallback mode). */
+    /** Request an IDR (key) frame from Sunshine via the input DataChannel or WS text (WSS/fallback mode).
+     *  Client-side throttle: at most one request per IDR_THROTTLE_MS; backend also throttles server-side. */
     _requestIdrFrame(reason) {
+        const now = performance.now();
+        if (now - this._lastIdrRequestTime < this.IDR_THROTTLE_MS) {
+            return;  // Throttled — too soon since last request
+        }
+        this._lastIdrRequestTime = now;
+
         // WSS mode or WS fallback mode: send via signaling WS text message
         if (this._wssMode || this._wsFallback) {
             if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {

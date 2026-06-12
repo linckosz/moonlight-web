@@ -76,6 +76,14 @@ public:
     // Returns the VIDEO_FORMAT_* mask chosen by Sunshine, or 0 before negotiation.
     int negotiatedVideoFormat() const { return m_NegotiatedVideoFormat.load(std::memory_order_acquire); }
 
+    // Called by the relay at the head of onVideoFrame() to balance the
+    // worker→main pending frame counter (incremented before each emit).
+    void videoFrameDelivered() { m_PendingVideoFrames.fetch_sub(1, std::memory_order_acq_rel); }
+
+    // Consume the worker-side delta drop flag (true once per drop episode).
+    // The relay uses it to arm awaiting-IDR recovery on the main thread.
+    bool takeWorkerDroppedDelta() { return m_WorkerDroppedDelta.exchange(false, std::memory_order_acq_rel); }
+
 signals:
     void stageChanged(int stage);
     void connectionStarted();
@@ -104,6 +112,11 @@ private:
     // Negotiated video format (set by drSetup during LiStartConnection).
     // 0 = unknown, 0x0001 = H.264, 0x0100 = HEVC, 0x0200 = AV1.
     std::atomic<int> m_NegotiatedVideoFormat{0};
+
+    // Worker→main queue bound: frames emitted via videoFrameReady but not yet
+    // processed by the relay. Deltas are dropped worker-side when it saturates.
+    std::atomic<int> m_PendingVideoFrames{0};
+    std::atomic<bool> m_WorkerDroppedDelta{false};
 
     void finishCleanup();
     void blockingStopConnection();
