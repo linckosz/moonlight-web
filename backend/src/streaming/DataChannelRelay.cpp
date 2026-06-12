@@ -692,11 +692,12 @@ void DataChannelRelay::createDataChannels()
     qInfo() << "[DataChannelRelay] Creating DataChannels";
 
     // --- Video DataChannel (server->browser, H.264 NAL units) ---
-    // Unordered + no retransmits: video frames are time-sensitive, stale data
-    // is worse than lost data. The decoder can recover from the next keyframe.
+    // Unordered + partial reliability (3 retransmits): an HEVC keyframe is
+    // ~11 chunks ≈ 140 UDP packets, so with 0 retransmits a single packet
+    // loss kills the whole frame and forces an IDR recovery cycle.
     rtc::DataChannelInit videoConfig;
     videoConfig.reliability.unordered = true;
-    videoConfig.reliability.maxRetransmits = 0;  // No retransmits — loss is handled by IDR recovery
+    videoConfig.reliability.maxRetransmits = 3;  // Must match frontend negotiated channel config
     videoConfig.negotiated = true;
     videoConfig.id = 0;
 
@@ -801,10 +802,12 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
 
     bool isKeyframe = (frameType == 1);
 
-    // ── DEBUG LOG: First frames detailed hex dump ──────────────────────────
+    // ── DEBUG LOG: First frames detailed hex dump (test mode only) ────────
+    // Gated behind m_HevcTestMode: hex/NAL formatting is too expensive for
+    // the hot video path during normal operation.
     static int debugFrameNumber = 0;
     debugFrameNumber++;
-    if (debugFrameNumber <= 3 || debugFrameNumber % 120 == 0) {
+    if (m_HevcTestMode > 0 && (debugFrameNumber <= 3 || debugFrameNumber % 120 == 0)) {
         qInfo() << "[DataChannelRelay] onVideoFrame #" << debugFrameNumber
                 << "type=" << frameType << "size=" << data.size()
                 << "dcOpen=" << (m_VideoDc && m_VideoDc->isOpen())

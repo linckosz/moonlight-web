@@ -99,9 +99,11 @@ private:
 
     // Backpressure: if the SCTP send buffer exceeds this threshold, drop
     // incoming delta frames to prevent main-thread blocking on dc->send().
-    // Keyframes always pass through. 48KB ≈ 3 chunks in flight — keeps the
-    // send queue short so latency cannot build up in the SCTP buffer.
-    static constexpr size_t kHighWatermark = 48 * 1024;
+    // Keyframes always pass through. Must exceed the largest expected HEVC
+    // keyframe (~165KB): a lower threshold made every keyframe trip the
+    // backpressure drop on following deltas, re-arming m_AwaitingIdr and
+    // looping IDR requests at the 300ms throttle (3-4 fps).
+    static constexpr size_t kHighWatermark = 256 * 1024;
 
     void sendFragmented(const QByteArray& data, bool isKeyframe,
                         std::shared_ptr<rtc::DataChannel>& dc);

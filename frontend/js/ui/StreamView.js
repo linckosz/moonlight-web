@@ -2075,7 +2075,9 @@ export class StreamView {
         // Gap detection: frameId is provided by WebRtcDataChannel (optional).
         // A non-consecutive frameId means packets were lost — drop deltas until
         // the next keyframe restores the reference picture.
-        if (frameId !== undefined && frameId !== 0) {
+        // Disabled for WSS transport: TCP does not lose frames, so a frameId
+        // discontinuity there is a false positive that would freeze the stream.
+        if (this._transport !== 'wss' && frameId !== undefined && frameId !== 0) {
             if (this._lastFrameId !== -1 && frameId !== this._lastFrameId + 1) {
                 console.warn('[StreamView] Frame gap: expected ' + (this._lastFrameId + 1) +
                     ' got ' + frameId + ' — invalidating reference, requesting IDR');
