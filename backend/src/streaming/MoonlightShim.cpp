@@ -363,7 +363,7 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
 
     static int frameCount = 0;
     frameCount++;
-    if (frameCount <= 3 || frameCount % 120 == 0) {
+    if (frameCount <= 3) {
         fprintf(stderr, "[MoonlightShim] drSubmitDecodeUnit frame=%d type=%d size=%d bufs=%d\n",
                 decodeUnit->frameNumber, decodeUnit->frameType, totalLen, bufCount);
 
