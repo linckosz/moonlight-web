@@ -92,7 +92,9 @@
       "Bash(mv sunshine-api.md sunshine-api/SKILL.md)",
       "Bash(rm build.md test-stream.md)",
       "Bash(git rm *)",
-      "Bash(rm .claude/agents/expert-moonlight-qt.md .claude/agents/expert-moonlight-xbox.md .claude/agents/expert-moonlight-web-stream.md)"
+      "Bash(rm .claude/agents/expert-moonlight-qt.md .claude/agents/expert-moonlight-xbox.md .claude/agents/expert-moonlight-web-stream.md)",
+      "Bash(node --check frontend/js/util/Av1Utils.js)",
+      "Bash(node *)"
     ]
   }
 }

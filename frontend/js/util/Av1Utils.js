@@ -24,6 +24,8 @@ export const CODEC_AV1 = 'av1';
  *   bit 0:    obu_reserved_1bit
  */
 const OBU_SEQUENCE_HEADER = 1;
+const OBU_TEMPORAL_DELIMITER = 2;
+const OBU_PADDING = 15;
 
 /**
  * AV1 codec strings to try, ordered by likelihood for 1080p60 streaming
@@ -116,6 +118,76 @@ export function findSequenceHeader(data) {
     }
 
     return null;
+}
+
+/**
+ * Strip Temporal Delimiter and Padding OBUs from a temporal unit.
+ *
+ * The WebCodecs AV1 registration uses the ISOBMFF low-overhead sample
+ * format, where TD/padding OBUs must not be present.  Software decoders
+ * (dav1d in Chrome) tolerate them, but Safari feeds chunks to VideoToolbox
+ * which rejects the whole frame ("Decoder failure" on every keyframe).
+ *
+ * Returns the input untouched (no copy) when nothing needs stripping or
+ * when the OBU stream cannot be parsed safely.
+ */
+export function stripNonEssentialObus(data) {
+    if (!data || data.length < 1) return data;
+
+    let offset = 0;
+    const kept = [];      // [start, end] ranges of OBUs to keep
+    let removed = false;
+
+    while (offset < data.length) {
+        const obuHeader = data[offset];
+        const obuType = (obuHeader >> 3) & 0x0F;
+        const hasExtension = (obuHeader >> 2) & 0x01;
+        const hasSizeField = (obuHeader >> 1) & 0x01;
+
+        const hdrLen = 1 + (hasExtension ? 1 : 0);
+        // Without a size field the OBU extent is unknown — bail out untouched.
+        if (!hasSizeField || offset + hdrLen >= data.length) return data;
+
+        let pos = offset + hdrLen;
+        let obuSize = 0;
+        let sizeLen = 0;
+        let sizeComplete = false;
+        while (pos < data.length && sizeLen < 8) {
+            const lebByte = data[pos];
+            obuSize |= (lebByte & 0x7F) << (sizeLen * 7);
+            sizeLen++;
+            pos++;
+            if (!(lebByte & 0x80)) { sizeComplete = true; break; }
+        }
+        if (!sizeComplete) return data;
+
+        const totalObuLen = hdrLen + sizeLen + obuSize;
+        if (offset + totalObuLen > data.length) return data;
+
+        if (obuType === OBU_TEMPORAL_DELIMITER || obuType === OBU_PADDING) {
+            removed = true;
+        } else if (kept.length > 0 && kept[kept.length - 1][1] === offset) {
+            kept[kept.length - 1][1] = offset + totalObuLen;  // extend contiguous range
+        } else {
+            kept.push([offset, offset + totalObuLen]);
+        }
+
+        offset += totalObuLen;
+    }
+
+    if (!removed || kept.length === 0) return data;
+    // Single contiguous range (the common case: TD at the head) — zero-copy view.
+    if (kept.length === 1) return data.subarray(kept[0][0], kept[0][1]);
+
+    let totalLen = 0;
+    for (const [s, e] of kept) totalLen += e - s;
+    const out = new Uint8Array(totalLen);
+    let outPos = 0;
+    for (const [s, e] of kept) {
+        out.set(data.subarray(s, e), outPos);
+        outPos += e - s;
+    }
+    return out;
 }
 
 /** MSB-first bit reader over a Uint8Array. */

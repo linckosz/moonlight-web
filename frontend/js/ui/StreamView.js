@@ -25,6 +25,7 @@ import {
 import {
     findSequenceHeader,
     buildAv1DecoderConfigs,
+    stripNonEssentialObus,
     CODEC_AV1
 } from '../util/Av1Utils.js';
 
@@ -311,6 +312,9 @@ export class StreamView {
         this._idrTimeout = null;
         // Timestamp of the last requestidr sent — drives the 1s retry in _requestIdr().
         this._lastIdrRequestMs = 0;
+        // Terminal decoder failure (codec unusable in this browser): all
+        // further video processing is skipped, an error overlay is shown.
+        this._fatalDecodeError = false;
 
         // Proactive IDR scheduling: after the VideoDecoder is first configured,
         // request a clean keyframe to overwrite any green/corrupted first decode.
@@ -756,6 +760,23 @@ export class StreamView {
         // Guard: limit total recovery attempts to avoid infinite loops on
         // a fundamentally broken connection
         this._recoveryAttempts++;
+        // AV1 decoder that NEVER produced a frame: the browser's AV1 decode is
+        // broken despite isConfigSupported=true (WebKit bug in early Safari 18).
+        // Retrying forever just spams IDR requests — fail with a clear message.
+        if (this.videoCodec === 'av1' && this.stats.decoded === 0 &&
+            this._recoveryAttempts >= 3) {
+            console.error('[StreamView] AV1 decoder never produced a frame after ' +
+                this._recoveryAttempts + ' attempts — AV1 decoding is broken in this browser');
+            this._fatalDecodeError = true;
+            if (this.decoder) {
+                try { this.decoder.close(); } catch (e) { /* ignore */ }
+                this.decoder = null;
+            }
+            this.decoderConfigured = false;
+            this.pendingFrames = [];
+            this.setStatus('error', 'AV1 decoding failed in this browser — select H.264 or HEVC in Settings');
+            return;
+        }
         if (this._recoveryAttempts > this.MAX_RECOVERY_ATTEMPTS) {
             console.error('[StreamView] Max recovery attempts (' + this.MAX_RECOVERY_ATTEMPTS +
                 ') reached, giving up');
@@ -2016,6 +2037,9 @@ export class StreamView {
         // Stop processing frames once quit() has started.  The DC may still
         // deliver queued messages during the async HTTP /quit call.
         if (this._quitting) return;
+        // Terminal decoder failure (e.g. broken AV1 in Safari): the stream
+        // keeps delivering frames — drop them silently, the error is displayed.
+        if (this._fatalDecodeError) return;
 
         if (data.length < 4) {
             console.warn('[StreamView] Video frame too small:', data.length);
@@ -2173,10 +2197,12 @@ export class StreamView {
                 console.warn('[StreamView] First frame is NOT a keyframe! Cannot extract SPS/PPS');
 
                 // Request an IDR if we've buffered too many delta frames without decoder config.
-                // Threshold: 30 frames (~0.5s at 60fps) without a keyframe.
+                // Threshold: 30 frames (~0.5s at 60fps) without a keyframe (warn sampled).
                 if (this.pendingFrames.length > 30) {
-                    console.warn('[StreamView] No keyframe after ' + this.pendingFrames.length +
-                        ' frames, requesting IDR from backend');
+                    if (this.pendingFrames.length % 30 === 0) {
+                        console.warn('[StreamView] No keyframe after ' + this.pendingFrames.length +
+                            ' frames, requesting IDR from backend');
+                    }
                     this._requestIdr('no keyframe while buffering');
                 }
             }
@@ -2200,13 +2226,15 @@ export class StreamView {
         // and immediately configure the decoder.
         if (!this.decoderConfigured && !this.decoderConfiguring) {
             if (isKeyframe) {
-                // If we requested an IDR, clear stale pending frames
-                if (this._idrRequested && this.pendingFrames.length > 0) {
-                    console.log('[StreamView] AV1: IDR received, clearing ' +
+                // Discard deltas buffered BEFORE this keyframe: they have no
+                // reference and would be submitted first after configure,
+                // throwing "Key frame is required" (seen on Safari).
+                if (this.pendingFrames.length > 0) {
+                    console.log('[StreamView] AV1: keyframe received, clearing ' +
                         this.pendingFrames.length + ' stale pending frames');
                     this.pendingFrames = [];
-                    this._idrRequested = false;
                 }
+                this._idrRequested = false;
 
                 console.log('[StreamView] AV1: extracting Sequence Header OBU from first keyframe');
                 const seqHeader = findSequenceHeader(data);
@@ -2223,9 +2251,12 @@ export class StreamView {
                 }
 
                 // Request an IDR if we've buffered too many delta frames
+                // (warn sampled: 1 line per 30 frames, not one per frame)
                 if (this.pendingFrames.length > 30) {
-                    console.warn('[StreamView] AV1: No keyframe after ' +
-                        this.pendingFrames.length + ' frames, requesting IDR');
+                    if (this.pendingFrames.length % 30 === 0) {
+                        console.warn('[StreamView] AV1: No keyframe after ' +
+                            this.pendingFrames.length + ' frames, requesting IDR');
+                    }
                     this._requestIdr('AV1 no keyframe while buffering');
                 }
                 return;
@@ -2271,7 +2302,12 @@ export class StreamView {
                         console.log('[StreamView] AV1 VideoDecoder configured OK with codec=' + cfg.codec +
                             ', dequeuing ' + this.pendingFrames.length + ' pending frames');
                         // Drain pending frames using AV1 decoder path (not flushPendingFrames
-                        // which calls toAvcc() and corrupts OBU data).
+                        // which calls toAvcc() and corrupts OBU data). The first
+                        // submitted chunk MUST be a keyframe — skip leading deltas.
+                        while (this.pendingFrames.length > 0 && !this.pendingFrames[0].isKeyframe) {
+                            this.pendingFrames.shift();
+                            this.stats.dropped++;
+                        }
                         while (this.pendingFrames.length > 0) {
                             const entry = this.pendingFrames.shift();
                             this.decodeAv1Frame(entry.data, entry.isKeyframe);
@@ -2313,14 +2349,16 @@ export class StreamView {
 
         const type = isKeyframe ? 'key' : 'delta';
 
-        // AV1 data is raw OBUs — no conversion needed (no Annex B, no AVCC).
-        // The VideoDecoder parses OBU framing directly.
+        // AV1 data is raw OBUs — no Annex B / AVCC conversion. Temporal
+        // Delimiter and Padding OBUs must be stripped: the WebCodecs sample
+        // format forbids them and Safari/VideoToolbox rejects the frame.
+        const obuData = stripNonEssentialObus(data);
         try {
             const chunk = new EncodedVideoChunk({
                 type: type,
                 timestamp: timestamp,
                 duration: 16667,
-                data: data
+                data: obuData
             });
             this.decoder.decode(chunk);
             this.stats.received++;
