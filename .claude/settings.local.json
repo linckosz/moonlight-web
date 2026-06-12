@@ -84,7 +84,15 @@
       "Bash(node --check frontend/js/ui/StreamView.js)",
       "Bash(node --check frontend/js/util/Mp4Muxer.js)",
       "Bash(cmd //c d:/Code/moonlight-web-deepseek/backend/build_msvc.bat)",
-      "Bash(powershell *)"
+      "Bash(powershell *)",
+      "Bash(ls skills/ skills/code-review skills/list-files)",
+      "Bash(ls tasks *)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(mkdir -p build test-stream sunshine-api)",
+      "Bash(mv sunshine-api.md sunshine-api/SKILL.md)",
+      "Bash(rm build.md test-stream.md)",
+      "Bash(git rm *)",
+      "Bash(rm .claude/agents/expert-moonlight-qt.md .claude/agents/expert-moonlight-xbox.md .claude/agents/expert-moonlight-web-stream.md)"
     ]
   }
 }

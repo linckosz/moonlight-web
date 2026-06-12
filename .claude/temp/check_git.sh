@@ -1,1 +1,0 @@
-cd /d/Code/moonlight-web-deepseek && echo "=== Git log ===" && git log --oneline -10

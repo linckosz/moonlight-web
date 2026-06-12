@@ -1,7 +1,0 @@
-ls -la .claude/results/backend-dev/ 2>/dev/null || echo "empty or not found"
-echo "---"
-ls -la .claude/results/frontend-dev/ 2>/dev/null || echo "empty or not found"
-echo "---"
-ls -la .claude/prompts/backend-dev/ 2>/dev/null || echo "empty or not found"
-echo "---"
-ls -la .claude/prompts/frontend-dev/ 2>/dev/null || echo "empty or not found"

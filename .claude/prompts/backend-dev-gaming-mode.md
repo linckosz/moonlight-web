@@ -1,1 +1,0 @@
-Ce fichier de prompt a ete deplace. Voir .claude/prompts/backend-dev/ pour la version active.

@@ -1,1 +1,0 @@
-find backend/src -name "*.h" -o -name "*.cpp" | sort

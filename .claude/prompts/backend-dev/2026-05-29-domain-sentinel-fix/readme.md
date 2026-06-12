@@ -1,1 +1,0 @@
-This is a leftover prompt file from a previous session, ignore it.
