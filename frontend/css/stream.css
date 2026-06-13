@@ -385,6 +385,14 @@
     transform: translate(-50%, -50%) scale(0.95);
 }
 
+/* ── Native fullscreen: hide the header so the stream fills the screen ──── */
+:fullscreen .stream-header {
+    display: none !important;
+}
+:-webkit-full-screen .stream-header {
+    display: none !important;
+}
+
 /* ── Canvas CSS fallback fullscreen ────────────────────────────────────── */
 .stream-css-fs .stream-header {
     display: none !important;

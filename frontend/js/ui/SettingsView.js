@@ -30,6 +30,7 @@ export class SettingsView {
         this._streamHeight = 1080;
         this._streamFps = 60;
         this._hdrEnabled = false;
+        this._touchSensitivity = 2.5;
         this._mediaTrackOnlyH264 = false;
 
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
@@ -90,6 +91,8 @@ export class SettingsView {
         this._streamHeight = data.stream_height || 1080;
         this._streamFps = data.stream_fps || 60;
         this._hdrEnabled = data.hdr_enabled === true;
+        this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
+            ? data.touch_sensitivity : 2.5;
     }
 
     /**
@@ -138,7 +141,8 @@ export class SettingsView {
             stream_bitrate: this._streamBitrateMbps * 1000,
             stream_height: this._streamHeight,
             stream_fps: this._streamFps,
-            hdr_enabled: this._hdrEnabled
+            hdr_enabled: this._hdrEnabled,
+            touch_sensitivity: this._touchSensitivity
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -261,6 +265,8 @@ export class SettingsView {
             const height = heightRaw !== undefined ? parseInt(heightRaw, 10) : this._streamHeight;
             const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10) || this._streamFps;
             const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
+            const sensRaw = parseFloat(this.container.querySelector('#settings-sensitivity')?.value);
+            const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
 
             // Update internal state
             this._videoCodec = codec;
@@ -270,12 +276,33 @@ export class SettingsView {
             this._streamHeight = isNaN(height) ? this._streamHeight : height;
             this._streamFps = fps;
             this._hdrEnabled = hdr;
+            this._touchSensitivity = sensitivity;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
 
             Toast.success('Saved');
         }, 300);
+    }
+
+    /** Reset all streaming preferences to their default values. */
+    async _resetDefaults() {
+        this._videoCodec = 'hevc';
+        this._gamingMode = true;
+        this._showPerformanceStats = false;
+        this._streamHeight = 1080;
+        this._streamFps = 60;
+        this._hdrEnabled = false;
+        this._touchSensitivity = 2.5;
+        // Bitrate follows the 1080p60 SDR reference
+        this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false);
+
+        await this._saveToStorage();
+
+        // Re-render with defaults and re-bind the controls
+        this.render();
+        this.bindEvents();
+        Toast.success('Settings reset to defaults');
     }
 
     // --- Rendering ---
@@ -441,6 +468,29 @@ export class SettingsView {
                         </label>
                         <span class="setting-desc">Overlays FPS, bitrate, frame loss and latency stats during streaming</span>
                     </div>
+
+                    <div class="settings-field">
+                        <label class="settings-label" for="settings-sensitivity">
+                            Pointer Sensitivity: <strong id="settings-sensitivity-value">${this._touchSensitivity.toFixed(1)}</strong>×
+                        </label>
+                        <span class="setting-desc">Trackpad/touch cursor speed (higher = faster pointer movement)</span>
+                        <input type="range" id="settings-sensitivity"
+                               class="settings-slider"
+                               min="0.5" max="5" step="0.1"
+                               value="${this._touchSensitivity}" />
+                        <div class="settings-slider-labels">
+                            <span>0.5×</span>
+                            <span>5×</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Reset ───────────────────────────────────────────────── -->
+                <div class="settings-section">
+                    <button class="btn btn-neutral" id="btn-settings-reset">
+                        Reset Default Parameters
+                    </button>
+                    <span class="setting-desc">Restore all streaming settings to their default values</span>
                 </div>
             </div>
         `;
@@ -451,6 +501,15 @@ export class SettingsView {
         if (slider && label) {
             slider.addEventListener('input', () => {
                 label.textContent = slider.value;
+            });
+        }
+
+        // Live sensitivity label updates while dragging
+        const sensSlider = this.container.querySelector('#settings-sensitivity');
+        const sensLabel = this.container.querySelector('#settings-sensitivity-value');
+        if (sensSlider && sensLabel) {
+            sensSlider.addEventListener('input', () => {
+                sensLabel.textContent = parseFloat(sensSlider.value).toFixed(1);
             });
         }
     }
@@ -487,6 +546,12 @@ export class SettingsView {
 
         const perfCheck = this.container.querySelector('#settings-show-perf-stats');
         if (perfCheck) perfCheck.addEventListener('change', () => this._autoSave());
+
+        const sensSlider = this.container.querySelector('#settings-sensitivity');
+        if (sensSlider) sensSlider.addEventListener('change', () => this._autoSave());
+
+        const resetBtn = this.container.querySelector('#btn-settings-reset');
+        if (resetBtn) resetBtn.addEventListener('click', () => this._resetDefaults());
 
         const closeBtn = this.container.querySelector('#btn-settings-close');
         if (closeBtn) closeBtn.addEventListener('click', () => this.onClose());

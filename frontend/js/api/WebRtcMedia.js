@@ -345,6 +345,12 @@ export class WebRtcMedia {
                     if (typeof receiver.setJitterBufferMinimumDelay === 'function') {
                         receiver.setJitterBufferMinimumDelay(0);
                     }
+                    // playoutDelayHint lives on the RTCRtpReceiver (NOT the <video>
+                    // element). 0 engages Chrome's low-delay rendering path —
+                    // distinct lever from the jitter buffer above.
+                    if ('playoutDelayHint' in receiver) {
+                        receiver.playoutDelayHint = 0;
+                    }
                 }
             } catch (e) {
                 console.warn('[WebRtcMedia] Failed to set jitter buffer target:', e.message);
@@ -355,10 +361,6 @@ export class WebRtcMedia {
                 if (this.videoElement) {
                     const stream = new MediaStream([event.track]);
                     this.videoElement.srcObject = stream;
-                    // Minimize playout delay for real-time streaming
-                    if ('playoutDelayHint' in this.videoElement) {
-                        this.videoElement.playoutDelayHint = 0;
-                    }
                     this.videoElement.play().catch(e => {
                         console.warn('[WebRtcMedia] <video> play() failed:', e.message);
                     });
@@ -570,15 +572,23 @@ export class WebRtcMedia {
             let answerSdp = answer.sdp;
             // Direction: receive only (client is viewer, never sends media)
             answerSdp = answerSdp.replace(/a=sendrecv/g, 'a=recvonly');
-            // Strip ULPFEC, RED and their fmtp lines — redundant FEC packets add bandwidth & latency
-            answerSdp = answerSdp.replace(/^a=rtpmap:\d+\s+ulpfec.*$/gim, '');
-            answerSdp = answerSdp.replace(/^a=rtpmap:\d+\s+RED.*$/gim, '');
-            answerSdp = answerSdp.replace(/^a=fmtp:\d+.*$/gim, '');
+            // Strip ULPFEC/RED (redundant FEC adds bandwidth & latency). Only the
+            // FEC payload types' lines are removed — the video codec's fmtp
+            // (packetization-mode/profile-level-id) is kept intact.
+            const fecPts = new Set();
+            const fecRe = /^a=rtpmap:(\d+)\s+(?:ulpfec|red)\b.*$/gim;
+            let fecMatch;
+            while ((fecMatch = fecRe.exec(answerSdp)) !== null) {
+                fecPts.add(fecMatch[1]);
+            }
+            for (const pt of fecPts) {
+                const lineRe = new RegExp('^a=(?:rtpmap|fmtp|rtcp-fb):' + pt + '\\b.*$', 'gim');
+                answerSdp = answerSdp.replace(lineRe, '');
+            }
             answerSdp = answerSdp.replace(/\n{2,}/g, '\n');
-            // Minimal packetization time (reduces audio/video buffering)
-            answerSdp = answerSdp.replace(/a=ptime:\d+/g, 'a=ptime:10');
-            // Strip NACK retransmission (keep nack pli for keyframe requests)
-            answerSdp = answerSdp.replace(/^a=rtcp-fb:\*\s+nack\s*$/gim, '');
+            // NACK retransmission is kept enabled: on an RTP track it is a good
+            // quality/latency tradeoff under light loss (paired with the
+            // backend RtcpNackResponder).
 
             const modifiedAnswer = new RTCSessionDescription({
                 type: 'answer',
