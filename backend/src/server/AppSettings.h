@@ -77,6 +77,14 @@ public:
     int streamFps() const;
     void setStreamFps(int fps);
 
+    // ── HDR ───────────────────────────────────────────────────────────────────
+    //
+    // Whether HDR streaming is requested. Stored as JSON bool "hdr_enabled",
+    // default false. Not yet applied to the video pipeline — UI preference only.
+
+    bool hdrEnabled() const;
+    void setHdrEnabled(bool enabled);
+
     // ── UPnP NAT traversal ────────────────────────────────────────────────────
 
     /// Whether UPnP port mapping is enabled for WebRTC NAT traversal.

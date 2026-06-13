@@ -29,6 +29,7 @@ export class SettingsView {
         this._streamBitrateMbps = 20;
         this._streamHeight = 1080;
         this._streamFps = 60;
+        this._hdrEnabled = false;
         this._mediaTrackOnlyH264 = false;
 
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
@@ -88,6 +89,43 @@ export class SettingsView {
         this._streamBitrateMbps = Math.round(kbps / 1000);
         this._streamHeight = data.stream_height || 1080;
         this._streamFps = data.stream_fps || 60;
+        this._hdrEnabled = data.hdr_enabled === true;
+    }
+
+    /**
+     * Recommended bitrate derived from the 1080p@60 SDR reference (20 Mbps):
+     *   × pixel-count ratio vs 1080p (e.g. 1440p → 1.78)
+     *   × framerate ratio vs 60 fps (e.g. 120 fps → 2.00)
+     *   × 1.5 when HDR is enabled
+     * Clamped to the slider range [5, 150] Mbps.
+     * "Same as Host" (height 0) uses the 1080p reference.
+     */
+    _computeAutoBitrate(height, fps, hdr) {
+        const REF_BITRATE = 20;   // Mbps at 1080p / 60fps / SDR
+        const h = height > 0 ? height : 1080;
+        // 16:9 assumed: pixel count scales with the square of the height ratio
+        const pixelRatio = (h / 1080) * (h / 1080);
+        const fpsRatio = (fps > 0 ? fps : 60) / 60;
+        const hdrRatio = hdr ? 1.5 : 1.0;
+        const mbps = Math.round(REF_BITRATE * pixelRatio * fpsRatio * hdrRatio);
+        return Math.max(5, Math.min(150, mbps));
+    }
+
+    /** Recompute the bitrate from current selects and sync the slider UI. */
+    _applyAutoBitrate() {
+        const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10);
+        const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
+        const hdr = this.container.querySelector('#settings-hdr')?.checked === true;
+        const mbps = this._computeAutoBitrate(
+            isNaN(height) ? this._streamHeight : height,
+            isNaN(fps) ? this._streamFps : fps,
+            hdr);
+
+        const slider = this.container.querySelector('#settings-stream-bitrate');
+        const label = this.container.querySelector('#settings-bitrate-value');
+        if (slider) slider.value = mbps;
+        if (label) label.textContent = mbps;
+        this._streamBitrateMbps = mbps;
     }
 
     /** Persist current internal state to localStorage (all clients)
@@ -99,7 +137,8 @@ export class SettingsView {
             show_performance_stats: this._showPerformanceStats,
             stream_bitrate: this._streamBitrateMbps * 1000,
             stream_height: this._streamHeight,
-            stream_fps: this._streamFps
+            stream_fps: this._streamFps,
+            hdr_enabled: this._hdrEnabled
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -218,16 +257,19 @@ export class SettingsView {
             const gamingMode = this.container.querySelector('#settings-gaming-mode')?.checked ?? this._gamingMode;
             const showPerf = this.container.querySelector('#settings-show-perf-stats')?.checked ?? this._showPerformanceStats;
             const bitrateMbps = parseInt(this.container.querySelector('#settings-stream-bitrate')?.value, 10) || this._streamBitrateMbps;
-            const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10) || this._streamHeight;
+            const heightRaw = this.container.querySelector('#settings-stream-height')?.value;
+            const height = heightRaw !== undefined ? parseInt(heightRaw, 10) : this._streamHeight;
             const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10) || this._streamFps;
+            const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
 
             // Update internal state
             this._videoCodec = codec;
             this._gamingMode = gamingMode;
             this._showPerformanceStats = showPerf;
             this._streamBitrateMbps = bitrateMbps;
-            this._streamHeight = height;
+            this._streamHeight = isNaN(height) ? this._streamHeight : height;
             this._streamFps = fps;
+            this._hdrEnabled = hdr;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -347,10 +389,21 @@ export class SettingsView {
                     </div>
 
                     <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-hdr"
+                                ${this._hdrEnabled ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>HDR</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">High Dynamic Range — richer colors and contrast (coming soon, not yet applied to the video stream)</span>
+                    </div>
+
+                    <div class="settings-field">
                         <label class="settings-label" for="settings-stream-bitrate">
                             Bitrate: <strong id="settings-bitrate-value">${this._streamBitrateMbps}</strong> Mbps
                         </label>
-                        <span class="setting-desc">Higher bitrate = better quality but more network bandwidth</span>
+                        <span class="setting-desc">Auto-adjusted from resolution, frame rate and HDR (reference: 20 Mbps for 1080p 60fps SDR) — drag to override</span>
                         <input type="range" id="settings-stream-bitrate"
                                class="settings-slider"
                                min="5" max="150" step="1"
@@ -406,11 +459,25 @@ export class SettingsView {
         const codecSelect = this.container.querySelector('#settings-video-codec');
         if (codecSelect) codecSelect.addEventListener('change', () => this._autoSave());
 
+        // Resolution / FPS / HDR changes recompute the recommended bitrate
+        // from the 1080p60 SDR reference before saving.
         const heightSelect = this.container.querySelector('#settings-stream-height');
-        if (heightSelect) heightSelect.addEventListener('change', () => this._autoSave());
+        if (heightSelect) heightSelect.addEventListener('change', () => {
+            this._applyAutoBitrate();
+            this._autoSave();
+        });
 
         const fpsSelect = this.container.querySelector('#settings-stream-fps');
-        if (fpsSelect) fpsSelect.addEventListener('change', () => this._autoSave());
+        if (fpsSelect) fpsSelect.addEventListener('change', () => {
+            this._applyAutoBitrate();
+            this._autoSave();
+        });
+
+        const hdrCheck = this.container.querySelector('#settings-hdr');
+        if (hdrCheck) hdrCheck.addEventListener('change', () => {
+            this._applyAutoBitrate();
+            this._autoSave();
+        });
 
         const bitrateSlider = this.container.querySelector('#settings-stream-bitrate');
         if (bitrateSlider) bitrateSlider.addEventListener('change', () => this._autoSave());

@@ -505,9 +505,21 @@ void StreamRelay::onWsTextMessage(const QString& message)
         m_Shim->sendKeyEvent(static_cast<short>(vk), down, mods, 0);
     }
     else if (type == "mousemove") {
-        short dx = static_cast<short>(msg["dx"].toInt(0));
-        short dy = static_cast<short>(msg["dy"].toInt(0));
-        m_Shim->sendMouseMove(dx, dy);
+        // Absolute mouse position (non-gaming mode) — same handling as
+        // DataChannelRelay, otherwise the host cursor never moves in WSS.
+        if (msg.contains("x") && msg.contains("y") &&
+            msg.contains("referenceWidth") && msg.contains("referenceHeight")) {
+            short x = static_cast<short>(msg["x"].toInt(0));
+            short y = static_cast<short>(msg["y"].toInt(0));
+            short refW = static_cast<short>(msg["referenceWidth"].toInt(0));
+            short refH = static_cast<short>(msg["referenceHeight"].toInt(0));
+            m_Shim->sendMousePosition(x, y, refW, refH);
+        } else {
+            // Gaming mode: relative mouse movement
+            short dx = static_cast<short>(msg["dx"].toInt(0));
+            short dy = static_cast<short>(msg["dy"].toInt(0));
+            m_Shim->sendMouseMove(dx, dy);
+        }
     }
     else if (type == "mousedown" || type == "mouseup") {
         bool down = (type == "mousedown");
@@ -532,7 +544,16 @@ void StreamRelay::onWsTextMessage(const QString& message)
         }
     }
     else if (type == "ping") {
-        // Keepalive — no action needed
+        // Echo a pong so the browser can compute its RTT (stats overlay),
+        // matching the DataChannelRelay behaviour.
+        if (m_WsClient && m_WsClient->state() == QAbstractSocket::ConnectedState) {
+            QJsonObject pong;
+            pong["type"] = "pong";
+            pong["seq"] = msg["seq"].toInt(0);
+            pong["ts"] = msg["ts"].toDouble(0);
+            m_WsClient->sendTextMessage(
+                QString::fromUtf8(QJsonDocument(pong).toJson(QJsonDocument::Compact)));
+        }
     }
     else {
         qWarning() << "[StreamRelay] Unknown input type:" << type;

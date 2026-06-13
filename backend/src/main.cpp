@@ -1487,6 +1487,7 @@ int main(int argc, char* argv[])
         obj["stream_bitrate"] = appSettings.streamBitrate();
         obj["stream_height"] = appSettings.streamHeight();
         obj["stream_fps"] = appSettings.streamFps();
+        obj["hdr_enabled"] = appSettings.hdrEnabled();
         return HttpResponse::json(obj);
     });
 
@@ -1545,6 +1546,14 @@ int main(int argc, char* argv[])
             int fps = body["stream_fps"].toInt(60);
             appSettings.setStreamFps(fps);
             obj["stream_fps"] = appSettings.streamFps();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("hdr_enabled")) {
+            bool enabled = body["hdr_enabled"].toBool();
+            appSettings.setHdrEnabled(enabled);
+            obj["hdr_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
         }

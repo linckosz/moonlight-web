@@ -225,7 +225,8 @@ export class StreamView {
         this._onTouchMove = (e) => this.handleTouchMove(e);
         this._onTouchEnd = (e) => this.handleTouchEnd(e);
 
-        // Touch state
+        // Touch state — laptop-trackpad model: relative cursor deltas,
+        // tap = left click, two-finger tap = right click, two-finger drag = scroll.
         this._touchActive = false;
         this._touchStartX = 0;
         this._touchStartY = 0;
@@ -236,32 +237,13 @@ export class StreamView {
         this._touchTapThreshold = 10;        // px max distance for a tap (vs drag)
         this._touchTapTimeThreshold = 300;   // ms max duration for a tap
         this._touchHadTwoFingers = false;     // true if 2 fingers were active during the current touch sequence
-
-        // ── Touch cursor (mobile overlay) ──────────────────────────────────
-        /** Overlay cursor diameter in CSS pixels — large enough for mobile
-         *  visibility while leaving most of the content uncovered. */
-        this._touchCursorSize = 44;
-        /** Reference to the DOM overlay element shown on touch. */
-        this._touchCursorEl = null;
-        /** Auto-hide timer handle for touch cursor. */
-        this._touchCursorTimeout = null;
-        /** How long (ms) the cursor stays visible after the last touch ends.
-         *  The user needs to see where the pointer is between gestures. */
-        this._touchCursorHideDelay = 3000;
-
-        // DEBUG: orientation debug overlay state — remove after diagnosis
-        this._debugOrientationEl = null;
-        this._debugOrientationInterval = null;
-        this._debugFullscreenSucceeded = false;
-        this._debugFullscreenFailed = false;
-        // DEBUG end
+        this._touchSensitivity = 1.6;         // trackpad acceleration factor (CSS px → host deltas)
 
         // Mobile fullscreen button state
         this._mobileFsBtn = null;
 
         // CSS fallback fullscreen (when Fullscreen API fails, e.g. iOS canvas)
         this._cssFullscreen = false;
-        this._exitFsBtn = null;
 
         // Visibility change: when returning from Alt-Tab, force browser to
         // re-composite all layers.  On Chrome Windows, the GPU compositor may
@@ -575,13 +557,16 @@ export class StreamView {
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
                 <video id="stream-video" class="stream-video" autoplay muted playsinline
                        style="width:100%;height:100%;object-fit:contain;display:none;"></video>
-                <div class="stream-touch-cursor" id="stream-touch-cursor"></div>
                 <div class="stream-click-hint" id="stream-hint">
                     Click to capture mouse & keyboard
                 </div>
             </div>
         `;
         document.getElementById('app').appendChild(el);
+
+        // Whole-surface input element: touch events are captured on the full
+        // overlay (trackpad model), not just the canvas/video rectangle.
+        this.streamEl = el;
 
         this.canvas = document.getElementById('stream-canvas');
         // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
@@ -595,9 +580,17 @@ export class StreamView {
         this.canvas.width = 1920;
         this.canvas.height = 1080;
         // Prevent browser default touch behaviors (scroll, zoom, pull-to-refresh)
+        // on the WHOLE overlay — touches must never scroll/move <video>/<canvas>.
+        this.streamEl.style.touchAction = 'none';
+        this.streamEl.style.overscrollBehavior = 'none';
         this.canvas.style.touchAction = 'none';
         // Video element for native RTP media track mode (webrtc-media)
         this.videoEl = document.getElementById('stream-video');
+        // The video never receives pointer/touch events directly: input is
+        // handled by the overlay (touch) and canvas (mouse). This also blocks
+        // iOS gestures that would drag or zoom the <video> element.
+        this.videoEl.style.touchAction = 'none';
+        this.videoEl.style.pointerEvents = 'none';
         if (this._transport === 'webrtc-media') {
             this.canvas.style.display = 'none';
             this.videoEl.style.display = 'block';
@@ -614,7 +607,6 @@ export class StreamView {
         // statusEl kept for backward compatibility — setStatus() is now a no-op
         this.statusEl = null;
         this.hintEl = document.getElementById('stream-hint');
-        this._touchCursorEl = document.getElementById('stream-touch-cursor');
 
         document.getElementById('btn-stream-quit').onclick = () => this.quit();
 
@@ -656,31 +648,7 @@ export class StreamView {
         ].join('');
         document.getElementById('stream-view').appendChild(this._startupOverlay);
 
-        // DEBUG: orientation debug badge — remove after diagnosis
-        if (IS_MOBILE_OR_TABLET) {
-            this._debugOrientationEl = document.createElement('div');
-            this._debugOrientationEl.id = 'stream-debug-orientation';
-            this._debugOrientationEl.style.cssText = [
-                'position:fixed',
-                'bottom:8px',
-                'right:8px',
-                'background:rgba(0,0,0,0.65)',
-                'color:#fff',
-                'font:11px/1.4 monospace',
-                'padding:4px 8px',
-                'border-radius:4px',
-                'z-index:9999',
-                'pointer-events:none',
-                'user-select:none',
-                'white-space:pre-wrap',
-            ].join(';');
-            document.body.appendChild(this._debugOrientationEl);
-            this._updateDebugOrientation();
-            this._debugOrientationInterval = setInterval(() => this._updateDebugOrientation(), 200);
-        }
-        // DEBUG end
-
-        // ── Header fullscreen button (always visible, desktop+mobile) ──────
+        // ── Header fullscreen button (desktop: always; mobile: landscape) ──
         this._mobileFsBtn = document.createElement('button');
         this._mobileFsBtn.id = 'btn-stream-fs';
         this._mobileFsBtn.className = 'btn-stream-fs';
@@ -695,7 +663,8 @@ export class StreamView {
             // Insert before the quit button (first child)
             header.insertBefore(this._mobileFsBtn, header.firstChild);
         }
-        // ── End header fullscreen button ─────────────────────────────────----
+        // Initial state: desktop = visible, mobile = landscape only
+        this._updateMobileFsButtonVisibility();
     }
 
     // =========================================================================
@@ -2377,11 +2346,13 @@ export class StreamView {
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
         this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
-        this.canvas.addEventListener('contextmenu', this._onContextMenu);
-        // Touch events (mobile)
-        this.canvas.addEventListener('touchstart', this._onTouchStart, { passive: false });
-        this.canvas.addEventListener('touchmove', this._onTouchMove, { passive: false });
-        this.canvas.addEventListener('touchend', this._onTouchEnd, { passive: false });
+        this.streamEl.addEventListener('contextmenu', this._onContextMenu);
+        // Touch events (mobile): bound to the WHOLE overlay so the entire
+        // screen acts as a laptop trackpad, not just the canvas rectangle.
+        this.streamEl.addEventListener('touchstart', this._onTouchStart, { passive: false });
+        this.streamEl.addEventListener('touchmove', this._onTouchMove, { passive: false });
+        this.streamEl.addEventListener('touchend', this._onTouchEnd, { passive: false });
+        this.streamEl.addEventListener('touchcancel', this._onTouchEnd, { passive: false });
         window.addEventListener('beforeunload', this._onBeforeUnload);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
 
@@ -2453,8 +2424,7 @@ export class StreamView {
         // mapped to the host screen. The cursor on the host follows the client
         // cursor position on the video canvas 1:1.
         // Hide local cursor — the host cursor is visible in the video stream.
-        // On touch devices, the overlay cursor (#stream-touch-cursor) provides
-        // visual feedback — keep the CSS cursor at default.
+        // On touch devices there is no CSS cursor to hide (trackpad model).
         if (!IS_TOUCH_DEVICE) {
             this.canvas.style.cursor = 'none';
         }
@@ -2515,16 +2485,19 @@ export class StreamView {
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         document.removeEventListener('visibilitychange', this._onVisibilityChange);
+        if (this.streamEl) {
+            this.streamEl.removeEventListener('contextmenu', this._onContextMenu);
+            // Touch events (mobile) — bound to the whole overlay
+            this.streamEl.removeEventListener('touchstart', this._onTouchStart);
+            this.streamEl.removeEventListener('touchmove', this._onTouchMove);
+            this.streamEl.removeEventListener('touchend', this._onTouchEnd);
+            this.streamEl.removeEventListener('touchcancel', this._onTouchEnd);
+        }
         if (this.canvas) {
             this.canvas.removeEventListener('mousemove', this._onMouseMove);
             this.canvas.removeEventListener('mousedown', this._onMouseDown);
             this.canvas.removeEventListener('mouseup', this._onMouseUp);
             this.canvas.removeEventListener('wheel', this._onWheel);
-            this.canvas.removeEventListener('contextmenu', this._onContextMenu);
-            // Touch events (mobile)
-            this.canvas.removeEventListener('touchstart', this._onTouchStart);
-            this.canvas.removeEventListener('touchmove', this._onTouchMove);
-            this.canvas.removeEventListener('touchend', this._onTouchEnd);
 
             // Mode-specific listeners
             if (this._gamingMode) {
@@ -2785,63 +2758,6 @@ export class StreamView {
     }
 
     // =========================================================================
-    // Touch cursor overlay
-    // =========================================================================
-
-    /**
-     * Position and show the touch cursor overlay at the given client coordinates.
-     * The overlay provides visual feedback of where the finger is pointing,
-     * which is essential on mobile where the CSS cursor is hidden.
-     *
-     * Coordinates are converted from client space to the canvas-area parent
-     * space (the cursor element is positioned relative to .stream-canvas-area).
-     * Cancels any pending auto-hide timer so the cursor stays visible during
-     * an active touch sequence.
-     *
-     * @param {number} clientX - Pointer clientX from the TouchEvent.
-     * @param {number} clientY - Pointer clientY from the TouchEvent.
-     */
-    _showTouchCursor(clientX, clientY) {
-        if (!this._touchCursorEl || !this.canvas) return;
-
-        const rect = this.canvas.getBoundingClientRect();
-        // Center the cursor on the touch point (offset by half its size)
-        const x = clientX - rect.left - this._touchCursorSize / 2;
-        const y = clientY - rect.top - this._touchCursorSize / 2;
-
-        this._touchCursorEl.style.transform = `translate(${x}px, ${y}px)`;
-        this._touchCursorEl.style.display = 'block';
-
-        // Cancel any pending auto-hide so the cursor stays during active touch
-        if (this._touchCursorTimeout) {
-            clearTimeout(this._touchCursorTimeout);
-            this._touchCursorTimeout = null;
-        }
-    }
-
-    /**
-     * Schedule hiding the touch cursor after the configured delay.
-     * Called when the user lifts all fingers — the cursor stays visible
-     * at the last known position for a moment so the user can see where
-     * the pointer ended up between gestures.
-     *
-     * If a new touch starts before the timeout fires, _showTouchCursor()
-     * cancels this timer and the cursor remains visible.
-     */
-    _scheduleHideTouchCursor() {
-        if (!this._touchCursorEl) return;
-        if (this._touchCursorTimeout) {
-            clearTimeout(this._touchCursorTimeout);
-        }
-        this._touchCursorTimeout = setTimeout(() => {
-            if (this._touchCursorEl) {
-                this._touchCursorEl.style.display = 'none';
-            }
-            this._touchCursorTimeout = null;
-        }, this._touchCursorHideDelay);
-    }
-
-    // =========================================================================
     // Mobile orientation-based fullscreen (iOS Safari native player / Android)
     // =========================================================================
 
@@ -2894,88 +2810,30 @@ export class StreamView {
     }
 
     /**
-     * Enter fullscreen on the <video> element.
-     *
-     * Priority order:
-     *   1. webkitEnterFullscreen() — native video player fullscreen (iOS Safari).
-     *      Only works from a user-gesture-initiated call chain. Orientation change
-     *      events are NOT user gestures, so this silently fails on rotation.
-     *   2. requestFullscreen() — standard Fullscreen API (Android Chrome, others).
+     * Mobile auto-fullscreen (orientation change / landscape launch).
+     * Delegates to _requestFullscreen(): same chain, same CSS fallback.
      */
     _requestMobileFullscreen() {
-        // iOS Safari / Chrome iOS: native video player fullscreen
-        if (this.videoEl && typeof this.videoEl.webkitEnterFullscreen === 'function') {
-            try {
-                this.videoEl.webkitEnterFullscreen();
-                this._debugFullscreenSucceeded = true;
-                this._debugFullscreenFailed = false;
-            } catch (e) {
-                // Silently ignored — rejected when not from a user gesture
-                // (orientation change events are not user-initiated on iOS).
-                this._debugFullscreenFailed = true;
-                this._debugFullscreenSucceeded = false;
-            }
-            this._updateMobileFsButtonVisibility();
-            return;
-        }
-
-        // Standard Fullscreen API on the document element
-        // Works for Android Chrome, DataChannel mode, etc.
-        if (document.documentElement.requestFullscreen) {
-            this._debugFullscreenSucceeded = true; // assume success until catch
-            document.documentElement.requestFullscreen()
-                .then(() => {
-                    this._debugFullscreenSucceeded = true;
-                    this._debugFullscreenFailed = false;
-                    this._updateMobileFsButtonVisibility();
-                })
-                .catch((err) => {
-                    console.warn('[StreamView] requestFullscreen failed:', err.message);
-                    this._debugFullscreenFailed = true;
-                    this._debugFullscreenSucceeded = false;
-                    this._updateMobileFsButtonVisibility();
-
-                    // Fallback: try video element fullscreen
-                    if (this.videoEl && this.videoEl.requestFullscreen) {
-                        return this.videoEl.requestFullscreen()
-                            .then(() => {
-                                this._debugFullscreenSucceeded = true;
-                                this._debugFullscreenFailed = false;
-                                this._updateMobileFsButtonVisibility();
-                            })
-                            .catch(() => {
-                                this._debugFullscreenFailed = true;
-                                this._debugFullscreenSucceeded = false;
-                                this._updateMobileFsButtonVisibility();
-                            });
-                    }
-                });
-        }
+        this._requestFullscreen();
     }
 
     /**
      * Request fullscreen for any transport mode, with CSS fallback on failure.
      *
+     * IMPORTANT: never use webkitEnterFullscreen() (iOS native video player).
+     * The native player swallows ALL touch/keyboard input — the user can see
+     * the stream but cannot control the host. The CSS fallback keeps our DOM
+     * (and therefore our input handlers) on screen, which is the only viable
+     * fullscreen on iOS.
+     *
      * Priority:
-     *   1. webkitEnterFullscreen() — native video player fullscreen (iOS Safari, video mode only).
-     *   2. document.documentElement.requestFullscreen() — standard Fullscreen API.
-     *   3. _enterCssFallbackFullscreen() — fake fullscreen via CSS when API fails
-     *      (iOS Safari/Chrome with canvas mode where Fullscreen API is unavailable).
+     *   1. document.documentElement.requestFullscreen() — standard Fullscreen API.
+     *   2. _enterCssFallbackFullscreen() — fake fullscreen via CSS when the API
+     *      is unavailable or rejected (iOS Safari, non-user-gesture calls).
      */
     _requestFullscreen() {
         if (this._cssFullscreen) return;
 
-        // ── Mode <video> (webrtc-media) — native video fullscreen ────────────
-        if (this.videoEl && typeof this.videoEl.webkitEnterFullscreen === 'function') {
-            try {
-                this.videoEl.webkitEnterFullscreen();
-                return;
-            } catch (e) {
-                // Silently ignored — not from a user gesture or not supported
-            }
-        }
-
-        // ── Standard Fullscreen API ──────────────────────────────────────────
         if (document.documentElement.requestFullscreen) {
             document.documentElement.requestFullscreen()
                 .then(() => {
@@ -2994,8 +2852,9 @@ export class StreamView {
 
     /**
      * Enter CSS-based "fake" fullscreen when the Fullscreen API is unavailable
-     * (iOS Safari canvas mode). Hides the header, stretches canvas fullscreen,
-     * adds a small "Exit fullscreen" overlay button.
+     * (iOS Safari canvas mode). Hides the header and stretches the canvas to
+     * cover the viewport. No exit button: desktop uses the keyboard combo and
+     * mobile auto-exits when rotating back to portrait.
      */
     _enterCssFallbackFullscreen() {
         if (this._cssFullscreen || this._quitting) return;
@@ -3007,23 +2866,10 @@ export class StreamView {
 
         // Hide the header fullscreen button
         if (this._mobileFsBtn) this._mobileFsBtn.style.display = 'none';
-
-        // Create exit button
-        if (!this._exitFsBtn) {
-            this._exitFsBtn = document.createElement('button');
-            this._exitFsBtn.className = 'stream-fs-exit-btn';
-            this._exitFsBtn.textContent = 'Exit FS';
-            this._exitFsBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._exitCssFallbackFullscreen();
-            });
-            document.body.appendChild(this._exitFsBtn);
-        }
     }
 
     /**
-     * Exit CSS fallback fullscreen. Restores header, canvas area, removes
-     * exit button.
+     * Exit CSS fallback fullscreen. Restores header and canvas area.
      */
     _exitCssFallbackFullscreen() {
         if (!this._cssFullscreen) return;
@@ -3033,14 +2879,8 @@ export class StreamView {
         const streamView = document.getElementById('stream-view');
         if (streamView) streamView.classList.remove('stream-css-fs');
 
-        // Restore header fullscreen button visibility
-        if (this._mobileFsBtn) this._mobileFsBtn.style.display = '';
-
-        // Remove exit button
-        if (this._exitFsBtn) {
-            this._exitFsBtn.remove();
-            this._exitFsBtn = null;
-        }
+        // Restore header fullscreen button visibility (per current orientation)
+        this._updateMobileFsButtonVisibility();
     }
 
     /**
@@ -3069,13 +2909,11 @@ export class StreamView {
     }
 
     /**
-     * Show/hide the header fullscreen button based on current state.
+     * Show/hide the header fullscreen button (placed next to the Stop button).
      *
-     * Visible when: NOT in fullscreen, NOT in CSS fallback fullscreen,
-     * AND in landscape orientation. Hidden when fullscreen is active,
-     * CSS fallback is active, or portrait mode (mobile users should
-     * rotate to landscape to enter fullscreen).
-     * Always visible on desktop (no orientation constraint).
+     * Desktop: always visible (unless already in fullscreen).
+     * Mobile/tablet: visible only in landscape — in portrait the user should
+     * rotate first (rotation auto-enters fullscreen anyway).
      */
     _updateMobileFsButtonVisibility() {
         if (!this._mobileFsBtn) return;
@@ -3083,13 +2921,20 @@ export class StreamView {
         const inFullscreen = !!document.fullscreenElement ||
             (this.videoEl && this.videoEl.webkitDisplayingFullscreen) ||
             this._cssFullscreen;
+        if (inFullscreen) {
+            this._mobileFsBtn.style.display = 'none';
+            return;
+        }
 
-        // Hide in portrait orientation — mobile users must rotate to landscape
-        // before entering fullscreen. Desktop (no matchMedia) passes through.
-        const isPortrait = window.matchMedia &&
-            window.matchMedia('(orientation: portrait)').matches;
+        if (!IS_MOBILE_OR_TABLET) {
+            // Desktop: always available
+            this._mobileFsBtn.style.display = '';
+            return;
+        }
 
-        this._mobileFsBtn.style.display = (inFullscreen || isPortrait) ? 'none' : '';
+        const isLandscape = window.matchMedia &&
+            window.matchMedia('(orientation: landscape)').matches;
+        this._mobileFsBtn.style.display = isLandscape ? '' : 'none';
     }
 
     // =========================================================================
@@ -3097,13 +2942,15 @@ export class StreamView {
     // =========================================================================
 
     /**
-     * Handle touch start on the streaming canvas.
+     * Handle touch start anywhere on the streaming overlay.
      *
-     * Behaviour:
-     *   1 finger → track mouse position for drag/tap detection.
-     *   2 fingers → immediate right click (mousedown+mouseup button=3).
+     * Laptop-trackpad model:
+     *   1 finger → start tracking for relative cursor movement / tap.
+     *   2 fingers (simultaneous) → right click (mousedown+mouseup button=3).
      */
     handleTouchStart(e) {
+        // Let UI buttons (Stop, Fullscreen, Exit FS) receive their native taps
+        if (e.target.closest('button')) return;
         e.preventDefault();
         const prevCount = this._touchFingerCount;
         const newCount = e.touches.length;
@@ -3115,9 +2962,6 @@ export class StreamView {
         this._touchLastY = touch.clientY;
         this._touchStartTime = performance.now();
         this._touchActive = true;
-
-        // Show touch cursor at finger position immediately
-        this._showTouchCursor(touch.clientX, touch.clientY);
 
         // Two fingers only when starting simultaneously (prevCount === 0) → right click.
         // If the second finger is added mid-drag (prevCount === 1 → 2), we just switch
@@ -3140,10 +2984,12 @@ export class StreamView {
     /**
      * Handle touch move (drag).
      *
-     * 1 finger → absolute mouse move (like desktop mouse, mapped to canvas).
+     * 1 finger → RELATIVE cursor movement (trackpad), like a laptop touchpad:
+     *            the finger moves the host cursor by deltas, wherever it is.
      * 2 fingers → vertical scroll via mousewheel delta.
      */
     handleTouchMove(e) {
+        if (e.target.closest('button')) return;
         e.preventDefault();
         if (!this._touchActive) return;
 
@@ -3151,24 +2997,19 @@ export class StreamView {
         this._touchFingerCount = count;
 
         if (count === 1) {
-            // Single finger: absolute mouse move (trackpad mode)
+            // Single finger: relative trackpad movement
             const touch = e.touches[0];
-            const rect = this.canvas.getBoundingClientRect();
-            const x = Math.round(Math.max(0, Math.min(touch.clientX - rect.left, rect.width)));
-            const y = Math.round(Math.max(0, Math.min(touch.clientY - rect.top, rect.height)));
-            const refW = Math.round(rect.width);
-            const refH = Math.round(rect.height);
+            const dx = (touch.clientX - this._touchLastX) * this._touchSensitivity;
+            const dy = (touch.clientY - this._touchLastY) * this._touchSensitivity;
 
-            this.webrtc.send({
-                type: 'mousemove',
-                x: x,
-                y: y,
-                referenceWidth: refW,
-                referenceHeight: refH
-            });
+            if (dx !== 0 || dy !== 0) {
+                this.webrtc.send({
+                    type: 'mousemove',
+                    dx: Math.round(dx),
+                    dy: Math.round(dy)
+                });
+            }
 
-            // Move touch cursor to follow the finger
-            this._showTouchCursor(touch.clientX, touch.clientY);
             this._touchLastX = touch.clientX;
             this._touchLastY = touch.clientY;
         } else if (count === 2) {
@@ -3194,6 +3035,7 @@ export class StreamView {
      * 1→0 finger transition with minimal movement → left click (tap).
      */
     handleTouchEnd(e) {
+        if (e.target.closest('button')) return;
         e.preventDefault();
 
         // Update finger count before processing
@@ -3223,8 +3065,6 @@ export class StreamView {
             this._touchActive = false;
             this._touchHadTwoFingers = false;
             this._touchFingerCount = 0;
-            // Keep cursor visible at last position, hide after delay
-            this._scheduleHideTouchCursor();
         }
     }
 
@@ -3249,19 +3089,10 @@ export class StreamView {
             document.exitFullscreen().catch(err => {
                 console.warn('[StreamView] exitFullscreen failed:', err.message);
             });
+        } else if (this._cssFullscreen) {
+            this._exitCssFallbackFullscreen();
         } else {
-            // DEBUG: track fullscreen success/failure for debug badge
-            this._debugFullscreenSucceeded = true; // assume success until catch // DEBUG
-            document.documentElement.requestFullscreen()
-                .then(() => {                                                       // DEBUG
-                    this._debugFullscreenSucceeded = true;                           // DEBUG
-                    this._debugFullscreenFailed = false;                             // DEBUG
-                })                                                                   // DEBUG
-                .catch(err => {                                                      // DEBUG
-                    console.warn('[StreamView] requestFullscreen failed:', err.message);
-                    this._debugFullscreenFailed = true;                              // DEBUG
-                    this._debugFullscreenSucceeded = false;                          // DEBUG
-                });                                                                  // DEBUG
+            this._requestFullscreen();
         }
     }
 
@@ -3380,8 +3211,10 @@ export class StreamView {
     /**
      * Show the shortcuts slide and set a 5-second auto-hide timer.
      * Safe to call multiple times — resets the timer each call.
+     * Never shown on mobile/tablet — there is no physical keyboard.
      */
     _showShortcutsSlide() {
+        if (IS_MOBILE_OR_TABLET) return;
         if (!this._shortcutsSlide) return;
         this._shortcutsSlide.style.display = '';
 
@@ -3446,22 +3279,6 @@ export class StreamView {
         }, 500);
     }
 
-    // DEBUG: orientation debug badge — real-time update (called every 200ms)
-    _updateDebugOrientation() {
-        if (!this._debugOrientationEl) return;
-        const mql = window.matchMedia('(orientation: landscape)');
-        const orient = mql.matches ? 'landscape' : 'portrait';
-        const screenType = screen?.orientation?.type || 'N/A';
-        const fsOk = this._debugFullscreenSucceeded ? 'OK'
-            : this._debugFullscreenFailed ? 'FAIL' : '--';
-        this._debugOrientationEl.textContent =
-            'orient: ' + orient +
-            '\nmql:    ' + mql.matches +
-            '\nscreen: ' + screenType +
-            '\nfs:     ' + fsOk;
-    }
-    // DEBUG end
-
     // =========================================================================
     // Quit / Cleanup
     // =========================================================================
@@ -3511,32 +3328,12 @@ export class StreamView {
             this._idrTimeout = null;
         }
 
-        // Clear touch cursor timer and hide the overlay
-        if (this._touchCursorTimeout) {
-            clearTimeout(this._touchCursorTimeout);
-            this._touchCursorTimeout = null;
-        }
-        if (this._touchCursorEl) {
-            this._touchCursorEl.style.display = 'none';
-        }
-
         // Remove mobile orientation fullscreen listener
         if (this._orientationMql && this._onOrientationChange) {
             this._orientationMql.removeEventListener('change', this._onOrientationChange);
             this._orientationMql = null;
             this._onOrientationChange = null;
         }
-
-        // DEBUG: clean up orientation debug overlay
-        if (this._debugOrientationInterval) {
-            clearInterval(this._debugOrientationInterval);
-            this._debugOrientationInterval = null;
-        }
-        if (this._debugOrientationEl) {
-            this._debugOrientationEl.remove();
-            this._debugOrientationEl = null;
-        }
-        // DEBUG end
 
         // Clean up fullscreen change listener
         if (this._onFullscreenChange) {
@@ -3627,28 +3424,12 @@ export class StreamView {
             this._idrTimeout = null;
         }
 
-        if (this._touchCursorTimeout) {
-            clearTimeout(this._touchCursorTimeout);
-            this._touchCursorTimeout = null;
-        }
-
         // Remove mobile orientation fullscreen listener
         if (this._orientationMql && this._onOrientationChange) {
             this._orientationMql.removeEventListener('change', this._onOrientationChange);
             this._orientationMql = null;
             this._onOrientationChange = null;
         }
-
-        // DEBUG: clean up orientation debug overlay
-        if (this._debugOrientationInterval) {
-            clearInterval(this._debugOrientationInterval);
-            this._debugOrientationInterval = null;
-        }
-        if (this._debugOrientationEl) {
-            this._debugOrientationEl.remove();
-            this._debugOrientationEl = null;
-        }
-        // DEBUG end
 
         // Clean up fullscreen change listener
         if (this._onFullscreenChange) {
