@@ -533,6 +533,10 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
     }
+    else if (type == "textinput") {
+        // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
+        m_Shim->sendUtf8Text(msg["text"].toString());
+    }
     else if (type == "request_idr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame via DataChannel (browser)";
         m_Shim->requestIdrFrame();

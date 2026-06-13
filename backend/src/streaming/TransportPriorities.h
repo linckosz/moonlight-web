@@ -13,10 +13,10 @@ struct TransportPriorities {
     // Lower priority = tried first. available=false = hidden from auto dropdown.
     static QMap<QString, Entry> defaults() {
         return {
-            {"webrtc-media-udp", {10, true}},
-            {"webrtc-dc-udp",    {20, true}},
-            {"webrtc-media-tcp", {30, true}},
-            {"webrtc-dc-tcp",    {40, true}},
+            {"webrtc-dc-udp",    {10, true}},
+            {"webrtc-media-udp", {20, true}},
+            {"webrtc-dc-tcp",    {30, true}},
+            {"webrtc-media-tcp", {40, true}},
             {"wss",              {50, true}}
         };
     }

@@ -1671,7 +1671,9 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     respData.append("X-Content-Type-Options: nosniff\r\n");
     respData.append("X-Frame-Options: DENY\r\n");
     respData.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
-    respData.append("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
+    // 'wasm-unsafe-eval' allows WebAssembly compilation only (not JS eval) —
+    // required by the WASM Opus decoder fallback used on iOS/WebKit.
+    respData.append("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
     respData.append("Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n");
 
     for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)

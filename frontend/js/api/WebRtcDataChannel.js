@@ -118,6 +118,7 @@ export class WebRtcDataChannel {
 
         // Guard
         this._stopping = false;
+        this._closed = false;  // separate from _stopping: markStopping() must not block close()
 
         // WS open/error tracking for better error diagnostics
         this._wsHadOpen = false;          // set true once onopen fires
@@ -422,7 +423,8 @@ export class WebRtcDataChannel {
 
     /** Close all connections and clean up. */
     close() {
-        if (this._stopping) return;
+        if (this._closed) return;  // idempotent — but markStopping() must NOT short-circuit this
+        this._closed = true;
         this._stopping = true;
         console.log('[WebRTC] Closing...');
 
@@ -600,13 +602,15 @@ export class WebRtcDataChannel {
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
         this._setupDataChannel('video', this.dataChannels.video);
 
-        // Audio DataChannel (ID=1, unordered, 100ms lifetime — must match backend).
-        // Real-time PCM: a late packet is a glitch either way, don't block on it.
+        // Audio DataChannel (ID=1, ordered, 250ms lifetime — must match backend).
+        // Opus is decoded sequentially by WebCodecs: ordered delivery prevents
+        // reorder glitches; the 250ms PR-SCTP window lets delayed packets arrive
+        // in time for the client's adaptive jitter buffer.
         const audioInit = {
             negotiated: true,
             id: 1,
-            ordered: false,
-            maxPacketLifeTime: 100
+            ordered: true,
+            maxPacketLifeTime: 250
         };
         this.dataChannels.audio = this.pc.createDataChannel('audio', audioInit);
         this._setupDataChannel('audio', this.dataChannels.audio);
@@ -1171,6 +1175,19 @@ export class WebRtcDataChannel {
      */
     _onWssMessage(evt) {
         if (this._stopping) return;
+
+        // Text messages carry stats/pong JSON (backend StreamRelay). Route them
+        // to onStats so the latency overlay works in WSS mode — previously these
+        // were dropped, leaving "Latency: --".
+        if (typeof evt.data === 'string') {
+            try {
+                const msg = JSON.parse(evt.data);
+                if ((msg.type === 'stats' || msg.type === 'pong') && this.onStats) {
+                    this.onStats(msg);
+                }
+            } catch (e) { /* ignore non-JSON text */ }
+            return;
+        }
 
         if (evt.data instanceof ArrayBuffer) {
             const raw = new Uint8Array(evt.data);

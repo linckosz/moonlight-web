@@ -54,6 +54,8 @@ public:
     bool isConnected() const { return m_Connected; }
 
     void sendKeyEvent(short keyCode, bool down, char modifiers, char flags);
+    // Send UTF-8 text (virtual/soft keyboard input) to the host.
+    void sendUtf8Text(const QString& text);
     void sendMouseMove(short deltaX, short deltaY);
     void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
     void sendMouseButton(bool down, int button);

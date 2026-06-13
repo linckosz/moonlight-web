@@ -697,12 +697,17 @@ int main(int argc, char* argv[])
             ? body["stream_fps"].toInt()
             : appSettings.streamFps();
 
+        bool reqHdr = body.contains("hdr_enabled")
+            ? body["hdr_enabled"].toBool()
+            : appSettings.hdrEnabled();
+
         qInfo() << "[Session] Per-request streaming settings:"
                 << "codec=" << AppSettings::videoCodecToString(reqCodec)
                 << "gaming=" << reqGamingMode
                 << "bitrate=" << reqBitrate
                 << "height=" << reqHeight
-                << "fps=" << reqFps;
+                << "fps=" << reqFps
+                << "hdr=" << reqHdr;
 
         // Determine signaling host from the browser's Host header.
         // Works for both LAN (localhost:443) and remote access via moonlightweb.top.
@@ -740,6 +745,25 @@ int main(int argc, char* argv[])
             default:               return true;
             }
         };
+
+        // ── HDR codec compatibility ───────────────────────────────────────────
+        // HDR requires 10-bit HEVC (or AV1). H.264 cannot carry HDR, and the
+        // MediaTrack transport is H.264-only. So when HDR is requested we force
+        // HEVC — provided the host supports it. If the host has no HEVC, HDR is
+        // disabled (we keep the requested codec and stream SDR).
+        if (reqHdr) {
+            if (hostSupportsCodec(host, VideoCodec::HEVC)) {
+                if (reqCodec != VideoCodec::HEVC) {
+                    qInfo() << "[Session] HDR requested — forcing codec HEVC (was"
+                            << AppSettings::videoCodecToString(reqCodec) << ")";
+                    reqCodec = VideoCodec::HEVC;
+                }
+            } else {
+                qWarning() << "[Session] HDR requested but host has no HEVC support"
+                           << "— disabling HDR, streaming SDR";
+                reqHdr = false;
+            }
+        }
 
         // Helper: filter transport list by codec compatibility.
         //
@@ -927,7 +951,8 @@ int main(int argc, char* argv[])
                 stunServer,
                 reqHeight,
                 reqFps,
-                reqBitrate
+                reqBitrate,
+                reqHdr
             );
             s->setHttpsPort(server.activeHttpsPort());
             s->setStreamRelayPort(signalingPort + 1);
@@ -1000,7 +1025,7 @@ int main(int argc, char* argv[])
                        &appSettings, effectiveUpnpEnabled, stunServer,
                        &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
                        &server, tryNextFn,
-                       reqCodec, reqGamingMode, reqHeight, reqFps, reqBitrate]() {
+                       reqCodec, reqGamingMode, reqHeight, reqFps, reqBitrate, reqHdr]() {
                 if (fbState->responded) return;
 
                 if (fbState->currentAttempt >= fbState->attempts.size()) {
@@ -1058,7 +1083,8 @@ int main(int argc, char* argv[])
                     internalTransport, stunServer,
                     reqHeight,
                     reqFps,
-                    reqBitrate
+                    reqBitrate,
+                    reqHdr
                 );
                 session->setHttpsPort(server.activeHttpsPort());
                 session->setStreamRelayPort(signalingPort + 1);

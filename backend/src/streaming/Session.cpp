@@ -29,6 +29,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                int streamHeight,
                                int streamFps,
                                int streamBitrateKbps,
+                               bool hdr,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -49,6 +50,11 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     // Apply video codec preference from settings (default Auto)
     m_Config.codec = videoCodec;
     qInfo() << "[Session] Video codec preference set to" << static_cast<int>(videoCodec);
+
+    // HDR requires 10-bit HEVC/AV1; the caller is responsible for forcing a
+    // compatible codec (HEVC) before constructing the session.
+    m_Config.hdr = hdr ? HdrMode::HDR : HdrMode::SDR;
+    qInfo() << "[Session] HDR" << (hdr ? "enabled" : "disabled");
 
     // Calculate width from height using 16:9 aspect ratio.
     // If height is 0 (Native Host resolution), pass 0 for both width and height
@@ -517,6 +523,10 @@ void StreamSession::onShimConnectionStarted()
     // This ensures the frontend decodes with the correct codec type even when
     // the auto-negotiation falls back from HEVC/AV1 to H.264.
     result["videoCodec"] = QString::fromLatin1(codecName);
+
+    // Report whether HDR (10-bit) was actually negotiated, so the frontend can
+    // configure the decoder with a BT.2020/PQ color space instead of BT.709.
+    result["hdr"] = (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_10BIT) != 0;
 
     // If the codec was overridden (e.g. HEVC → H.264 for MediaTrack),
     // report the original selection so the frontend can log or adapt.

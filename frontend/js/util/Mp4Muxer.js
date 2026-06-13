@@ -398,6 +398,8 @@ export const H264_FALLBACK_CODEC_STRINGS = [
  * Common HEVC codec strings for fallback (hvc1 — AVCC format with description).
  */
 export const HEVC_FALLBACK_CODEC_STRINGS = [
+    'hvc1.2.4.L153.B0',  // Main10 (HDR), High tier, Level 5.1
+    'hvc1.2.4.L150.B0',  // Main10 (HDR), High tier, Level 5.0
     'hvc1.1.6.L153.B0',  // Main, High tier, Level 5.1 (most common for 1080p60)
     'hvc1.1.6.L150.B0',  // Main, High tier, Level 5.0
     'hvc1.1.6.L123.B0',  // Main, High tier, Level 4.1
@@ -413,6 +415,8 @@ export const HEVC_FALLBACK_CODEC_STRINGS = [
  * keyframe validator (AnalyzeAnnexB) requires.
  */
 export const HEVC_ANNEXB_CODEC_STRINGS = [
+    'hev1.2.4.L153.B0',  // Main10 (HDR), High tier, Level 5.1
+    'hev1.2.4.L150.B0',  // Main10 (HDR), High tier, Level 5.0
     'hev1.1.6.L153.B0',
     'hev1.1.6.L150.B0',
     'hev1.1.6.L123.B0',

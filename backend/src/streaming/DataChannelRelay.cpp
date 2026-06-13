@@ -717,12 +717,15 @@ void DataChannelRelay::createDataChannels()
         });
     }
 
-    // --- Audio DataChannel (server->browser, PCM samples) ---
-    // Unordered + 100ms lifetime (must match browser): real-time PCM, a late
-    // packet is a glitch either way — don't block the stream waiting for it.
+    // --- Audio DataChannel (server->browser, Opus packets) ---
+    // Ordered + 250ms lifetime (must match browser): the client's WebCodecs Opus
+    // decoder is sequential, so out-of-order packets would glitch. Ordered
+    // delivery preserves Opus continuity. The 250ms PR-SCTP window lets briefly
+    // delayed packets still arrive in time for the client's adaptive jitter
+    // buffer (which grows up to ~240ms under lag), reducing dropouts.
     rtc::DataChannelInit audioConfig;
-    audioConfig.reliability.unordered = true;
-    audioConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(100);
+    audioConfig.reliability.unordered = false;
+    audioConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(250);
     audioConfig.negotiated = true;
     audioConfig.id = 1;
 
@@ -1209,6 +1212,10 @@ void DataChannelRelay::onInputMessage(const std::string& message)
     else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
+    }
+    else if (type == "textinput") {
+        // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
+        m_Shim->sendUtf8Text(msg["text"].toString());
     }
     else if (type == "requestidr") {
         qInfo() << "[DataChannelRelay] Requesting IDR frame from Sunshine (browser request)";

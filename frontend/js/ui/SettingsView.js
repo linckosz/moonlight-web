@@ -30,7 +30,8 @@ export class SettingsView {
         this._streamHeight = 1080;
         this._streamFps = 60;
         this._hdrEnabled = false;
-        this._touchSensitivity = 2.5;
+        this._touchSensitivity = 2.0;
+        this._vsync = true;
         this._mediaTrackOnlyH264 = false;
 
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
@@ -92,7 +93,8 @@ export class SettingsView {
         this._streamFps = data.stream_fps || 60;
         this._hdrEnabled = data.hdr_enabled === true;
         this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
-            ? data.touch_sensitivity : 2.5;
+            ? data.touch_sensitivity : 2.0;
+        this._vsync = data.vsync_enabled !== false;
     }
 
     /**
@@ -142,7 +144,8 @@ export class SettingsView {
             stream_height: this._streamHeight,
             stream_fps: this._streamFps,
             hdr_enabled: this._hdrEnabled,
-            touch_sensitivity: this._touchSensitivity
+            touch_sensitivity: this._touchSensitivity,
+            vsync_enabled: this._vsync
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -267,6 +270,7 @@ export class SettingsView {
             const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
             const sensRaw = parseFloat(this.container.querySelector('#settings-sensitivity')?.value);
             const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
+            const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
 
             // Update internal state
             this._videoCodec = codec;
@@ -277,6 +281,7 @@ export class SettingsView {
             this._streamFps = fps;
             this._hdrEnabled = hdr;
             this._touchSensitivity = sensitivity;
+            this._vsync = vsync;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -293,7 +298,8 @@ export class SettingsView {
         this._streamHeight = 1080;
         this._streamFps = 60;
         this._hdrEnabled = false;
-        this._touchSensitivity = 2.5;
+        this._touchSensitivity = 2.0;
+        this._vsync = true;
         // Bitrate follows the 1080p60 SDR reference
         this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false);
 
@@ -470,6 +476,17 @@ export class SettingsView {
                     </div>
 
                     <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-vsync"
+                                ${this._vsync ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>VSync</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">Synchronizes frames to the display refresh. Uncheck to allow tearing for lower latency (all transports)</span>
+                    </div>
+
+                    <div class="settings-field">
                         <label class="settings-label" for="settings-sensitivity">
                             Pointer Sensitivity: <strong id="settings-sensitivity-value">${this._touchSensitivity.toFixed(1)}</strong>×
                         </label>
@@ -546,6 +563,9 @@ export class SettingsView {
 
         const perfCheck = this.container.querySelector('#settings-show-perf-stats');
         if (perfCheck) perfCheck.addEventListener('change', () => this._autoSave());
+
+        const vsyncCheck = this.container.querySelector('#settings-vsync');
+        if (vsyncCheck) vsyncCheck.addEventListener('change', () => this._autoSave());
 
         const sensSlider = this.container.querySelector('#settings-sensitivity');
         if (sensSlider) sensSlider.addEventListener('change', () => this._autoSave());

@@ -490,6 +490,14 @@ void MoonlightShim::sendKeyEvent(short keyCode, bool down, char modifiers, char 
                          modifiers, flags);
 }
 
+void MoonlightShim::sendUtf8Text(const QString& text)
+{
+    if (!m_Connected.load(std::memory_order_acquire)) return;
+    if (text.isEmpty()) return;
+    QByteArray utf8 = text.toUtf8();
+    LiSendUtf8TextEvent(utf8.constData(), static_cast<unsigned int>(utf8.size()));
+}
+
 void MoonlightShim::sendMouseMove(short deltaX, short deltaY)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
