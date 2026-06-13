@@ -128,6 +128,10 @@ export class HostListView {
         if (!this._active) return;
         try {
             const data = await BackendClient.getHosts();
+            // Re-check after await: stop()/destroy() may have run while the
+            // request was in flight (e.g. a stream was launched) — a late
+            // render here would overwrite the current view.
+            if (!this._active || this._destroyed) return;
             const serverHosts = data.hosts || [];
             const before = this._fingerprint();
             // Merge — add/update, never remove

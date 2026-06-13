@@ -12,6 +12,7 @@ export class AppListView {
         this.loading = true;
         this.error = null;
         this._loadInProgress = false;
+        this._destroyed = false;
         this.render();
         this.load();
     }
@@ -33,11 +34,15 @@ export class AppListView {
         }
         this._loadInProgress = false;
         this.loading = false;
+        // Late response after navigation/stream start: never re-render —
+        // it would overwrite whatever view now owns the container.
+        if (this._destroyed) return;
         this.render();
     }
 
     destroy() {
-        // No periodic tasks — nothing to clean up
+        // Block any in-flight load() from rendering after teardown
+        this._destroyed = true;
     }
 
     // --- Rendering ---

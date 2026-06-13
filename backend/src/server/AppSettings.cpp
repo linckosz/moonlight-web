@@ -183,6 +183,21 @@ void AppSettings::setStreamFps(int fps)
     writeAll(obj);
 }
 
+// ── HDR ──────────────────────────────────────────────────────────────────────────
+
+bool AppSettings::hdrEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("hdr_enabled").toBool(false);
+}
+
+void AppSettings::setHdrEnabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["hdr_enabled"] = enabled;
+    writeAll(obj);
+}
+
 // ── Show performance stats ────────────────────────────────────────────────────────
 
 bool AppSettings::showPerformanceStats() const

@@ -1220,8 +1220,18 @@ export class WebRtcDataChannel {
             } else {
                 console.warn('[WSS] Unknown channel byte: 0x' + channel.toString(16));
             }
+            return;
         }
-        // Text messages from backend in WSS mode are ignored
+
+        // Text messages: pong/stats for the stats overlay, others ignored
+        if (typeof evt.data === 'string') {
+            try {
+                const msg = JSON.parse(evt.data);
+                if (msg.type === 'stats' || msg.type === 'pong') {
+                    if (this.onStats) this.onStats(msg);
+                }
+            } catch (e) { /* non-JSON text — ignore */ }
+        }
     }
 
     // =========================================================================

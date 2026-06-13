@@ -310,6 +310,16 @@ const MoonlightApp = {
      * @param {string} type - 'admin' | 'settings'
      */
     _openOverlay(type) {
+        // ── Streaming has absolute priority ────────────────────────────────
+        // Never let admin/settings open on top of (or under) an active or
+        // launching stream — it corrupts the overlay/history state and the
+        // view would pop up when the stream ends.
+        if (this._nav.overlay === 'streaming' || this.streamView ||
+            this.state === 'launching' || this.state === 'streaming') {
+            console.warn('[MW] Overlay "' + type + '" blocked: streaming in progress');
+            return;
+        }
+
         const switching = !!this._nav.overlay;
 
         if (switching) {
