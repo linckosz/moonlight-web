@@ -111,6 +111,17 @@
     /* cursor is managed per-mode by JS: hidden in non-gaming, visible pre-focus in gaming */
 }
 
+/* Transparent input-capture layer over the canvas/video area.
+   Receives all mouse/wheel events (and sits above <video> so iOS Safari
+   cannot swallow touches), independent of which display element is active. */
+.stream-input-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    background: transparent;
+    touch-action: none;
+}
+
 .stream-click-hint {
     position: absolute;
     bottom: 40px;
@@ -383,6 +394,67 @@
 }
 .btn-stream-fs:active {
     transform: translate(-50%, -50%) scale(0.95);
+}
+
+/* ── On-screen keyboard toggle (touch devices) ─────────────────────────── */
+.btn-stream-kbd {
+    position: absolute;
+    left: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: flex-start;
+    justify-content: center;
+    height: 30px;
+    padding: 0 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 16px;
+    line-height: 30px;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+.btn-stream-kbd .kbd-arrow {
+    font-size: 9px;
+    line-height: 1;
+    margin-left: 1px;
+    margin-top: 4px;
+}
+.btn-stream-kbd:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.3);
+}
+.btn-stream-kbd:active {
+    transform: translateY(-50%) scale(0.95);
+}
+.btn-stream-kbd.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+/* Hidden capture element: focusable (opens the soft keyboard) but invisible.
+   Must NOT use display:none / visibility:hidden — those block focus. */
+.stream-kbd-capture {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    opacity: 0;
+    resize: none;
+    z-index: -1;
+    color: transparent;
+    background: transparent;
+    caret-color: transparent;
+    pointer-events: none;
 }
 
 /* ── Native fullscreen: hide the header so the stream fills the screen ──── */

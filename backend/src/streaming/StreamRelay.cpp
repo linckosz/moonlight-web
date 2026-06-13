@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QDateTime>
 #include <QMap>
+#include <chrono>
 
 StreamRelay::StreamRelay(MoonlightShim* shim,
                            quint16 wsPort,
@@ -36,6 +37,12 @@ StreamRelay::StreamRelay(MoonlightShim* shim,
         this);
     if (secure)
         m_WsServer->setSslConfiguration(sslConfig);
+
+    // Periodic stats timer — started when a client connects, stopped on
+    // disconnect. Mirrors DataChannelRelay so the WSS latency overlay works.
+    m_StatsTimer = new QTimer(this);
+    m_StatsTimer->setInterval(500);
+    connect(m_StatsTimer, &QTimer::timeout, this, &StreamRelay::sendStats);
 
     qInfo() << "[StreamRelay] Constructor done, secure=" << secure;
 }
@@ -81,6 +88,8 @@ void StreamRelay::stop()
         return;
     }
     m_Stopping = true;
+
+    if (m_StatsTimer) m_StatsTimer->stop();
 
     m_Running = false;
     qInfo() << "[StreamRelay::stop] m_Running=false, pending video="
@@ -472,7 +481,36 @@ void StreamRelay::onNewWsConnection()
         m_Shim->requestIdrFrame();
     }
 
+    // Start periodic stats now that a client is connected.
+    if (m_StatsTimer && !m_StatsTimer->isActive()) {
+        m_StatsTimer->start();
+    }
+
     emit clientConnected();
+}
+
+void StreamRelay::sendStats()
+{
+    if (m_Stopping) return;
+    if (!m_WsClient || m_WsClient->state() != QAbstractSocket::ConnectedState) return;
+
+    double hostRttMs = m_Shim ? m_Shim->hostRttMs() : 0.0;
+
+    QJsonObject stats;
+    stats["type"] = "stats";
+    stats["hostRttMs"] = hostRttMs;
+    // WSS has no per-frame decode-latency tracking; report 0.
+    stats["decodeLatencyUs"] = 0;
+
+    {
+        using namespace std::chrono;
+        int64_t nowMs = duration_cast<milliseconds>(
+            steady_clock::now().time_since_epoch()).count();
+        stats["streamTimeMs"] = static_cast<double>(nowMs);
+    }
+
+    m_WsClient->sendTextMessage(
+        QString::fromUtf8(QJsonDocument(stats).toJson(QJsonDocument::Compact)));
 }
 
 void StreamRelay::onWsTextMessage(const QString& message)
@@ -530,6 +568,10 @@ void StreamRelay::onWsTextMessage(const QString& message)
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
     }
+    else if (type == "textinput") {
+        // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
+        m_Shim->sendUtf8Text(msg["text"].toString());
+    }
     else if (type == "requestidr") {
         // Browser lost its reference picture — forward to Sunshine (throttled).
         // Without this, a single decode-queue overflow freezes the WSS stream
@@ -568,6 +610,8 @@ void StreamRelay::onWsDisconnected()
             << "frames sent=" << m_FrameCount
             << "pending video=" << m_PendingVideoFrames.size()
             << "pending audio=" << m_PendingAudioFrames.size();
+
+    if (m_StatsTimer) m_StatsTimer->stop();
 
     QString disconnectSource;
     QWebSocketProtocol::CloseCode closeCode = QWebSocketProtocol::CloseCodeNormal;

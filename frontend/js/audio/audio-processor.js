@@ -1,12 +1,21 @@
 /**
  * AudioWorkletProcessor for Moonlight-Web audio pipeline.
  *
- * Runs on the audio render thread (real-time priority).  Receives raw PCM16
- * stereo interleaved buffers from the main thread via port.onmessage, converts
- * them to Float32, and writes them to the output bus in process().
+ * Runs on the audio render thread (real-time priority). Receives Float32
+ * interleaved stereo PCM chunks (already Opus-decoded by the WebCodecs
+ * AudioDecoder on the main thread) via port.onmessage and writes them to the
+ * output bus in process().
  *
- * Underrun: fills with silence (zeros).
- * Overrun: drops oldest chunks if queue exceeds MAX_QUEUED_CHUNKS.
+ * Anti-crackle design:
+ *   - Adaptive jitter buffer: playback waits until `_target` frames are queued.
+ *     The target starts small (~60 ms) and GROWS on every underrun (up to
+ *     ~240 ms), so a laggy network self-tunes to a larger cushion; it decays
+ *     back toward the base during sustained stable playback.
+ *   - De-click: short linear fade-out into silence on underrun and fade-in on
+ *     resume, turning sharp clicks into inaudible transitions.
+ *   - Overrun: drop the OLDEST chunk(s) to keep latency bounded.
+ *
+ * `sampleRate` is a global in AudioWorkletGlobalScope (context rate).
  *
  * @implements {AudioWorkletProcessor}
  */
@@ -14,104 +23,173 @@ class AudioProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
 
-        /** @type {Int16Array[]} Queue of PCM16 stereo interleaved chunks. */
+        /** @type {Float32Array[]} Queue of Float32 interleaved stereo chunks. */
         this._queue = [];
+        this._readOffset = 0;        // read offset (float elements) into head chunk
+        this._queuedFrames = 0;      // stereo-frames currently queued
+        this._consumedFrames = 0;    // total stereo-frames played (diagnostics)
+        this._underrunFrames = 0;    // underrun frames since last diag report
+        this._underrunEvents = 0;    // underrun episodes since last diag report
+        this._playing = false;       // true once buffer filled and draining
 
-        /** @type {number} Read offset (in int16 elements) into the current chunk. */
-        this._readOffset = 0;
+        // Adaptive jitter-buffer targets (stereo-frames at context sample rate).
+        this._baseTarget = Math.round(sampleRate * 0.06);   // 60 ms steady state
+        this._maxTarget = Math.round(sampleRate * 0.24);    // 240 ms ceiling
+        this._target = this._baseTarget;
+        this.GROW_FRAMES = Math.round(sampleRate * 0.03);   // +30 ms per underrun
+        this.MAX_BUFFER_FRAMES = Math.round(sampleRate * 0.50); // 500 ms hard cap
+        this.DECAY_INTERVAL = Math.round(sampleRate * 5);   // shrink after 5 s stable
 
-        /** @type {number} Total stereo-frames consumed (for diagnostics). */
-        this._consumedFrames = 0;
-
-        /** @type {number} Consecutive underrun frames in current process() call. */
-        this._underrunFrames = 0;
-
-        /** Max chunks to buffer before dropping oldest (approx 6 frames of 10ms). */
-        this.MAX_QUEUED_CHUNKS = 12;
+        // De-click fade length (samples). ~1.3 ms at 48 kHz.
+        this.FADE_SAMPLES = 64;
+        this._fadeInRemaining = 0;
+        this._lastL = 0;
+        this._lastR = 0;
+        this._framesSinceUnderrun = 0;
 
         this.port.onmessage = (evt) => {
-            // evt.data is a transferred ArrayBuffer containing raw PCM16 data
-            const pcm16 = new Int16Array(evt.data);
-
-            // Drop if queue is too deep (overrun protection)
-            if (this._queue.length >= this.MAX_QUEUED_CHUNKS) {
-                // Drop half the queue to recover quickly
-                const dropCount = Math.floor(this.MAX_QUEUED_CHUNKS / 2);
-                this._queue.splice(0, dropCount);
+            // Allow the main thread to override the base latency target.
+            if (evt.data && evt.data.type === 'config') {
+                if (typeof evt.data.baseLatencyMs === 'number') {
+                    this._baseTarget = Math.round(sampleRate * evt.data.baseLatencyMs / 1000);
+                    this._target = Math.max(this._target, this._baseTarget);
+                }
+                return;
             }
 
-            this._queue.push(pcm16);
+            // Float32 interleaved stereo PCM (transferred ArrayBuffer).
+            const chunk = new Float32Array(evt.data);
+            if (chunk.length === 0) return;
+
+            this._queue.push(chunk);
+            this._queuedFrames += chunk.length >> 1; // /2 channels
+
+            // Overrun protection: drop oldest chunks until under the cap.
+            while (this._queuedFrames > this.MAX_BUFFER_FRAMES && this._queue.length > 1) {
+                const dropped = this._queue.shift();
+                this._queuedFrames -= (dropped.length - this._readOffset) >> 1;
+                this._readOffset = 0;
+            }
         };
     }
 
-    /**
-     * AudioWorklet process callback (called by the audio thread).
-     *
-     * @param {Float32Array[][]} inputs  - Not used (no input connections).
-     * @param {Float32Array[][]} outputs - Stereo output: outputs[0][0] = left, outputs[0][1] = right.
-     * @param {object}           params  - Not used.
-     * @returns {boolean} true to keep the processor alive.
-     */
     process(inputs, outputs) {
         const out = outputs[0];
         if (!out || out.length < 2) return true;
 
         const left = out[0];
         const right = out[1];
-        const numFrames = left.length; // Typically 128 frames per render quantum
+        const numFrames = left.length; // usually 128
+
+        // Gate playback until the buffer reaches the (adaptive) target.
+        if (!this._playing) {
+            if (this._queuedFrames >= this._target) {
+                this._playing = true;
+                this._fadeInRemaining = this.FADE_SAMPLES; // fade in on resume
+                this.port.postMessage({
+                    type: 'started',
+                    outChannels: out.length,
+                    queuedFrames: this._queuedFrames,
+                    targetMs: Math.round(this._target / sampleRate * 1000)
+                });
+            } else {
+                left.fill(0);
+                right.fill(0);
+                return true;
+            }
+        }
 
         let outIdx = 0;
 
-        // Drain queued chunks
+        // Drain queued chunks, applying fade-in gain on the first samples.
         while (outIdx < numFrames && this._queue.length > 0) {
             const chunk = this._queue[0];
-            const availablePairs = (chunk.length - this._readOffset) >> 1; // /2
+            const availablePairs = (chunk.length - this._readOffset) >> 1;
             const needed = numFrames - outIdx;
             const toCopy = Math.min(availablePairs, needed);
-
             const start = this._readOffset;
 
-            // Bulk de-interleave + PCM16-to-Float32 conversion
             for (let i = 0; i < toCopy; i++) {
-                const si = start + (i << 1); // i * 2
-                left[outIdx + i] = chunk[si] * 0.000030517578125;     // / 32768
-                right[outIdx + i] = chunk[si + 1] * 0.000030517578125;
+                const si = start + (i << 1);
+                let l = chunk[si];
+                let r = chunk[si + 1];
+                if (this._fadeInRemaining > 0) {
+                    const g = 1 - (this._fadeInRemaining / this.FADE_SAMPLES);
+                    l *= g;
+                    r *= g;
+                    this._fadeInRemaining--;
+                }
+                left[outIdx + i] = l;
+                right[outIdx + i] = r;
             }
 
             outIdx += toCopy;
-            this._readOffset += toCopy << 1; // toCopy * 2
+            this._readOffset += toCopy << 1;
             this._consumedFrames += toCopy;
+            this._queuedFrames -= toCopy;
 
-            // Advance to next chunk if current is exhausted
             if (this._readOffset >= chunk.length) {
                 this._queue.shift();
                 this._readOffset = 0;
             }
         }
 
-        // Fill remaining frames with silence (underrun)
+        // Remember the last real sample for the de-click fade-out.
+        if (outIdx > 0) {
+            this._lastL = left[outIdx - 1];
+            this._lastR = right[outIdx - 1];
+        }
+
         if (outIdx < numFrames) {
+            // ── Underrun: buffer drained mid-quantum ───────────────────────────
             this._underrunFrames += numFrames - outIdx;
-            while (outIdx < numFrames) {
-                left[outIdx] = 0.0;
-                right[outIdx] = 0.0;
-                outIdx++;
+            this._underrunEvents++;
+
+            // De-click: linearly ramp the last sample down to zero, then silence.
+            const gap = numFrames - outIdx;
+            const fade = Math.min(this.FADE_SAMPLES, gap);
+            for (let i = 0; i < gap; i++) {
+                const g = i < fade ? (1 - i / fade) : 0;
+                left[outIdx + i] = this._lastL * g;
+                right[outIdx + i] = this._lastR * g;
+            }
+
+            // Adapt: grow the target so the rebuilt buffer rides out the next lag,
+            // and re-arm buffering (queue is already empty here).
+            this._target = Math.min(this._maxTarget, this._target + this.GROW_FRAMES);
+            this._playing = false;
+            this._readOffset = 0;
+            this._queue.length = 0;
+            this._queuedFrames = 0;
+            this._lastL = 0;
+            this._lastR = 0;
+            this._framesSinceUnderrun = 0;
+        } else {
+            // Stable playback — slowly decay the target back toward the base.
+            this._framesSinceUnderrun += numFrames;
+            if (this._framesSinceUnderrun > this.DECAY_INTERVAL &&
+                this._target > this._baseTarget) {
+                this._target = Math.max(this._baseTarget, this._target - this.GROW_FRAMES);
+                this._framesSinceUnderrun = 0;
             }
         }
 
-        // Report diagnostics periodically via message
-        if (this._consumedFrames % 48000 === 0) {
-            // Every ~1 second at 48kHz, report buffer health
+        // Diagnostics ~once per second.
+        if (this._consumedFrames % 48000 < numFrames) {
             this.port.postMessage({
                 type: 'diag',
                 queueDepth: this._queue.length,
+                queuedFrames: this._queuedFrames,
+                targetMs: Math.round(this._target / sampleRate * 1000),
                 underrunFrames: this._underrunFrames,
+                underrunEvents: this._underrunEvents,
                 consumedFrames: this._consumedFrames
             });
             this._underrunFrames = 0;
+            this._underrunEvents = 0;
         }
 
-        return true; // Keep alive
+        return true;
     }
 }
 

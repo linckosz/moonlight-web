@@ -90,6 +90,7 @@ export class WebRtcMedia {
 
         // Guard
         this._stopping = false;
+        this._closed = false;  // separate from _stopping: markStopping() must not block close()
 
         // WS open/error tracking for better error diagnostics
         this._wsHadOpen = false;
@@ -222,7 +223,8 @@ export class WebRtcMedia {
 
     /** Close all connections and clean up. */
     close() {
-        if (this._stopping) return;
+        if (this._closed) return;  // idempotent — but markStopping() must NOT short-circuit this
+        this._closed = true;
         this._stopping = true;
         console.log('[WebRtcMedia] Closing...');
 

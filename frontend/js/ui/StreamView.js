@@ -108,8 +108,15 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.5) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, hdr = false) {
         this.container = container;
+        // HDR (10-bit) negotiated by the backend. When true, the decoder is
+        // configured with a BT.2020/PQ color space instead of BT.709.
+        this._hdr = hdr === true;
+        // VSync: when false, the canvas 2D context is created with
+        // desynchronized=true to allow tearing (lower latency) on transports
+        // that render through the canvas (DataChannel / WSS).
+        this._vsync = vsync !== false;
         this.signalingUrl = signalingUrl;
         this.host = host;
         this.videoCodec = videoCodec || 'auto';
@@ -250,9 +257,27 @@ export class StreamView {
         this._touchTapThreshold = 10;        // px max distance for a tap (vs drag)
         this._touchTapTimeThreshold = 300;   // ms max duration for a tap
         this._touchHadTwoFingers = false;     // true if 2 fingers were active during the current touch sequence
+        this._touchMaxFingers = 0;            // max simultaneous fingers in the current sequence (1/2/3)
+        this._touchMoved = false;             // true once the primary finger moved past the tap threshold
+        this._touchDragging = false;          // true while a long-press drag holds the left button down
+        this._touchLongPressTimer = null;     // timer that engages drag after a still hold
+        this._touchLongPressMs = 450;         // ms hold (still) before a drag engages
+        // Pinch-zoom state (mobile): scale + pan applied to the streamed display only.
+        this._zoom = 1;                       // current display scale (1..4)
+        this._panX = 0;                       // pan offset in CSS px (applied before scale)
+        this._panY = 0;
+        this._pinchPrevDist = 0;              // previous finger spacing during a 2-finger gesture
+        this._pinchPrevCx = null;             // previous centroid (for pan)
+        this._pinchPrevCy = null;
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
         this._touchSensitivity = (typeof touchSensitivity === 'number' && touchSensitivity > 0)
-            ? touchSensitivity : 2.5;
+            ? touchSensitivity : 2.0;
+
+        // Virtual keyboard (touch devices): hidden capture element + toggle button.
+        this._kbdBtn = null;
+        this._kbdCapture = null;
+        this._kbdVisible = false;
+        this._onViewportResize = null;        // VisualViewport handler (keyboard push-up)
 
         // Mobile fullscreen button state
         this._mobileFsBtn = null;
@@ -538,8 +563,9 @@ export class StreamView {
     }
 
     /**
-     * Handle an incoming PCM16 audio sample from the WebRTC DataChannel.
-     * @param {Uint8Array} sample - PCM16 stereo interleaved data.
+     * Handle an incoming Opus audio packet from the transport (DataChannel /
+     * media-DC / WSS). Decoding to PCM happens inside AudioPipeline (WebCodecs).
+     * @param {Uint8Array} sample - One raw Opus packet.
      */
     handleAudioSample(sample) {
         if (this._quitting) return;
@@ -572,6 +598,7 @@ export class StreamView {
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
                 <video id="stream-video" class="stream-video" autoplay muted playsinline
                        style="width:100%;height:100%;object-fit:contain;display:none;"></video>
+                <div id="stream-input-layer" class="stream-input-layer"></div>
                 <div class="stream-click-hint" id="stream-hint">
                     Click to capture mouse & keyboard
                 </div>
@@ -583,14 +610,18 @@ export class StreamView {
         // overlay (trackpad model), not just the canvas/video rectangle.
         this.streamEl = el;
 
+        this.canvasArea = el.querySelector('.stream-canvas-area');
         this.canvas = document.getElementById('stream-canvas');
         // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
         // Mac Chrome handles NV12→RGBA correctly via Metal; Windows Chrome
         // should do the same via D3D11.
-        // NO desynchronized:true — it bypasses vsync composition on Android
-        // (where it is actually honored) and causes visible tearing bands and
-        // partially-written buffers. Desktop Chrome ignores it for 2D anyway.
-        this.ctx = this.canvas.getContext('2d');
+        // desynchronized:true bypasses vsync composition (honored on Android),
+        // trading possible tearing for lower latency. Gated by the VSync setting:
+        // VSync ON  → standard composited context (no tearing).
+        // VSync OFF → desynchronized context (tearing allowed, lower latency).
+        this.ctx = this._vsync
+            ? this.canvas.getContext('2d')
+            : this.canvas.getContext('2d', { desynchronized: true });
         // Set initial canvas size; will be adjusted when first frame arrives
         this.canvas.width = 1920;
         this.canvas.height = 1080;
@@ -618,6 +649,15 @@ export class StreamView {
                 this.webrtc.setVideoElement(this.videoEl);
             }
         }
+
+        // Transparent input-capture layer covering the whole canvas/video area.
+        // All mouse/wheel events bind here (not the canvas) so input works in
+        // every transport: in webrtc-media the canvas is hidden and the <video>
+        // has pointer-events:none, so without this layer the mouse was dead.
+        // Sitting on top of <video> also fixes iOS Safari swallowing touches
+        // over the video element.
+        this.inputEl = document.getElementById('stream-input-layer');
+        this.inputEl.style.touchAction = 'none';
 
         // statusEl kept for backward compatibility — setStatus() is now a no-op
         this.statusEl = null;
@@ -682,6 +722,42 @@ export class StreamView {
         }
         // Initial state: desktop = visible, mobile = landscape only
         this._updateMobileFsButtonVisibility();
+
+        // ── Virtual keyboard (touch devices only) ──────────────────────────
+        if (IS_TOUCH_DEVICE) {
+            // Hidden capture element: focusing it opens the OS soft keyboard.
+            // Key/text events are read here and forwarded to the host.
+            this._kbdCapture = document.createElement('textarea');
+            this._kbdCapture.id = 'stream-kbd-capture';
+            this._kbdCapture.className = 'stream-kbd-capture';
+            this._kbdCapture.setAttribute('autocomplete', 'off');
+            this._kbdCapture.setAttribute('autocorrect', 'off');
+            this._kbdCapture.setAttribute('autocapitalize', 'off');
+            this._kbdCapture.setAttribute('spellcheck', 'false');
+            this._kbdCapture.setAttribute('aria-hidden', 'true');
+            document.getElementById('stream-view').appendChild(this._kbdCapture);
+            this._setupKeyboardCapture();
+
+            // Header toggle button: keyboard glyph + tiny up arrow.
+            this._kbdBtn = document.createElement('button');
+            this._kbdBtn.id = 'btn-stream-keyboard';
+            this._kbdBtn.className = 'btn-stream-kbd';
+            this._kbdBtn.innerHTML = '⌨<span class="kbd-arrow">▴</span>';
+            this._kbdBtn.title = 'Show on-screen keyboard';
+            this._kbdBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._toggleVirtualKeyboard();
+            });
+            if (header) header.insertBefore(this._kbdBtn, header.firstChild);
+
+            // VisualViewport: shrink the overlay so the stream stays fully
+            // visible above the soft keyboard (push-up, esp. portrait).
+            if (window.visualViewport) {
+                this._onViewportResize = () => this._handleViewportResize();
+                window.visualViewport.addEventListener('resize', this._onViewportResize);
+                window.visualViewport.addEventListener('scroll', this._onViewportResize);
+            }
+        }
     }
 
     // =========================================================================
@@ -994,14 +1070,25 @@ export class StreamView {
             optimizeForLatency: true
         };
 
-        const bt709 = {
-            colorSpace: {
-                primaries: 'bt709',
-                transfer: 'bt709',
-                matrix: 'bt709',
-                fullRange: false
-            }
-        };
+        // Decoder color space. HEVC HDR streams are BT.2020 + PQ (SMPTE 2084);
+        // every other path stays BT.709 SDR. (HDR is only ever negotiated with HEVC.)
+        const vColor = (this._hdr && codecType === CODEC_HEVC)
+            ? {
+                colorSpace: {
+                    primaries: 'bt2020',
+                    transfer: 'pq',
+                    matrix: 'bt2020ncl',
+                    fullRange: false
+                }
+              }
+            : {
+                colorSpace: {
+                    primaries: 'bt709',
+                    transfer: 'bt709',
+                    matrix: 'bt709',
+                    fullRange: false
+                }
+              };
 
         // Build configs: for HEVC, try Annex B (no description) first.
         // Chromium's keyframe validator (AnalyzeAnnexB) only parses start-code
@@ -1019,7 +1106,7 @@ export class StreamView {
             codec: codec,
             description: desc.buffer,
             ...shared,
-            ...bt709
+            ...vColor
         };
 
         // ── HEVC Annex B phase (no description) ──
@@ -1028,11 +1115,11 @@ export class StreamView {
         if (codecType === CODEC_HEVC) {
             const annexBCfgs = [];
             const hev1Primary = codec.replace(/^hvc1/, 'hev1');
-            annexBCfgs.push({ codec: hev1Primary, ...shared, ...bt709, _noDescription: true });
+            annexBCfgs.push({ codec: hev1Primary, ...shared, ...vColor, _noDescription: true });
             annexBCfgs.push({ codec: hev1Primary, ...shared, _noDescription: true });
             for (const fb of HEVC_ANNEXB_CODEC_STRINGS) {
                 if (fb === hev1Primary) continue;
-                annexBCfgs.push({ codec: fb, ...shared, ...bt709, _noDescription: true });
+                annexBCfgs.push({ codec: fb, ...shared, ...vColor, _noDescription: true });
                 annexBCfgs.push({ codec: fb, ...shared, _noDescription: true });
             }
 
@@ -1041,7 +1128,7 @@ export class StreamView {
 
             tryCodecs(annexBCfgs, 0, () => {
                 console.log('[StreamView] Annex B exhausted, Phase B: AVCC with description');
-                this._tryHevcAvccConfigs(codec, desc, fallbacks, shared, bt709);
+                this._tryHevcAvccConfigs(codec, desc, fallbacks, shared, vColor);
             });
             return;
         }
@@ -1058,7 +1145,7 @@ export class StreamView {
                 codedWidth: 1920,
                 codedHeight: 1080,
                 optimizeForLatency: true,
-                ...bt709
+                ...vColor
             });
             // Without colorSpace (Safari iOS does not support colorSpace in configure())
             configsToTry.push({
@@ -1115,7 +1202,7 @@ export class StreamView {
             // Some browsers/devices prefer avc3 over avc1 for hardware decoding.
             console.warn('[GPU] All avc1 configs rejected, trying avc3 (in-band SPS/PPS)');
             const avc3Configs = [
-                { codec: 'avc3.42E01E', ...shared, ...bt709, optimizeForLatency: true },
+                { codec: 'avc3.42E01E', ...shared, ...vColor, optimizeForLatency: true },
                 { codec: 'avc3.42E01E', ...shared, optimizeForLatency: true },
                 { codec: 'avc3.42E01E', ...shared }
             ];
@@ -1132,15 +1219,15 @@ export class StreamView {
      * Called when all Annex B (no-description) configs were exhausted.
      * On total exhaustion, triggers H.264 fallback via _handleHevcFallback().
      */
-    _tryHevcAvccConfigs(codec, desc, fallbacks, shared, bt709) {
+    _tryHevcAvccConfigs(codec, desc, fallbacks, shared, vColor) {
         const cfgs = [];
 
-        cfgs.push({ codec, description: desc.buffer, ...shared, ...bt709 });
+        cfgs.push({ codec, description: desc.buffer, ...shared, ...vColor });
         cfgs.push({ codec, description: desc.buffer, ...shared });
 
         for (const fb of fallbacks) {
             if (fb === codec) continue;
-            cfgs.push({ codec: fb, description: desc.buffer, ...shared, ...bt709 });
+            cfgs.push({ codec: fb, description: desc.buffer, ...shared, ...vColor });
             cfgs.push({ codec: fb, description: desc.buffer, ...shared });
         }
 
@@ -2057,8 +2144,32 @@ export class StreamView {
         let avgLatency = '--';
         if (isMedia) {
             if (this._mediaLatencyMs > 0) avgLatency = this._mediaLatencyMs.toFixed(1) + 'ms';
-        } else if (this._e2eLatencyStats.count > 0) {
-            avgLatency = this._e2eLatencyStats.avg.toFixed(1) + 'ms';
+        } else {
+            // Robust RTT-based latency for DataChannel and WSS. The steady-clock
+            // e2e estimate is fragile (32-bit timestamp wrap, clock-domain drift)
+            // and silently produced no value on these transports. Sum the
+            // measurable one-way components instead:
+            //   browser↔backend one-way (ping/pong RTT / 2)
+            //   backend↔Sunshine one-way (hostRttMs, already halved server-side)
+            //   backend decode/pipeline latency (decodeLatencyUs)
+            let latency = 0;
+            let haveLatency = false;
+            if (this._browserRttStats.count > 0) {
+                latency += this._browserRttStats.avg / 2;
+                haveLatency = true;
+            }
+            if (this._hostRttStats.count > 0) {
+                latency += this._hostRttStats.avg;
+                haveLatency = true;
+            }
+            if (this._decodeLatencyStats.count > 0) {
+                latency += this._decodeLatencyStats.avg;
+            }
+            if (haveLatency) {
+                avgLatency = latency.toFixed(1) + 'ms';
+            } else if (this._e2eLatencyStats.count > 0) {
+                avgLatency = this._e2eLatencyStats.avg.toFixed(1) + 'ms';
+            }
         }
         html += '<div class="stats-row stats-latency-row">' +
             '<span class="stats-label">Latency:</span>' +
@@ -2459,7 +2570,7 @@ export class StreamView {
         // Common events (both modes)
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
-        this.canvas.addEventListener('wheel', this._onWheel, { passive: false });
+        this.inputEl.addEventListener('wheel', this._onWheel, { passive: false });
         this.streamEl.addEventListener('contextmenu', this._onContextMenu);
         // Touch events (mobile): bound to the WHOLE overlay so the entire
         // screen acts as a laptop trackpad, not just the canvas rectangle.
@@ -2478,11 +2589,17 @@ export class StreamView {
         }
     }
 
+    /** Active display element used for absolute-coordinate mapping:
+     *  the <video> in webrtc-media mode, the <canvas> otherwise. */
+    _displayEl() {
+        return this._transport === 'webrtc-media' ? this.videoEl : this.canvas;
+    }
+
     _bindGamingEvents() {
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
 
         // Pre-focus: cursor visible (browser default — pointer lock hides it natively)
-        this.canvas.style.cursor = '';
+        this.inputEl.style.cursor = '';
 
         // Unified mousemove: absolute tracking when visible (pre-focus),
         // relative movement via pointer lock deltas when focused.
@@ -2490,7 +2607,7 @@ export class StreamView {
             if (this._mouseFocused) {
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
-                const rect = this.canvas.getBoundingClientRect();
+                const rect = this._displayEl().getBoundingClientRect();
                 const x = Math.round(Math.max(0, Math.min(e.clientX - rect.left, rect.width)));
                 const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
                 const refW = Math.round(rect.width);
@@ -2501,7 +2618,7 @@ export class StreamView {
                 });
             }
         };
-        this.canvas.addEventListener('mousemove', this._onGamingMouseMove);
+        this.inputEl.addEventListener('mousemove', this._onGamingMouseMove);
 
         // Click to capture focus: set host cursor at clicked position, then grab pointer.
         this._onGamingClick = (e) => {
@@ -2509,7 +2626,7 @@ export class StreamView {
             e.preventDefault();
 
             // Send absolute position so the host cursor teleports to the clicked point
-            const rect = this.canvas.getBoundingClientRect();
+            const rect = this._displayEl().getBoundingClientRect();
             const x = Math.round(Math.max(0, Math.min(e.clientX - rect.left, rect.width)));
             const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
             const refW = Math.round(rect.width);
@@ -2518,9 +2635,9 @@ export class StreamView {
                 type: 'mousemove', x, y,
                 referenceWidth: refW, referenceHeight: refH
             });
-            this.canvas.requestPointerLock();
+            this.inputEl.requestPointerLock();
         };
-        this.canvas.addEventListener('click', this._onGamingClick);
+        this.inputEl.addEventListener('click', this._onGamingClick);
 
         // Mouse button events: only send when focused (pre-focus click only captures)
         this._onGamingMouseDown = (e) => {
@@ -2529,8 +2646,8 @@ export class StreamView {
         this._onGamingMouseUp = (e) => {
             if (this._mouseFocused) this.handleMouseUp(e);
         };
-        this.canvas.addEventListener('mousedown', this._onGamingMouseDown);
-        this.canvas.addEventListener('mouseup', this._onGamingMouseUp);
+        this.inputEl.addEventListener('mousedown', this._onGamingMouseDown);
+        this.inputEl.addEventListener('mouseup', this._onGamingMouseUp);
     }
 
     _setupNormalMouse() {
@@ -2540,11 +2657,11 @@ export class StreamView {
         // Hide local cursor — the host cursor is visible in the video stream.
         // On touch devices there is no CSS cursor to hide (trackpad model).
         if (!IS_TOUCH_DEVICE) {
-            this.canvas.style.cursor = 'none';
+            this.inputEl.style.cursor = 'none';
         }
 
         this._onNormalMouseMove = (e) => {
-            const rect = this.canvas.getBoundingClientRect();
+            const rect = this._displayEl().getBoundingClientRect();
             // Absolute pixel position within the canvas element
             const rawX = e.clientX - rect.left;
             const rawY = e.clientY - rect.top;
@@ -2576,21 +2693,21 @@ export class StreamView {
 
         this._onNormalMouseEnter = () => {
             if (!IS_TOUCH_DEVICE) {
-                this.canvas.style.cursor = 'none';
+                this.inputEl.style.cursor = 'none';
             }
         };
 
         this._onNormalMouseLeave = () => {
             if (!IS_TOUCH_DEVICE) {
-                this.canvas.style.cursor = 'default';
+                this.inputEl.style.cursor = 'default';
             }
         };
 
-        this.canvas.addEventListener('mousemove', this._onNormalMouseMove);
-        this.canvas.addEventListener('mousedown', this._onNormalMouseDown);
-        this.canvas.addEventListener('mouseup', this._onNormalMouseUp);
-        this.canvas.addEventListener('mouseenter', this._onNormalMouseEnter);
-        this.canvas.addEventListener('mouseleave', this._onNormalMouseLeave);
+        this.inputEl.addEventListener('mousemove', this._onNormalMouseMove);
+        this.inputEl.addEventListener('mousedown', this._onNormalMouseDown);
+        this.inputEl.addEventListener('mouseup', this._onNormalMouseUp);
+        this.inputEl.addEventListener('mouseenter', this._onNormalMouseEnter);
+        this.inputEl.addEventListener('mouseleave', this._onNormalMouseLeave);
     }
 
     unbindEvents() {
@@ -2607,40 +2724,37 @@ export class StreamView {
             this.streamEl.removeEventListener('touchend', this._onTouchEnd);
             this.streamEl.removeEventListener('touchcancel', this._onTouchEnd);
         }
-        if (this.canvas) {
-            this.canvas.removeEventListener('mousemove', this._onMouseMove);
-            this.canvas.removeEventListener('mousedown', this._onMouseDown);
-            this.canvas.removeEventListener('mouseup', this._onMouseUp);
-            this.canvas.removeEventListener('wheel', this._onWheel);
+        if (this.inputEl) {
+            this.inputEl.removeEventListener('wheel', this._onWheel);
 
             // Mode-specific listeners
             if (this._gamingMode) {
                 if (this._onGamingMouseMove)
-                    this.canvas.removeEventListener('mousemove', this._onGamingMouseMove);
+                    this.inputEl.removeEventListener('mousemove', this._onGamingMouseMove);
                 if (this._onGamingClick)
-                    this.canvas.removeEventListener('click', this._onGamingClick);
+                    this.inputEl.removeEventListener('click', this._onGamingClick);
                 if (this._onGamingMouseDown)
-                    this.canvas.removeEventListener('mousedown', this._onGamingMouseDown);
+                    this.inputEl.removeEventListener('mousedown', this._onGamingMouseDown);
                 if (this._onGamingMouseUp)
-                    this.canvas.removeEventListener('mouseup', this._onGamingMouseUp);
+                    this.inputEl.removeEventListener('mouseup', this._onGamingMouseUp);
             } else {
                 if (this._onNormalMouseMove)
-                    this.canvas.removeEventListener('mousemove', this._onNormalMouseMove);
+                    this.inputEl.removeEventListener('mousemove', this._onNormalMouseMove);
                 if (this._onNormalMouseDown)
-                    this.canvas.removeEventListener('mousedown', this._onNormalMouseDown);
+                    this.inputEl.removeEventListener('mousedown', this._onNormalMouseDown);
                 if (this._onNormalMouseUp)
-                    this.canvas.removeEventListener('mouseup', this._onNormalMouseUp);
+                    this.inputEl.removeEventListener('mouseup', this._onNormalMouseUp);
                 if (this._onNormalMouseEnter)
-                    this.canvas.removeEventListener('mouseenter', this._onNormalMouseEnter);
+                    this.inputEl.removeEventListener('mouseenter', this._onNormalMouseEnter);
                 if (this._onNormalMouseLeave)
-                    this.canvas.removeEventListener('mouseleave', this._onNormalMouseLeave);
+                    this.inputEl.removeEventListener('mouseleave', this._onNormalMouseLeave);
             }
         }
     }
 
     requestPointerLock() {
-        if (!this.pointerLocked && this.canvas) {
-            this.canvas.requestPointerLock();
+        if (!this.pointerLocked && this.inputEl) {
+            this.inputEl.requestPointerLock();
         }
     }
 
@@ -2718,6 +2832,9 @@ export class StreamView {
     handleKeyDown(e) {
         // Ignore all keyboard input while the stream is being shut down
         if (this._quitting) return;
+        // Soft-keyboard events on the capture element are handled by its own
+        // listeners (beforeinput/keydown) — don't double-process here.
+        if (e.target === this._kbdCapture) return;
 
         // ── CSS fallback fullscreen Escape ─────────────────────────────────
         // When in CSS fake fullscreen (no native Fullscreen API), Escape
@@ -2798,7 +2915,7 @@ export class StreamView {
             // Releases the mouse cursor back to the OS (gaming mode only).
             if (chk('z', 'KeyZ')) {
                 e.preventDefault();
-                if (document.pointerLockElement === this.canvas) {
+                if (document.pointerLockElement === this.inputEl) {
                     document.exitPointerLock();
                 }
                 return;
@@ -2839,6 +2956,7 @@ export class StreamView {
     }
 
     handleKeyUp(e) {
+        if (e.target === this._kbdCapture) return;
         e.preventDefault();
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
         this.webrtc.send({
@@ -3046,6 +3164,109 @@ export class StreamView {
     }
 
     // =========================================================================
+    // Virtual keyboard (touch devices)
+    // =========================================================================
+
+    /**
+     * Wire the hidden capture <textarea>:
+     *   - beforeinput: printable text → UTF-8 text event; line break → Enter;
+     *     backward delete → Backspace. preventDefault keeps it empty.
+     *   - keydown: navigation/control keys that produce no input (arrows, Tab,
+     *     Escape, Home/End/PageUp/Down, Delete).
+     *   - focus/blur: keep _kbdVisible and the button state in sync (the OS may
+     *     dismiss the keyboard on its own).
+     */
+    _setupKeyboardCapture() {
+        const cap = this._kbdCapture;
+        if (!cap) return;
+
+        cap.addEventListener('beforeinput', (e) => {
+            const t = e.inputType || '';
+            if (t === 'insertText' && e.data) {
+                this.webrtc.send({ type: 'textinput', text: e.data });
+            } else if (t === 'insertLineBreak' || t === 'insertParagraph') {
+                this._sendKey(0x0D); // Enter
+            } else if (t.indexOf('delete') === 0) {
+                this._sendKey(0x08); // Backspace
+            }
+            // Keep the textarea empty so events keep firing and no text accrues.
+            e.preventDefault();
+        });
+
+        // Navigation/control keys not covered by beforeinput.
+        const navKeys = {
+            'Tab': 0x09, 'Escape': 0x1B, 'Delete': 0x2E,
+            'ArrowUp': 0x26, 'ArrowDown': 0x28, 'ArrowLeft': 0x25, 'ArrowRight': 0x27,
+            'Home': 0x24, 'End': 0x23, 'PageUp': 0x21, 'PageDown': 0x22
+        };
+        cap.addEventListener('keydown', (e) => {
+            const vk = navKeys[e.code] ?? navKeys[e.key];
+            if (vk !== undefined) {
+                e.preventDefault();
+                this._sendKey(vk);
+            }
+        });
+
+        cap.addEventListener('focus', () => {
+            this._kbdVisible = true;
+            if (this._kbdBtn) this._kbdBtn.classList.add('active');
+        });
+        cap.addEventListener('blur', () => {
+            this._kbdVisible = false;
+            if (this._kbdBtn) this._kbdBtn.classList.remove('active');
+        });
+    }
+
+    /** Send a single key press (down+up) with no modifiers. */
+    _sendKey(vk) {
+        const base = { keyCode: vk, code: '', key: '',
+            ctrlKey: false, shiftKey: false, altKey: false, metaKey: false };
+        this.webrtc.send({ type: 'keydown', ...base });
+        this.webrtc.send({ type: 'keyup', ...base });
+    }
+
+    _toggleVirtualKeyboard() {
+        if (this._kbdVisible) this._hideVirtualKeyboard();
+        else this._showVirtualKeyboard();
+    }
+
+    /** Focus the hidden capture element — opens the OS soft keyboard.
+     *  Must run inside a user gesture (button tap / 3-finger tap). */
+    _showVirtualKeyboard() {
+        if (!this._kbdCapture) return;
+        this._kbdCapture.value = '';
+        try { this._kbdCapture.focus({ preventScroll: true }); }
+        catch (e) { this._kbdCapture.focus(); }
+    }
+
+    _hideVirtualKeyboard() {
+        if (this._kbdCapture) this._kbdCapture.blur();
+    }
+
+    /**
+     * Keep the stream fully visible above the soft keyboard.
+     * VisualViewport shrinks when the keyboard opens (iOS Safari + Android
+     * Chrome); we resize the overlay to the visible area so the centered video
+     * fits above the keyboard instead of hiding behind it.
+     */
+    _handleViewportResize() {
+        const vv = window.visualViewport;
+        if (!vv || !this.streamEl) return;
+        // In real fullscreen the keyboard rarely opens; skip to avoid fighting it.
+        const kbHeight = window.innerHeight - vv.height - vv.offsetTop;
+        if (kbHeight > 120) {
+            // Release `bottom` (set by inset:0) so `height` actually applies.
+            this.streamEl.style.bottom = 'auto';
+            this.streamEl.style.top = vv.offsetTop + 'px';
+            this.streamEl.style.height = vv.height + 'px';
+        } else {
+            this.streamEl.style.bottom = '';
+            this.streamEl.style.top = '';
+            this.streamEl.style.height = '';
+        }
+    }
+
+    // =========================================================================
     // Touch input (mobile) — trackpad-like behaviour
     // =========================================================================
 
@@ -3057,35 +3278,82 @@ export class StreamView {
      *   2 fingers (simultaneous) → right click (mousedown+mouseup button=3).
      */
     handleTouchStart(e) {
-        // Let UI buttons (Stop, Fullscreen, Exit FS) receive their native taps
+        // Let UI buttons (Stop, Fullscreen, Keyboard) receive their native taps
         if (e.target.closest('button')) return;
         e.preventDefault();
-        const prevCount = this._touchFingerCount;
         const newCount = e.touches.length;
-        this._touchFingerCount = newCount;
-        const touch = e.touches[0];
-        this._touchStartX = touch.clientX;
-        this._touchStartY = touch.clientY;
-        this._touchLastX = touch.clientX;
-        this._touchLastY = touch.clientY;
-        this._touchStartTime = performance.now();
-        this._touchActive = true;
 
-        // Two fingers only when starting simultaneously (prevCount === 0) → right click.
-        // If the second finger is added mid-drag (prevCount === 1 → 2), we just switch
-        // to scroll mode without firing a click.
-        if (newCount === 2 && prevCount === 0) {
-            this._touchHadTwoFingers = true;
-            this.webrtc.send({ type: 'mousedown', button: 3 });
-            this.webrtc.send({ type: 'mouseup', button: 3 });
-            // Clear start time so touchend doesn't also fire a left click
-            this._touchStartTime = 0;
-            // Store average Y so first two-finger touchmove delta is correct
-            const t0 = e.touches[0], t1 = e.touches[1];
-            this._touchLastY = (t0.clientY + t1.clientY) / 2;
-        } else if (newCount === 2 && prevCount === 1) {
-            // Second finger added mid-drag — mark to prevent tap on final finger lift
-            this._touchHadTwoFingers = true;
+        // New sequence: first finger of the gesture goes down.
+        if (!this._touchActive) {
+            this._touchActive = true;
+            this._touchMaxFingers = 0;
+            this._touchMoved = false;
+            this._touchDragging = false;
+            this._touchHadTwoFingers = false;
+            const t = e.touches[0];
+            this._touchStartX = t.clientX;
+            this._touchStartY = t.clientY;
+            this._touchLastX = t.clientX;
+            this._touchLastY = t.clientY;
+            this._touchStartTime = performance.now();
+        }
+
+        this._touchFingerCount = newCount;
+        this._touchMaxFingers = Math.max(this._touchMaxFingers, newCount);
+        if (newCount >= 2) this._touchHadTwoFingers = true;
+
+        if (newCount === 1) {
+            // Arm long-press → drag: hold still to grab the left button
+            // (lets you move windows / select text without a physical button).
+            this._clearLongPress();
+            this._touchLongPressTimer = setTimeout(() => {
+                if (this._touchActive && !this._touchMoved &&
+                    this._touchFingerCount === 1 && !this._touchDragging) {
+                    this._touchDragging = true;
+                    this.webrtc.send({ type: 'mousedown', button: 1 });
+                }
+            }, this._touchLongPressMs);
+        } else {
+            // Multi-finger gesture — never a drag candidate.
+            this._clearLongPress();
+            if (newCount === 2) {
+                const t0 = e.touches[0], t1 = e.touches[1];
+                this._touchLastX = t0.clientX;
+                this._touchLastY = (t0.clientY + t1.clientY) / 2;
+                // Seed pinch tracking (spacing + centroid) for zoom/pan.
+                this._pinchPrevDist = Math.hypot(t0.clientX - t1.clientX,
+                                                 t0.clientY - t1.clientY);
+                this._pinchPrevCx = (t0.clientX + t1.clientX) / 2;
+                this._pinchPrevCy = (t0.clientY + t1.clientY) / 2;
+            }
+        }
+    }
+
+    /**
+     * Apply the current zoom/pan to the streamed display (canvas + video).
+     * Pan is clamped so the scaled image edges never reveal the black area.
+     * Origin is the center; the input layer stays unscaled.
+     */
+    _applyZoomTransform() {
+        if (this.canvasArea) {
+            const rect = this.canvasArea.getBoundingClientRect();
+            const maxX = (this._zoom - 1) * rect.width / 2;
+            const maxY = (this._zoom - 1) * rect.height / 2;
+            this._panX = Math.max(-maxX, Math.min(maxX, this._panX));
+            this._panY = Math.max(-maxY, Math.min(maxY, this._panY));
+        }
+        const transform = this._zoom > 1.001
+            ? `translate(${this._panX}px, ${this._panY}px) scale(${this._zoom})`
+            : '';
+        if (this.canvas) this.canvas.style.transform = transform;
+        if (this.videoEl) this.videoEl.style.transform = transform;
+    }
+
+    /** Cancel a pending long-press → drag timer. */
+    _clearLongPress() {
+        if (this._touchLongPressTimer) {
+            clearTimeout(this._touchLongPressTimer);
+            this._touchLongPressTimer = null;
         }
     }
 
@@ -3105,11 +3373,20 @@ export class StreamView {
         this._touchFingerCount = count;
 
         if (count === 1) {
-            // Single finger: relative trackpad movement
+            // Single finger: relative trackpad movement (also drags when the
+            // long-press grab is active — the left button stays held down).
             const touch = e.touches[0];
+
+            // Past the tap threshold → it's a move, cancel long-press arming.
+            const movedDist = Math.hypot(touch.clientX - this._touchStartX,
+                                         touch.clientY - this._touchStartY);
+            if (movedDist > this._touchTapThreshold) {
+                this._touchMoved = true;
+                if (!this._touchDragging) this._clearLongPress();
+            }
+
             const dx = (touch.clientX - this._touchLastX) * this._touchSensitivity;
             const dy = (touch.clientY - this._touchLastY) * this._touchSensitivity;
-
             if (dx !== 0 || dy !== 0) {
                 this.webrtc.send({
                     type: 'mousemove',
@@ -3121,19 +3398,52 @@ export class StreamView {
             this._touchLastX = touch.clientX;
             this._touchLastY = touch.clientY;
         } else if (count === 2) {
-            // Two finger vertical swipe → scroll
+            // Two fingers: pinch → zoom the streamed display; drag → pan when
+            // zoomed in, else vertical scroll wheel (unchanged when at zoom 1).
+            this._touchMoved = true;
+            this._clearLongPress();
             const t1 = e.touches[0];
             const t2 = e.touches[1];
-            const avgY = (t1.clientY + t2.clientY) / 2;
-            const deltaY = this._touchLastY ? avgY - this._touchLastY : 0;
+            const cx = (t1.clientX + t2.clientX) / 2;
+            const cy = (t1.clientY + t2.clientY) / 2;
+            const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
 
-            if (Math.abs(deltaY) > 1) {
-                this.webrtc.send({ type: 'mousewheel', delta: deltaY });
+            // Pinch → adjust zoom, keeping the focal point (centroid) stable.
+            if (this._pinchPrevDist > 0 && dist > 0) {
+                const newZoom = Math.min(4, Math.max(1, this._zoom * (dist / this._pinchPrevDist)));
+                const f = newZoom / this._zoom;
+                if (f !== 1 && this.canvasArea) {
+                    const rect = this.canvasArea.getBoundingClientRect();
+                    const focalX = cx - (rect.left + rect.width / 2);
+                    const focalY = cy - (rect.top + rect.height / 2);
+                    this._panX = focalX * (1 - f) + f * this._panX;
+                    this._panY = focalY * (1 - f) + f * this._panY;
+                }
+                this._zoom = newZoom;
             }
 
-            // Track average Y for next delta
+            const dCx = this._pinchPrevCx != null ? cx - this._pinchPrevCx : 0;
+            const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
+
+            if (this._zoom > 1.01) {
+                // Pan the zoomed view with the two-finger drag.
+                this._panX += dCx;
+                this._panY += dCy;
+                this._applyZoomTransform();
+            } else {
+                // At base zoom: behave like before — vertical scroll wheel.
+                if (this._zoom !== 1) { this._zoom = 1; this._panX = 0; this._panY = 0; }
+                this._applyZoomTransform();
+                if (Math.abs(dCy) > 1) {
+                    this.webrtc.send({ type: 'mousewheel', delta: dCy });
+                }
+            }
+
+            this._pinchPrevDist = dist;
+            this._pinchPrevCx = cx;
+            this._pinchPrevCy = cy;
             this._touchLastX = t1.clientX;
-            this._touchLastY = avgY;
+            this._touchLastY = cy;
         }
     }
 
@@ -3145,39 +3455,52 @@ export class StreamView {
     handleTouchEnd(e) {
         if (e.target.closest('button')) return;
         e.preventDefault();
-
-        // Update finger count before processing
         this._touchFingerCount = e.touches.length;
 
-        // Tap detection: 1→0 finger transition, no two-finger gesture seen, no significant drag
-        if (e.touches.length === 0 &&
-            !this._touchHadTwoFingers &&
-            e.changedTouches.length > 0) {
-            const touch = e.changedTouches[0];
-            const dx = touch.clientX - this._touchStartX;
-            const dy = touch.clientY - this._touchStartY;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const elapsed = performance.now() - this._touchStartTime;
+        // Resolve the gesture only once ALL fingers are lifted.
+        if (e.touches.length > 0) return;
 
-            // Tap: minimal movement + short duration → left click
-            if (dist < this._touchTapThreshold &&
-                elapsed < this._touchTapTimeThreshold &&
-                this._touchStartTime > 0) {
+        this._clearLongPress();
+
+        const elapsed = performance.now() - this._touchStartTime;
+        const tch = e.changedTouches[0];
+        const dist = tch
+            ? Math.hypot(tch.clientX - this._touchStartX, tch.clientY - this._touchStartY)
+            : 0;
+        const isTap = !this._touchMoved &&
+            dist < this._touchTapThreshold &&
+            elapsed < this._touchTapTimeThreshold &&
+            this._touchStartTime > 0;
+
+        if (this._touchDragging) {
+            // End the long-press drag — release the held left button.
+            this.webrtc.send({ type: 'mouseup', button: 1 });
+        } else if (isTap) {
+            if (this._touchMaxFingers >= 3) {
+                this._toggleVirtualKeyboard();              // 3-finger tap → keyboard
+            } else if (this._touchMaxFingers === 2) {
+                this.webrtc.send({ type: 'mousedown', button: 3 });
+                this.webrtc.send({ type: 'mouseup', button: 3 });   // 2-finger tap → right click
+            } else {
                 this.webrtc.send({ type: 'mousedown', button: 1 });
-                this.webrtc.send({ type: 'mouseup', button: 1 });
+                this.webrtc.send({ type: 'mouseup', button: 1 });   // 1-finger tap → left click
             }
         }
 
-        // Reset state when all fingers are lifted
-        if (e.touches.length === 0) {
-            this._touchActive = false;
-            this._touchHadTwoFingers = false;
-            this._touchFingerCount = 0;
-        }
+        // Reset sequence state.
+        this._touchActive = false;
+        this._touchDragging = false;
+        this._touchMoved = false;
+        this._touchHadTwoFingers = false;
+        this._touchFingerCount = 0;
+        this._touchMaxFingers = 0;
+        this._pinchPrevDist = 0;
+        this._pinchPrevCx = null;
+        this._pinchPrevCy = null;
     }
 
     handlePointerLockChange() {
-        this.pointerLocked = (document.pointerLockElement === this.canvas);
+        this.pointerLocked = (document.pointerLockElement === this.inputEl);
         this._mouseFocused = this.pointerLocked;
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
@@ -3217,28 +3540,28 @@ export class StreamView {
         // ── Remove current mouse event listeners ─────────────────────────
         if (this._gamingMode) {
             if (this._onGamingMouseMove)
-                this.canvas.removeEventListener('mousemove', this._onGamingMouseMove);
+                this.inputEl.removeEventListener('mousemove', this._onGamingMouseMove);
             if (this._onGamingClick)
-                this.canvas.removeEventListener('click', this._onGamingClick);
+                this.inputEl.removeEventListener('click', this._onGamingClick);
             if (this._onGamingMouseDown)
-                this.canvas.removeEventListener('mousedown', this._onGamingMouseDown);
+                this.inputEl.removeEventListener('mousedown', this._onGamingMouseDown);
             if (this._onGamingMouseUp)
-                this.canvas.removeEventListener('mouseup', this._onGamingMouseUp);
+                this.inputEl.removeEventListener('mouseup', this._onGamingMouseUp);
         } else {
             if (this._onNormalMouseMove)
-                this.canvas.removeEventListener('mousemove', this._onNormalMouseMove);
+                this.inputEl.removeEventListener('mousemove', this._onNormalMouseMove);
             if (this._onNormalMouseDown)
-                this.canvas.removeEventListener('mousedown', this._onNormalMouseDown);
+                this.inputEl.removeEventListener('mousedown', this._onNormalMouseDown);
             if (this._onNormalMouseUp)
-                this.canvas.removeEventListener('mouseup', this._onNormalMouseUp);
+                this.inputEl.removeEventListener('mouseup', this._onNormalMouseUp);
             if (this._onNormalMouseEnter)
-                this.canvas.removeEventListener('mouseenter', this._onNormalMouseEnter);
+                this.inputEl.removeEventListener('mouseenter', this._onNormalMouseEnter);
             if (this._onNormalMouseLeave)
-                this.canvas.removeEventListener('mouseleave', this._onNormalMouseLeave);
+                this.inputEl.removeEventListener('mouseleave', this._onNormalMouseLeave);
         }
 
         // ── Exit pointer lock if leaving gaming mode ────────────────────
-        if (this._gamingMode && document.pointerLockElement === this.canvas) {
+        if (this._gamingMode && document.pointerLockElement === this.inputEl) {
             document.exitPointerLock();
         }
 
@@ -3460,7 +3783,29 @@ export class StreamView {
             this._mobileFsBtn = null;
         }
 
-        if (document.pointerLockElement === this.canvas) {
+        // Remove virtual keyboard button + capture, drop viewport listeners
+        this._clearLongPress();
+        if (this._onViewportResize && window.visualViewport) {
+            window.visualViewport.removeEventListener('resize', this._onViewportResize);
+            window.visualViewport.removeEventListener('scroll', this._onViewportResize);
+            this._onViewportResize = null;
+        }
+        if (this._kbdCapture) {
+            this._kbdCapture.blur();
+            this._kbdCapture.remove();
+            this._kbdCapture = null;
+        }
+        if (this._kbdBtn) {
+            this._kbdBtn.remove();
+            this._kbdBtn = null;
+        }
+        if (this.streamEl) {
+            this.streamEl.style.height = '';
+            this.streamEl.style.top = '';
+            this.streamEl.style.bottom = '';
+        }
+
+        if (document.pointerLockElement === this.inputEl) {
             document.exitPointerLock();
         }
 
@@ -3557,7 +3902,29 @@ export class StreamView {
             this._mobileFsBtn = null;
         }
 
-        if (document.pointerLockElement === this.canvas) {
+        // Remove virtual keyboard button + capture, drop viewport listeners
+        this._clearLongPress();
+        if (this._onViewportResize && window.visualViewport) {
+            window.visualViewport.removeEventListener('resize', this._onViewportResize);
+            window.visualViewport.removeEventListener('scroll', this._onViewportResize);
+            this._onViewportResize = null;
+        }
+        if (this._kbdCapture) {
+            this._kbdCapture.blur();
+            this._kbdCapture.remove();
+            this._kbdCapture = null;
+        }
+        if (this._kbdBtn) {
+            this._kbdBtn.remove();
+            this._kbdBtn = null;
+        }
+        if (this.streamEl) {
+            this.streamEl.style.height = '';
+            this.streamEl.style.top = '';
+            this.streamEl.style.bottom = '';
+        }
+
+        if (document.pointerLockElement === this.inputEl) {
             document.exitPointerLock();
         }
 

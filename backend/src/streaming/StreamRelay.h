@@ -5,6 +5,7 @@
 #include <QWebSocket>
 #include <QSslConfiguration>
 #include <QElapsedTimer>
+#include <QTimer>
 
 class MoonlightShim;
 
@@ -66,7 +67,12 @@ private:
     /// Each WS binary message: [channel:1][frag_header:17][chunk_payload...].
     void sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe);
 
+    /// Send periodic stats (hostRtt + steady-clock reference) to the browser
+    /// over the WS as text JSON, so the latency overlay works in WSS mode.
+    void sendStats();
+
     MoonlightShim* m_Shim;
+    QTimer* m_StatsTimer = nullptr;    // Periodic stats to the browser (500ms)
     QElapsedTimer m_IdrCooldownTimer;  // Throttle browser IDR requests (300ms)
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;

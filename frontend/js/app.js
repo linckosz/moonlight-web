@@ -633,6 +633,7 @@ const MoonlightApp = {
             console.log('[MW] Launch result:', {
                 status: result.status,
                 videoCodec: result.videoCodec,
+                hdr: result.hdr,
                 gamingMode: result.gamingMode,
                 transport: result.transport,
                 transport_mode: result.transport_mode,
@@ -669,9 +670,11 @@ const MoonlightApp = {
                 const transportMode = result.transport_mode || internalTransport;
                 // Respect the "show performance stats" setting (default: true)
                 const showPerfStats = streamingSettings.show_performance_stats !== false;
-                // Touch/trackpad sensitivity (default 2.5)
+                // Touch/trackpad sensitivity (default 2.0)
                 const touchSensitivity = typeof streamingSettings.touch_sensitivity === 'number'
-                    ? streamingSettings.touch_sensitivity : 2.5;
+                    ? streamingSettings.touch_sensitivity : 2.0;
+                // VSync (default on): when off, the canvas allows tearing (lower latency)
+                const vsync = streamingSettings.vsync_enabled !== false;
                 this.streamView = new StreamView(
                     document.getElementById('app'),
                     result.signalingUrl || result.wsUrl,
@@ -684,7 +687,9 @@ const MoonlightApp = {
                     transportMode,
                     isRemote,
                     showPerfStats,
-                    touchSensitivity
+                    touchSensitivity,
+                    vsync,
+                    result.hdr === true
                 );
 
                 // ── Callback when streaming quits (Stop button / disconnect) ─
