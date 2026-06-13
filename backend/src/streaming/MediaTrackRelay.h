@@ -10,6 +10,8 @@
 #include <functional>
 #include <cstdint>
 #include <cstddef>
+#include <chrono>
+#include <mutex>
 
 namespace rtc {
 class PeerConnection;
@@ -93,6 +95,11 @@ private:
     // Send a previously buffered keyframe (arrived before Video Track was ready).
     void sendBufferedKeyframe();
 
+    // Compute the 90 kHz RTP timestamp from real frame arrival time, so pacing
+    // is correct for any frame rate (30/60/90/120...) and reflects real jitter.
+    // Main-thread only (called from onVideoFrame / sendBufferedKeyframe).
+    uint32_t computeRtpTimestamp();
+
     MoonlightShim* m_Shim;
 
     std::shared_ptr<rtc::PeerConnection> m_Pc;
@@ -104,8 +111,18 @@ private:
     std::atomic<bool> m_Stopping{false};
     int m_FrameCount = 0;
 
-    // RTP timestamp for video (90 kHz clock, incremented per frame)
-    uint32_t m_RtpTimestamp = 0;
+    // P2-B: when true, onVideoFrame runs on the capture thread (DirectConnection)
+    // instead of being marshaled to the Qt main thread. Set from env at construction.
+    bool m_DirectVideoSend = true;
+    // Serializes the video send path (onVideoFrame / sendBufferedKeyframe) with
+    // track teardown in stop(). Required because onVideoFrame may run on the
+    // capture thread in direct mode.
+    std::mutex m_VideoMutex;
+
+    // RTP timestamp base: captured on the first sent frame; subsequent
+    // timestamps are derived from elapsed wall-clock time (see computeRtpTimestamp).
+    std::chrono::steady_clock::time_point m_FirstFrameTime;
+    bool m_HaveFirstFrameTime = false;
 
     // Buffered keyframe: if the first IDR arrives before the Video Track is open
     QByteArray m_BufferedKeyframe;

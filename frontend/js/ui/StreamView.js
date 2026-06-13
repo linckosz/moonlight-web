@@ -108,7 +108,7 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.5) {
         this.container = container;
         this.signalingUrl = signalingUrl;
         this.host = host;
@@ -203,8 +203,21 @@ export class StreamView {
         this._streamTimeMs = 0;                              // Last known steady_clock ms from backend stats
         this._streamTimeReceiptTime = 0;                     // performance.now() when _streamTimeMs was received
         this._steadyToPerfOffset = null;                     // perfTime = steadyTime - offset (set once)
+        this._offsetFromStats = false;                       // true once a stats msg refined the offset (authoritative)
         this._pingSeq = 0;
         this._pingInterval = null;
+
+        // ── webrtc-media native stats (getStats polling) ──────────────────────
+        // RTP media track frames bypass the JS decoder, so fps/bitrate/latency
+        // must be read from RTCPeerConnection.getStats() instead of the
+        // WebCodecs pipeline counters used by the DataChannel transports.
+        this._mediaStatsTimer = null;
+        this._mediaFps = 0;
+        this._mediaBitrateMbps = 0;
+        this._mediaLatencyMs = 0;
+        this._lastInboundBytes = 0;
+        this._lastInboundFrames = 0;
+        this._lastInboundStatsTime = 0;
 
         // Forward stats/pong messages from backend to the stats overlay system.
         // Set before setupWebRtc() so it's active when connect() is called.
@@ -237,7 +250,9 @@ export class StreamView {
         this._touchTapThreshold = 10;        // px max distance for a tap (vs drag)
         this._touchTapTimeThreshold = 300;   // ms max duration for a tap
         this._touchHadTwoFingers = false;     // true if 2 fingers were active during the current touch sequence
-        this._touchSensitivity = 1.6;         // trackpad acceleration factor (CSS px → host deltas)
+        // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
+        this._touchSensitivity = (typeof touchSensitivity === 'number' && touchSensitivity > 0)
+            ? touchSensitivity : 2.5;
 
         // Mobile fullscreen button state
         this._mobileFsBtn = null;
@@ -656,7 +671,9 @@ export class StreamView {
         this._mobileFsBtn.title = 'Enter fullscreen';
         this._mobileFsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this._requestFullscreen();
+            // Same behaviour as the keyboard combo: toggle real browser
+            // fullscreen of the stream (header hidden via :fullscreen CSS).
+            this.toggleFullscreen();
         });
         const header = document.querySelector('.stream-header');
         if (header) {
@@ -1832,10 +1849,12 @@ export class StreamView {
                             setTimeout(() => this._hideStartupOverlay(), 1500);
                             // Show keyboard shortcuts slide (5s auto-hide)
                             this._showShortcutsSlide();
-
                         }
                     };
                 }
+                // Native RTP stats: poll getStats() for fps/bitrate/latency,
+                // since these frames never reach the WebCodecs pipeline.
+                this._startMediaStatsPolling();
             } else {
                 // DataChannel mode: set up WebCodecs decoder
                 this.setupDecoder();
@@ -1878,6 +1897,87 @@ export class StreamView {
         this.webrtc.connect();
     }
 
+    // ── webrtc-media native stats polling (getStats) ──────────────────────
+
+    /**
+     * Poll RTCPeerConnection.getStats() every second to derive fps, bitrate,
+     * resolution and an end-to-end-ish latency for the native RTP media track.
+     * These cannot come from the WebCodecs counters (frames bypass the decoder).
+     */
+    _startMediaStatsPolling() {
+        if (this._mediaStatsTimer) return;
+        const pc = this.webrtc && this.webrtc.pc;
+        if (!pc || typeof pc.getStats !== 'function') return;
+
+        this._mediaStatsTimer = setInterval(async () => {
+            if (this._quitting) return;
+            const peer = this.webrtc && this.webrtc.pc;
+            if (!peer || typeof peer.getStats !== 'function') return;
+            try {
+                const report = await peer.getStats();
+                let inbound = null;
+                let candidatePair = null;
+                report.forEach((s) => {
+                    if (s.type === 'inbound-rtp' && s.kind === 'video') inbound = s;
+                    else if (s.type === 'candidate-pair' &&
+                             (s.nominated || s.selected || s.state === 'succeeded')) {
+                        candidatePair = s;
+                    }
+                });
+                if (!inbound) return;
+
+                const now = performance.now();
+                // Resolution
+                if (inbound.frameWidth > 0 && inbound.frameHeight > 0) {
+                    this._resolution = inbound.frameWidth + '×' + inbound.frameHeight;
+                }
+                // FPS: prefer the engine-reported value, fall back to a delta
+                if (typeof inbound.framesPerSecond === 'number') {
+                    this._mediaFps = Math.round(inbound.framesPerSecond);
+                } else if (this._lastInboundStatsTime > 0) {
+                    const dt = (now - this._lastInboundStatsTime) / 1000;
+                    if (dt > 0) {
+                        this._mediaFps = Math.round(
+                            ((inbound.framesDecoded || 0) - this._lastInboundFrames) / dt);
+                    }
+                }
+                // Bitrate from bytesReceived delta
+                if (this._lastInboundStatsTime > 0) {
+                    const dt = (now - this._lastInboundStatsTime) / 1000;
+                    const dBytes = (inbound.bytesReceived || 0) - this._lastInboundBytes;
+                    if (dt > 0 && dBytes >= 0) {
+                        this._mediaBitrateMbps = (dBytes * 8) / dt / 1e6;
+                    }
+                }
+                this._lastInboundBytes = inbound.bytesReceived || 0;
+                this._lastInboundFrames = inbound.framesDecoded || 0;
+                this._lastInboundStatsTime = now;
+
+                // Latency ≈ jitter-buffer delay + network RTT/2 + backend↔Sunshine RTT.
+                let latency = 0;
+                if (inbound.jitterBufferDelay > 0 && inbound.jitterBufferEmittedCount > 0) {
+                    latency += (inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000;
+                }
+                if (candidatePair && candidatePair.currentRoundTripTime > 0) {
+                    latency += (candidatePair.currentRoundTripTime * 1000) / 2;
+                }
+                if (this._hostRttStats.count > 0) {
+                    latency += this._hostRttStats.avg;
+                }
+                if (latency > 0 && latency < 5000) this._mediaLatencyMs = latency;
+            } catch (e) {
+                // getStats can throw transiently during teardown — ignore
+            }
+        }, 1000);
+    }
+
+    _stopMediaStatsPolling() {
+        if (this._mediaStatsTimer) {
+            clearInterval(this._mediaStatsTimer);
+            this._mediaStatsTimer = null;
+        }
+    }
+
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
 
     _updateOverlay() {
@@ -1900,15 +2000,22 @@ export class StreamView {
         const elapsed = (now - this._startTime) / 1000;
         let fps = 0;
         let bitrateMbps = 0;
+        const isMedia = this._transport === 'webrtc-media';
 
-        // FPS: decoded frames in the last 2 seconds
-        const cutoff = now - 2000;
-        this._fpsTimestamps = this._fpsTimestamps.filter(t => t > cutoff);
-        fps = Math.round(this._fpsTimestamps.length / 2);
+        if (isMedia) {
+            // Native RTP: values come from the getStats() poller
+            fps = this._mediaFps;
+            bitrateMbps = this._mediaBitrateMbps;
+        } else {
+            // FPS: decoded frames in the last 2 seconds
+            const cutoff = now - 2000;
+            this._fpsTimestamps = this._fpsTimestamps.filter(t => t > cutoff);
+            fps = Math.round(this._fpsTimestamps.length / 2);
 
-        // Bitrate: total bytes / elapsed seconds
-        if (elapsed > 0.5) {
-            bitrateMbps = ((this._totalBytes * 8) / elapsed) / 1e6;
+            // Bitrate: total bytes / elapsed seconds
+            if (elapsed > 0.5) {
+                bitrateMbps = ((this._totalBytes * 8) / elapsed) / 1e6;
+            }
         }
 
         const codec = this.videoCodec === 'auto' ? 'h264' : this.videoCodec;
@@ -1947,9 +2054,12 @@ export class StreamView {
             '</div>';
 
         // End-to-end latency
-        const avgLatency = this._e2eLatencyStats.count > 0
-            ? this._e2eLatencyStats.avg.toFixed(1) + 'ms'
-            : '--';
+        let avgLatency = '--';
+        if (isMedia) {
+            if (this._mediaLatencyMs > 0) avgLatency = this._mediaLatencyMs.toFixed(1) + 'ms';
+        } else if (this._e2eLatencyStats.count > 0) {
+            avgLatency = this._e2eLatencyStats.avg.toFixed(1) + 'ms';
+        }
         html += '<div class="stats-row stats-latency-row">' +
             '<span class="stats-label">Latency:</span>' +
             '<span class="stats-value stats-latency">' + avgLatency + '</span>' +
@@ -1985,18 +2095,22 @@ export class StreamView {
                 // Refine offset: steadyTime ≈ streamTimeMs + RTT/2 at receive
                 const rtt = this._browserRttStats.count > 0 ? this._browserRttStats.avg : 0;
                 const refinedOffset = msg.streamTimeMs - this._streamTimeReceiptTime + rtt / 2;
-                if (this._steadyToPerfOffset === null) {
+                if (!this._offsetFromStats) {
+                    // First authoritative measurement: overwrite the crude
+                    // frame-based estimate (which assumed a fixed 30ms pipeline
+                    // floor and pinned the latency near that floor).
                     this._steadyToPerfOffset = refinedOffset;
+                    this._offsetFromStats = true;
                     console.log('[StreamView] Clock offset (stats): steadyToPerfOffset=' +
                         Math.round(this._steadyToPerfOffset) +
                         ' streamTimeMs=' + msg.streamTimeMs +
                         ' perf=' + Math.round(this._streamTimeReceiptTime) +
                         ' rtt=' + rtt.toFixed(1));
                 } else {
-                    // Blend new measurement with existing offset (80% old, 20% new)
+                    // Blend new measurement with existing offset (70% old, 30% new)
                     // to smooth out jitter while adapting to clock drift.
                     this._steadyToPerfOffset =
-                        this._steadyToPerfOffset * 0.8 + refinedOffset * 0.2;
+                        this._steadyToPerfOffset * 0.7 + refinedOffset * 0.3;
                 }
             }
         }
@@ -2778,9 +2892,10 @@ export class StreamView {
         // Orientation change listener
         this._orientationMql = window.matchMedia('(orientation: landscape)');
         this._onOrientationChange = (e) => {
-            if (e.matches) {
-                this._requestFullscreen();
-            } else {
+            // Landscape: do NOT auto-enter fullscreen — just reveal the button
+            // so the user keeps the header until they explicitly tap it.
+            // Portrait: always leave fullscreen.
+            if (!e.matches) {
                 this._exitMobileFullscreen();
             }
             this._updateMobileFsButtonVisibility();
@@ -2797,15 +2912,8 @@ export class StreamView {
             this.videoEl.addEventListener('webkitendfullscreen', this._onFullscreenChange);
         }
 
-        // If the constructor was called from a user click (app launch), the user
-        // gesture is still active — webkitEnterFullscreen() may succeed on iOS.
-        // Only auto-fullscreen if already in landscape; in portrait, let the user
-        // rotate first (orientation change listener handles landscape→FS).
-        if (window.matchMedia('(orientation: landscape)').matches) {
-            this._requestMobileFullscreen();
-        }
-
-        // Initial button state
+        // No auto-fullscreen on launch: the user enters fullscreen only by
+        // tapping the button (shown in landscape). Just set the initial state.
         this._updateMobileFsButtonVisibility();
     }
 
@@ -3321,6 +3429,7 @@ export class StreamView {
             clearInterval(this._pingInterval);
             this._pingInterval = null;
         }
+        this._stopMediaStatsPolling();
 
         // Clear IDR request timer
         if (this._idrTimeout) {
@@ -3418,6 +3527,7 @@ export class StreamView {
             clearInterval(this._pingInterval);
             this._pingInterval = null;
         }
+        this._stopMediaStatsPolling();
 
         if (this._idrTimeout) {
             clearTimeout(this._idrTimeout);

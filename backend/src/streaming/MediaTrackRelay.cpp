@@ -23,8 +23,19 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
 {
     qInfo() << "[MediaTrackRelay] Created";
 
+    // Video path threading (P2-B):
+    //   Default = DirectConnection: onVideoFrame runs on the capture (worker)
+    //   thread that emits the signal, removing one Qt event-loop hop before the
+    //   RTP send. The send path is serialized with stop()/sendBufferedKeyframe()
+    //   by m_VideoMutex. Set MW_MEDIA_QUEUED_VIDEO=1 to roll back to the old
+    //   main-thread queued path (no rebuild needed) if it misbehaves.
+    bool queuedVideo = qEnvironmentVariableIntValue("MW_MEDIA_QUEUED_VIDEO") != 0;
+    m_DirectVideoSend = !queuedVideo;
+    qInfo() << "[MediaTrackRelay] Video send mode:"
+            << (m_DirectVideoSend ? "direct (capture thread)" : "queued (main thread)");
     connect(m_Shim, &MoonlightShim::videoFrameReady,
-            this, &MediaTrackRelay::onVideoFrame);
+            this, &MediaTrackRelay::onVideoFrame,
+            m_DirectVideoSend ? Qt::DirectConnection : Qt::QueuedConnection);
     connect(m_Shim, &MoonlightShim::audioSampleReady,
             this, &MediaTrackRelay::onAudioSample);
     connect(m_Shim, &MoonlightShim::connectionTerminated,
@@ -306,6 +317,14 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 
     bool isKeyframe = (frameType == 1);
 
+    // Serialize the video send path with stop() and sendBufferedKeyframe().
+    // In direct mode this runs on the capture thread; the lock guarantees the
+    // Video Track and the buffered keyframe are not torn down mid-send.
+    std::lock_guard<std::mutex> lk(m_VideoMutex);
+
+    // Re-check after acquiring the lock: stop() may have run while we waited.
+    if (m_Stopping.load()) return;
+
     // Buffer keyframes arriving before the Video Track is ready
     if (isKeyframe && (!m_VideoTrack || !m_VideoTrack->isOpen())) {
         m_BufferedKeyframe = data;
@@ -322,17 +341,20 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
         return;
     }
 
+    // Derive the RTP timestamp from real arrival time (any FPS, real jitter).
+    uint32_t rtpTs = computeRtpTimestamp();
+
     static int logCounter = 0;
     logCounter++;
     if (logCounter <= 5 || logCounter % 120 == 0) {
         qInfo() << "[MediaTrackRelay] Video frame #" << logCounter
                 << "size=" << data.size() << "type=" << frameType
-                << "rtpTimestamp=" << m_RtpTimestamp;
+                << "rtpTimestamp=" << rtpTs;
     }
 
     // Create FrameInfo with isKeyFrame flag. The H264RtpPacketizer reads this
     // to decide STAP-A (single NAL) vs FU-A (fragmented) packetization.
-    auto frameInfo = std::make_shared<rtc::FrameInfo>(m_RtpTimestamp);
+    auto frameInfo = std::make_shared<rtc::FrameInfo>(rtpTs);
     frameInfo->isKeyFrame = isKeyframe;
 
     // Copy data into binary format for sendFrame
@@ -352,25 +374,40 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 
     m_FrameCount++;
 
-    // Advance RTP timestamp: 90000 Hz / 60 fps = 1500 per frame
-    m_RtpTimestamp += 1500;
-
     if (m_FrameCount <= 3 || m_FrameCount % 300 == 0) {
         qInfo() << "[MediaTrackRelay] Sent video frame #" << m_FrameCount
                 << "size=" << data.size() << "isKeyframe=" << isKeyframe
-                << "rtpTimestamp=" << m_RtpTimestamp;
+                << "rtpTimestamp=" << rtpTs;
     }
+}
+
+uint32_t MediaTrackRelay::computeRtpTimestamp()
+{
+    auto now = std::chrono::steady_clock::now();
+    if (!m_HaveFirstFrameTime) {
+        m_FirstFrameTime = now;
+        m_HaveFirstFrameTime = true;
+        return 0;
+    }
+    // 90 kHz clock: ticks = elapsed_seconds * 90000. uint32 wrap is expected.
+    auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        now - m_FirstFrameTime).count();
+    return static_cast<uint32_t>((elapsedUs * 90000) / 1000000);
 }
 
 void MediaTrackRelay::sendBufferedKeyframe()
 {
+    // Same lock as onVideoFrame: the buffered keyframe may be written from the
+    // capture thread while this runs on the main thread (direct mode).
+    std::lock_guard<std::mutex> lk(m_VideoMutex);
+
     if (!m_HaveBufferedKeyframe) return;
     if (m_Stopping.load() || !m_VideoTrack || !m_VideoTrack->isOpen()) return;
 
     qInfo() << "[MediaTrackRelay] Sending buffered keyframe, size="
             << m_BufferedKeyframe.size();
 
-    auto frameInfo = std::make_shared<rtc::FrameInfo>(m_RtpTimestamp);
+    auto frameInfo = std::make_shared<rtc::FrameInfo>(computeRtpTimestamp());
     frameInfo->isKeyFrame = true;
 
     rtc::binary bin(static_cast<size_t>(m_BufferedKeyframe.size()));
@@ -385,7 +422,6 @@ void MediaTrackRelay::sendBufferedKeyframe()
         qWarning() << "[MediaTrackRelay] sendBufferedKeyframe error:" << e.what();
     }
 
-    m_RtpTimestamp += 1500;
     m_BufferedKeyframe.clear();
     m_HaveBufferedKeyframe = false;
 }
@@ -664,8 +700,12 @@ void MediaTrackRelay::stop()
     }
 
     m_Connected = false;
-    m_BufferedKeyframe.clear();
-    m_HaveBufferedKeyframe = false;
+    {
+        // Serialize with the (possibly concurrent) capture-thread send path.
+        std::lock_guard<std::mutex> lk(m_VideoMutex);
+        m_BufferedKeyframe.clear();
+        m_HaveBufferedKeyframe = false;
+    }
 
     // Close DataChannels
     auto closeDc = [](std::shared_ptr<rtc::DataChannel>& dc, const char* name) {
@@ -679,11 +719,15 @@ void MediaTrackRelay::stop()
     closeDc(m_AudioDc, "audio");
     closeDc(m_InputDc, "input");
 
-    // Close Video Track
-    if (m_VideoTrack) {
-        qInfo() << "[MediaTrackRelay] Closing video track";
-        try { m_VideoTrack->close(); } catch (...) {}
-        m_VideoTrack.reset();
+    // Close Video Track under the send lock, so an in-flight sendFrame on the
+    // capture thread finishes before the track is destroyed.
+    {
+        std::lock_guard<std::mutex> lk(m_VideoMutex);
+        if (m_VideoTrack) {
+            qInfo() << "[MediaTrackRelay] Closing video track";
+            try { m_VideoTrack->close(); } catch (...) {}
+            m_VideoTrack.reset();
+        }
     }
 
     // Close PeerConnection

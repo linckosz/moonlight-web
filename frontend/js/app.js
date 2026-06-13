@@ -669,6 +669,9 @@ const MoonlightApp = {
                 const transportMode = result.transport_mode || internalTransport;
                 // Respect the "show performance stats" setting (default: true)
                 const showPerfStats = streamingSettings.show_performance_stats !== false;
+                // Touch/trackpad sensitivity (default 2.5)
+                const touchSensitivity = typeof streamingSettings.touch_sensitivity === 'number'
+                    ? streamingSettings.touch_sensitivity : 2.5;
                 this.streamView = new StreamView(
                     document.getElementById('app'),
                     result.signalingUrl || result.wsUrl,
@@ -680,7 +683,8 @@ const MoonlightApp = {
                     internalTransport,
                     transportMode,
                     isRemote,
-                    showPerfStats
+                    showPerfStats,
+                    touchSensitivity
                 );
 
                 // ── Callback when streaming quits (Stop button / disconnect) ─
