@@ -74,6 +74,7 @@ SOURCES += \
     src/streaming/StreamRelay.cpp \
     # WebRTC DataChannel relay \
     src/streaming/DataChannelRelay.cpp \
+    src/streaming/FrameSender.cpp \
     src/streaming/MediaTrackRelay.cpp \
     src/streaming/SignalingServer.cpp \
     # moonlight-common-c ENet \
@@ -136,6 +137,7 @@ HEADERS += \
     src/streaming/Session.h \
     src/streaming/RelayBase.h \
     src/streaming/DataChannelRelay.h \
+    src/streaming/FrameSender.h \
     src/streaming/MediaTrackRelay.h \
     src/streaming/SignalingServer.h \
     src/streaming/MoonlightShim.h \

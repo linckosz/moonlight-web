@@ -492,6 +492,9 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
 {
     qInfo() << "[DataChannelRelay] Created";
 
+    // Dedicated sender thread: fragmentation + dc->send() run off the main thread.
+    m_Sender = std::make_unique<FrameSender>();
+
     // Enable HEVC debug test mode via environment variable (1-4)
     {
         QByteArray envVal = qgetenv("MW_HEVC_TEST");
@@ -654,24 +657,27 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
 
     // --- State change callback ---
     m_Pc->onStateChange([this](rtc::PeerConnection::State state) {
+        // This callback runs on a libdatachannel thread. QTimer is thread-affine
+        // and signal-driven teardown must happen on the Qt main thread, so
+        // marshal everything that touches Qt objects (avoids the
+        // "Timers cannot be stopped from another thread" UB that corrupts the
+        // event dispatcher and crashes later during timer processing).
         qInfo() << "[DataChannelRelay] PC state changed to" << static_cast<int>(state);
         if (state == rtc::PeerConnection::State::Connected) {
             qInfo() << "[DataChannelRelay] PeerConnection connected — canceling ICE timeout";
-            // Cancel ICE timeout timer — connection established successfully
-            if (m_IceCheckTimer) {
-                m_IceCheckTimer->stop();
-            }
+            QMetaObject::invokeMethod(this, [this]() {
+                if (m_IceCheckTimer) m_IceCheckTimer->stop();
+            }, Qt::QueuedConnection);
         } else if (state == rtc::PeerConnection::State::Disconnected ||
                    state == rtc::PeerConnection::State::Failed ||
                    state == rtc::PeerConnection::State::Closed) {
             if (!m_Stopping.exchange(true)) {
                 m_Connected = false;
-                // Cancel ICE timeout timer — PC already disconnected/failed
-                if (m_IceCheckTimer) {
-                    m_IceCheckTimer->stop();
-                }
                 qInfo() << "[DataChannelRelay] PC disconnected/failed/closed";
-                emit sessionEnded();
+                QMetaObject::invokeMethod(this, [this]() {
+                    if (m_IceCheckTimer) m_IceCheckTimer->stop();
+                    emit sessionEnded();
+                }, Qt::QueuedConnection);
             }
         }
     });
@@ -1357,57 +1363,11 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
             QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
     }
 
-    for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-        int offset = chunkIdx * kMaxPayloadSize;
-        int payloadSize = std::min(kMaxPayloadSize, totalSize - offset);
-
-        rtc::binary bin(kFragHeaderSize + payloadSize);
-
-        // Frame ID (4 bytes, big endian)
-        bin[0] = static_cast<std::byte>((frameId >> 24) & 0xFF);
-        bin[1] = static_cast<std::byte>((frameId >> 16) & 0xFF);
-        bin[2] = static_cast<std::byte>((frameId >> 8) & 0xFF);
-        bin[3] = static_cast<std::byte>(frameId & 0xFF);
-
-        // Chunk index (2 bytes, big endian)
-        uint16_t chunkIdx16 = static_cast<uint16_t>(chunkIdx);
-        bin[4] = static_cast<std::byte>((chunkIdx16 >> 8) & 0xFF);
-        bin[5] = static_cast<std::byte>(chunkIdx16 & 0xFF);
-
-        // Total chunks (2 bytes, big endian)
-        uint16_t totalChunks16 = static_cast<uint16_t>(totalChunks);
-        bin[6] = static_cast<std::byte>((totalChunks16 >> 8) & 0xFF);
-        bin[7] = static_cast<std::byte>(totalChunks16 & 0xFF);
-
-        // Is keyframe (1 byte)
-        bin[8] = static_cast<std::byte>(isKeyframe ? 0x01 : 0x00);
-
-        // Payload size (4 bytes, big endian)
-        uint32_t payloadSize32 = static_cast<uint32_t>(payloadSize);
-        bin[9] = static_cast<std::byte>((payloadSize32 >> 24) & 0xFF);
-        bin[10] = static_cast<std::byte>((payloadSize32 >> 16) & 0xFF);
-        bin[11] = static_cast<std::byte>((payloadSize32 >> 8) & 0xFF);
-        bin[12] = static_cast<std::byte>(payloadSize32 & 0xFF);
-
-        // Backend timestamp (4 bytes, big endian) — same value for all chunks
-        bin[13] = static_cast<std::byte>((backendTs >> 24) & 0xFF);
-        bin[14] = static_cast<std::byte>((backendTs >> 16) & 0xFF);
-        bin[15] = static_cast<std::byte>((backendTs >> 8) & 0xFF);
-        bin[16] = static_cast<std::byte>(backendTs & 0xFF);
-
-        // Payload
-        std::memcpy(bin.data() + kFragHeaderSize, data.constData() + offset,
-                    static_cast<size_t>(payloadSize));
-
-        try {
-            dc->send(bin);
-        } catch (const std::exception& e) {
-            if (!m_Stopping.load()) {
-                qWarning() << "[DataChannelRelay] Fragmented send error:" << e.what();
-            }
-            return;
-        }
-    }
+    // Offload fragmentation + dc->send() to the dedicated sender thread so the
+    // Qt main thread (HTTP/REST/signaling) is never spent building chunks or
+    // blocking on a full SCTP buffer. The job holds a shared_ptr copy of the DC,
+    // so an in-flight send cannot outlive the channel during stop().
+    m_Sender->enqueue(dc, data, isKeyframe, isAudio, frameId, backendTs);
 
     // Video-only counters: audio packets are not "frames" for diagnostics.
     if (!isAudio) {
@@ -1522,6 +1482,14 @@ void DataChannelRelay::stop()
     closeDc(m_VideoDc, "video");
     closeDc(m_AudioDc, "audio");
     closeDc(m_InputDc, "input");
+
+    // Stop the sender thread AFTER closing the DataChannels: a send that is
+    // blocked on a full SCTP buffer errors out promptly once the channel closes,
+    // so join() can't stall the /quit path. The worker holds its own shared_ptr
+    // to the (now closed) channel, so the in-flight send is exception-safe.
+    if (m_Sender) {
+        m_Sender->stop();
+    }
 
     // Close PeerConnection
     if (m_Pc) {
