@@ -76,3 +76,20 @@ export const IS_TOUCH_DEVICE = platform.isTouchDevice;
 
 /** The raw platform type string: 'mobile', 'tablet', or 'desktop'. */
 export const PLATFORM_TYPE = platform.type;
+
+/**
+ * True on Apple touch devices (iPhone/iPad), including iPadOS 13+ which reports
+ * a Mac UA. Used to surface the "Add to Home Screen" hint, since iOS blocks the
+ * Fullscreen API on canvas — a standalone PWA is the only true-fullscreen path.
+ */
+export const IS_IOS = (() => {
+    const ua = navigator.userAgent || '';
+    return /iphone|ipad|ipod/i.test(ua) ||
+        (/mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1);
+})();
+
+/** True when the app runs as an installed PWA (no browser chrome). */
+export const IS_STANDALONE = window.navigator.standalone === true ||
+    (window.matchMedia && (
+        window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches));

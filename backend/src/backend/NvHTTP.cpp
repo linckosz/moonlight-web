@@ -44,6 +44,9 @@ QNetworkReply* NvHTTP::getServerInfoAsync(const NvAddress& address, const QStrin
     QNetworkRequest req(url);
     req.setTransferTimeout(FAST_FAIL_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    // Force a fresh connection each poll: Sunshine closes idle keep-alive
+    // sockets, and reusing a dead one yields spurious RemoteHostClosedError.
+    req.setRawHeader("Connection", "close");
 
     return m_Nam->get(req);
 }
