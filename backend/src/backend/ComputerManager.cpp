@@ -315,11 +315,15 @@ void ComputerManager::onPollReplyFinished()
     static constexpr int OFFLINE_FAILURE_THRESHOLD = 3;
 
     auto registerFailure = [&](const QString& reason) {
-        host->consecutivePollFailures++;
-        Logger::warning(QString("Poll failure %1/%2 for %3: %4")
-                            .arg(host->consecutivePollFailures)
-                            .arg(OFFLINE_FAILURE_THRESHOLD)
-                            .arg(host->name, reason));
+        // Cap the counter at the threshold: once offline, keep polling silently
+        // so a long-down host doesn't grow the counter or spam the log.
+        if (host->consecutivePollFailures < OFFLINE_FAILURE_THRESHOLD) {
+            host->consecutivePollFailures++;
+            Logger::warning(QString("Poll failure %1/%2 for %3: %4")
+                                .arg(host->consecutivePollFailures)
+                                .arg(OFFLINE_FAILURE_THRESHOLD)
+                                .arg(host->name, reason));
+        }
         if (host->consecutivePollFailures >= OFFLINE_FAILURE_THRESHOLD
             && host->state != NvComputer::CS_OFFLINE) {
             host->state = NvComputer::CS_OFFLINE;
