@@ -264,7 +264,8 @@ export class StreamView {
         this._onTouchEnd = (e) => this.handleTouchEnd(e);
 
         // Touch state — laptop-trackpad model: relative cursor deltas,
-        // tap = left click, two-finger tap = right click, two-finger drag = scroll.
+        // tap = left click, two-finger tap = right click, two-finger drag =
+        // scroll (or pinch = zoom), three-finger drag = pan the zoomed view.
         this._touchActive = false;
         this._touchStartX = 0;
         this._touchStartY = 0;
@@ -284,9 +285,10 @@ export class StreamView {
         this._zoom = 1;                       // current display scale (1..4)
         this._panX = 0;                       // pan offset in CSS px (applied before scale)
         this._panY = 0;
-        this._pinchPrevDist = 0;              // previous finger spacing during a 2-finger gesture
-        this._pinchPrevCx = null;             // previous centroid (for pan)
+        this._pinchPrevDist = 0;              // previous finger spacing during a multi-finger gesture
+        this._pinchPrevCx = null;             // previous centroid (of all touches)
         this._pinchPrevCy = null;
+        this._lastMoveFingerCount = 0;        // finger count of the last touchmove (reseed trackers on change)
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
         this._touchSensitivity = (typeof touchSensitivity === 'number' && touchSensitivity > 0)
             ? touchSensitivity : 2.0;
@@ -2907,6 +2909,11 @@ export class StreamView {
         }
     }
 
+    // Filler kept in the hidden capture <textarea> so Backspace always has
+    // something to delete (iOS Safari emits no deletion event on an empty
+    // field). Non-breaking spaces avoid soft-keyboard auto-capitalize/predict.
+    static KBD_SENTINEL = '    ';
+
     // Maps KeyboardEvent.code (layout-independent physical key position)
     // to Windows Virtual Key codes.
     //
@@ -3257,18 +3264,23 @@ export class StreamView {
 
         const hint = document.createElement('div');
         hint.className = 'install-hint';
-        hint.textContent = 'Pour un vrai plein écran : Partager → Sur l’écran d’accueil, puis lancez Moonlight depuis l’icône.';
+        hint.textContent = 'For true fullscreen: Share → Add to Home Screen, then launch Moonlight from the icon.';
         document.body.appendChild(hint);
 
         // Force reflow so the opacity transition runs on insert.
         void hint.offsetWidth;
         hint.classList.add('install-hint-visible');
 
-        // Fade out after 4s, remove once the transition ends.
-        setTimeout(() => {
+        const dismiss = () => {
             hint.classList.remove('install-hint-visible');
             hint.addEventListener('transitionend', () => hint.remove(), { once: true });
-        }, 4000);
+        };
+
+        // Dismiss immediately on tap/click.
+        hint.addEventListener('click', dismiss, { once: true });
+
+        // Otherwise fade out after 4s.
+        setTimeout(dismiss, 4000);
     }
 
     /**
@@ -3346,8 +3358,13 @@ export class StreamView {
 
     /**
      * Wire the hidden capture <textarea>:
-     *   - beforeinput: printable text → UTF-8 text event; line break → Enter;
-     *     backward delete → Backspace. preventDefault keeps it empty.
+     *   - input: diff the textarea value against a filler sentinel and forward
+     *     inserted text (UTF-8 event) / removed chars (Backspace). Diffing on
+     *     `input` — not `beforeinput` + inputType — is what makes it work on
+     *     Android Gboard (which routes everything through composition, so
+     *     inputType is `insertCompositionText`, never `insertText`).
+     *     The sentinel keeps the field non-empty so iOS Safari fires a
+     *     deletion event on Backspace (an empty field has nothing to delete).
      *   - keydown: navigation/control keys that produce no input (arrows, Tab,
      *     Escape, Home/End/PageUp/Down, Delete).
      *   - focus/blur: keep _kbdVisible and the button state in sync (the OS may
@@ -3357,20 +3374,38 @@ export class StreamView {
         const cap = this._kbdCapture;
         if (!cap) return;
 
-        cap.addEventListener('beforeinput', (e) => {
-            const t = e.inputType || '';
-            if (t === 'insertText' && e.data) {
-                this.webrtc.send({ type: 'textinput', text: e.data });
-            } else if (t === 'insertLineBreak' || t === 'insertParagraph') {
-                this._sendKey(0x0D); // Enter
-            } else if (t.indexOf('delete') === 0) {
-                this._sendKey(0x08); // Backspace
+        this._resetKbdCapture();
+
+        cap.addEventListener('input', () => {
+            const val = cap.value;
+            const sent = StreamView.KBD_SENTINEL;
+            // Common prefix / suffix between the sentinel and the new value.
+            let p = 0;
+            const maxP = Math.min(sent.length, val.length);
+            while (p < maxP && sent[p] === val[p]) p++;
+            let s = 0;
+            const maxS = Math.min(sent.length - p, val.length - p);
+            while (s < maxS && sent[sent.length - 1 - s] === val[val.length - 1 - s]) s++;
+
+            const deleted = sent.length - p - s;        // chars removed from sentinel
+            const inserted = val.slice(p, val.length - s); // chars added by the user
+
+            if (deleted > 0) {
+                for (let i = 0; i < deleted; i++) this._sendKey(0x08); // Backspace
             }
-            // Keep the textarea empty so events keep firing and no text accrues.
-            e.preventDefault();
+            if (inserted) {
+                // Enter shows up as an inserted line break — send it as a key.
+                if (inserted === '\n' || inserted === '\r' || inserted === '\r\n') {
+                    this._sendKey(0x0D); // Enter
+                } else {
+                    this.webrtc.send({ type: 'textinput', text: inserted });
+                }
+            }
+            // Restore the sentinel so the next keystroke diffs cleanly.
+            this._resetKbdCapture();
         });
 
-        // Navigation/control keys not covered by beforeinput.
+        // Navigation/control keys not covered by the input diff.
         const navKeys = {
             'Tab': 0x09, 'Escape': 0x1B, 'Delete': 0x2E,
             'ArrowUp': 0x26, 'ArrowDown': 0x28, 'ArrowLeft': 0x25, 'ArrowRight': 0x27,
@@ -3394,6 +3429,17 @@ export class StreamView {
         });
     }
 
+    /** Seed the capture <textarea> with the filler sentinel and put the caret
+     *  at the end, so Backspace always has something to delete and inserted
+     *  text appends after the sentinel. */
+    _resetKbdCapture() {
+        const cap = this._kbdCapture;
+        if (!cap) return;
+        const sent = StreamView.KBD_SENTINEL;
+        if (cap.value !== sent) cap.value = sent;
+        try { cap.setSelectionRange(sent.length, sent.length); } catch (e) { /* ignore */ }
+    }
+
     /** Send a single key press (down+up) with no modifiers. */
     _sendKey(vk) {
         const base = { keyCode: vk, code: '', key: '',
@@ -3411,7 +3457,7 @@ export class StreamView {
      *  Must run inside a user gesture (button tap / 3-finger tap). */
     _showVirtualKeyboard() {
         if (!this._kbdCapture) return;
-        this._kbdCapture.value = '';
+        this._resetKbdCapture();
         try { this._kbdCapture.focus({ preventScroll: true }); }
         catch (e) { this._kbdCapture.focus(); }
     }
@@ -3473,6 +3519,7 @@ export class StreamView {
             this._touchLastX = t.clientX;
             this._touchLastY = t.clientY;
             this._touchStartTime = performance.now();
+            this._lastMoveFingerCount = newCount;
         }
 
         this._touchFingerCount = newCount;
@@ -3493,17 +3540,25 @@ export class StreamView {
         } else {
             // Multi-finger gesture — never a drag candidate.
             this._clearLongPress();
-            if (newCount === 2) {
-                const t0 = e.touches[0], t1 = e.touches[1];
-                this._touchLastX = t0.clientX;
-                this._touchLastY = (t0.clientY + t1.clientY) / 2;
-                // Seed pinch tracking (spacing + centroid) for zoom/pan.
-                this._pinchPrevDist = Math.hypot(t0.clientX - t1.clientX,
-                                                 t0.clientY - t1.clientY);
-                this._pinchPrevCx = (t0.clientX + t1.clientX) / 2;
-                this._pinchPrevCy = (t0.clientY + t1.clientY) / 2;
+            if (newCount >= 2) {
+                // Seed spacing + centroid for zoom/scroll (2 fingers) or pan (3).
+                this._seedMultiTouch(e.touches);
             }
         }
+    }
+
+    /** Seed multi-finger trackers from the current touch list: finger spacing
+     *  (first two fingers, for pinch) and the centroid of all touches (for
+     *  2-finger scroll and 3-finger pan). */
+    _seedMultiTouch(touches) {
+        const n = touches.length;
+        if (n < 2) return;
+        const t0 = touches[0], t1 = touches[1];
+        this._pinchPrevDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+        let cx = 0, cy = 0;
+        for (let i = 0; i < n; i++) { cx += touches[i].clientX; cy += touches[i].clientY; }
+        this._pinchPrevCx = cx / n;
+        this._pinchPrevCy = cy / n;
     }
 
     /**
@@ -3537,9 +3592,11 @@ export class StreamView {
     /**
      * Handle touch move (drag).
      *
-     * 1 finger → RELATIVE cursor movement (trackpad), like a laptop touchpad:
-     *            the finger moves the host cursor by deltas, wherever it is.
-     * 2 fingers → vertical scroll via mousewheel delta.
+     * 1 finger  → RELATIVE cursor movement (trackpad), like a laptop touchpad:
+     *             the finger moves the host cursor by deltas, wherever it is.
+     * 2 fingers → pinch = zoom the local display (focal recenter), otherwise
+     *             vertical scroll wheel to the host (works zoomed in too).
+     * 3 fingers → pan the zoomed display (no scroll/zoom side effects).
      */
     handleTouchMove(e) {
         if (e.target.closest('button')) return;
@@ -3548,6 +3605,20 @@ export class StreamView {
 
         const count = e.touches.length;
         this._touchFingerCount = count;
+
+        // Finger count changed mid-gesture (lifted/added a finger): reseed the
+        // multi-finger trackers and skip this frame's delta to avoid a jump.
+        if (count !== this._lastMoveFingerCount) {
+            this._lastMoveFingerCount = count;
+            if (count === 1) {
+                const t = e.touches[0];
+                this._touchLastX = t.clientX;
+                this._touchLastY = t.clientY;
+            } else {
+                this._seedMultiTouch(e.touches);
+            }
+            return;
+        }
 
         if (count === 1) {
             // Single finger: relative trackpad movement (also drags when the
@@ -3575,8 +3646,9 @@ export class StreamView {
             this._touchLastX = touch.clientX;
             this._touchLastY = touch.clientY;
         } else if (count === 2) {
-            // Two fingers: pinch → zoom the streamed display; drag → pan when
-            // zoomed in, else vertical scroll wheel (unchanged when at zoom 1).
+            // Two fingers: pinch → zoom (focal recenter); otherwise → scroll
+            // wheel to the host. Pan is reserved for 3 fingers, so scrolling
+            // works whether or not the display is zoomed in.
             this._touchMoved = true;
             this._clearLongPress();
             const t1 = e.touches[0];
@@ -3585,8 +3657,12 @@ export class StreamView {
             const cy = (t1.clientY + t2.clientY) / 2;
             const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
 
-            // Pinch → adjust zoom, keeping the focal point (centroid) stable.
-            if (this._pinchPrevDist > 0 && dist > 0) {
+            const dDist = this._pinchPrevDist > 0 ? dist - this._pinchPrevDist : 0;
+            const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
+
+            // Classify the frame: a clear change in finger spacing → pinch/zoom;
+            // otherwise a parallel drag → scroll.
+            if (Math.abs(dDist) > 2 && Math.abs(dDist) >= Math.abs(dCy)) {
                 const newZoom = Math.min(4, Math.max(1, this._zoom * (dist / this._pinchPrevDist)));
                 const f = newZoom / this._zoom;
                 if (f !== 1 && this.canvasArea) {
@@ -3597,30 +3673,31 @@ export class StreamView {
                     this._panY = focalY * (1 - f) + f * this._panY;
                 }
                 this._zoom = newZoom;
-            }
-
-            const dCx = this._pinchPrevCx != null ? cx - this._pinchPrevCx : 0;
-            const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
-
-            if (this._zoom > 1.01) {
-                // Pan the zoomed view with the two-finger drag.
-                this._panX += dCx;
-                this._panY += dCy;
+                if (this._zoom <= 1.001) { this._panX = 0; this._panY = 0; }
                 this._applyZoomTransform();
-            } else {
-                // At base zoom: behave like before — vertical scroll wheel.
-                if (this._zoom !== 1) { this._zoom = 1; this._panX = 0; this._panY = 0; }
-                this._applyZoomTransform();
-                if (Math.abs(dCy) > 1) {
-                    this.webrtc.send({ type: 'mousewheel', delta: dCy });
-                }
+            } else if (Math.abs(dCy) > 1) {
+                this.webrtc.send({ type: 'mousewheel', delta: dCy });
             }
 
             this._pinchPrevDist = dist;
             this._pinchPrevCx = cx;
             this._pinchPrevCy = cy;
-            this._touchLastX = t1.clientX;
-            this._touchLastY = cy;
+        } else if (count >= 3) {
+            // Three fingers: pan the zoomed display (no effect at base zoom).
+            this._touchMoved = true;
+            this._clearLongPress();
+            let cx = 0, cy = 0;
+            for (let i = 0; i < count; i++) { cx += e.touches[i].clientX; cy += e.touches[i].clientY; }
+            cx /= count; cy /= count;
+            const dCx = this._pinchPrevCx != null ? cx - this._pinchPrevCx : 0;
+            const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
+            if (this._zoom > 1.01) {
+                this._panX += dCx;
+                this._panY += dCy;
+                this._applyZoomTransform();
+            }
+            this._pinchPrevCx = cx;
+            this._pinchPrevCy = cy;
         }
     }
 
@@ -3674,6 +3751,7 @@ export class StreamView {
         this._pinchPrevDist = 0;
         this._pinchPrevCx = null;
         this._pinchPrevCy = null;
+        this._lastMoveFingerCount = 0;
     }
 
     handlePointerLockChange() {
