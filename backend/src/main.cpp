@@ -866,7 +866,10 @@ int main(int argc, char* argv[])
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
 
-                    QObject::connect(r, &StreamRelay::sessionEnded,
+                    // Context = qApp so the lambda runs on the main thread: the relay
+                    // emits sessionEnded from its dedicated thread, but quitAppAsync()
+                    // touches the shared QNAM that lives on the main thread.
+                    QObject::connect(r, &StreamRelay::sessionEnded, qApp,
                         [r, &g_ActiveStreamRelay, &computerManager, host]() {
                             qInfo() << "[main] StreamRelay sessionEnded";
                             auto* identity = IdentityManager::get();
@@ -886,7 +889,8 @@ int main(int argc, char* argv[])
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
 
-                    QObject::connect(r, &DataChannelRelay::sessionEnded,
+                    // Context = qApp: see StreamRelay note above (run on main thread).
+                    QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
                         [r, &g_ActiveRelay, &computerManager, host]() {
                             qInfo() << "[main] sessionEnded fired, relay=" << r;
                             auto* identity = IdentityManager::get();
@@ -908,7 +912,8 @@ int main(int argc, char* argv[])
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
 
-                    QObject::connect(r, &MediaTrackRelay::sessionEnded,
+                    // Context = qApp: see StreamRelay note above (run on main thread).
+                    QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
                         [r, &g_ActiveMediaTrackRelay, &computerManager, host]() {
                             qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << r;
                             auto* identity = IdentityManager::get();
@@ -1115,7 +1120,7 @@ int main(int argc, char* argv[])
                         g_ActiveStreamRelay = r;
                         // WSS: forward deferred response immediately (already done in
                         // attemptRespond above, but ensure it here too).
-                        QObject::connect(r, &StreamRelay::sessionEnded,
+                        QObject::connect(r, &StreamRelay::sessionEnded, qApp,
                             [r, &g_ActiveStreamRelay, &computerManager, fbState, onSessionEnded]() {
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
@@ -1144,7 +1149,7 @@ int main(int argc, char* argv[])
                                 qInfo() << "[Auto]" << fbState->currentMode
                                         << "ICE connected (response already sent)";
                             });
-                        QObject::connect(r, &DataChannelRelay::sessionEnded,
+                        QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
                             [r, &g_ActiveRelay, &computerManager, fbState, onSessionEnded]() {
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
@@ -1173,7 +1178,7 @@ int main(int argc, char* argv[])
                                 qInfo() << "[Auto]" << fbState->currentMode
                                         << "ICE connected (response already sent)";
                             });
-                        QObject::connect(r, &MediaTrackRelay::sessionEnded,
+                        QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
                             [r, &g_ActiveMediaTrackRelay, &computerManager, fbState, onSessionEnded]() {
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
