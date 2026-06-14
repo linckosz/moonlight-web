@@ -65,6 +65,11 @@ public:
 
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
 
+    /// Per-browser Sunshine unique ID (from the browser's localStorage).
+    /// Isolates session management on Sunshine so one browser doesn't take
+    /// over / cancel another's session. Empty → shared IdentityManager id.
+    void setClientUniqueId(const QString& id) { m_ClientUniqueId = id; }
+
     /// Set the actual HTTPS port used by HttpServer (may differ from 443
     /// due to port fallback). Used to construct the correct wsUrl() for
     /// the browser when sharing the unified port.
@@ -119,6 +124,8 @@ private:
     /// The original codec selected by the user, before override.
     VideoCodec m_OriginalCodec = VideoCodec::Auto;
     QString m_StunServer = "stun:stun.l.google.com:19302";
+    /// Per-browser uniqueid for Sunshine launch/cancel; empty → shared id.
+    QString m_ClientUniqueId;
     QNetworkReply* m_LaunchReply = nullptr;
     QString m_SessionUrl;
 

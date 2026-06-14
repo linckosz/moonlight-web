@@ -1359,6 +1359,34 @@ body {
     width: 80px;
 }
 
+/* Highlight the session(s) currently streaming */
+.sessions-table tr.session-row-streaming td {
+    background: rgba(56, 217, 138, 0.08);
+}
+
+.sessions-table tr.session-row-streaming:hover td {
+    background: rgba(56, 217, 138, 0.14);
+}
+
+.session-streaming-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #38d98a;
+    background: rgba(56, 217, 138, 0.15);
+    vertical-align: middle;
+    white-space: nowrap;
+    animation: session-streaming-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes session-streaming-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+
 /* Sessions pagination controls */
 .sessions-pagination {
     display: flex;

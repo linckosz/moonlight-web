@@ -122,7 +122,10 @@ export class AdminView {
     async _loadSessions() {
         try {
             const result = await BackendClient.getAuthSessions();
-            this._sessions = result.sessions || [];
+            const sessions = result.sessions || [];
+            // Streaming sessions float to the top so they're immediately visible.
+            sessions.sort((a, b) => (b.streaming ? 1 : 0) - (a.streaming ? 1 : 0));
+            this._sessions = sessions;
         } catch (err) {
             console.warn('[Admin] Failed to load sessions:', err);
         }
@@ -567,9 +570,12 @@ export class AdminView {
             } else if (s.city) {
                 location = this.esc(s.city) + (s.country ? ', ' + this.esc(s.country) : '');
             }
+            const streamingBadge = s.streaming
+                ? '<span class="session-streaming-badge" title="Currently streaming">● Streaming</span>'
+                : '';
             return `
-            <tr data-token="${this.esc(s.token)}">
-                <td>${this.esc(s.machine_name || 'Unknown')}</td>
+            <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
+                <td>${this.esc(s.machine_name || 'Unknown')}${streamingBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>

@@ -361,6 +361,30 @@ void AuthManager::setSessionGeo(const QString& token, const QString& city, const
         .arg(token.left(12), city, country));
 }
 
+void AuthManager::setSessionStreaming(const QString& token, bool streaming)
+{
+    bool changed = false;
+
+    // Enforce a single active stream: clear any other session's flag.
+    if (streaming) {
+        for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
+            if (it.key() != token && it->streaming) {
+                it->streaming = false;
+                changed = true;
+            }
+        }
+    }
+
+    auto it = m_sessions.find(token);
+    if (it != m_sessions.end() && it->streaming != streaming) {
+        it->streaming = streaming;
+        changed = true;
+    }
+
+    if (changed)
+        emit sessionsChanged();
+}
+
 void AuthManager::destroySession(const QString& token)
 {
     if (m_sessions.contains(token)) {

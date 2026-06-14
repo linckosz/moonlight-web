@@ -136,7 +136,7 @@ void StreamSession::start()
 
     QNetworkReply* quitReply = m_Http->quitAppAsync(
         m_Host->activeAddress, m_Host->activeHttpsPort,
-        clientCert, clientKey);
+        clientCert, clientKey, m_ClientUniqueId);
 
     connect(quitReply, &QNetworkReply::finished, this,
             [this, quitReply, clientCert, clientKey]() {
@@ -166,9 +166,11 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert,
     qDebug() << "[Session]   stream:" << m_StreamWidth << "x" << m_StreamHeight
              << "@" << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps";
 
+    QString uniqueId = m_ClientUniqueId.isEmpty()
+        ? IdentityManager::get()->getUniqueId() : m_ClientUniqueId;
     m_LaunchReply = m_Http->launchAppAsync(
         m_Host->activeAddress, m_Host->activeHttpsPort,
-        m_AppId, IdentityManager::get()->getUniqueId(),
+        m_AppId, uniqueId,
         m_Config.rikey, m_Config.rikeyid,
         m_StreamWidth, m_StreamHeight, m_StreamFps,
         m_StreamBitrateKbps,

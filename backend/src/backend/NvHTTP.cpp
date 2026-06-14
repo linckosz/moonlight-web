@@ -291,13 +291,15 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 
 QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                      const QByteArray& clientCertPem,
-                                     const QByteArray& clientKeyPem)
+                                     const QByteArray& clientKeyPem,
+                                     const QString& uniqueId)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
     QUrl url(QString("https://%1:%2/cancel?uniqueid=%3&uuid=%4")
                  .arg(address.address())
                  .arg(httpsPort)
-                 .arg(IdentityManager::get()->getUniqueId())
+                 .arg(uid)
                  .arg(uuid));
 
     QNetworkRequest req(url);

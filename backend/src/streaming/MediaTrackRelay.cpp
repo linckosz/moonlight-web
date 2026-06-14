@@ -521,9 +521,20 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         m_Shim->sendKeyEvent(keyCode, down, mods, flags);
     }
     else if (type == "mousemove") {
-        short dx = static_cast<short>(msg["dx"].toInt(0));
-        short dy = static_cast<short>(msg["dy"].toInt(0));
-        m_Shim->sendMouseMove(dx, dy);
+        // Absolute mouse position (non-gaming mode)
+        if (msg.contains("x") && msg.contains("y") &&
+            msg.contains("referenceWidth") && msg.contains("referenceHeight")) {
+            short x = static_cast<short>(msg["x"].toInt(0));
+            short y = static_cast<short>(msg["y"].toInt(0));
+            short refW = static_cast<short>(msg["referenceWidth"].toInt(0));
+            short refH = static_cast<short>(msg["referenceHeight"].toInt(0));
+            m_Shim->sendMousePosition(x, y, refW, refH);
+        } else {
+            // Legacy / gaming mode: relative mouse movement
+            short dx = static_cast<short>(msg["dx"].toInt(0));
+            short dy = static_cast<short>(msg["dy"].toInt(0));
+            m_Shim->sendMouseMove(dx, dy);
+        }
     }
     else if (type == "mousedown" || type == "mouseup") {
         bool down = (type == "mousedown");

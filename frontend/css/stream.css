@@ -362,6 +362,60 @@
     50% { transform: scale(1.3); opacity: 0.6; }
 }
 
+/* ── Futuristic loader (sweeping ring + pulsing core) ──────────────────── */
+.startup-loader {
+    align-self: center;
+    position: relative;
+    width: 68px;
+    height: 68px;
+    margin-bottom: 10px;
+}
+
+/* Donut ring with a single colored arc fading to transparent — the conic
+   gradient is clipped to a thin ring by a radial mask, then spun. */
+.startup-loader-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+        rgba(240, 192, 64, 0) 0deg,
+        rgba(240, 192, 64, 0.10) 130deg,
+        rgba(240, 192, 64, 0.55) 280deg,
+        #f0c040 350deg,
+        #f0c040 360deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+    animation: startup-spin 0.85s linear infinite;
+}
+
+/* Static faint ring track behind the arc for depth. */
+.startup-loader::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 4px solid rgba(240, 192, 64, 0.08);
+}
+
+/* Glowing core dot. */
+.startup-loader::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 9px;
+    height: 9px;
+    margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%;
+    background: #f0c040;
+    box-shadow: 0 0 14px rgba(240, 192, 64, 0.75);
+    animation: startup-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes startup-spin {
+    to { transform: rotate(360deg); }
+}
+
 /* ── Fullscreen button — centered in the header bar ────────────────────── */
 .btn-stream-fs {
     position: absolute;

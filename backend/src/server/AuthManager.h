@@ -18,6 +18,7 @@ struct SessionInfo {
     QString city;
     QString country;
     qint64 createdAt;  // unix timestamp (secs)
+    bool streaming = false;  // runtime-only: true while this session has an active stream
 
     QJsonObject toJson() const {
         QJsonObject obj;
@@ -27,6 +28,7 @@ struct SessionInfo {
         obj["city"] = city;
         obj["country"] = country;
         obj["created_at"] = createdAt;
+        obj["streaming"] = streaming;
         return obj;
     }
 };
@@ -69,6 +71,10 @@ public:
 
     /** Store geolocation data for a session after async lookup completes. */
     void setSessionGeo(const QString& token, const QString& city, const QString& country);
+
+    /** Flag a session as actively streaming (or not). When set true, any other
+     *  session's streaming flag is cleared first (single active stream). */
+    void setSessionStreaming(const QString& token, bool streaming);
 
     /**
      * Returns detailed session info for all active sessions.
