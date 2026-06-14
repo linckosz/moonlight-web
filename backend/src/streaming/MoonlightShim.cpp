@@ -6,6 +6,8 @@ extern "C" {
 }
 
 #include <QDebug>
+#include <QThread>
+#include <QMetaObject>
 #include <cstring>
 #include <cstdarg>
 
@@ -125,6 +127,16 @@ void MoonlightShim::startConnection(const InitParams& params)
 
 void MoonlightShim::stopConnection()
 {
+    // The shim shares the relay's session thread. When stopConnection() is
+    // called cross-thread (main: Session::quit, /quit), marshal it so the
+    // QThread::finished connect/deleteLater bookkeeping runs on the owning
+    // thread. Queued (non-blocking) avoids deadlock; LiInterruptConnection
+    // inside still fires promptly (it only sets an atomic flag).
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this]() { stopConnection(); }, Qt::QueuedConnection);
+        return;
+    }
+
     // Atomic exchange prevents re-entrant calls (may be called from multiple
     // paths: relay->stop(), Session::quit(), ~MoonlightShim()).
     if (m_Stopping.exchange(true)) {

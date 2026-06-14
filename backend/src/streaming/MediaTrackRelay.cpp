@@ -11,6 +11,7 @@ extern "C" {
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QThread>
 #include <QDebug>
 #include <QMap>
 #include <cstring>
@@ -688,6 +689,13 @@ void MediaTrackRelay::onIceCheckTimeout()
 
 void MediaTrackRelay::stop()
 {
+    // Marshal onto the relay's session thread when called cross-thread (main:
+    // /quit, Session::quit, auto-fallback). Queued (non-blocking) avoids deadlock.
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this]() { stop(); }, Qt::QueuedConnection);
+        return;
+    }
+
     if (m_Stopping.exchange(true)) {
         qInfo() << "[MediaTrackRelay::stop] Already stopping, skip";
         return;

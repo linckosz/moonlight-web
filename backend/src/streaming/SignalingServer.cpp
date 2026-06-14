@@ -15,6 +15,8 @@ extern "C" {
 #include <QJsonObject>
 #include <QDebug>
 #include <QHostAddress>
+#include <QThread>
+#include <QMetaObject>
 #include <QTimer>
 #include <QMap>
 #include <memory>
@@ -95,6 +97,13 @@ bool SignalingServer::start()
 
 void SignalingServer::stop()
 {
+    // Marshal onto the signaling thread when called cross-thread (main:
+    // Session::quit). The QWebSocketServer/QWebSocket are bound to this thread.
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this]() { stop(); }, Qt::QueuedConnection);
+        return;
+    }
+
     if (m_Stopping.exchange(true, std::memory_order_acq_rel)) {
         qInfo() << "[SignalingServer::stop] Already stopping";
         return;

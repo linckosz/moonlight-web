@@ -16,6 +16,28 @@ extern "C" {
 #include <QJsonObject>
 #include <QDebug>
 #include <QUrl>
+#include <QThread>
+#include <QMetaObject>
+
+namespace {
+// Move a relay graph (relay + its child signaling server + child MoonlightShim)
+// onto a dedicated per-session thread so all media/WS send + fragmentation work
+// runs off the Qt main thread (which hosts the HTTP/REST/control plane). This
+// isolates the streaming pipeline for both fluidity (no contention with HTTP)
+// and stability (a stall in the media path can't freeze the control server).
+// Teardown is self-managed: when the relay is destroyed the thread quits and
+// deletes itself. The relay must have no QObject parent before this call.
+QThread* spawnRelayThread(QObject* relayRoot)
+{
+    QThread* t = new QThread();
+    t->setObjectName(QStringLiteral("RelaySessionThread"));
+    relayRoot->moveToThread(t);
+    QObject::connect(relayRoot, &QObject::destroyed, t, &QThread::quit);
+    QObject::connect(t, &QThread::finished, t, &QThread::deleteLater);
+    t->start();
+    return t;
+}
+} // namespace
 
 StreamSession::StreamSession(NvComputer* host, int appId,
                                NvHTTP* http, ResponseCallback respond,
@@ -315,27 +337,16 @@ void StreamSession::onLaunchReplyFinished()
         // ── Legacy WSS mode: uses plain WebSocket StreamRelay ──────────────
         qInfo() << "[Session] Transport=wss — using legacy StreamRelay";
 
-        auto* streamRelay = new StreamRelay(m_Shim, m_StreamRelayPort, {}, this);
+        auto* streamRelay = new StreamRelay(m_Shim, m_StreamRelayPort, {}, nullptr);
         streamRelay->setServerHost(m_ServerHost);
         streamRelay->setHttpsPort(m_HttpsPort);
-
-        if (!streamRelay->start()) {
-            delete streamRelay;
-            delete m_Shim;
-            m_Shim = nullptr;
-            m_Respond(HttpResponse::error(500, "Failed to start StreamRelay"));
-            emit sessionFailed("StreamRelay failed to start");
-            deleteLater();
-            return;
-        }
 
         connect(m_Shim, &MoonlightShim::connectionStarted,
                 this, &StreamSession::onShimConnectionStarted);
         connect(m_Shim, &MoonlightShim::connectionFailed,
                 this, &StreamSession::onShimConnectionFailed);
 
-        // StreamRelay must outlive StreamSession
-        streamRelay->setParent(QCoreApplication::instance());
+        // The shim migrates to the relay's dedicated thread with it (child).
         m_Shim->setParent(streamRelay);
 
         connect(streamRelay, &StreamRelay::sessionEnded, this, [this]() {
@@ -343,20 +354,41 @@ void StreamSession::onLaunchReplyFinished()
             deleteLater();
         });
 
+        // Move the relay graph onto a dedicated per-session thread: all WS
+        // send + fragmentation runs off the Qt main thread (HTTP/control).
+        spawnRelayThread(streamRelay);
+
+        // start() binds the WS listener and must run on the thread that owns the
+        // socket. Block only to retrieve the success/failure result.
+        bool started = false;
+        QMetaObject::invokeMethod(streamRelay, [&]() { started = streamRelay->start(); },
+                                  Qt::BlockingQueuedConnection);
+        if (!started) {
+            streamRelay->deleteLater();  // also deletes the shim (its child)
+            m_Shim = nullptr;
+            m_Respond(HttpResponse::error(500, "Failed to start StreamRelay"));
+            emit sessionFailed("StreamRelay failed to start");
+            deleteLater();
+            return;
+        }
+
         m_StreamRelay = streamRelay;
         emit streamRelayCreated(streamRelay);
 
         qDebug() << "[Session] StreamRelay created, starting LiStartConnection...";
-        m_Shim->startConnection(params);
+        MoonlightShim* shim = m_Shim;
+        QMetaObject::invokeMethod(shim, [shim, params]() { shim->startConnection(params); },
+                                  Qt::QueuedConnection);
     } else if (m_Transport == "webrtc-media") {
         // ── WebRTC Media Track mode: MediaTrackRelay + SignalingServer ─────────
         qInfo() << "[Session] Transport=webrtc-media — using MediaTrackRelay";
 
-        // MediaTrackRelay: owns the libdatachannel PeerConnection + video track + audio/input DCs
-        auto* relay = new MediaTrackRelay(m_Shim, this);
+        // MediaTrackRelay: owns the libdatachannel PeerConnection + video track + audio/input DCs.
+        // No QObject parent: it is moved onto a dedicated thread below.
+        auto* relay = new MediaTrackRelay(m_Shim, nullptr);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
-        auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
+        auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
@@ -369,25 +401,13 @@ void StreamSession::onLaunchReplyFinished()
             qInfo() << "[Session] Using explicit signaling URL:" << m_ExplicitWsUrl;
         }
 
-        if (!signaling->start()) {
-            delete signaling;
-            delete relay;
-            delete m_Shim;
-            m_Shim = nullptr;
-            m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
-            emit sessionFailed("Signaling server failed to start");
-            deleteLater();
-            return;
-        }
-
         // Connect session-level handlers
         connect(m_Shim, &MoonlightShim::connectionStarted,
                 this, &StreamSession::onShimConnectionStarted);
         connect(m_Shim, &MoonlightShim::connectionFailed,
                 this, &StreamSession::onShimConnectionFailed);
 
-        // Relay must outlive StreamSession
-        relay->setParent(QCoreApplication::instance());
+        // signaling + shim migrate to the relay's dedicated thread (children).
         signaling->setParent(relay);
         m_Shim->setParent(relay);
 
@@ -397,22 +417,42 @@ void StreamSession::onLaunchReplyFinished()
             deleteLater();
         });
 
+        // Move the relay graph onto a dedicated per-session thread.
+        spawnRelayThread(relay);
+
+        // signaling->start() binds the WS listener on the relay thread that owns
+        // the socket. Block only to retrieve the success/failure result.
+        bool started = false;
+        QMetaObject::invokeMethod(signaling, [&]() { started = signaling->start(); },
+                                  Qt::BlockingQueuedConnection);
+        if (!started) {
+            relay->deleteLater();  // also deletes signaling + shim (its children)
+            m_Shim = nullptr;
+            m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
+            emit sessionFailed("Signaling server failed to start");
+            deleteLater();
+            return;
+        }
+
         m_MediaTrackRelay = relay;
         m_Signaling = signaling;
         emit mediaTrackRelayCreated(relay);
 
         qDebug() << "[Session] MediaTrackRelay + Signaling created, starting LiStartConnection...";
-        m_Shim->startConnection(params);
+        MoonlightShim* shim = m_Shim;
+        QMetaObject::invokeMethod(shim, [shim, params]() { shim->startConnection(params); },
+                                  Qt::QueuedConnection);
     } else {
         // ── WebRTC mode: DataChannelRelay + SignalingServer (default) ─────
         qInfo() << "[Session] Transport=webrtc — using DataChannelRelay";
 
-        // DataChannelRelay: owns the libdatachannel PeerConnection + DataChannels
-        auto* relay = new DataChannelRelay(m_Shim, this);
+        // DataChannelRelay: owns the libdatachannel PeerConnection + DataChannels.
+        // No QObject parent: it is moved onto a dedicated thread below.
+        auto* relay = new DataChannelRelay(m_Shim, nullptr);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         // NonSecure mode: external tunnel or Cloudflare provides TLS termination.
-        auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, this);
+        auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
         signaling->setHttpsPort(m_HttpsPort);
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
@@ -425,25 +465,13 @@ void StreamSession::onLaunchReplyFinished()
             qInfo() << "[Session] Using explicit signaling URL:" << m_ExplicitWsUrl;
         }
 
-        if (!signaling->start()) {
-            delete signaling;
-            delete relay;
-            delete m_Shim;
-            m_Shim = nullptr;
-            m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
-            emit sessionFailed("Signaling server failed to start");
-            deleteLater();
-            return;
-        }
-
-        // Now connect the session-level handlers
+        // Connect the session-level handlers
         connect(m_Shim, &MoonlightShim::connectionStarted,
                 this, &StreamSession::onShimConnectionStarted);
         connect(m_Shim, &MoonlightShim::connectionFailed,
                 this, &StreamSession::onShimConnectionFailed);
 
-        // Relay must outlive StreamSession
-        relay->setParent(QCoreApplication::instance());
+        // signaling + shim migrate to the relay's dedicated thread (children).
         signaling->setParent(relay);  // Signaling is a child of relay
         m_Shim->setParent(relay);
 
@@ -456,12 +484,33 @@ void StreamSession::onLaunchReplyFinished()
         // Provide MoonlightShim reference for WS fallback (ICE timeout → WS data transport)
         signaling->setMoonlightShim(m_Shim);
 
+        // Move the relay graph onto a dedicated per-session thread: video/audio
+        // fragmentation + dc->send and the WS-fallback path all run off the main
+        // thread (HTTP/control).
+        spawnRelayThread(relay);
+
+        // signaling->start() binds the WS listener on the relay thread that owns
+        // the socket. Block only to retrieve the success/failure result.
+        bool started = false;
+        QMetaObject::invokeMethod(signaling, [&]() { started = signaling->start(); },
+                                  Qt::BlockingQueuedConnection);
+        if (!started) {
+            relay->deleteLater();  // also deletes signaling + shim (its children)
+            m_Shim = nullptr;
+            m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
+            emit sessionFailed("Signaling server failed to start");
+            deleteLater();
+            return;
+        }
+
         m_Relay = relay;
         m_Signaling = signaling;
         emit relayCreated(relay);
 
         qDebug() << "[Session] Relay + Signaling created, starting LiStartConnection...";
-        m_Shim->startConnection(params);
+        MoonlightShim* shim = m_Shim;
+        QMetaObject::invokeMethod(shim, [shim, params]() { shim->startConnection(params); },
+                                  Qt::QueuedConnection);
     }
 }
 
