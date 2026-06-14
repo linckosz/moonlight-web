@@ -135,13 +135,31 @@ export class StreamView {
 
         // ── OffscreenCanvas video worker ────────────────────────────────────
         // Moves WebCodecs decode + canvas rendering off the main UI thread.
-        // Controlled by the "Decode on worker thread" setting (default ON), and
-        // only when the browser supports it. Not used for the native RTP media
-        // transport (the browser renders the <video> directly). Falls back to the
-        // main-thread pipeline automatically if the worker cannot start.
+        // Controlled by the "Decode on worker thread" setting, a tri-state:
+        //   'auto' (default) → heuristic: ON on desktop, OFF on mobile / low-core
+        //     devices, where the extra hot thread contends for scarce cores and
+        //     OffscreenCanvas-from-worker presentation can be slower → lower fps.
+        //   'on' / 'off' (or legacy boolean true/false) → explicit user override.
+        // Never used for the native RTP media transport (the browser renders the
+        // <video> directly). Falls back to the main-thread pipeline automatically
+        // if the worker cannot start.
+        const workerMode = (videoWorker === true) ? 'on'
+            : (videoWorker === false) ? 'off'
+            : (videoWorker || 'auto');
+        let workerWanted;
+        if (workerMode === 'on') {
+            workerWanted = true;
+        } else if (workerMode === 'off') {
+            workerWanted = false;
+        } else {
+            // Auto: enable only on desktop-class hardware.
+            const cores = navigator.hardwareConcurrency || 4;
+            const isMobile = /Android|Mobile|iPhone|iPad|iPod|Tablet/i.test(navigator.userAgent || '');
+            workerWanted = !isMobile && cores > 4;
+        }
         this._useWorker = false;
         try {
-            this._useWorker = (videoWorker !== false)
+            this._useWorker = workerWanted
                 && transport !== 'webrtc-media'
                 && typeof Worker !== 'undefined'
                 && typeof OffscreenCanvas !== 'undefined'
@@ -2746,6 +2764,28 @@ export class StreamView {
         return this._transport === 'webrtc-media' ? this.videoEl : this.canvas;
     }
 
+    /** Displayed media rectangle in client coordinates, accounting for
+     *  object-fit: contain (letterbox/pillarbox bars). The <video> element box
+     *  fills the whole canvas area, so its real content rect must be derived
+     *  from the intrinsic video size; the <canvas> box already matches its
+     *  content. Used so the cursor is hidden only over the actual image and
+     *  coordinates map to the real picture, not the surrounding black bars. */
+    _mediaRect() {
+        const r = this._displayEl().getBoundingClientRect();
+        const iw = this._transport === 'webrtc-media'
+            ? this.videoEl.videoWidth : this.canvas.width;
+        const ih = this._transport === 'webrtc-media'
+            ? this.videoEl.videoHeight : this.canvas.height;
+        if (!iw || !ih) return r;
+        const scale = Math.min(r.width / iw, r.height / ih);
+        const w = iw * scale, h = ih * scale;
+        return {
+            left: r.left + (r.width - w) / 2,
+            top: r.top + (r.height - h) / 2,
+            width: w, height: h,
+        };
+    }
+
     _bindGamingEvents() {
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
 
@@ -2758,7 +2798,7 @@ export class StreamView {
             if (this._mouseFocused) {
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
-                const rect = this._displayEl().getBoundingClientRect();
+                const rect = this._mediaRect();
                 const x = Math.round(Math.max(0, Math.min(e.clientX - rect.left, rect.width)));
                 const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
                 const refW = Math.round(rect.width);
@@ -2777,7 +2817,7 @@ export class StreamView {
             e.preventDefault();
 
             // Send absolute position so the host cursor teleports to the clicked point
-            const rect = this._displayEl().getBoundingClientRect();
+            const rect = this._mediaRect();
             const x = Math.round(Math.max(0, Math.min(e.clientX - rect.left, rect.width)));
             const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
             const refW = Math.round(rect.width);
@@ -2805,19 +2845,26 @@ export class StreamView {
         // In non-gaming mode, mouse position is sent in absolute coordinates
         // mapped to the host screen. The cursor on the host follows the client
         // cursor position on the video canvas 1:1.
-        // Hide local cursor — the host cursor is visible in the video stream.
-        // On touch devices there is no CSS cursor to hide (trackpad model).
-        if (!IS_TOUCH_DEVICE) {
-            this.inputEl.style.cursor = 'none';
-        }
+        // The host cursor is visible in the video stream, so the local cursor
+        // is hidden — but ONLY over the actual image, not the letterbox bars
+        // around it (managed per-move below). On touch devices there is no CSS
+        // cursor to hide (trackpad model).
 
         this._onNormalMouseMove = (e) => {
-            const rect = this._displayEl().getBoundingClientRect();
-            // Absolute pixel position within the canvas element
+            const rect = this._mediaRect();
+            // Absolute pixel position within the displayed image
             const rawX = e.clientX - rect.left;
             const rawY = e.clientY - rect.top;
 
-            // Clamp to canvas bounds to avoid sending out-of-range coordinates
+            // Hide the local cursor only when it is over the actual picture;
+            // show it over the surrounding black bars.
+            const inside = rawX >= 0 && rawY >= 0 &&
+                rawX <= rect.width && rawY <= rect.height;
+            if (!IS_TOUCH_DEVICE) {
+                this.inputEl.style.cursor = inside ? 'none' : 'default';
+            }
+
+            // Clamp to image bounds to avoid sending out-of-range coordinates
             const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
             const y = Math.round(Math.max(0, Math.min(rawY, rect.height)));
             const refW = Math.round(rect.width);
@@ -2842,9 +2889,11 @@ export class StreamView {
             this.handleMouseUp(e);
         };
 
+        // Entering the area shows the default cursor; the first mousemove
+        // hides it once the pointer is confirmed over the actual image.
         this._onNormalMouseEnter = () => {
             if (!IS_TOUCH_DEVICE) {
-                this.inputEl.style.cursor = 'none';
+                this.inputEl.style.cursor = 'default';
             }
         };
 
