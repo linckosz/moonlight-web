@@ -652,7 +652,7 @@ int main(int argc, char* argv[])
     auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
 
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, &authManager, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -671,6 +671,21 @@ int main(int argc, char* argv[])
         if (appId <= 0) {
             respond(HttpResponse::error(400, "Missing or invalid appId"));
             return;
+        }
+
+        // Identify the authenticated session behind this stream. Remote clients
+        // send the mw_session cookie; empty for localhost (no session row to flag).
+        QString sessionToken;
+        {
+            const QString cookie = req.headers.value("cookie");
+            const auto cookies = cookie.split(';');
+            for (const QString& c : cookies) {
+                const QString t = c.trimmed();
+                if (t.startsWith("mw_session=", Qt::CaseInsensitive)) {
+                    sessionToken = t.mid(QStringLiteral("mw_session=").length());
+                    break;
+                }
+            }
         }
 
         // ── Per-request streaming settings ─────────────────────────────────────
@@ -700,6 +715,18 @@ int main(int argc, char* argv[])
         bool reqHdr = body.contains("hdr_enabled")
             ? body["hdr_enabled"].toBool()
             : appSettings.hdrEnabled();
+
+        // Per-browser Sunshine unique ID (from the browser's localStorage).
+        // Sanitized to hex (max 32 chars) before it reaches the launch URL.
+        // Empty → StreamSession falls back to the shared Moonlight unique ID.
+        QString reqClientUniqueId;
+        for (const QChar& c : body["client_uniqueid"].toString()) {
+            QChar u = c.toUpper();
+            if (u.isDigit() || (u >= 'A' && u <= 'F'))
+                reqClientUniqueId += u;
+            if (reqClientUniqueId.size() >= 32)
+                break;
+        }
 
         qInfo() << "[Session] Per-request streaming settings:"
                 << "codec=" << AppSettings::videoCodecToString(reqCodec)
@@ -862,16 +889,18 @@ int main(int argc, char* argv[])
         auto attachRelayTracking = [&](StreamSession* s) {
             // WSS mode: StreamRelay tracking
             QObject::connect(s, &StreamSession::streamRelayCreated,
-                [&g_ActiveStreamRelay, &computerManager, host](StreamRelay* r) {
+                [&g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host](StreamRelay* r) {
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
+                    authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp so the lambda runs on the main thread: the relay
                     // emits sessionEnded from its dedicated thread, but quitAppAsync()
                     // touches the shared QNAM that lives on the main thread.
                     QObject::connect(r, &StreamRelay::sessionEnded, qApp,
-                        [r, &g_ActiveStreamRelay, &computerManager, host]() {
+                        [r, &g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host]() {
                             qInfo() << "[main] StreamRelay sessionEnded";
+                            authManager.setSessionStreaming(sessionToken, false);
                             auto* identity = IdentityManager::get();
                             auto* quitReply = computerManager.http()->quitAppAsync(
                                 host->activeAddress, host->activeHttpsPort,
@@ -885,14 +914,16 @@ int main(int argc, char* argv[])
 
             // WebRTC DataChannel mode: DataChannelRelay tracking
             QObject::connect(s, &StreamSession::relayCreated,
-                [&g_ActiveRelay, &computerManager, host](DataChannelRelay* r) {
+                [&g_ActiveRelay, &computerManager, &authManager, sessionToken, host](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
+                    authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
-                        [r, &g_ActiveRelay, &computerManager, host]() {
+                        [r, &g_ActiveRelay, &computerManager, &authManager, sessionToken, host]() {
                             qInfo() << "[main] sessionEnded fired, relay=" << r;
+                            authManager.setSessionStreaming(sessionToken, false);
                             auto* identity = IdentityManager::get();
                             auto* quitReply = computerManager.http()->quitAppAsync(
                                 host->activeAddress, host->activeHttpsPort,
@@ -908,14 +939,16 @@ int main(int argc, char* argv[])
 
             // WebRTC Media Track mode: MediaTrackRelay tracking
             QObject::connect(s, &StreamSession::mediaTrackRelayCreated,
-                [&g_ActiveMediaTrackRelay, &computerManager, host](MediaTrackRelay* r) {
+                [&g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host](MediaTrackRelay* r) {
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
+                    authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
-                        [r, &g_ActiveMediaTrackRelay, &computerManager, host]() {
+                        [r, &g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host]() {
                             qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << r;
+                            authManager.setSessionStreaming(sessionToken, false);
                             auto* identity = IdentityManager::get();
                             auto* quitReply = computerManager.http()->quitAppAsync(
                                 host->activeAddress, host->activeHttpsPort,
@@ -963,6 +996,7 @@ int main(int argc, char* argv[])
             s->setStreamRelayPort(signalingPort + 1);
             s->setTransportMode(transportMode); // Full mode for response
             s->setEnableIceTcp(iceTcp);
+            s->setClientUniqueId(reqClientUniqueId);
             attachRelayTracking(s);
             return s;
         };
@@ -1027,10 +1061,11 @@ int main(int argc, char* argv[])
             auto tryNextFn = std::make_shared<std::function<void()>>();
             std::function<void()> tryNext;
             tryNext = [fbState, &computerManager, signalingPort, serverHost,
-                       &appSettings, effectiveUpnpEnabled, stunServer,
+                       &appSettings, &authManager, sessionToken, effectiveUpnpEnabled, stunServer,
                        &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
                        &server, tryNextFn,
-                       reqCodec, reqGamingMode, reqHeight, reqFps, reqBitrate, reqHdr]() {
+                       reqCodec, reqGamingMode, reqHeight, reqFps, reqBitrate, reqHdr,
+                       reqClientUniqueId]() {
                 if (fbState->responded) return;
 
                 if (fbState->currentAttempt >= fbState->attempts.size()) {
@@ -1095,6 +1130,7 @@ int main(int argc, char* argv[])
                 session->setStreamRelayPort(signalingPort + 1);
                 session->setTransportMode(mode);
                 session->setEnableIceTcp(iceTcp);
+                session->setClientUniqueId(reqClientUniqueId);
                 session->setAutoMode(true);  // Disable internal WS fallback → use auto chain
 
                 // ── Relay lifecycle tracking with auto-fallback integration ──
@@ -1116,12 +1152,14 @@ int main(int argc, char* argv[])
 
                 // WSS mode: StreamRelay tracking
                 QObject::connect(session, &StreamSession::streamRelayCreated,
-                    [&g_ActiveStreamRelay, &computerManager, fbState, onSessionEnded](StreamRelay* r) {
+                    [&g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, fbState, onSessionEnded](StreamRelay* r) {
                         g_ActiveStreamRelay = r;
+                        authManager.setSessionStreaming(sessionToken, true);
                         // WSS: forward deferred response immediately (already done in
                         // attemptRespond above, but ensure it here too).
                         QObject::connect(r, &StreamRelay::sessionEnded, qApp,
-                            [r, &g_ActiveStreamRelay, &computerManager, fbState, onSessionEnded]() {
+                            [r, &g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, fbState, onSessionEnded]() {
+                                authManager.setSessionStreaming(sessionToken, false);
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     fbState->host->activeAddress,
@@ -1140,8 +1178,9 @@ int main(int argc, char* argv[])
 
                 // WebRTC DataChannel mode: DataChannelRelay tracking
                 QObject::connect(session, &StreamSession::relayCreated,
-                    [&g_ActiveRelay, &computerManager, fbState, onSessionEnded](DataChannelRelay* r) {
+                    [&g_ActiveRelay, &computerManager, &authManager, sessionToken, fbState, onSessionEnded](DataChannelRelay* r) {
                         g_ActiveRelay = r;
+                        authManager.setSessionStreaming(sessionToken, true);
                         // Response already forwarded in attemptRespond (no more deferred response).
                         // Log ICE connection for diagnostics only.
                         QObject::connect(r, &DataChannelRelay::dataChannelsOpen,
@@ -1150,7 +1189,8 @@ int main(int argc, char* argv[])
                                         << "ICE connected (response already sent)";
                             });
                         QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
-                            [r, &g_ActiveRelay, &computerManager, fbState, onSessionEnded]() {
+                            [r, &g_ActiveRelay, &computerManager, &authManager, sessionToken, fbState, onSessionEnded]() {
+                                authManager.setSessionStreaming(sessionToken, false);
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     fbState->host->activeAddress,
@@ -1169,8 +1209,9 @@ int main(int argc, char* argv[])
 
                 // WebRTC Media Track mode: MediaTrackRelay tracking
                 QObject::connect(session, &StreamSession::mediaTrackRelayCreated,
-                    [&g_ActiveMediaTrackRelay, &computerManager, fbState, onSessionEnded](MediaTrackRelay* r) {
+                    [&g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, fbState, onSessionEnded](MediaTrackRelay* r) {
                         g_ActiveMediaTrackRelay = r;
+                        authManager.setSessionStreaming(sessionToken, true);
                         // Response already forwarded in attemptRespond (no more deferred response).
                         // Log ICE connection for diagnostics only.
                         QObject::connect(r, &MediaTrackRelay::dataChannelsOpen,
@@ -1179,7 +1220,8 @@ int main(int argc, char* argv[])
                                         << "ICE connected (response already sent)";
                             });
                         QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
-                            [r, &g_ActiveMediaTrackRelay, &computerManager, fbState, onSessionEnded]() {
+                            [r, &g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, fbState, onSessionEnded]() {
+                                authManager.setSessionStreaming(sessionToken, false);
                                 auto* identity = IdentityManager::get();
                                 auto* quitReply = computerManager.http()->quitAppAsync(
                                     fbState->host->activeAddress,
@@ -1243,6 +1285,20 @@ int main(int argc, char* argv[])
         qInfo() << "[quit] Host found:" << host->name << host->activeAddress.address()
                 << ":" << host->activeHttpsPort;
 
+        // Per-browser unique ID so the cancel targets this browser's own
+        // session (must match the one used at /launch). Sanitized to hex.
+        QString quitUniqueId;
+        {
+            QJsonObject qbody = QJsonDocument::fromJson(req.body).object();
+            for (const QChar& c : qbody["client_uniqueid"].toString()) {
+                QChar u = c.toUpper();
+                if (u.isDigit() || (u >= 'A' && u <= 'F'))
+                    quitUniqueId += u;
+                if (quitUniqueId.size() >= 32)
+                    break;
+            }
+        }
+
         // Stop the transport relay first (closes PeerConnection or WS)
         bool relayStopped = false;
 
@@ -1288,7 +1344,7 @@ int main(int argc, char* argv[])
         auto* identity = IdentityManager::get();
         QNetworkReply* reply = computerManager.http()->quitAppAsync(
             host->activeAddress, host->activeHttpsPort,
-            identity->getCertificate(), identity->getPrivateKey());
+            identity->getCertificate(), identity->getPrivateKey(), quitUniqueId);
         qInfo() << "[quit] quitAppAsync reply=" << reply;
 
         // Wait for quit to complete, then respond

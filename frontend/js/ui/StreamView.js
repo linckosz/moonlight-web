@@ -734,6 +734,9 @@ export class StreamView {
         this._startupOverlay.id = 'stream-startup-overlay';
         this._startupOverlay.className = 'stream-startup-overlay';
         this._startupOverlay.innerHTML = [
+            '<div class="startup-loader" aria-hidden="true">',
+            '  <div class="startup-loader-ring"></div>',
+            '</div>',
             '<div class="startup-step active" data-step="1">',
             '  <span class="startup-step-dot"></span>',
             '  <span class="startup-step-label">Connecting...</span>',

@@ -53,9 +53,11 @@ public:
                                    const QByteArray& clientKeyPem,
                                    int hdrMode = 0);
 
+    // uniqueId empty → falls back to the shared Moonlight unique ID.
     QNetworkReply* quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                  const QByteArray& clientCertPem,
-                                 const QByteArray& clientKeyPem);
+                                 const QByteArray& clientKeyPem,
+                                 const QString& uniqueId = QString());
 
     // Static XML helpers
     static void verifyResponseStatus(const QString& xml);

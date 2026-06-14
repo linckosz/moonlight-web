@@ -61,10 +61,30 @@ export class BackendClient {
     static async getPairState(hostId)     { return this.get(`/api/hosts/${hostId}/pair`); }
     static async confirmPairing(hostId)   { return this.post(`/api/hosts/${hostId}/pair`); }
     static async getAppList(hostId)       { return this.get(`/api/hosts/${hostId}/apps`); }
-    static async launchApp(hostId, appId, streamingSettings = {}) {
-        return this.post(`/api/hosts/${hostId}/start`, { appId, ...streamingSettings });
+    /**
+     * Per-browser Sunshine client unique ID, persisted in localStorage.
+     * Each browser gets its own 16-hex-char ID so Sunshine treats their
+     * sessions independently (one browser won't cancel/take over another's).
+     */
+    static clientUniqueId() {
+        let id = localStorage.getItem('mw_client_uniqueid');
+        if (!id || !/^[0-9A-F]{16}$/.test(id)) {
+            const bytes = new Uint8Array(8);
+            crypto.getRandomValues(bytes);
+            id = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+            localStorage.setItem('mw_client_uniqueid', id);
+        }
+        return id;
     }
-    static async quitApp(hostId)          { return this.post(`/api/hosts/${hostId}/quit`); }
+
+    static async launchApp(hostId, appId, streamingSettings = {}) {
+        return this.post(`/api/hosts/${hostId}/start`,
+            { appId, client_uniqueid: this.clientUniqueId(), ...streamingSettings });
+    }
+    static async quitApp(hostId) {
+        return this.post(`/api/hosts/${hostId}/quit`,
+            { client_uniqueid: this.clientUniqueId() });
+    }
 
     // ── Auth API ───────────────────────────────────────────────────────────
 
