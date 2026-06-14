@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RelayBase.h"
+#include "FrameSender.h"
 #include <QByteArray>
 #include <QElapsedTimer>
 #include <QMutex>
@@ -118,6 +119,10 @@ private:
     void sendIdrRequestThrottled();
 
     MoonlightShim* m_Shim;
+
+    // Dedicated thread for DataChannel fragmentation + send (keeps the per-frame
+    // memcpy + dc->send off the Qt main thread / HTTP event loop).
+    std::unique_ptr<FrameSender> m_Sender;
 
     std::shared_ptr<rtc::PeerConnection> m_Pc;
     std::shared_ptr<rtc::DataChannel> m_VideoDc;
