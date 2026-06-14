@@ -536,6 +536,7 @@ export class SettingsView {
             slider.addEventListener('input', () => {
                 label.textContent = slider.value;
             });
+            this._dragOnlySlider(slider);
         }
 
         // Live sensitivity label updates while dragging
@@ -545,7 +546,25 @@ export class SettingsView {
             sensSlider.addEventListener('input', () => {
                 sensLabel.textContent = parseFloat(sensSlider.value).toFixed(1);
             });
+            this._dragOnlySlider(sensSlider);
         }
+    }
+
+    // Block click-to-jump on the track: only a press on the thumb starts a drag.
+    _dragOnlySlider(slider) {
+        const THUMB = 20; // thumb diameter (CSS .settings-slider::-..-thumb)
+        slider.addEventListener('pointerdown', (e) => {
+            const rect = slider.getBoundingClientRect();
+            const min = parseFloat(slider.min) || 0;
+            const max = parseFloat(slider.max) || 100;
+            const ratio = (parseFloat(slider.value) - min) / (max - min);
+            const track = rect.width - THUMB;
+            const thumbCenter = rect.left + THUMB / 2 + ratio * track;
+            // Outside the thumb → cancel the native jump (drag from thumb still works).
+            if (Math.abs(e.clientX - thumbCenter) > THUMB / 2) {
+                e.preventDefault();
+            }
+        });
     }
 
     bindEvents() {
