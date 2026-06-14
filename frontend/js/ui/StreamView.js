@@ -133,6 +133,23 @@ export class StreamView {
         this._isRemote = isRemote;
         this._showPerfStats = showPerformanceStats;
 
+        // ── OffscreenCanvas video worker (opt-in) ───────────────────────────
+        // Moves WebCodecs decode + canvas rendering off the main UI thread.
+        // Default OFF: the proven main-thread pipeline stays the default. Enable
+        // with localStorage 'mw_video_worker' = '1'. Not used for the native RTP
+        // media transport (the browser renders the <video> directly).
+        this._useWorker = false;
+        try {
+            this._useWorker = (localStorage.getItem('mw_video_worker') === '1')
+                && transport !== 'webrtc-media'
+                && typeof Worker !== 'undefined'
+                && typeof OffscreenCanvas !== 'undefined'
+                && typeof HTMLCanvasElement !== 'undefined'
+                && typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function';
+        } catch (e) { this._useWorker = false; }
+        this._videoWorker = null;
+        this._workerLastDecoded = 0;
+
         // Backend timestamp tracking for stale frame detection.
         // WebRTC SCTP unordered delivery (ordered=false) can reassemble frames
         // out of order.  An older frame arriving after a newer one would
@@ -619,12 +636,20 @@ export class StreamView {
         // trading possible tearing for lower latency. Gated by the VSync setting:
         // VSync ON  → standard composited context (no tearing).
         // VSync OFF → desynchronized context (tearing allowed, lower latency).
-        this.ctx = this._vsync
-            ? this.canvas.getContext('2d')
-            : this.canvas.getContext('2d', { desynchronized: true });
-        // Set initial canvas size; will be adjusted when first frame arrives
-        this.canvas.width = 1920;
-        this.canvas.height = 1080;
+        // Worker mode: the canvas is transferred to the worker (in
+        // _initVideoWorker, once platform detection has run), so we must NOT
+        // create a 2D context or set its size here — both would prevent
+        // transferControlToOffscreen(). The worker owns the OffscreenCanvas.
+        if (this._useWorker) {
+            this.ctx = null;
+        } else {
+            this.ctx = this._vsync
+                ? this.canvas.getContext('2d')
+                : this.canvas.getContext('2d', { desynchronized: true });
+            // Set initial canvas size; will be adjusted when first frame arrives
+            this.canvas.width = 1920;
+            this.canvas.height = 1080;
+        }
         // Prevent browser default touch behaviors (scroll, zoom, pull-to-refresh)
         // on the WHOLE overlay — touches must never scroll/move <video>/<canvas>.
         this.streamEl.style.touchAction = 'none';
@@ -763,6 +788,96 @@ export class StreamView {
     // =========================================================================
     // WebCodecs VideoDecoder
     // =========================================================================
+
+    // ── OffscreenCanvas video worker (opt-in) ───────────────────────────────
+    // Create the worker, transfer the canvas, and start the decode+render
+    // pipeline off the main thread. Called from setupWebRtc once platform
+    // detection (_isChromeWindowsHevc) has run. Falls back to the main-thread
+    // path if the Worker cannot be created (before the canvas is transferred).
+    _initVideoWorker() {
+        try {
+            const worker = new Worker(
+                new URL('../stream/VideoDecodeWorker.js', import.meta.url),
+                { type: 'module' });
+            // Transfer only AFTER the worker exists, so a construction failure
+            // leaves the canvas intact for the main-thread fallback below.
+            const offscreen = this.canvas.transferControlToOffscreen();
+            worker.onmessage = (e) => this._onWorkerMessage(e.data);
+            worker.onerror = (err) => {
+                console.error('[StreamView] Video worker error:', err.message || err);
+            };
+            worker.postMessage({
+                type: 'init',
+                canvas: offscreen,
+                videoCodec: this.videoCodec,
+                hdr: this._hdr,
+                isChromeWindowsHevc: this._isChromeWindowsHevc,
+                transport: this._transport,
+                vsync: this._vsync
+            }, [offscreen]);
+            this._videoWorker = worker;
+            console.log('[StreamView] Video worker started (OffscreenCanvas)');
+        } catch (e) {
+            console.error('[StreamView] Video worker init failed, using main thread:', e.message);
+            this._useWorker = false;
+            this._videoWorker = null;
+            // Recover the main-thread render path (canvas not transferred yet).
+            this.ctx = this._vsync
+                ? this.canvas.getContext('2d')
+                : this.canvas.getContext('2d', { desynchronized: true });
+            this.canvas.width = 1920;
+            this.canvas.height = 1080;
+            this.setupDecoder();
+            this.startRenderLoop();
+        }
+    }
+
+    // Handle messages from the video worker (mirrors the main-thread side
+    // effects that must stay on the UI thread: IDR requests, codec fallback,
+    // status/overlay updates).
+    _onWorkerMessage(m) {
+        switch (m.type) {
+        case 'requestidr':
+            this._requestIdr(m.reason || 'worker');
+            break;
+        case 'codecfallback':
+            // HEVC unsupported in this browser → re-launch with H.264.
+            this._handleHevcFallback();
+            break;
+        case 'firstframe':
+            if (!this._firstFrameRendered) {
+                if (m.resolution) this._resolution = m.resolution;
+                this.setStatus('live', 'Live');
+                this._firstFrameRendered = true;
+                if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+                this._updateStartupStep(3);
+                setTimeout(() => this._hideStartupOverlay(), 1500);
+                this._showShortcutsSlide();
+            }
+            break;
+        case 'status':
+            this.setStatus(m.state, m.msg);
+            break;
+        case 'counters': {
+            // Approximate decode fps: push one timestamp per newly decoded frame
+            // into the sliding window the overlay already uses.
+            const dDecoded = m.decoded - this._workerLastDecoded;
+            this._workerLastDecoded = m.decoded;
+            const now = performance.now();
+            for (let i = 0; i < dDecoded && i < 240; i++) this._fpsTimestamps.push(now);
+            this.stats.received = m.received;
+            this.stats.decoded = m.decoded;
+            this.stats.rendered = m.rendered;
+            this.stats.dropped = m.dropped;
+            if (m.latencyMs > 0) this._e2eLatencyStats.addSample(m.latencyMs);
+            break;
+        }
+        case 'fatal':
+            this._fatalDecodeError = true;
+            this.setStatus('error', m.msg);
+            break;
+        }
+    }
 
     setupDecoder() {
         if (this.decoder) {
@@ -1548,6 +1663,8 @@ export class StreamView {
         if (this.renderRunning) return;
         // Media track mode: video is rendered natively via <video>, no canvas loop needed.
         if (this._transport === 'webrtc-media') return;
+        // Worker mode: the worker owns the OffscreenCanvas and its render loop.
+        if (this._useWorker) return;
         this.renderRunning = true;
 
         const loop = (now) => {
@@ -1943,12 +2060,19 @@ export class StreamView {
                 // since these frames never reach the WebCodecs pipeline.
                 this._startMediaStatsPolling();
             } else {
-                // DataChannel mode: set up WebCodecs decoder
-                this.setupDecoder();
+                // DataChannel mode: set up WebCodecs decoder (main thread) OR
+                // hand decode+render to the OffscreenCanvas worker (opt-in).
+                if (this._useWorker) {
+                    this._initVideoWorker();
+                } else {
+                    this.setupDecoder();
+                }
 
                 // Safety timeout: if no decoder config after 3 seconds, request an IDR.
+                // In worker mode the worker owns the NAL parser and requests its
+                // own IDRs, so skip the main-thread nalParser readiness probe.
                 this._idrTimeout = setTimeout(() => {
-                    if (!this.nalParser.isReady()) {
+                    if (!this._useWorker && !this.nalParser.isReady()) {
                         console.warn('[StreamView] No keyframe after 3s, requesting IDR from backend');
                         this._requestIdr('no keyframe after 3s');
                     }
@@ -1977,6 +2101,7 @@ export class StreamView {
             // IDR is already requested by WebRtcDataChannel (throttled) — don't double it.
             this.webrtc.onFrameLoss = (frameId, wasKeyframe) => {
                 this._referenceValid = false;
+                if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
             };
         }
         // Audio samples (PCM16 stereo interleaved) -> AudioPipeline
@@ -2287,6 +2412,7 @@ export class StreamView {
                 console.warn('[StreamView] Frame gap: expected ' + (this._lastFrameId + 1) +
                     ' got ' + frameId + ' — invalidating reference, requesting IDR');
                 this._referenceValid = false;
+                if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
                 this._requestIdr('frame gap');
             }
             if (frameId > this._lastFrameId) this._lastFrameId = frameId;
@@ -2344,6 +2470,19 @@ export class StreamView {
                 return 'len=' + n.length;
             });
             console.log('[StreamView] First frame NAL types (H=HEVC type / A=H264 type):', nalInfo.join(', '));
+        }
+
+        // Worker mode: hand the frame to the OffscreenCanvas worker for decode
+        // + render. Transfer a fresh copy of the frame bytes (zero further copy)
+        // so the buffer ownership moves to the worker without aliasing.
+        if (this._useWorker) {
+            if (this._videoWorker) {
+                const buf = data.buffer.slice(
+                    data.byteOffset, data.byteOffset + data.byteLength);
+                this._videoWorker.postMessage(
+                    { type: 'frame', data: buf, isKeyframe, backendTs }, [buf]);
+            }
+            return;
         }
 
         // AV1 pipeline: no NAL units, no SPS/PPS, no Annex B start codes.
@@ -3759,6 +3898,14 @@ export class StreamView {
         this.stopRenderLoop();
         this.stopDiagnostics();
         this.unbindEvents();
+
+        // Tear down the video worker (if active): stop its pipeline, then
+        // terminate so the decoder/OffscreenCanvas are released.
+        if (this._videoWorker) {
+            try { this._videoWorker.postMessage({ type: 'stop' }); } catch (e) {}
+            try { this._videoWorker.terminate(); } catch (e) {}
+            this._videoWorker = null;
+        }
 
         // Clear stats overlay timer
         if (this._overlayInterval) {
