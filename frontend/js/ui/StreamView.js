@@ -29,7 +29,7 @@ import {
     CODEC_AV1
 } from '../util/Av1Utils.js';
 
-import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET } from '../util/BrowserDetect.js';
+import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetect.js';
 
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
@@ -3092,6 +3092,34 @@ export class StreamView {
 
         // Hide the header fullscreen button
         if (this._mobileFsBtn) this._mobileFsBtn.style.display = 'none';
+
+        // iOS blocks the Fullscreen API on canvas, so the browser chrome stays
+        // visible. Hint the user that an installed PWA is the only true path.
+        if (IS_IOS && !IS_STANDALONE) this._showInstallHint();
+    }
+
+    /**
+     * Show a one-shot "Add to Home Screen" hint, then fade it out after 4s.
+     * Sits above the CSS fullscreen canvas (z-index) and is shown once per view.
+     */
+    _showInstallHint() {
+        if (this._installHintShown) return;
+        this._installHintShown = true;
+
+        const hint = document.createElement('div');
+        hint.className = 'install-hint';
+        hint.textContent = 'Pour un vrai plein écran : Partager → Sur l’écran d’accueil, puis lancez Moonlight depuis l’icône.';
+        document.body.appendChild(hint);
+
+        // Force reflow so the opacity transition runs on insert.
+        void hint.offsetWidth;
+        hint.classList.add('install-hint-visible');
+
+        // Fade out after 4s, remove once the transition ends.
+        setTimeout(() => {
+            hint.classList.remove('install-hint-visible');
+            hint.addEventListener('transitionend', () => hint.remove(), { once: true });
+        }, 4000);
     }
 
     /**

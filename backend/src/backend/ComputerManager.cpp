@@ -309,11 +309,26 @@ void ComputerManager::onPollReplyFinished()
 
     bool changed = false;
 
-    if (reply->error() != QNetworkReply::NoError) {
-        if (host->state != NvComputer::CS_OFFLINE) {
+    // Debounce: a single transient error (stale keep-alive, 2s abort, brief
+    // network blip) must not flip a healthy host offline. Only go offline
+    // after several consecutive failures.
+    static constexpr int OFFLINE_FAILURE_THRESHOLD = 3;
+
+    auto registerFailure = [&](const QString& reason) {
+        host->consecutivePollFailures++;
+        Logger::warning(QString("Poll failure %1/%2 for %3: %4")
+                            .arg(host->consecutivePollFailures)
+                            .arg(OFFLINE_FAILURE_THRESHOLD)
+                            .arg(host->name, reason));
+        if (host->consecutivePollFailures >= OFFLINE_FAILURE_THRESHOLD
+            && host->state != NvComputer::CS_OFFLINE) {
             host->state = NvComputer::CS_OFFLINE;
             changed = true;
         }
+    };
+
+    if (reply->error() != QNetworkReply::NoError) {
+        registerFailure(reply->errorString());
     } else {
         QString xml = QString::fromUtf8(reply->readAll());
 
@@ -327,14 +342,11 @@ void ComputerManager::onPollReplyFinished()
             NvComputer newState(xml, pollAddr);
 
             if (newState.uuid == host->uuid) {
+                host->consecutivePollFailures = 0;
                 changed = host->update(newState);
             }
         } catch (const std::exception& e) {
-            Logger::warning(QString("Poll error for %1: %2").arg(host->name, e.what()));
-            if (host->state != NvComputer::CS_OFFLINE) {
-                host->state = NvComputer::CS_OFFLINE;
-                changed = true;
-            }
+            registerFailure(e.what());
         }
     }
 

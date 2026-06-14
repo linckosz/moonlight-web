@@ -484,3 +484,27 @@
     object-fit: contain;
 }
 
+/* ── "Add to Home Screen" hint (iOS, shown over CSS fullscreen) ─────────── */
+.install-hint {
+    position: fixed;
+    left: 50%;
+    bottom: max(24px, env(safe-area-inset-bottom, 24px));
+    transform: translateX(-50%);
+    z-index: 100000;
+    max-width: min(92vw, 460px);
+    padding: 12px 18px;
+    border-radius: 10px;
+    background: rgba(20, 20, 22, 0.92);
+    color: #fff;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    text-align: center;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+.install-hint-visible {
+    opacity: 1;
+}
+

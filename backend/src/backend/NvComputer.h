@@ -47,6 +47,10 @@ public:
     // — Ephemeral traits (from polling) —
     ComputerState state = CS_UNKNOWN;
 
+    // Consecutive failed polls — debounce so a single transient network
+    // error (stale keep-alive, 2s abort) does not flip the host offline.
+    int consecutivePollFailures = 0;
+
     // — Persisted pairing state —
     PairState pairState = PS_UNKNOWN;
     NvAddress activeAddress;
