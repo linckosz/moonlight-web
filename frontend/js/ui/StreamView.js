@@ -108,7 +108,7 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, hdr = false) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, hdr = false, videoWorker = true) {
         this.container = container;
         // HDR (10-bit) negotiated by the backend. When true, the decoder is
         // configured with a BT.2020/PQ color space instead of BT.709.
@@ -133,14 +133,15 @@ export class StreamView {
         this._isRemote = isRemote;
         this._showPerfStats = showPerformanceStats;
 
-        // ── OffscreenCanvas video worker (opt-in) ───────────────────────────
+        // ── OffscreenCanvas video worker ────────────────────────────────────
         // Moves WebCodecs decode + canvas rendering off the main UI thread.
-        // Default OFF: the proven main-thread pipeline stays the default. Enable
-        // with localStorage 'mw_video_worker' = '1'. Not used for the native RTP
-        // media transport (the browser renders the <video> directly).
+        // Controlled by the "Decode on worker thread" setting (default ON), and
+        // only when the browser supports it. Not used for the native RTP media
+        // transport (the browser renders the <video> directly). Falls back to the
+        // main-thread pipeline automatically if the worker cannot start.
         this._useWorker = false;
         try {
-            this._useWorker = (localStorage.getItem('mw_video_worker') === '1')
+            this._useWorker = (videoWorker !== false)
                 && transport !== 'webrtc-media'
                 && typeof Worker !== 'undefined'
                 && typeof OffscreenCanvas !== 'undefined'

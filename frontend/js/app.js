@@ -675,6 +675,9 @@ const MoonlightApp = {
                     ? streamingSettings.touch_sensitivity : 2.0;
                 // VSync (default on): when off, the canvas allows tearing (lower latency)
                 const vsync = streamingSettings.vsync_enabled !== false;
+                // Video worker (default on): decode+render on an OffscreenCanvas
+                // worker thread. StreamView falls back to main-thread if unsupported.
+                const videoWorker = streamingSettings.video_worker !== false;
                 this.streamView = new StreamView(
                     document.getElementById('app'),
                     result.signalingUrl || result.wsUrl,
@@ -689,7 +692,8 @@ const MoonlightApp = {
                     showPerfStats,
                     touchSensitivity,
                     vsync,
-                    result.hdr === true
+                    result.hdr === true,
+                    videoWorker
                 );
 
                 // ── Callback when streaming quits (Stop button / disconnect) ─
