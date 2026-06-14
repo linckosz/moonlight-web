@@ -32,6 +32,7 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._touchSensitivity = 2.0;
         this._vsync = true;
+        this._videoWorker = true;
         this._mediaTrackOnlyH264 = false;
 
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
@@ -95,6 +96,7 @@ export class SettingsView {
         this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
             ? data.touch_sensitivity : 2.0;
         this._vsync = data.vsync_enabled !== false;
+        this._videoWorker = data.video_worker !== false;
     }
 
     /**
@@ -145,7 +147,8 @@ export class SettingsView {
             stream_fps: this._streamFps,
             hdr_enabled: this._hdrEnabled,
             touch_sensitivity: this._touchSensitivity,
-            vsync_enabled: this._vsync
+            vsync_enabled: this._vsync,
+            video_worker: this._videoWorker
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -271,6 +274,7 @@ export class SettingsView {
             const sensRaw = parseFloat(this.container.querySelector('#settings-sensitivity')?.value);
             const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
             const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
+            const videoWorker = this.container.querySelector('#settings-video-worker')?.checked ?? this._videoWorker;
 
             // Update internal state
             this._videoCodec = codec;
@@ -282,6 +286,7 @@ export class SettingsView {
             this._hdrEnabled = hdr;
             this._touchSensitivity = sensitivity;
             this._vsync = vsync;
+            this._videoWorker = videoWorker;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -300,6 +305,7 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._touchSensitivity = 2.0;
         this._vsync = true;
+        this._videoWorker = true;
         // Bitrate follows the 1080p60 SDR reference
         this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false);
 
@@ -487,6 +493,17 @@ export class SettingsView {
                     </div>
 
                     <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-video-worker"
+                                ${this._videoWorker ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>Decode on worker thread</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas) for smoother playback on busy/low-power devices. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
+                    </div>
+
+                    <div class="settings-field">
                         <label class="settings-label" for="settings-sensitivity">
                             Pointer Sensitivity: <strong id="settings-sensitivity-value">${this._touchSensitivity.toFixed(1)}</strong>×
                         </label>
@@ -566,6 +583,9 @@ export class SettingsView {
 
         const vsyncCheck = this.container.querySelector('#settings-vsync');
         if (vsyncCheck) vsyncCheck.addEventListener('change', () => this._autoSave());
+
+        const workerCheck = this.container.querySelector('#settings-video-worker');
+        if (workerCheck) workerCheck.addEventListener('change', () => this._autoSave());
 
         const sensSlider = this.container.querySelector('#settings-sensitivity');
         if (sensSlider) sensSlider.addEventListener('change', () => this._autoSave());
