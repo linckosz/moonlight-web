@@ -9,6 +9,7 @@ extern "C" {
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QThread>
 #include <QDebug>
 #include <QDateTime>
 #include <QMap>
@@ -1438,6 +1439,15 @@ void DataChannelRelay::onStatsTimerTick()
 
 void DataChannelRelay::stop()
 {
+    // The relay lives on its own session thread. If stop() is called from another
+    // thread (main: /quit, Session::quit, auto-fallback), marshal it onto the
+    // relay thread so timers/DC/PC teardown happen on the owning thread. Queued
+    // (non-blocking) avoids any deadlock; a following deleteLater() posts after.
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this]() { stop(); }, Qt::QueuedConnection);
+        return;
+    }
+
     if (m_Stopping.exchange(true)) {
         qInfo() << "[DataChannelRelay::stop] Already stopping, skip";
         return;

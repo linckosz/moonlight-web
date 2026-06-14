@@ -2,6 +2,8 @@
 #include "MoonlightShim.h"
 
 #include <QCoreApplication>
+#include <QThread>
+#include <QMetaObject>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
@@ -73,6 +75,14 @@ bool StreamRelay::start()
 
 void StreamRelay::stop()
 {
+    // Marshal onto the relay's session thread when called cross-thread (main:
+    // /quit, Session::quit). Queued (non-blocking) avoids deadlock; the WS
+    // server/client teardown must run on the thread that owns those sockets.
+    if (QThread::currentThread() != this->thread()) {
+        QMetaObject::invokeMethod(this, [this]() { stop(); }, Qt::QueuedConnection);
+        return;
+    }
+
     qInfo() << "[StreamRelay::stop] ENTER, m_Stopping=" << m_Stopping
             << "m_Running=" << m_Running
             << "m_WsClient=" << m_WsClient
