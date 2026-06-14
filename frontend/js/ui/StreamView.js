@@ -2477,8 +2477,17 @@ export class StreamView {
         // so the buffer ownership moves to the worker without aliasing.
         if (this._useWorker) {
             if (this._videoWorker) {
-                const buf = data.buffer.slice(
-                    data.byteOffset, data.byteOffset + data.byteLength);
+                // Transfer the frame buffer to the worker (zero-copy). Reassembled
+                // frames are standalone Uint8Arrays (byteOffset 0, full buffer), so
+                // we can hand over data.buffer directly; otherwise copy the view.
+                // The caller does not touch the bytes after this point.
+                let buf;
+                if (data.byteOffset === 0 && data.byteLength === data.buffer.byteLength) {
+                    buf = data.buffer;
+                } else {
+                    buf = data.buffer.slice(
+                        data.byteOffset, data.byteOffset + data.byteLength);
+                }
                 this._videoWorker.postMessage(
                     { type: 'frame', data: buf, isKeyframe, backendTs }, [buf]);
             }
