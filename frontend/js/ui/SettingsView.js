@@ -32,7 +32,8 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._touchSensitivity = 2.0;
         this._vsync = true;
-        this._videoWorker = true;
+        // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
+        this._videoWorker = 'auto';
         this._mediaTrackOnlyH264 = false;
 
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
@@ -96,7 +97,10 @@ export class SettingsView {
         this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
             ? data.touch_sensitivity : 2.0;
         this._vsync = data.vsync_enabled !== false;
-        this._videoWorker = data.video_worker !== false;
+        // Back-compat: older saves stored a boolean; map it onto the tri-state.
+        const vw = data.video_worker;
+        this._videoWorker = (vw === true || vw === 'on') ? 'on'
+            : (vw === false || vw === 'off') ? 'off' : 'auto';
     }
 
     /**
@@ -274,7 +278,7 @@ export class SettingsView {
             const sensRaw = parseFloat(this.container.querySelector('#settings-sensitivity')?.value);
             const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
             const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
-            const videoWorker = this.container.querySelector('#settings-video-worker')?.checked ?? this._videoWorker;
+            const videoWorker = this.container.querySelector('#settings-video-worker')?.value ?? this._videoWorker;
 
             // Update internal state
             this._videoCodec = codec;
@@ -305,7 +309,7 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._touchSensitivity = 2.0;
         this._vsync = true;
-        this._videoWorker = true;
+        this._videoWorker = 'auto';
         // Bitrate follows the 1080p60 SDR reference
         this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false);
 
@@ -493,14 +497,13 @@ export class SettingsView {
                     </div>
 
                     <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-video-worker"
-                                ${this._videoWorker ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">
-                                <strong>Decode on worker thread</strong>
-                            </span>
-                        </label>
-                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas) for smoother playback on busy/low-power devices. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
+                        <label class="settings-label" for="settings-video-worker">Decode on worker thread</label>
+                        <select id="settings-video-worker" class="settings-select">
+                            <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>Auto (desktop only)</option>
+                            <option value="on" ${this._videoWorker === 'on' ? 'selected' : ''}>On</option>
+                            <option value="off" ${this._videoWorker === 'off' ? 'selected' : ''}>Off</option>
+                        </select>
+                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> enables it on desktop only — on mobile / low-core devices the extra thread competes for scarce cores and can lower fps. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
                     </div>
 
                     <div class="settings-field">
