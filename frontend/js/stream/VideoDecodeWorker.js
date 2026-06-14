@@ -642,7 +642,12 @@ self.onmessage = (e) => {
         S.hdr = !!m.hdr;
         S.isChromeWindowsHevc = !!m.isChromeWindowsHevc;
         S.transport = m.transport || 'webrtc';
-        S.ctx = S.canvas.getContext('2d', m.vsync ? {} : { desynchronized: true });
+        // Always use a low-latency (desynchronized) context in the worker: it
+        // lets the canvas bypass the document compositor and present sooner,
+        // clawing back the ~1-frame latency that an OffscreenCanvas presented
+        // from a worker otherwise adds vs the main-thread rAF path. (m.vsync is
+        // kept for reference; tearing is acceptable for a real-time game stream.)
+        S.ctx = S.canvas.getContext('2d', { desynchronized: true });
         S.canvas.width = 1920;
         S.canvas.height = 1080;
         S.nalParser = new NalParser();
