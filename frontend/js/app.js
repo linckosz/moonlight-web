@@ -670,9 +670,9 @@ const MoonlightApp = {
                 const transportMode = result.transport_mode || internalTransport;
                 // Respect the "show performance stats" setting (default: true)
                 const showPerfStats = streamingSettings.show_performance_stats !== false;
-                // Touch/trackpad sensitivity (default 2.0)
+                // Touch/trackpad sensitivity (default 2.2)
                 const touchSensitivity = typeof streamingSettings.touch_sensitivity === 'number'
-                    ? streamingSettings.touch_sensitivity : 2.0;
+                    ? streamingSettings.touch_sensitivity : 2.2;
                 // VSync (default on): when off, the canvas allows tearing (lower latency)
                 const vsync = streamingSettings.vsync_enabled !== false;
                 // Video worker (default on): decode+render on an OffscreenCanvas
