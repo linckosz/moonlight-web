@@ -1,5 +1,15 @@
 /* Moonlight-Web — Streaming View Styles */
 
+/* While a stream is active, the overlay owns the screen. Hide the underlying
+   app (header, content, footer) so pinch-zoom/pan or the iOS virtual keyboard
+   pushing the viewport can never reveal the apps grid, settings or buttons
+   beneath the stream — the stream has absolute visual priority. */
+body.streaming-active .app-header,
+body.streaming-active #main-content,
+body.streaming-active .app-footer {
+    display: none !important;
+}
+
 .stream-overlay {
     position: fixed;
     inset: 0;
@@ -457,7 +467,7 @@
     top: 50%;
     transform: translateY(-50%);
     display: inline-flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: center;
     height: 30px;
     padding: 0 12px;
@@ -465,17 +475,11 @@
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     color: rgba(255, 255, 255, 0.65);
-    font-size: 16px;
+    font-size: 19px;
     line-height: 30px;
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
-}
-.btn-stream-kbd .kbd-arrow {
-    font-size: 9px;
-    line-height: 1;
-    margin-left: 1px;
-    margin-top: 4px;
 }
 .btn-stream-kbd:hover {
     background: rgba(255, 255, 255, 0.12);

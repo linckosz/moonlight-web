@@ -61,6 +61,14 @@ HttpResponse StaticFileHandler::serveFile(const QString& requestPath) const
     resp.statusCode = 200;
     resp.contentType = mimeType(fileInfo.suffix());
     resp.body = file.readAll();
+
+    // Text assets (html/css/js/manifest) must always be revalidated: iOS
+    // WebKit otherwise caches them aggressively (even across PWA reinstalls),
+    // so frontend edits never reach the device. Images/fonts may be cached.
+    const QString ext = fileInfo.suffix().toLower();
+    if (ext == "html" || ext == "css" || ext == "js" || ext == "webmanifest" || ext == "json")
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate";
+
     return resp;
 }
 

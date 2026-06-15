@@ -135,11 +135,13 @@ export class StreamView {
 
         // ── OffscreenCanvas video worker ────────────────────────────────────
         // Moves WebCodecs decode + canvas rendering off the main UI thread.
-        // Controlled by the "Decode on worker thread" setting, a tri-state:
-        //   'auto' (default) → heuristic: ON on desktop, OFF on mobile / low-core
-        //     devices, where the extra hot thread contends for scarce cores and
-        //     OffscreenCanvas-from-worker presentation can be slower → lower fps.
-        //   'on' / 'off' (or legacy boolean true/false) → explicit user override.
+        // Controlled by the "Decode on worker thread" setting, a tri-state.
+        // The setting is hidden from the UI (kept as a debug override); the
+        // effective default is 'auto':
+        //   'auto' (default) → ON above 4 logical cores, OFF at ≤4, regardless
+        //     of device type. Below 5 cores the extra hot thread contends for
+        //     scarce cores and presentation can be slower → lower fps.
+        //   'on' / 'off' (or legacy boolean true/false) → explicit override.
         // Never used for the native RTP media transport (the browser renders the
         // <video> directly). Falls back to the main-thread pipeline automatically
         // if the worker cannot start.
@@ -152,10 +154,9 @@ export class StreamView {
         } else if (workerMode === 'off') {
             workerWanted = false;
         } else {
-            // Auto: enable only on desktop-class hardware.
+            // Auto: enable above 4 logical cores, regardless of device type.
             const cores = navigator.hardwareConcurrency || 4;
-            const isMobile = /Android|Mobile|iPhone|iPad|iPod|Tablet/i.test(navigator.userAgent || '');
-            workerWanted = !isMobile && cores > 4;
+            workerWanted = cores > 4;
         }
         this._useWorker = false;
         try {
@@ -300,13 +301,18 @@ export class StreamView {
         this._touchLongPressTimer = null;     // timer that engages drag after a still hold
         this._touchLongPressMs = 450;         // ms hold (still) before a drag engages
         // Pinch-zoom state (mobile): scale + pan applied to the streamed display only.
-        this._zoom = 1;                       // current display scale (1..4)
+        this._zoom = 1;                       // current display scale (1..6)
         this._panX = 0;                       // pan offset in CSS px (applied before scale)
         this._panY = 0;
         this._pinchPrevDist = 0;              // previous finger spacing during a multi-finger gesture
         this._pinchPrevCx = null;             // previous centroid (of all touches)
         this._pinchPrevCy = null;
         this._lastMoveFingerCount = 0;        // finger count of the last touchmove (reseed trackers on change)
+        // Two-finger scroll: amplification + inertial (momentum) glide after release.
+        this._scrollScale = 4;                // finger px → wheel delta units (faster scroll)
+        this._scrollAccum = 0;                // fractional wheel-delta carry between frames
+        this._scrollSamples = [];             // recent {t, y} centroid samples (flick velocity)
+        this._scrollMomentumRaf = null;       // rAF id for the inertial glide loop
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
         this._touchSensitivity = (typeof touchSensitivity === 'number' && touchSensitivity > 0)
             ? touchSensitivity : 2.0;
@@ -315,6 +321,7 @@ export class StreamView {
         this._kbdBtn = null;
         this._kbdCapture = null;
         this._kbdVisible = false;
+        this._kbdBlurAt = 0;                  // timestamp of last capture blur
         this._onViewportResize = null;        // VisualViewport handler (keyboard push-up)
 
         // Mobile fullscreen button state
@@ -644,6 +651,10 @@ export class StreamView {
         `;
         document.getElementById('app').appendChild(el);
 
+        // Stream owns the screen: hide the underlying app (header/content/footer)
+        // so zoom/pan or the iOS keyboard can never reveal it behind the stream.
+        document.body.classList.add('streaming-active');
+
         // Whole-surface input element: touch events are captured on the full
         // overlay (trackpad model), not just the canvas/video rectangle.
         this.streamEl = el;
@@ -791,7 +802,7 @@ export class StreamView {
             this._kbdBtn = document.createElement('button');
             this._kbdBtn.id = 'btn-stream-keyboard';
             this._kbdBtn.className = 'btn-stream-kbd';
-            this._kbdBtn.innerHTML = '⌨<span class="kbd-arrow">▴</span>';
+            this._kbdBtn.textContent = '⌨';
             this._kbdBtn.title = 'Show on-screen keyboard';
             this._kbdBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -2926,6 +2937,7 @@ export class StreamView {
             this.streamEl.removeEventListener('touchmove', this._onTouchMove);
             this.streamEl.removeEventListener('touchend', this._onTouchEnd);
             this.streamEl.removeEventListener('touchcancel', this._onTouchEnd);
+            this._stopScrollMomentum();
         }
         if (this.inputEl) {
             this.inputEl.removeEventListener('wheel', this._onWheel);
@@ -3428,7 +3440,35 @@ export class StreamView {
 
         this._resetKbdCapture();
 
-        cap.addEventListener('input', () => {
+        cap.addEventListener('input', (e) => {
+            // Preferred path: InputEvent exposes an explicit type + data. On iOS
+            // Safari `cap.value` can lag inside the handler (so the sentinel diff
+            // misses characters like "*"), but `e.data`/`e.inputType` are exact.
+            // Gboard composition has no usable data → falls through to the diff.
+            const it = e && e.inputType;
+            if (it === 'insertText' && e.data != null) {
+                this.webrtc.send({ type: 'textinput', text: e.data });
+                this._resetKbdCapture();
+                return;
+            }
+            if (it === 'insertLineBreak' || it === 'insertParagraph') {
+                this._sendKey(0x0D);                 // Enter
+                this._resetKbdCapture();
+                return;
+            }
+            if (it === 'deleteContentBackward') {
+                this._sendKey(0x08);                 // Backspace
+                this._resetKbdCapture();
+                return;
+            }
+            if ((it === 'insertFromPaste' || it === 'insertReplacementText') &&
+                e.data != null) {
+                this.webrtc.send({ type: 'textinput', text: e.data });
+                this._resetKbdCapture();
+                return;
+            }
+
+            // Fallback: diff the sentinel (Android Gboard composition, etc.).
             const val = cap.value;
             const sent = StreamView.KBD_SENTINEL;
             // Common prefix / suffix between the sentinel and the new value.
@@ -3477,6 +3517,7 @@ export class StreamView {
         });
         cap.addEventListener('blur', () => {
             this._kbdVisible = false;
+            this._kbdBlurAt = performance.now();   // for the toggle-button race
             if (this._kbdBtn) this._kbdBtn.classList.remove('active');
         });
     }
@@ -3501,7 +3542,11 @@ export class StreamView {
     }
 
     _toggleVirtualKeyboard() {
-        if (this._kbdVisible) this._hideVirtualKeyboard();
+        // Tapping the toggle button blurs the capture <textarea> first, which
+        // flips _kbdVisible to false before this runs. Treat a very recent blur
+        // as "keyboard was open" so the second tap actually hides it.
+        const justBlurred = (performance.now() - (this._kbdBlurAt || 0)) < 350;
+        if (this._kbdVisible || justBlurred) this._hideVirtualKeyboard();
         else this._showVirtualKeyboard();
     }
 
@@ -3558,6 +3603,9 @@ export class StreamView {
         e.preventDefault();
         const newCount = e.touches.length;
 
+        // Any new touch interrupts an ongoing inertial scroll glide.
+        this._stopScrollMomentum();
+
         // New sequence: first finger of the gesture goes down.
         if (!this._touchActive) {
             this._touchActive = true;
@@ -3565,6 +3613,8 @@ export class StreamView {
             this._touchMoved = false;
             this._touchDragging = false;
             this._touchHadTwoFingers = false;
+            this._scrollAccum = 0;
+            this._scrollSamples.length = 0;
             const t = e.touches[0];
             this._touchStartX = t.clientX;
             this._touchStartY = t.clientY;
@@ -3715,7 +3765,7 @@ export class StreamView {
             // Classify the frame: a clear change in finger spacing → pinch/zoom;
             // otherwise a parallel drag → scroll.
             if (Math.abs(dDist) > 2 && Math.abs(dDist) >= Math.abs(dCy)) {
-                const newZoom = Math.min(4, Math.max(1, this._zoom * (dist / this._pinchPrevDist)));
+                const newZoom = Math.min(6, Math.max(1, this._zoom * (dist / this._pinchPrevDist)));
                 const f = newZoom / this._zoom;
                 if (f !== 1 && this.canvasArea) {
                     const rect = this.canvasArea.getBoundingClientRect();
@@ -3727,8 +3777,25 @@ export class StreamView {
                 this._zoom = newZoom;
                 if (this._zoom <= 1.001) { this._panX = 0; this._panY = 0; }
                 this._applyZoomTransform();
-            } else if (Math.abs(dCy) > 1) {
-                this.webrtc.send({ type: 'mousewheel', delta: dCy });
+                this._scrollSamples.length = 0;   // pinching cancels pending inertia
+            } else if (Math.abs(dCy) > 0.1) {
+                // Parallel two-finger drag → vertical scroll wheel, amplified and
+                // with fractional carry so slow drags still register. Record
+                // centroid samples to derive the flick velocity at release.
+                const scaled = dCy * this._scrollScale;
+                this._scrollAccum += scaled;
+                const whole = Math.trunc(this._scrollAccum);
+                if (whole !== 0) {
+                    this.webrtc.send({ type: 'mousewheel', delta: whole });
+                    this._scrollAccum -= whole;
+                }
+                const now = performance.now();
+                this._scrollSamples.push({ t: now, y: cy });
+                // Keep only the last ~120 ms of samples.
+                while (this._scrollSamples.length > 2 &&
+                       now - this._scrollSamples[0].t > 120) {
+                    this._scrollSamples.shift();
+                }
             }
 
             this._pinchPrevDist = dist;
@@ -3793,6 +3860,13 @@ export class StreamView {
             }
         }
 
+        // Inertial scroll: if the gesture ended on a flicking two-finger drag,
+        // keep gliding with a decaying velocity (phone-like momentum). Velocity
+        // is derived from the recent centroid samples (px/frame → wheel units).
+        if (!isTap && !this._touchDragging && this._touchMaxFingers === 2) {
+            this._startScrollMomentum();
+        }
+
         // Reset sequence state.
         this._touchActive = false;
         this._touchDragging = false;
@@ -3800,10 +3874,53 @@ export class StreamView {
         this._touchHadTwoFingers = false;
         this._touchFingerCount = 0;
         this._touchMaxFingers = 0;
+        this._scrollAccum = 0;
+        this._scrollSamples.length = 0;
         this._pinchPrevDist = 0;
         this._pinchPrevCx = null;
         this._pinchPrevCy = null;
         this._lastMoveFingerCount = 0;
+    }
+
+    /** Start the inertial scroll glide. Computes the release velocity from the
+     *  recent centroid samples, then sends decaying wheel deltas each frame
+     *  until the velocity dies out (or a new touch cancels it). */
+    _startScrollMomentum() {
+        this._stopScrollMomentum();
+
+        // Flick velocity from the oldest→newest recent sample (px per frame).
+        const s = this._scrollSamples;
+        if (s.length < 2) return;
+        const a = s[0], b = s[s.length - 1];
+        const dt = b.t - a.t;
+        // Only glide on a fresh flick (last sample very recent, real movement).
+        if (dt <= 0 || performance.now() - b.t > 80) return;
+        let v = ((b.y - a.y) / dt) * 16.67 * this._scrollScale; // wheel units/frame
+        v = Math.max(-400, Math.min(400, v));                   // clamp wild flicks
+        if (Math.abs(v) < 1.5) return;                          // too slow → no glide
+
+        let acc = this._scrollAccum;        // carry leftover fractional delta
+        const friction = 0.95;              // per-frame decay (higher = longer glide)
+        const step = () => {
+            v *= friction;
+            if (Math.abs(v) < 0.4) { this._scrollMomentumRaf = null; return; }
+            acc += v;
+            const whole = Math.trunc(acc);
+            if (whole !== 0) {
+                this.webrtc.send({ type: 'mousewheel', delta: whole });
+                acc -= whole;
+            }
+            this._scrollMomentumRaf = requestAnimationFrame(step);
+        };
+        this._scrollMomentumRaf = requestAnimationFrame(step);
+    }
+
+    /** Cancel any running inertial scroll glide. */
+    _stopScrollMomentum() {
+        if (this._scrollMomentumRaf != null) {
+            cancelAnimationFrame(this._scrollMomentumRaf);
+            this._scrollMomentumRaf = null;
+        }
     }
 
     handlePointerLockChange() {
@@ -4262,5 +4379,8 @@ export class StreamView {
 
         const el = document.getElementById('stream-view');
         if (el) el.remove();
+
+        // Restore the underlying app now that the stream overlay is gone.
+        document.body.classList.remove('streaming-active');
     }
 }
