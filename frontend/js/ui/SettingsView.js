@@ -496,14 +496,16 @@ export class SettingsView {
                         <span class="setting-desc">Synchronizes frames to the display refresh. Uncheck to allow tearing for lower latency (all transports)</span>
                     </div>
 
-                    <div class="settings-field">
+                    <!-- Hidden: too technical for the average user. Kept in the DOM
+                         (display:none) as a debug override; defaults to 'auto'. -->
+                    <div class="settings-field" style="display:none">
                         <label class="settings-label" for="settings-video-worker">Decode on worker thread</label>
                         <select id="settings-video-worker" class="settings-select">
-                            <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>Auto (desktop only)</option>
+                            <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>Auto (by core count)</option>
                             <option value="on" ${this._videoWorker === 'on' ? 'selected' : ''}>On</option>
                             <option value="off" ${this._videoWorker === 'off' ? 'selected' : ''}>Off</option>
                         </select>
-                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> enables it on desktop only — on mobile / low-core devices the extra thread competes for scarce cores and can lower fps. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
+                        <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> enables it above 4 logical cores. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
                     </div>
 
                     <div class="settings-field">

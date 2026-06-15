@@ -38,6 +38,7 @@ import { AdminView } from './ui/AdminView.js';
 import { LoginView } from './ui/LoginView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
+import { VersionGuard } from './util/VersionGuard.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
@@ -102,6 +103,9 @@ const MoonlightApp = {
 
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
+
+        // Reload the app if a newer build is deployed while it stays open.
+        VersionGuard.start();
 
         // ── Hide admin/settings buttons upfront for non-localhost ─────────
         // They will be revealed by _initNavButtons() if authenticated.

@@ -30,6 +30,9 @@
 html {
     height: 100%;
     overflow: hidden;
+    /* Solid dark base so the iOS safe-area regions (notch, home indicator)
+       never show the white default page background behind the app. */
+    background-color: #131325;
 }
 
 body {
@@ -60,6 +63,11 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 12px 24px;
+    /* Mobile: viewport-fit=cover + translucent status bar push content under
+       the notch/status bar — inset the header so the title stays visible. */
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
     background: rgba(22, 33, 62, 0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
@@ -380,6 +388,11 @@ body {
 .app-footer {
     text-align: center;
     padding: 8px 24px;
+    /* Extend the footer's dark background into the home-indicator safe area
+       so its text clears the indicator and no white bar shows underneath. */
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
     font-size: 0.75rem;
     color: var(--text-secondary);
     border-top: 1px solid var(--border);
@@ -396,6 +409,11 @@ body {
 
     .app-header {
         padding: 10px 16px;
+        /* Keep the safe-area insets — the shorthand above would otherwise
+           reset padding-top and let the title slide under the status bar. */
+        padding-top: max(10px, env(safe-area-inset-top));
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
     }
 
     .host-card {
