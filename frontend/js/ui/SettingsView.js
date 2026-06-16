@@ -35,6 +35,12 @@ export class SettingsView {
         // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
         this._videoWorker = 'auto';
         this._mediaTrackOnlyH264 = false;
+        // Video enhancement (WebGPU upscale/sharpen): 'off'|'on' + algo selector.
+        // The algo selector is exposed only in debug builds (server reports it);
+        // in production the algo is forced to 'auto'.
+        this._videoEnhancement = 'off';
+        this._videoEnhancementAlgo = 'auto';
+        this._debugBuild = false;
 
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
         this._codecSupport = null;
@@ -46,6 +52,7 @@ export class SettingsView {
     async start() {
         await this._loadState();
         this._codecSupport = await this._checkCodecSupport();
+        this._webgpuUsable = await this._checkWebGpuSupport();
         this.render();
         this.bindEvents();
     }
@@ -69,6 +76,7 @@ export class SettingsView {
         try {
             const data = await BackendClient.getStreamingSettings();
             this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
+            this._debugBuild = data.debug_build === true;
 
             if (!stored) {
                 this._applySettings(data);
@@ -101,6 +109,9 @@ export class SettingsView {
         const vw = data.video_worker;
         this._videoWorker = (vw === true || vw === 'on') ? 'on'
             : (vw === false || vw === 'off') ? 'off' : 'auto';
+        this._videoEnhancement = data.video_enhancement === 'on' ? 'on' : 'off';
+        const algo = data.video_enhancement_algo;
+        this._videoEnhancementAlgo = (algo === 'sgsr' || algo === 'fsr1' || algo === 'off') ? algo : 'auto';
     }
 
     /**
@@ -152,7 +163,9 @@ export class SettingsView {
             hdr_enabled: this._hdrEnabled,
             touch_sensitivity: this._touchSensitivity,
             vsync_enabled: this._vsync,
-            video_worker: this._videoWorker
+            video_worker: this._videoWorker,
+            video_enhancement: this._videoEnhancement,
+            video_enhancement_algo: this._videoEnhancementAlgo
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -230,6 +243,21 @@ export class SettingsView {
     }
 
     /**
+     * Probe WebGPU usability for the Video Enhancement feature (consumed by the
+     * UI graying in a later commit). Probes the adapter, NOT the device — the
+     * device is created by the renderer at launch (Canvas2D fallback on failure).
+     */
+    async _checkWebGpuSupport() {
+        try {
+            if (!navigator.gpu) return false;
+            const adapter = await navigator.gpu.requestAdapter();
+            return !!adapter;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    /**
      * Return the effective codec to display in the dropdown, considering:
      * 1. MediaTrack transport forces H.264
      * 2. Browser codec support (preferred codec may be unsupported)
@@ -279,6 +307,11 @@ export class SettingsView {
             const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
             const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
             const videoWorker = this.container.querySelector('#settings-video-worker')?.value ?? this._videoWorker;
+            const veCheck = this.container.querySelector('#settings-video-enhancement');
+            const videoEnhancement = veCheck ? (veCheck.checked ? 'on' : 'off') : this._videoEnhancement;
+            // Algo dropdown only exists in debug builds; production forces 'auto'.
+            const veAlgoEl = this.container.querySelector('#settings-video-enhancement-algo');
+            const videoEnhancementAlgo = (this._debugBuild && veAlgoEl) ? veAlgoEl.value : 'auto';
 
             // Update internal state
             this._videoCodec = codec;
@@ -291,6 +324,8 @@ export class SettingsView {
             this._touchSensitivity = sensitivity;
             this._vsync = vsync;
             this._videoWorker = videoWorker;
+            this._videoEnhancement = videoEnhancement;
+            this._videoEnhancementAlgo = videoEnhancementAlgo;
 
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
@@ -310,6 +345,8 @@ export class SettingsView {
         this._touchSensitivity = 2.0;
         this._vsync = true;
         this._videoWorker = 'auto';
+        this._videoEnhancement = 'off';
+        this._videoEnhancementAlgo = 'auto';
         // Bitrate follows the 1080p60 SDR reference
         this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false);
 
@@ -388,6 +425,23 @@ export class SettingsView {
             `<option value="${f}" ${f === this._streamFps ? 'selected' : ''}>${f} FPS</option>`
         ).join('');
 
+        // Video Enhancement (WebGPU upscale/sharpen) — grayed out if WebGPU is
+        // unavailable, like the per-codec graying.
+        const webgpuUnavailable = !this._webgpuUsable;
+        const veDisabledAttr = webgpuUnavailable ? ' disabled' : '';
+        const veAlgos = [
+            { value: 'auto', label: 'Auto (mobile→SGSR, desktop→FSR1)', disabled: false },
+            { value: 'off',  label: 'Off (WebGPU pass-through, no upscaler)', disabled: false },
+            { value: 'sgsr', label: 'SGSR (Snapdragon)', disabled: false },
+            { value: 'fsr1', label: 'FSR 1 (AMD)', disabled: false }
+        ];
+        const veAlgoOptions = veAlgos.map(a =>
+            `<option value="${a.value}" ${a.value === this._videoEnhancementAlgo ? 'selected' : ''}${a.disabled ? ' disabled' : ''}>${this.esc(a.label)}</option>`
+        ).join('');
+        const veNote = webgpuUnavailable
+            ? `<div class="settings-note">WebGPU is not available in this browser — video enhancement is disabled.</div>`
+            : '';
+
         this.container.innerHTML = `
             <div class="settings-view" id="view-settings">
                 <div class="settings-header">
@@ -455,6 +509,21 @@ export class SettingsView {
                             <span>5 Mbps</span>
                             <span>150 Mbps</span>
                         </div>
+                    </div>
+
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-video-enhancement"
+                                ${this._videoEnhancement === 'on' ? 'checked' : ''}${veDisabledAttr} />
+                            <span class="settings-checkbox-text">
+                                <strong>Video Enhancement</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">GPU upscaling &amp; sharpening of the video (WebGPU). Applied at stream start; forces the DataChannel/WSS transport.</span>
+                        ${this._debugBuild ? `<select id="settings-video-enhancement-algo" class="settings-select" style="margin-top:8px"${veDisabledAttr}>
+                            ${veAlgoOptions}
+                        </select>` : ''}
+                        ${veNote}
                     </div>
                 </div>
 
@@ -610,6 +679,12 @@ export class SettingsView {
 
         const workerCheck = this.container.querySelector('#settings-video-worker');
         if (workerCheck) workerCheck.addEventListener('change', () => this._autoSave());
+
+        const veSelect = this.container.querySelector('#settings-video-enhancement');
+        if (veSelect) veSelect.addEventListener('change', () => this._autoSave());
+
+        const veAlgoSelect = this.container.querySelector('#settings-video-enhancement-algo');
+        if (veAlgoSelect) veAlgoSelect.addEventListener('change', () => this._autoSave());
 
         const sensSlider = this.container.querySelector('#settings-sensitivity');
         if (sensSlider) sensSlider.addEventListener('change', () => this._autoSave());

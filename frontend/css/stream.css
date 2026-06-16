@@ -115,8 +115,11 @@ body.streaming-active .app-footer {
 
 .stream-canvas {
     display: block;
-    max-width: 100%;
-    max-height: 100%;
+    /* Fill the area while preserving aspect (object-fit letterboxes). Using
+       width/height (not max-*) so a small frame (e.g. 720p) is scaled up to the
+       edges instead of sitting at its native size. */
+    width: 100%;
+    height: 100%;
     object-fit: contain;
     /* cursor is managed per-mode by JS: hidden in non-gaming, visible pre-focus in gaming */
 }
@@ -238,7 +241,9 @@ body.streaming-active .app-footer {
     position: fixed;
     top: 10px;
     left: 10px;
-    z-index: 100;
+    /* Above the CSS-fallback fullscreen canvas area (z-index 9999) so the stats
+       stay visible in fullscreen. */
+    z-index: 10000;
     pointer-events: none;
     background: rgba(8, 8, 14, 0.45);
     backdrop-filter: blur(10px);
@@ -462,10 +467,11 @@ body.streaming-active .app-footer {
 
 /* ── On-screen keyboard toggle (touch devices) ─────────────────────────── */
 .btn-stream-kbd {
-    position: absolute;
-    left: 24px;
-    top: 50%;
-    transform: translateY(-50%);
+    /* In the header flex flow on the right (left of Stop), so it never sits
+       under the top-left stats overlay. The fullscreen button is absolute-center,
+       so the flex items are just this button and Stop. */
+    position: relative;
+    margin-right: 12px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -487,7 +493,7 @@ body.streaming-active .app-footer {
     border-color: rgba(255, 255, 255, 0.3);
 }
 .btn-stream-kbd:active {
-    transform: translateY(-50%) scale(0.95);
+    transform: scale(0.95);
 }
 .btn-stream-kbd.active {
     background: var(--accent);

@@ -94,7 +94,13 @@
       "Bash(git rm *)",
       "Bash(rm .claude/agents/expert-moonlight-qt.md .claude/agents/expert-moonlight-xbox.md .claude/agents/expert-moonlight-web-stream.md)",
       "Bash(node --check frontend/js/util/Av1Utils.js)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__ide__getDiagnostics",
+      "Read(//c/Users/Minis/Downloads/**)",
+      "Bash(cp Capture4.png D:/Code/moonlight-web-deepseek/.mw_shot.png)",
+      "Bash(rm -f D:/Code/moonlight-web-deepseek/.mw_shot.png)"
     ]
   }
 }

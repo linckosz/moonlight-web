@@ -85,6 +85,20 @@ public:
     bool hdrEnabled() const;
     void setHdrEnabled(bool enabled);
 
+    // ── Video enhancement (WebGPU upscale/sharpen) ─────────────────────────────
+    //
+    // Client-side feature (the browser renders via WebGPU). Persisted here so the
+    // setting syncs across browsers. Stored as JSON string "video_enhancement"
+    // ("off" default | "on") and "video_enhancement_algo" ("auto" | "off" | "sgsr" | "fsr1").
+    // When "on", the launch transport negotiation skips webrtc-media (the canvas
+    // pipeline is required).
+
+    QString videoEnhancement() const;
+    void setVideoEnhancement(const QString& value);
+
+    QString videoEnhancementAlgo() const;
+    void setVideoEnhancementAlgo(const QString& algo);
+
     // ── UPnP NAT traversal ────────────────────────────────────────────────────
 
     /// Whether UPnP port mapping is enabled for WebRTC NAT traversal.

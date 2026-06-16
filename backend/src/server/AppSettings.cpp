@@ -384,6 +384,35 @@ void AppSettings::setTransportMode(const QString& mode)
     writeAll(obj);
 }
 
+// ── Video enhancement ───────────────────────────────────────────────────────
+
+QString AppSettings::videoEnhancement() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("video_enhancement").toString() == "on" ? "on" : "off";
+}
+
+void AppSettings::setVideoEnhancement(const QString& value)
+{
+    QJsonObject obj = readAll();
+    obj["video_enhancement"] = (value == "on") ? "on" : "off";
+    writeAll(obj);
+}
+
+QString AppSettings::videoEnhancementAlgo() const
+{
+    QJsonObject obj = readAll();
+    QString a = obj.value("video_enhancement_algo").toString();
+    return (a == "sgsr" || a == "fsr1" || a == "off") ? a : "auto";
+}
+
+void AppSettings::setVideoEnhancementAlgo(const QString& algo)
+{
+    QJsonObject obj = readAll();
+    obj["video_enhancement_algo"] = (algo == "sgsr" || algo == "fsr1" || algo == "off") ? algo : "auto";
+    writeAll(obj);
+}
+
 bool AppSettings::pendingRegistration() const
 {
     QJsonObject obj = readAll();
