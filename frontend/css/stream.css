@@ -36,7 +36,11 @@ body.streaming-active .app-footer {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    padding: 12px 24px;
+    /* Honor the safe-area insets so the header never sits under the iOS
+       status bar / notch in "Add to Home Screen" standalone mode (env() is
+       0 on devices without insets, so this is harmless on desktop). */
+    padding: max(12px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+             12px max(24px, env(safe-area-inset-left));
     background: #111;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     flex-shrink: 0;
@@ -236,6 +240,17 @@ body.streaming-active .app-footer {
     box-sizing: border-box;
 }
 
+/* Gesture chips (touch help): wider, sentence-case label rather than a key. */
+.shortcut-keys kbd.gesture {
+    min-width: 0;
+    padding: 0 10px;
+    font-size: 11.5px;
+    letter-spacing: 0.2px;
+    background: rgba(240, 192, 64, 0.12);
+    border-color: rgba(240, 192, 64, 0.28);
+    color: rgba(255, 255, 255, 0.92);
+}
+
 /* ── Streaming stats overlay (top-LEFT, discreet glass card) ───────── */
 .stream-stats-overlay {
     position: fixed;
@@ -321,8 +336,9 @@ body.streaming-active .app-footer {
     z-index: 200;
     pointer-events: none;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 22px;
+    align-items: center;
+    text-align: center;
+    gap: 18px;
     transition: opacity 0.5s ease;
 }
 
@@ -377,58 +393,79 @@ body.streaming-active .app-footer {
     50% { transform: scale(1.3); opacity: 0.6; }
 }
 
-/* ── Futuristic loader (sweeping ring + pulsing core) ──────────────────── */
+/* ── Futuristic loader — dual sweeping arcs + breathing core ───────────── */
 .startup-loader {
-    align-self: center;
     position: relative;
-    width: 68px;
-    height: 68px;
-    margin-bottom: 10px;
+    width: 84px;
+    height: 84px;
+    margin-bottom: 6px;
 }
 
-/* Donut ring with a single colored arc fading to transparent — the conic
-   gradient is clipped to a thin ring by a radial mask, then spun. */
+/* Outer ring: a single bright arc fading to transparent (conic gradient
+   clipped to a thin ring by a radial mask), spun clockwise. Unicolor. */
 .startup-loader-ring {
     position: absolute;
     inset: 0;
     border-radius: 50%;
     background: conic-gradient(from 0deg,
         rgba(240, 192, 64, 0) 0deg,
-        rgba(240, 192, 64, 0.10) 130deg,
-        rgba(240, 192, 64, 0.55) 280deg,
-        #f0c040 350deg,
+        rgba(240, 192, 64, 0.06) 150deg,
+        rgba(240, 192, 64, 0.45) 300deg,
+        #f0c040 352deg,
         #f0c040 360deg);
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
-            mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
-    animation: startup-spin 0.85s linear infinite;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    animation: startup-spin 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+    filter: drop-shadow(0 0 6px rgba(240, 192, 64, 0.35));
 }
 
-/* Static faint ring track behind the arc for depth. */
+/* Inner ring: shorter arc, counter-rotating faster — adds the "futuristic"
+   layered motion while staying strictly one color. */
+.startup-loader-ring::after {
+    content: '';
+    position: absolute;
+    inset: 14px;
+    border-radius: 50%;
+    background: conic-gradient(from 180deg,
+        rgba(240, 192, 64, 0) 0deg,
+        rgba(240, 192, 64, 0) 250deg,
+        #f0c040 350deg,
+        #f0c040 360deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+    animation: startup-spin-rev 0.8s linear infinite;
+}
+
+/* Static faint ring track behind the arcs for depth. */
 .startup-loader::before {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    border: 4px solid rgba(240, 192, 64, 0.08);
+    border: 3px solid rgba(240, 192, 64, 0.07);
 }
 
-/* Glowing core dot. */
+/* Glowing core dot — breathes in sync with the active step. */
 .startup-loader::after {
     content: '';
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 9px;
-    height: 9px;
-    margin: -4.5px 0 0 -4.5px;
+    width: 8px;
+    height: 8px;
+    margin: -4px 0 0 -4px;
     border-radius: 50%;
     background: #f0c040;
-    box-shadow: 0 0 14px rgba(240, 192, 64, 0.75);
-    animation: startup-pulse 1.2s ease-in-out infinite;
+    box-shadow: 0 0 16px rgba(240, 192, 64, 0.85);
+    animation: startup-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes startup-spin {
     to { transform: rotate(360deg); }
+}
+
+@keyframes startup-spin-rev {
+    to { transform: rotate(-360deg); }
 }
 
 /* ── Fullscreen button — centered in the header bar ────────────────────── */
@@ -548,11 +585,11 @@ body.streaming-active .app-footer {
     object-fit: contain;
 }
 
-/* ── "Add to Home Screen" hint (iOS, shown over CSS fullscreen) ─────────── */
+/* ── "Add to Home Screen" hint (iOS) — pinned to the TOP of the stream ─── */
 .install-hint {
     position: fixed;
     left: 50%;
-    bottom: max(24px, env(safe-area-inset-bottom, 24px));
+    top: max(16px, env(safe-area-inset-top, 16px));
     transform: translateX(-50%);
     z-index: 100000;
     max-width: min(92vw, 460px);

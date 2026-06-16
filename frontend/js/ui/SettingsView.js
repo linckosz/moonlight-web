@@ -516,7 +516,7 @@ export class SettingsView {
                             <input type="checkbox" id="settings-video-enhancement"
                                 ${this._videoEnhancement === 'on' ? 'checked' : ''}${veDisabledAttr} />
                             <span class="settings-checkbox-text">
-                                <strong>Video Enhancement</strong>
+                                <strong>Video Enhancement${webgpuUnavailable ? ' (unavailable)' : ''}</strong>
                             </span>
                         </label>
                         <span class="setting-desc">GPU upscaling &amp; sharpening of the video (WebGPU). Applied at stream start; forces the DataChannel/WSS transport.</span>
