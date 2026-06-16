@@ -14,6 +14,7 @@ extern "C" {
 
 #include <QCoreApplication>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QDebug>
 #include <QUrl>
 #include <QThread>
@@ -547,6 +548,13 @@ void StreamSession::onShimConnectionStarted()
     // (e.g. rtspenc://192.168.x.x:port) which must not be exposed to the browser.
     result["transport"] = m_Transport;
     result["transport_mode"] = m_TransportMode;
+    // Fallback chain + this attempt's index: the frontend relaunches with the
+    // next index when this transport fails to establish a connection.
+    result["transport_index"] = m_TransportIndex;
+    QJsonArray chainArr;
+    for (const QString& m : m_TransportChain)
+        chainArr.append(m);
+    result["transport_chain"] = chainArr;
 
     if (m_Transport == "wss") {
         // WSS mode: provide the StreamRelay WS URL directly

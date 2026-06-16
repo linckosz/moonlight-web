@@ -2,49 +2,37 @@
 
 #include <QString>
 #include <QStringList>
-#include <QMap>
 
 struct TransportPriorities {
-    struct Entry {
-        int priority = 100;
-        bool available = true;
-    };
-
-    // Lower priority = tried first. available=false = hidden from auto dropdown.
-    static QMap<QString, Entry> defaults() {
-        return {
-            {"webrtc-dc-udp",    {10, true}},
-            {"webrtc-media-udp", {20, true}},
-            {"webrtc-dc-tcp",    {30, true}},
-            {"webrtc-media-tcp", {40, true}},
-            {"wss",              {50, true}}
-        };
-    }
-
-    // Ordered transports sorted by priority (lowest first).
-    // Unavailable transports excluded unless they match forcedExplicit.
-    static QStringList orderedTransports(const QString& forcedExplicit = {}) {
-        auto map = defaults();
-        QList<QPair<int, QString>> sorted;
-        for (auto it = map.begin(); it != map.end(); ++it) {
-            if (!it.value().available && it.key() != forcedExplicit)
-                continue;
-            sorted.append({it.value().priority, it.key()});
+    // Auto-mode fallback order (lowest index = tried first).
+    //
+    //   Video Enhancement OFF:
+    //     1. webrtc-dc-udp     DataChannel (UDP)  → <canvas>
+    //     2. webrtc-dc-tcp     DataChannel (TCP)  → <canvas>
+    //     3. webrtc-media-udp  MediaTrack  (UDP)  → <video>
+    //     4. webrtc-media-tcp  MediaTrack  (TCP)  → <video>
+    //     5. wss               WebSocket Secure   → <canvas>
+    //
+    //   Video Enhancement ON (canvas transports first so WebGPU upscaling
+    //   applies; MediaTrack is kept only as a last resort and streams
+    //   WITHOUT enhancement since <video> cannot be processed by WebGPU):
+    //     1. webrtc-dc-udp     DataChannel (UDP)  → <canvas>
+    //     2. webrtc-dc-tcp     DataChannel (TCP)  → <canvas>
+    //     3. wss               WebSocket Secure   → <canvas>
+    //     4. webrtc-media-udp  MediaTrack  (UDP)  → <video> (no enhancement)
+    //     5. webrtc-media-tcp  MediaTrack  (TCP)  → <video> (no enhancement)
+    static QStringList orderedTransports(bool videoEnhancement = false) {
+        if (videoEnhancement) {
+            return {QStringLiteral("webrtc-dc-udp"),
+                    QStringLiteral("webrtc-dc-tcp"),
+                    QStringLiteral("wss"),
+                    QStringLiteral("webrtc-media-udp"),
+                    QStringLiteral("webrtc-media-tcp")};
         }
-        std::sort(sorted.begin(), sorted.end());
-        QStringList result;
-        for (const auto& pair : sorted)
-            result.append(pair.second);
-        return result;
-    }
-
-    // Priority of a given transport mode (100 = unknown).
-    static int priority(const QString& mode) {
-        return defaults().value(mode).priority;
-    }
-
-    // Whether a transport is available (visible in auto dropdown).
-    static bool available(const QString& mode) {
-        return defaults().value(mode).available;
+        return {QStringLiteral("webrtc-dc-udp"),
+                QStringLiteral("webrtc-dc-tcp"),
+                QStringLiteral("webrtc-media-udp"),
+                QStringLiteral("webrtc-media-tcp"),
+                QStringLiteral("wss")};
     }
 };

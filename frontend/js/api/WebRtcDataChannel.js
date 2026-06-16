@@ -130,6 +130,12 @@ export class WebRtcDataChannel {
         this._wsFallback = false;
         this._fallbackRequestTimer = null;
 
+        // Chain-fallback mode: when set, ICE failures do NOT trigger the
+        // in-session WS fallback. Instead they surface as an error so the
+        // caller (StreamView → MoonlightApp) can relaunch with the next
+        // transport in the priority chain (… → wss is a distinct attempt).
+        this._chainFallback = false;
+
         // ICE connection timeout: if ICE doesn't reach "connected" within
         // 3s, trigger WebSocket fallback (UDP blocked, corporate firewall).
         this._iceTimeout = null;
@@ -374,6 +380,13 @@ export class WebRtcDataChannel {
         console.warn('[WebRTC] ICE timeout — connection not established within ' +
             (this.ICE_TIMEOUT_MS / 1000) + 's');
 
+        // Chain-fallback: surface as an error so the caller relaunches with the
+        // next transport instead of rerouting over the signaling WS in-session.
+        if (this._chainFallback) {
+            this._onError('ICE timeout');
+            return;
+        }
+
         // Try WS fallback: if the signaling WebSocket is still open (TCP),
         // send a fallback request to the backend.
         if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
@@ -559,11 +572,15 @@ export class WebRtcDataChannel {
                 if (!this._stopping) {
                     if (!this._iceConnected) {
                         // ICE transitioned to disconnected/failed BEFORE ever
-                        // reaching connected. This means UDP is blocked
-                        // (e.g. corporate firewall). Try WS fallback instead
-                        // of immediately erroring — the signaling WebSocket
-                        // (TCP) is still open and can carry data.
-                        this._requestWsFallback(state);
+                        // reaching connected. Chain-fallback: surface as error
+                        // so the caller relaunches with the next transport.
+                        // Otherwise try the in-session WS fallback (UDP blocked).
+                        if (this._chainFallback) {
+                            this._clearIceTimer();
+                            this._onError('ICE ' + state);
+                        } else {
+                            this._requestWsFallback(state);
+                        }
                     } else {
                         // ICE WAS connected before — real disconnection.
                         // Cancel ICE timeout — ICE already failed

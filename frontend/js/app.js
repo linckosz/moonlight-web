@@ -670,51 +670,156 @@ const MoonlightApp = {
                 };
                 history.pushState(guardState, '');
 
-                const internalTransport = result.transport || (result.signalingUrl ? 'webrtc' : 'wss');
-                const transportMode = result.transport_mode || internalTransport;
-                // Respect the "show performance stats" setting (default: true)
-                const showPerfStats = streamingSettings.show_performance_stats !== false;
-                // Touch/trackpad sensitivity (default 2.2)
-                const touchSensitivity = typeof streamingSettings.touch_sensitivity === 'number'
-                    ? streamingSettings.touch_sensitivity : 2.2;
-                // VSync (default on): when off, the canvas allows tearing (lower latency)
-                const vsync = streamingSettings.vsync_enabled !== false;
-                // Video worker mode: 'auto' (heuristic — desktop only), 'on' or
-                // 'off'. StreamView resolves 'auto' and falls back to the main
-                // thread if OffscreenCanvas/Worker are unsupported. Older saves
-                // may hold a boolean — pass it through; StreamView normalizes it.
-                const videoWorker = streamingSettings.video_worker;
-                // Video enhancement (WebGPU upscale/sharpen): 'on' forces a
-                // canvas transport (DC/WSS) — the backend skips webrtc-media.
-                const videoEnhancement = streamingSettings.video_enhancement === 'on' ? 'on' : 'off';
-                const videoEnhancementAlgo = streamingSettings.video_enhancement_algo || 'auto';
-                this.streamView = new StreamView(
-                    document.getElementById('app'),
-                    result.signalingUrl || result.wsUrl,
-                    host,
-                    result.videoCodec,
-                    result.gamingMode !== false,
-                    upnpEnabled,
-                    result.upnpAvailable !== false,
-                    internalTransport,
-                    transportMode,
-                    isRemote,
-                    showPerfStats,
-                    touchSensitivity,
-                    vsync,
-                    result.hdr === true,
-                    videoWorker,
-                    videoEnhancement,
-                    videoEnhancementAlgo
-                );
-
-                // ── Callback when streaming quits (Stop button / disconnect) ─
-                this.streamView.onQuit = () => this._onStreamingQuit();
+                // Remember context so a failed transport can be relaunched with
+                // the next entry in the priority chain (see _onTransportFailed).
+                this._lastStreamingSettings = streamingSettings;
+                this._startStreamView(result, host, streamingSettings);
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
             Toast.error(err.message || 'Launch failed');
             this.transition('app_list');
+        }
+    },
+
+    /**
+     * Create the StreamView for a successful launch response and wire its
+     * callbacks. Shared by the initial launch and transport-chain relaunches.
+     * Stores the backend-reported transport fallback chain + index.
+     */
+    _startStreamView(result, host, streamingSettings) {
+        const isRemote = this._isRemoteConnection();
+        const upnpEnabled = true;
+        const internalTransport = result.transport || (result.signalingUrl ? 'webrtc' : 'wss');
+        const transportMode = result.transport_mode || internalTransport;
+        // Respect the "show performance stats" setting (default: true)
+        const showPerfStats = streamingSettings.show_performance_stats !== false;
+        // Touch/trackpad sensitivity (default 2.2)
+        const touchSensitivity = typeof streamingSettings.touch_sensitivity === 'number'
+            ? streamingSettings.touch_sensitivity : 2.2;
+        // VSync (default on): when off, the canvas allows tearing (lower latency)
+        const vsync = streamingSettings.vsync_enabled !== false;
+        // Video worker mode: 'auto' (heuristic — desktop only), 'on' or 'off'.
+        const videoWorker = streamingSettings.video_worker;
+        // Video enhancement (WebGPU upscale/sharpen). Forced OFF on MediaTrack:
+        // <video> cannot be processed by WebGPU, so a MediaTrack last-resort
+        // attempt always streams without enhancement.
+        let videoEnhancement = streamingSettings.video_enhancement === 'on' ? 'on' : 'off';
+        if (internalTransport === 'webrtc-media') videoEnhancement = 'off';
+        const videoEnhancementAlgo = streamingSettings.video_enhancement_algo || 'auto';
+
+        // Track the fallback chain reported by the backend.
+        this._transportChain = Array.isArray(result.transport_chain) ? result.transport_chain : [];
+        this._transportIndex = typeof result.transport_index === 'number' ? result.transport_index : 0;
+
+        this.streamView = new StreamView(
+            document.getElementById('app'),
+            result.signalingUrl || result.wsUrl,
+            host,
+            result.videoCodec,
+            result.gamingMode !== false,
+            upnpEnabled,
+            result.upnpAvailable !== false,
+            internalTransport,
+            transportMode,
+            isRemote,
+            showPerfStats,
+            touchSensitivity,
+            vsync,
+            result.hdr === true,
+            videoWorker,
+            videoEnhancement,
+            videoEnhancementAlgo
+        );
+
+        // ── Callbacks ──────────────────────────────────────────────────────
+        // onQuit: normal end (Stop button / mid-stream disconnect).
+        this.streamView.onQuit = () => this._onStreamingQuit();
+        // onConnectionFailed: transport never connected → try the next entry
+        // in the priority chain (or give up if the chain is exhausted).
+        this.streamView.onConnectionFailed = (reason) => this._onTransportFailed(reason);
+    },
+
+    /** Human-readable label for a transport mode (warning toasts / logs). */
+    _transportLabel(mode) {
+        const labels = {
+            'webrtc-dc-udp':    'WebRTC DataChannel (UDP)',
+            'webrtc-dc-tcp':    'WebRTC DataChannel (TCP)',
+            'webrtc-media-udp': 'WebRTC MediaTrack (UDP)',
+            'webrtc-media-tcp': 'WebRTC MediaTrack (TCP)',
+            'wss':              'WebSocket Secure'
+        };
+        return labels[mode] || mode;
+    },
+
+    /**
+     * A transport failed to establish a connection. If there is a next entry in
+     * the priority chain, relaunch with it (warning toast). Otherwise show a
+     * final error and return to the apps view.
+     */
+    _onTransportFailed(reason) {
+        // Ignore if streaming was already torn down (e.g. user pressed Back).
+        if (this._nav.overlay !== 'streaming') return;
+
+        const chain = this._transportChain || [];
+        const cur = this._transportIndex || 0;
+        const next = cur + 1;
+
+        if (next < chain.length) {
+            console.warn(`[MW] Transport ${chain[cur]} failed (${reason}) — trying ${chain[next]}`);
+            Toast.warning(
+                `Connexion ${this._transportLabel(chain[cur])} échouée — ` +
+                `tentative avec ${this._transportLabel(chain[next])}…`
+            );
+            this._relaunchTransport(next);
+        } else {
+            console.error(`[MW] All transports failed (last: ${chain[cur] || '?'}, reason: ${reason})`);
+            Toast.error('Échec de la connexion — tous les modes de transport ont échoué');
+            // quit() fires onQuit → _onStreamingQuit, which handles navigation
+            // back to the apps view. silent: suppress the "Stream end" toast.
+            if (this.streamView) this.streamView.quit({ silent: true });
+        }
+    },
+
+    /**
+     * Tear down the current StreamView and relaunch the same app with the next
+     * transport index. The backend recomputes the (identical) chain and attempts
+     * the requested index.
+     */
+    async _relaunchTransport(nextIndex) {
+        const host = this._lastStreamHost;
+        const app = this._lastStreamApp;
+        if (!host || !app) {
+            if (this.streamView) this.streamView.quit({ silent: true });
+            return;
+        }
+
+        // Quietly tear down the failed StreamView (no navigation, no toast).
+        const sv = this.streamView;
+        this.streamView = null;
+        if (sv) {
+            sv.onQuit = null;
+            sv.onConnectionFailed = null;
+            try { await sv.quit({ silent: true }); } catch (e) { /* ignore */ }
+        }
+
+        this._transportIndex = nextIndex;
+
+        // Relaunch targeting the next chain index. Same settings otherwise; the
+        // backend recomputes the same chain and picks chain[nextIndex].
+        const settings = { ...this._lastStreamingSettings, transport_index: nextIndex };
+        try {
+            const result = await BackendClient.launchApp(host.uuid, app.id, settings);
+            if (result.status === 'streaming') {
+                this._startStreamView(result, host, this._lastStreamingSettings);
+            } else {
+                this._onTransportFailed('launch status ' + result.status);
+            }
+        } catch (err) {
+            // HTTP error on this transport (e.g. backend 502 chain exhausted) →
+            // advance the chain / final error.
+            console.warn('[MW] Relaunch failed for index', nextIndex, err);
+            this._onTransportFailed('launch error');
         }
     },
 

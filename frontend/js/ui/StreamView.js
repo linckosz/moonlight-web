@@ -184,6 +184,9 @@ export class StreamView {
             algo = 'off'; // WebGPU pass-through (no upscaler) when Enhancer is off
         }
         this._videoEnhancementAlgo = algo;
+        // Whether the user enabled the Enhancer (used to flag it OFF in the overlay
+        // when the stream lands on webrtc-media, where it can't be applied).
+        this._videoEnhancementRequested = (videoEnhancement === 'on');
         this._wantWebGpu = true;
         // Dev override: 'mw_force_2d=1' forces the Canvas2D path for comparison.
         try { if (localStorage.getItem('mw_force_2d') === '1') this._wantWebGpu = false; } catch (e) {}
@@ -201,6 +204,17 @@ export class StreamView {
          *  to restore the underlying main view (apps/hosts). */
         this.onQuit = null;
 
+        /** Callback invoked when the transport fails to establish a connection
+         *  (ICE failure / closed before ever connecting). MoonlightApp relaunches
+         *  with the next transport in the priority chain. Receives a reason string. */
+        this.onConnectionFailed = null;
+        /** True once the transport has connected at least once (DCs open / media
+         *  playing). Distinguishes a connection failure (→ chain fallback) from a
+         *  mid-stream disconnect (→ normal quit). */
+        this._everConnected = false;
+        /** Guard so onConnectionFailed fires at most once per session. */
+        this._connectionFailureReported = false;
+
         // ── UPnP status ─────────────────────────────────────────────────────
         // UPnP toasts intentionally suppressed: they have no value during a
         // streaming session and only clutter the UI. The UPnP state is visible
@@ -215,6 +229,10 @@ export class StreamView {
         } else {
             this.webrtc = new WebRtcDataChannel(signalingUrl);
         }
+        // Browser-driven transport fallback: ICE failures surface as errors so
+        // MoonlightApp can relaunch with the next transport (no in-session WS
+        // reroute). WebRtcMedia ignores this flag (no in-session WS fallback).
+        this.webrtc._chainFallback = true;
         this.pointerLocked = false;
         /** Gaming mode focus state: true when pointer lock is active (cursor captured).
          *  false initially (cursor visible, absolute mouse tracking).
@@ -354,6 +372,16 @@ export class StreamView {
 
         // CSS fallback fullscreen (when Fullscreen API fails, e.g. iOS canvas)
         this._cssFullscreen = false;
+
+        // Keyboard Lock (Chrome/Edge): while in native fullscreen, lock the
+        // Escape key so it is delivered to our handler (and forwarded to the
+        // host as VK_ESCAPE) instead of exiting fullscreen. Fullscreen is then
+        // left only via the keyboard combo. Synced on every fullscreenchange.
+        this._keyboardLocked = false;
+        this._onFsChangeLock = () => this._syncKeyboardLock();
+        // Transient on-screen hint element (reused for the fullscreen-exit tip).
+        this._transientHintEl = null;
+        this._transientHintTimer = null;
 
         // Visibility change: when returning from Alt-Tab, force browser to
         // re-composite all layers.  On Chrome Windows, the GPU compositor may
@@ -1867,6 +1895,21 @@ export class StreamView {
         }
     }
 
+    /** Report a connection failure to MoonlightApp (transport chain fallback).
+     *  Returns true if the failure was handed off (caller should stop its own
+     *  error/quit handling); false if there is no handler. Fires at most once. */
+    _reportConnectionFailed(reason) {
+        if (this._connectionFailureReported) return true; // already handed off
+        if (typeof this.onConnectionFailed !== 'function') return false;
+        this._connectionFailureReported = true;
+        console.warn('[StreamView] Connection failed before established:', reason);
+        const cb = this.onConnectionFailed;
+        this.onConnectionFailed = null;
+        // Defer so the current event handler unwinds before teardown/relaunch.
+        setTimeout(() => cb(reason), 0);
+        return true;
+    }
+
     // =========================================================================
     // WebRTC DataChannel (replaces legacy WebSocket binary transport)
     // =========================================================================
@@ -1875,6 +1918,9 @@ export class StreamView {
         this.webrtc.onOpen = () => {
             if (this._quitting) return;
             this.connected = true;
+            // Transport established at least once → past the connection-failure
+            // window. Later failures are mid-stream disconnects, not fallbacks.
+            this._everConnected = true;
             this.setStatus('connecting', 'Waiting for stream...');
             this._updateStartupStep(2);
 
@@ -1949,6 +1995,9 @@ export class StreamView {
         };
         this.webrtc.onClose = () => {
             if (this._quitting) return;
+            // Never connected → connection failure, let the chain try the next
+            // transport instead of showing a disconnect error.
+            if (!this._everConnected && this._reportConnectionFailed('closed before connect')) return;
             this.connected = false;
             this.setStatus('disconnected', 'Disconnected');
             Toast.error('Stream disconnected');
@@ -1957,6 +2006,8 @@ export class StreamView {
         this.webrtc.onError = (err) => {
             if (this._quitting) return;
             console.error('[StreamView] WebRTC error:', err.message);
+            // Never connected → connection failure, defer to the transport chain.
+            if (!this._everConnected && this._reportConnectionFailed(err.message)) return;
             Toast.error('WebRTC connection error');
         };
         // Video frames: DataChannel mode uses WebCodecs callbacks
@@ -2124,13 +2175,20 @@ export class StreamView {
             '<span class="stats-value">' + codec.toUpperCase() + '</span>' +
             '</div>';
 
-        // Enhancer (only when the active renderer is WebGPU)
+        // Enhancer: show the active algo when the WebGPU renderer is up. On
+        // webrtc-media (<video>, no canvas) the Enhancer can't be applied — if the
+        // user enabled it, flag it OFF so they know it isn't active.
+        let enhancerName = null;
         if (this._activeRendererKind === 'webgpu') {
-            const algoName = this._videoEnhancementAlgo === 'fsr1' ? 'FSR1'
+            enhancerName = this._videoEnhancementAlgo === 'fsr1' ? 'FSR1'
                 : this._videoEnhancementAlgo === 'off' ? 'Off' : 'SGSR';
+        } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
+            enhancerName = 'OFF (not available on MediaTrack)';
+        }
+        if (enhancerName !== null) {
             html += '<div class="stats-row">' +
                 '<span class="stats-label">Enhancer:</span>' +
-                '<span class="stats-value">' + algoName + '</span>' +
+                '<span class="stats-value">' + enhancerName + '</span>' +
                 '</div>';
         }
 
@@ -2603,6 +2661,8 @@ export class StreamView {
         this.streamEl.addEventListener('touchcancel', this._onTouchEnd, { passive: false });
         window.addEventListener('beforeunload', this._onBeforeUnload);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
+        // All platforms: keep Escape inside the host while in fullscreen.
+        document.addEventListener('fullscreenchange', this._onFsChangeLock);
 
         // Mode-specific events
         if (this._gamingMode) {
@@ -2778,6 +2838,12 @@ export class StreamView {
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         document.removeEventListener('visibilitychange', this._onVisibilityChange);
+        document.removeEventListener('fullscreenchange', this._onFsChangeLock);
+        // Release the keyboard lock if still held (e.g. quit while fullscreen).
+        if (this._keyboardLocked && navigator.keyboard && navigator.keyboard.unlock) {
+            try { navigator.keyboard.unlock(); } catch (e) {}
+            this._keyboardLocked = false;
+        }
         if (this.streamEl) {
             this.streamEl.removeEventListener('contextmenu', this._onContextMenu);
             // Touch events (mobile) — bound to the whole overlay
@@ -2948,6 +3014,12 @@ export class StreamView {
         // a normal VK_ESCAPE keypress instead.
         if (e.key === 'Escape') {
             e.preventDefault();
+            // In native fullscreen, Escape stays inside the host (Keyboard Lock
+            // keeps it from exiting). Remind the user how to actually leave
+            // fullscreen, since Escape no longer does it.
+            if (document.fullscreenElement) {
+                this._showFullscreenExitHint();
+            }
             // Fall through to normal keydown handling below — VK_ESCAPE
             // (0x1B) will be sent to the host.
         }
@@ -3193,6 +3265,54 @@ export class StreamView {
 
         // Otherwise fade out after 4s.
         setTimeout(dismiss, 4000);
+    }
+
+    /**
+     * Sync the Escape Keyboard Lock with the current fullscreen state.
+     * In fullscreen, lock Escape so it reaches the host (instead of exiting);
+     * out of fullscreen, release it. Chrome/Edge only — no-op elsewhere.
+     */
+    _syncKeyboardLock() {
+        const kb = navigator.keyboard;
+        if (!kb || typeof kb.lock !== 'function') return;
+        if (document.fullscreenElement) {
+            kb.lock(['Escape']).catch(() => {});
+            this._keyboardLocked = true;
+        } else if (this._keyboardLocked) {
+            try { kb.unlock(); } catch (e) {}
+            this._keyboardLocked = false;
+        }
+    }
+
+    /**
+     * Show a 2s transient tip explaining how to exit fullscreen, since Escape
+     * is now forwarded to the host. Same transparent style as the install hint.
+     */
+    _showFullscreenExitHint() {
+        const isMac = /Mac/.test(navigator.platform);
+        const combo = isMac ? 'Ctrl + Option + Cmd + X' : 'Shift + Ctrl + Alt + X';
+        this._showTransientHint('Press ' + combo + ' to exit fullscreen', 2000);
+    }
+
+    /**
+     * Display a transparent on-screen hint for `ms`, reusing a single element.
+     * Repeated calls reset the text and the auto-dismiss timer (no stacking).
+     */
+    _showTransientHint(text, ms) {
+        let hint = this._transientHintEl;
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.className = 'install-hint';
+            document.body.appendChild(hint);
+            this._transientHintEl = hint;
+        }
+        hint.textContent = text;
+        void hint.offsetWidth;
+        hint.classList.add('install-hint-visible');
+        if (this._transientHintTimer) clearTimeout(this._transientHintTimer);
+        this._transientHintTimer = setTimeout(() => {
+            hint.classList.remove('install-hint-visible');
+        }, ms);
     }
 
     /**
@@ -4020,7 +4140,10 @@ export class StreamView {
     // Quit / Cleanup
     // =========================================================================
 
-    async quit() {
+    async quit(opts = {}) {
+        // silent: suppress the "Stream end" toast (used by transport fallback
+        // relaunch, which shows its own warning toast instead).
+        const silent = opts.silent === true;
         // Guard: prevent re-entrant calls (e.g. from WS onClose -> setTimeout)
         if (this._quitting) return;
         this._quitting = true;
@@ -4067,6 +4190,16 @@ export class StreamView {
 
         // Hide shortcuts slide immediately (session is ending)
         this._hideShortcutsSlide();
+
+        // Remove the transient hint (fullscreen-exit tip) and its timer.
+        if (this._transientHintTimer) {
+            clearTimeout(this._transientHintTimer);
+            this._transientHintTimer = null;
+        }
+        if (this._transientHintEl) {
+            this._transientHintEl.remove();
+            this._transientHintEl = null;
+        }
 
         // Hide startup overlay if still visible
         this._hideStartupOverlay();
@@ -4168,8 +4301,10 @@ export class StreamView {
         try {
             await BackendClient.quitApp(this.host.uuid);
             this.webrtc.close();
-            await Toast.dismissAll();
-            Toast.success('Stream end');
+            if (!silent) {
+                await Toast.dismissAll();
+                Toast.success('Stream end');
+            }
         } catch (err) {
             console.warn('[StreamView] Quit failed:', err);
             this.webrtc.close();

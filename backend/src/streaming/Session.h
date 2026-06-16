@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QNetworkReply>
 #include <QUrl>
+#include <QStringList>
 
 #include "StreamConfig.h"
 #include "../common/Types.h"
@@ -65,6 +66,14 @@ public:
 
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
 
+    /// Set the ordered transport fallback chain and the index of the attempt
+    /// this session represents. Echoed back to the browser so the frontend can
+    /// walk the chain (relaunch with the next index) when a transport fails.
+    void setTransportChain(const QStringList& chain, int index) {
+        m_TransportChain = chain;
+        m_TransportIndex = index;
+    }
+
     /// Per-browser Sunshine unique ID (from the browser's localStorage).
     /// Isolates session management on Sunshine so one browser doesn't take
     /// over / cancel another's session. Empty → shared IdentityManager id.
@@ -114,6 +123,10 @@ private:
     /// Full transport mode string (e.g. "webrtc-media-udp", "webrtc-dc-tcp", "wss").
     /// Echoed back to the browser in the /start response for display/debug.
     QString m_TransportMode;
+    /// Ordered transport fallback chain + this attempt's index (echoed back so
+    /// the frontend can relaunch with the next transport on connection failure).
+    QStringList m_TransportChain;
+    int m_TransportIndex = 0;
     /// Enable ICE-TCP candidates (true for *-tcp modes, false for *-udp modes).
     bool m_EnableIceTcp = false;
     /// True when session is part of the auto fallback chain (main.cpp auto mode).
