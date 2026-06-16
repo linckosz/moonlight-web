@@ -365,7 +365,7 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("auto_ip_detection")] = m_Settings->autoIpDetection();
     obj[QStringLiteral("transport_mode")] = m_Settings->transportMode();
     obj[QStringLiteral("available_transports")] = QJsonArray::fromStringList(
-        TransportPriorities::orderedTransports(m_Settings->transportMode()));
+        TransportPriorities::orderedTransports());
     obj[QStringLiteral("pending_registration")] = m_Settings->pendingRegistration();
     obj[QStringLiteral("cert_pem")] = m_Settings->certPem();
     obj[QStringLiteral("cert_key")] = m_Settings->certKey();
