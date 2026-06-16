@@ -684,6 +684,10 @@ const MoonlightApp = {
                 // thread if OffscreenCanvas/Worker are unsupported. Older saves
                 // may hold a boolean — pass it through; StreamView normalizes it.
                 const videoWorker = streamingSettings.video_worker;
+                // Video enhancement (WebGPU upscale/sharpen): 'on' forces a
+                // canvas transport (DC/WSS) — the backend skips webrtc-media.
+                const videoEnhancement = streamingSettings.video_enhancement === 'on' ? 'on' : 'off';
+                const videoEnhancementAlgo = streamingSettings.video_enhancement_algo || 'auto';
                 this.streamView = new StreamView(
                     document.getElementById('app'),
                     result.signalingUrl || result.wsUrl,
@@ -699,7 +703,9 @@ const MoonlightApp = {
                     touchSensitivity,
                     vsync,
                     result.hdr === true,
-                    videoWorker
+                    videoWorker,
+                    videoEnhancement,
+                    videoEnhancementAlgo
                 );
 
                 // ── Callback when streaming quits (Stop button / disconnect) ─

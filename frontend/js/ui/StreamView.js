@@ -30,6 +30,7 @@ import {
 } from '../util/Av1Utils.js';
 
 import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetect.js';
+import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
@@ -108,7 +109,7 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, hdr = false, videoWorker = true) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, hdr = false, videoWorker = true, videoEnhancement = 'off', videoEnhancementAlgo = 'auto') {
         this.container = container;
         // HDR (10-bit) negotiated by the backend. When true, the decoder is
         // configured with a BT.2020/PQ color space instead of BT.709.
@@ -168,6 +169,17 @@ export class StreamView {
                 && typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function';
         } catch (e) { this._useWorker = false; }
         this._videoWorker = null;
+        // Video Enhancement (WebGPU upscale/sharpen). Driven by the persisted
+        // setting; 'mw_webgpu=1' remains a dev override. Forwarded to the worker,
+        // where localStorage is unavailable. The transport is already forced to a
+        // canvas path (DC/WSS) by the backend when enhancement is on.
+        // Resolve the algo here: 'auto' picks by platform (mobile→SGSR, desktop→FSR1).
+        let algo = videoEnhancementAlgo || 'auto';
+        if (algo === 'auto') algo = IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
+        else if (algo !== 'sgsr' && algo !== 'fsr1' && algo !== 'off') algo = 'sgsr';
+        this._videoEnhancementAlgo = algo;
+        this._wantWebGpu = (videoEnhancement === 'on');
+        try { if (localStorage.getItem('mw_webgpu') === '1') this._wantWebGpu = true; } catch (e) {}
         this._workerLastDecoded = 0;
 
         // Backend timestamp tracking for stale frame detection.
@@ -216,6 +228,12 @@ export class StreamView {
         this.frameCount = 0;
         this.renderRunning = false;
         this._rendering = false;     // Guard: prevents overlapping GPU render ops
+        this._immediateRender = false; // VSync off: draw is driven by decoder output, not rAF
+        this._renderer = null;       // VideoRenderer (Canvas2D / WebGPU); owns the context
+        this._activeRendererKind = null; // 'canvas2d' | 'webgpu' (for the overlay)
+        this._resizeObserver = null; // tracks the DOM output size (device px)
+        this._outW = 0;
+        this._outH = 0;
         // Recycled buffer for HEVC RGBA copyTo — avoids per-frame allocation
         this._rgbaBuffer = null;
         this._rgbaBufferSize = 0;
@@ -463,7 +481,7 @@ export class StreamView {
                 ' dropped=' + this.stats.dropped +
                 ' canvas=' + this.canvas.width + 'x' + this.canvas.height +
                 ' decoder=' + (this.decoder ? this.decoder.state : 'null') +
-                ' ctx=' + (this.ctx ? 'ok' : 'null') +
+                ' renderer=' + (this._renderer ? 'ok' : 'null') +
                 ' recoveryAttempts=' + this._recoveryAttempts +
                 ' idrRequested=' + this._idrRequested +
                 ' totalBytes=' + this._totalBytes +
@@ -563,8 +581,8 @@ export class StreamView {
         if (isIOS || isSafari) {
             console.log('[Platform] Running on Apple platform — ' +
                 'createImageBitmap(VideoFrame) requires iOS 17+ / Safari 17+. ' +
-                'If the screen is black, the rendering fallback in ' +
-                '_drawFrameWithBitmap() should handle this automatically.');
+                'If the screen is black, the Canvas2DRenderer fallback chain ' +
+                'should handle this automatically.');
         }
 
         // HEVC codec capability check for diagnostics
@@ -664,29 +682,19 @@ export class StreamView {
         // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
         // Mac Chrome handles NV12→RGBA correctly via Metal; Windows Chrome
         // should do the same via D3D11.
-        // desynchronized:true bypasses vsync composition (honored on Android),
-        // trading possible tearing for lower latency. Gated by the VSync setting:
-        // VSync ON  → standard composited context (no tearing).
-        // VSync OFF → desynchronized context (tearing allowed, lower latency).
-        // Worker mode: the canvas is transferred to the worker (in
-        // _initVideoWorker, once platform detection has run), so we must NOT
-        // create a 2D context or set its size here — both would prevent
-        // transferControlToOffscreen(). The worker owns the OffscreenCanvas.
-        if (this._useWorker) {
-            this.ctx = null;
-        } else {
-            this.ctx = this._vsync
-                ? this.canvas.getContext('2d')
-                : this.canvas.getContext('2d', { desynchronized: true });
-            // Set initial canvas size; will be adjusted when first frame arrives
-            this.canvas.width = 1920;
-            this.canvas.height = 1080;
-        }
+        // The Canvas2DRenderer owns the context now — it is created later, once
+        // platform detection (_isChromeWindowsHevc) has run: the main-thread
+        // renderer in setupWebRtc.onOpen, the worker renderer in _initVideoWorker.
+        // render() must NOT touch the canvas here: a 2D context or a size set on
+        // it would prevent transferControlToOffscreen() in worker mode.
         // Prevent browser default touch behaviors (scroll, zoom, pull-to-refresh)
         // on the WHOLE overlay — touches must never scroll/move <video>/<canvas>.
         this.streamEl.style.touchAction = 'none';
         this.streamEl.style.overscrollBehavior = 'none';
         this.canvas.style.touchAction = 'none';
+        // Track the DOM output size for the renderer (WebGPU scales to it; the
+        // worker has no DOM, so the size is forwarded as a 'resize' message).
+        this._setupOutputSizeObserver();
         // Video element for native RTP media track mode (webrtc-media)
         this.videoEl = document.getElementById('stream-video');
         // The video never receives pointer/touch events directly: input is
@@ -848,22 +856,32 @@ export class StreamView {
                 hdr: this._hdr,
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 transport: this._transport,
-                vsync: this._vsync
+                vsync: this._vsync,
+                webgpu: this._wantWebGpu,
+                algo: this._videoEnhancementAlgo
             }, [offscreen]);
             this._videoWorker = worker;
+            // Forward the measured output size (worker has no DOM / ResizeObserver).
+            this._applyOutputSize();
             console.log('[StreamView] Video worker started (OffscreenCanvas)');
         } catch (e) {
             console.error('[StreamView] Video worker init failed, using main thread:', e.message);
             this._useWorker = false;
             this._videoWorker = null;
             // Recover the main-thread render path (canvas not transferred yet).
-            this.ctx = this._vsync
-                ? this.canvas.getContext('2d')
-                : this.canvas.getContext('2d', { desynchronized: true });
-            this.canvas.width = 1920;
-            this.canvas.height = 1080;
-            this.setupDecoder();
-            this.startRenderLoop();
+            createVideoRenderer(this.canvas, {
+                desynchronized: !this._vsync,
+                videoCodec: this.videoCodec,
+                isChromeWindowsHevc: this._isChromeWindowsHevc,
+                webgpu: this._wantWebGpu,
+                algo: this._videoEnhancementAlgo
+            }).then((r) => {
+                this._renderer = r;
+                this._activeRendererKind = r.kind;
+                this._applyOutputSize();
+                this.setupDecoder();
+                this.startRenderLoop();
+            });
         }
     }
 
@@ -874,6 +892,10 @@ export class StreamView {
         switch (m.type) {
         case 'requestidr':
             this._requestIdr(m.reason || 'worker');
+            break;
+        case 'rendererinfo':
+            // Worker reports which renderer it created (for the stats overlay).
+            this._activeRendererKind = m.kind;
             break;
         case 'codecfallback':
             // HEVC unsupported in this browser → re-launch with H.264.
@@ -1664,7 +1686,7 @@ export class StreamView {
 
         // Limit queue depth to prevent unbounded memory growth.
         // Drop the NEW frame instead of closing an old one — the old frame
-        // may still be rendering in _drawFrameWithBitmap() (async + not awaited).
+        // may still be rendering in the renderer's draw() (async + not awaited).
         // Closing it mid-render zeroes its NV12 buffer → green screen on Chrome.
         if (this.frameQueue.length >= 3) {
             frame.close();
@@ -1673,6 +1695,11 @@ export class StreamView {
         }
 
         this.frameQueue.push(frame);
+
+        // VSync off (option A): present as soon as the frame is decoded instead of
+        // waiting for the next rAF — shaves up to one refresh interval of latency.
+        // Serialized by the _rendering guard. VSync on keeps the rAF-paced loop.
+        if (this._immediateRender) this._pumpRender();
 
         // Update status on first frame
         if (!this._firstFrameRendered) {
@@ -1702,19 +1729,26 @@ export class StreamView {
         if (this._useWorker) return;
         this.renderRunning = true;
 
+        // VSync off (option A): rendering is driven by decoder output (onDecodedFrame
+        // → _pumpRender) for lower latency. The rAF loop then only handles context-loss
+        // detection. VSync on: the rAF loop paces rendering to the display refresh.
+        this._immediateRender = !this._vsync;
+
         const loop = (now) => {
             if (!this.renderRunning) return;
 
+            // Renderer is created asynchronously (in onOpen / worker fallback) —
+            // skip ticks until it exists. Frames arrive only after that.
+            if (!this._renderer) {
+                requestAnimationFrame(loop);
+                return;
+            }
+
             // Detect Canvas2D context loss (GPU driver crash, Alt-Tab on some GPUs).
-            // When lost, the canvas is permanently blank — we must recreate the context.
-            // Safari/WebKit does not support CanvasRenderingContext2D.isContextLost().
-            // Feature-detect the method before calling it to avoid TypeError.
-            const ctxLost = typeof this.ctx.isContextLost === 'function'
-                ? this.ctx.isContextLost()
-                : false;
-            if (this.ctx && ctxLost) {
+            // When lost, the canvas is permanently blank — recreate the context.
+            if (this._renderer.isContextLost()) {
                 console.warn('[StreamView] Canvas2D context lost, recreating...');
-                this.ctx = this.canvas.getContext('2d');
+                this._renderer.recreateContext();
                 // Force re-composite all overlay layers by briefly toggling transform
                 const header = document.querySelector('.stream-header');
                 if (header) {
@@ -1723,64 +1757,54 @@ export class StreamView {
                 }
             }
 
-            // ── Render ONE frame per rAF to serialize GPU access ─────────
-            // HEVC NV12 on Chrome Windows fails when two VideoFrame objects
-            // are accessed concurrently (createImageBitmap / copyTo race).
-            // Processing one frame per rAF (~60fps) with a guard prevents
-            // overlapping GPU operations. When frames arrive in bursts
-            // (DC mode), we drop intermediate frames to keep latency low.
-            if (this._rendering) {
-                // Previous render still in flight — skip this rAF tick.
-                // Drop intermediate frames to prevent queue buildup.
-                if (this.frameQueue.length > 1) {
-                    while (this.frameQueue.length > 1) {
-                        const old = this.frameQueue.shift();
-                        old.close();
-                        this.stats.dropped++;
-                    }
-                }
-                requestAnimationFrame(loop);
-                return;
+            // VSync on: rAF paces the rendering. VSync off: decoder output drives it.
+            if (!this._immediateRender) this._pumpRender();
+
+            requestAnimationFrame(loop);
+        };
+
+        requestAnimationFrame(loop);
+    }
+
+    /**
+     * Render the freshest queued frame, serialized by the _rendering guard.
+     * Called once per rAF (VSync on) or once per decoded frame (VSync off).
+     *
+     * One frame is rendered at a time: HEVC NV12 on Chrome Windows fails when two
+     * VideoFrame objects are accessed concurrently (createImageBitmap / copyTo race),
+     * so the guard prevents overlapping GPU ops. Bursts (DC mode) drop all but the
+     * freshest frame to keep latency low.
+     */
+    _pumpRender() {
+        if (!this.renderRunning || !this._renderer) return;
+
+        // Previous render still in flight — drop intermediate frames; the draw's
+        // finally() re-pumps in immediate mode, the next rAF does so otherwise.
+        if (this._rendering) {
+            while (this.frameQueue.length > 1) {
+                const old = this.frameQueue.shift();
+                old.close();
+                this.stats.dropped++;
             }
+            return;
+        }
 
-            if (this.frameQueue.length > 1) {
-                // Drop all but the latest frame — only render the freshest
-                while (this.frameQueue.length > 1) {
-                    const old = this.frameQueue.shift();
-                    old.close();
-                    this.stats.dropped++;
-                }
-            }
+        // Drop all but the latest frame — only render the freshest.
+        while (this.frameQueue.length > 1) {
+            const old = this.frameQueue.shift();
+            old.close();
+            this.stats.dropped++;
+        }
+        if (this.frameQueue.length === 0) return;
 
-            if (this.frameQueue.length === 1) {
-                this._rendering = true;
-                const frame = this.frameQueue.shift();
+        this._rendering = true;
+        const frame = this.frameQueue.shift();
 
-                // Resize canvas to match frame dimensions if needed.
-                const canvasWBefore = this.canvas.width;
-                const canvasHBefore = this.canvas.height;
-                if (frame.displayWidth && frame.displayHeight &&
-                    (this.canvas.width !== frame.displayWidth ||
-                     this.canvas.height !== frame.displayHeight)) {
-                    this.canvas.width = frame.displayWidth;
-                    this.canvas.height = frame.displayHeight;
-                }
-
-                if (this.stats.rendered < 5) {
-                    console.log('[debug] renderLoop frame#' + this.stats.rendered +
-                        ' display=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
-                        ' coded=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
-                        ' format=' + (frame.format || '?') +
-                        ' canvasBefore=' + canvasWBefore + 'x' + canvasHBefore +
-                        ' canvasAfter=' + this.canvas.width + 'x' + this.canvas.height +
-                        ' codec=' + this.videoCodec);
-                }
-
-                // Fire-and-forget with guard: mark rendering complete when done
-                this._drawFrameWithBitmap(frame).finally(() => {
-                    this._rendering = false;
-                });
-
+        // Fire-and-forget with guard: the renderer resizes the canvas to the frame,
+        // draws and closes it; stats stay here.
+        this._renderer.draw(frame)
+            .then(() => {
+                this.stats.rendered++;
                 // Log stats periodically (every ~5s at 60fps)
                 if (this.stats.rendered % 300 === 0) {
                     console.log('[StreamView] Stats:',
@@ -1790,264 +1814,50 @@ export class StreamView {
                         'dropped=' + this.stats.dropped,
                         'queue=' + this.frameQueue.length);
                 }
-            }
-
-            requestAnimationFrame(loop);
-        };
-
-        requestAnimationFrame(loop);
+            })
+            .finally(() => {
+                this._rendering = false;
+                // Immediate mode: drain a frame that arrived while we were drawing.
+                if (this._immediateRender && this.frameQueue.length > 0) this._pumpRender();
+            });
     }
 
     stopRenderLoop() {
         this.renderRunning = false;
     }
 
-    /**
-     * Draw a VideoFrame to canvas.
-     *
-     * Platform-specific workarounds for browser bugs:
-     *
-     *   Windows Chrome HEVC NV12:
-     *     GPU D3D11 compositor bug → green tint with createImageBitmap.
-     *     Fix: CPU-side copyTo(RGBA) + putImageData bypasses GPU pipeline.
-     *
-     *   macOS/iOS Chrome HEVC NV12:
-     *     Chromium createImageBitmap stride bug → 4x horizontal stretch.
-     *     Fix: drawImage(VideoFrame) first (GPU compositor via Metal works).
-     *
-     *   All other cases (H.264, AV1, Safari, Edge):
-     *     Standard createImageBitmap path (fastest, GPU→GPU).
-     *
-     * Async: returns immediately; the frame is always closed, even on error.
-     */
-    async _drawFrameWithBitmap(frame) {
-        // Chrome Windows only: the bitmap-primary path works around a D3D11
-        // compositor ghosting bug. On Android/iOS/Mac it just adds a costly
-        // per-frame GPU copy — those platforms use the standard path below.
-        const isHevcNv12 = this.videoCodec === CODEC_HEVC && frame.format === 'NV12' &&
-            this._isChromeWindowsHevc;
-        const dbgFirstFew = this.stats.rendered < 5;
+    // Observe the canvas area and feed the output size (CSS box × dPR) to the
+    // renderer. Canvas2D ignores it (no-op); WebGPU uses it as its backing res.
+    _setupOutputSizeObserver() {
+        if (typeof ResizeObserver === 'undefined' || !this.canvasArea) return;
+        const apply = () => {
+            const rect = this.canvasArea.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            const w = Math.max(1, Math.round(rect.width * dpr));
+            const h = Math.max(1, Math.round(rect.height * dpr));
+            if (w === this._outW && h === this._outH) return;
+            this._outW = w;
+            this._outH = h;
+            this._applyOutputSize();
+        };
+        this._resizeObserver = new ResizeObserver(apply);
+        this._resizeObserver.observe(this.canvasArea);
+        apply(); // initial measure
+    }
 
-        if (dbgFirstFew) {
-            console.log('[debug] _drawFrameWithBitmap entry' +
-                ' codec=' + this.videoCodec +
-                ' format=' + (frame.format || '?') +
-                ' displaySize=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
-                ' codedSize=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
-                ' isHevcNv12=' + isHevcNv12 +
-                ' nalParser.codec=' + this.nalParser.codec);
+    // Push the current output size to the active renderer (main) or worker.
+    // Re-called when the renderer/worker is created (size measured earlier).
+    _applyOutputSize() {
+        if (this._outW <= 0 || this._outH <= 0) return;
+        if (this._useWorker) {
+            if (this._videoWorker) {
+                this._videoWorker.postMessage({
+                    type: 'resize', outW: this._outW, outH: this._outH
+                });
+            }
+        } else if (this._renderer) {
+            this._renderer.setOutputSize(this._outW, this._outH);
         }
-
-        // ── HEVC NV12: createImageBitmap(VideoFrame) as PRIMARY path ──────
-        //
-        // ROOT CAUSE of persistent ghosting after canvas-level fixes:
-        //
-        // The previous primary path used frame.copyTo(buf, {format:'RGBA'})
-        // to convert NV12→RGBA on CPU, then createImageBitmap(ImageData) to
-        // upload back to GPU.  If Chrome silently ignores the 'RGBA' format
-        // hint and writes NV12 (1.5 bytes/pixel) into a 4-byte/pixel buffer,
-        // the ImageData has alpha=0 on ~3/4 of pixels.  Even with
-        // globalCompositeOperation='copy', zero-alpha pixels may not fully
-        // overwrite the destination — and getImageData(1x1) can't detect this.
-        //
-        // Fix: use createImageBitmap(VideoFrame) as PRIMARY.  This keeps the
-        // NV12→RGBA conversion on the GPU (no CPU round-trip, no buffer size
-        // mismatch), and the resulting RGBA bitmap has alpha=255 everywhere.
-        // The 'copy' composite mode then correctly overwrites all pixels.
-        //
-        // Fallback chain:
-        //   1. createImageBitmap(VideoFrame) → drawImage(bitmap, 'copy')
-        //   2. ctx.drawImage(VideoFrame, 'copy')          (some Safari)
-        //   3. copyTo(RGBA) → ImageData → putImageData     (last resort)
-
-        // ── HEVC NV12: render with 'copy' composite mode ─────────────────
-        // globalCompositeOperation='copy' replaces ALL destination pixels,
-        // regardless of alpha — no blending at all.
-        // The standard path below handles non-HEVC without 'copy' mode.
-        if (isHevcNv12) {
-            // ── PRIMARY: createImageBitmap(VideoFrame) BEFORE touching canvas.
-            // The await must happen before any canvas mutation: painting black
-            // then awaiting let the compositor present an all-black canvas
-            // (visible black flashes on Android where the bitmap is slow).
-            // No black pre-fill is needed — 'copy' mode replaces every pixel.
-            let bitmap = null;
-            try {
-                bitmap = await createImageBitmap(frame);
-            } catch (e) {
-                if (dbgFirstFew) {
-                    console.warn('[HEVC-RENDER] createImageBitmap(VideoFrame) failed: ' +
-                        e.message + ' — trying ctx.drawImage(VideoFrame)');
-                }
-            }
-
-            this.ctx.save();
-            this.ctx.globalCompositeOperation = 'copy';
-
-            let success = false;
-            if (bitmap) {
-                this.ctx.drawImage(bitmap, 0, 0,
-                    this.canvas.width, this.canvas.height);
-                bitmap.close();
-                success = true;
-                if (dbgFirstFew) {
-                    console.log('[HEVC-RENDER] createImageBitmap(VideoFrame) SUCCESS, frame#' +
-                        this.stats.rendered);
-                }
-            }
-
-            // ── FALLBACK 1: ctx.drawImage(VideoFrame) direct ──────────────
-            if (!success) {
-                try {
-                    this.ctx.drawImage(frame, 0, 0,
-                        this.canvas.width, this.canvas.height);
-                    success = true;
-                    if (dbgFirstFew) {
-                        console.log('[HEVC-RENDER] ctx.drawImage(VideoFrame) SUCCESS, frame#' +
-                            this.stats.rendered);
-                    }
-                } catch (e) {
-                    console.warn('[HEVC-RENDER] ctx.drawImage(VideoFrame) failed: ' + e.message);
-                }
-            }
-
-            // ── FALLBACK 2: copyTo(RGBA) → ImageData → putImageData ──────
-            // CPU-side NV12→RGBA conversion.  Last resort when GPU paths fail.
-            if (!success) {
-                try {
-                    const w = frame.displayWidth || frame.codedWidth || 0;
-                    const h = frame.displayHeight || frame.codedHeight || 0;
-                    if (w > 0 && h > 0) {
-                        const size = w * h * 4;
-                        const buf = new ArrayBuffer(size);
-                        await frame.copyTo(buf, { format: 'RGBA' });
-                        const imageData = new ImageData(
-                            new Uint8ClampedArray(buf, 0, size), w, h);
-
-                        // Diagnostic: sample RGBA pixels before rendering
-                        if (dbgFirstFew) {
-                            const midX = Math.floor(w / 2);
-                            const midY = Math.floor(h / 2);
-                            const off = (midY * w + midX) * 4;
-                            const rgba = imageData.data;
-                            console.log('[RGBA-DEBUG] copyTo sample center: R=' +
-                                rgba[off] + ' G=' + rgba[off+1] + ' B=' + rgba[off+2] +
-                                ' A=' + rgba[off+3]);
-                            let alphaZeroCount = 0;
-                            for (let i = 3; i < Math.min(size, 4096); i += 4) {
-                                if (rgba[i] === 0) alphaZeroCount++;
-                            }
-                            console.log('[RGBA-DEBUG] copyTo alpha=0 count (1K pixels): ' +
-                                alphaZeroCount + '/' + Math.min(Math.floor(size/4), 1024));
-                        }
-
-                        this.ctx.putImageData(imageData, 0, 0);
-                        success = true;
-                        if (dbgFirstFew) {
-                            console.log('[HEVC-RENDER] copyTo(RGBA)+putImageData SUCCESS, frame#' +
-                                this.stats.rendered);
-                        }
-                    }
-                } catch (e) {
-                    console.error('[HEVC-RENDER] All render paths failed:', e.message);
-                }
-            }
-
-            this.ctx.restore();
-
-            // Force GPU sync after render — only needed on the first frames to
-            // flush stale compositor caches; per-frame readback costs ~1-3ms.
-            if (this.stats.rendered < 30) {
-                this.ctx.getImageData(0, 0, 1, 1);
-            }
-
-            // Diagnostic
-            if (dbgFirstFew) {
-                const w = frame.displayWidth || frame.codedWidth || 0;
-                const h = frame.displayHeight || frame.codedHeight || 0;
-                if (w > 0 && h > 0) {
-                    const pixels = this.ctx.getImageData(
-                        Math.floor(w / 2), Math.floor(h / 2), 1, 1).data;
-                    console.log('[RGBA-DEBUG] Canvas center after render: R=' +
-                        pixels[0] + ' G=' + pixels[1] + ' B=' + pixels[2] + ' A=' + pixels[3] +
-                        ' (frame#' + this.stats.rendered + ')');
-                }
-            }
-
-            frame.close();
-            this.stats.rendered++;
-            return;
-        }
-
-        // ── Standard path (H.264 / AV1 / non-NV12 / Safari) ──────────────
-        let rendered = false;
-
-        // Try direct drawImage(VideoFrame) first for ALL codecs: it skips the
-        // per-frame await createImageBitmap (GPU copy + microtask gap) — the
-        // main fluidity cost on Android/iOS. createImageBitmap remains the
-        // fallback for browsers where direct VideoFrame drawing fails.
-        {
-            try {
-                if (this.canvas && this.ctx) {
-                    if (this.stats.rendered < 6) {
-                        console.log('[GPU] direct drawImage(VideoFrame), frame#' +
-                            this.stats.rendered);
-                    }
-                    this.ctx.drawImage(frame, 0, 0,
-                        this.canvas.width, this.canvas.height);
-                    rendered = true;
-                }
-            } catch (e) {
-                console.warn('[GPU] drawImage(VideoFrame) failed: ' + e.message +
-                    ' — falling back to createImageBitmap');
-            }
-        }
-
-        if (!rendered) {
-            try {
-                const bitmap = await createImageBitmap(frame);
-                if (this.stats.rendered < 5) {
-                    console.log('[debug] PATH: createImageBitmap' +
-                        ' bitmapSize=' + bitmap.width + 'x' + bitmap.height +
-                        ' canvasSize=' + (this.canvas?.width || '?') + 'x' + (this.canvas?.height || '?'));
-                }
-                if (this.canvas && this.ctx) {
-                    this.ctx.drawImage(bitmap, 0, 0,
-                        this.canvas.width, this.canvas.height);
-                }
-                bitmap.close();
-                rendered = true;
-            } catch (e) {
-                console.warn('[StreamView] createImageBitmap failed: ' + e.message +
-                    ' — trying drawImage(VideoFrame) fallback');
-                if (this.canvas && this.ctx) {
-                    try {
-                        this.ctx.drawImage(frame, 0, 0,
-                            this.canvas.width, this.canvas.height);
-                        rendered = true;
-                    } catch (e2) {
-                        console.warn('[StreamView] drawImage(VideoFrame) failed: ' +
-                            e2.message + ' — trying copyTo RGBA readback');
-                        try {
-                            const w = frame.displayWidth || frame.codedWidth || 0;
-                            const h = frame.displayHeight || frame.codedHeight || 0;
-                            if (w > 0 && h > 0) {
-                                const size = w * h * 4;
-                                const buf = new ArrayBuffer(size);
-                                await frame.copyTo(buf, { format: 'RGBA' });
-                                const imageData = new ImageData(
-                                    new Uint8ClampedArray(buf, 0, size), w, h);
-                                this.ctx.putImageData(imageData, 0, 0);
-                                rendered = true;
-                            }
-                        } catch (e3) {
-                            console.error('[StreamView] All rendering paths failed:', e3.message);
-                        }
-                    }
-                }
-            }
-        }
-        frame.close();
-        this.stats.rendered++;
     }
 
     // =========================================================================
@@ -2100,6 +1910,19 @@ export class StreamView {
                 if (this._useWorker) {
                     this._initVideoWorker();
                 } else {
+                    // Create the main-thread renderer here (not in render()) so the
+                    // resolved _isChromeWindowsHevc flag gates the HEVC NV12 path.
+                    createVideoRenderer(this.canvas, {
+                        desynchronized: !this._vsync,
+                        videoCodec: this.videoCodec,
+                        isChromeWindowsHevc: this._isChromeWindowsHevc,
+                        webgpu: this._wantWebGpu,
+                        algo: this._videoEnhancementAlgo
+                    }).then((r) => {
+                        this._renderer = r;
+                        this._activeRendererKind = r.kind;
+                        this._applyOutputSize();
+                    });
                     this.setupDecoder();
                 }
 
@@ -2293,6 +2116,16 @@ export class StreamView {
             '<span class="stats-label">Codec:</span>' +
             '<span class="stats-value">' + codec.toUpperCase() + '</span>' +
             '</div>';
+
+        // Enhancer (only when the active renderer is WebGPU)
+        if (this._activeRendererKind === 'webgpu') {
+            const algoName = this._videoEnhancementAlgo === 'fsr1' ? 'FSR1'
+                : this._videoEnhancementAlgo === 'off' ? 'Off' : 'SGSR';
+            html += '<div class="stats-row">' +
+                '<span class="stats-label">Enhancer:</span>' +
+                '<span class="stats-value">' + algoName + '</span>' +
+                '</div>';
+        }
 
         // Transport
         html += '<div class="stats-row">' +
@@ -2813,8 +2646,12 @@ export class StreamView {
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
                 const rect = this._mediaRect();
-                const x = Math.round(Math.max(0, Math.min(e.clientX - rect.left, rect.width)));
-                const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
+                const rawX = e.clientX - rect.left;
+                const rawY = e.clientY - rect.top;
+                // Outside the picture (letterbox bars) → don't move the host cursor.
+                if (rawX < 0 || rawY < 0 || rawX > rect.width || rawY > rect.height) return;
+                const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
+                const y = Math.round(Math.max(0, Math.min(rawY, rect.height)));
                 const refW = Math.round(rect.width);
                 const refH = Math.round(rect.height);
                 this.webrtc.send({
@@ -2877,6 +2714,10 @@ export class StreamView {
             if (!IS_TOUCH_DEVICE) {
                 this.inputEl.style.cursor = inside ? 'none' : 'default';
             }
+
+            // Over the letterbox bars (outside the picture): leave the host cursor
+            // where it is — the client cursor is off the stream surface.
+            if (!inside) return;
 
             // Clamp to image bounds to avoid sending out-of-range coordinates
             const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
@@ -4162,6 +4003,16 @@ export class StreamView {
             try { this._videoWorker.postMessage({ type: 'stop' }); } catch (e) {}
             try { this._videoWorker.terminate(); } catch (e) {}
             this._videoWorker = null;
+        }
+
+        // Stop tracking output size and release the renderer (GPU resources).
+        if (this._resizeObserver) {
+            try { this._resizeObserver.disconnect(); } catch (e) {}
+            this._resizeObserver = null;
+        }
+        if (this._renderer) {
+            try { this._renderer.dispose(); } catch (e) {}
+            this._renderer = null;
         }
 
         // Clear stats overlay timer

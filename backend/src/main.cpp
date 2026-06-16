@@ -716,6 +716,12 @@ int main(int argc, char* argv[])
             ? body["hdr_enabled"].toBool()
             : appSettings.hdrEnabled();
 
+        // Video enhancement (WebGPU): the browser renders via canvas, so when it
+        // is on the transport negotiation must avoid webrtc-media (<video>).
+        bool reqVideoEnhancement = body.contains("video_enhancement")
+            ? (body["video_enhancement"].toString() == "on")
+            : (appSettings.videoEnhancement() == "on");
+
         // Per-browser Sunshine unique ID (from the browser's localStorage).
         // Sanitized to hex (max 32 chars) before it reaches the launch URL.
         // Empty → StreamSession falls back to the shared Moonlight unique ID.
@@ -734,7 +740,8 @@ int main(int argc, char* argv[])
                 << "bitrate=" << reqBitrate
                 << "height=" << reqHeight
                 << "fps=" << reqFps
-                << "hdr=" << reqHdr;
+                << "hdr=" << reqHdr
+                << "videoEnhancement=" << reqVideoEnhancement;
 
         // Determine signaling host from the browser's Host header.
         // Works for both LAN (localhost:443) and remote access via moonlightweb.top.
@@ -834,6 +841,12 @@ int main(int argc, char* argv[])
                             << static_cast<int>(effective) << ")";
                     continue; // Skip non-H.264 codecs on MediaTrack
                 }
+                // Video enhancement renders via WebCodecs+canvas → MediaTrack
+                // (<video>) cannot be enhanced. Skip it regardless of codec.
+                if (reqVideoEnhancement && t.startsWith("webrtc-media")) {
+                    qInfo() << "[Auto] Skipping" << t << "(video enhancement on — needs a canvas transport)";
+                    continue;
+                }
                 result.append(t);
             }
             return result;
@@ -843,7 +856,14 @@ int main(int argc, char* argv[])
         QString internalTransport;
         bool enableIceTcp = false;
 
-        auto resolveExplicitTransport = [&](const QString& mode) {
+        auto resolveExplicitTransport = [&](const QString& modeIn) {
+            // Video enhancement needs a canvas transport → downgrade an explicit
+            // MediaTrack mode to its DataChannel equivalent (same UDP/TCP).
+            QString mode = modeIn;
+            if (reqVideoEnhancement) {
+                if (mode == "webrtc-media-udp") mode = "webrtc-dc-udp";
+                else if (mode == "webrtc-media-tcp") mode = "webrtc-dc-tcp";
+            }
             if (mode == "webrtc-media-udp") {
                 internalTransport = "webrtc-media";
                 enableIceTcp = false;
@@ -1575,6 +1595,15 @@ int main(int argc, char* argv[])
         obj["stream_height"] = appSettings.streamHeight();
         obj["stream_fps"] = appSettings.streamFps();
         obj["hdr_enabled"] = appSettings.hdrEnabled();
+        obj["video_enhancement"] = appSettings.videoEnhancement();
+        obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
+        // Debug build flag: the UI exposes the enhancement algo selector only in
+        // debug builds (Qt Creator); production forces 'auto'.
+#ifdef QT_DEBUG
+        obj["debug_build"] = true;
+#else
+        obj["debug_build"] = false;
+#endif
         return HttpResponse::json(obj);
     });
 
@@ -1649,6 +1678,20 @@ int main(int argc, char* argv[])
             bool enabled = body["upnp_enabled"].toBool();
             appSettings.setUpnpEnabled(enabled);
             obj["upnp_enabled"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("video_enhancement")) {
+            appSettings.setVideoEnhancement(body["video_enhancement"].toString());
+            obj["video_enhancement"] = appSettings.videoEnhancement();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("video_enhancement_algo")) {
+            appSettings.setVideoEnhancementAlgo(body["video_enhancement_algo"].toString());
+            obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
             obj["status"] = "saved";
             hadChange = true;
         }

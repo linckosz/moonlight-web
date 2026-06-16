@@ -36,11 +36,14 @@ import {
     stripNonEssentialObus,
     CODEC_AV1
 } from '../util/Av1Utils.js';
+import { createVideoRenderer } from './renderers/createRenderer.js';
 
 // ── Worker-local pipeline state (mirrors the StreamView fields) ──────────────
 const S = {
     canvas: null,
-    ctx: null,
+    renderer: null,
+    outW: 0,
+    outH: 0,
     videoCodec: 'h264',
     hdr: false,
     isChromeWindowsHevc: false,
@@ -498,105 +501,19 @@ function pump() {
     while (S.frameQueue.length > 1) { S.frameQueue.shift().close(); S.stats.dropped++; }
     const frame = S.frameQueue.shift();
     S.rendering = true;
-    drawFrame(frame).finally(() => {
+    drawFrame(frame).then((ok) => { if (ok) S.stats.rendered++; }).finally(() => {
         S.rendering = false;
         postCounters(false);
         pump();
     });
 }
 
+// Delegate to the renderer (owns context + HEVC NV12 fallbacks). The renderer
+// closes the frame; stats stay here per the render boundary.
 async function drawFrame(frame) {
-    if (!S.canvas || !S.ctx) { try { frame.close(); } catch (e) {} return; }
-
-    // Resize the OffscreenCanvas to the frame size when needed.
-    if (frame.displayWidth && frame.displayHeight &&
-        (S.canvas.width !== frame.displayWidth || S.canvas.height !== frame.displayHeight)) {
-        S.canvas.width = frame.displayWidth;
-        S.canvas.height = frame.displayHeight;
-    }
-
-    const isHevcNv12 = S.videoCodec === CODEC_HEVC && frame.format === 'NV12' && S.isChromeWindowsHevc;
-
-    if (isHevcNv12) {
-        // Chrome Windows HEVC NV12: createImageBitmap(VideoFrame) primary +
-        // 'copy' composite (replaces all pixels regardless of alpha).
-        let bitmap = null;
-        try { bitmap = await createImageBitmap(frame); } catch (e) {}
-
-        S.ctx.save();
-        S.ctx.globalCompositeOperation = 'copy';
-        let success = false;
-        if (bitmap) {
-            S.ctx.drawImage(bitmap, 0, 0, S.canvas.width, S.canvas.height);
-            bitmap.close();
-            success = true;
-        }
-        if (!success) {
-            try { S.ctx.drawImage(frame, 0, 0, S.canvas.width, S.canvas.height); success = true; } catch (e) {}
-        }
-        if (!success) {
-            try {
-                const w = frame.displayWidth || frame.codedWidth || 0;
-                const h = frame.displayHeight || frame.codedHeight || 0;
-                if (w > 0 && h > 0) {
-                    const size = w * h * 4;
-                    const buf = new ArrayBuffer(size);
-                    await frame.copyTo(buf, { format: 'RGBA' });
-                    const imageData = new ImageData(new Uint8ClampedArray(buf, 0, size), w, h);
-                    S.ctx.putImageData(imageData, 0, 0);
-                    success = true;
-                }
-            } catch (e) {
-                console.error('[VideoWorker] All HEVC render paths failed:', e.message);
-            }
-        }
-        S.ctx.restore();
-
-        // Force GPU sync on the first frames to flush stale compositor caches.
-        if (S.stats.rendered < 30) { try { S.ctx.getImageData(0, 0, 1, 1); } catch (e) {} }
-
-        frame.close();
-        S.stats.rendered++;
-        return;
-    }
-
-    // Standard path (H.264 / AV1 / non-NV12 / Safari).
-    let rendered = false;
-    try {
-        S.ctx.drawImage(frame, 0, 0, S.canvas.width, S.canvas.height);
-        rendered = true;
-    } catch (e) {}
-
-    if (!rendered) {
-        try {
-            const bitmap = await createImageBitmap(frame);
-            S.ctx.drawImage(bitmap, 0, 0, S.canvas.width, S.canvas.height);
-            bitmap.close();
-            rendered = true;
-        } catch (e) {
-            try {
-                S.ctx.drawImage(frame, 0, 0, S.canvas.width, S.canvas.height);
-                rendered = true;
-            } catch (e2) {
-                try {
-                    const w = frame.displayWidth || frame.codedWidth || 0;
-                    const h = frame.displayHeight || frame.codedHeight || 0;
-                    if (w > 0 && h > 0) {
-                        const size = w * h * 4;
-                        const buf = new ArrayBuffer(size);
-                        await frame.copyTo(buf, { format: 'RGBA' });
-                        const imageData = new ImageData(new Uint8ClampedArray(buf, 0, size), w, h);
-                        S.ctx.putImageData(imageData, 0, 0);
-                        rendered = true;
-                    }
-                } catch (e3) {
-                    console.error('[VideoWorker] All render paths failed:', e3.message);
-                }
-            }
-        }
-    }
-    frame.close();
-    S.stats.rendered++;
+    if (!S.renderer) { try { frame.close(); } catch (e) {} return false; }
+    await S.renderer.draw(frame);
+    return true;
 }
 
 // ── Main-thread message handling ─────────────────────────────────────────────
@@ -647,9 +564,20 @@ self.onmessage = (e) => {
         // clawing back the ~1-frame latency that an OffscreenCanvas presented
         // from a worker otherwise adds vs the main-thread rAF path. (m.vsync is
         // kept for reference; tearing is acceptable for a real-time game stream.)
-        S.ctx = S.canvas.getContext('2d', { desynchronized: true });
-        S.canvas.width = 1920;
-        S.canvas.height = 1080;
+        // Renderer assigned in a microtask; well before any decoded frame reaches
+        // drawFrame. mw_webgpu flag arrives via the message (no localStorage here).
+        createVideoRenderer(S.canvas, {
+            desynchronized: true,
+            videoCodec: S.videoCodec,
+            isChromeWindowsHevc: S.isChromeWindowsHevc,
+            webgpu: !!m.webgpu,
+            algo: m.algo
+        }).then((r) => {
+            S.renderer = r;
+            // Apply an output size that may have arrived before the renderer.
+            if (S.outW > 0 && S.outH > 0) r.setOutputSize(S.outW, S.outH);
+            post({ type: 'rendererinfo', kind: r.kind });
+        });
         S.nalParser = new NalParser();
         setupDecoder();
         console.log('[VideoWorker] init codec=' + S.videoCodec + ' hdr=' + S.hdr +
@@ -662,6 +590,11 @@ self.onmessage = (e) => {
     }
     case 'frameloss':
         S._referenceValid = false;
+        break;
+    case 'resize':
+        S.outW = m.outW;
+        S.outH = m.outH;
+        if (S.renderer) S.renderer.setOutputSize(S.outW, S.outH);
         break;
     case 'stop':
         S.stopped = true;
