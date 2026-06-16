@@ -169,17 +169,24 @@ export class StreamView {
                 && typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function';
         } catch (e) { this._useWorker = false; }
         this._videoWorker = null;
-        // Video Enhancement (WebGPU upscale/sharpen). Driven by the persisted
-        // setting; 'mw_webgpu=1' remains a dev override. Forwarded to the worker,
-        // where localStorage is unavailable. The transport is already forced to a
-        // canvas path (DC/WSS) by the backend when enhancement is on.
-        // Resolve the algo here: 'auto' picks by platform (mobile→SGSR, desktop→FSR1).
-        let algo = videoEnhancementAlgo || 'auto';
-        if (algo === 'auto') algo = IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
-        else if (algo !== 'sgsr' && algo !== 'fsr1' && algo !== 'off') algo = 'sgsr';
+        // Renderer selection for the canvas path (DC/WSS; webrtc-media uses <video>).
+        // WebGPU is the preferred renderer on ALL devices; createVideoRenderer falls
+        // back to Canvas2D when WebGPU is unavailable. The algo decides what WebGPU
+        // does: 'off' = pass-through (Enhancer disabled), 'sgsr'/'fsr1' = upscaler.
+        // Forwarded to the worker too (localStorage is unavailable there).
+        let algo;
+        if (videoEnhancement === 'on') {
+            // 'auto' picks by platform (mobile→SGSR, desktop→FSR1).
+            algo = videoEnhancementAlgo || 'auto';
+            if (algo === 'auto') algo = IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
+            else if (algo !== 'sgsr' && algo !== 'fsr1' && algo !== 'off') algo = 'sgsr';
+        } else {
+            algo = 'off'; // WebGPU pass-through (no upscaler) when Enhancer is off
+        }
         this._videoEnhancementAlgo = algo;
-        this._wantWebGpu = (videoEnhancement === 'on');
-        try { if (localStorage.getItem('mw_webgpu') === '1') this._wantWebGpu = true; } catch (e) {}
+        this._wantWebGpu = true;
+        // Dev override: 'mw_force_2d=1' forces the Canvas2D path for comparison.
+        try { if (localStorage.getItem('mw_force_2d') === '1') this._wantWebGpu = false; } catch (e) {}
         this._workerLastDecoded = 0;
 
         // Backend timestamp tracking for stale frame detection.
@@ -655,7 +662,7 @@ export class StreamView {
         el.className = 'stream-overlay';
         el.innerHTML = `
             <div class="stream-header">
-                <button class="btn stream-quit-btn" id="btn-stream-quit">Stop Streaming</button>
+                <button class="btn stream-quit-btn" id="btn-stream-quit">${IS_MOBILE_OR_TABLET ? 'Stop' : 'Stop Streaming'}</button>
             </div>
             <div class="stream-canvas-area">
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
@@ -3870,6 +3877,12 @@ export class StreamView {
      * to the current platform (Windows vs macOS).
      */
     _buildShortcutsSlideContent() {
+        // Touch devices have no physical keyboard: show a gesture cheat-sheet
+        // (the trackpad model) instead of the keyboard-shortcut combos.
+        if (IS_TOUCH_DEVICE) {
+            this._buildTouchHelpContent();
+            return;
+        }
         const isMac = /Mac/.test(navigator.platform);
         const modA = isMac ? 'Cmd' : 'Ctrl';          // Primary modifier
         const modB = isMac ? 'Option' : 'Alt';         // Secondary modifier
@@ -3905,21 +3918,49 @@ export class StreamView {
     }
 
     /**
-     * Show the shortcuts slide and set a 5-second auto-hide timer.
+     * Build the touch gesture cheat-sheet (mobile/tablet). Mirrors the
+     * trackpad input model implemented in the touch handlers: relative
+     * cursor, taps for clicks, multi-finger drags for scroll/zoom/pan.
+     */
+    _buildTouchHelpContent() {
+        const rows = [
+            ['Move cursor',   '1 finger drag'],
+            ['Left click',    'Tap'],
+            ['Right click',   '2-finger tap'],
+            ['Drag & hold',   'Long press'],
+            ['Scroll',        '2-finger drag'],
+            ['Zoom',          'Pinch'],
+            ['Pan zoom',      '3-finger drag'],
+            ['Keyboard',      '3-finger tap'],
+        ];
+
+        let html = '<div class="shortcuts-slide-title">Touch controls</div>';
+        html += '<div class="shortcuts-slide-grid">';
+        for (const [action, gesture] of rows) {
+            html += '<div class="shortcut-row">';
+            html += '<span class="shortcut-action">' + action + '</span>';
+            html += '<span class="shortcut-keys"><kbd class="gesture">' + gesture + '</kbd></span>';
+            html += '</div>';
+        }
+        html += '</div>';
+        this._shortcutsSlide.innerHTML = html;
+    }
+
+    /**
+     * Show the shortcuts/gesture slide and set an auto-hide timer.
      * Safe to call multiple times — resets the timer each call.
-     * Never shown on mobile/tablet — there is no physical keyboard.
      */
     _showShortcutsSlide() {
-        if (IS_MOBILE_OR_TABLET) return;
         if (!this._shortcutsSlide) return;
         this._shortcutsSlide.style.display = '';
 
         if (this._shortcutsTimeout) {
             clearTimeout(this._shortcutsTimeout);
         }
+        // Touch help has more rows to read than the keyboard combos.
         this._shortcutsTimeout = setTimeout(() => {
             this._hideShortcutsSlide();
-        }, 5000);
+        }, IS_TOUCH_DEVICE ? 8000 : 5000);
     }
 
     /**

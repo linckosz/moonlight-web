@@ -1,7 +1,8 @@
 /**
- * createVideoRenderer — picks the output renderer. WebGPU (feature On, dev flag)
- * with a transparent fallback to Canvas2D when WebGPU init fails. Kept in its own
- * module to avoid a circular import (the subclasses import VideoRenderer).
+ * createVideoRenderer — picks the output renderer for the canvas path. WebGPU is
+ * the preferred renderer on all devices (opts.webgpu defaults on), with a
+ * transparent fallback to Canvas2D when WebGPU is unavailable or init fails.
+ * Kept in its own module to avoid a circular import (the subclasses import VideoRenderer).
  *
  * The WebGPU attempt is safe to fall back from: WebGpuRenderer.create runs
  * requestAdapter/requestDevice BEFORE getContext('webgpu'), so a failure there
