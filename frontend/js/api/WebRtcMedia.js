@@ -122,6 +122,33 @@ export class WebRtcMedia {
     }
 
     /**
+     * Set the video receiver's jitter-buffer target (adaptive buffer, ms).
+     * Raising it lets Chrome's dejitter buffer absorb network jitter AND makes
+     * the backend NACK retransmission effective (a packet retransmitted within
+     * the buffer window arrives before its playout deadline). playoutDelayHint
+     * (seconds) moves in lockstep so it does not clamp the buffer back down.
+     * No-op on browsers without jitterBufferTarget (Firefox/Safari).
+     */
+    setVideoJitterBufferTarget(ms) {
+        if (!this.pc || typeof this.pc.getReceivers !== 'function') return;
+        const targetMs = Math.max(0, ms | 0);
+        try {
+            for (const receiver of this.pc.getReceivers()) {
+                const track = receiver.track;
+                if (!track || track.kind !== 'video') continue;
+                if (receiver.jitterBufferTarget !== undefined) {
+                    receiver.jitterBufferTarget = targetMs;
+                }
+                if ('playoutDelayHint' in receiver) {
+                    receiver.playoutDelayHint = targetMs / 1000;
+                }
+            }
+        } catch (e) {
+            console.warn('[WebRtcMedia] setVideoJitterBufferTarget failed:', e.message);
+        }
+    }
+
+    /**
      * Start the WebRTC connection: connect signaling WS, create PeerConnection,
      * wait for offer from backend, answer, exchange ICE.
      */

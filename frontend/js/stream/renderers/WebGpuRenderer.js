@@ -744,8 +744,11 @@ export class WebGpuRenderer extends VideoRenderer {
         if (this._hasOutputSize) {
             const frameAspect = inW / inH;
             const boxAspect = this._outW / this._outH;
-            if (frameAspect >= boxAspect) { cw = this._outW; ch = Math.round(this._outW / frameAspect); }
-            else { ch = this._outH; cw = Math.round(this._outH * frameAspect); }
+            cw = (frameAspect >= boxAspect) ? this._outW : Math.round(this._outH * frameAspect);
+            // Cap at 2× source: no extra detail beyond, and it bounds the texture
+            // size when the output box is inflated by pinch-zoom.
+            cw = Math.min(cw, inW * 2);
+            ch = Math.round(cw / frameAspect);
         }
         if (cw > 0 && ch > 0 && (this.canvas.width !== cw || this.canvas.height !== ch)) {
             this.canvas.width = cw;

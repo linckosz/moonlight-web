@@ -10,6 +10,7 @@ import { WebRtcMedia } from '../api/WebRtcMedia.js';
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
+import { JitterController } from '../stream/JitterController.js';
 import {
     NalParser,
     splitNals,
@@ -173,22 +174,27 @@ export class StreamView {
         // WebGPU is the preferred renderer on ALL devices; createVideoRenderer falls
         // back to Canvas2D when WebGPU is unavailable. The algo decides what WebGPU
         // does: 'off' = pass-through (Enhancer disabled), 'sgsr'/'fsr1' = upscaler.
+        // 'force2d' (debug) bypasses WebGPU to exercise the Canvas2D path.
         // Forwarded to the worker too (localStorage is unavailable there).
-        let algo;
+        let algo = 'off';        // default: WebGPU pass-through (no upscaler)
+        let wantWebGpu = true;   // WebGPU is the preferred canvas renderer
         if (videoEnhancement === 'on') {
-            // 'auto' picks by platform (mobile→SGSR, desktop→FSR1).
-            algo = videoEnhancementAlgo || 'auto';
-            if (algo === 'auto') algo = IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
-            else if (algo !== 'sgsr' && algo !== 'fsr1' && algo !== 'off') algo = 'sgsr';
-        } else {
-            algo = 'off'; // WebGPU pass-through (no upscaler) when Enhancer is off
+            const sel = videoEnhancementAlgo || 'auto';
+            if (sel === 'force2d') {
+                wantWebGpu = false; // debug: force the Canvas2D renderer
+            } else if (sel === 'auto') {
+                // 'auto' picks by platform (mobile→SGSR, desktop→FSR1).
+                algo = IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
+            } else {
+                algo = (sel === 'sgsr' || sel === 'fsr1') ? sel : 'sgsr';
+            }
         }
         this._videoEnhancementAlgo = algo;
         // Whether the user enabled the Enhancer (used to flag it OFF in the overlay
         // when the stream lands on webrtc-media, where it can't be applied).
         this._videoEnhancementRequested = (videoEnhancement === 'on');
-        this._wantWebGpu = true;
-        // Dev override: 'mw_force_2d=1' forces the Canvas2D path for comparison.
+        this._wantWebGpu = wantWebGpu;
+        // Dev override (no UI): also force the Canvas2D path for comparison.
         try { if (localStorage.getItem('mw_force_2d') === '1') this._wantWebGpu = false; } catch (e) {}
         this._workerLastDecoded = 0;
 
@@ -305,6 +311,14 @@ export class StreamView {
         this._lastInboundBytes = 0;
         this._lastInboundFrames = 0;
         this._lastInboundStatsTime = 0;
+
+        // ── Adaptive jitter buffer (webrtc-media only, behind mw_jitter_auto) ──
+        // Sits at 0 on a clean link (= current behavior); grows only when jitter/
+        // loss/freezes appear, which also reactivates the backend NACK (neutralized
+        // at target=0). Control law lives in JitterController; we feed it raw stats.
+        this._jitterAuto = false;
+        try { this._jitterAuto = localStorage.getItem('mw_jitter_auto') === '1'; } catch (e) {}
+        this._jitterController = new JitterController();
 
         // Forward stats/pong messages from backend to the stats overlay system.
         // Set before setupWebRtc() so it's active when connect() is called.
@@ -781,6 +795,11 @@ export class StreamView {
         this._shortcutsSlide.className = 'stream-shortcuts-slide';
         this._shortcutsSlide.style.display = 'none';
         this._buildShortcutsSlideContent();
+        // Click/tap to dismiss the shortcuts/gesture hint immediately.
+        this._shortcutsSlide.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._hideShortcutsSlide();
+        });
         document.getElementById('stream-view').appendChild(this._shortcutsSlide);
 
         // ── Startup overlay (centered 3-step status) ───────────────────────
@@ -830,10 +849,15 @@ export class StreamView {
         if (IS_TOUCH_DEVICE) {
             // Hidden capture element: focusing it opens the OS soft keyboard.
             // Key/text events are read here and forwarded to the host.
-            this._kbdCapture = document.createElement('textarea');
+            // contenteditable (not <textarea>): a real form field makes iOS
+            // Safari show its AutoFill accessory bar (passwords/cards/keyboard
+            // switcher). A contenteditable element opens the soft keyboard with
+            // none of that bar.
+            this._kbdCapture = document.createElement('div');
             this._kbdCapture.id = 'stream-kbd-capture';
             this._kbdCapture.className = 'stream-kbd-capture';
-            this._kbdCapture.setAttribute('autocomplete', 'off');
+            this._kbdCapture.setAttribute('contenteditable', 'true');
+            this._kbdCapture.setAttribute('inputmode', 'text');
             this._kbdCapture.setAttribute('autocorrect', 'off');
             this._kbdCapture.setAttribute('autocapitalize', 'off');
             this._kbdCapture.setAttribute('spellcheck', 'false');
@@ -852,6 +876,10 @@ export class StreamView {
                 this._toggleVirtualKeyboard();
             });
             if (header) header.insertBefore(this._kbdBtn, header.firstChild);
+
+            // Special-keys bar shown above the soft keyboard (Win/Esc/Tab/
+            // modifiers/Del + arrows). Latching modifiers carry into the next key.
+            this._buildKbToolbar();
 
             // VisualViewport: shrink the overlay so the stream stays fully
             // visible above the soft keyboard (push-up, esp. portrait).
@@ -943,7 +971,7 @@ export class StreamView {
                 this._firstFrameRendered = true;
                 if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
                 this._updateStartupStep(3);
-                setTimeout(() => this._hideStartupOverlay(), 1500);
+                setTimeout(() => this._hideStartupOverlay(), 500);
                 this._showShortcutsSlide();
             }
             break;
@@ -1749,7 +1777,7 @@ export class StreamView {
             if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
             // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
             this._updateStartupStep(3);
-            setTimeout(() => this._hideStartupOverlay(), 1500);
+            setTimeout(() => this._hideStartupOverlay(), 500);
             // Show keyboard shortcuts slide (5s auto-hide)
             this._showShortcutsSlide();
 
@@ -1880,18 +1908,29 @@ export class StreamView {
         apply(); // initial measure
     }
 
+    // Quantized zoom factor folded into the output size so the WebGPU enhancer
+    // renders its backing at the *zoomed* device resolution (a box-sized canvas
+    // CSS-scaled by pinch-zoom would otherwise blur). Quantized (ceil, capped)
+    // so GPU textures aren't reallocated on every pinch frame; the renderer caps
+    // again to 2× source. No effect on Canvas2D (it ignores setOutputSize).
+    _outputZoomScale() {
+        return Math.min(4, Math.max(1, Math.ceil(this._zoom || 1)));
+    }
+
     // Push the current output size to the active renderer (main) or worker.
-    // Re-called when the renderer/worker is created (size measured earlier).
+    // Re-called when the renderer/worker is created (size measured earlier) and
+    // whenever the zoom step changes.
     _applyOutputSize() {
         if (this._outW <= 0 || this._outH <= 0) return;
+        const s = this._outputZoomScale();
+        this._lastOutputZoomScale = s;
+        const w = this._outW * s, h = this._outH * s;
         if (this._useWorker) {
             if (this._videoWorker) {
-                this._videoWorker.postMessage({
-                    type: 'resize', outW: this._outW, outH: this._outH
-                });
+                this._videoWorker.postMessage({ type: 'resize', outW: w, outH: h });
             }
         } else if (this._renderer) {
-            this._renderer.setOutputSize(this._outW, this._outH);
+            this._renderer.setOutputSize(w, h);
         }
     }
 
@@ -1948,7 +1987,7 @@ export class StreamView {
                             if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
                             // Mark startup step 3 ("Stream prêt !") and hide overlay after 1.5s
                             this._updateStartupStep(3);
-                            setTimeout(() => this._hideStartupOverlay(), 1500);
+                            setTimeout(() => this._hideStartupOverlay(), 500);
                             // Show keyboard shortcuts slide (5s auto-hide)
                             this._showShortcutsSlide();
                         }
@@ -2037,6 +2076,9 @@ export class StreamView {
         const pc = this.webrtc && this.webrtc.pc;
         if (!pc || typeof pc.getStats !== 'function') return;
 
+        // Reset adaptive jitter-buffer controller state for this session.
+        this._jitterController.reset();
+
         this._mediaStatsTimer = setInterval(async () => {
             if (this._quitting) return;
             const peer = this.webrtc && this.webrtc.pc;
@@ -2080,6 +2122,30 @@ export class StreamView {
                 this._lastInboundBytes = inbound.bytesReceived || 0;
                 this._lastInboundFrames = inbound.framesDecoded || 0;
                 this._lastInboundStatsTime = now;
+
+                // Adaptive jitter buffer: drive receiver.jitterBufferTarget from
+                // measured jitter/loss/freezes (webrtc-media only, flag-gated).
+                if (this._jitterAuto) {
+                    const cmd = this._jitterController.update({
+                        packetsLost: inbound.packetsLost || 0,
+                        packetsReceived: inbound.packetsReceived || 0,
+                        freezeCount: inbound.freezeCount || 0,
+                        jitterMs: (typeof inbound.jitter === 'number' ? inbound.jitter : 0) * 1000,
+                        rttMs: (candidatePair && candidatePair.currentRoundTripTime > 0)
+                            ? candidatePair.currentRoundTripTime * 1000 : 0
+                    });
+                    if (cmd !== null) {
+                        if (this.webrtc && typeof this.webrtc.setVideoJitterBufferTarget === 'function') {
+                            this.webrtc.setVideoJitterBufferTarget(cmd);
+                        }
+                        const s = this._jitterController.lastSignals;
+                        console.log('[JitterAuto] target=' + Math.round(cmd) +
+                            'ms jitter=' + (s ? s.jitterEwma.toFixed(1) : '?') +
+                            ' loss=' + (s ? (s.lossRate * 100).toFixed(1) : '?') + '%' +
+                            ' rtt=' + (s ? Math.round(s.rttMs) : '?') +
+                            ' freezes=' + (s ? s.freezes : '?'));
+                    }
+                }
 
                 // Latency ≈ jitter-buffer delay + network RTT/2 + backend↔Sunshine RTT.
                 let latency = 0;
@@ -3303,6 +3369,12 @@ export class StreamView {
         if (!hint) {
             hint = document.createElement('div');
             hint.className = 'install-hint';
+            // Click/tap to dismiss the hint (e.g. the fullscreen-exit reminder).
+            hint.addEventListener('click', (e) => {
+                e.stopPropagation();
+                hint.classList.remove('install-hint-visible');
+                if (this._transientHintTimer) clearTimeout(this._transientHintTimer);
+            });
             document.body.appendChild(hint);
             this._transientHintEl = hint;
         }
@@ -3414,6 +3486,16 @@ export class StreamView {
             // misses characters like "*"), but `e.data`/`e.inputType` are exact.
             // Gboard composition has no usable data → falls through to the diff.
             const it = e && e.inputType;
+            // With a latched toolbar modifier, route a typed character through a
+            // key event so the modifier applies (Ctrl+C, Alt+F4, Win+R, …).
+            if (this._anyModHeld() && it === 'insertText' && e.data != null) {
+                const vk = StreamView.charToVk(e.data);
+                if (vk != null) {
+                    this._sendToolbarKey(vk);
+                    this._resetKbdCapture();
+                    return;
+                }
+            }
             if (it === 'insertText' && e.data != null) {
                 this.webrtc.send({ type: 'textinput', text: e.data });
                 this._resetKbdCapture();
@@ -3437,7 +3519,7 @@ export class StreamView {
             }
 
             // Fallback: diff the sentinel (Android Gboard composition, etc.).
-            const val = cap.value;
+            const val = cap.textContent;
             const sent = StreamView.KBD_SENTINEL;
             // Common prefix / suffix between the sentinel and the new value.
             let p = 0;
@@ -3487,26 +3569,143 @@ export class StreamView {
             this._kbdVisible = false;
             this._kbdBlurAt = performance.now();   // for the toggle-button race
             if (this._kbdBtn) this._kbdBtn.classList.remove('active');
+            // A genuine dismiss hides the bar; a tap on a toolbar button refocuses
+            // immediately, so defer to let _refocusCapture cancel the hide.
+            setTimeout(() => { if (!this._kbdVisible) this._hideKbToolbar(); }, 50);
         });
     }
 
-    /** Seed the capture <textarea> with the filler sentinel and put the caret
-     *  at the end, so Backspace always has something to delete and inserted
-     *  text appends after the sentinel. */
+    /** Seed the capture element with the filler sentinel and put the caret at
+     *  the end, so Backspace always has something to delete and inserted text
+     *  appends after the sentinel. (contenteditable: textContent + Range.) */
     _resetKbdCapture() {
         const cap = this._kbdCapture;
         if (!cap) return;
         const sent = StreamView.KBD_SENTINEL;
-        if (cap.value !== sent) cap.value = sent;
-        try { cap.setSelectionRange(sent.length, sent.length); } catch (e) { /* ignore */ }
+        if (cap.textContent !== sent) cap.textContent = sent;
+        // Only move the caret while focused, to avoid stealing focus on setup.
+        if (document.activeElement !== cap) return;
+        try {
+            const sel = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(cap);
+            range.collapse(false);              // caret at end
+            sel.removeAllRanges();
+            sel.addRange(range);
+        } catch (e) { /* ignore */ }
     }
 
-    /** Send a single key press (down+up) with no modifiers. */
+    /** Send a single key press (down+up), applying any latched toolbar mods. */
     _sendKey(vk) {
-        const base = { keyCode: vk, code: '', key: '',
-            ctrlKey: false, shiftKey: false, altKey: false, metaKey: false };
+        const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
         this.webrtc.send({ type: 'keydown', ...base });
         this.webrtc.send({ type: 'keyup', ...base });
+    }
+
+    // =========================================================================
+    // On-screen special-keys toolbar (touch) — Win/Esc/Tab/mods/Del + arrows
+    // =========================================================================
+
+    // Windows virtual-key codes for the latching modifier buttons.
+    static MOD_VK = { ctrl: 0x11, shift: 0x10, alt: 0x12, meta: 0x5B };
+
+    /** Map a single printable character to a Windows VK (letters/digits only),
+     *  so a character typed with a latched modifier becomes Ctrl/Alt/… + key. */
+    static charToVk(ch) {
+        if (!ch || ch.length !== 1) return null;
+        const c = ch.toUpperCase().charCodeAt(0);
+        if (c >= 0x30 && c <= 0x39) return c;   // 0-9
+        if (c >= 0x41 && c <= 0x5A) return c;   // A-Z
+        return null;
+    }
+
+    /** Current latched modifier state as DOM-event-style flags. */
+    _modFlags() {
+        const m = this._heldMods || {};
+        return { ctrlKey: !!m.ctrl, shiftKey: !!m.shift,
+                 altKey: !!m.alt, metaKey: !!m.meta };
+    }
+
+    _anyModHeld() {
+        const m = this._heldMods || {};
+        return m.ctrl || m.shift || m.alt || m.meta;
+    }
+
+    /** Build the special-keys bar (hidden until the soft keyboard opens). */
+    _buildKbToolbar() {
+        this._heldMods = { ctrl: false, shift: false, alt: false, meta: false };
+
+        const bar = document.createElement('div');
+        bar.id = 'stream-kbd-toolbar';
+        bar.className = 'stream-kbd-toolbar';
+
+        // [label, kind, id]. kind: 'close' | 'mod' | 'key'.
+        const items = [
+            ['✕', 'close', null],
+            ['Win',  'key',  0x5B],   // momentary tap → Start menu (single press)
+            ['Esc',  'key',  0x1B],
+            ['Tab',  'key',  0x09],
+            ['Shift','mod',  'shift'],
+            ['Ctrl', 'mod',  'ctrl'],
+            ['Alt',  'mod',  'alt'],
+            ['Del',  'key',  0x2E],
+            ['←', 'key',  0x25],
+            ['↑', 'key',  0x26],
+            ['↓', 'key',  0x28],
+            ['→', 'key',  0x27],
+        ];
+
+        for (const [label, kind, id] of items) {
+            const btn = document.createElement('button');
+            btn.className = 'stream-kbd-key' + (kind === 'mod' ? ' is-mod' : '');
+            btn.textContent = label;
+            btn.tabIndex = -1;
+            // pointerdown + preventDefault: act immediately and keep the hidden
+            // <textarea> focused so the soft keyboard does not dismiss.
+            btn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (kind === 'close')     this._hideVirtualKeyboard();
+                else if (kind === 'mod')  this._toggleMod(id, btn);
+                else                      this._sendToolbarKey(id);
+                this._refocusCapture();
+            });
+            bar.appendChild(btn);
+        }
+
+        document.getElementById('stream-view').appendChild(bar);
+        this._kbToolbar = bar;
+    }
+
+    /** Latch / unlatch a modifier, sending a real key down/up so a bare press
+     *  works (e.g. Win alone opens the Start menu) and the flag carries over. */
+    _toggleMod(name, btn) {
+        const vk = StreamView.MOD_VK[name];
+        if (this._heldMods[name]) {
+            this._heldMods[name] = false;
+            this.webrtc.send({ type: 'keyup', keyCode: vk, code: '', key: '', ...this._modFlags() });
+            btn.classList.remove('active');
+        } else {
+            this._heldMods[name] = true;
+            // Flags reflect already-held mods (this one now included).
+            this.webrtc.send({ type: 'keydown', keyCode: vk, code: '', key: '', ...this._modFlags() });
+            btn.classList.add('active');
+        }
+    }
+
+    /** Send a toolbar action key (down+up) with the current latched mods.
+     *  Latches stay held so e.g. Shift + arrows keeps selecting. */
+    _sendToolbarKey(vk) {
+        const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
+        this.webrtc.send({ type: 'keydown', ...base });
+        this.webrtc.send({ type: 'keyup', ...base });
+    }
+
+    /** Re-focus the hidden capture so the soft keyboard stays open after a tap. */
+    _refocusCapture() {
+        const cap = this._kbdCapture;
+        if (!cap) return;
+        try { cap.focus({ preventScroll: true }); } catch (e) { cap.focus(); }
     }
 
     _toggleVirtualKeyboard() {
@@ -3547,10 +3746,34 @@ export class StreamView {
             this.streamEl.style.bottom = 'auto';
             this.streamEl.style.top = vv.offsetTop + 'px';
             this.streamEl.style.height = vv.height + 'px';
+            // Park the special-keys bar just above the soft keyboard.
+            if (this._kbToolbar) {
+                this._kbToolbar.style.bottom = kbHeight + 'px';
+                this._kbToolbar.classList.add('visible');
+            }
         } else {
             this.streamEl.style.bottom = '';
             this.streamEl.style.top = '';
             this.streamEl.style.height = '';
+            this._hideKbToolbar();
+        }
+    }
+
+    /** Hide the special-keys bar and release any latched modifiers. */
+    _hideKbToolbar() {
+        if (!this._kbToolbar) return;
+        this._kbToolbar.classList.remove('visible');
+        // Release stuck modifiers so the host doesn't keep them held.
+        if (this._heldMods) {
+            for (const name of Object.keys(this._heldMods)) {
+                if (!this._heldMods[name]) continue;
+                this._heldMods[name] = false;
+                this.webrtc.send({ type: 'keyup', keyCode: StreamView.MOD_VK[name],
+                    code: '', key: '', ctrlKey: false, shiftKey: false,
+                    altKey: false, metaKey: false });
+            }
+            this._kbToolbar.querySelectorAll('.stream-kbd-key.active')
+                .forEach((b) => b.classList.remove('active'));
         }
     }
 
@@ -3745,6 +3968,8 @@ export class StreamView {
                 this._zoom = newZoom;
                 if (this._zoom <= 1.001) { this._panX = 0; this._panY = 0; }
                 this._applyZoomTransform();
+                // Re-render the enhancer backing at the new zoom step (crisp pinch-zoom).
+                if (this._outputZoomScale() !== this._lastOutputZoomScale) this._applyOutputSize();
                 this._scrollSamples.length = 0;   // pinching cancels pending inertia
             } else if (Math.abs(dCy) > 0.1) {
                 // Parallel two-finger drag → vertical scroll wheel, amplified and
@@ -4108,6 +4333,10 @@ export class StreamView {
      */
     _updateStartupStep(step) {
         if (!this._startupOverlay) return;
+        // The overlay defaults to display:none in CSS — reveal it while the
+        // stream initializes (hidden again by _hideStartupOverlay after step 3).
+        this._startupOverlay.classList.remove('hidden');
+        this._startupOverlay.style.display = 'flex';
         const items = this._startupOverlay.querySelectorAll('.startup-step');
         items.forEach((el) => {
             const idx = parseInt(el.getAttribute('data-step'), 10);
@@ -4123,7 +4352,7 @@ export class StreamView {
 
     /**
      * Fade out and hide the startup overlay.
-     * Called ~1.5s after the first video frame is decoded (step 3).
+     * Called ~0.5s after the first video frame is decoded (step 3).
      */
     _hideStartupOverlay() {
         if (!this._startupOverlay) return;
@@ -4256,6 +4485,10 @@ export class StreamView {
             this._kbdBtn.remove();
             this._kbdBtn = null;
         }
+        if (this._kbToolbar) {
+            this._kbToolbar.remove();
+            this._kbToolbar = null;
+        }
         if (this.streamEl) {
             this.streamEl.style.height = '';
             this.streamEl.style.top = '';
@@ -4376,6 +4609,10 @@ export class StreamView {
         if (this._kbdBtn) {
             this._kbdBtn.remove();
             this._kbdBtn = null;
+        }
+        if (this._kbToolbar) {
+            this._kbToolbar.remove();
+            this._kbToolbar = null;
         }
         if (this.streamEl) {
             this.streamEl.style.height = '';

@@ -32,6 +32,12 @@
 
 static const int POLL_INTERVAL_MS = 5000;
 
+// mDNS runs only in short bursts: binding UDP 5353 permanently steals unicast
+// mDNS responses from other clients on the same machine (Moonlight Qt) on
+// Windows. Known hosts are kept fresh via HTTP polling, so a brief window per
+// scan is enough to discover new hosts.
+static const int MDNS_DISCOVERY_WINDOW_MS = 8000;
+
 // ============================================================================
 // MdnsPendingComputer — Resolves mDNS hostname → addresses
 // ============================================================================
@@ -122,6 +128,13 @@ void ComputerManager::init()
 {
     loadHosts();
     startPolling();
+
+    // Single-shot timer that closes each mDNS discovery window and frees 5353.
+    m_MdnsWindowTimer = new QTimer(this);
+    m_MdnsWindowTimer->setSingleShot(true);
+    connect(m_MdnsWindowTimer, &QTimer::timeout,
+            this, &ComputerManager::stopMdnsDiscovery);
+
     startMdnsDiscovery();
 
     Logger::info(QString("ComputerManager initialized: %1 hosts loaded")
@@ -366,6 +379,12 @@ void ComputerManager::onPollReplyFinished()
 
 void ComputerManager::startMdnsDiscovery()
 {
+    // Already browsing — just extend the current window instead of rebinding.
+    if (m_MdnsActive) {
+        m_MdnsWindowTimer->start(MDNS_DISCOVERY_WINDOW_MS);
+        return;
+    }
+
     try {
         m_MdnsServer = new QMdnsEngine::Server(this);
         m_MdnsBrowser = new QMdnsEngine::Browser(m_MdnsServer,
@@ -376,10 +395,30 @@ void ComputerManager::startMdnsDiscovery()
                 this, &ComputerManager::onMdnsServiceAdded);
 
         m_MdnsActive = true;
-        Logger::info("mDNS discovery started for _nvstream._tcp.local.");
+        m_MdnsWindowTimer->start(MDNS_DISCOVERY_WINDOW_MS);
+        Logger::info("mDNS discovery window opened for _nvstream._tcp.local.");
     } catch (const std::exception& e) {
         Logger::warning(QString("mDNS discovery unavailable: %1").arg(e.what()));
     }
+}
+
+void ComputerManager::stopMdnsDiscovery()
+{
+    if (!m_MdnsActive && !m_MdnsServer)
+        return;
+
+    // Cancel pending hostname resolutions first — they hold a pointer to the
+    // mDNS server and must not outlive it.
+    qDeleteAll(m_PendingResolutions);
+    m_PendingResolutions.clear();
+
+    delete m_MdnsBrowser;
+    m_MdnsBrowser = nullptr;
+    delete m_MdnsServer;  // releases UDP 5353
+    m_MdnsServer = nullptr;
+
+    m_MdnsActive = false;
+    Logger::info("mDNS discovery window closed — UDP 5353 released");
 }
 
 void ComputerManager::onMdnsServiceAdded(const QMdnsEngine::Service& service)
@@ -504,10 +543,8 @@ void ComputerManager::handleScanRequest()
     }
     m_LastScanTime = now;
 
-    // Re-trigger mDNS browser. If already active, qmdnsengine handles dedup.
-    if (!m_MdnsActive) {
-        startMdnsDiscovery();
-    }
+    // Open a fresh mDNS discovery window (extends it if already active).
+    startMdnsDiscovery();
 
     // Also trigger a poll tick immediately
     onPollTick();

@@ -602,6 +602,9 @@ const MoonlightApp = {
         // Reset fallback counter on user-initiated launch (not a fallback re-launch)
         if (!codecOverride) {
             this._fallbackAttemptCount = 0;
+            // Reset transport-chain fallback state for a fresh launch.
+            this._transportIndex = 0;
+            this._firstTransportRetried = false;
         }
 
         // Store host/app for HEVC fallback re-launch
@@ -763,8 +766,18 @@ const MoonlightApp = {
 
         const chain = this._transportChain || [];
         const cur = this._transportIndex || 0;
-        const next = cur + 1;
 
+        // Always retry the FIRST transport once before moving down the chain — a
+        // single transient ICE failure on the preferred transport shouldn't
+        // immediately downgrade. The retry is silent (no warning toast).
+        if (cur === 0 && !this._firstTransportRetried) {
+            this._firstTransportRetried = true;
+            console.warn(`[MW] Transport ${chain[0]} failed (${reason}) — retrying once (silent)`);
+            this._relaunchTransport(0);
+            return;
+        }
+
+        const next = cur + 1;
         if (next < chain.length) {
             console.warn(`[MW] Transport ${chain[cur]} failed (${reason}) — trying ${chain[next]}`);
             Toast.warning(
@@ -775,10 +788,29 @@ const MoonlightApp = {
         } else {
             console.error(`[MW] All transports failed (last: ${chain[cur] || '?'}, reason: ${reason})`);
             Toast.error('Échec de la connexion — tous les modes de transport ont échoué');
+            this._hideRelaunchLoader();
             // quit() fires onQuit → _onStreamingQuit, which handles navigation
             // back to the apps view. silent: suppress the "Stream end" toast.
             if (this.streamView) this.streamView.quit({ silent: true });
         }
+    },
+
+    /** Full-screen loader shown during a transport relaunch so the apps view is
+     *  never revealed between tearing down the old StreamView and rendering the
+     *  new one. Reuses the StreamView startup-loader visuals. */
+    _showRelaunchLoader() {
+        if (document.getElementById('stream-relaunch-loader')) return;
+        const el = document.createElement('div');
+        el.id = 'stream-relaunch-loader';
+        el.innerHTML =
+            '<div class="startup-loader" aria-hidden="true"><div class="startup-loader-ring"></div></div>' +
+            '<div class="startup-step active"><span class="startup-step-label">Connecting...</span></div>';
+        document.getElementById('app').appendChild(el);
+    },
+
+    _hideRelaunchLoader() {
+        const el = document.getElementById('stream-relaunch-loader');
+        if (el) el.remove();
     },
 
     /**
@@ -793,6 +825,10 @@ const MoonlightApp = {
             if (this.streamView) this.streamView.quit({ silent: true });
             return;
         }
+
+        // Show the bridging loader BEFORE teardown so the apps view underneath
+        // is never revealed (stay on the stream initialization screen).
+        this._showRelaunchLoader();
 
         // Quietly tear down the failed StreamView (no navigation, no toast).
         const sv = this.streamView;
@@ -812,6 +848,9 @@ const MoonlightApp = {
             const result = await BackendClient.launchApp(host.uuid, app.id, settings);
             if (result.status === 'streaming') {
                 this._startStreamView(result, host, this._lastStreamingSettings);
+                // New StreamView rendered its own #stream-view on top — drop the
+                // bridging loader.
+                this._hideRelaunchLoader();
             } else {
                 this._onTransportFailed('launch status ' + result.status);
             }
@@ -833,6 +872,8 @@ const MoonlightApp = {
      * infinite loops if H.264 also fails.
      */
     _onStreamingQuit() {
+        // Drop any lingering transport-relaunch loader.
+        this._hideRelaunchLoader();
         // Guard: if popstate already handled cleanup, skip.
         // This prevents double-navigation when:
         //   a) User presses Back → popstate fires quit() + navigates

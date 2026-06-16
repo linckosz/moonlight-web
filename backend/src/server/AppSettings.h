@@ -89,7 +89,7 @@ public:
     //
     // Client-side feature (the browser renders via WebGPU). Persisted here so the
     // setting syncs across browsers. Stored as JSON string "video_enhancement"
-    // ("off" default | "on") and "video_enhancement_algo" ("auto" | "off" | "sgsr" | "fsr1").
+    // ("off" default | "on") and "video_enhancement_algo" ("auto" | "sgsr" | "fsr1" | "force2d").
     // When "on", the launch transport negotiation skips webrtc-media (the canvas
     // pipeline is required).
 

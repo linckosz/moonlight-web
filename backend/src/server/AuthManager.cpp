@@ -361,6 +361,27 @@ void AuthManager::setSessionGeo(const QString& token, const QString& city, const
         .arg(token.left(12), city, country));
 }
 
+bool AuthManager::updateSessionAddress(const QString& token, const QString& ip)
+{
+    auto it = m_sessions.find(token);
+    if (it == m_sessions.end())
+        return false;
+
+    QString cleanIp = cleanClientAddress(ip);
+    if (cleanIp.isEmpty() || it->ip == cleanIp)
+        return false;
+
+    Logger::info(QString("[Auth] Session %1 IP changed: %2 -> %3")
+        .arg(token.left(12), it->ip, cleanIp));
+    it->ip = cleanIp;
+    // Drop stale geolocation; the caller re-runs the lookup for the new IP.
+    it->city.clear();
+    it->country.clear();
+    saveSessions();
+    emit sessionsChanged();
+    return true;
+}
+
 void AuthManager::setSessionStreaming(const QString& token, bool streaming)
 {
     bool changed = false;

@@ -403,13 +403,13 @@ QString AppSettings::videoEnhancementAlgo() const
 {
     QJsonObject obj = readAll();
     QString a = obj.value("video_enhancement_algo").toString();
-    return (a == "sgsr" || a == "fsr1" || a == "off") ? a : "auto";
+    return (a == "sgsr" || a == "fsr1" || a == "force2d") ? a : "auto";
 }
 
 void AppSettings::setVideoEnhancementAlgo(const QString& algo)
 {
     QJsonObject obj = readAll();
-    obj["video_enhancement_algo"] = (algo == "sgsr" || algo == "fsr1" || algo == "off") ? algo : "auto";
+    obj["video_enhancement_algo"] = (algo == "sgsr" || algo == "fsr1" || algo == "force2d") ? algo : "auto";
     writeAll(obj);
 }
 
