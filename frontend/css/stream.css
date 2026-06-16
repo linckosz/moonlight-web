@@ -167,7 +167,9 @@ body.streaming-active .app-footer {
     border-radius: 12px;
     padding: 14px 22px;
     z-index: 100;
-    pointer-events: none;
+    /* Clickable so the user can dismiss the hint (tap/click to hide). */
+    pointer-events: auto;
+    cursor: pointer;
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
@@ -254,8 +256,10 @@ body.streaming-active .app-footer {
 /* ── Streaming stats overlay (top-LEFT, discreet glass card) ───────── */
 .stream-stats-overlay {
     position: fixed;
-    top: 10px;
-    left: 10px;
+    /* Honor the safe-area insets so the card never sits under the iOS notch /
+       status bar when running as a standalone home-screen app. */
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
     /* Above the CSS-fallback fullscreen canvas area (z-index 9999) so the stats
        stay visible in fullscreen. */
     z-index: 10000;
@@ -338,7 +342,7 @@ body.streaming-active .app-footer {
     flex-direction: column;
     align-items: center;
     text-align: center;
-    gap: 18px;
+    gap: 11px;
     transition: opacity 0.5s ease;
 }
 
@@ -346,126 +350,96 @@ body.streaming-active .app-footer {
     opacity: 0;
 }
 
+/* Full-screen loader shown during a transport relaunch (transport-chain
+   fallback) so the apps view is never revealed between StreamView instances.
+   Reuses the .startup-loader / .startup-step visuals. */
+#stream-relaunch-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 11px;
+}
+
 .startup-step {
     display: flex;
     align-items: center;
-    gap: 14px;
-    font-size: 20px;
-    font-weight: 400;
-    color: rgba(255, 255, 255, 0.18);
-    transition: color 0.5s ease;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.2px;
+    color: rgba(255, 255, 255, 0.32);
+    transition: color 0.4s ease;
 }
 
 .startup-step.active {
-    color: rgba(255, 255, 255, 0.90);
+    color: rgba(255, 255, 255, 0.95);
 }
 
 .startup-step.done {
-    color: rgba(255, 255, 255, 0.35);
+    color: rgba(255, 255, 255, 0.45);
 }
 
 .startup-step-dot {
-    width: 12px;
-    height: 12px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.20);
     transition: background 0.4s ease, box-shadow 0.4s ease;
     flex-shrink: 0;
 }
 
 .startup-step.active .startup-step-dot {
     background: #f0c040;
-    box-shadow: 0 0 10px rgba(240, 192, 64, 0.5);
-    animation: startup-pulse 1.2s ease-in-out infinite;
+    box-shadow: 0 0 0 4px rgba(240, 192, 64, 0.14);
 }
 
 .startup-step.done .startup-step-dot {
     background: #4caf50;
-    box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
 }
 
 .startup-step-label {
     white-space: nowrap;
 }
 
-@keyframes startup-pulse {
-    0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.3); opacity: 0.6; }
-}
-
-/* ── Futuristic loader — dual sweeping arcs + breathing core ───────────── */
+/* ── Loader — thin track + single smooth sweeping arc ──────────────────── */
 .startup-loader {
     position: relative;
-    width: 84px;
-    height: 84px;
-    margin-bottom: 6px;
+    width: 52px;
+    height: 52px;
+    margin-bottom: 8px;
 }
 
-/* Outer ring: a single bright arc fading to transparent (conic gradient
-   clipped to a thin ring by a radial mask), spun clockwise. Unicolor. */
+/* Faint full-circle track. */
+.startup-loader::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.09);
+}
+
+/* Sweeping accent arc: a conic gradient clipped to a thin ring by a radial
+   mask, rotated smoothly. Single color, soft head — clean and calm. */
 .startup-loader-ring {
     position: absolute;
     inset: 0;
     border-radius: 50%;
     background: conic-gradient(from 0deg,
         rgba(240, 192, 64, 0) 0deg,
-        rgba(240, 192, 64, 0.06) 150deg,
-        rgba(240, 192, 64, 0.45) 300deg,
-        #f0c040 352deg,
+        rgba(240, 192, 64, 0) 90deg,
         #f0c040 360deg);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
             mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
-    animation: startup-spin 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
-    filter: drop-shadow(0 0 6px rgba(240, 192, 64, 0.35));
-}
-
-/* Inner ring: shorter arc, counter-rotating faster — adds the "futuristic"
-   layered motion while staying strictly one color. */
-.startup-loader-ring::after {
-    content: '';
-    position: absolute;
-    inset: 14px;
-    border-radius: 50%;
-    background: conic-gradient(from 180deg,
-        rgba(240, 192, 64, 0) 0deg,
-        rgba(240, 192, 64, 0) 250deg,
-        #f0c040 350deg,
-        #f0c040 360deg);
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-            mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-    animation: startup-spin-rev 0.8s linear infinite;
-}
-
-/* Static faint ring track behind the arcs for depth. */
-.startup-loader::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    border: 3px solid rgba(240, 192, 64, 0.07);
-}
-
-/* Glowing core dot — breathes in sync with the active step. */
-.startup-loader::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 8px;
-    height: 8px;
-    margin: -4px 0 0 -4px;
-    border-radius: 50%;
-    background: #f0c040;
-    box-shadow: 0 0 16px rgba(240, 192, 64, 0.85);
-    animation: startup-pulse 1.4s ease-in-out infinite;
+    animation: startup-spin 0.9s linear infinite;
 }
 
 @keyframes startup-spin {
     to { transform: rotate(360deg); }
-}
-
-@keyframes startup-spin-rev {
-    to { transform: rotate(-360deg); }
 }
 
 /* ── Fullscreen button — centered in the header bar ────────────────────── */
@@ -558,6 +532,59 @@ body.streaming-active .app-footer {
     pointer-events: none;
 }
 
+/* ── Special-keys bar shown above the on-screen keyboard (touch) ────────── */
+.stream-kbd-toolbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;                 /* JS parks it just above the soft keyboard */
+    display: none;
+    align-items: stretch;
+    gap: 3px;
+    padding: 5px 4px;
+    /* All keys share the width — no horizontal scroll, every key reachable. */
+    background: rgba(20, 20, 22, 0.96);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.4);
+    z-index: 60;
+    box-sizing: border-box;
+}
+.stream-kbd-toolbar.visible {
+    display: flex;
+}
+.stream-kbd-key {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 38px;
+    padding: 0 1px;
+    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 7px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+.stream-kbd-key:active {
+    transform: scale(0.94);
+    background: rgba(255, 255, 255, 0.18);
+}
+.stream-kbd-key.is-mod {
+    color: rgba(255, 255, 255, 0.8);
+}
+.stream-kbd-key.active {
+    /* Latched modifier */
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
 /* ── Native fullscreen: hide the header so the stream fills the screen ──── */
 :fullscreen .stream-header {
     display: none !important;
@@ -601,12 +628,15 @@ body.streaming-active .app-footer {
     line-height: 1.4;
     text-align: center;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
-    pointer-events: auto;
+    /* Only intercept clicks while visible, so the faded-out hint never blocks
+       input in the top-center region. Clickable to dismiss when shown. */
+    pointer-events: none;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.4s ease;
 }
 .install-hint-visible {
     opacity: 0.8;
+    pointer-events: auto;
 }
 

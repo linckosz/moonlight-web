@@ -446,7 +446,7 @@ int main(int argc, char* argv[])
 
     // GET /api/auth/status — check current auth status
     server.router()->get("/api/auth/status",
-        [&authManager](const HttpRequest& req) {
+        [&authManager, &geoIpService](const HttpRequest& req) {
             QJsonObject obj;
 
             bool isLocal = HttpServer::isLocalRequest(req.clientAddress);
@@ -468,6 +468,14 @@ int main(int argc, char* argv[])
                             QString token = trimmed.mid(QStringLiteral("mw_session=").length());
                             if (authManager.validateSession(token)) {
                                 auth = true;
+                                // Reconnection: refresh source IP and re-run
+                                // geolocation if it changed since last seen.
+                                if (authManager.updateSessionAddress(token, req.clientAddress)) {
+                                    geoIpService.lookupIp(req.clientAddress,
+                                        [&authManager, token](const QString& city, const QString& country) {
+                                            authManager.setSessionGeo(token, city, country);
+                                        });
+                                }
                                 break;
                             }
                         }

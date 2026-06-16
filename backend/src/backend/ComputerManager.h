@@ -78,6 +78,7 @@ private:
     void saveHosts();
     void startPolling();
     void startMdnsDiscovery();
+    void stopMdnsDiscovery();
     NvComputer* findHostByUuid(const QString& uuid) const;
     void addOrUpdateHost(const QString& serverInfo, const NvAddress& addr);
     void tryAddHostFromAddress(const NvAddress& addr, bool fromMdns, const QString& name = QString());
@@ -130,4 +131,7 @@ private:
     QMdnsEngine::Browser* m_MdnsBrowser = nullptr;
     QList<MdnsPendingComputer*> m_PendingResolutions;
     bool m_MdnsActive = false;
+    // Tears down the mDNS sockets at the end of each discovery window,
+    // releasing UDP 5353 so other mDNS clients (e.g. Moonlight Qt) can use it.
+    QTimer* m_MdnsWindowTimer = nullptr;
 };

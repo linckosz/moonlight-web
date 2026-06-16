@@ -72,6 +72,12 @@ public:
     /** Store geolocation data for a session after async lookup completes. */
     void setSessionGeo(const QString& token, const QString& city, const QString& country);
 
+    /** Refresh a session's source IP on reconnection. If the IP changed since
+     *  the session was created (or last seen), it is updated and the stale
+     *  geolocation is cleared. Returns true when the IP changed so the caller
+     *  can re-run the async geolocation lookup. */
+    bool updateSessionAddress(const QString& token, const QString& ip);
+
     /** Flag a session as actively streaming (or not). When set true, any other
      *  session's streaming flag is cleared first (single active stream). */
     void setSessionStreaming(const QString& token, bool streaming);

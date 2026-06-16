@@ -111,7 +111,7 @@ export class SettingsView {
             : (vw === false || vw === 'off') ? 'off' : 'auto';
         this._videoEnhancement = data.video_enhancement === 'on' ? 'on' : 'off';
         const algo = data.video_enhancement_algo;
-        this._videoEnhancementAlgo = (algo === 'sgsr' || algo === 'fsr1' || algo === 'off') ? algo : 'auto';
+        this._videoEnhancementAlgo = (algo === 'sgsr' || algo === 'fsr1' || algo === 'force2d') ? algo : 'auto';
     }
 
     /**
@@ -430,10 +430,10 @@ export class SettingsView {
         const webgpuUnavailable = !this._webgpuUsable;
         const veDisabledAttr = webgpuUnavailable ? ' disabled' : '';
         const veAlgos = [
-            { value: 'auto', label: 'Auto (mobile→SGSR, desktop→FSR1)', disabled: false },
-            { value: 'off',  label: 'Off (WebGPU pass-through, no upscaler)', disabled: false },
-            { value: 'sgsr', label: 'SGSR (Snapdragon)', disabled: false },
-            { value: 'fsr1', label: 'FSR 1 (AMD)', disabled: false }
+            { value: 'auto',    label: 'Auto (mobile→SGSR, desktop→FSR1)', disabled: false },
+            { value: 'sgsr',    label: 'SGSR (Snapdragon)', disabled: false },
+            { value: 'fsr1',    label: 'FSR 1 (AMD)', disabled: false },
+            { value: 'force2d', label: 'Force Canvas 2D (debug)', disabled: false }
         ];
         const veAlgoOptions = veAlgos.map(a =>
             `<option value="${a.value}" ${a.value === this._videoEnhancementAlgo ? 'selected' : ''}${a.disabled ? ' disabled' : ''}>${this.esc(a.label)}</option>`
