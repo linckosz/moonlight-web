@@ -796,10 +796,16 @@ export class StreamView {
         this._shortcutsSlide.style.display = 'none';
         this._buildShortcutsSlideContent();
         // Click/tap to dismiss the shortcuts/gesture hint immediately.
-        this._shortcutsSlide.addEventListener('click', (e) => {
+        // Use pointerdown/touchstart with stopPropagation: a plain 'click'
+        // never fires on touch because handleTouchStart() preventDefaults the
+        // bubbled touchstart on streamEl, suppressing the synthetic click.
+        const dismiss = (e) => {
             e.stopPropagation();
+            e.preventDefault();
             this._hideShortcutsSlide();
-        });
+        };
+        this._shortcutsSlide.addEventListener('pointerdown', dismiss);
+        this._shortcutsSlide.addEventListener('touchstart', dismiss, { passive: false });
         document.getElementById('stream-view').appendChild(this._shortcutsSlide);
 
         // ── Startup overlay (centered 3-step status) ───────────────────────
@@ -862,6 +868,10 @@ export class StreamView {
             this._kbdCapture.setAttribute('autocapitalize', 'off');
             this._kbdCapture.setAttribute('spellcheck', 'false');
             this._kbdCapture.setAttribute('aria-hidden', 'true');
+            // Out of the tab order: removes iOS's prev/next field-navigation
+            // chevrons from the keyboard accessory bar (still programmatically
+            // focusable via .focus()).
+            this._kbdCapture.setAttribute('tabindex', '-1');
             document.getElementById('stream-view').appendChild(this._kbdCapture);
             this._setupKeyboardCapture();
 
@@ -888,6 +898,31 @@ export class StreamView {
                 window.visualViewport.addEventListener('resize', this._onViewportResize);
                 window.visualViewport.addEventListener('scroll', this._onViewportResize);
             }
+
+            // Hard scroll lock: the stream view never scrolls — any document
+            // scroll (iOS auto-scroll to a focused field, rubber-banding) is
+            // snapped straight back to the top.
+            this._onWindowScroll = () => {
+                if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+            };
+            window.addEventListener('scroll', this._onWindowScroll, { passive: true });
+
+            // Keep the soft keyboard open: while it is visible, prevent any tap
+            // outside the capture (stream area, dark band under the resized
+            // overlay, toolbar gaps/keys) from blurring the contenteditable.
+            // Header controls (Stop / Fullscreen / Keyboard toggle) are excluded
+            // so they still work. Capture phase + passive:false so preventDefault
+            // runs before the browser moves focus, without stopping propagation
+            // (the trackpad touch handlers still run).
+            this._onDocKeepFocus = (e) => {
+                if (!this._kbdVisible) return;
+                const t = e.target;
+                if (t === this._kbdCapture) return;
+                if (t && t.closest && t.closest('.stream-header')) return;
+                e.preventDefault();
+            };
+            document.addEventListener('touchstart', this._onDocKeepFocus, { capture: true, passive: false });
+            document.addEventListener('mousedown', this._onDocKeepFocus, { capture: true });
         }
     }
 
@@ -1910,11 +1945,11 @@ export class StreamView {
 
     // Quantized zoom factor folded into the output size so the WebGPU enhancer
     // renders its backing at the *zoomed* device resolution (a box-sized canvas
-    // CSS-scaled by pinch-zoom would otherwise blur). Quantized (ceil, capped)
-    // so GPU textures aren't reallocated on every pinch frame; the renderer caps
-    // again to 2× source. No effect on Canvas2D (it ignores setOutputSize).
+    // CSS-scaled by pinch-zoom would otherwise blur). Quantized (ceil) so GPU
+    // textures aren't reallocated on every pinch frame; the renderer clamps the
+    // result to its max texture dimension. No effect on Canvas2D (ignores it).
     _outputZoomScale() {
-        return Math.min(4, Math.max(1, Math.ceil(this._zoom || 1)));
+        return Math.max(1, Math.ceil(this._zoom || 1));
     }
 
     // Push the current output size to the active renderer (main) or worker.
@@ -3639,9 +3674,8 @@ export class StreamView {
         bar.id = 'stream-kbd-toolbar';
         bar.className = 'stream-kbd-toolbar';
 
-        // [label, kind, id]. kind: 'close' | 'mod' | 'key'.
+        // [label, kind, id]. kind: 'mod' | 'key'.
         const items = [
-            ['✕', 'close', null],
             ['Win',  'key',  0x5B],   // momentary tap → Start menu (single press)
             ['Esc',  'key',  0x1B],
             ['Tab',  'key',  0x09],
@@ -3661,13 +3695,12 @@ export class StreamView {
             btn.textContent = label;
             btn.tabIndex = -1;
             // pointerdown + preventDefault: act immediately and keep the hidden
-            // <textarea> focused so the soft keyboard does not dismiss.
+            // capture focused so the soft keyboard does not dismiss.
             btn.addEventListener('pointerdown', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (kind === 'close')     this._hideVirtualKeyboard();
-                else if (kind === 'mod')  this._toggleMod(id, btn);
-                else                      this._sendToolbarKey(id);
+                if (kind === 'mod')  this._toggleMod(id, btn);
+                else                 this._sendToolbarKey(id);
                 this._refocusCapture();
             });
             bar.appendChild(btn);
@@ -4297,6 +4330,7 @@ export class StreamView {
      */
     _showShortcutsSlide() {
         if (!this._shortcutsSlide) return;
+        this._shortcutsSlide.classList.remove('fading-out');
         this._shortcutsSlide.style.display = '';
 
         if (this._shortcutsTimeout) {
@@ -4305,20 +4339,28 @@ export class StreamView {
         // Touch help has more rows to read than the keyboard combos.
         this._shortcutsTimeout = setTimeout(() => {
             this._hideShortcutsSlide();
-        }, IS_TOUCH_DEVICE ? 8000 : 5000);
+        }, IS_TOUCH_DEVICE ? 7000 : 4000);
     }
 
     /**
-     * Immediately hide the shortcuts slide and clear the auto-hide timer.
+     * Hide the shortcuts slide with a fast fade-out and clear the auto-hide
+     * timer. The element is reused on the next show, so reset its state.
      */
     _hideShortcutsSlide() {
         if (this._shortcutsTimeout) {
             clearTimeout(this._shortcutsTimeout);
             this._shortcutsTimeout = null;
         }
-        if (this._shortcutsSlide) {
-            this._shortcutsSlide.style.display = 'none';
+        const slide = this._shortcutsSlide;
+        if (!slide || slide.style.display === 'none' ||
+            slide.classList.contains('fading-out')) {
+            return;
         }
+        slide.classList.add('fading-out');
+        slide.addEventListener('animationend', () => {
+            slide.style.display = 'none';
+            slide.classList.remove('fading-out');
+        }, { once: true });
     }
 
     // =========================================================================
@@ -4476,6 +4518,15 @@ export class StreamView {
             window.visualViewport.removeEventListener('scroll', this._onViewportResize);
             this._onViewportResize = null;
         }
+        if (this._onWindowScroll) {
+            window.removeEventListener('scroll', this._onWindowScroll);
+            this._onWindowScroll = null;
+        }
+        if (this._onDocKeepFocus) {
+            document.removeEventListener('touchstart', this._onDocKeepFocus, { capture: true });
+            document.removeEventListener('mousedown', this._onDocKeepFocus, { capture: true });
+            this._onDocKeepFocus = null;
+        }
         if (this._kbdCapture) {
             this._kbdCapture.blur();
             this._kbdCapture.remove();
@@ -4600,6 +4651,15 @@ export class StreamView {
             window.visualViewport.removeEventListener('resize', this._onViewportResize);
             window.visualViewport.removeEventListener('scroll', this._onViewportResize);
             this._onViewportResize = null;
+        }
+        if (this._onWindowScroll) {
+            window.removeEventListener('scroll', this._onWindowScroll);
+            this._onWindowScroll = null;
+        }
+        if (this._onDocKeepFocus) {
+            document.removeEventListener('touchstart', this._onDocKeepFocus, { capture: true });
+            document.removeEventListener('mousedown', this._onDocKeepFocus, { capture: true });
+            this._onDocKeepFocus = null;
         }
         if (this._kbdCapture) {
             this._kbdCapture.blur();

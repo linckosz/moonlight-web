@@ -30,7 +30,7 @@ export class SettingsView {
         this._streamHeight = 1080;
         this._streamFps = 60;
         this._hdrEnabled = false;
-        this._touchSensitivity = 2.0;
+        this._touchSensitivity = 2.2;
         this._vsync = true;
         // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
         this._videoWorker = 'auto';
@@ -103,7 +103,7 @@ export class SettingsView {
         this._streamFps = data.stream_fps || 60;
         this._hdrEnabled = data.hdr_enabled === true;
         this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
-            ? data.touch_sensitivity : 2.0;
+            ? data.touch_sensitivity : 2.2;
         this._vsync = data.vsync_enabled !== false;
         // Back-compat: older saves stored a boolean; map it onto the tri-state.
         const vw = data.video_worker;
@@ -342,7 +342,7 @@ export class SettingsView {
         this._streamHeight = 1080;
         this._streamFps = 60;
         this._hdrEnabled = false;
-        this._touchSensitivity = 2.0;
+        this._touchSensitivity = 2.2;
         this._vsync = true;
         this._videoWorker = 'auto';
         this._videoEnhancement = 'off';

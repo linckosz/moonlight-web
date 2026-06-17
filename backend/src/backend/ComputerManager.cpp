@@ -135,9 +135,13 @@ void ComputerManager::init()
     connect(m_MdnsWindowTimer, &QTimer::timeout,
             this, &ComputerManager::stopMdnsDiscovery);
 
-    startMdnsDiscovery();
+    // NOTE: mDNS is NOT started at boot. Binding UDP 5353 at idle steals mDNS
+    // traffic from any other client on the same machine (Moonlight Qt, or
+    // Sunshine's own responder when co-located), so we only open a short mDNS
+    // window on an explicit scan request. Known hosts stay fresh via HTTP
+    // polling, which never touches 5353.
 
-    Logger::info(QString("ComputerManager initialized: %1 hosts loaded")
+    Logger::info(QString("ComputerManager initialized: %1 hosts loaded (mDNS idle)")
                      .arg(m_Hosts.size()));
 }
 
