@@ -358,7 +358,7 @@ export class StreamView {
         this._touchLongPressTimer = null;     // timer that engages drag after a still hold
         this._touchLongPressMs = 450;         // ms hold (still) before a drag engages
         // Pinch-zoom state (mobile): scale + pan applied to the streamed display only.
-        this._zoom = 1;                       // current display scale (1..6)
+        this._zoom = 1;                       // current display scale (1..8)
         this._panX = 0;                       // pan offset in CSS px (applied before scale)
         this._panY = 0;
         this._pinchPrevDist = 0;              // previous finger spacing during a multi-finger gesture
@@ -3895,8 +3895,20 @@ export class StreamView {
     _applyZoomTransform() {
         if (this.canvasArea) {
             const rect = this.canvasArea.getBoundingClientRect();
-            const maxX = (this._zoom - 1) * rect.width / 2;
-            const maxY = (this._zoom - 1) * rect.height / 2;
+            // Displayed image size at zoom 1 (object-fit: contain letterboxes it
+            // inside the area). Clamp the pan so the *scaled image* always covers
+            // the area — its edges can never reveal the black bars.
+            const el = this._displayEl();
+            let iw = 0, ih = 0;
+            if (this._transport === 'webrtc-media') { iw = el.videoWidth; ih = el.videoHeight; }
+            else if (this.canvas) { iw = this.canvas.width; ih = this.canvas.height; }
+            let imgW = rect.width, imgH = rect.height;
+            if (iw > 0 && ih > 0) {
+                const fit = Math.min(rect.width / iw, rect.height / ih);
+                imgW = iw * fit; imgH = ih * fit;
+            }
+            const maxX = Math.max(0, (imgW * this._zoom - rect.width) / 2);
+            const maxY = Math.max(0, (imgH * this._zoom - rect.height) / 2);
             this._panX = Math.max(-maxX, Math.min(maxX, this._panX));
             this._panY = Math.max(-maxY, Math.min(maxY, this._panY));
         }
@@ -3989,7 +4001,7 @@ export class StreamView {
             // Classify the frame: a clear change in finger spacing → pinch/zoom;
             // otherwise a parallel drag → scroll.
             if (Math.abs(dDist) > 2 && Math.abs(dDist) >= Math.abs(dCy)) {
-                const newZoom = Math.min(6, Math.max(1, this._zoom * (dist / this._pinchPrevDist)));
+                const newZoom = Math.min(8, Math.max(1, this._zoom * (dist / this._pinchPrevDist)));
                 const f = newZoom / this._zoom;
                 if (f !== 1 && this.canvasArea) {
                     const rect = this.canvasArea.getBoundingClientRect();

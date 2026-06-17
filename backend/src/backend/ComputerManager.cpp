@@ -32,6 +32,12 @@
 
 static const int POLL_INTERVAL_MS = 5000;
 
+// HTTPS /applist pair verification is expensive on Sunshine (TLS handshake +
+// applist generation). Running it every poll tick saturates Sunshine's HTTPS
+// server and makes co-located native Moonlight clients see hosts as offline.
+// Pairing state changes rarely, so a slow re-check is plenty.
+static const int PAIR_CHECK_INTERVAL_SEC = 300;
+
 // mDNS runs only in short bursts: binding UDP 5353 permanently steals unicast
 // mDNS responses from other clients on the same machine (Moonlight Qt) on
 // Windows. Known hosts are kept fresh via HTTP polling, so a brief window per
@@ -224,7 +230,7 @@ void ComputerManager::onPollTick()
             && !m_PendingPairChecks.contains(uuid)) {
             QDateTime now = QDateTime::currentDateTime();
             if (!m_LastPairCheck.contains(uuid)
-                || m_LastPairCheck[uuid].secsTo(now) >= 5) {
+                || m_LastPairCheck[uuid].secsTo(now) >= PAIR_CHECK_INTERVAL_SEC) {
                 m_LastPairCheck[uuid] = now;
                 QVector<NvAddress> addrs = host->uniqueAddresses();
                 if (!addrs.isEmpty()) {
