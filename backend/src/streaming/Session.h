@@ -4,6 +4,7 @@
 #include <QNetworkReply>
 #include <QUrl>
 #include <QStringList>
+#include <QSet>
 
 #include "StreamConfig.h"
 #include "../common/Types.h"
@@ -101,6 +102,15 @@ private slots:
 
 private:
     void doLaunchApp(const QByteArray& clientCert, const QByteArray& clientKey);
+    void doResumeApp(const QByteArray& clientCert, const QByteArray& clientKey);
+
+    /// Effective Sunshine uniqueid (m_ClientUniqueId or the shared id).
+    QString effectiveUniqueId() const;
+
+    /// Registry of uniqueids with a session we launched and haven't quit.
+    /// Main-thread only (start/quit/reply slots all run on the Session thread).
+    /// Lets a reload reconnect to its own session via /resume instead of /launch.
+    static QSet<QString> s_ActiveUniqueIds;
 
     NvComputer* m_Host;
     int m_AppId;
@@ -140,6 +150,10 @@ private:
     /// Per-browser uniqueid for Sunshine launch/cancel; empty → shared id.
     QString m_ClientUniqueId;
     QNetworkReply* m_LaunchReply = nullptr;
+    /// Track which start paths we've tried, so launch↔resume fallback (used when
+    /// the registry hint is stale) terminates instead of looping.
+    bool m_LaunchAttempted = false;
+    bool m_ResumeAttempted = false;
     QString m_SessionUrl;
 
     /// If non-empty, overrides SignalingServer::wsUrl() in the /start response.
