@@ -6,8 +6,8 @@
  * fetched from the server on first visit.
  *
  * Layout:
- *   - Video section: codec, resolution, FPS, bitrate (grouped)
- *   - Advanced section: gaming mode, performance stats
+ *   - Video section: resolution, FPS, HDR, VSync, bitrate
+ *   - Advanced section: video enhancement, codec, performance stats, gaming mode
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
@@ -455,17 +455,6 @@ export class SettingsView {
                     <h3 class="settings-section-title">Video</h3>
 
                     <div class="settings-field">
-                        <label class="settings-label" for="settings-video-codec">
-                            Video Codec
-                        </label>
-                        <span class="setting-desc">HEVC for best balance of quality and compatibility</span>
-                        <select id="settings-video-codec" class="settings-select">
-                            ${codecOptions}
-                        </select>
-                        ${codecHintHtml}
-                    </div>
-
-                    <div class="settings-field">
                         <label class="settings-label" for="settings-stream-height">
                             Streamed Resolution
                         </label>
@@ -497,6 +486,17 @@ export class SettingsView {
                     </div>
 
                     <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-vsync"
+                                ${this._vsync ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>VSync</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">Synchronizes frames to the display refresh. Uncheck to allow tearing for lower latency (all transports)</span>
+                    </div>
+
+                    <div class="settings-field">
                         <label class="settings-label" for="settings-stream-bitrate">
                             Bitrate: <strong id="settings-bitrate-value">${this._streamBitrateMbps}</strong> Mbps
                         </label>
@@ -510,6 +510,11 @@ export class SettingsView {
                             <span>150 Mbps</span>
                         </div>
                     </div>
+                </div>
+
+                <!-- ── Advanced ────────────────────────────────────────────── -->
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Advanced</h3>
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
@@ -525,23 +530,17 @@ export class SettingsView {
                         </select>` : ''}
                         ${veNote}
                     </div>
-                </div>
 
-                <!-- ── Advanced ────────────────────────────────────────────── -->
-                <div class="settings-section">
-                    <h3 class="settings-section-title">Advanced</h3>
-
-                    ${IS_TOUCH_DEVICE ? '' : `
                     <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-gaming-mode"
-                                ${this._gamingMode ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">
-                                <strong>Mouse Gaming Mode</strong>
-                            </span>
+                        <label class="settings-label" for="settings-video-codec">
+                            Video Codec
                         </label>
-                        <span class="setting-desc">Locks mouse pointer for seamless camera control in games</span>
-                    </div>`}
+                        <span class="setting-desc">HEVC for best balance of quality and compatibility</span>
+                        <select id="settings-video-codec" class="settings-select">
+                            ${codecOptions}
+                        </select>
+                        ${codecHintHtml}
+                    </div>
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
@@ -554,16 +553,17 @@ export class SettingsView {
                         <span class="setting-desc">Overlays FPS, bitrate, frame loss and latency stats during streaming</span>
                     </div>
 
+                    ${IS_TOUCH_DEVICE ? '' : `
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-vsync"
-                                ${this._vsync ? 'checked' : ''} />
+                            <input type="checkbox" id="settings-gaming-mode"
+                                ${this._gamingMode ? 'checked' : ''} />
                             <span class="settings-checkbox-text">
-                                <strong>VSync</strong>
+                                <strong>Mouse Gaming Mode</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">Synchronizes frames to the display refresh. Uncheck to allow tearing for lower latency (all transports)</span>
-                    </div>
+                        <span class="setting-desc">Locks mouse pointer for seamless camera control in games</span>
+                    </div>`}
 
                     <!-- Hidden: too technical for the average user. Kept in the DOM
                          (display:none) as a debug override; defaults to 'auto'. -->
