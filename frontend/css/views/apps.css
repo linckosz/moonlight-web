@@ -1,0 +1,104 @@
+/* Moonlight-Web — Apps view */
+
+.apps-view { width: 100%; }
+
+.apps-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+}
+.apps-host-info { flex: 1; min-width: 0; }
+.apps-host-name {
+    font-weight: 600;
+    font-size: var(--fs-lg);
+    color: var(--text-1);
+}
+.apps-host-addr {
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+    font-family: var(--font-mono);
+}
+.apps-spacer { width: 100px; }  /* balance the back button */
+
+.apps-loading,
+.apps-error,
+.apps-empty {
+    text-align: center;
+    padding: var(--space-8) var(--space-5);
+    color: var(--text-2);
+    background-color: var(--surface-2);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-1);
+}
+
+/* ── App grid ──────────────────────────────────────────────────────────── */
+.apps-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: var(--space-4);
+}
+
+.app-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-5) var(--space-4);
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+.app-card:hover {
+    box-shadow: var(--edge-accent), var(--glass-highlight);
+    filter: var(--glow-accent);
+    transform: translateY(-3px);
+}
+/* Press feedback (tap on mobile / click) — quick scale-down for tactile cue. */
+.app-card:active {
+    transform: translateY(-1px) scale(0.96);
+    transition: transform 0.06s ease;
+}
+
+.app-card-image {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-3);
+    margin-bottom: 2px;
+}
+.app-card-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+.app-card-image .app-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    font-size: 2rem;
+    opacity: 0.7;
+}
+
+.app-card-name {
+    font-weight: 500;
+    font-size: var(--fs-sm);
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+@media (max-width: 600px) {
+    .apps-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: var(--space-3);
+    }
+    .apps-header {
+        flex-wrap: wrap;
+        gap: var(--space-3);
+    }
+    .apps-spacer { display: none; }
+}

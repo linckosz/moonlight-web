@@ -93,19 +93,28 @@ body.streaming-active .app-footer {
     margin-right: 12px;
 }
 
+/* Same style as the "Back to Hosts" button (.btn-secondary): dark surface with
+   a cyan neon inset edge. Inherits the cyber .btn gabarit (notch, uppercase). */
 .stream-quit-btn {
-    padding: 6px 18px;
-    font-size: 13px;
-    background: var(--accent);
-    color: #fff;
+    padding: 7px 18px;
+    font-size: 12.5px;
+    background: var(--surface-3);
+    color: var(--text-1);
     border: none;
-    border-radius: 6px;
+    box-shadow: var(--edge-cyan);
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background 0.15s, color 0.15s, filter 0.2s, transform 0.08s;
 }
 
 .stream-quit-btn:hover {
-    background: var(--accent-hover);
+    background: var(--surface-4);
+    color: var(--neon-cyan);
+    box-shadow: var(--edge-cyan);
+    filter: var(--glow-cyan);
+}
+
+.stream-quit-btn:active {
+    transform: translateY(1px);
 }
 
 .stream-canvas-area {
@@ -653,5 +662,136 @@ body.streaming-active .app-footer {
 .install-hint-visible {
     opacity: 0.8;
     pointer-events: auto;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Cyberpunk "SIGNAL ACQUIRED" boot reveal — one-shot, plays on first frame.
+   Full-screen, pointer-events:none (Stop stays clickable). Built in
+   StreamView.render(), triggered by _playStreamReveal() at startup step 3.
+   ════════════════════════════════════════════════════════════════════════ */
+.stream-reveal {
+    position: fixed;
+    inset: 0;
+    z-index: 9990;
+    pointer-events: none;
+    overflow: hidden;
+    display: none;
+}
+.stream-reveal.playing { display: block; }
+
+/* Dark tech-grid cover that dissolves as the screen "materializes". */
+.reveal-grid {
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-linear-gradient(to bottom,
+            rgba(0, 229, 255, 0.07) 0, rgba(0, 229, 255, 0.07) 1px,
+            transparent 1px, transparent 3px),
+        repeating-linear-gradient(to right,
+            rgba(0, 229, 255, 0.05) 0, rgba(0, 229, 255, 0.05) 1px,
+            transparent 1px, transparent 46px),
+        linear-gradient(0deg, rgba(5, 8, 11, 0.92), rgba(5, 8, 11, 0.65));
+    opacity: 0;
+}
+.playing .reveal-grid { animation: reveal-grid-out 0.9s ease forwards; }
+@keyframes reveal-grid-out {
+    0%   { opacity: 1; }
+    55%  { opacity: 0.55; }
+    100% { opacity: 0; }
+}
+
+/* Bright cyan scan beam sweeping top → bottom once. */
+.reveal-beam {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 14%;
+    opacity: 0;
+    background: linear-gradient(to bottom,
+        transparent 0%,
+        rgba(0, 229, 255, 0.18) 42%,
+        var(--neon-cyan) 50%,
+        rgba(0, 229, 255, 0.18) 58%,
+        transparent 100%);
+    box-shadow: 0 0 48px 10px rgba(0, 229, 255, 0.45);
+    mix-blend-mode: screen;
+}
+.playing .reveal-beam { animation: reveal-beam 0.72s cubic-bezier(0.4, 0, 0.1, 1) forwards; }
+@keyframes reveal-beam {
+    0%   { transform: translateY(-30%); opacity: 0; }
+    10%  { opacity: 1; }
+    88%  { opacity: 1; }
+    100% { transform: translateY(720%); opacity: 0; }
+}
+
+/* Quick RGB-split glitch that settles. */
+.reveal-glitch {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    mix-blend-mode: screen;
+    background:
+        linear-gradient(90deg, rgba(255, 42, 109, 0.0), rgba(255, 42, 109, 0.16)),
+        linear-gradient(270deg, rgba(0, 229, 255, 0.0), rgba(0, 229, 255, 0.14));
+}
+.playing .reveal-glitch { animation: reveal-glitch 0.5s steps(1) forwards; }
+@keyframes reveal-glitch {
+    0%   { opacity: 0;   transform: translateX(0); }
+    8%   { opacity: 0.8; transform: translateX(-7px); }
+    13%  { opacity: 0.15; transform: translateX(5px); }
+    21%  { opacity: 0.7; transform: translateX(3px); }
+    27%  { opacity: 0;   transform: translateX(0); }
+    100% { opacity: 0; }
+}
+
+/* HUD corner brackets that converge inward then fade (neon yellow). */
+.reveal-brackets {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+}
+.playing .reveal-brackets { animation: reveal-brackets 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+@keyframes reveal-brackets {
+    0%   { opacity: 0; transform: scale(1.16); }
+    22%  { opacity: 1; }
+    70%  { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1); }
+}
+.reveal-brackets .rb {
+    position: absolute;
+    width: 46px;
+    height: 46px;
+    border: 2px solid var(--accent-1);
+    box-shadow: 0 0 12px var(--accent-ring);
+}
+.reveal-brackets .rb.tl { top: 6%;    left: 6%;    border-right: none; border-bottom: none; }
+.reveal-brackets .rb.tr { top: 6%;    right: 6%;   border-left: none;  border-bottom: none; }
+.reveal-brackets .rb.bl { bottom: 6%; left: 6%;    border-right: none; border-top: none; }
+.reveal-brackets .rb.br { bottom: 6%; right: 6%;   border-left: none;  border-top: none; }
+
+/* Flickering HUD line. */
+.reveal-text {
+    position: absolute;
+    top: 15%;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: clamp(14px, 3vw, 22px);
+    letter-spacing: 7px;
+    text-indent: 7px;
+    color: var(--accent-1);
+    text-shadow: 0 0 14px var(--accent-ring);
+    opacity: 0;
+}
+.playing .reveal-text { animation: reveal-text 0.9s steps(1) forwards; }
+@keyframes reveal-text {
+    0%   { opacity: 0; }
+    12%  { opacity: 1; }
+    16%  { opacity: 0.2; }
+    22%  { opacity: 1; }
+    70%  { opacity: 1; }
+    100% { opacity: 0; }
 }
 

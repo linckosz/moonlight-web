@@ -55,6 +55,23 @@ export class HostListView {
                 return;
             }
 
+            const wolBtn = e.target.closest('.btn-wol');
+            if (wolBtn) {
+                const uuid = wolBtn.dataset.uuid;
+                const host = this.hosts.find(h => h.uuid === uuid);
+                wolBtn.disabled = true;
+                BackendClient.wakeHost(uuid)
+                    .then(() => {
+                        Toast.show(`Wake-on-LAN sent to "${host ? host.displayName : uuid}"`, 'success');
+                    })
+                    .catch(err => {
+                        console.error('[MW] Wake-on-LAN failed:', err);
+                        Toast.show(err.message, 'error');
+                    })
+                    .finally(() => { wolBtn.disabled = false; });
+                return;
+            }
+
             const removeBtn = e.target.closest('.btn-remove');
             if (removeBtn) {
                 removeBtn.disabled = true;
@@ -167,6 +184,7 @@ export class HostListView {
         return [
             host.uuid, host.state, host.pairState, host.name,
             host.activeAddress, host.port, host.gpuModel,
+            host.macAddress,
             JSON.stringify(host.displayModes)
         ].join('|');
     }
@@ -273,7 +291,9 @@ export class HostListView {
                         ? `<button class="btn btn-open" data-uuid="${host.uuid}">Open</button>`
                         : host.isLocked
                             ? `<button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">Pair</button>`
-                            : ''
+                            : host.canWake
+                                ? `<button class="btn btn-secondary btn-small btn-wol" data-uuid="${host.uuid}" title="Wake On LAN">⏻ Wake</button>`
+                                : ''
                     }
                 </div>
                 ${!host.isAvailable && !host.isLocked

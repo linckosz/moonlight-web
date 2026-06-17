@@ -21,12 +21,24 @@
 #include <QTimer>
 #include <QUuid>
 
+#include <QUdpSocket>
+#include <QHostAddress>
+
 #include <QSslConfiguration>
 #include <QSslCertificate>
 #include <QSslKey>
 #include <QSslSocket>
 
 #include <utility>
+
+#ifdef Q_OS_WIN
+// Declared locally to avoid winsock2/windows.h include-ordering conflicts with
+// Qt headers. Links against iphlpapi (already in LIBS). IPAddr/DWORD/ULONG are
+// all unsigned long.
+extern "C" __declspec(dllimport) unsigned long __stdcall SendARP(
+    unsigned long DestIP, unsigned long SrcIP,
+    void* pMacAddr, unsigned long* PhysAddrLen);
+#endif
 
 #define SER_HOSTS "hosts"
 
@@ -207,6 +219,13 @@ void ComputerManager::startPolling()
 
 void ComputerManager::onPollTick()
 {
+    // Suspend polling while a stream session is active: a co-located native
+    // client owning the session polls nothing, and our extra connection churn
+    // (Connection: close + 2s abort) wedges Sunshine's single-threaded HTTP
+    // server during encode, making the host appear offline to other clients.
+    if (m_StreamActivePredicate && m_StreamActivePredicate())
+        return;
+
     // --- Stalled poll cleanup: force-remove hosts stuck in polling for >10s ---
     QList<QString> stalled;
     for (auto it = m_PollStartedAt.cbegin(); it != m_PollStartedAt.cend(); ++it) {
@@ -278,6 +297,10 @@ void ComputerManager::onPollTick()
 
 void ComputerManager::onBackupPollTick()
 {
+    // Suspend during an active stream — see onPollTick().
+    if (m_StreamActivePredicate && m_StreamActivePredicate())
+        return;
+
     Logger::debug("Backup poll tick — forcing unconditional refresh of all hosts");
 
     // Unconditional refresh: poll every host regardless of tracking state.
@@ -371,6 +394,16 @@ void ComputerManager::onPollReplyFinished()
             if (newState.uuid == host->uuid) {
                 host->consecutivePollFailures = 0;
                 changed = host->update(newState);
+
+                // Capture the MAC from ARP while reachable (Sunshine often
+                // omits it) so Wake-on-LAN works later when the host is down.
+                if (host->macAddress.isEmpty()) {
+                    QByteArray mac = resolveMacFromArp(pollAddr.address());
+                    if (!mac.isEmpty()) {
+                        host->macAddress = mac;
+                        changed = true;
+                    }
+                }
             }
         } catch (const std::exception& e) {
             registerFailure(e.what());
@@ -683,6 +716,93 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
     result["status"] = "ok";
     result["message"] = QString("Host '%1' removed").arg(name);
     return {200, result};
+}
+
+// --- Wake-on-LAN -------------------------------------------------------------
+
+// Resolve a host's MAC from the OS ARP cache. Sunshine often omits the MAC in
+// serverinfo, so we capture it from ARP while the host is reachable (the entry
+// is guaranteed present right after a successful poll). Returns 6 bytes, or
+// empty if unavailable. Windows-only; other platforms return empty.
+QByteArray ComputerManager::resolveMacFromArp(const QString& ip)
+{
+#ifdef Q_OS_WIN
+    QHostAddress addr(ip);
+    if (addr.protocol() != QAbstractSocket::IPv4Protocol)
+        return {};
+
+    quint32 host = addr.toIPv4Address();
+    // SendARP expects the IPv4 address in network byte order.
+    unsigned long destIp =
+        ((host & 0x000000FFu) << 24) | ((host & 0x0000FF00u) << 8) |
+        ((host & 0x00FF0000u) >> 8)  | ((host & 0xFF000000u) >> 24);
+
+    unsigned char mac[8] = {0};
+    unsigned long macLen = 6;
+    if (SendARP(destIp, 0, mac, &macLen) == 0 /* NO_ERROR */ && macLen == 6) {
+        QByteArray out(reinterpret_cast<char*>(mac), 6);
+        if (out != QByteArray(6, '\0'))  // reject all-zero
+            return out;
+    }
+    return {};
+#else
+    Q_UNUSED(ip)
+    return {};
+#endif
+}
+
+std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
+{
+    NvComputer* host = findHostByUuid(uuid);
+    if (!host)
+        return {404, {{"status", "error"}, {"message", "Host not found"}}};
+
+    if (host->macAddress.size() != 6)
+        return {400, {{"status", "error"},
+                {"message", "No MAC address known for this host"}}};
+
+    // Magic packet: 6×0xFF followed by 16 repetitions of the 6-byte MAC.
+    QByteArray packet;
+    packet.append(6, static_cast<char>(0xFF));
+    for (int i = 0; i < 16; ++i)
+        packet.append(host->macAddress);
+
+    // Targets: global broadcast + subnet-directed broadcast derived from the
+    // host's known addresses (a sleeping host won't answer ARP, so unicast to
+    // its last IP is useless — broadcasting is what wakes it).
+    QSet<quint32> targets;
+    targets.insert(QHostAddress(QHostAddress::Broadcast).toIPv4Address());
+
+    auto addSubnetBroadcast = [&](const NvAddress& a) {
+        if (a.address().isEmpty()) return;
+        QHostAddress h(a.address());
+        if (h.protocol() != QAbstractSocket::IPv4Protocol) return;
+        targets.insert(h.toIPv4Address() | 0x000000FF);  // assume /24
+    };
+    addSubnetBroadcast(host->localAddress);
+    addSubnetBroadcast(host->activeAddress);
+
+    // WoL is conventionally sent to UDP discard (9) and echo (7).
+    static const quint16 wolPorts[] = {9, 7};
+
+    QUdpSocket socket;
+    bool sentAny = false;
+    for (quint32 ip : targets) {
+        for (quint16 port : wolPorts) {
+            if (socket.writeDatagram(packet, QHostAddress(ip), port) == packet.size())
+                sentAny = true;
+        }
+    }
+
+    if (!sentAny)
+        return {500, {{"status", "error"},
+                {"message", "Failed to send Wake-on-LAN packet"}}};
+
+    Logger::info(QString("Wake-on-LAN sent to %1 (%2)")
+                     .arg(host->name, QString::fromUtf8(host->macAddress.toHex(':'))));
+
+    return {200, {{"status", "ok"},
+            {"message", QString("Wake-on-LAN packet sent to %1").arg(host->name)}}};
 }
 
 // --- Client unique ID -------------------------------------------------------

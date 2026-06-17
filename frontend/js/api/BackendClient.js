@@ -58,6 +58,7 @@ export class BackendClient {
     static async scanHosts()      { return this.post('/api/hosts/scan'); }
     static async addManualHost(address) { return this.post('/api/hosts/manual', { address }); }
     static async removeHost(uuid) { return this.del(`/api/hosts/${uuid}`); }
+    static async wakeHost(uuid)   { return this.post(`/api/hosts/${uuid}/wol`); }
     static async getPairState(hostId)     { return this.get(`/api/hosts/${hostId}/pair`); }
     static async confirmPairing(hostId)   { return this.post(`/api/hosts/${hostId}/pair`); }
     static async getAppList(hostId)       { return this.get(`/api/hosts/${hostId}/apps`); }

@@ -1,0 +1,54 @@
+/* Moonlight-Web — Settings + Admin shared chrome (sections, headers) */
+
+.settings-view,
+.admin-view { width: 100%; }
+
+.settings-header,
+.admin-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-5);
+}
+.settings-header h2,
+.admin-header h2 {
+    font-size: var(--fs-xl);
+    font-weight: 700;
+}
+
+.settings-section {
+    padding: var(--space-5);
+    margin-bottom: var(--space-5);
+}
+.settings-section-title {
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    margin-bottom: var(--space-2);
+    color: var(--text-1);
+}
+.settings-section-desc {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    line-height: 1.5;
+    margin-bottom: var(--space-5);
+}
+.settings-section-desc code {
+    font-family: var(--font-mono);
+    background-color: var(--surface-1);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+.settings-section-desc a {
+    color: var(--text-2);
+    text-decoration: underline;
+}
+.settings-section-desc a:hover { color: var(--text-1); }
+
+/* Field block spacing inside a section (admin zeroes the first via inline style) */
+.settings-field { padding-top: var(--space-5); }
+
+.settings-actions {
+    display: flex;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
+}

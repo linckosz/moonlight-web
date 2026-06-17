@@ -85,21 +85,22 @@ export class AppListView {
     }
 
     renderCard(app) {
+        // The whole card is the launch action (no separate button). role/tabindex
+        // keep it keyboard-accessible now that the <button> is gone.
         return `
-            <div class="app-card" data-app-id="${app.id}">
+            <div class="app-card" data-app-id="${app.id}"
+                 role="button" tabindex="0"
+                 aria-label="Launch ${this.esc(app.displayName)}">
                 <div class="app-card-image">
                     ${app.boxArtUrl
                         ? `<img src="${this.esc(app.boxArtUrl)}"
                                alt="${this.esc(app.displayName)}"
                                loading="lazy"
-                               onerror="this.parentElement.innerHTML='<span class=\\'app-icon\\'>\u{1F3AE}</span>'">`
+                               onerror="this.outerHTML='<span class=\\'app-icon\\'>\u{1F3AE}</span>'">`
                         : `<span class="app-icon">\u{1F3AE}</span>`
                     }
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
-                <div class="app-card-actions">
-                    <button class="btn btn-launch" data-app-id="${app.id}">Launch</button>
-                </div>
             </div>
         `;
     }
@@ -149,13 +150,21 @@ export class AppListView {
             });
         }
 
-        // Launch button delegation
-        this.container.querySelectorAll('.btn-launch').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const appId = parseInt(e.target.dataset.appId);
+        // The whole card is the launch action (click/tap anywhere, or Enter/
+        // Space when focused). No separate Launch/Play button.
+        this.container.querySelectorAll('.app-card').forEach(card => {
+            const launch = () => {
+                const appId = parseInt(card.dataset.appId);
                 const app = this.apps.find(a => a.id === appId);
                 if (app) {
                     this.onLaunch && this.onLaunch(app);
+                }
+            };
+            card.addEventListener('click', launch);
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    launch();
                 }
             });
         });

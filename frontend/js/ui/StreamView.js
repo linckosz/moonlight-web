@@ -786,6 +786,28 @@ export class StreamView {
         this._overlayEl.innerHTML = '<div class="stats-waiting">Connecting...</div>';
         document.getElementById('stream-view').appendChild(this._overlayEl);
 
+        // ── Cyberpunk "signal acquired" reveal ─────────────────────────────
+        // Full-screen one-shot boot animation played the instant the first
+        // frame arrives (see _playStreamReveal, triggered from step 3): a cyan
+        // scan-beam sweep + RGB-glitch + HUD corner brackets that converge,
+        // "materializing" the streamed screen. pointer-events:none so Stop
+        // stays clickable; removes itself after ~1s.
+        this._revealEl = document.createElement('div');
+        this._revealEl.id = 'stream-reveal';
+        this._revealEl.className = 'stream-reveal';
+        this._revealEl.setAttribute('aria-hidden', 'true');
+        this._revealEl.innerHTML =
+            '<div class="reveal-grid"></div>' +
+            '<div class="reveal-beam"></div>' +
+            '<div class="reveal-glitch"></div>' +
+            '<div class="reveal-brackets">' +
+                '<span class="rb tl"></span><span class="rb tr"></span>' +
+                '<span class="rb bl"></span><span class="rb br"></span>' +
+            '</div>' +
+            '<div class="reveal-text">SIGNAL ACQUIRED</div>';
+        this._revealEl.style.display = 'none';
+        this.streamEl.appendChild(this._revealEl);
+
         // Start overlay update timer (every 500ms)
         this._overlayInterval = setInterval(() => this._updateOverlay(), 500);
 
@@ -1024,6 +1046,7 @@ export class StreamView {
             this.stats.decoded = m.decoded;
             this.stats.rendered = m.rendered;
             this.stats.dropped = m.dropped;
+            if (m.resolution && m.resolution !== this._resolution) this._resolution = m.resolution;
             if (m.latencyMs > 0) this._e2eLatencyStats.addSample(m.latencyMs);
             break;
         }
@@ -1743,6 +1766,16 @@ export class StreamView {
         // FPS tracking: record decode timestamp (2s sliding window in _updateOverlay)
         this._fpsTimestamps.push(performance.now());
 
+        // Capture resolution from frame dimensions. Kept out of the first-frame
+        // block below: on some decoders (e.g. iOS Safari/HEVC) the very first
+        // frame reports 0×0, which would otherwise leave the overlay stuck on
+        // "?". Retry until a valid size is seen, and pick up resolution changes.
+        const fw = frame.displayWidth || frame.codedWidth || 0;
+        if (fw > 0) {
+            const res = fw + '×' + (frame.displayHeight || frame.codedHeight || 0);
+            if (res !== this._resolution) this._resolution = res;
+        }
+
         // ── End-to-end latency ──────────────────────────────────────────────
         // Total time from Sunshine capture to browser decode+display.
         // Backend sends captureSteadyMs (= firstFrameArrivalSteadyMs + presTimeUs/1000)
@@ -1802,10 +1835,6 @@ export class StreamView {
         // Update status on first frame
         if (!this._firstFrameRendered) {
             console.log('[StreamView] FIRST DECODED FRAME! Setting status to Live');
-            // Capture resolution from first frame
-            const w = frame.displayWidth || frame.codedWidth || 0;
-            const h = frame.displayHeight || frame.codedHeight || 0;
-            if (w > 0) this._resolution = w + '×' + h;
             this.setStatus('live', 'Live');
             this._firstFrameRendered = true;
             // Show stats overlay (only if enabled in settings)
@@ -4406,6 +4435,30 @@ export class StreamView {
                 el.classList.add(step >= 3 ? 'done' : 'active');
             }
         });
+
+        // Step 3 == first frame == stream arrival → fire the boot reveal.
+        if (step >= 3) this._playStreamReveal();
+    }
+
+    /**
+     * Cyberpunk boot reveal, synchronized with the first decoded frame.
+     * Plays once: a cyan scan-beam sweeps the screen while a brief RGB glitch
+     * and HUD corner brackets converge, then everything fades to leave the
+     * live stream. pointer-events:none, so it never blocks the Stop button.
+     */
+    _playStreamReveal() {
+        if (this._revealPlayed || !this._revealEl) return;
+        this._revealPlayed = true;
+        const el = this._revealEl;
+        el.style.display = 'block';
+        // Force reflow so the animation always (re)starts from frame 0.
+        void el.offsetWidth;
+        el.classList.add('playing');
+        setTimeout(() => {
+            if (!el) return;
+            el.classList.remove('playing');
+            el.style.display = 'none';
+        }, 1000);
     }
 
     /**

@@ -18,12 +18,20 @@ export class Host {
         this.remoteAddress = data.remoteAddress || '';
         this.manualAddress = data.manualAddress || '';
         this.serverCodecModeSupport = data.serverCodecModeSupport || 1;
+        this.macAddress    = data.macAddress || '';
     }
 
     get isOnline()  { return this.state === 'online'; }
     get isPaired()  { return this.pairState === 'paired'; }
     get isLocked()  { return this.isOnline && !this.isPaired; }
     get isAvailable() { return this.isOnline && this.isPaired; }
+
+    // Wake-on-LAN is offered for offline hosts with a known (non-zero) MAC.
+    get canWake() {
+        return !this.isOnline
+            && !!this.macAddress
+            && this.macAddress !== '00:00:00:00:00:00';
+    }
 
     get displayName() {
         if (this.name && this.name !== 'UNKNOWN')

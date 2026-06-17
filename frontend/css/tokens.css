@@ -1,0 +1,129 @@
+/* Moonlight-Web — Design tokens
+ *
+ * Direction: CYBERPUNK 2077 — signature neon yellow on near-black, with cyan
+ * and magenta secondary neons, notched (bevelled) corners, neon edges + glow.
+ *
+ * Legacy aliases (bottom) keep older class rules and a few JS-referenced
+ * variables working while pointing at the new palette.
+ */
+
+:root {
+    /* ── Surfaces — near-black with a faint cold teal cast ─────────────── */
+    --surface-0: #05080b;
+    --surface-1: #0a0e13;
+    --surface-2: #0f141b;
+    --surface-3: #161e28;
+    --surface-4: #202b38;
+    /* Translucent panel glass (cold tint, blurs the neon bloom behind) */
+    --surface-glass: rgba(10, 16, 22, 0.58);
+
+    /* ── Text — cyan-white / muted steel ───────────────────────────────── */
+    --text-1: #eafdff;
+    --text-2: #8ea7b4;
+    --text-3: #51626d;
+
+    /* ── Accent — CP2077 signature yellow ──────────────────────────────── */
+    --accent-1: #fcee0a;
+    --accent-strong: #fff64a;   /* brighter on hover */
+    --accent-deep: #d4c800;     /* pressed */
+    --accent-soft: rgba(252, 238, 10, 0.12);
+    --accent-ring: rgba(252, 238, 10, 0.55);
+    /* Black text on the yellow fill — the iconic high-contrast combo */
+    --on-accent: #07090b;
+
+    /* ── Secondary neons ───────────────────────────────────────────────── */
+    --neon-cyan: #00e5ff;
+    --neon-magenta: #ff2a6d;
+    --cyan-soft: rgba(0, 229, 255, 0.12);
+    --magenta-soft: rgba(255, 42, 109, 0.14);
+
+    /* ── Semantic ──────────────────────────────────────────────────────── */
+    --c-success: #2ad4a0;
+    --c-warning: #ffb627;
+    --c-danger: #ff2a6d;
+    --c-info: #00e5ff;
+    --c-success-soft: rgba(42, 212, 160, 0.14);
+    --c-warning-soft: rgba(255, 182, 39, 0.14);
+    --c-danger-soft: rgba(255, 42, 109, 0.14);
+    --c-info-soft: rgba(0, 229, 255, 0.12);
+
+    /* ── Borders — neon cyan hairlines ─────────────────────────────────── */
+    --border-1: rgba(0, 229, 255, 0.16);
+    --border-2: rgba(0, 229, 255, 0.34);
+
+    /* ── Spacing scale (4px base) ──────────────────────────────────────── */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-8: 48px;
+
+    /* ── Typography ────────────────────────────────────────────────────── */
+    --fs-xs: 0.75rem;
+    --fs-sm: 0.875rem;
+    --fs-md: 1rem;
+    --fs-lg: 1.125rem;
+    --fs-xl: 1.375rem;
+    --fs-2xl: 1.75rem;
+    --font-ui: 'Rajdhani', 'Chakra Petch', -apple-system, BlinkMacSystemFont,
+               'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'Share Tech Mono', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+
+    /* ── Radii — angular ───────────────────────────────────────────────── */
+    --radius-sm: 2px;
+    --radius-md: 3px;
+    --radius-lg: 4px;
+    --radius-pill: 2px;
+
+    /* ── Notch (bevelled corner) clip-paths — the CP2077 signature ─────── */
+    --notch-lg: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%,
+                        16px 100%, 0 calc(100% - 16px));
+    --notch-sm: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%,
+                        9px 100%, 0 calc(100% - 9px));
+
+    /* ── Shadows + neon glows ──────────────────────────────────────────── */
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40);
+    --shadow-2: 0 6px 22px rgba(0, 0, 0, 0.50);
+    --shadow-3: 0 14px 44px rgba(0, 0, 0, 0.60);
+    /* Outer glow for hovered notched panels (use via filter: drop-shadow) */
+    --glow-accent: drop-shadow(0 0 10px rgba(252, 238, 10, 0.45));
+    --glow-cyan: drop-shadow(0 0 8px rgba(0, 229, 255, 0.40));
+    /* Inset neon edge that follows a notched clip-path */
+    --edge-cyan: inset 0 0 0 1px var(--border-2);
+    --edge-accent: inset 0 0 0 1px var(--accent-ring);
+
+    /* ── Page background — neon bloom + faint grid base ────────────────── */
+    --app-bg: radial-gradient(1100px 760px at 85% -12%, rgba(252, 238, 10, 0.10) 0%, transparent 52%),
+              radial-gradient(900px 720px at -5% 108%, rgba(255, 42, 109, 0.10) 0%, transparent 50%),
+              radial-gradient(700px 600px at 50% 50%, rgba(0, 229, 255, 0.05) 0%, transparent 60%),
+              linear-gradient(168deg, #080c11 0%, var(--surface-0) 72%);
+
+    /* ════════════════════════════════════════════════════════════════════
+       Legacy aliases — map old variable names onto the new palette.
+       ════════════════════════════════════════════════════════════════════ */
+    --bg-primary: var(--surface-1);
+    --bg-secondary: var(--surface-2);
+    --bg-card: var(--surface-3);
+
+    --text-primary: var(--text-1);
+    --text-secondary: var(--text-2);
+    --text-muted: var(--text-3);
+
+    --accent: var(--accent-1);
+    --accent-hover: var(--accent-strong);
+    --btn-primary: var(--accent-1);
+
+    --success: var(--c-success);
+    --warning: var(--c-warning);
+    --error: var(--c-danger);
+
+    --border: var(--border-1);
+    --radius: var(--radius-md);
+    --shadow-card: var(--shadow-2);
+    --shadow-card-hover: var(--shadow-3);
+
+    /* glass highlight kept for back-compat (used by card/stream rules) */
+    --glass-highlight: inset 0 1px 0 rgba(0, 229, 255, 0.08);
+}
