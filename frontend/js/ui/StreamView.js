@@ -3778,12 +3778,16 @@ export class StreamView {
             // Release `bottom` (set by inset:0) so `height` actually applies.
             this.streamEl.style.bottom = 'auto';
             this.streamEl.style.top = vv.offsetTop + 'px';
-            this.streamEl.style.height = vv.height + 'px';
-            // Park the special-keys bar just above the soft keyboard.
+            // Park the special-keys bar just above the soft keyboard, then shrink
+            // the stream by its height too so the bottom of the picture (e.g. the
+            // Windows taskbar) stays visible above the bar instead of behind it.
+            let tbHeight = 0;
             if (this._kbToolbar) {
                 this._kbToolbar.style.bottom = kbHeight + 'px';
                 this._kbToolbar.classList.add('visible');
+                tbHeight = this._kbToolbar.offsetHeight;
             }
+            this.streamEl.style.height = Math.max(0, vv.height - tbHeight) + 'px';
         } else {
             this.streamEl.style.bottom = '';
             this.streamEl.style.top = '';
