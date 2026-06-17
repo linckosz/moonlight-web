@@ -289,6 +289,42 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
     return reply;
 }
 
+QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPort,
+                                       const QString& uniqueId,
+                                       const QByteArray& rikey, int rikeyid,
+                                       const QByteArray& clientCertPem,
+                                       const QByteArray& clientKeyPem)
+{
+    QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
+    // No appid/mode: resume reconnects to the app already running for this client.
+    QString query = QString("uniqueid=%1&uuid=%2&rikey=%3&rikeyid=%4"
+                            "&surroundAudioInfo=196610&localAudioPlayMode=0&corever=1")
+                        .arg(uid)
+                        .arg(uuid)
+                        .arg(QString::fromLatin1(rikey.toHex()))
+                        .arg(rikeyid);
+
+    QUrl url(QString("https://%1:%2/resume?%3")
+                 .arg(address.address())
+                 .arg(httpsPort)
+                 .arg(query));
+
+    qDebug() << "[NvHTTP] resumeApp URL:" << url.toString();
+
+    QNetworkRequest req(url);
+    req.setTransferTimeout(120000);  // resume can take a while like launch
+    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+
+    QSslConfiguration sslConfig = req.sslConfiguration();
+    sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
+    sslConfig.setPrivateKey(QSslKey(clientKeyPem, QSsl::Rsa, QSsl::Pem));
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    req.setSslConfiguration(sslConfig);
+
+    return m_Nam->get(req);
+}
+
 QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                      const QByteArray& clientCertPem,
                                      const QByteArray& clientKeyPem,

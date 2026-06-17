@@ -20,6 +20,8 @@ extern "C" {
 #include <QThread>
 #include <QMetaObject>
 
+QSet<QString> StreamSession::s_ActiveUniqueIds;
+
 namespace {
 // Move a relay graph (relay + its child signaling server + child MoonlightShim)
 // onto a dedicated per-session thread so all media/WS send + fragmentation work
@@ -119,14 +121,46 @@ void StreamSession::start()
     QByteArray clientCert = identity->getCertificate();
     QByteArray clientKey = identity->getPrivateKey();
 
-    // Launch the app directly, without force-quitting other sessions first.
+    // Start the app without force-quitting other sessions.
     //
     // Sunshine supports concurrent sessions (e.g. iOS + Moonlight-QT on the same
     // host), keyed per client uniqueid. Launching with our own per-browser
     // uniqueid creates an independent session and leaves any other client's
     // session running. We deliberately do NOT send a pre-start /cancel, which
     // would tear down whatever session is currently active on the host.
-    doLaunchApp(clientCert, clientKey);
+    //
+    // If this same client already has a live session we launched (e.g. a reload
+    // that didn't /quit cleanly), /resume reconnects to OUR own session instead
+    // of /launch (which would be rejected with "app already running"). /resume
+    // is keyed by uniqueid, so it never touches another client's session.
+    if (s_ActiveUniqueIds.contains(effectiveUniqueId())) {
+        qInfo() << "[Session] uniqueid already has a session — resuming"
+                << m_Host->name << m_Host->activeAddress.address();
+        doResumeApp(clientCert, clientKey);
+    } else {
+        doLaunchApp(clientCert, clientKey);
+    }
+}
+
+QString StreamSession::effectiveUniqueId() const
+{
+    return m_ClientUniqueId.isEmpty()
+        ? IdentityManager::get()->getUniqueId() : m_ClientUniqueId;
+}
+
+void StreamSession::doResumeApp(const QByteArray& clientCert,
+                                const QByteArray& clientKey)
+{
+    qInfo() << "[Session] Resuming session on" << m_Host->name
+            << "appid=" << m_AppId;
+    m_ResumeAttempted = true;
+    m_LaunchReply = m_Http->resumeAppAsync(
+        m_Host->activeAddress, m_Host->activeHttpsPort,
+        effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
+        clientCert, clientKey);
+
+    connect(m_LaunchReply, &QNetworkReply::finished,
+            this, &StreamSession::onLaunchReplyFinished);
 }
 
 void StreamSession::doLaunchApp(const QByteArray& clientCert,
@@ -138,11 +172,10 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert,
     qDebug() << "[Session]   stream:" << m_StreamWidth << "x" << m_StreamHeight
              << "@" << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps";
 
-    QString uniqueId = m_ClientUniqueId.isEmpty()
-        ? IdentityManager::get()->getUniqueId() : m_ClientUniqueId;
+    m_LaunchAttempted = true;
     m_LaunchReply = m_Http->launchAppAsync(
         m_Host->activeAddress, m_Host->activeHttpsPort,
-        m_AppId, uniqueId,
+        m_AppId, effectiveUniqueId(),
         m_Config.rikey, m_Config.rikeyid,
         m_StreamWidth, m_StreamHeight, m_StreamFps,
         m_StreamBitrateKbps,
@@ -161,6 +194,11 @@ void StreamSession::quit()
             << "m_StreamRelay=" << m_StreamRelay
             << "m_Connected=" << (m_Shim ? m_Shim->isConnected() : false)
             << "transport=" << m_Transport;
+
+    // Forget this uniqueid: the session is being torn down (a /cancel to Sunshine
+    // follows on the quit paths). A later start() launches fresh rather than
+    // resuming. If the hint ends up stale either way, start() self-heals.
+    s_ActiveUniqueIds.remove(effectiveUniqueId());
 
     if (m_Transport == "wss") {
         // WSS mode: stop StreamRelay (closes WS server + client)
@@ -250,6 +288,24 @@ void StreamSession::onLaunchReplyFinished()
     try {
         NvHTTP::verifyResponseStatus(xml);
     } catch (const std::runtime_error& e) {
+        // The registry hint can be stale (orphaned session after a backend
+        // restart, or a cleared entry whose Sunshine session is gone). Self-heal
+        // by trying the other path once. Both are keyed by our uniqueid, so a
+        // /resume can only reconnect to OUR session, never another client's.
+        auto* identity = IdentityManager::get();
+        if (!m_ResumeAttempted) {
+            qWarning() << "[Session] Launch rejected (" << e.what()
+                       << ") — falling back to /resume for our uniqueid";
+            doResumeApp(identity->getCertificate(), identity->getPrivateKey());
+            return;
+        }
+        if (!m_LaunchAttempted) {
+            qWarning() << "[Session] Resume rejected (" << e.what()
+                       << ") — falling back to /launch";
+            s_ActiveUniqueIds.remove(effectiveUniqueId());  // stale hint
+            doLaunchApp(identity->getCertificate(), identity->getPrivateKey());
+            return;
+        }
         m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(e.what())));
         emit sessionFailed(e.what());
         deleteLater();
@@ -273,6 +329,10 @@ void StreamSession::onLaunchReplyFinished()
     }
 
     m_SessionUrl = sessionUrl;
+
+    // Session is now live on Sunshine for this uniqueid: remember it so a later
+    // reconnect (reload) resumes instead of relaunching. Cleared in quit().
+    s_ActiveUniqueIds.insert(effectiveUniqueId());
 
     // Build InitParams for MoonlightShim
     MoonlightShim::InitParams params;

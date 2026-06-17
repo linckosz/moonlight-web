@@ -53,6 +53,15 @@ public:
                                    const QByteArray& clientKeyPem,
                                    int hdrMode = 0);
 
+    // Resume an existing session for this uniqueId (reconnect to our own
+    // orphaned session without relaunching the app). Keyed by uniqueId so it
+    // never touches another client's session.
+    QNetworkReply* resumeAppAsync(const NvAddress& address, quint16 httpsPort,
+                                   const QString& uniqueId,
+                                   const QByteArray& rikey, int rikeyid,
+                                   const QByteArray& clientCertPem,
+                                   const QByteArray& clientKeyPem);
+
     // uniqueId empty → falls back to the shared Moonlight unique ID.
     QNetworkReply* quitAppAsync(const NvAddress& address, quint16 httpsPort,
                                  const QByteArray& clientCertPem,
