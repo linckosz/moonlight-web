@@ -10,11 +10,24 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Moonlight">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#0a0a0a">
+    <meta name="theme-color" content="#05080b">
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="apple-touch-icon" sizes="180x180" href="assets/icon-180.png">
-    <link rel="stylesheet" href="css/style.css?v=20260615c">
-    <link rel="stylesheet" href="css/stream.css?v=20260615c">
+    <!-- Cyberpunk-style display + mono fonts (graceful fallback to system if offline) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap">
+    <!-- Design system: tokens → base → layout → components → views → stream -->
+    <link rel="stylesheet" href="css/tokens.css?v=20260617i">
+    <link rel="stylesheet" href="css/base.css?v=20260617i">
+    <link rel="stylesheet" href="css/layout.css?v=20260617i">
+    <link rel="stylesheet" href="css/components.css?v=20260617i">
+    <link rel="stylesheet" href="css/views/hosts.css?v=20260617i">
+    <link rel="stylesheet" href="css/views/apps.css?v=20260617i">
+    <link rel="stylesheet" href="css/views/settings.css?v=20260617i">
+    <link rel="stylesheet" href="css/views/login.css?v=20260617i">
+    <link rel="stylesheet" href="css/views/admin.css?v=20260617i">
+    <link rel="stylesheet" href="css/stream.css?v=20260617i">
     <link rel="icon" href="assets/favicon.ico" type="image/x-icon">
 </head>
 <body>

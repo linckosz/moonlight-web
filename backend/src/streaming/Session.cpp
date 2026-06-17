@@ -119,43 +119,14 @@ void StreamSession::start()
     QByteArray clientCert = identity->getCertificate();
     QByteArray clientKey = identity->getPrivateKey();
 
-    // Step 1: Force-quit any stale session on Sunshine before launching.
+    // Launch the app directly, without force-quitting other sessions first.
     //
-    // If the browser tab was closed without a clean /quit (e.g. crash, tab kill),
-    // Sunshine may still believe a session is active and reject the new /launch.
-    // Sending /cancel first makes the start flow idempotent: any orphaned
-    // session is torn down before we attempt to start a new one.
-    //
-    // HTTPS requests to Sunshine are serialized per host (the same QNAManager
-    // is used for both quit and launch), so the quit MUST complete before the
-    // launch begins. We chain them via the reply's finished signal.
-    //
-    // The quit is best-effort: if it fails (no session running, network blip,
-    // etc.) we log a warning and proceed with the launch anyway.
-    qInfo() << "[Session] Pre-start: force-quitting any stale session on"
-            << m_Host->name << m_Host->activeAddress.address();
-
-    QNetworkReply* quitReply = m_Http->quitAppAsync(
-        m_Host->activeAddress, m_Host->activeHttpsPort,
-        clientCert, clientKey, m_ClientUniqueId);
-
-    connect(quitReply, &QNetworkReply::finished, this,
-            [this, quitReply, clientCert, clientKey]() {
-        quitReply->deleteLater();
-
-        if (quitReply->error() != QNetworkReply::NoError) {
-            qWarning() << "[Session] Pre-start quit: network error"
-                       << quitReply->errorString()
-                       << "(non-fatal, continuing with launch)";
-        } else {
-            QByteArray body = quitReply->readAll();
-            qInfo() << "[Session] Pre-start quit: OK, response:"
-                    << body.left(200);
-        }
-
-        // Step 2: Launch the app (HTTPS serialized: quit finished first)
-        doLaunchApp(clientCert, clientKey);
-    });
+    // Sunshine supports concurrent sessions (e.g. iOS + Moonlight-QT on the same
+    // host), keyed per client uniqueid. Launching with our own per-browser
+    // uniqueid creates an independent session and leaves any other client's
+    // session running. We deliberately do NOT send a pre-start /cancel, which
+    // would tear down whatever session is currently active on the host.
+    doLaunchApp(clientCert, clientKey);
 }
 
 void StreamSession::doLaunchApp(const QByteArray& clientCert,

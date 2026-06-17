@@ -67,6 +67,7 @@ const S = {
     _proactiveIdrScheduled: false,
     _firstFrameReported: false,
     _firstDecoderOutputLogged: false,
+    _lastResolution: '',
 
     frameCount: 0,
     _lastChunkTs: 0,
@@ -114,7 +115,8 @@ function postCounters(force) {
         decoded: S.stats.decoded,
         rendered: S.stats.rendered,
         dropped: S.stats.dropped,
-        latencyMs: S._lastLatencyMs
+        latencyMs: S._lastLatencyMs,
+        resolution: S._lastResolution || ''
     });
 }
 
@@ -484,11 +486,14 @@ function onDecodedFrame(frame) {
     if (S.frameQueue.length >= 3) { frame.close(); S.stats.dropped++; return; }
     S.frameQueue.push(frame);
 
+    // Track resolution from frame dims; retry past the first frame since some
+    // decoders report 0×0 initially (otherwise the overlay stays stuck on "?").
+    const w = frame.displayWidth || frame.codedWidth || 0;
+    if (w > 0) S._lastResolution = w + '×' + (frame.displayHeight || frame.codedHeight || 0);
+
     if (!S._firstFrameReported) {
         S._firstFrameReported = true;
-        const w = frame.displayWidth || frame.codedWidth || 0;
-        const h = frame.displayHeight || frame.codedHeight || 0;
-        post({ type: 'firstframe', resolution: w > 0 ? (w + '×' + h) : '' });
+        post({ type: 'firstframe', resolution: S._lastResolution || '' });
     }
 
     pump();

@@ -100,7 +100,8 @@
       "mcp__ide__getDiagnostics",
       "Read(//c/Users/Minis/Downloads/**)",
       "Bash(cp Capture4.png D:/Code/moonlight-web-deepseek/.mw_shot.png)",
-      "Bash(rm -f D:/Code/moonlight-web-deepseek/.mw_shot.png)"
+      "Bash(rm -f D:/Code/moonlight-web-deepseek/.mw_shot.png)",
+      "Bash(netstat -ano)"
     ]
   }
 }

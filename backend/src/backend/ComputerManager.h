@@ -10,6 +10,8 @@
 #include <QSettings>
 #include <QJsonArray>
 
+#include <functional>
+
 #include "NvComputer.h"
 #include "NvHTTP.h"
 #include "../common/Types.h"
@@ -36,11 +38,22 @@ public:
     // Lifecycle
     void init();
 
+    // Suspend all Sunshine polling while a stream session is active. Native
+    // Moonlight clients stop polling when they own the session; doing the same
+    // avoids hammering Sunshine's single-threaded HTTP server during encode,
+    // which otherwise wedges it and makes the host appear offline to other
+    // clients. The predicate reads the live relay pointers (no desync).
+    void setStreamActivePredicate(std::function<bool()> predicate)
+    { m_StreamActivePredicate = std::move(predicate); }
+
     // REST API methods
     QJsonArray getHostsJson() const;
     void handleScanRequest();
     std::pair<int, QJsonObject> handleAddManualHost(const QString& address);
     std::pair<int, QJsonObject> handleDeleteHost(const QString& uuid);
+
+    // Wake-on-LAN — broadcasts a magic packet to the host's MAC on the LAN
+    std::pair<int, QJsonObject> handleWakeHost(const QString& uuid);
 
     // Pairing — client generates PIN, user enters it in Sunshine
     std::pair<int, QJsonObject> handleStartPairing(const QString& uuid);
@@ -80,6 +93,9 @@ private:
     void startMdnsDiscovery();
     void stopMdnsDiscovery();
     NvComputer* findHostByUuid(const QString& uuid) const;
+
+    // Resolve a host MAC from the OS ARP cache (Windows). Empty if unavailable.
+    static QByteArray resolveMacFromArp(const QString& ip);
     void addOrUpdateHost(const QString& serverInfo, const NvAddress& addr);
     void tryAddHostFromAddress(const NvAddress& addr, bool fromMdns, const QString& name = QString());
 
@@ -98,6 +114,10 @@ private:
 
     // Backup polling timer — forces full refresh every 30s regardless of tracking state
     QTimer* m_BackupPollTimer = nullptr;
+
+    // Returns true while a stream session is active (set by main.cpp). When
+    // active, all polling is suspended to avoid wedging Sunshine during encode.
+    std::function<bool()> m_StreamActivePredicate;
 
     // HTTPS pair verification via /applist for paired hosts
     QMap<QString, QDateTime> m_LastPairCheck;

@@ -215,6 +215,17 @@ int main(int argc, char* argv[])
     QPointer<DataChannelRelay> g_ActiveRelay;
     QPointer<MediaTrackRelay> g_ActiveMediaTrackRelay;
     QPointer<StreamRelay> g_ActiveStreamRelay;
+
+    // Suspend host polling whenever a relay is active, so we stop hammering
+    // Sunshine's HTTP server while a stream is running (avoids wedging it and
+    // making the host appear offline to native clients).
+    computerManager.setStreamActivePredicate(
+        [&g_ActiveRelay, &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay]() {
+            return !g_ActiveRelay.isNull()
+                || !g_ActiveMediaTrackRelay.isNull()
+                || !g_ActiveStreamRelay.isNull();
+        });
+
     InternetAccessManager internetAccess(&appSettings);
     GeoIpService geoIpService;
 
@@ -605,6 +616,15 @@ int main(int argc, char* argv[])
             return HttpResponse::error(400, "Missing host ID");
 
         auto [status, result] = computerManager.handleDeleteHost(uuid);
+        return HttpResponse::json(result, status);
+    });
+
+    server.router()->post("/api/hosts/:id/wol", [&computerManager](const HttpRequest& req) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty())
+            return HttpResponse::error(400, "Missing host ID");
+
+        auto [status, result] = computerManager.handleWakeHost(uuid);
         return HttpResponse::json(result, status);
     });
 
