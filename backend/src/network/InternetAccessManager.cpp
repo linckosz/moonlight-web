@@ -13,6 +13,7 @@
 #include <QRandomGenerator>
 #include <QSslCertificate>
 #include <QSslKey>
+#include <QSslSocket>
 #include <QDirIterator>
 #include "streaming/TransportPriorities.h"
 #include <QTcpSocket>
@@ -390,11 +391,13 @@ QString InternetAccessManager::buildDomain() const
 
 QString InternetAccessManager::generateUniqueId()
 {
-    // Generate 8 random hex characters.
+    // Generate 8 random lowercase hex characters from the OS CSPRNG.
+    // Lowercase matches the reuse-from-domain check; CSPRNG avoids the
+    // predictable sequence of the shared global PRNG.
     QString hex(8, QChar('0'));
     for (int i = 0; i < 8; ++i) {
-        hex[i] = QStringLiteral("0123456789ABCDEF")
-                 .at(QRandomGenerator::global()->bounded(16));
+        hex[i] = QStringLiteral("0123456789abcdef")
+                 .at(QRandomGenerator::system()->bounded(16));
     }
     qInfo() << "[InternetAccess] Generated unique ID:" << hex;
     return hex;
@@ -443,9 +446,62 @@ void InternetAccessManager::ensureIdentifiers()
 // A record management (subdomain under kBaseDomain)
 // ---------------------------------------------------------------------------
 
+bool InternetAccessManager::claimOrVerifyOwnership(QString& errorMsg)
+{
+    // Per-instance random token, generated once and persisted.
+    QString myToken = m_Settings->ownerToken();
+    if (myToken.isEmpty()) {
+        QByteArray raw(32, '\0');
+        for (int i = 0; i < 32; ++i)
+            raw[i] = static_cast<char>(QRandomGenerator::system()->bounded(256));
+        myToken = QString::fromLatin1(raw.toBase64(QByteArray::OmitTrailingEquals));
+        m_Settings->setOwnerToken(myToken);
+    }
+
+    const QString ownerFqdn = QStringLiteral("_owner.") + m_UniqueId
+                            + QLatin1Char('.') + baseDomain() + QLatin1Char('.');
+
+    QString existing;
+    if (!m_Pdns.getTxtRecord(ownerFqdn, existing, errorMsg)) {
+        // Network/HTTP error: don't brick the user's own registration over a
+        // transient DNS API issue — proceed (best-effort cooperative ownership).
+        qWarning() << "[InternetAccess] Ownership check failed (proceeding):" << errorMsg;
+        return true;
+    }
+
+    if (existing.isEmpty()) {
+        // Unclaimed → claim it now.
+        QString claimErr;
+        if (!m_Pdns.createTxtRecord(ownerFqdn, myToken, kDefaultTtl, claimErr))
+            qWarning() << "[InternetAccess] Failed to write ownership TXT:" << claimErr;
+        else
+            qInfo() << "[InternetAccess] Claimed subdomain ownership:" << m_UniqueId;
+        return true;
+    }
+
+    if (existing == myToken)
+        return true;  // we already own it
+
+    // Owned by a different instance — refuse to touch the A record.
+    errorMsg = QStringLiteral(
+        "Subdomain %1 is already registered by another Moonlight-Web instance. "
+        "Pick a different subdomain (unique_id) for this machine.")
+        .arg(m_Domain);
+    qWarning() << "[InternetAccess]" << errorMsg;
+    return false;
+}
+
 bool InternetAccessManager::createOrUpdateARecord()
 {
     qInfo() << "[InternetAccess] Checking A record for subdomain:" << m_UniqueId;
+
+    // Cooperative ownership guard: never clobber another instance's subdomain.
+    QString ownErr;
+    if (!claimOrVerifyOwnership(ownErr)) {
+        m_LastError = ownErr;
+        emit error(ownErr);
+        return false;
+    }
 
     QString errorMsg;
     bool available = m_Pdns.checkSubdomainAvailable(m_UniqueId, errorMsg);
@@ -492,24 +548,22 @@ bool InternetAccessManager::createOrUpdateARecord()
 
 QString InternetAccessManager::detectPublicIpViaHttp()
 {
-    // Try multiple HTTP services in order
-    struct HttpIpService {
-        QString host;
-        quint16 port;
-    };
-    const HttpIpService services[] = {
-        { QStringLiteral("api.ipify.org"), 80 },
-        { QStringLiteral("icanhazip.com"), 80 },
-        { QStringLiteral("checkip.amazonaws.com"), 80 },
+    // HTTPS endpoints (port 443). TLS is verified against the system trust store,
+    // so a network MITM can neither read the request nor forge the public IP we
+    // would then publish in the A record. This is a fallback after STUN.
+    const QString hosts[] = {
+        QStringLiteral("api.ipify.org"),
+        QStringLiteral("icanhazip.com"),
+        QStringLiteral("checkip.amazonaws.com"),
     };
 
-    for (const auto& svc : services) {
-        qInfo() << "[InternetAccess] Trying HTTP IP detection:" << svc.host;
+    for (const QString& host : hosts) {
+        qInfo() << "[InternetAccess] Trying HTTPS IP detection:" << host;
 
-        QTcpSocket socket;
-        socket.connectToHost(svc.host, svc.port);
-        if (!socket.waitForConnected(5000)) {
-            qWarning() << "[InternetAccess] HTTP connection failed to" << svc.host
+        QSslSocket socket;
+        socket.connectToHostEncrypted(host, 443);
+        if (!socket.waitForEncrypted(5000)) {
+            qWarning() << "[InternetAccess] HTTPS handshake failed to" << host
                        << ":" << socket.errorString();
             continue;
         }
@@ -518,24 +572,28 @@ QString InternetAccessManager::detectPublicIpViaHttp()
             "GET / HTTP/1.1\r\n"
             "Host: %1\r\n"
             "User-Agent: Moonlight-Web/1.0\r\n"
-            "Connection: close\r\n\r\n").arg(svc.host).toUtf8();
+            "Connection: close\r\n\r\n").arg(host).toUtf8();
 
         socket.write(request);
         socket.waitForBytesWritten();
 
-        if (!socket.waitForReadyRead(5000)) {
-            qWarning() << "[InternetAccess] HTTP read timeout from" << svc.host;
-            socket.disconnectFromHost();
+        // Read until the server closes the connection (Connection: close).
+        QByteArray response;
+        while (socket.state() == QAbstractSocket::ConnectedState
+               && socket.waitForReadyRead(5000))
+            response += socket.readAll();
+        response += socket.readAll();
+        socket.close();
+
+        if (response.isEmpty()) {
+            qWarning() << "[InternetAccess] HTTPS read timeout from" << host;
             continue;
         }
-
-        QByteArray response = socket.readAll();
-        socket.disconnectFromHost();
 
         // Parse HTTP response body (after \r\n\r\n)
         int headerEnd = response.indexOf("\r\n\r\n");
         if (headerEnd < 0) {
-            qWarning() << "[InternetAccess] Invalid HTTP response from" << svc.host;
+            qWarning() << "[InternetAccess] Invalid HTTP response from" << host;
             continue;
         }
 
@@ -553,8 +611,8 @@ QString InternetAccessManager::detectPublicIpViaHttp()
         }
 
         QString ip = ha.toString();
-        qInfo() << "[InternetAccess] Public IP detected via HTTP:" << ip
-                << "from" << svc.host;
+        qInfo() << "[InternetAccess] Public IP detected via HTTPS:" << ip
+                << "from" << host;
         return ip;
     }
 
@@ -700,6 +758,24 @@ bool InternetAccessManager::issueCertificate()
     m_Acme.setHost(m_Domain);
     m_Acme.setBaseDomain(baseDomain());
     m_Acme.setPdnsToken(QString::fromUtf8(qgetenv("MW_PDNS_TOKEN")));
+
+    // ACME CA selection. When ZeroSSL EAB credentials are present, issue from
+    // ZeroSSL (USERTrust/Sectigo root — same trust as PositiveSSL) so corporate
+    // networks that reject the Let's Encrypt root still accept the certificate.
+    // Each instance gets its own key; no shared wildcard. Falls back to Let's
+    // Encrypt when EAB is not configured.
+    const QString eabKid  = QString::fromUtf8(qgetenv("MW_ZEROSSL_EAB_KID"));
+    const QString eabHmac = QString::fromUtf8(qgetenv("MW_ZEROSSL_EAB_HMAC"));
+    if (!eabKid.isEmpty() && !eabHmac.isEmpty()) {
+        QString dir = QString::fromUtf8(qgetenv("MW_ACME_DIRECTORY"));
+        if (dir.isEmpty())
+            dir = QStringLiteral("https://acme.zerossl.com/v2/DV90");
+        m_Acme.setDirectoryUrl(dir);
+        m_Acme.setExternalAccountBinding(eabKid, eabHmac);
+        qInfo() << "[InternetAccess] ACME provider: ZeroSSL (EAB set), directory=" << dir;
+    } else {
+        qInfo() << "[InternetAccess] ACME provider: Let's Encrypt (no EAB configured)";
+    }
 
     m_CertIssuing = true;
     qInfo() << "[InternetAccess] Starting ACME certificate issuance for" << m_Domain;
@@ -974,7 +1050,14 @@ void InternetAccessManager::onAcmeFinished(bool success)
         if (QFile::exists(srcKey)) {
             QFile::remove(dstKey);
             keyCopied = QFile::copy(srcKey, dstKey);
+            if (keyCopied) {
+                // Restrict the copied key to the owner (QFile::copy resets perms).
+                QFile::setPermissions(dstKey,
+                                      QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+            }
         }
+        // Also lock down the ACME working-dir key.
+        QFile::setPermissions(srcKey, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
         qInfo() << "[InternetAccess] key.pem: src_exists=" << QFile::exists(srcKey)
                 << "copied=" << keyCopied;
 

@@ -32,6 +32,7 @@ public:
                   const QString& transport = "webrtc",
                   const QString& stunServer = "stun:stun.l.google.com:19302",
                   int streamHeight = 1080,
+                  int streamWidth = 0,   // 0 = derive from height (16:9); >0 = explicit (ultrawide)
                   int streamFps = 60,
                   int streamBitrateKbps = 20000,
                   bool hdr = false,

@@ -115,6 +115,10 @@ private:
     /// Create or verify the A record under the existing parent domain.
     bool createOrUpdateARecord();
 
+    /// Claim (if unowned) or verify ownership of this instance's subdomain via a
+    /// _owner.<uid> TXT record. Returns false only when another instance owns it.
+    bool claimOrVerifyOwnership(QString& errorMsg);
+
     /// Detect public IP via STUN (with fallback chain).
     bool detectPublicIp();
 

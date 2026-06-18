@@ -18,6 +18,13 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <functional>
+#include <memory>
+
+// Request hardening caps (anti-DoS): bound how much we buffer before a complete
+// request is available, so a client cannot grow our memory without limit by
+// sending headers/body that never complete.
+static constexpr int MAX_HEADER_BYTES = 32 * 1024;        // 32 KB of headers
+static constexpr int MAX_BODY_BYTES   = 8 * 1024 * 1024;  // 8 MB body
 
 // --- SslServer: creates QSslSocket directly from native handle ----------------
 // Avoids descriptor-transfer hack (get descriptor → setSocketDescriptor(-1) →
@@ -52,23 +59,6 @@ protected:
             return;
         }
 
-        // Peek at the TLS ClientHello to extract the SNI hostname before starting
-        // the handshake. waitForReadyRead() blocks briefly to ensure the ClientHello
-        // has arrived from the client (typically <1ms on localhost/LAN).
-        // peek() is non-destructive — data remains in the buffer for OpenSSL.
-        QString sniHostname;
-        if (ssl->waitForReadyRead(100)) {
-            QByteArray data = ssl->peek(4096);
-            sniHostname = parseSniHostname(data);
-        }
-
-        // Select configuration based on SNI hostname.
-        // Default to public config (PositiveSSL / Let's Encrypt) for all connections.
-        // Only use local self-signed cert when SNI explicitly indicates a LAN hostname.
-        bool isLanSni = !sniHostname.isEmpty() && isLanHostname(sniHostname);
-        const QSslConfiguration& config = isLanSni ? m_LocalSslConfig : m_PublicSslConfig;
-
-        ssl->setSslConfiguration(config);
         ssl->setPeerVerifyMode(QSslSocket::VerifyNone);
 
         connect(ssl, &QSslSocket::encrypted, this, [this, ssl]() {
@@ -87,7 +77,30 @@ protected:
             ssl->deleteLater();
         });
 
-        ssl->startServerEncryption();
+        // Non-blocking SNI selection: peek the ClientHello once it arrives (via
+        // readyRead) instead of blocking the accept thread with waitForReadyRead.
+        // A client that connects but never sends data no longer stalls the server
+        // (slowloris). A 3s timeout falls back to the public config.
+        // peek() is non-destructive — the bytes remain for OpenSSL.
+        auto done = std::make_shared<bool>(false);
+        auto conn = std::make_shared<QMetaObject::Connection>();
+
+        auto begin = [this, ssl, done, conn]() {
+            if (*done) return;
+            *done = true;
+            QObject::disconnect(*conn);
+
+            QByteArray data = ssl->peek(4096);
+            QString sni = parseSniHostname(data);
+            // Default to the public cert; only use the local self-signed cert when
+            // SNI explicitly names a LAN hostname.
+            bool isLanSni = !sni.isEmpty() && isLanHostname(sni);
+            ssl->setSslConfiguration(isLanSni ? m_LocalSslConfig : m_PublicSslConfig);
+            ssl->startServerEncryption();
+        };
+
+        *conn = connect(ssl, &QSslSocket::readyRead, this, begin);
+        QTimer::singleShot(3000, ssl, [begin]() { begin(); });
     }
 
 private:
@@ -954,6 +967,9 @@ bool HttpServer::generateSelfSignedCert()
             .arg(sans.size()).arg(certDir));
     }
 
+    // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).
+    QFile::setPermissions(certDir + "key.pem",
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     return loadCertFiles(certDir);
 }
 
@@ -1038,6 +1054,9 @@ void HttpServer::ensureLocalSslConfig()
             return;
         }
     }
+
+    // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).
+    QFile::setPermissions(keyPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 
     // Load the local cert files into m_LocalSslConfig (separate from m_SslConfig)
     QFile certFile(certPath);
@@ -1345,7 +1364,14 @@ void HttpServer::onReadyReadSocket(QTcpSocket* socket)
 
     QByteArray& buffer = m_Buffers[socket];
     int headerEnd = buffer.indexOf("\r\n\r\n");
-    if (headerEnd == -1) return;
+    if (headerEnd == -1) {
+        // Headers still incomplete: bail until more data — but cap the wait so a
+        // client dripping bytes without ever ending the headers can't grow memory.
+        if (buffer.size() > MAX_HEADER_BYTES) {
+            sendResponse(socket, HttpResponse::error(431, "Request Header Fields Too Large"));
+        }
+        return;
+    }
 
     QString headerPart = QString::fromUtf8(buffer.left(headerEnd));
 
@@ -1363,6 +1389,12 @@ void HttpServer::onReadyReadSocket(QTcpSocket* socket)
             contentLength = line.mid(15).trimmed().toInt();
             break;
         }
+    }
+
+    // Reject oversized or malformed bodies before buffering them.
+    if (contentLength < 0 || contentLength > MAX_BODY_BYTES) {
+        sendResponse(socket, HttpResponse::error(413, "Payload Too Large"));
+        return;
     }
 
     int totalSize = headerEnd + 4 + contentLength;
@@ -1447,12 +1479,14 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     }
 
     // ── Auth check for API routes ──────────────────────────────────────────
-    // Exemptions: localhost, /api/auth/*, /api/health, /api/server/*
+    // Exemptions: localhost, /api/auth/*, /api/health, /api/server/hostname.
+    // Only /api/server/hostname is public (the login screen displays the PC name
+    // before authentication); /api/server/status (ports) now requires a session.
     if (m_AuthManager
         && !HttpServer::isLocalRequest(req.clientAddress)
         && req.path != "/api/health"
+        && req.path != "/api/server/hostname"
         && !req.path.startsWith("/api/auth/")
-        && !req.path.startsWith("/api/server/")
         && !isAuthenticated(req)) {
         QJsonObject obj;
         obj["error"] = "authentication_required";
@@ -1664,7 +1698,9 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     respData.append("HTTP/1.1 " + QByteArray::number(response.statusCode) + " " + statusText.toUtf8() + "\r\n");
     respData.append("Content-Type: " + response.contentType.toUtf8() + "\r\n");
     respData.append("Content-Length: " + QByteArray::number(response.body.size()) + "\r\n");
-    respData.append("Access-Control-Allow-Origin: *\r\n");
+    // No Access-Control-Allow-Origin: the frontend is served same-origin by this
+    // server, so CORS is never needed. Omitting it prevents any cross-origin page
+    // from reading API responses.
     respData.append("Connection: close\r\n");
 
     // Security headers
@@ -1673,7 +1709,9 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     respData.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
     // 'wasm-unsafe-eval' allows WebAssembly compilation only (not JS eval) —
     // required by the WASM Opus decoder fallback used on iOS/WebKit.
-    respData.append("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
+    // Google Fonts: stylesheet from fonts.googleapis.com, font files from
+    // fonts.gstatic.com (graceful fallback to system fonts if offline).
+    respData.append("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
     respData.append("Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n");
 
     for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)

@@ -8,16 +8,20 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+class QTimer;
+
 /**
  * Session metadata stored server-side keyed by token.
  */
 struct SessionInfo {
-    QString token;
+    QString token;  // stored value is the SHA-256 of the cookie token (opaque id),
+                    // never the raw token — a stolen sessions.json cannot be replayed
     QString ip;
     QString machineName;
     QString city;
     QString country;
-    qint64 createdAt;  // unix timestamp (secs)
+    qint64 createdAt;       // unix timestamp (secs)
+    qint64 lastSeen = 0;    // unix secs; bumped on activity (sliding expiration)
     bool streaming = false;  // runtime-only: true while this session has an active stream
 
     QJsonObject toJson() const {
@@ -28,6 +32,7 @@ struct SessionInfo {
         obj["city"] = city;
         obj["country"] = country;
         obj["created_at"] = createdAt;
+        obj["last_seen"] = lastSeen;
         obj["streaming"] = streaming;
         return obj;
     }
@@ -66,8 +71,15 @@ public:
     // ── Session management ─────────────────────────────────────────────────
     QString createSession(const QString& ip, const QString& machineName = QString());
     bool validateSession(const QString& token) const;
+    /** Bump a session's lastSeen on activity (sliding expiration). Takes the raw
+     *  cookie token. No-op for unknown/empty tokens. */
+    void touchSession(const QString& token);
+    /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,
+     *  i.e. the token hash), NOT the raw cookie token. */
     void destroySession(const QString& token);
     void destroyAllSessions();
+    /** Drop sessions inactive beyond SESSION_TTL_SECS. Called periodically. */
+    void purgeExpiredSessions();
 
     /** Store geolocation data for a session after async lookup completes. */
     void setSessionGeo(const QString& token, const QString& city, const QString& country);
@@ -126,6 +138,10 @@ public:
     static QString cleanClientAddress(const QString& ip);
     /** Returns "Local" for private IPs (10.x, 172.16-31.x, 192.168.x, 127.x, ::1), else "Remote" */
     static QString isPrivateIP(const QString& ip);
+    /** Rate-limit bucket key for an address: the raw IPv4, or the /64 prefix for
+     *  IPv6 (a single client trivially owns a whole /64, so per-/128 buckets are
+     *  pointless against guessing). */
+    static QString rateLimitKey(const QString& ip);
 
     // ── Session persistence ───────────────────────────────────────────────────
     /** Save active sessions to disk (app data directory). */
@@ -155,16 +171,26 @@ private:
     QString m_currentPin;
     bool m_pinConsumed = false;
     QByteArray m_hmacKey;
-    QHash<QString, RateLimitEntry> m_rateLimits; // ip -> entry
-    QHash<QString, SessionInfo> m_sessions;      // token -> SessionInfo
+    QHash<QString, RateLimitEntry> m_rateLimits; // rate-limit key -> entry
+    QHash<QString, SessionInfo> m_sessions;      // token hash (id) -> SessionInfo
+    QTimer* m_purgeTimer = nullptr;
 
     QString generatePinInternal();
     QByteArray generateHmac(const QString& data) const;
     void cleanupExpired();
     static QByteArray generateRandomKey();
+    /// SHA-256 (base64url) of a raw session token — the value stored/looked up.
+    static QString hashToken(const QString& token);
+    /// Length-independent, constant-time string comparison (anti timing-attack).
+    static bool constantTimeEquals(const QString& a, const QString& b);
 
     static constexpr int MAX_LOCKOUT_FAILURES = 3;
     static constexpr int LOCKOUT_SHORT_MS = 30000;
     static constexpr int LOCKOUT_MEDIUM_MS = 120000;
     static constexpr int LOCKOUT_LONG_MS = 600000;
+
+    // Sliding session lifetime: a session inactive for this long is purged and the
+    // user must re-enter a PIN. Activity (any authenticated request that touches
+    // the session) resets the clock, so active users are never prompted again.
+    static constexpr qint64 SESSION_TTL_SECS = 90LL * 24 * 3600;  // 90 days
 };

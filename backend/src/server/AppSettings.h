@@ -69,6 +69,15 @@ public:
     int streamHeight() const;
     void setStreamHeight(int height);
 
+    // ── Stream aspect ratio ────────────────────────────────────────────────────
+    //
+    // Aspect ratio used to derive width from a fixed height. Stored as JSON
+    // string "stream_aspect", default "auto" (derive from the host's reported
+    // screen format). Manual overrides: "16:9", "21:9", "32:9".
+
+    QString streamAspect() const;
+    void setStreamAspect(const QString& aspect);
+
     // ── Stream frame rate ─────────────────────────────────────────────────────
     //
     // Target FPS. Stored as JSON int "stream_fps", default 60.
@@ -205,6 +214,15 @@ public:
 
     /// Enable or disable certificate authentication.
     void setCertAuthEnabled(bool enabled);
+
+    // ── DNS subdomain ownership ─────────────────────────────────────────────
+    //
+    // Per-instance random token written to a _owner.<uid> TXT record. Before
+    // replacing its A record, an instance verifies this matches (or claims it
+    // if absent), so two instances cannot clobber each other's subdomain.
+
+    QString ownerToken() const;
+    void setOwnerToken(const QString& token);
 
     // ── Low-level access (for other one-off settings) ───────────────────────
 

@@ -807,7 +807,9 @@ export class StreamView {
             '</div>' +
             '<div class="reveal-text">' + t('stream.signalAcquired') + '</div>';
         this._revealEl.style.display = 'none';
-        this.streamEl.appendChild(this._revealEl);
+        // Append to the canvas area (not the whole overlay) so the reveal only
+        // covers the streamed image, leaving the header/letterbox untouched.
+        this.canvasArea.appendChild(this._revealEl);
 
         // Start overlay update timer (every 500ms)
         this._overlayInterval = setInterval(() => this._updateOverlay(), 500);

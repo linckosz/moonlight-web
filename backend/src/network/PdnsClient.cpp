@@ -297,6 +297,61 @@ bool PdnsClient::createTxtRecord(const QString& fqdnSubname, const QString& valu
     }
 }
 
+bool PdnsClient::getTxtRecord(const QString& fqdnSubname, QString& valueOut,
+                              QString& errorMsg)
+{
+    valueOut.clear();
+
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("rrset_name"), fqdnSubname);
+    query.addQueryItem(QStringLiteral("rrset_type"), QStringLiteral("TXT"));
+
+    QUrl url(apiBaseUrl() + QStringLiteral("/zones/") + zoneName());
+    url.setQuery(query);
+
+    QNetworkReply* reply = sendGet(url.toString());
+    if (!reply) {
+        errorMsg = QStringLiteral("PowerDNS getTxtRecord timed out");
+        return false;
+    }
+
+    int statusCode = reply->attribute(
+        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QByteArray responseData = reply->readAll();
+    reply->deleteLater();
+
+    if (statusCode != 200) {
+        errorMsg = QStringLiteral("PowerDNS getTxtRecord failed (HTTP %1)")
+                   .arg(statusCode);
+        return false;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(responseData);
+    if (!doc.isObject()) {
+        errorMsg = QStringLiteral("PowerDNS getTxtRecord: invalid JSON");
+        return false;
+    }
+
+    const QJsonArray rrsets = doc.object().value(QStringLiteral("rrsets")).toArray();
+    for (const QJsonValue& v : rrsets) {
+        QJsonObject rr = v.toObject();
+        if (rr.value(QStringLiteral("name")).toString() == fqdnSubname &&
+            rr.value(QStringLiteral("type")).toString() == QStringLiteral("TXT")) {
+            const QJsonArray records = rr.value(QStringLiteral("records")).toArray();
+            if (!records.isEmpty()) {
+                QString content = records.first().toObject()
+                                  .value(QStringLiteral("content")).toString();
+                // Strip the surrounding quotes PowerDNS stores for TXT content.
+                if (content.size() >= 2 && content.startsWith('"') && content.endsWith('"'))
+                    content = content.mid(1, content.size() - 2);
+                valueOut = content;
+            }
+            return true;
+        }
+    }
+    return true;  // query OK, record absent
+}
+
 bool PdnsClient::deleteTxtRecord(const QString& fqdnSubname, QString& errorMsg)
 {
     QString zone = zoneName();

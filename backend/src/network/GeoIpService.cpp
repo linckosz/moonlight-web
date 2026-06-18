@@ -49,9 +49,12 @@ void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
     // Start new request
     m_pending[ip].append(callback);
 
-    QUrl url(QStringLiteral("http://ip-api.com/json/%1").arg(ip));
+    // HTTPS provider (ipwho.is): free, no API key, and crucially encrypted so a
+    // network observer cannot harvest the client IPs we look up or tamper with
+    // the geo result. Returns {success, city, country}.
+    QUrl url(QStringLiteral("https://ipwho.is/%1").arg(ip));
     QUrlQuery query;
-    query.addQueryItem(QStringLiteral("fields"), QStringLiteral("city,country,status"));
+    query.addQueryItem(QStringLiteral("fields"), QStringLiteral("success,city,country"));
     url.setQuery(query);
 
     QNetworkRequest req(url);
@@ -71,7 +74,7 @@ void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
             QJsonDocument doc = QJsonDocument::fromJson(data);
             if (doc.isObject()) {
                 QJsonObject obj = doc.object();
-                if (obj.value("status").toString() == "success") {
+                if (obj.value("success").toBool()) {
                     city = obj.value("city").toString();
                     country = obj.value("country").toString();
                 }

@@ -165,6 +165,24 @@ void AppSettings::setStreamHeight(int height)
     writeAll(obj);
 }
 
+// ── Stream aspect ratio ────────────────────────────────────────────────────────
+
+QString AppSettings::streamAspect() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("stream_aspect").toString("auto");
+}
+
+void AppSettings::setStreamAspect(const QString& aspect)
+{
+    QJsonObject obj = readAll();
+    // "auto" = derive width from the host's reported screen format; the explicit
+    // ratios are manual overrides (ultrawide-aware).
+    const QStringList valid = {"auto", "16:9", "21:9", "32:9"};
+    obj["stream_aspect"] = valid.contains(aspect) ? aspect : QStringLiteral("auto");
+    writeAll(obj);
+}
+
 // ── Stream frame rate ────────────────────────────────────────────────────────────
 
 int AppSettings::streamFps() const
@@ -471,6 +489,21 @@ bool AppSettings::certAuthEnabled() const
 {
     QJsonObject obj = readAll();
     return obj.value("cert_auth_enabled").toBool(false);
+}
+
+// ── DNS subdomain ownership token ───────────────────────────────────────────────
+
+QString AppSettings::ownerToken() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("owner_token").toString();
+}
+
+void AppSettings::setOwnerToken(const QString& token)
+{
+    QJsonObject obj = readAll();
+    obj["owner_token"] = token;
+    writeAll(obj);
 }
 
 void AppSettings::setCertAuthEnabled(bool enabled)
