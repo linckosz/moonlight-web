@@ -1,6 +1,8 @@
 /**
  * Moonlight-Web — Host data model
  */
+import { t } from '../i18n/i18n.js';
+
 export class Host {
     constructor(data) {
         this.uuid          = data.uuid || '';
@@ -52,9 +54,9 @@ export class Host {
     }
 
     get statusLabel() {
-        if (!this.isOnline) return 'Offline';
-        if (this.isPaired)  return 'Ready';
-        return 'Not paired';
+        if (!this.isOnline) return t('hosts.statusOffline');
+        if (this.isPaired)  return t('hosts.statusReady');
+        return t('hosts.statusNotPaired');
     }
 
     get statusClass() {

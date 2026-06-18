@@ -54,7 +54,7 @@ l'utilisateur. Pour l'API Sunshine, le skill `sunshine-api` suffit.
 - **Stack** : backend C++17 / Qt 6.11 (MSVC 2022) ; frontend Vanilla JS (modules ES6), HTML/CSS
 - **Objectif** : client de streaming Sunshine dans le navigateur — WebCodecs + canvas, transport WebRTC (DataChannels + media tracks) avec fallback WSS, multi-hôtes, pairing, audio AudioWorklet, input clavier/souris/touch
 - **État** : phases 1–6 terminées (HTTP, découverte, pairing, apps, RTSP, vidéo, audio) ; input avancé et polish en cours
-- **Docs** : [plan](docs/moonlight-web-plan.md) · [API Sunshine](docs/sunshine-api.md) · [architecture moonlight-qt](docs/moonlight-qt-architecture.md)
+- **Docs** : [plan](docs/moonlight-web-plan.md) · [API Sunshine](docs/sunshine-api.md) · [architecture moonlight-qt](docs/moonlight-qt-architecture.md) · [i18n](docs/i18n.md)
 
 ## Standards
 

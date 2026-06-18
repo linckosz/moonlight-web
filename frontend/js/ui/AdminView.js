@@ -12,6 +12,7 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
+import { t } from '../i18n/i18n.js';
 
 export class AdminView {
     constructor(container, onClose) {
@@ -156,8 +157,8 @@ export class AdminView {
             const sessionCount = this.container.querySelector('#admin-session-count');
             if (sessionCount) {
                 sessionCount.textContent = this._activeSessions > 0
-                    ? `${this._activeSessions} active session(s)`
-                    : 'No active sessions';
+                    ? t('admin.sessionCount', { count: this._activeSessions })
+                    : t('admin.noActiveSessions');
             }
             // Update the PIN display. If the PIN was consumed (auto-regenerated
             // after remote validation), show "--------" to force the admin to
@@ -176,7 +177,7 @@ export class AdminView {
                         // PIN became consumed while view was open — insert hint
                         const hint = document.createElement('p');
                         hint.className = 'settings-hint pin-consumed-hint';
-                        hint.textContent = 'The previous PIN was used by a remote user. Generate a new PIN to allow another session.';
+                        hint.textContent = t('admin.pinConsumedHint');
                         pinCount.parentNode.insertBefore(hint, pinCount);
                     } else if (!this._pinConsumed && hintArea) {
                         hintArea.remove();
@@ -213,7 +214,7 @@ export class AdminView {
             if (this._dnsPollAttempts > this._maxDnsPollAttempts) {
                 this._stopDnsPolling();
                 this._pendingRegistration = false;
-                this._lastError = 'DNS propagation timed out after 5 minutes. Check your domain configuration.';
+                this._lastError = t('admin.dnsTimeout');
                 this.render();
                 this.bindEvents();
                 return;
@@ -230,7 +231,7 @@ export class AdminView {
                     this._lastError = '';
                     this.render();
                     this.bindEvents();
-                    Toast.success('DNS propagated -- your site is now available at ' + this._domain);
+                    Toast.success(t('admin.dnsPropagated', { domain: this._domain }));
                 } else if (status.last_error && status.last_error !== this._lastError) {
                     this._lastError = status.last_error;
                     this._pendingRegistration = status.pending_registration !== false;
@@ -315,7 +316,7 @@ export class AdminView {
             'wss':              'WSS (WebSocket Secure)'
         };
         const transportOptions = [
-            { value: 'auto', label: 'Auto (prefer UDP)' },
+            { value: 'auto', label: t('admin.transportAuto') },
             ...this._availableTransports.map(t => ({
                 value: t,
                 label: transportLabels[t] || t
@@ -328,19 +329,18 @@ export class AdminView {
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
                 <div class="admin-header">
-                    <h2>Server Settings</h2>
+                    <h2>${t('admin.title')}</h2>
                     <button class="view-close-btn" id="btn-admin-close"
-                            title="Close (discards unsaved changes)">&times;</button>
+                            title="${this.esc(t('admin.closeDiscard'))}">&times;</button>
                 </div>
 
                 <!-- PIN (localhost only) -->
                 ${this._isLocalhost() ? `
                     <div class="settings-section">
-                        <h3 class="settings-section-title">Access PIN</h3>
+                        <h3 class="settings-section-title">${t('admin.accessPin')}</h3>
                         <div class="settings-field" style="padding-top:0;">
                             <p class="setting-desc">
-                                Share this PIN with remote users to grant them access to this server.
-                                The PIN is valid for one session only.
+                                ${t('admin.accessPinDesc')}
                             </p>
                             <div class="pin-display-area">
                                 <span class="pin-display ${this._pinConsumed ? 'pin-consumed' : ''}"
@@ -348,20 +348,19 @@ export class AdminView {
                                     ${this.esc(this._pinConsumed ? '--------' : this._pin)}
                                 </span>
                                 <button class="btn btn-secondary" id="btn-copy-pin" style="flex-shrink:0;"
-                                        title="Copy PIN to clipboard">
-                                    Copy
+                                        title="${this.esc(t('admin.copyPinTitle'))}">
+                                    ${t('common.copy')}
                                 </button>
                                 <button class="btn btn-secondary" id="btn-regenerate-pin" style="flex-shrink:0;">
-                                    Generate
+                                    ${t('common.generate')}
                                 </button>
                                 <button class="btn btn-secondary" id="btn-clear-pin" style="flex-shrink:0;">
-                                    Clear
+                                    ${t('common.clear')}
                                 </button>
                             </div>
                             ${this._pinConsumed ? `
                                 <p class="settings-hint pin-consumed-hint">
-                                    The previous PIN was used by a remote user.
-                                    Generate a new PIN to allow another session.
+                                    ${t('admin.pinConsumedHint')}
                                 </p>
                             ` : ''}
                         </div>
@@ -371,16 +370,16 @@ export class AdminView {
                 <!-- Active Sessions (localhost only) -->
                 ${this._isLocalhost() ? `
                     <div class="settings-section">
-                        <h3 class="settings-section-title">Active Sessions</h3>
+                        <h3 class="settings-section-title">${t('admin.activeSessions')}</h3>
                         <div class="settings-field" style="padding-top:0;">
                             <p class="setting-desc">
-                                Remote users currently connected to this server.
+                                ${t('admin.activeSessionsDesc')}
                             </p>
                             <p class="settings-hint" id="admin-session-count"
                                style="font-weight:500;margin-bottom:4px;">
                                 ${this._activeSessions > 0
-                                    ? `${this._activeSessions} active session(s)`
-                                    : 'No active sessions'}
+                                    ? t('admin.sessionCount', { count: this._activeSessions })
+                                    : t('admin.noActiveSessions')}
                             </p>
                             <div id="admin-sessions-table">
                                 ${this._buildSessionsAreaHtml()}
@@ -392,34 +391,30 @@ export class AdminView {
                 <!-- Certificate Authentication (localhost only) -->
                 ${this._isLocalhost() ? `
                     <div class="settings-section">
-                        <h3 class="settings-section-title">Certificate Authentication</h3>
+                        <h3 class="settings-section-title">${t('admin.certAuth')}</h3>
                         <div class="settings-field" style="padding-top:0;">
                             <label class="settings-checkbox-label">
                                 <input type="checkbox" id="chk-cert-auth"
                                        ${this._certAuthEnabled ? 'checked' : ''} />
-                                <span class="settings-checkbox-text">Enable certificate authentication</span>
+                                <span class="settings-checkbox-text">${t('admin.enableCertAuth')}</span>
                             </label>
                             <p class="setting-desc">
-                                When enabled, remote users can upload a certificate file instead
-                                of entering a PIN. The certificate is a long random token that
-                                never changes — generate it once and share it securely.
+                                ${t('admin.certAuthDesc')}
                             </p>
                             <div id="cert-download-area" style="${this._certAuthEnabled ? '' : 'display:none;'}">
                                 <button class="btn btn-secondary" id="btn-download-cert"
                                         style="margin-top:8px;">
-                                    Download certificate
+                                    ${t('admin.downloadCert')}
                                 </button>
                                 <p class="settings-hint">
-                                    The certificate grants the same access as a PIN.
-                                    Share it only with trusted users. If compromised,
-                                    use the "Generate" button below to issue a new one.
+                                    ${t('admin.downloadCertHint')}
                                 </p>
                                 <div style="margin-top:8px;">
                                     <button class="btn btn-danger btn-small" id="btn-regenerate-cert">
-                                        Regenerate certificate
+                                        ${t('admin.regenerateCert')}
                                     </button>
                                     <span class="settings-hint" style="margin-left:8px;">
-                                        Invalidates all existing certificate files.
+                                        ${t('admin.regenerateCertHint')}
                                     </span>
                                 </div>
                             </div>
@@ -429,13 +424,13 @@ export class AdminView {
 
                 <!-- Internet -->
                 <div class="settings-section">
-                    <h3 class="settings-section-title">Internet</h3>
+                    <h3 class="settings-section-title">${t('admin.internet')}</h3>
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="chk-internet-enable"
                                    ${this._internetEnabled ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">Enable Internet Access</span>
+                            <span class="settings-checkbox-text">${t('admin.enableInternet')}</span>
                         </label>
                     </div>
 
@@ -450,17 +445,13 @@ export class AdminView {
 
                     <!-- Info frame (always visible) -->
                     <div class="internet-info-box">
-                        <p><strong class="internet-important-label">Important:</strong><br>
-                        By enabling Internet Access, you authorize sending this server's
-                        <strong>public IP address</strong> to PowerDNS to create an A record
-                        pointing to your network.</p>
-                        <p>Authorizes <strong>UPnP</strong> port mapping on your router
-                        ${this._upnpAvailable ? '(available on this network).' : '(not available on this network).'}
-                        You can also forward ports manually.</p>
-                        ${this._publicIp ? `<p>Public IP: <code>${this.esc(this._publicIp)}</code></p>` : ''}
-                        <p>UPnP: ${this._upnpAvailable
-                            ? '<span class="text-success">Available</span>'
-                            : '<span class="text-muted">Not available</span>'}
+                        <p><strong class="internet-important-label">${t('admin.importantLabel')}</strong><br>
+                        ${t('admin.internetInfo1')}</p>
+                        <p>${this._upnpAvailable ? t('admin.upnpAvailableNote') : t('admin.upnpUnavailableNote')}</p>
+                        ${this._publicIp ? `<p>${t('admin.publicIp')} <code>${this.esc(this._publicIp)}</code></p>` : ''}
+                        <p>${t('admin.upnpLabel')} ${this._upnpAvailable
+                            ? `<span class="text-success">${t('admin.available')}</span>`
+                            : `<span class="text-muted">${t('admin.notAvailable')}</span>`}
                         </p>
                     </div>
 
@@ -468,8 +459,7 @@ export class AdminView {
                     ${this._pendingRegistration ? `
                         <div class="dns-propagating">
                             <span class="tunnel-spinner"></span>
-                            <span>DNS propagation in progress &mdash; your site will be
-                            available shortly. This may take a few minutes...</span>
+                            <span>${t('admin.dnsPropagating')}</span>
                         </div>
                     ` : ''}
 
@@ -483,14 +473,13 @@ export class AdminView {
                     <!-- Port Mapping: only shown when UPnP is NOT available -->
                     ${!this._upnpAvailable ? `
                         <div class="settings-field" style="padding-top:12px;">
-                            <label class="settings-label">Port Mapping</label>
+                            <label class="settings-label">${t('admin.portMapping')}</label>
                             <p class="settings-hint">
-                                UPnP is not available on your router. To allow external access,
-                                manually forward ports in your router settings:
-                                <br />Source (<strong>Any:${this._httpsPort}</strong>) &rarr;
-                                Destination (<strong>${this._getLocalIpForDisplay() ? this.esc(this._getLocalIpForDisplay()) + ':' : ''}${this._httpsPort}</strong>)
-                                ${this._getLocalIpForDisplay() ? '' : `<br />Enter the LAN IP address of this server (e.g. 192.168.1.x) as the destination.`}
-                                <br /><strong>TCP and UDP</strong>.
+                                ${t('admin.portMappingHint')}
+                                <br />${t('admin.portMappingSource')} (<strong>Any:${this._httpsPort}</strong>) &rarr;
+                                ${t('admin.portMappingDest')} (<strong>${this._getLocalIpForDisplay() ? this.esc(this._getLocalIpForDisplay()) + ':' : ''}${this._httpsPort}</strong>)
+                                ${this._getLocalIpForDisplay() ? '' : `<br />${t('admin.portMappingEnterIp')}`}
+                                <br /><strong>${t('admin.portMappingProtocols')}</strong>.
                             </p>
                         </div>
                     ` : ''}
@@ -499,14 +488,14 @@ export class AdminView {
                 <!-- Local Access -->
                 ${this._localIp ? `
                 <div class="settings-section">
-                    <h3 class="settings-section-title">Local Access</h3>
+                    <h3 class="settings-section-title">${t('admin.localAccess')}</h3>
                     <div class="settings-field" style="padding-top:0;">
                         <div style="padding:4px 0;font-family:monospace;">
                             <a href="${this.esc(this._buildLocalUrl())}" target="_blank" rel="noopener"
                                class="tunnel-url-link">${this.esc(this._buildLocalUrl())}</a>
                         </div>
                         <p class="settings-hint">
-                            Access this server from other devices on your local network.
+                            ${t('admin.localAccessHint')}
                         </p>
                     </div>
                 </div>
@@ -514,11 +503,11 @@ export class AdminView {
 
                 <!-- Server Configuration -->
                 <div class="settings-section">
-                    <h3 class="settings-section-title">Server Configuration</h3>
+                    <h3 class="settings-section-title">${t('admin.serverConfig')}</h3>
 
                     <div class="settings-field">
                         <label class="settings-label" for="select-transport-mode">
-                            Transport Mode
+                            ${t('admin.transportMode')}
                         </label>
                         <select id="select-transport-mode" class="settings-select">
                             ${transportOptions.map(o =>
@@ -526,19 +515,16 @@ export class AdminView {
                             ).join('')}
                         </select>
                         <p class="settings-hint">
-                            When set to <strong>Auto</strong>, the system tries the best
-                            available protocol (UDP &gt; TCP &gt; WSS) based on network
-                            conditions and browser support.
+                            ${t('admin.transportModeHint')}
                         </p>
                     </div>
 
                     <div class="settings-field">
                         <label class="settings-label" for="admin-https-port">
-                            HTTPS Port
+                            ${t('admin.httpsPort')}
                         </label>
                         <span class="setting-desc">
-                            Configure the server HTTPS port. Changes require a brief
-                            service interruption while the port is rebound.
+                            ${t('admin.httpsPortDesc')}
                         </span>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <input type="number" id="admin-https-port" class="settings-input"
@@ -548,7 +534,7 @@ export class AdminView {
                                    style="flex: 1;" />
                             <button class="btn btn-save" id="btn-admin-save" disabled
                                     style="flex-shrink: 0;">
-                                Save &amp; Reload
+                                ${t('admin.saveReload')}
                             </button>
                         </div>
                     </div>
@@ -565,25 +551,25 @@ export class AdminView {
             let location = this.esc(s.location || '');
             let ip = this.esc(s.ip || '');
             if (s.location === 'Local') {
-                location = 'Local Network';
-                ip = 'Local Network';
+                location = t('admin.localNetwork');
+                ip = t('admin.localNetwork');
             } else if (s.city) {
                 location = this.esc(s.city) + (s.country ? ', ' + this.esc(s.country) : '');
             }
             const streamingBadge = s.streaming
-                ? '<span class="session-streaming-badge" title="Currently streaming">● Streaming</span>'
+                ? `<span class="session-streaming-badge" title="${this.esc(t('admin.streamingTitle'))}">${t('admin.streaming')}</span>`
                 : '';
             return `
             <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
-                <td>${this.esc(s.machine_name || 'Unknown')}${streamingBadge}</td>
+                <td>${this.esc(s.machine_name || t('common.unknown'))}${streamingBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>
                 <td>
                     <button class="btn btn-danger btn-small btn-session-revoke"
                             data-token="${this.esc(s.token)}"
-                            title="Revoke this session">
-                        Revoke
+                            title="${this.esc(t('admin.revokeTitle'))}">
+                        ${t('admin.revoke')}
                     </button>
                 </td>
             </tr>`;
@@ -593,11 +579,11 @@ export class AdminView {
             <table class="sessions-table">
                 <thead>
                     <tr>
-                        <th>Machine</th>
-                        <th>Authorized</th>
-                        <th>IP</th>
-                        <th>Location</th>
-                        <th>Action</th>
+                        <th>${t('admin.colMachine')}</th>
+                        <th>${t('admin.colAuthorized')}</th>
+                        <th>${t('admin.colIp')}</th>
+                        <th>${t('admin.colLocation')}</th>
+                        <th>${t('admin.colAction')}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -619,12 +605,12 @@ export class AdminView {
             <div class="sessions-pagination">
                 <button class="btn btn-small btn-pagination" id="btn-page-prev"
                         ${this._sessionPage === 0 ? 'disabled' : ''}>
-                    &laquo; Previous
+                    ${t('admin.prevPage')}
                 </button>
-                <span class="pagination-info">Page ${currentPage} of ${totalPages}</span>
+                <span class="pagination-info">${t('admin.pageInfo', { current: currentPage, total: totalPages })}</span>
                 <button class="btn btn-small btn-pagination" id="btn-page-next"
                         ${this._sessionPage >= totalPages - 1 ? 'disabled' : ''}>
-                    Next &raquo;
+                    ${t('admin.nextPage')}
                 </button>
             </div>
         `;
@@ -632,7 +618,7 @@ export class AdminView {
 
     _buildSessionsAreaHtml() {
         if (this._sessions.length === 0) {
-            return '<p class="settings-hint">No active sessions</p>';
+            return `<p class="settings-hint">${t('admin.noActiveSessions')}</p>`;
         }
         const pageSessions = this._getPaginatedSessions();
         return this._buildSessionsTableHtml(pageSessions) + this._buildPaginationHtml();
@@ -725,18 +711,18 @@ export class AdminView {
             saveBtn.addEventListener('click', async () => {
                 const newPort = parseInt(portInput.value, 10);
                 if (isNaN(newPort) || newPort < 1 || newPort > 65535) {
-                    Toast.warning('Port must be between 1 and 65535');
+                    Toast.warning(t('admin.portRange'));
                     return;
                 }
 
                 saveBtn.disabled = true;
                 saveBtn.classList.add('btn-loading');
-                saveBtn.textContent = 'Saving...';
+                saveBtn.textContent = t('admin.saving');
 
                 try {
                     const result = await BackendClient.saveAdminSettings({ https_port: newPort });
                     if (result.status === 'saved') {
-                        Toast.success('Port changed to ' + result.https_port);
+                        Toast.success(t('admin.portChanged', { port: result.https_port }));
 
                         if (result.port_changed) {
                             const newUrl = new URL(window.location.href);
@@ -751,14 +737,14 @@ export class AdminView {
                         portInput.value = String(this._httpsPort);
                         this._markClean();
                     } else if (result.status === 'partial') {
-                        Toast.success('Port saved to settings. Restart required to apply.');
+                        Toast.success(t('admin.portSavedRestart'));
                     }
                 } catch (err) {
                     console.error('[Admin] Failed to save settings:', err);
-                    Toast.error('Failed to save: ' + err.message);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
                 } finally {
                     saveBtn.classList.remove('btn-loading');
-                    saveBtn.textContent = 'Save & Reload';
+                    saveBtn.textContent = t('admin.saveReload');
                     this._updateSaveButton();
                 }
             });
@@ -769,14 +755,14 @@ export class AdminView {
         if (copyBtn) {
             copyBtn.addEventListener('click', async () => {
                 if (this._pin === '--------' || !this._pin) {
-                    Toast.warning('No valid PIN to copy — generate one first');
+                    Toast.warning(t('admin.noPinToCopy'));
                     return;
                 }
                 try {
                     await navigator.clipboard.writeText(this._pin);
-                    Toast.success('PIN copied to clipboard');
-                    copyBtn.textContent = 'Copied!';
-                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+                    Toast.success(t('admin.pinCopied'));
+                    copyBtn.textContent = t('common.copied');
+                    setTimeout(() => { copyBtn.textContent = t('common.copy'); }, 2000);
                 } catch (err) {
                     console.warn('[Admin] Clipboard write failed:', err);
                     // Fallback: select the PIN text
@@ -787,7 +773,7 @@ export class AdminView {
                         const sel = window.getSelection();
                         sel.removeAllRanges();
                         sel.addRange(range);
-                        Toast.info('PIN selected — press Ctrl+C to copy');
+                        Toast.info(t('admin.pinSelected'));
                     }
                 }
             });
@@ -798,19 +784,19 @@ export class AdminView {
         if (regenBtn) {
             regenBtn.addEventListener('click', async () => {
                 regenBtn.disabled = true;
-                regenBtn.textContent = 'Generating...';
+                regenBtn.textContent = t('admin.generating');
                 try {
                     const result = await BackendClient.generatePin();
                     this._pin = result.pin;
                     this._pinConsumed = false;  // fresh PIN
                     this.render();
                     this.bindEvents();
-                    Toast.success('New PIN: ' + result.pin);
+                    Toast.success(t('admin.newPin', { pin: result.pin }));
                 } catch (err) {
                     console.error('[Admin] Failed to generate PIN:', err);
-                    Toast.error('Failed to generate: ' + err.message);
+                    Toast.error(t('admin.generateFailed', { message: err.message }));
                     regenBtn.disabled = false;
-                    regenBtn.textContent = 'Generate';
+                    regenBtn.textContent = t('common.generate');
                 }
             });
         }
@@ -820,19 +806,19 @@ export class AdminView {
         if (clearBtn) {
             clearBtn.addEventListener('click', async () => {
                 clearBtn.disabled = true;
-                clearBtn.textContent = 'Clearing...';
+                clearBtn.textContent = t('admin.clearing');
                 try {
                     const result = await BackendClient.clearPin();
                     this._pin = result.pin || '--------';
                     this._pinConsumed = false;
                     this.render();
                     this.bindEvents();
-                    Toast.info('PIN cleared — remote access disabled');
+                    Toast.info(t('admin.pinCleared'));
                 } catch (err) {
                     console.error('[Admin] Failed to clear PIN:', err);
-                    Toast.error('Failed to clear: ' + err.message);
+                    Toast.error(t('admin.clearFailed', { message: err.message }));
                     clearBtn.disabled = false;
-                    clearBtn.textContent = 'Clear';
+                    clearBtn.textContent = t('common.clear');
                 }
             });
         }
@@ -851,10 +837,10 @@ export class AdminView {
                     if (area) {
                         area.style.display = enabled ? '' : 'none';
                     }
-                    Toast.success(enabled ? 'Certificate authentication enabled' : 'Certificate authentication disabled');
+                    Toast.success(enabled ? t('admin.certAuthEnabled') : t('admin.certAuthDisabled'));
                 } catch (err) {
                     console.error('[Admin] Failed to save cert auth setting:', err);
-                    Toast.error('Failed to save: ' + err.message);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
                     certChk.checked = !enabled; // revert
                 }
             });
@@ -865,7 +851,7 @@ export class AdminView {
         if (downloadBtn) {
             downloadBtn.addEventListener('click', async () => {
                 downloadBtn.disabled = true;
-                downloadBtn.textContent = 'Downloading...';
+                downloadBtn.textContent = t('admin.downloading');
                 try {
                     const content = await BackendClient.downloadCertificate();
                     // Trigger file download via a temporary anchor
@@ -878,13 +864,13 @@ export class AdminView {
                     a.click();
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
-                    Toast.success('Certificate downloaded');
+                    Toast.success(t('admin.certDownloaded'));
                 } catch (err) {
                     console.error('[Admin] Failed to download certificate:', err);
-                    Toast.error('Failed to download: ' + err.message);
+                    Toast.error(t('admin.downloadFailed', { message: err.message }));
                 } finally {
                     downloadBtn.disabled = false;
-                    downloadBtn.textContent = 'Download certificate';
+                    downloadBtn.textContent = t('admin.downloadCert');
                 }
             });
         }
@@ -893,14 +879,14 @@ export class AdminView {
         const regenCertBtn = this.container.querySelector('#btn-regenerate-cert');
         if (regenCertBtn) {
             regenCertBtn.addEventListener('click', async () => {
-                if (!confirm('Regenerating the certificate will invalidate all existing certificate files. Continue?')) {
+                if (!confirm(t('admin.confirmRegenCert'))) {
                     return;
                 }
                 regenCertBtn.disabled = true;
-                regenCertBtn.textContent = 'Regenerating...';
+                regenCertBtn.textContent = t('admin.regenerating');
                 try {
                     const result = await BackendClient.regenerateCertificate();
-                    Toast.success('Certificate regenerated');
+                    Toast.success(t('admin.certRegenerated'));
                     if (this._certAuthEnabled) {
                         // Re-enable the checkbox to trigger UI update
                         const chk = this.container.querySelector('#chk-cert-auth');
@@ -908,10 +894,10 @@ export class AdminView {
                     }
                 } catch (err) {
                     console.error('[Admin] Failed to regenerate certificate:', err);
-                    Toast.error('Failed to regenerate: ' + err.message);
+                    Toast.error(t('admin.regenerateFailed', { message: err.message }));
                 } finally {
                     regenCertBtn.disabled = false;
-                    regenCertBtn.textContent = 'Regenerate certificate';
+                    regenCertBtn.textContent = t('admin.regenerateCert');
                 }
             });
         }
@@ -947,7 +933,7 @@ export class AdminView {
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 if (this._dirty) {
-                    Toast.info('Settings changes discarded');
+                    Toast.info(t('admin.changesDiscarded'));
                 }
                 this.onClose();
             });
@@ -960,12 +946,12 @@ export class AdminView {
         const btn = this.container.querySelector(`.btn-session-revoke[data-token="${CSS.escape(token)}"]`);
         if (btn) {
             btn.disabled = true;
-            btn.textContent = 'Revoking...';
+            btn.textContent = t('admin.revoking');
         }
 
         try {
             await BackendClient.revokeSession(token);
-            Toast.success('Session revoked');
+            Toast.success(t('admin.sessionRevoked'));
 
             // Remove from local list and re-render
             this._sessions = this._sessions.filter(s => s.token !== token);
@@ -976,15 +962,15 @@ export class AdminView {
             const sessionCount = this.container.querySelector('#admin-session-count');
             if (sessionCount) {
                 sessionCount.textContent = this._activeSessions > 0
-                    ? `${this._activeSessions} active session(s)`
-                    : 'No active sessions';
+                    ? t('admin.sessionCount', { count: this._activeSessions })
+                    : t('admin.noActiveSessions');
             }
         } catch (err) {
             console.error('[Admin] Failed to revoke session:', err);
-            Toast.error('Failed to revoke: ' + err.message);
+            Toast.error(t('admin.revokeFailed', { message: err.message }));
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = 'Revoke';
+                btn.textContent = t('admin.revoke');
             }
         }
     }
@@ -999,7 +985,7 @@ export class AdminView {
                 transport_mode: this._transportMode
             });
             if (result.status === 'enabled') {
-                Toast.success('Internet Access enabled -- domain: ' + (result.domain || '...'));
+                Toast.success(t('admin.internetEnabled', { domain: result.domain || '...' }));
                 await this._loadInternetState();
                 this.render();
                 this.bindEvents();
@@ -1007,13 +993,13 @@ export class AdminView {
                     this._startDnsPolling();
                 }
             } else {
-                Toast.error('Failed to enable Internet Access');
+                Toast.error(t('admin.internetEnableFailed'));
                 const chk = this.container.querySelector('#chk-internet-enable');
                 if (chk) chk.checked = false;
             }
         } catch (err) {
             console.error('[Admin] Failed to enable Internet Access:', err);
-            Toast.error('Failed to enable: ' + err.message);
+            Toast.error(t('admin.enableFailed', { message: err.message }));
             const chk = this.container.querySelector('#chk-internet-enable');
             if (chk) chk.checked = false;
         }
@@ -1024,13 +1010,13 @@ export class AdminView {
             await BackendClient.disableInternet();
             this._internetEnabled = false;
             this._stopDnsPolling();
-            Toast.success('Internet Access disabled');
+            Toast.success(t('admin.internetDisabled'));
             await this._loadInternetState();
             this.render();
             this.bindEvents();
         } catch (err) {
             console.error('[Admin] Failed to disable Internet Access:', err);
-            Toast.error('Failed to disable: ' + err.message);
+            Toast.error(t('admin.disableFailed', { message: err.message }));
             const chk = this.container.querySelector('#chk-internet-enable');
             if (chk) chk.checked = true;
         }
@@ -1048,10 +1034,10 @@ export class AdminView {
         try {
             await BackendClient.enableInternet(prefs);
             this._transportMode = newMode;
-            Toast.success('Transport mode saved: ' + newMode);
+            Toast.success(t('admin.transportSaved', { mode: newMode }));
         } catch (err) {
             console.warn('[Admin] Failed to save transport prefs:', err);
-            Toast.error('Failed to save transport mode');
+            Toast.error(t('admin.transportSaveFailed'));
         }
     }
 

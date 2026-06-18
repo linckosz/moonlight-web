@@ -11,6 +11,7 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
+import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
 const IS_TOUCH_DEVICE = 'ontouchstart' in window ||
@@ -330,7 +331,7 @@ export class SettingsView {
             // Save to localStorage and server (if localhost)
             await this._saveToStorage();
 
-            Toast.success('Saved');
+            Toast.success(t('settings.saved'));
         }, 300);
     }
 
@@ -355,7 +356,7 @@ export class SettingsView {
         // Re-render with defaults and re-bind the controls
         this.render();
         this.bindEvents();
-        Toast.success('Settings reset to defaults');
+        Toast.success(t('settings.settingsReset'));
     }
 
     // --- Rendering ---
@@ -363,9 +364,9 @@ export class SettingsView {
     render() {
         // Codec options (explicit, no "Auto")
         const codecs = [
-            { value: 'h264', label: 'H.264 (Wide compatibility)' },
-            { value: 'hevc', label: 'HEVC (Efficient compression, recommended)' },
-            { value: 'av1',  label: 'AV1 (Best compression for modern GPUs)' }
+            { value: 'h264', label: t('settings.codecH264') },
+            { value: 'hevc', label: t('settings.codecHevc') },
+            { value: 'av1',  label: t('settings.codecAv1') }
         ];
         const effectiveCodec = this._getEffectiveCodec();
         const codecOptions = codecs.map(c => {
@@ -376,10 +377,8 @@ export class SettingsView {
             const selected = c.value === effectiveCodec ? ' selected' : '';
 
             let label = c.label;
-            if (browserDisabled) {
-                label = `${c.value.toUpperCase()} (unavailable)`;
-            } else if (mediaTrackDisabled) {
-                label = `${c.value.toUpperCase()} (unavailable)`;
+            if (browserDisabled || mediaTrackDisabled) {
+                label = t('settings.codecUnavailable', { codec: c.value.toUpperCase() });
             }
 
             return `<option value="${c.value}"${selected}${disabled ? ' disabled' : ''}>${this.esc(label)}</option>`;
@@ -392,8 +391,10 @@ export class SettingsView {
         let codecHintHtml = '';
         if (codecChanged) {
             codecHintHtml = `<div class="settings-note">
-                ${this._videoCodec.toUpperCase()} was selected but is not supported
-                by this browser. Falling back to ${effectiveCodec.toUpperCase()}.
+                ${this.esc(t('settings.codecFallback', {
+                    selected: this._videoCodec.toUpperCase(),
+                    effective: effectiveCodec.toUpperCase()
+                }))}
             </div>`;
         }
 
@@ -402,8 +403,7 @@ export class SettingsView {
             !this._codecSupport.h264 && !this._codecSupport.hevc && !this._codecSupport.av1;
         if (noCodecSupported) {
             codecHintHtml = `<div class="settings-status settings-status-pending" style="margin-bottom:8px">
-                <strong>No codec supported.</strong> This browser does not support H.264,
-                HEVC, or AV1 decoding. Streaming is not possible.
+                <strong>${t('settings.noCodecSupportedTitle')}</strong> ${t('settings.noCodecSupportedBody')}
             </div>`;
         }
 
@@ -413,7 +413,7 @@ export class SettingsView {
             { value: 1080, label: '1080p' },
             { value: 1440, label: '1440p' },
             { value: 2160, label: '2160p' },
-            { value: 0,    label: 'Same as Host' }
+            { value: 0,    label: t('settings.sameAsHost') }
         ];
         const heightOptions = heights.map(h =>
             `<option value="${h.value}" ${h.value === this._streamHeight ? 'selected' : ''}>${this.esc(h.label)}</option>`
@@ -422,7 +422,7 @@ export class SettingsView {
         // FPS options
         const fpsValues = [1, 30, 60, 75, 90, 120, 144, 165, 240];
         const fpsOptions = fpsValues.map(f =>
-            `<option value="${f}" ${f === this._streamFps ? 'selected' : ''}>${f} FPS</option>`
+            `<option value="${f}" ${f === this._streamFps ? 'selected' : ''}>${this.esc(t('settings.fpsSuffix', { fps: f }))}</option>`
         ).join('');
 
         // Video Enhancement (WebGPU upscale/sharpen) — grayed out if WebGPU is
@@ -430,35 +430,35 @@ export class SettingsView {
         const webgpuUnavailable = !this._webgpuUsable;
         const veDisabledAttr = webgpuUnavailable ? ' disabled' : '';
         const veAlgos = [
-            { value: 'auto',    label: 'Auto (mobile→SGSR, desktop→FSR1)', disabled: false },
-            { value: 'sgsr',    label: 'SGSR (Snapdragon)', disabled: false },
-            { value: 'fsr1',    label: 'FSR 1 (AMD)', disabled: false },
-            { value: 'force2d', label: 'Force Canvas 2D (debug)', disabled: false }
+            { value: 'auto',    label: t('settings.algoAuto'), disabled: false },
+            { value: 'sgsr',    label: t('settings.algoSgsr'), disabled: false },
+            { value: 'fsr1',    label: t('settings.algoFsr1'), disabled: false },
+            { value: 'force2d', label: t('settings.algoForce2d'), disabled: false }
         ];
         const veAlgoOptions = veAlgos.map(a =>
             `<option value="${a.value}" ${a.value === this._videoEnhancementAlgo ? 'selected' : ''}${a.disabled ? ' disabled' : ''}>${this.esc(a.label)}</option>`
         ).join('');
         const veNote = webgpuUnavailable
-            ? `<div class="settings-note">WebGPU is not available in this browser — video enhancement is disabled.</div>`
+            ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
             : '';
 
         this.container.innerHTML = `
             <div class="settings-view" id="view-settings">
                 <div class="settings-header">
-                    <h2>Streaming Settings</h2>
+                    <h2>${t('settings.title')}</h2>
                     <button class="view-close-btn" id="btn-settings-close"
-                            title="Close">&times;</button>
+                            title="${this.esc(t('common.close'))}">&times;</button>
                 </div>
 
                 <!-- ── Video ─────────────────────────────────────────────── -->
                 <div class="settings-section">
-                    <h3 class="settings-section-title">Video</h3>
+                    <h3 class="settings-section-title">${t('settings.video')}</h3>
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-stream-height">
-                            Streamed Resolution
+                            ${t('settings.resolution')}
                         </label>
-                        <span class="setting-desc">Higher resolution needs more bandwidth and GPU power</span>
+                        <span class="setting-desc">${t('settings.resolutionDesc')}</span>
                         <select id="settings-stream-height" class="settings-select">
                             ${heightOptions}
                         </select>
@@ -466,9 +466,9 @@ export class SettingsView {
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-stream-fps">
-                            Frame Rate
+                            ${t('settings.frameRate')}
                         </label>
-                        <span class="setting-desc">Higher frame rates provide smoother motion but need more bandwidth</span>
+                        <span class="setting-desc">${t('settings.frameRateDesc')}</span>
                         <select id="settings-stream-fps" class="settings-select">
                             ${fpsOptions}
                         </select>
@@ -479,10 +479,10 @@ export class SettingsView {
                             <input type="checkbox" id="settings-hdr"
                                 ${this._hdrEnabled ? 'checked' : ''} />
                             <span class="settings-checkbox-text">
-                                <strong>HDR</strong>
+                                <strong>${t('settings.hdr')}</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">High Dynamic Range — richer colors and contrast (coming soon, not yet applied to the video stream)</span>
+                        <span class="setting-desc">${t('settings.hdrDesc')}</span>
                     </div>
 
                     <div class="settings-field">
@@ -490,17 +490,17 @@ export class SettingsView {
                             <input type="checkbox" id="settings-vsync"
                                 ${this._vsync ? 'checked' : ''} />
                             <span class="settings-checkbox-text">
-                                <strong>VSync</strong>
+                                <strong>${t('settings.vsync')}</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">Synchronizes frames to the display refresh. Uncheck to allow tearing for lower latency (all transports)</span>
+                        <span class="setting-desc">${t('settings.vsyncDesc')}</span>
                     </div>
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-stream-bitrate">
-                            Bitrate: <strong id="settings-bitrate-value">${this._streamBitrateMbps}</strong> Mbps
+                            ${t('settings.bitrate')} <strong id="settings-bitrate-value">${this._streamBitrateMbps}</strong> ${t('settings.bitrateUnit')}
                         </label>
-                        <span class="setting-desc">Auto-adjusted from resolution, frame rate and HDR (reference: 20 Mbps for 1080p 60fps SDR) — drag to override</span>
+                        <span class="setting-desc">${t('settings.bitrateDesc')}</span>
                         <input type="range" id="settings-stream-bitrate"
                                class="settings-slider"
                                min="5" max="150" step="1"
@@ -514,17 +514,17 @@ export class SettingsView {
 
                 <!-- ── Advanced ────────────────────────────────────────────── -->
                 <div class="settings-section">
-                    <h3 class="settings-section-title">Advanced</h3>
+                    <h3 class="settings-section-title">${t('settings.advanced')}</h3>
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-video-enhancement"
                                 ${this._videoEnhancement === 'on' ? 'checked' : ''}${veDisabledAttr} />
                             <span class="settings-checkbox-text">
-                                <strong>Video Enhancement${webgpuUnavailable ? ' (unavailable)' : ''}</strong>
+                                <strong>${t('settings.videoEnhancement')}${webgpuUnavailable ? t('settings.unavailableSuffix') : ''}</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">GPU upscaling &amp; sharpening of the video (WebGPU). Applied at stream start; forces the DataChannel/WSS transport.</span>
+                        <span class="setting-desc">${t('settings.videoEnhancementDesc')}</span>
                         ${this._debugBuild ? `<select id="settings-video-enhancement-algo" class="settings-select" style="margin-top:8px"${veDisabledAttr}>
                             ${veAlgoOptions}
                         </select>` : ''}
@@ -533,9 +533,9 @@ export class SettingsView {
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-video-codec">
-                            Video Codec
+                            ${t('settings.videoCodec')}
                         </label>
-                        <span class="setting-desc">HEVC for best balance of quality and compatibility</span>
+                        <span class="setting-desc">${t('settings.videoCodecDesc')}</span>
                         <select id="settings-video-codec" class="settings-select">
                             ${codecOptions}
                         </select>
@@ -547,10 +547,10 @@ export class SettingsView {
                             <input type="checkbox" id="settings-show-perf-stats"
                                 ${this._showPerformanceStats ? 'checked' : ''} />
                             <span class="settings-checkbox-text">
-                                <strong>Show Performance Stats</strong>
+                                <strong>${t('settings.showPerfStats')}</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">Overlays FPS, bitrate, frame loss and latency stats during streaming</span>
+                        <span class="setting-desc">${t('settings.showPerfStatsDesc')}</span>
                     </div>
 
                     ${IS_TOUCH_DEVICE ? '' : `
@@ -559,10 +559,10 @@ export class SettingsView {
                             <input type="checkbox" id="settings-gaming-mode"
                                 ${this._gamingMode ? 'checked' : ''} />
                             <span class="settings-checkbox-text">
-                                <strong>Mouse Gaming Mode</strong>
+                                <strong>${t('settings.gamingMode')}</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">Locks mouse pointer for seamless camera control in games</span>
+                        <span class="setting-desc">${t('settings.gamingModeDesc')}</span>
                     </div>`}
 
                     <!-- Hidden: too technical for the average user. Kept in the DOM
@@ -579,9 +579,9 @@ export class SettingsView {
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-sensitivity">
-                            Pointer Sensitivity: <strong id="settings-sensitivity-value">${this._touchSensitivity.toFixed(1)}</strong>×
+                            ${t('settings.pointerSensitivity')} <strong id="settings-sensitivity-value">${this._touchSensitivity.toFixed(1)}</strong>×
                         </label>
-                        <span class="setting-desc">Trackpad/touch cursor speed (higher = faster pointer movement)</span>
+                        <span class="setting-desc">${t('settings.pointerSensitivityDesc')}</span>
                         <input type="range" id="settings-sensitivity"
                                class="settings-slider"
                                min="0.5" max="5" step="0.1"
@@ -593,12 +593,25 @@ export class SettingsView {
                     </div>
                 </div>
 
+                <!-- ── Language ────────────────────────────────────────────── -->
+                <div class="settings-section">
+                    <h3 class="settings-section-title">${t('settings.language')}</h3>
+                    <div class="settings-field">
+                        <select id="settings-language" class="settings-select">
+                            ${AVAILABLE_LANGUAGES.map(l =>
+                                `<option value="${l.code}" ${l.code === getLanguage() ? 'selected' : ''}>${this.esc(l.label)}</option>`
+                            ).join('')}
+                        </select>
+                        <span class="setting-desc">${t('settings.languageDesc')}</span>
+                    </div>
+                </div>
+
                 <!-- ── Reset ───────────────────────────────────────────────── -->
                 <div class="settings-section">
                     <button class="btn btn-neutral" id="btn-settings-reset">
-                        Reset Default Parameters
+                        ${t('settings.resetDefaults')}
                     </button>
-                    <span class="setting-desc">Restore all streaming settings to their default values</span>
+                    <span class="setting-desc">${t('settings.resetDefaultsDesc')}</span>
                 </div>
             </div>
         `;
@@ -688,6 +701,10 @@ export class SettingsView {
 
         const sensSlider = this.container.querySelector('#settings-sensitivity');
         if (sensSlider) sensSlider.addEventListener('change', () => this._autoSave());
+
+        // Language selector — changing it persists the choice and reloads.
+        const langSelect = this.container.querySelector('#settings-language');
+        if (langSelect) langSelect.addEventListener('change', () => setLanguage(langSelect.value));
 
         const resetBtn = this.container.querySelector('#btn-settings-reset');
         if (resetBtn) resetBtn.addEventListener('click', () => this._resetDefaults());

@@ -790,6 +790,10 @@ export class WebGpuRenderer extends VideoRenderer {
                 pass.end();
                 this._device.queue.submit([encoder.finish()]);
                 frame.close();
+                // Backpressure: resolve only when the GPU finished, so the caller's
+                // render guard reflects real GPU throughput (drop-to-latest then
+                // discards the backlog instead of letting it grow → no lag creep).
+                try { await this._device.queue.onSubmittedWorkDone(); } catch (e) {}
                 return;
             }
 
@@ -866,6 +870,11 @@ export class WebGpuRenderer extends VideoRenderer {
         }
 
         frame.close();
+        // Backpressure: resolve only when the GPU finished this frame's work, so
+        // the caller's render guard self-paces to GPU capacity. Without it the
+        // VSync-off / worker path submits faster than the GPU presents and the
+        // backlog grows unbounded → progressive latency (4K + FSR1 + zoom).
+        try { await this._device.queue.onSubmittedWorkDone(); } catch (e) {}
     }
 
     dispose() {

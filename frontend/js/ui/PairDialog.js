@@ -7,6 +7,7 @@
  *   3. User enters PIN in Sunshine → next POST poll succeeds → paired
  */
 import { BackendClient } from '../api/BackendClient.js';
+import { t } from '../i18n/i18n.js';
 
 export class PairDialog {
     constructor(host) {
@@ -51,7 +52,7 @@ export class PairDialog {
                 this.pin = result.pin;
                 pinEl.textContent = this.pin;
                 pinEl.classList.add('visible');
-                statusEl.textContent = 'Enter this PIN in Sunshine (Web UI or stdin on the host)';
+                statusEl.textContent = t('pairing.enterPin');
                 statusEl.className = 'pairing-status-text pairing-info';
 
                 // Auto-poll for completion
@@ -60,11 +61,11 @@ export class PairDialog {
                 statusEl.textContent = result.message;
                 statusEl.className = 'pairing-status-text pairing-error';
             } else {
-                statusEl.textContent = 'Unexpected response from server.';
+                statusEl.textContent = t('pairing.unexpectedResponse');
                 statusEl.className = 'pairing-status-text pairing-error';
             }
         } catch (err) {
-            statusEl.textContent = 'Failed to contact server: ' + err.message;
+            statusEl.textContent = t('pairing.contactFailed', { message: err.message });
             statusEl.className = 'pairing-status-text pairing-error';
         }
     }
@@ -95,7 +96,7 @@ export class PairDialog {
 
             if (result.status === 'paired') {
                 this.stopPolling();
-                statusEl.textContent = 'Paired successfully!';
+                statusEl.textContent = t('pairing.paired');
                 statusEl.className = 'pairing-status-text pairing-success';
                 if (this.onComplete)
                     this.onComplete();
@@ -117,16 +118,16 @@ export class PairDialog {
         this.overlay.className = 'pairing-overlay';
         this.overlay.innerHTML = `
             <div class="pairing-dialog">
-                <h3>Pair with ${this.esc(this.host.displayName)}</h3>
+                <h3>${this.esc(t('pairing.title', { name: this.host.displayName }))}</h3>
                 <p class="pairing-instruction">
-                    Enter this PIN in Sunshine to authorize the client:
+                    ${t('pairing.instruction')}
                 </p>
                 <div class="pairing-status">
                     <div class="pairing-pin-display">----</div>
-                    <p class="pairing-status-text pairing-info">Contacting host...</p>
+                    <p class="pairing-status-text pairing-info">${t('pairing.contacting')}</p>
                 </div>
                 <div class="pairing-actions">
-                    <button class="btn btn-secondary btn-pair-cancel">Cancel</button>
+                    <button class="btn btn-secondary btn-pair-cancel">${t('common.cancel')}</button>
                 </div>
             </div>
         `;

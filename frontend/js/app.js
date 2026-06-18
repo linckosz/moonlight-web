@@ -39,6 +39,7 @@ import { LoginView } from './ui/LoginView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
+import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
@@ -47,11 +48,11 @@ window.addEventListener('error', (evt) => {
     if (main && main.children.length === 0) {
         main.innerHTML = `
             <div class="hosts-view">
-                <div class="hosts-header"><h2>Error</h2></div>
+                <div class="hosts-header"><h2>${t('appError.title')}</h2></div>
                 <div class="hosts-error">
-                    <p>Failed to load application</p>
-                    <p class="hint">${(evt.error && evt.error.message) || evt.message || 'Unknown error'}</p>
-                    <button class="btn" onclick="location.reload()">Retry</button>
+                    <p>${t('appError.failedToLoad')}</p>
+                    <p class="hint">${(evt.error && evt.error.message) || evt.message || t('appError.unknownError')}</p>
+                    <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
                 </div>
             </div>
         `;
@@ -65,10 +66,10 @@ window.addEventListener('unhandledrejection', (evt) => {
         const msg = (evt.reason && evt.reason.message) || String(evt.reason || 'Unknown error');
         main.innerHTML = `
             <div class="hosts-view">
-                <div class="hosts-header"><h2>Initialization Error</h2></div>
+                <div class="hosts-header"><h2>${t('appError.initTitle')}</h2></div>
                 <div class="hosts-error">
                     <p>${msg}</p>
-                    <button class="btn" onclick="location.reload()">Retry</button>
+                    <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
                 </div>
             </div>
         `;
@@ -461,11 +462,11 @@ const MoonlightApp = {
             // If we can't reach the server, show error in main content
             main.innerHTML = `
                 <div class="hosts-view">
-                    <div class="hosts-header"><h2>Connection Error</h2></div>
+                    <div class="hosts-header"><h2>${t('appError.connectionTitle')}</h2></div>
                     <div class="hosts-error">
-                        <p>Unable to connect to server</p>
-                        <p class="hint">${err.message || 'Unknown error'}</p>
-                        <button class="btn" onclick="location.reload()">Retry</button>
+                        <p>${t('appError.unableToConnect')}</p>
+                        <p class="hint">${err.message || t('appError.unknownError')}</p>
+                        <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
                     </div>
                 </div>
             `;
@@ -597,7 +598,7 @@ const MoonlightApp = {
         console.log(`[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}` +
             (codecOverride ? ` (forced codec: ${codecOverride})` : ''));
         this.transition('launching');
-        Toast.info(`Launching ${app.name}...`);
+        Toast.info(t('launch.launching', { name: app.name }));
 
         // Reset fallback counter on user-initiated launch (not a fallback re-launch)
         if (!codecOverride) {
@@ -651,7 +652,7 @@ const MoonlightApp = {
             if (result.status === 'streaming') {
                 // Dismiss "Launching..." toast so only the current status is visible
                 await Toast.dismissAll();
-                Toast.success(`${app.name} started`);
+                Toast.success(t('launch.started', { name: app.name }));
 
                 // ── Streaming overlay guard ────────────────────────────────
                 // Push a guard state so Back from streaming goes to Apps.
@@ -680,7 +681,7 @@ const MoonlightApp = {
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
-            Toast.error(err.message || 'Launch failed');
+            Toast.error(err.message || t('launch.failed'));
             this.transition('app_list');
         }
     },
@@ -745,14 +746,14 @@ const MoonlightApp = {
 
     /** Human-readable label for a transport mode (warning toasts / logs). */
     _transportLabel(mode) {
-        const labels = {
-            'webrtc-dc-udp':    'WebRTC DataChannel (UDP)',
-            'webrtc-dc-tcp':    'WebRTC DataChannel (TCP)',
-            'webrtc-media-udp': 'WebRTC MediaTrack (UDP)',
-            'webrtc-media-tcp': 'WebRTC MediaTrack (TCP)',
-            'wss':              'WebSocket Secure'
+        const keys = {
+            'webrtc-dc-udp':    'transport.webrtcDcUdp',
+            'webrtc-dc-tcp':    'transport.webrtcDcTcp',
+            'webrtc-media-udp': 'transport.webrtcMediaUdp',
+            'webrtc-media-tcp': 'transport.webrtcMediaTcp',
+            'wss':              'transport.wss'
         };
-        return labels[mode] || mode;
+        return keys[mode] ? t(keys[mode]) : mode;
     },
 
     /**
@@ -780,14 +781,14 @@ const MoonlightApp = {
         const next = cur + 1;
         if (next < chain.length) {
             console.warn(`[MW] Transport ${chain[cur]} failed (${reason}) — trying ${chain[next]}`);
-            Toast.warning(
-                `Connexion ${this._transportLabel(chain[cur])} échouée — ` +
-                `tentative avec ${this._transportLabel(chain[next])}…`
-            );
+            Toast.warning(t('transport.connectFailed', {
+                from: this._transportLabel(chain[cur]),
+                to: this._transportLabel(chain[next])
+            }));
             this._relaunchTransport(next);
         } else {
             console.error(`[MW] All transports failed (last: ${chain[cur] || '?'}, reason: ${reason})`);
-            Toast.error('Échec de la connexion — tous les modes de transport ont échoué');
+            Toast.error(t('transport.allFailed'));
             this._hideRelaunchLoader();
             // quit() fires onQuit → _onStreamingQuit, which handles navigation
             // back to the apps view. silent: suppress the "Stream end" toast.
@@ -804,7 +805,7 @@ const MoonlightApp = {
         el.id = 'stream-relaunch-loader';
         el.innerHTML =
             '<div class="startup-loader" aria-hidden="true"><div class="startup-loader-ring"></div></div>' +
-            '<div class="startup-step active"><span class="startup-step-label">Connecting...</span></div>';
+            '<div class="startup-step active"><span class="startup-step-label">' + t('stream.connecting') + '</span></div>';
         document.getElementById('app').appendChild(el);
     },
 
@@ -911,7 +912,7 @@ const MoonlightApp = {
                     history.replaceState({ view: 'apps', hostUuid: fallbackHost.uuid,
                         hostDisplayName: fallbackHost.displayName }, '', '/apps');
                 }
-                Toast.error('HEVC and H.264 both unsupported by browser');
+                Toast.error(t('launch.hevcH264Unsupported'));
                 return;
             }
 
@@ -985,4 +986,10 @@ const MoonlightApp = {
 };
 
 // Boot
-document.addEventListener('DOMContentLoaded', () => MoonlightApp.init());
+document.addEventListener('DOMContentLoaded', async () => {
+    // Load translations before the first render, then translate the static
+    // markup (header buttons / footer) that exists in index.html.
+    await i18nInit();
+    applyDOM(document);
+    MoonlightApp.init();
+});
