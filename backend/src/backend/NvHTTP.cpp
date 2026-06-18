@@ -359,6 +359,11 @@ QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
     return m_Nam->get(req);
 }
 
+void NvHTTP::dropPooledConnections()
+{
+    m_Nam->clearConnectionCache();
+}
+
 QString NvHTTP::parseSessionUrl(const QString& launchXml)
 {
     return getXmlString(launchXml, "sessionUrl0");

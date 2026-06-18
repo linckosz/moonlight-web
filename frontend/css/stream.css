@@ -676,7 +676,9 @@ body.streaming-active .app-footer {
    StreamView.render(), triggered by _playStreamReveal() at startup step 3.
    ════════════════════════════════════════════════════════════════════════ */
 .stream-reveal {
-    position: fixed;
+    /* absolute (not fixed): scoped to .stream-canvas-area, which is the
+       positioned ancestor — covers only the streamed image, not the body. */
+    position: absolute;
     inset: 0;
     z-index: 9990;
     pointer-events: none;

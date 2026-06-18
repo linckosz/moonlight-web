@@ -71,6 +71,11 @@ public:
                                  const QByteArray& clientKeyPem,
                                  const QString& uniqueId = QString());
 
+    // Evict idle pooled sockets. Qt keeps finished TLS sockets alive ~120s for
+    // reuse; against Sunshine's single-threaded HTTPS server that lingering
+    // socket blocks other clients. Call after a one-shot request completes.
+    void dropPooledConnections();
+
     // Static XML helpers
     static void verifyResponseStatus(const QString& xml);
     static QString getXmlString(const QString& xml, const QString& tagName);

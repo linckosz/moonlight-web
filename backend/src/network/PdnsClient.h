@@ -95,6 +95,19 @@ public:
      */
     bool deleteTxtRecord(const QString& fqdnSubname, QString& errorMsg);
 
+    /**
+     * @brief Read a TXT record's value.
+     *
+     * GET .../zones/{zone}?rrset_name={fqdnSubname}&rrset_type=TXT
+     *
+     * @param[out] valueOut First TXT record content, unquoted; empty if absent.
+     * @param[out] errorMsg Set only on network/HTTP error.
+     * @return true if the query succeeded (record may still be absent),
+     *         false on network/HTTP error.
+     */
+    bool getTxtRecord(const QString& fqdnSubname, QString& valueOut,
+                      QString& errorMsg);
+
 signals:
     void error(const QString& message);
 

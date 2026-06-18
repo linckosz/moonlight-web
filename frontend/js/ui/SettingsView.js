@@ -29,6 +29,7 @@ export class SettingsView {
         this._showPerformanceStats = false;
         this._streamBitrateMbps = 20;
         this._streamHeight = 1080;
+        this._streamAspect = 'auto';
         this._streamFps = 60;
         this._hdrEnabled = false;
         this._touchSensitivity = 2.2;
@@ -101,6 +102,7 @@ export class SettingsView {
         const kbps = data.stream_bitrate || 20000;
         this._streamBitrateMbps = Math.round(kbps / 1000);
         this._streamHeight = data.stream_height || 1080;
+        this._streamAspect = ['auto', '16:9', '21:9', '32:9'].includes(data.stream_aspect) ? data.stream_aspect : 'auto';
         this._streamFps = data.stream_fps || 60;
         this._hdrEnabled = data.hdr_enabled === true;
         this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
@@ -123,15 +125,26 @@ export class SettingsView {
      * Clamped to the slider range [5, 150] Mbps.
      * "Same as Host" (height 0) uses the 1080p reference.
      */
-    _computeAutoBitrate(height, fps, hdr) {
-        const REF_BITRATE = 20;   // Mbps at 1080p / 60fps / SDR
+    /** Parse a "W:H" aspect string into a numeric ratio. "auto" / unknown → 16:9
+     *  (baseline for the bitrate estimate; the real width is derived from the
+     *  host's screen format on the backend at launch). */
+    _aspectToNumber(aspect) {
+        const m = /^(\d+):(\d+)$/.exec(aspect || '');
+        if (m && +m[2] > 0) return +m[1] / +m[2];
+        return 16 / 9;
+    }
+
+    _computeAutoBitrate(height, fps, hdr, aspect) {
+        const REF_BITRATE = 20;   // Mbps at 1920×1080 / 60fps / SDR
         const h = height > 0 ? height : 1080;
-        // 16:9 assumed: pixel count scales with the square of the height ratio
-        const pixelRatio = (h / 1080) * (h / 1080);
+        // Pixel count = (h × aspectRatio) × h, normalised to the 1920×1080 ref.
+        // Ultrawide (21:9, 32:9) therefore scales the bitrate up accordingly.
+        const aspRatio = this._aspectToNumber(aspect);
+        const pixelRatio = (h * h * aspRatio) / (1080 * 1080 * (16 / 9));
         const fpsRatio = (fps > 0 ? fps : 60) / 60;
         const hdrRatio = hdr ? 1.5 : 1.0;
         const mbps = Math.round(REF_BITRATE * pixelRatio * fpsRatio * hdrRatio);
-        return Math.max(5, Math.min(150, mbps));
+        return Math.max(1, Math.min(150, mbps));
     }
 
     /** Recompute the bitrate from current selects and sync the slider UI. */
@@ -139,10 +152,11 @@ export class SettingsView {
         const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10);
         const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
         const hdr = this.container.querySelector('#settings-hdr')?.checked === true;
+        const aspect = this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
         const mbps = this._computeAutoBitrate(
             isNaN(height) ? this._streamHeight : height,
             isNaN(fps) ? this._streamFps : fps,
-            hdr);
+            hdr, aspect);
 
         const slider = this.container.querySelector('#settings-stream-bitrate');
         const label = this.container.querySelector('#settings-bitrate-value');
@@ -160,6 +174,7 @@ export class SettingsView {
             show_performance_stats: this._showPerformanceStats,
             stream_bitrate: this._streamBitrateMbps * 1000,
             stream_height: this._streamHeight,
+            stream_aspect: this._streamAspect,
             stream_fps: this._streamFps,
             hdr_enabled: this._hdrEnabled,
             touch_sensitivity: this._touchSensitivity,
@@ -302,6 +317,7 @@ export class SettingsView {
             const bitrateMbps = parseInt(this.container.querySelector('#settings-stream-bitrate')?.value, 10) || this._streamBitrateMbps;
             const heightRaw = this.container.querySelector('#settings-stream-height')?.value;
             const height = heightRaw !== undefined ? parseInt(heightRaw, 10) : this._streamHeight;
+            const aspect = this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
             const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10) || this._streamFps;
             const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
             const sensRaw = parseFloat(this.container.querySelector('#settings-sensitivity')?.value);
@@ -320,6 +336,7 @@ export class SettingsView {
             this._showPerformanceStats = showPerf;
             this._streamBitrateMbps = bitrateMbps;
             this._streamHeight = isNaN(height) ? this._streamHeight : height;
+            this._streamAspect = aspect;
             this._streamFps = fps;
             this._hdrEnabled = hdr;
             this._touchSensitivity = sensitivity;
@@ -341,6 +358,7 @@ export class SettingsView {
         this._gamingMode = true;
         this._showPerformanceStats = false;
         this._streamHeight = 1080;
+        this._streamAspect = 'auto';
         this._streamFps = 60;
         this._hdrEnabled = false;
         this._touchSensitivity = 2.2;
@@ -348,8 +366,8 @@ export class SettingsView {
         this._videoWorker = 'auto';
         this._videoEnhancement = 'off';
         this._videoEnhancementAlgo = 'auto';
-        // Bitrate follows the 1080p60 SDR reference
-        this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false);
+        // Bitrate follows the 1080p60 SDR 16:9 reference
+        this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false, '16:9');
 
         await this._saveToStorage();
 
@@ -420,7 +438,7 @@ export class SettingsView {
         ).join('');
 
         // FPS options
-        const fpsValues = [1, 30, 60, 75, 90, 120, 144, 165, 240];
+        const fpsValues = [15, 30, 60, 75, 90, 120, 144, 165, 240];
         const fpsOptions = fpsValues.map(f =>
             `<option value="${f}" ${f === this._streamFps ? 'selected' : ''}>${this.esc(t('settings.fpsSuffix', { fps: f }))}</option>`
         ).join('');
@@ -503,10 +521,10 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.bitrateDesc')}</span>
                         <input type="range" id="settings-stream-bitrate"
                                class="settings-slider"
-                               min="5" max="150" step="1"
+                               min="1" max="150" step="1"
                                value="${this._streamBitrateMbps}" />
                         <div class="settings-slider-labels">
-                            <span>5 Mbps</span>
+                            <span>1 Mbps</span>
                             <span>150 Mbps</span>
                         </div>
                     </div>

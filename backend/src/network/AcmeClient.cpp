@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMessageAuthenticationCode>
 #include <QNetworkReply>
 #include <QTimer>
 #include <QUrl>
@@ -314,6 +315,37 @@ QByteArray AcmeClient::signRsaSha256(const QByteArray& data)
     EVP_MD_CTX_free(mdctx);
     EVP_PKEY_free(pkey);
     return signature;
+}
+
+QJsonObject AcmeClient::buildEabJws(const QString& newAccountUrl)
+{
+    if (m_EabKid.isEmpty() || m_EabHmacKey.isEmpty())
+        return {};
+
+    // Inner JWS protected header: HS256, the CA-issued kid, and the newAccount URL.
+    // Note: no "nonce" — the EAB inner JWS is not nonce-protected (RFC 8555 §7.3.4).
+    QJsonObject header;
+    header[QStringLiteral("alg")] = QStringLiteral("HS256");
+    header[QStringLiteral("kid")] = m_EabKid;
+    header[QStringLiteral("url")] = newAccountUrl;
+
+    // Payload is the account public key JWK (the key being bound to the account).
+    QByteArray protectedB64 = b64urlEncode(
+        QJsonDocument(header).toJson(QJsonDocument::Compact));
+    QByteArray payloadB64 = b64urlEncode(
+        QJsonDocument(accountKeyJwk()).toJson(QJsonDocument::Compact));
+    QByteArray signingInput = protectedB64 + '.' + payloadB64;
+
+    // HMAC-SHA256 with the base64url-decoded EAB key.
+    QByteArray hmacKey = b64urlDecode(m_EabHmacKey.toUtf8());
+    QByteArray sig = QMessageAuthenticationCode::hash(
+        signingInput, hmacKey, QCryptographicHash::Sha256);
+
+    QJsonObject eab;
+    eab[QStringLiteral("protected")] = QString::fromUtf8(protectedB64);
+    eab[QStringLiteral("payload")]   = QString::fromUtf8(payloadB64);
+    eab[QStringLiteral("signature")] = QString::fromUtf8(b64urlEncode(sig));
+    return eab;
 }
 
 QByteArray AcmeClient::buildJws(const QByteArray& payload, const QString& url, bool useKid)
@@ -811,6 +843,14 @@ void AcmeClient::stepCreateAccount()
     payload[QStringLiteral("termsOfServiceAgreed")] = true;
     // Also set "onlyReturnExisting": false — this is the default
     // but we'll be explicit: we want to create if not exists
+
+    // External Account Binding (ZeroSSL / Google Trust Services require it).
+    QJsonObject eab = buildEabJws(url);
+    if (!eab.isEmpty()) {
+        payload[QStringLiteral("externalAccountBinding")] = eab;
+        qInfo() << "[AcmeClient] newAccount carries EAB (kid set)";
+    }
+
     QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
     // First request: useKid=false (embed JWK)

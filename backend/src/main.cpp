@@ -359,7 +359,7 @@ int main(int argc, char* argv[])
                     obj["auth_method"] = "certificate";
                     HttpResponse resp = HttpResponse::json(obj);
                     resp.headers["Set-Cookie"] = QString(
-                        "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=315360000")
+                        "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
                         .arg(token);
                     return resp;
                 } else {
@@ -397,7 +397,7 @@ int main(int argc, char* argv[])
                 HttpResponse resp = HttpResponse::json(obj);
                 // Set HttpOnly session cookie, 10-year expiry, Strict SameSite
                 resp.headers["Set-Cookie"] = QString(
-                    "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=315360000")
+                    "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
                     .arg(token);
                 return resp;
             }
@@ -459,6 +459,7 @@ int main(int argc, char* argv[])
     server.router()->get("/api/auth/status",
         [&authManager, &geoIpService](const HttpRequest& req) {
             QJsonObject obj;
+            QString authedToken;  // set when a valid session cookie is found below
 
             bool isLocal = HttpServer::isLocalRequest(req.clientAddress);
             obj["is_localhost"] = isLocal;
@@ -479,6 +480,9 @@ int main(int argc, char* argv[])
                             QString token = trimmed.mid(QStringLiteral("mw_session=").length());
                             if (authManager.validateSession(token)) {
                                 auth = true;
+                                authedToken = token;
+                                // Activity → slide the session's expiration window.
+                                authManager.touchSession(token);
                                 // Reconnection: refresh source IP and re-run
                                 // geolocation if it changed since last seen.
                                 if (authManager.updateSessionAddress(token, req.clientAddress)) {
@@ -504,7 +508,16 @@ int main(int argc, char* argv[])
             obj["requires_pin"] = !isLocal;
             obj["active_sessions"] = authManager.activeSessionCount();
             obj["cert_auth_enabled"] = authManager.certAuthEnabled();
-            return HttpResponse::json(obj);
+
+            HttpResponse resp = HttpResponse::json(obj);
+            // Slide the cookie browser-side too, so an active client keeps a
+            // fresh 90-day window without ever re-entering the PIN.
+            if (!authedToken.isEmpty()) {
+                resp.headers["Set-Cookie"] = QString(
+                    "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
+                    .arg(authedToken);
+            }
+            return resp;
         });
 
     // GET /api/auth/sessions — list active sessions with metadata (localhost only)
@@ -736,6 +749,29 @@ int main(int argc, char* argv[])
             ? body["stream_height"].toInt()
             : appSettings.streamHeight();
 
+        // Aspect ratio → explicit width. Fix the height, derive the width from
+        // the host's actual screen format so ultrawide hosts (21:9 / 32:9) stream
+        // un-stretched. "auto" (default) reads the host's largest reported
+        // DisplayMode — the host format is detected here, not assumed in advance.
+        // An explicit "W:H" overrides it (manual 16:9 / 21:9 / 32:9).
+        QString reqAspect = body.contains("stream_aspect") && !body["stream_aspect"].toString().isEmpty()
+            ? body["stream_aspect"].toString()
+            : appSettings.streamAspect();
+        double aspect = 16.0 / 9.0;
+        if (reqAspect.contains(':')) {
+            const QStringList parts = reqAspect.split(':');
+            int w = parts.value(0).toInt(), h = parts.value(1).toInt();
+            if (w > 0 && h > 0) aspect = static_cast<double>(w) / h;
+        } else if (!host->displayModes.isEmpty()) {
+            // "auto": displayModes are sorted largest-first → native host format.
+            const NvDisplayMode& top = host->displayModes.first();
+            if (top.width > 0 && top.height > 0)
+                aspect = static_cast<double>(top.width) / top.height;
+        }
+        // Even width (encoders require it), 0 height stays native (width 0).
+        int reqWidth = (reqHeight > 0) ? (static_cast<int>(reqHeight * aspect + 0.5) & ~1) : 0;
+        qInfo() << "[Session] Aspect" << reqAspect << "→" << reqWidth << "x" << reqHeight;
+
         int reqFps = body.contains("stream_fps") && body["stream_fps"].toInt() > 0
             ? body["stream_fps"].toInt()
             : appSettings.streamFps();
@@ -938,9 +974,14 @@ int main(int argc, char* argv[])
         // maintain the global relay pointers (g_ActiveRelay, etc.) and send a
         // best-effort HTTPS quit to Sunshine when a session ends unexpectedly.
         auto attachRelayTracking = [&](StreamSession* s) {
+            // Per-browser uniqueid so an unexpected-end auto-quit cancels only THIS
+            // browser's Sunshine session (keyed like /launch), never a co-located
+            // iOS/Qt client's session. Empty → shared id (legacy fallback).
+            QString quitUid = reqClientUniqueId;
+
             // WSS mode: StreamRelay tracking
             QObject::connect(s, &StreamSession::streamRelayCreated,
-                [&g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host](StreamRelay* r) {
+                [&g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host, quitUid](StreamRelay* r) {
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
                     authManager.setSessionStreaming(sessionToken, true);
@@ -949,13 +990,13 @@ int main(int argc, char* argv[])
                     // emits sessionEnded from its dedicated thread, but quitAppAsync()
                     // touches the shared QNAM that lives on the main thread.
                     QObject::connect(r, &StreamRelay::sessionEnded, qApp,
-                        [r, &g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host]() {
+                        [r, &g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host, quitUid]() {
                             qInfo() << "[main] StreamRelay sessionEnded";
                             authManager.setSessionStreaming(sessionToken, false);
                             auto* identity = IdentityManager::get();
                             auto* quitReply = computerManager.http()->quitAppAsync(
                                 host->activeAddress, host->activeHttpsPort,
-                                identity->getCertificate(), identity->getPrivateKey());
+                                identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
                             r->stop();
                             r->deleteLater();
@@ -965,20 +1006,20 @@ int main(int argc, char* argv[])
 
             // WebRTC DataChannel mode: DataChannelRelay tracking
             QObject::connect(s, &StreamSession::relayCreated,
-                [&g_ActiveRelay, &computerManager, &authManager, sessionToken, host](DataChannelRelay* r) {
+                [&g_ActiveRelay, &computerManager, &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
-                        [r, &g_ActiveRelay, &computerManager, &authManager, sessionToken, host]() {
+                        [r, &g_ActiveRelay, &computerManager, &authManager, sessionToken, host, quitUid]() {
                             qInfo() << "[main] sessionEnded fired, relay=" << r;
                             authManager.setSessionStreaming(sessionToken, false);
                             auto* identity = IdentityManager::get();
                             auto* quitReply = computerManager.http()->quitAppAsync(
                                 host->activeAddress, host->activeHttpsPort,
-                                identity->getCertificate(), identity->getPrivateKey());
+                                identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
                             r->stop();
                             r->deleteLater();
@@ -990,20 +1031,20 @@ int main(int argc, char* argv[])
 
             // WebRTC Media Track mode: MediaTrackRelay tracking
             QObject::connect(s, &StreamSession::mediaTrackRelayCreated,
-                [&g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host](MediaTrackRelay* r) {
+                [&g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host, quitUid](MediaTrackRelay* r) {
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
-                        [r, &g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host]() {
+                        [r, &g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host, quitUid]() {
                             qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << r;
                             authManager.setSessionStreaming(sessionToken, false);
                             auto* identity = IdentityManager::get();
                             auto* quitReply = computerManager.http()->quitAppAsync(
                                 host->activeAddress, host->activeHttpsPort,
-                                identity->getCertificate(), identity->getPrivateKey());
+                                identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
                             r->stop();
                             r->deleteLater();
@@ -1039,6 +1080,7 @@ int main(int argc, char* argv[])
                 internal,
                 stunServer,
                 reqHeight,
+                reqWidth,
                 reqFps,
                 reqBitrate,
                 reqHdr
@@ -1234,8 +1276,16 @@ int main(int argc, char* argv[])
     // — Internet Access via PowerDNS —
 
     // API route: get Internet Access status
-    server.router()->get("/api/internet/status", [&](const HttpRequest&) {
-        return HttpResponse::json(internetAccess.statusJson());
+    server.router()->get("/api/internet/status", [&](const HttpRequest& req) {
+        QJsonObject obj = internetAccess.statusJson();
+        // The admin UI runs on localhost and needs the full payload. Remote
+        // sessions must not learn the internal network topology / file layout.
+        if (!HttpServer::isLocalRequest(req.clientAddress)) {
+            for (const char* key : { "local_ip", "public_ip", "unique_id",
+                                     "cert_pem", "cert_key", "last_error" })
+                obj.remove(QLatin1String(key));
+        }
+        return HttpResponse::json(obj);
     });
 
     // API route: enable/configure Internet Access
@@ -1247,7 +1297,9 @@ int main(int argc, char* argv[])
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
 
-        if (body.contains("unique_id"))
+        // unique_id is immutable once assigned: it keys this instance's subdomain,
+        // its DNS ownership token, and its certificate. Only accept it when unset.
+        if (body.contains("unique_id") && appSettings.uniqueId().isEmpty())
             appSettings.setUniqueId(body["unique_id"].toString());
         // pdns_token is no longer stored in settings; set MW_PDNS_TOKEN env var instead.
         if (body.contains("auto_ip_detection"))
@@ -1402,6 +1454,7 @@ int main(int argc, char* argv[])
         obj["auto_ip_detection"] = appSettings.autoIpDetection();
         obj["stream_bitrate"] = appSettings.streamBitrate();
         obj["stream_height"] = appSettings.streamHeight();
+        obj["stream_aspect"] = appSettings.streamAspect();
         obj["stream_fps"] = appSettings.streamFps();
         obj["hdr_enabled"] = appSettings.hdrEnabled();
         obj["video_enhancement"] = appSettings.videoEnhancement();
@@ -1463,6 +1516,13 @@ int main(int argc, char* argv[])
             int height = body["stream_height"].toInt(1080);
             appSettings.setStreamHeight(height);
             obj["stream_height"] = appSettings.streamHeight();
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("stream_aspect")) {
+            appSettings.setStreamAspect(body["stream_aspect"].toString());
+            obj["stream_aspect"] = appSettings.streamAspect();
             obj["status"] = "saved";
             hadChange = true;
         }

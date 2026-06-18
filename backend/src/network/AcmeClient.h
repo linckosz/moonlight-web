@@ -58,6 +58,15 @@ public:
     /// ACME directory URL (default: Let's Encrypt production).
     void setDirectoryUrl(const QString& url) { m_DirectoryUrl = url; }
 
+    /// External Account Binding credentials (RFC 8555 §7.3.4), required by CAs
+    /// such as ZeroSSL / Google Trust Services. @p hmacKeyB64Url is the EAB HMAC
+    /// key as provided by the CA (base64url, no padding). When both are set, the
+    /// newAccount request carries an "externalAccountBinding" field.
+    void setExternalAccountBinding(const QString& kid, const QString& hmacKeyB64Url) {
+        m_EabKid = kid;
+        m_EabHmacKey = hmacKeyB64Url;
+    }
+
     /// Start the certificate issuance. Async — returns immediately.
     void start();
 
@@ -102,6 +111,10 @@ private:
     /// Build a JWS JSON body: { "protected": b64, "payload": b64, "signature": b64 }.
     /// If useKid is false, embeds the full JWK instead of the kid.
     QByteArray buildJws(const QByteArray& payload, const QString& url, bool useKid);
+
+    /// Build the External Account Binding inner JWS (HS256 over the account JWK).
+    /// Returns an empty object when no EAB credentials are configured.
+    QJsonObject buildEabJws(const QString& newAccountUrl);
 
     /// POST a JWS to an ACME endpoint with Replay-Nonce handling.
     /// Automatically retries on badNonce (up to 3 times).
@@ -175,6 +188,8 @@ private:
     QString m_PdnsToken;
 
     QString m_DirectoryUrl;
+    QString m_EabKid;      // External Account Binding key identifier
+    QString m_EabHmacKey;  // EAB HMAC key (base64url, as given by the CA)
 
     // ACME protocol state
     QJsonObject m_Directory;

@@ -52,6 +52,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                const QString& transport,
                                const QString& stunServer,
                                int streamHeight,
+                               int streamWidth,
                                int streamFps,
                                int streamBitrateKbps,
                                bool hdr,
@@ -81,10 +82,12 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     m_Config.hdr = hdr ? HdrMode::HDR : HdrMode::SDR;
     qInfo() << "[Session] HDR" << (hdr ? "enabled" : "disabled");
 
-    // Calculate width from height using 16:9 aspect ratio.
+    // Width: explicit when provided (ultrawide 21:9 / 32:9), otherwise derived
+    // from height using a 16:9 aspect ratio.
     // If height is 0 (Native Host resolution), pass 0 for both width and height
     // so Sunshine uses the display's native resolution.
-    m_StreamWidth = (m_StreamHeight > 0) ? (m_StreamHeight * 16 / 9) : 0;
+    m_StreamWidth = (streamWidth > 0) ? streamWidth
+                  : ((m_StreamHeight > 0) ? (m_StreamHeight * 16 / 9) : 0);
 
     qInfo() << "[Session] Stream settings:" << m_StreamWidth << "x" << m_StreamHeight
             << "@" << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps,"
@@ -266,6 +269,11 @@ void StreamSession::onLaunchReplyFinished()
 
     reply->deleteLater();
     m_LaunchReply = nullptr;
+
+    // Drop the launch/resume TLS socket now: leaving it pooled ~120s would hold
+    // Sunshine's single-threaded HTTPS server and block new iOS/Qt connections
+    // for the whole stream. Polling is suspended during a stream, so this is safe.
+    m_Http->dropPooledConnections();
 
     if (reply->error() != QNetworkReply::NoError) {
         int code = static_cast<int>(reply->error());
