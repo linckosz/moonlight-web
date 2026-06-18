@@ -118,9 +118,8 @@ export class LoginView {
                     </div>
 
                     ${!this._loading && this._certAuthAvailable ? `
-                        <div id="login-method-toggle" style="margin-top:12px;text-align:center;">
-                            <button id="btn-toggle-auth-method" class="btn btn-link"
-                                    style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:0.85em;text-decoration:underline;">
+                        <div id="login-method-toggle" class="u-mt-3 u-center">
+                            <button id="btn-toggle-auth-method" class="btn btn-link">
                                 ${this._certMode
                                     ? t('login.usePinInstead')
                                     : t('login.useCertInstead')}
@@ -203,7 +202,7 @@ export class LoginView {
                                ${this._submitting ? 'disabled' : ''} />
                     </div>
                     ${this._selectedFileName ? `
-                        <p class="login-file-selected" style="font-size:0.85em;margin-top:4px;color:var(--text-muted);">
+                        <p class="login-file-selected">
                             ${this.esc(t('login.selected', { name: this._selectedFileName }))}
                         </p>
                     ` : ''}

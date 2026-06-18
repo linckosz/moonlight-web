@@ -651,3 +651,20 @@
     min-width: 100px;
     text-align: center;
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Utilities — small helpers so view templates carry no inline style
+   ════════════════════════════════════════════════════════════════════════ */
+.u-hidden { display: none; }
+.u-mono { font-family: var(--font-mono); }
+.u-row { display: flex; gap: var(--space-2); align-items: center; }
+.u-grow { flex: 1; }
+.u-shrink-0 { flex-shrink: 0; }
+.u-center { text-align: center; }
+.u-mt-2 { margin-top: var(--space-2); }
+.u-mt-3 { margin-top: var(--space-3); }
+.u-mb-1 { margin-bottom: var(--space-1); }
+.u-mb-2 { margin-bottom: var(--space-2); }
+.u-ml-2 { margin-left: var(--space-2); }
+.u-pt-0 { padding-top: 0; }
+.u-pt-3 { padding-top: var(--space-3); }

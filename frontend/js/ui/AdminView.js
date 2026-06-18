@@ -338,7 +338,7 @@ export class AdminView {
                 ${this._isLocalhost() ? `
                     <div class="settings-section">
                         <h3 class="settings-section-title">${t('admin.accessPin')}</h3>
-                        <div class="settings-field" style="padding-top:0;">
+                        <div class="settings-field u-pt-0">
                             <p class="setting-desc">
                                 ${t('admin.accessPinDesc')}
                             </p>
@@ -347,14 +347,14 @@ export class AdminView {
                                       id="admin-pin-display">
                                     ${this.esc(this._pinConsumed ? '--------' : this._pin)}
                                 </span>
-                                <button class="btn btn-secondary" id="btn-copy-pin" style="flex-shrink:0;"
+                                <button class="btn btn-secondary" id="btn-copy-pin"
                                         title="${this.esc(t('admin.copyPinTitle'))}">
                                     ${t('common.copy')}
                                 </button>
-                                <button class="btn btn-secondary" id="btn-regenerate-pin" style="flex-shrink:0;">
+                                <button class="btn btn-secondary" id="btn-regenerate-pin">
                                     ${t('common.generate')}
                                 </button>
-                                <button class="btn btn-secondary" id="btn-clear-pin" style="flex-shrink:0;">
+                                <button class="btn btn-secondary" id="btn-clear-pin">
                                     ${t('common.clear')}
                                 </button>
                             </div>
@@ -371,12 +371,11 @@ export class AdminView {
                 ${this._isLocalhost() ? `
                     <div class="settings-section">
                         <h3 class="settings-section-title">${t('admin.activeSessions')}</h3>
-                        <div class="settings-field" style="padding-top:0;">
+                        <div class="settings-field u-pt-0">
                             <p class="setting-desc">
                                 ${t('admin.activeSessionsDesc')}
                             </p>
-                            <p class="settings-hint" id="admin-session-count"
-                               style="font-weight:500;margin-bottom:4px;">
+                            <p class="settings-hint" id="admin-session-count">
                                 ${this._activeSessions > 0
                                     ? t('admin.sessionCount', { count: this._activeSessions })
                                     : t('admin.noActiveSessions')}
@@ -392,7 +391,7 @@ export class AdminView {
                 ${this._isLocalhost() ? `
                     <div class="settings-section">
                         <h3 class="settings-section-title">${t('admin.certAuth')}</h3>
-                        <div class="settings-field" style="padding-top:0;">
+                        <div class="settings-field u-pt-0">
                             <label class="settings-checkbox-label">
                                 <input type="checkbox" id="chk-cert-auth"
                                        ${this._certAuthEnabled ? 'checked' : ''} />
@@ -402,18 +401,17 @@ export class AdminView {
                                 ${t('admin.certAuthDesc')}
                             </p>
                             <div id="cert-download-area" style="${this._certAuthEnabled ? '' : 'display:none;'}">
-                                <button class="btn btn-secondary" id="btn-download-cert"
-                                        style="margin-top:8px;">
+                                <button class="btn btn-secondary u-mt-2" id="btn-download-cert">
                                     ${t('admin.downloadCert')}
                                 </button>
                                 <p class="settings-hint">
                                     ${t('admin.downloadCertHint')}
                                 </p>
-                                <div style="margin-top:8px;">
+                                <div class="u-mt-2">
                                     <button class="btn btn-danger btn-small" id="btn-regenerate-cert">
                                         ${t('admin.regenerateCert')}
                                     </button>
-                                    <span class="settings-hint" style="margin-left:8px;">
+                                    <span class="settings-hint u-ml-2">
                                         ${t('admin.regenerateCertHint')}
                                     </span>
                                 </div>
@@ -435,7 +433,7 @@ export class AdminView {
                     </div>
 
                     ${showDomain ? `
-                                <div style="padding:6px 0;font-family:monospace;">
+                                <div class="admin-url-row">
                                     ${this._internetEnabled && !this._pendingRegistration && domainUrl
                                         ? `<a href="${this.esc(domainUrl)}" target="_blank" rel="noopener" class="tunnel-url-link">${this.esc(domainUrl)}</a>`
                                         : `<span class="tunnel-url-disabled">${domainUrl ? this.esc(domainUrl) : ''}</span>`
@@ -472,7 +470,7 @@ export class AdminView {
 
                     <!-- Port Mapping: only shown when UPnP is NOT available -->
                     ${!this._upnpAvailable ? `
-                        <div class="settings-field" style="padding-top:12px;">
+                        <div class="settings-field u-pt-3">
                             <label class="settings-label">${t('admin.portMapping')}</label>
                             <p class="settings-hint">
                                 ${t('admin.portMappingHint')}
@@ -489,8 +487,8 @@ export class AdminView {
                 ${this._localIp ? `
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('admin.localAccess')}</h3>
-                    <div class="settings-field" style="padding-top:0;">
-                        <div style="padding:4px 0;font-family:monospace;">
+                    <div class="settings-field u-pt-0">
+                        <div class="admin-url-row">
                             <a href="${this.esc(this._buildLocalUrl())}" target="_blank" rel="noopener"
                                class="tunnel-url-link">${this.esc(this._buildLocalUrl())}</a>
                         </div>
@@ -526,14 +524,12 @@ export class AdminView {
                         <span class="setting-desc">
                             ${t('admin.httpsPortDesc')}
                         </span>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <input type="number" id="admin-https-port" class="settings-input"
+                        <div class="u-row">
+                            <input type="number" id="admin-https-port" class="settings-input u-grow"
                                    placeholder="443"
                                    value="${this.esc(String(this._httpsPort))}"
-                                   min="1" max="65535"
-                                   style="flex: 1;" />
-                            <button class="btn btn-save" id="btn-admin-save" disabled
-                                    style="flex-shrink: 0;">
+                                   min="1" max="65535" />
+                            <button class="btn btn-save u-shrink-0" id="btn-admin-save" disabled>
                                 ${t('admin.saveReload')}
                             </button>
                         </div>

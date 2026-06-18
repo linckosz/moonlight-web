@@ -66,6 +66,10 @@ QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const Q
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    // Close immediately: Qt would otherwise keep the TLS socket alive ~120s for
+    // reuse, holding Sunshine's single-threaded HTTPS server and making the host
+    // appear offline to co-located native clients during that window.
+    req.setRawHeader("Connection", "close");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
     sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
@@ -180,6 +184,10 @@ QNetworkReply* NvHTTP::getAppListAsync(const NvAddress& address, quint16 httpsPo
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    // Close immediately — see getServerInfoAsyncHttps. This periodic pair-check
+    // (every 5 min) was the connection that lingered ~120s and wedged Sunshine's
+    // HTTPS server, cycling the host offline for native iOS/Qt clients.
+    req.setRawHeader("Connection", "close");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
     sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
