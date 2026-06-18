@@ -6,6 +6,7 @@ import { Host } from '../models/Host.js';
 import { PairDialog } from './PairDialog.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
+import { Icons } from './icons.js';
 
 export class HostListView {
     constructor(container) {
@@ -293,7 +294,7 @@ export class HostListView {
                         : host.isLocked
                             ? `<button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>`
                             : host.canWake
-                                ? `<button class="btn btn-secondary btn-small btn-wol" data-uuid="${host.uuid}" title="${t('hosts.wakeTitle')}">${t('hosts.wakeBtn')}</button>`
+                                ? `<button class="btn btn-secondary btn-small btn-wol" data-uuid="${host.uuid}" title="${t('hosts.wakeTitle')}">${Icons.power}${t('hosts.wakeBtn')}</button>`
                                 : ''
                     }
                 </div>
