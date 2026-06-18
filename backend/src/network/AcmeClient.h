@@ -197,6 +197,7 @@ private:
     QByteArray m_Nonce;
     QString m_AccountUrl;
     QString m_FinalizeUrl;
+    QString m_OrderUrl;       // from newOrder Location header (for polling)
     QString m_CertUrl;
     QString m_ChallengeToken;
     QString m_ChallengeUrl;

@@ -127,6 +127,11 @@ private:
     /// Called after loadCert() to set up the second SSL configuration for SNI.
     void ensureLocalSslConfig();
 
+    /// Push the current m_SslConfig onto the live SslServer as its public (SNI
+    /// default) config. Called after a TLS reload so new connections use the
+    /// freshly issued certificate without restarting the server.
+    void applyPublicSslConfig();
+
     QTcpServer* m_HttpServer;
     QTcpServer* m_HttpsServer;
 
