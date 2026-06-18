@@ -927,7 +927,7 @@ void AcmeClient::stepCreateOrder()
     QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
     acmePost(url, body, true,
-             [this](int code, const QByteArray& respBody, const QString& /*loc*/) {
+             [this](int code, const QByteArray& respBody, const QString& loc) {
         if (m_Cancelled) return;
 
         if (code != 201) {
@@ -949,7 +949,11 @@ void AcmeClient::stepCreateOrder()
 
         m_Order = doc.object();
         m_FinalizeUrl = m_Order.value(QStringLiteral("finalize")).toString();
-        qInfo() << "[AcmeClient] Order created, status:" << m_Order.value("status").toString();
+        // The order URL is the Location header of newOrder (RFC 8555 §7.4);
+        // the order object body has no self-referential "url" field.
+        m_OrderUrl = loc;
+        qInfo() << "[AcmeClient] Order created, status:" << m_Order.value("status").toString()
+                << "url:" << m_OrderUrl;
 
         // Get the first authorization URL
         QJsonArray auths = m_Order.value(QStringLiteral("authorizations")).toArray();
@@ -1218,10 +1222,13 @@ void AcmeClient::stepFinalize()
             return;
         }
 
-        // Order still processing — poll the order URL
-        QString orderUrl = doc.object().value(QStringLiteral("url")).toString();
+        // Order still processing — poll the order URL captured from the
+        // newOrder Location header (the order body has no self "url" field).
+        QString orderUrl = m_OrderUrl;
+        if (orderUrl.isEmpty())
+            orderUrl = doc.object().value(QStringLiteral("url")).toString();
         if (orderUrl.isEmpty()) {
-            emit errorOccurred(QStringLiteral("Order URL missing in finalize response"));
+            emit errorOccurred(QStringLiteral("Order URL missing (no Location header from newOrder)"));
             emit finished(false);
             return;
         }

@@ -49,6 +49,11 @@ public:
         , m_OnSslReady(std::move(onSslReady))
     {}
 
+    // Update the public (SNI default) config on a running server. Needed after
+    // ACME issuance so new connections get the freshly issued cert without a
+    // full server restart.
+    void setPublicSslConfig(const QSslConfiguration& cfg) { m_PublicSslConfig = cfg; }
+
 protected:
     void incomingConnection(qintptr handle) override
     {
@@ -852,6 +857,7 @@ bool HttpServer::reloadTls()
         if (!chain.isEmpty() && !key.isNull()) {
             m_SslConfig.setLocalCertificateChain(chain);
             m_SslConfig.setPrivateKey(key);
+            applyPublicSslConfig();
             Logger::info("TLS reloaded from cert_pem/cert_key sources");
             return true;
         }
@@ -863,7 +869,19 @@ bool HttpServer::reloadTls()
         Logger::warning("[TLS] No certificate directory found, cannot reload");
         return false;
     }
-    return loadCertFiles(certDir);
+    if (!loadCertFiles(certDir))
+        return false;
+    applyPublicSslConfig();
+    return true;
+}
+
+// Push the current m_SslConfig onto the running SslServer as its public (SNI
+// default) config. Without this, a reload only updates m_SslConfig while the
+// live server keeps serving the cert captured at construction time.
+void HttpServer::applyPublicSslConfig()
+{
+    if (m_HttpsServer)
+        static_cast<SslServer*>(m_HttpsServer)->setPublicSslConfig(m_SslConfig);
 }
 
 bool HttpServer::generateSelfSignedCert()
