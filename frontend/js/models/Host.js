@@ -2,6 +2,7 @@
  * Moonlight-Web — Host data model
  */
 import { t } from '../i18n/i18n.js';
+import { Icons } from '../ui/icons.js';
 
 export class Host {
     constructor(data) {
@@ -66,9 +67,9 @@ export class Host {
     }
 
     get statusIcon() {
-        if (!this.isOnline) return '⏻';   // ⏻ power off
-        if (this.isPaired)  return '✔';   // ✔ checkmark
-        return '\u{1F512}';                    // 🔒 lock
+        if (!this.isOnline) return Icons.power;   // power off
+        if (this.isPaired)  return Icons.check;   // checkmark
+        return Icons.lock;                         // lock
     }
 
     get resolutionText() {

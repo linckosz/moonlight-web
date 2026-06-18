@@ -33,6 +33,7 @@ import {
 import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { t } from '../i18n/i18n.js';
+import { Icons } from './icons.js';
 
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
@@ -857,7 +858,7 @@ export class StreamView {
         this._mobileFsBtn = document.createElement('button');
         this._mobileFsBtn.id = 'btn-stream-fs';
         this._mobileFsBtn.className = 'btn-stream-fs';
-        this._mobileFsBtn.textContent = t('stream.fullscreen');
+        this._mobileFsBtn.innerHTML = Icons.fullscreen + t('stream.fullscreen');
         this._mobileFsBtn.title = t('stream.enterFullscreen');
         this._mobileFsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -901,7 +902,7 @@ export class StreamView {
             this._kbdBtn = document.createElement('button');
             this._kbdBtn.id = 'btn-stream-keyboard';
             this._kbdBtn.className = 'btn-stream-kbd';
-            this._kbdBtn.textContent = '⌨';
+            this._kbdBtn.innerHTML = Icons.keyboard;
             this._kbdBtn.title = t('stream.showKeyboard');
             this._kbdBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
