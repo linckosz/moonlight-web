@@ -1,0 +1,31 @@
+# Tolgee self-hosted — web interface to manage Moonlight-Web translations.
+#
+# The runtime (frontend/js/i18n/i18n.js) does NOT depend on Tolgee: it only
+# reads frontend/locales/*.json. Tolgee is an *editor* that syncs with those
+# files via the Tolgee CLI (push/pull) — see ../docs/i18n.md.
+#
+# Quick start:
+#   cd tolgee && docker compose up -d
+#   open http://localhost:8085   (login: admin / admin — CHANGE in production)
+#
+# The all-in-one image embeds PostgreSQL; data persists in the named volume.
+# For production, point SPRING_DATASOURCE_* at an external Postgres instead.
+
+services:
+  tolgee:
+    image: tolgee/tolgee:latest
+    container_name: moonlight-tolgee
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    environment:
+      # Seed an initial admin user on first boot.
+      TOLGEE_AUTHENTICATION_INITIAL_USERNAME: admin
+      TOLGEE_AUTHENTICATION_INITIAL_PASSWORD: admin
+      # Public address used in generated links / CORS.
+      TOLGEE_FRONTEND_URL: http://localhost:8085
+    volumes:
+      - tolgee_data:/data
+
+volumes:
+  tolgee_data:

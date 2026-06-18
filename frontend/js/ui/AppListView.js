@@ -3,6 +3,7 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { App } from '../models/App.js';
+import { t } from '../i18n/i18n.js';
 
 export class AppListView {
     constructor(container, host) {
@@ -61,7 +62,7 @@ export class AppListView {
         this.container.innerHTML = `
             <div class="apps-view" id="view-apps">
                 <div class="apps-header">
-                    <button class="btn btn-secondary" id="btn-back-hosts">&larr; Back to Hosts</button>
+                    <button class="btn btn-secondary" id="btn-back-hosts">${t('apps.backToHosts')}</button>
                     <div class="apps-host-info">
                         <div class="apps-host-name">${this.esc(this.host.displayName)}</div>
                         <div class="apps-host-addr">${this.esc(this.host.displayAddress)}</div>
@@ -71,8 +72,8 @@ export class AppListView {
                 ${this.apps.length === 0
                     ? `<div class="apps-empty">
                          <span class="empty-icon">\u{1F4E6}</span>
-                         <p>No applications found</p>
-                         <p class="hint">Add applications in Sunshine on the host</p>
+                         <p>${t('apps.empty')}</p>
+                         <p class="hint">${t('apps.emptyHint')}</p>
                        </div>`
                     : `<div class="apps-grid">
                          ${this.apps.map(a => this.renderCard(a)).join('')}
@@ -90,7 +91,7 @@ export class AppListView {
         return `
             <div class="app-card" data-app-id="${app.id}"
                  role="button" tabindex="0"
-                 aria-label="Launch ${this.esc(app.displayName)}">
+                 aria-label="${this.esc(t('apps.launchAria', { name: app.displayName }))}">
                 <div class="app-card-image">
                     ${app.boxArtUrl
                         ? `<img src="${this.esc(app.boxArtUrl)}"
@@ -109,10 +110,10 @@ export class AppListView {
         this.container.innerHTML = `
             <div class="apps-view">
                 <div class="apps-header">
-                    <button class="btn btn-secondary" id="btn-back-hosts">&larr; Back to Hosts</button>
+                    <button class="btn btn-secondary" id="btn-back-hosts">${t('apps.backToHosts')}</button>
                 </div>
                 <div class="apps-loading">
-                    <p>Loading applications...</p>
+                    <p>${t('apps.loading')}</p>
                 </div>
             </div>
         `;
@@ -126,9 +127,9 @@ export class AppListView {
                     <button class="btn btn-secondary" id="btn-back-hosts">&larr; Back to Hosts</button>
                 </div>
                 <div class="apps-error">
-                    <p>Failed to load applications</p>
-                    <p class="hint">The host is unreachable or took too long to respond</p>
-                    <button class="btn" id="btn-retry-apps">Retry</button>
+                    <p>${t('apps.loadFailed')}</p>
+                    <p class="hint">${t('apps.loadFailedHint')}</p>
+                    <button class="btn" id="btn-retry-apps">${t('common.retry')}</button>
                 </div>
             </div>
         `;

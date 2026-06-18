@@ -32,6 +32,7 @@ import {
 
 import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
+import { t } from '../i18n/i18n.js';
 
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
@@ -704,7 +705,7 @@ export class StreamView {
         el.className = 'stream-overlay';
         el.innerHTML = `
             <div class="stream-header">
-                <button class="btn stream-quit-btn" id="btn-stream-quit">${IS_MOBILE_OR_TABLET ? 'Stop' : 'Stop Streaming'}</button>
+                <button class="btn stream-quit-btn" id="btn-stream-quit">${IS_MOBILE_OR_TABLET ? t('stream.stop') : t('stream.stopStreaming')}</button>
             </div>
             <div class="stream-canvas-area">
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
@@ -712,7 +713,7 @@ export class StreamView {
                        style="width:100%;height:100%;object-fit:contain;display:none;"></video>
                 <div id="stream-input-layer" class="stream-input-layer"></div>
                 <div class="stream-click-hint" id="stream-hint">
-                    Click to capture mouse & keyboard
+                    ${t('stream.clickToCapture')}
                 </div>
             </div>
         `;
@@ -783,7 +784,7 @@ export class StreamView {
         this._overlayEl = document.createElement('div');
         this._overlayEl.id = 'stream-stats-overlay';
         this._overlayEl.className = 'stream-stats-overlay';
-        this._overlayEl.innerHTML = '<div class="stats-waiting">Connecting...</div>';
+        this._overlayEl.innerHTML = '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
         document.getElementById('stream-view').appendChild(this._overlayEl);
 
         // ── Cyberpunk "signal acquired" reveal ─────────────────────────────
@@ -804,7 +805,7 @@ export class StreamView {
                 '<span class="rb tl"></span><span class="rb tr"></span>' +
                 '<span class="rb bl"></span><span class="rb br"></span>' +
             '</div>' +
-            '<div class="reveal-text">SIGNAL ACQUIRED</div>';
+            '<div class="reveal-text">' + t('stream.signalAcquired') + '</div>';
         this._revealEl.style.display = 'none';
         this.streamEl.appendChild(this._revealEl);
 
@@ -840,15 +841,15 @@ export class StreamView {
             '</div>',
             '<div class="startup-step active" data-step="1">',
             '  <span class="startup-step-dot"></span>',
-            '  <span class="startup-step-label">Connecting...</span>',
+            '  <span class="startup-step-label">' + t('stream.connecting') + '</span>',
             '</div>',
             '<div class="startup-step" data-step="2">',
             '  <span class="startup-step-dot"></span>',
-            '  <span class="startup-step-label">Starting video stream...</span>',
+            '  <span class="startup-step-label">' + t('stream.startingVideo') + '</span>',
             '</div>',
             '<div class="startup-step" data-step="3">',
             '  <span class="startup-step-dot"></span>',
-            '  <span class="startup-step-label">Stream ready!</span>',
+            '  <span class="startup-step-label">' + t('stream.streamReady') + '</span>',
             '</div>'
         ].join('');
         document.getElementById('stream-view').appendChild(this._startupOverlay);
@@ -857,8 +858,8 @@ export class StreamView {
         this._mobileFsBtn = document.createElement('button');
         this._mobileFsBtn.id = 'btn-stream-fs';
         this._mobileFsBtn.className = 'btn-stream-fs';
-        this._mobileFsBtn.textContent = '⛶ Fullscreen';
-        this._mobileFsBtn.title = 'Enter fullscreen';
+        this._mobileFsBtn.textContent = t('stream.fullscreen');
+        this._mobileFsBtn.title = t('stream.enterFullscreen');
         this._mobileFsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             // Same behaviour as the keyboard combo: toggle real browser
@@ -902,7 +903,7 @@ export class StreamView {
             this._kbdBtn.id = 'btn-stream-keyboard';
             this._kbdBtn.className = 'btn-stream-kbd';
             this._kbdBtn.textContent = '⌨';
-            this._kbdBtn.title = 'Show on-screen keyboard';
+            this._kbdBtn.title = t('stream.showKeyboard');
             this._kbdBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this._toggleVirtualKeyboard();
@@ -2103,7 +2104,7 @@ export class StreamView {
             if (!this._everConnected && this._reportConnectionFailed('closed before connect')) return;
             this.connected = false;
             this.setStatus('disconnected', 'Disconnected');
-            Toast.error('Stream disconnected');
+            Toast.error(t('stream.streamDisconnected'));
             setTimeout(() => this.quit(), 3000);
         };
         this.webrtc.onError = (err) => {
@@ -2111,7 +2112,7 @@ export class StreamView {
             console.error('[StreamView] WebRTC error:', err.message);
             // Never connected → connection failure, defer to the transport chain.
             if (!this._everConnected && this._reportConnectionFailed(err.message)) return;
-            Toast.error('WebRTC connection error');
+            Toast.error(t('stream.webrtcError'));
         };
         // Video frames: DataChannel mode uses WebCodecs callbacks
         if (this._transport !== 'webrtc-media') {
@@ -2249,7 +2250,7 @@ export class StreamView {
 
         // Before first frame: show minimal waiting state
         if (!this._firstFrameRendered) {
-            this._overlayEl.innerHTML = '<div class="stats-waiting">Connecting...</div>';
+            this._overlayEl.innerHTML = '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
             this._overlayEl.style.display = '';
             return;
         }
@@ -2283,25 +2284,25 @@ export class StreamView {
 
         // Resolution
         html += '<div class="stats-row">' +
-            '<span class="stats-label">Resolution:</span>' +
+            '<span class="stats-label">' + t('stream.statResolution') + '</span>' +
             '<span class="stats-value">' + (this._resolution || '?') + '</span>' +
             '</div>';
 
         // Framerate
         html += '<div class="stats-row">' +
-            '<span class="stats-label">Framerate:</span>' +
+            '<span class="stats-label">' + t('stream.statFramerate') + '</span>' +
             '<span class="stats-value">' + fps + ' fps</span>' +
             '</div>';
 
         // Bitrate
         html += '<div class="stats-row">' +
-            '<span class="stats-label">Bitrate:</span>' +
+            '<span class="stats-label">' + t('stream.statBitrate') + '</span>' +
             '<span class="stats-value">' + bitrateMbps.toFixed(1) + ' Mbps</span>' +
             '</div>';
 
         // Codec
         html += '<div class="stats-row">' +
-            '<span class="stats-label">Codec:</span>' +
+            '<span class="stats-label">' + t('stream.statCodec') + '</span>' +
             '<span class="stats-value">' + codec.toUpperCase() + '</span>' +
             '</div>';
 
@@ -2311,20 +2312,20 @@ export class StreamView {
         let enhancerName = null;
         if (this._activeRendererKind === 'webgpu') {
             enhancerName = this._videoEnhancementAlgo === 'fsr1' ? 'FSR1'
-                : this._videoEnhancementAlgo === 'off' ? 'Off' : 'SGSR';
+                : this._videoEnhancementAlgo === 'off' ? t('stream.enhancerOff') : 'SGSR';
         } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
             enhancerName = 'OFF (not available on MediaTrack)';
         }
         if (enhancerName !== null) {
             html += '<div class="stats-row">' +
-                '<span class="stats-label">Enhancer:</span>' +
+                '<span class="stats-label">' + t('stream.statEnhancer') + '</span>' +
                 '<span class="stats-value">' + enhancerName + '</span>' +
                 '</div>';
         }
 
         // Transport
         html += '<div class="stats-row">' +
-            '<span class="stats-label">Transport:</span>' +
+            '<span class="stats-label">' + t('stream.statTransport') + '</span>' +
             '<span class="stats-value">' + this._transportMode + '</span>' +
             '</div>';
 
@@ -2360,7 +2361,7 @@ export class StreamView {
             }
         }
         html += '<div class="stats-row stats-latency-row">' +
-            '<span class="stats-label">Latency:</span>' +
+            '<span class="stats-label">' + t('stream.statLatency') + '</span>' +
             '<span class="stats-value stats-latency">' + avgLatency + '</span>' +
             '</div>';
 
@@ -3378,7 +3379,7 @@ export class StreamView {
 
         const hint = document.createElement('div');
         hint.className = 'install-hint';
-        hint.textContent = 'For true fullscreen: Share → Add to Home Screen, then launch Moonlight from the icon.';
+        hint.textContent = t('stream.iosFullscreenHint');
         document.body.appendChild(hint);
 
         // Force reflow so the opacity transition runs on insert.
@@ -3421,7 +3422,7 @@ export class StreamView {
     _showFullscreenExitHint() {
         const isMac = /Mac/.test(navigator.platform);
         const combo = isMac ? 'Ctrl + Option + Cmd + X' : 'Shift + Ctrl + Alt + X';
-        this._showTransientHint('Press ' + combo + ' to exit fullscreen', 2000);
+        this._showTransientHint(t('stream.exitFullscreenHint', { combo }), 2000);
     }
 
     /**
@@ -4277,7 +4278,7 @@ export class StreamView {
         console.log('[StreamView] Mouse mode toggled: ' +
             (this._gamingMode ? 'gaming (relative+lock)' : 'desktop (absolute)'));
 
-        Toast.info('Mouse mode: ' + (this._gamingMode ? 'Gaming' : 'Desktop'));
+        Toast.info(t('stream.mouseMode', { mode: this._gamingMode ? t('stream.mouseModeGaming') : t('stream.mouseModeDesktop') }));
     }
 
     // =========================================================================
@@ -4318,13 +4319,13 @@ export class StreamView {
         const comboMods = isMac ? comboMac : comboWin;
 
         const rows = [
-            ['Quit session',             ...comboMods, 'Q'],
-            ['Fullscreen',               ...comboMods, 'X'],
-            ['Release mouse/keyboard',   ...comboMods, 'Z'],
-            ['Change mouse mode',        ...comboMods, 'M'],
+            [t('stream.scQuit'),       ...comboMods, 'Q'],
+            [t('stream.scFullscreen'), ...comboMods, 'X'],
+            [t('stream.scRelease'),    ...comboMods, 'Z'],
+            [t('stream.scMouseMode'),  ...comboMods, 'M'],
         ];
 
-        let html = '<div class="shortcuts-slide-title">Keyboard shortcuts</div>';
+        let html = '<div class="shortcuts-slide-title">' + t('stream.shortcutsTitle') + '</div>';
         html += '<div class="shortcuts-slide-grid">';
         for (const [action, ...keys] of rows) {
             html += '<div class="shortcut-row">';
@@ -4347,17 +4348,17 @@ export class StreamView {
      */
     _buildTouchHelpContent() {
         const rows = [
-            ['Move cursor',   '1 finger drag'],
-            ['Left click',    'Tap'],
-            ['Right click',   '2-finger tap'],
-            ['Drag & hold',   'Long press'],
-            ['Scroll',        '2-finger drag'],
-            ['Zoom',          'Pinch'],
-            ['Pan zoom',      '3-finger drag'],
-            ['Keyboard',      '3-finger tap'],
+            [t('stream.tcMoveCursor'), t('stream.tcMoveCursorVal')],
+            [t('stream.tcLeftClick'),  t('stream.tcLeftClickVal')],
+            [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
+            [t('stream.tcDrag'),       t('stream.tcDragVal')],
+            [t('stream.tcScroll'),     t('stream.tcScrollVal')],
+            [t('stream.tcZoom'),       t('stream.tcZoomVal')],
+            [t('stream.tcPanZoom'),    t('stream.tcPanZoomVal')],
+            [t('stream.tcKeyboard'),   t('stream.tcKeyboardVal')],
         ];
 
-        let html = '<div class="shortcuts-slide-title">Touch controls</div>';
+        let html = '<div class="shortcuts-slide-title">' + t('stream.touchTitle') + '</div>';
         html += '<div class="shortcuts-slide-grid">';
         for (const [action, gesture] of rows) {
             html += '<div class="shortcut-row">';
@@ -4656,7 +4657,7 @@ export class StreamView {
             this.webrtc.close();
             if (!silent) {
                 await Toast.dismissAll();
-                Toast.success('Stream end');
+                Toast.success(t('stream.streamEnd'));
             }
         } catch (err) {
             console.warn('[StreamView] Quit failed:', err);

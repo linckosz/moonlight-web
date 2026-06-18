@@ -10,6 +10,7 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
+import { t } from '../i18n/i18n.js';
 
 export class LoginView {
     constructor(container, onAuthenticated) {
@@ -60,7 +61,7 @@ export class LoginView {
         } catch (err) {
             console.warn('[Login] Failed to check auth status:', err);
             this._loading = false;
-            this._error = 'Unable to connect to server';
+            this._error = t('login.unableToConnect');
             this.render();
             this.bindEvents();
         }
@@ -111,7 +112,7 @@ export class LoginView {
                         ${this._loading ? `
                             <div class="login-loading">
                                 <div class="login-spinner"></div>
-                                <p>Connecting to server...</p>
+                                <p>${t('login.connecting')}</p>
                             </div>
                         ` : this._certMode ? this._renderCertForm() : this._renderPinForm()}
                     </div>
@@ -121,14 +122,14 @@ export class LoginView {
                             <button id="btn-toggle-auth-method" class="btn btn-link"
                                     style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:0.85em;text-decoration:underline;">
                                 ${this._certMode
-                                    ? 'Use PIN instead'
-                                    : 'Use certificate instead'}
+                                    ? t('login.usePinInstead')
+                                    : t('login.useCertInstead')}
                             </button>
                         </div>
                     ` : ''}
 
                     ${!this._loading && !this._certMode ? `
-                        <p class="login-hint">Access the admin page from localhost to view the PIN</p>
+                        <p class="login-hint">${t('login.pinHint')}</p>
                     ` : ''}
                 </div>
             </div>
@@ -138,13 +139,13 @@ export class LoginView {
     _renderPinForm() {
         return `
             <div class="login-form">
-                <p class="login-subtitle">Enter the PIN shown on the server admin page</p>
+                <p class="login-subtitle">${t('login.pinSubtitle')}</p>
 
                 <!-- Machine name -->
                 <div class="login-field">
-                    <label class="login-label" for="login-machine-input">Name this session</label>
+                    <label class="login-label" for="login-machine-input">${t('login.nameSession')}</label>
                     <input type="text" id="login-machine-input" class="login-input"
-                           placeholder="e.g. BrunoXT Chrome"
+                           placeholder="${this.esc(t('login.namePlaceholder'))}"
                            value="${this.esc(this._machineName)}"
                            maxlength="64"
                            autocomplete="off" />
@@ -152,27 +153,27 @@ export class LoginView {
 
                 <!-- PIN input -->
                 <div class="login-field">
-                    <label class="login-label" for="login-pin-input">PIN</label>
+                    <label class="login-label" for="login-pin-input">${t('login.pinLabel')}</label>
                     <div class="login-pin-input-wrap">
                         <input type="text" id="login-pin-input" class="login-pin-input"
                                inputmode="numeric" pattern="[0-9]*"
-                               maxlength="20" placeholder="Enter the PIN"
+                               maxlength="20" placeholder="${this.esc(t('login.pinPlaceholder'))}"
                                autocomplete="off"
                                ${this._lockoutRemaining > 0 ? 'disabled' : ''} />
                     </div>
                 </div>
 
                 ${this._error ? `<p id="login-error" class="login-error">${this.esc(this._error)}</p>` : '<p id="login-error" class="login-error"></p>'}
-                <p id="login-remaining" class="login-remaining">${this._remaining > 0 && this._remaining <= 3 ? `${this._remaining} attempt(s) remaining before lockout` : ''}</p>
+                <p id="login-remaining" class="login-remaining">${this._remaining > 0 && this._remaining <= 3 ? this.esc(t('login.attemptsRemaining', { count: this._remaining })) : ''}</p>
                 ${this._lockoutRemaining > 0 ? `
                     <div id="login-lockout" class="login-lockout">
-                        Try again in <span id="login-lockout-countdown">${this._lockoutRemaining}</span> seconds
+                        ${t('login.lockout', { seconds: `<span id="login-lockout-countdown">${this._lockoutRemaining}</span>` })}
                     </div>
                 ` : '<div id="login-lockout" class="login-lockout" style="display:none;"></div>'}
                 <button id="btn-login-unlock" class="btn btn-neutral login-submit"
                         disabled
                         ${this._lockoutRemaining > 0 || this._submitting ? 'disabled' : ''}>
-                    ${this._submitting ? 'Verifying...' : 'Unlock'}
+                    ${this._submitting ? t('common.verifying') : t('login.unlock')}
                 </button>
             </div>
         `;
@@ -181,13 +182,13 @@ export class LoginView {
     _renderCertForm() {
         return `
             <div class="login-form">
-                <p class="login-subtitle">Upload your certificate file to authenticate</p>
+                <p class="login-subtitle">${t('login.certSubtitle')}</p>
 
                 <!-- Machine name -->
                 <div class="login-field">
-                    <label class="login-label" for="login-machine-input">Name this session</label>
+                    <label class="login-label" for="login-machine-input">${t('login.nameSession')}</label>
                     <input type="text" id="login-machine-input" class="login-input"
-                           placeholder="e.g. BrunoXT Chrome"
+                           placeholder="${this.esc(t('login.namePlaceholder'))}"
                            value="${this.esc(this._machineName)}"
                            maxlength="64"
                            autocomplete="off" />
@@ -195,7 +196,7 @@ export class LoginView {
 
                 <!-- File upload -->
                 <div class="login-field">
-                    <label class="login-label" for="login-cert-input">Certificate file</label>
+                    <label class="login-label" for="login-cert-input">${t('login.certLabel')}</label>
                     <div class="login-cert-upload-wrap">
                         <input type="file" id="login-cert-input" class="login-cert-input"
                                accept=".txt,.cert,.pem,.key,text/plain"
@@ -203,7 +204,7 @@ export class LoginView {
                     </div>
                     ${this._selectedFileName ? `
                         <p class="login-file-selected" style="font-size:0.85em;margin-top:4px;color:var(--text-muted);">
-                            Selected: ${this.esc(this._selectedFileName)}
+                            ${this.esc(t('login.selected', { name: this._selectedFileName }))}
                         </p>
                     ` : ''}
                 </div>
@@ -212,7 +213,7 @@ export class LoginView {
                 <button id="btn-login-cert-auth" class="btn btn-neutral login-submit"
                         disabled
                         ${this._submitting ? 'disabled' : ''}>
-                    ${this._submitting ? 'Verifying...' : 'Authenticate with Certificate'}
+                    ${this._submitting ? t('common.verifying') : t('login.certAuthBtn')}
                 </button>
             </div>
         `;
@@ -296,7 +297,7 @@ export class LoginView {
             // Show selected file name
             const fileLabel = this.container.querySelector('.login-file-selected');
             if (fileLabel && file) {
-                fileLabel.textContent = `Selected: ${file.name}`;
+                fileLabel.textContent = t('login.selected', { name: file.name });
             } else if (fileLabel) {
                 fileLabel.textContent = '';
             }
@@ -332,7 +333,7 @@ export class LoginView {
         if (this._submitting) return;
         this._submitting = true;
         btn.disabled = true;
-        btn.textContent = 'Verifying...';
+        btn.textContent = t('common.verifying');
 
         const pin = input.value;
         const machineName = machineInput ? machineInput.value.trim() : '';
@@ -341,7 +342,7 @@ export class LoginView {
             const result = await BackendClient.validatePin(pin, machineName);
 
             if (result.status === 'ok') {
-                Toast.success('Authentication successful');
+                Toast.success(t('login.authSuccess'));
                 this.onAuthenticated();
                 return;
             }
@@ -354,7 +355,7 @@ export class LoginView {
         if (this._submitting) return;
         this._submitting = true;
         btn.disabled = true;
-        btn.textContent = 'Verifying...';
+        btn.textContent = t('common.verifying');
 
         const machineName = machineInput ? machineInput.value.trim() : '';
 
@@ -366,7 +367,7 @@ export class LoginView {
             const result = await BackendClient.validateCertificate(content, machineName);
 
             if (result.status === 'ok') {
-                Toast.success('Authentication successful');
+                Toast.success(t('login.authSuccess'));
                 this.onAuthenticated();
                 return;
             }
@@ -379,7 +380,7 @@ export class LoginView {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = (e) => reject(new Error('Failed to read file'));
+            reader.onerror = (e) => reject(new Error(t('login.readFileError')));
             reader.readAsText(file);
         });
     }
@@ -387,21 +388,21 @@ export class LoginView {
     _handlePinError(err, input, btn) {
         this._submitting = false;
         btn.disabled = false;
-        btn.textContent = 'Unlock';
+        btn.textContent = t('login.unlock');
         input.value = '';
         input.focus();
 
-        let errorMsg = 'Invalid PIN';
+        let errorMsg = t('login.invalidPin');
         const statusCode = err.statusCode || 0;
         const body = err.responseBody || {};
 
         if (statusCode === 429) {
-            errorMsg = 'Too many failed attempts';
+            errorMsg = t('login.tooManyAttempts');
             if (body.lockout_seconds > 0) {
                 this._startLockoutTimer(body.lockout_seconds);
             }
         } else if (statusCode === 401) {
-            errorMsg = 'Invalid PIN';
+            errorMsg = t('login.invalidPin');
             if (body.lockout_seconds > 0) {
                 this._startLockoutTimer(body.lockout_seconds);
             }
@@ -411,7 +412,7 @@ export class LoginView {
                 this._remaining = Math.max(0, this._remaining - 1);
             }
         } else {
-            errorMsg = err.message || 'Connection error';
+            errorMsg = err.message || t('login.connectionError');
         }
 
         this._error = errorMsg;
@@ -422,7 +423,7 @@ export class LoginView {
     _handleCertError(err, btn, certInput) {
         this._submitting = false;
         btn.disabled = false;
-        btn.textContent = 'Authenticate with Certificate';
+        btn.textContent = t('login.certAuthBtn');
 
         // Reset file input for retry
         if (certInput) certInput.value = '';
@@ -432,9 +433,9 @@ export class LoginView {
         let errorMsg = '';
 
         if (statusCode === 401 && body.error === 'invalid_certificate') {
-            errorMsg = 'Invalid certificate. Check that you have the correct file.';
+            errorMsg = t('login.invalidCert');
         } else {
-            errorMsg = err.message || 'Verification failed';
+            errorMsg = err.message || t('login.verificationFailed');
         }
 
         this._error = errorMsg;

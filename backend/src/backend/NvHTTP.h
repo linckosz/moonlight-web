@@ -26,7 +26,10 @@ class NvHTTP : public QObject
     Q_OBJECT
 
 public:
-    static constexpr int FAST_FAIL_TIMEOUT_MS = 2000;
+    // Poll deadline for serverinfo. Generous on purpose: aborting a slow-but-
+    // alive Sunshine mid-response wedges its single-threaded HTTP server and
+    // makes the host appear offline to co-located native clients.
+    static constexpr int FAST_FAIL_TIMEOUT_MS = 5000;
     static constexpr int REQUEST_TIMEOUT_MS   = 5000;
 
     explicit NvHTTP(QNetworkAccessManager* nam, QObject* parent = nullptr);

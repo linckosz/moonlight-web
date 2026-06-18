@@ -42,7 +42,9 @@ extern "C" __declspec(dllimport) unsigned long __stdcall SendARP(
 
 #define SER_HOSTS "hosts"
 
-static const int POLL_INTERVAL_MS = 5000;
+// Poll every 10s, not 5s: halves the connection churn against each host's
+// single-threaded HTTP server, which co-located native clients also poll.
+static const int POLL_INTERVAL_MS = 10000;
 
 // HTTPS /applist pair verification is expensive on Sunshine (TLS handshake +
 // applist generation). Running it every poll tick saturates Sunshine's HTTPS
@@ -209,10 +211,11 @@ void ComputerManager::startPolling()
     connect(m_PollTimer, &QTimer::timeout, this, &ComputerManager::onPollTick);
     m_PollTimer->start();
 
-    // Backup poll timer: every 30 seconds, unconditional full refresh
-    // Guarantees no host stays stuck in "offline" even if regular tracking stalls
+    // Backup poll timer: every 60 seconds, safety-net refresh. Skips hosts
+    // already being polled (see onBackupPollTick) to avoid a second concurrent
+    // connection to the same single-threaded Sunshine server.
     m_BackupPollTimer = new QTimer(this);
-    m_BackupPollTimer->setInterval(30000);
+    m_BackupPollTimer->setInterval(60000);
     connect(m_BackupPollTimer, &QTimer::timeout, this, &ComputerManager::onBackupPollTick);
     m_BackupPollTimer->start();
 }
@@ -301,13 +304,18 @@ void ComputerManager::onBackupPollTick()
     if (m_StreamActivePredicate && m_StreamActivePredicate())
         return;
 
-    Logger::debug("Backup poll tick — forcing unconditional refresh of all hosts");
+    Logger::debug("Backup poll tick — safety-net refresh of idle hosts");
 
-    // Unconditional refresh: poll every host regardless of tracking state.
-    // This guarantees no host stays stuck in "offline" if regular tracking stalls.
+    // Safety net for hosts the regular tick somehow never scheduled. Skips any
+    // host already in flight: a second concurrent connection to a single-
+    // threaded Sunshine server wedges it. Stalled in-flight polls are already
+    // cleaned up by onPollTick (>10s), so this never stays stuck.
     for (auto it = m_Hosts.begin(); it != m_Hosts.end(); ++it) {
         const QString& uuid = it.key();
         NvComputer* host = it.value();
+
+        if (m_PollingHosts.contains(uuid))
+            continue;
 
         QVector<NvAddress> addrs = host->uniqueAddresses();
         if (addrs.isEmpty())
@@ -315,9 +323,6 @@ void ComputerManager::onBackupPollTick()
 
         NvAddress addr = addrs.first();
 
-        // IMPORTANT: Do NOT check m_PollingHosts here — this backup timer
-        // sends a fresh poll unconditionally, even if the regular tick
-        // believes this host is already being polled.
         QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
         m_PendingPolls[reply] = uuid;
         m_PollingHosts.insert(uuid);

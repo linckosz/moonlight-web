@@ -5,6 +5,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Host } from '../models/Host.js';
 import { PairDialog } from './PairDialog.js';
 import { Toast } from './Toast.js';
+import { t } from '../i18n/i18n.js';
 
 export class HostListView {
     constructor(container) {
@@ -62,7 +63,7 @@ export class HostListView {
                 wolBtn.disabled = true;
                 BackendClient.wakeHost(uuid)
                     .then(() => {
-                        Toast.show(`Wake-on-LAN sent to "${host ? host.displayName : uuid}"`, 'success');
+                        Toast.show(t('hosts.wolSent', { name: host ? host.displayName : uuid }), 'success');
                     })
                     .catch(err => {
                         console.error('[MW] Wake-on-LAN failed:', err);
@@ -75,7 +76,7 @@ export class HostListView {
             const removeBtn = e.target.closest('.btn-remove');
             if (removeBtn) {
                 removeBtn.disabled = true;
-                removeBtn.textContent = 'Removing...';
+                removeBtn.textContent = t('common.removing');
                 const uuid = removeBtn.dataset.uuid;
                 BackendClient.removeHost(uuid)
                     .then(() => {
@@ -196,9 +197,9 @@ export class HostListView {
         this.container.innerHTML = `
             <div class="hosts-view" id="view-hosts">
                 <div class="hosts-header">
-                    <h2>Hosts</h2>
+                    <h2>${t('hosts.title')}</h2>
                     <div class="hosts-actions">
-                        <button class="btn btn-neutral" id="btn-manual">Add Manually</button>
+                        <button class="btn btn-neutral" id="btn-manual">${t('hosts.addManually')}</button>
                     </div>
                 </div>
                 <div class="hosts-list" id="hosts-list"></div>
@@ -217,8 +218,8 @@ export class HostListView {
             list.innerHTML = `
                 <div class="hosts-empty">
                     <span class="empty-icon">\u{1F5B4}</span>
-                    <p>No hosts found</p>
-                    <p class="hint">Click "Scan Network" or add a host manually</p>
+                    <p>${t('hosts.empty')}</p>
+                    <p class="hint">${t('hosts.emptyHint')}</p>
                 </div>`;
             return;
         }
@@ -288,17 +289,17 @@ export class HostListView {
                 </div>
                 <div class="host-card-actions">
                     ${host.isAvailable
-                        ? `<button class="btn btn-open" data-uuid="${host.uuid}">Open</button>`
+                        ? `<button class="btn btn-open" data-uuid="${host.uuid}">${t('common.open')}</button>`
                         : host.isLocked
-                            ? `<button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">Pair</button>`
+                            ? `<button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>`
                             : host.canWake
-                                ? `<button class="btn btn-secondary btn-small btn-wol" data-uuid="${host.uuid}" title="Wake On LAN">⏻ Wake</button>`
+                                ? `<button class="btn btn-secondary btn-small btn-wol" data-uuid="${host.uuid}" title="${t('hosts.wakeTitle')}">${t('hosts.wakeBtn')}</button>`
                                 : ''
                     }
                 </div>
                 ${!host.isAvailable && !host.isLocked
                     ? `<div class="host-card-remove">
-                         <button class="btn btn-secondary btn-remove" data-uuid="${host.uuid}">Remove</button>
+                         <button class="btn btn-secondary btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
                        </div>`
                     : ''
                 }
@@ -310,11 +311,11 @@ export class HostListView {
         this.container.innerHTML = `
             <div class="hosts-view">
                 <div class="hosts-header">
-                    <h2>Hosts</h2>
-                    <button class="btn" onclick="location.reload()">Retry</button>
+                    <h2>${t('hosts.title')}</h2>
+                    <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
                 </div>
                 <div class="hosts-error">
-                    <p>Connection lost</p>
+                    <p>${t('hosts.connectionLost')}</p>
                     <p class="hint">${this.esc(message)}</p>
                 </div>
             </div>
@@ -327,7 +328,7 @@ export class HostListView {
         const manualBtn = this.container.querySelector('#btn-manual');
         if (manualBtn) {
             manualBtn.addEventListener('click', async () => {
-                const addr = prompt('Enter host IP address (e.g., 192.168.1.5):');
+                const addr = prompt(t('hosts.promptManual'));
                 if (!addr || !addr.trim()) return;
                 manualBtn.disabled = true;
                 manualBtn.classList.add('btn-loading');
@@ -339,14 +340,14 @@ export class HostListView {
                         if (idx >= 0) {
                             this.hosts[idx] = newHost;
                             this.renderList();
-                            Toast.show(`"${newHost.displayName}" already in list`, 'warning');
+                            Toast.show(t('hosts.alreadyInList', { name: newHost.displayName }), 'warning');
                         } else {
                             this.hosts.push(newHost);
                             this.renderList();
-                            Toast.show(`"${newHost.displayName}" added successfully`, 'success');
+                            Toast.show(t('hosts.addedSuccess', { name: newHost.displayName }), 'success');
                         }
                     } else {
-                        Toast.show('No host was returned from the server', 'error');
+                        Toast.show(t('hosts.noHostReturned'), 'error');
                     }
                 } catch (err) {
                     console.error('[MW] Add host failed:', err);

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://docs.tolgee.io/tolgeerc-schema.json",
+  "apiUrl": "http://localhost:8085",
+  "projectId": 1,
+  "format": "JSON_I18NEXT",
+  "push": {
+    "files": [
+      { "path": "locales/en.json", "language": "en" },
+      { "path": "locales/fr.json", "language": "fr" }
+    ],
+    "forceMode": "OVERRIDE"
+  },
+  "pull": {
+    "path": "locales"
+  }
+}
