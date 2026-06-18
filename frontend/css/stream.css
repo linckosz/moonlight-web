@@ -27,6 +27,12 @@ body.streaming-active .app-footer {
 
 /* Video/canvas must never be draggable or receive native touch gestures */
 .stream-video {
+    /* Fills the area like the canvas; hidden until the media-track path swaps
+       it in (JS toggles display between canvas and video). */
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none;
     pointer-events: none;
     touch-action: none;
 }

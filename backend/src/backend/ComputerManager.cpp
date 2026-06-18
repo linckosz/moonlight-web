@@ -260,6 +260,9 @@ void ComputerManager::onPollTick()
                     quint16 httpsPort = host->activeHttpsPort > 0
                         ? host->activeHttpsPort : MW_HTTPS_PORT;
                     m_PendingPairChecks.insert(uuid);
+                    // [NETWORK] diagnostic: trace HTTPS pair-check (every 5 min).
+                    Logger::info(QString("[NETWORK] pair-check applist HTTPS -> %1:%2 (%3)")
+                                     .arg(addrs.first().address()).arg(httpsPort).arg(host->name));
                     QNetworkReply* reply = m_Http->getAppListAsync(
                         addrs.first(), httpsPort,
                         im->getCertificate(), im->getPrivateKey());
@@ -280,6 +283,10 @@ void ComputerManager::onPollTick()
 
         // Use first address for polling
         NvAddress addr = addrs.first();
+
+        // [NETWORK] diagnostic: trace every outbound serverinfo poll.
+        Logger::info(QString("[NETWORK] poll serverinfo HTTP -> %1 (%2)")
+                         .arg(addr.toString(), host->name));
 
         QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
         m_PendingPolls[reply] = uuid;
@@ -322,6 +329,10 @@ void ComputerManager::onBackupPollTick()
             continue;
 
         NvAddress addr = addrs.first();
+
+        // [NETWORK] diagnostic: trace backup serverinfo poll (every 60s).
+        Logger::info(QString("[NETWORK] backup poll serverinfo HTTP -> %1 (%2)")
+                         .arg(addr.toString(), host->name));
 
         QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
         m_PendingPolls[reply] = uuid;
@@ -444,7 +455,7 @@ void ComputerManager::startMdnsDiscovery()
 
         m_MdnsActive = true;
         m_MdnsWindowTimer->start(MDNS_DISCOVERY_WINDOW_MS);
-        Logger::info("mDNS discovery window opened for _nvstream._tcp.local.");
+        Logger::info("[NETWORK] mDNS discovery window opened — UDP 5353 bound (_nvstream._tcp.local.)");
     } catch (const std::exception& e) {
         Logger::warning(QString("mDNS discovery unavailable: %1").arg(e.what()));
     }
@@ -466,7 +477,7 @@ void ComputerManager::stopMdnsDiscovery()
     m_MdnsServer = nullptr;
 
     m_MdnsActive = false;
-    Logger::info("mDNS discovery window closed — UDP 5353 released");
+    Logger::info("[NETWORK] mDNS discovery window closed — UDP 5353 released");
 }
 
 void ComputerManager::onMdnsServiceAdded(const QMdnsEngine::Service& service)
@@ -1142,6 +1153,9 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
     QNetworkRequest artReq(artUrl);
     artReq.setTransferTimeout(5000);
     artReq.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    // Close immediately — don't leave the TLS socket pooled ~120s holding
+    // Sunshine's single-threaded HTTPS server (see NvHTTP::getAppListAsync).
+    artReq.setRawHeader("Connection", "close");
 
     QSslConfiguration sslConfig = artReq.sslConfiguration();
     sslConfig.setLocalCertificate(QSslCertificate(cert, QSsl::Pem));

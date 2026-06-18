@@ -709,8 +709,7 @@ export class StreamView {
             </div>
             <div class="stream-canvas-area">
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
-                <video id="stream-video" class="stream-video" autoplay muted playsinline
-                       style="width:100%;height:100%;object-fit:contain;display:none;"></video>
+                <video id="stream-video" class="stream-video" autoplay muted playsinline></video>
                 <div id="stream-input-layer" class="stream-input-layer"></div>
                 <div class="stream-click-hint" id="stream-hint">
                     ${t('stream.clickToCapture')}

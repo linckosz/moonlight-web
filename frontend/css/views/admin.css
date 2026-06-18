@@ -28,6 +28,17 @@
     letter-spacing: 4px;
     user-select: none;
 }
+.pin-display-area .btn { flex-shrink: 0; }
+
+/* ── Session count + tunnel URL rows (inline-style extraction) ──────────── */
+#admin-session-count {
+    font-weight: 500;
+    margin-bottom: var(--space-1);
+}
+.admin-url-row {
+    padding: 6px 0;
+    font-family: var(--font-mono);
+}
 .pin-consumed-hint {
     color: var(--c-warning);
     font-weight: 500;

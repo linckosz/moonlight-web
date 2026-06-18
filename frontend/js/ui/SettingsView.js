@@ -402,7 +402,7 @@ export class SettingsView {
         const noCodecSupported = this._codecSupport &&
             !this._codecSupport.h264 && !this._codecSupport.hevc && !this._codecSupport.av1;
         if (noCodecSupported) {
-            codecHintHtml = `<div class="settings-status settings-status-pending" style="margin-bottom:8px">
+            codecHintHtml = `<div class="settings-status settings-status-pending u-mb-2">
                 <strong>${t('settings.noCodecSupportedTitle')}</strong> ${t('settings.noCodecSupportedBody')}
             </div>`;
         }
@@ -525,7 +525,7 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.videoEnhancementDesc')}</span>
-                        ${this._debugBuild ? `<select id="settings-video-enhancement-algo" class="settings-select" style="margin-top:8px"${veDisabledAttr}>
+                        ${this._debugBuild ? `<select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veDisabledAttr}>
                             ${veAlgoOptions}
                         </select>` : ''}
                         ${veNote}
@@ -567,7 +567,7 @@ export class SettingsView {
 
                     <!-- Hidden: too technical for the average user. Kept in the DOM
                          (display:none) as a debug override; defaults to 'auto'. -->
-                    <div class="settings-field" style="display:none">
+                    <div class="settings-field u-hidden">
                         <label class="settings-label" for="settings-video-worker">Decode on worker thread</label>
                         <select id="settings-video-worker" class="settings-select">
                             <option value="auto" ${this._videoWorker === 'auto' ? 'selected' : ''}>Auto (by core count)</option>
