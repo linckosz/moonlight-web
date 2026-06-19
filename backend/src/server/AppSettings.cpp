@@ -157,8 +157,8 @@ int AppSettings::streamHeight() const
 void AppSettings::setStreamHeight(int height)
 {
     QJsonObject obj = readAll();
-    // Valid values: 720, 1080, 1440, 2160, or 0 (Native Host)
-    QList<int> valid = {0, 720, 1080, 1440, 2160};
+    // Valid values: 720, 1080, 1440, 2160
+    QList<int> valid = {720, 1080, 1440, 2160};
     if (!valid.contains(height))
         height = 1080;
     obj["stream_height"] = height;

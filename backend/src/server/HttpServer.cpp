@@ -570,33 +570,41 @@ bool HttpServer::loadCertFiles(const QString& certDir)
         return false;
     }
 
-    // Load private key: env var first, then file scan
+    // Load private key. Prefer the key file sitting next to the certificate —
+    // it is authoritative for ACME-issued certs (cert + key are written together
+    // in the same dir). The embedded env key (MW_CERT_KEY) belongs to ONE
+    // specific embedded cert; pairing it with a different scanned cert produces
+    // OpenSSL "key values mismatch" at handshake time (e.g. brunoocto key paired
+    // with a brunchlee/damian cert). So the env key is only a last resort, used
+    // when no file key is found alongside the cert (the embedded-cert deployment).
     QSslKey key;
     QString keySource;
 
-    if (useEnvKey) {
+    QFileInfo certFi(certPath);
+    QString keyPath = scanKeyInDir(certFi.absolutePath());
+    if (!keyPath.isEmpty()) {
+        QFile keyFile(keyPath);
+        if (keyFile.open(QIODevice::ReadOnly)) {
+            key = QSslKey(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+            keyFile.close();
+            if (key.isNull() && keyFile.open(QIODevice::ReadOnly)) {
+                key = QSslKey(&keyFile, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+                keyFile.close();
+            }
+            if (!key.isNull())
+                keySource = keyPath;
+        }
+    }
+
+    // Fall back to the embedded env key only when no file key was found.
+    if (key.isNull() && useEnvKey) {
         key = envKey;
         keySource = "env:MW_CERT_KEY";
-    } else {
-        QFileInfo certFi(certPath);
-        QString keyPath = scanKeyInDir(certFi.absolutePath());
-        if (keyPath.isEmpty()) {
-            Logger::warning("No private key found in " + certFi.absolutePath());
-            return false;
-        }
-        QFile keyFile(keyPath);
-        if (!keyFile.open(QIODevice::ReadOnly)) {
-            Logger::warning("Failed to open key file: " + keyFile.errorString());
-            return false;
-        }
-        key = QSslKey(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        keyFile.close();
-        if (key.isNull()) {
-            if (!keyFile.open(QIODevice::ReadOnly)) return false;
-            key = QSslKey(&keyFile, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
-            keyFile.close();
-        }
-        keySource = keyPath;
+    }
+
+    if (key.isNull()) {
+        Logger::warning("No usable private key found for cert " + certPath);
+        return false;
     }
 
     // Load cert chain

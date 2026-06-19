@@ -20,6 +20,11 @@
     padding: var(--space-5);
     margin-bottom: var(--space-5);
 }
+/* Power Saving: isolated block at the very bottom, set apart by a top divider. */
+.settings-section-powersave {
+    margin-top: var(--space-6);
+    border-top: 1px solid var(--border-1);
+}
 .settings-section-title {
     font-size: var(--fs-lg);
     font-weight: 600;
@@ -46,6 +51,15 @@
 
 /* Field block spacing inside a section (admin zeroes the first via inline style) */
 .settings-field { padding-top: var(--space-5); }
+
+/* A field frozen by Power Saving: clearly dimmed + a lock icon on its label so
+   it reads as read-only rather than just subtly greyed. */
+.settings-field-locked { opacity: 0.45; cursor: not-allowed; }
+.settings-field-locked .settings-label::after,
+.settings-field-locked .settings-checkbox-text strong::after {
+    content: " 🔒";
+    font-size: 0.9em;
+}
 
 .settings-actions {
     display: flex;

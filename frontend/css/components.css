@@ -638,6 +638,25 @@
 .sessions-table tr.session-row-streaming:hover td {
     background: rgba(62, 201, 138, 0.18);
 }
+/* Editable session name: looks like plain text until hovered/focused. */
+.session-name-edit {
+    display: inline-block;
+    min-width: 2ch;
+    padding: 1px 4px;
+    margin: -1px -4px;
+    border-radius: var(--radius-1);
+    cursor: text;
+    outline: none;
+    transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+.session-name-edit:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+.session-name-edit:focus {
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 1px var(--c-accent, var(--border-1));
+}
+
 .session-streaming-badge {
     display: inline-block;
     margin-left: var(--space-2);
