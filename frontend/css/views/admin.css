@@ -13,8 +13,10 @@
     font-family: var(--font-mono);
     font-size: 1.6rem;
     font-weight: 700;
-    /* Light tracking: separates the 6 digits without looking gappy. */
+    /* Light tracking between digits; word-spacing trims the full mono space so
+     * the gap between the two groups of 3 stays small ("123 456"). */
     letter-spacing: 2px;
+    word-spacing: -0.35em;
     color: var(--text-1);
     user-select: all;
     padding: 6px 14px;

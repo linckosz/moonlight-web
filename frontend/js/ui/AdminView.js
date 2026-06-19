@@ -40,8 +40,8 @@ export class AdminView {
         this._dnsPollAttempts = 0;
         this._maxDnsPollAttempts = 60; // 5 min at 5s interval
 
-        // Auth / PIN state (default "--------" = no valid PIN)
-        this._pin = '--------';
+        // Auth / PIN state (default "------" = no valid PIN, 6 digits)
+        this._pin = '------';
         this._pinConsumed = false;  // true when PIN was used by remote client
         this._activeSessions = 0;
         this._sessions = [];
@@ -165,8 +165,8 @@ export class AdminView {
             // explicitly generate a fresh PIN.
             const pinDisplay = this.container.querySelector('#admin-pin-display');
             if (pinDisplay) {
-                const displayValue = this._pinConsumed ? '--------' : this._pin;
-                if (pinDisplay.textContent !== displayValue) {
+                const displayValue = this._formatPin(this._pinConsumed ? '------' : this._pin);
+                if (pinDisplay.textContent.trim() !== displayValue) {
                     const oldPin = pinDisplay.textContent;
                     pinDisplay.textContent = displayValue;
                     pinDisplay.classList.toggle('pin-consumed', this._pinConsumed);
@@ -345,14 +345,14 @@ export class AdminView {
                             <div class="pin-display-area">
                                 <span class="pin-display ${this._pinConsumed ? 'pin-consumed' : ''}"
                                       id="admin-pin-display">
-                                    ${this.esc(this._pinConsumed ? '--------' : this._pin)}
+                                    ${this.esc(this._formatPin(this._pinConsumed ? '------' : this._pin))}
                                 </span>
+                                <button class="btn btn-secondary" id="btn-regenerate-pin">
+                                    ${t('common.generate')}
+                                </button>
                                 <button class="btn btn-secondary" id="btn-copy-pin"
                                         title="${this.esc(t('admin.copyPinTitle'))}">
                                     ${t('common.copy')}
-                                </button>
-                                <button class="btn btn-secondary" id="btn-regenerate-pin">
-                                    ${t('common.generate')}
                                 </button>
                                 <button class="btn btn-secondary" id="btn-clear-pin">
                                     ${t('common.clear')}
@@ -805,7 +805,7 @@ export class AdminView {
                 clearBtn.textContent = t('admin.clearing');
                 try {
                     const result = await BackendClient.clearPin();
-                    this._pin = result.pin || '--------';
+                    this._pin = result.pin || '------';
                     this._pinConsumed = false;
                     this.render();
                     this.bindEvents();
@@ -1038,6 +1038,13 @@ export class AdminView {
     }
 
     // --- Helpers ---
+
+    // Format a 6-char PIN as two groups of 3 for readability ("123 456",
+    // "--- ---"). Any other length is returned unchanged.
+    _formatPin(value) {
+        const s = String(value || '');
+        return s.length === 6 ? s.slice(0, 3) + ' ' + s.slice(3) : s;
+    }
 
     esc(text) {
         if (typeof text !== 'string' && typeof text !== 'number') return '';

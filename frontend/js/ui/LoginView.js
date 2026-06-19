@@ -146,7 +146,7 @@ export class LoginView {
                     <input type="text" id="login-machine-input" class="login-input"
                            placeholder="${this.esc(t('login.namePlaceholder'))}"
                            value="${this.esc(this._machineName)}"
-                           maxlength="64"
+                           maxlength="24"
                            autocomplete="off" />
                 </div>
 
@@ -156,7 +156,7 @@ export class LoginView {
                     <div class="login-pin-input-wrap">
                         <input type="text" id="login-pin-input" class="login-pin-input"
                                inputmode="numeric" pattern="[0-9]*"
-                               maxlength="20" placeholder="${this.esc(t('login.pinPlaceholder'))}"
+                               placeholder="${this.esc(t('login.pinPlaceholder'))}"
                                autocomplete="off"
                                ${this._lockoutRemaining > 0 ? 'disabled' : ''} />
                     </div>
@@ -189,7 +189,7 @@ export class LoginView {
                     <input type="text" id="login-machine-input" class="login-input"
                            placeholder="${this.esc(t('login.namePlaceholder'))}"
                            value="${this.esc(this._machineName)}"
-                           maxlength="64"
+                           maxlength="24"
                            autocomplete="off" />
                 </div>
 
@@ -251,10 +251,31 @@ export class LoginView {
         if (!input || !btn) return;
 
         input.addEventListener('input', () => {
-            input.value = input.value.replace(/\D/g, '');
-            btn.disabled = input.value.length === 0
+            // Mask: fill a "DDD DDD" template left-to-right — each typed digit
+            // replaces the next dash. Caret stays right after the last digit.
+            const digits = input.value.replace(/\D/g, '').slice(0, 6);
+            const filled = digits.padEnd(6, '-');
+            input.value = filled.slice(0, 3) + ' ' + filled.slice(3);
+            // Caret right after the last digit (start when none yet).
+            const caret = digits.length + (digits.length > 3 ? 1 : 0);
+            input.setSelectionRange(caret, caret);
+            btn.disabled = digits.length === 0
                 || this._lockoutRemaining > 0
                 || this._submitting;
+        });
+
+        // Show the "--- ---" template (centered) while focused, caret on the
+        // first dash; clear it on blur so the dim placeholder shows when empty.
+        input.addEventListener('focus', () => {
+            if (input.value.replace(/\D/g, '').length === 0) {
+                input.value = '--- ---';
+                input.setSelectionRange(0, 0);
+            }
+        });
+        input.addEventListener('blur', () => {
+            if (input.value.replace(/\D/g, '').length === 0) {
+                input.value = '';
+            }
         });
 
         input.addEventListener('keydown', (e) => {
@@ -334,7 +355,7 @@ export class LoginView {
         btn.disabled = true;
         btn.textContent = t('common.verifying');
 
-        const pin = input.value;
+        const pin = input.value.replace(/\D/g, '');
         const machineName = machineInput ? machineInput.value.trim() : '';
 
         try {

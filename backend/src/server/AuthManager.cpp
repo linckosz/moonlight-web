@@ -20,7 +20,7 @@
 AuthManager::AuthManager(AppSettings* settings, QObject* parent)
     : QObject(parent)
     , m_settings(settings)
-    , m_currentPin(QStringLiteral("--------"))
+    , m_currentPin(QStringLiteral("------"))
 {
     // Load or generate persistent HMAC key
     if (settings) {
@@ -79,8 +79,8 @@ QByteArray AuthManager::generateRandomKey()
 
 QString AuthManager::generatePinInternal()
 {
-    // 8-digit PIN in range [10000000, 99999999]
-    quint64 value = QRandomGenerator::securelySeeded().bounded(10000000ULL, 100000000ULL);
+    // 6-digit PIN in range [100000, 999999]
+    quint64 value = QRandomGenerator::securelySeeded().bounded(100000ULL, 1000000ULL);
     return QString::number(value);
 }
 
@@ -198,7 +198,7 @@ void AuthManager::autoRegeneratePin()
 
 void AuthManager::clearPin()
 {
-    m_currentPin = QStringLiteral("--------");
+    m_currentPin = QStringLiteral("------");
     m_pinConsumed = false;
     Logger::info("[Auth] PIN cleared");
     emit pinChanged(m_currentPin);
@@ -206,7 +206,7 @@ void AuthManager::clearPin()
 
 bool AuthManager::hasValidPin() const
 {
-    return m_currentPin != QStringLiteral("--------") && !m_currentPin.isEmpty();
+    return m_currentPin != QStringLiteral("------") && !m_currentPin.isEmpty();
 }
 
 // ── Certificate Authentication ────────────────────────────────────────────────
