@@ -55,7 +55,8 @@
     "loading": "Chargement des applications...",
     "loadFailed": "Échec du chargement des applications",
     "loadFailedHint": "L'hôte est injoignable ou a mis trop de temps à répondre",
-    "launchAria": "Lancer {{name}}"
+    "launchAria": "Lancer {{name}}",
+    "launching": "Lancement…"
   },
   "login": {
     "connecting": "Connexion au serveur...",
@@ -98,7 +99,6 @@
     "advanced": "Avancé",
     "resolution": "Résolution diffusée",
     "resolutionDesc": "Une résolution plus élevée demande plus de bande passante et de puissance GPU",
-    "sameAsHost": "Comme l'hôte",
     "frameRate": "Fréquence d'images",
     "frameRateDesc": "Des fréquences plus élevées offrent un mouvement plus fluide mais demandent plus de bande passante",
     "fpsSuffix": "{{fps}} FPS",
@@ -132,7 +132,10 @@
     "resetDefaultsDesc": "Restaure tous les paramètres de streaming à leurs valeurs par défaut",
     "saved": "Enregistré",
     "settingsReset": "Paramètres réinitialisés par défaut",
-    "algoAuto": "Auto (mobile→SGSR, bureau→FSR1)",
+    "powerSave": "Économie d'énergie",
+    "powerSaveToggle": "Mode économie d'énergie",
+    "powerSaveDesc": "Force le pipeline le plus léger sur batterie : transport vidéo natif (UDP en priorité), H.264, pas de HDR, pas d'amélioration, VSync activée, 720p / 60fps. Résolution, fréquence et débit restent réglables. Décocher restaure vos valeurs précédentes si vous ne les avez pas modifiées.",
+    "algoAuto": "Auto",
     "algoSgsr": "SGSR (Snapdragon)",
     "algoFsr1": "FSR 1 (AMD)",
     "algoForce2d": "Forcer Canvas 2D (debug)",

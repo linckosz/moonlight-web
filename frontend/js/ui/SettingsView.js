@@ -44,6 +44,12 @@ export class SettingsView {
         this._videoEnhancementAlgo = 'auto';
         this._debugBuild = false;
 
+        // Power Saving mode (mobile only): forces the lightest pipeline.
+        // _powerSaveBackup holds the values present before enabling, so unchecking
+        // can restore the ones the user didn't manually change in the meantime.
+        this._powerSave = false;
+        this._powerSaveBackup = null;
+
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
         this._codecSupport = null;
 
@@ -115,6 +121,9 @@ export class SettingsView {
         this._videoEnhancement = data.video_enhancement === 'on' ? 'on' : 'off';
         const algo = data.video_enhancement_algo;
         this._videoEnhancementAlgo = (algo === 'sgsr' || algo === 'fsr1' || algo === 'force2d') ? algo : 'auto';
+        this._powerSave = data.power_save === true;
+        this._powerSaveBackup = (data.power_save_backup && typeof data.power_save_backup === 'object')
+            ? data.power_save_backup : null;
     }
 
     /**
@@ -181,7 +190,10 @@ export class SettingsView {
             vsync_enabled: this._vsync,
             video_worker: this._videoWorker,
             video_enhancement: this._videoEnhancement,
-            video_enhancement_algo: this._videoEnhancementAlgo
+            video_enhancement_algo: this._videoEnhancementAlgo,
+            // Per-device only (server ignores these unknown fields).
+            power_save: this._powerSave,
+            power_save_backup: this._powerSaveBackup
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -366,6 +378,8 @@ export class SettingsView {
         this._videoWorker = 'auto';
         this._videoEnhancement = 'off';
         this._videoEnhancementAlgo = 'auto';
+        this._powerSave = false;
+        this._powerSaveBackup = null;
         // Bitrate follows the 1080p60 SDR 16:9 reference
         this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false, '16:9');
 
@@ -377,9 +391,66 @@ export class SettingsView {
         Toast.success(t('settings.settingsReset'));
     }
 
+    /**
+     * Toggle Power Saving mode (mobile only). Enabling forces the lightest
+     * pipeline (native video / UDP-first transport, H.264, no HDR, no
+     * enhancement, VSync on, 720p / 60fps, auto bitrate) and grays out the
+     * forced controls. Resolution / FPS / bitrate stay editable.
+     *
+     * The pre-enable values are snapshotted; disabling restores each one ONLY
+     * if it is still at its power-save default (i.e. the user didn't change it).
+     */
+    async _togglePowerSave(enabled) {
+        if (enabled) {
+            this._powerSaveBackup = {
+                video_codec: this._videoCodec,
+                hdr_enabled: this._hdrEnabled,
+                video_enhancement: this._videoEnhancement,
+                vsync_enabled: this._vsync,
+                stream_height: this._streamHeight,
+                stream_fps: this._streamFps,
+                stream_bitrate_mbps: this._streamBitrateMbps
+            };
+            this._videoCodec = 'h264';
+            this._hdrEnabled = false;
+            this._videoEnhancement = 'off';
+            this._vsync = true;
+            this._streamHeight = 720;
+            this._streamFps = 60;
+            this._streamBitrateMbps = this._computeAutoBitrate(720, 60, false, this._streamAspect);
+            this._powerSave = true;
+        } else {
+            const b = this._powerSaveBackup;
+            if (b) {
+                const psBitrate = this._computeAutoBitrate(720, 60, false, this._streamAspect);
+                // Restore each value only if untouched (still at the power-save default).
+                if (this._videoCodec === 'h264') this._videoCodec = b.video_codec;
+                if (this._hdrEnabled === false) this._hdrEnabled = b.hdr_enabled;
+                if (this._videoEnhancement === 'off') this._videoEnhancement = b.video_enhancement;
+                if (this._vsync === true) this._vsync = b.vsync_enabled;
+                if (this._streamHeight === 720) this._streamHeight = b.stream_height;
+                if (this._streamFps === 60) this._streamFps = b.stream_fps;
+                if (this._streamBitrateMbps === psBitrate) this._streamBitrateMbps = b.stream_bitrate_mbps;
+            }
+            this._powerSave = false;
+            this._powerSaveBackup = null;
+        }
+
+        await this._saveToStorage();
+        this.render();
+        this.bindEvents();
+        Toast.success(t('settings.saved'));
+    }
+
     // --- Rendering ---
 
     render() {
+        // Power Saving forces (and grays out) HDR, VSync, codec and enhancement.
+        // psDisabled disables the control; psLocked dims the whole field + adds a
+        // lock icon so it's clearly read-only (not just subtly greyed).
+        const psDisabled = this._powerSave ? ' disabled' : '';
+        const psLocked = this._powerSave ? ' settings-field-locked' : '';
+
         // Codec options (explicit, no "Auto")
         const codecs = [
             { value: 'h264', label: t('settings.codecH264') },
@@ -430,8 +501,7 @@ export class SettingsView {
             { value: 720,  label: '720p' },
             { value: 1080, label: '1080p' },
             { value: 1440, label: '1440p' },
-            { value: 2160, label: '2160p' },
-            { value: 0,    label: t('settings.sameAsHost') }
+            { value: 2160, label: '2160p' }
         ];
         const heightOptions = heights.map(h =>
             `<option value="${h.value}" ${h.value === this._streamHeight ? 'selected' : ''}>${this.esc(h.label)}</option>`
@@ -492,10 +562,10 @@ export class SettingsView {
                         </select>
                     </div>
 
-                    <div class="settings-field">
+                    <div class="settings-field${psLocked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-hdr"
-                                ${this._hdrEnabled ? 'checked' : ''} />
+                                ${this._hdrEnabled ? 'checked' : ''}${psDisabled} />
                             <span class="settings-checkbox-text">
                                 <strong>${t('settings.hdr')}</strong>
                             </span>
@@ -503,10 +573,10 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.hdrDesc')}</span>
                     </div>
 
-                    <div class="settings-field">
+                    <div class="settings-field${psLocked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-vsync"
-                                ${this._vsync ? 'checked' : ''} />
+                                ${this._vsync ? 'checked' : ''}${psDisabled} />
                             <span class="settings-checkbox-text">
                                 <strong>${t('settings.vsync')}</strong>
                             </span>
@@ -534,10 +604,10 @@ export class SettingsView {
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('settings.advanced')}</h3>
 
-                    <div class="settings-field">
+                    <div class="settings-field${psLocked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-video-enhancement"
-                                ${this._videoEnhancement === 'on' ? 'checked' : ''}${veDisabledAttr} />
+                                ${this._videoEnhancement === 'on' ? 'checked' : ''}${veDisabledAttr}${psDisabled} />
                             <span class="settings-checkbox-text">
                                 <strong>${t('settings.videoEnhancement')}${webgpuUnavailable ? t('settings.unavailableSuffix') : ''}</strong>
                             </span>
@@ -549,12 +619,12 @@ export class SettingsView {
                         ${veNote}
                     </div>
 
-                    <div class="settings-field">
+                    <div class="settings-field${psLocked}">
                         <label class="settings-label" for="settings-video-codec">
                             ${t('settings.videoCodec')}
                         </label>
                         <span class="setting-desc">${t('settings.videoCodecDesc')}</span>
-                        <select id="settings-video-codec" class="settings-select">
+                        <select id="settings-video-codec" class="settings-select"${psDisabled}>
                             ${codecOptions}
                         </select>
                         ${codecHintHtml}
@@ -623,6 +693,22 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.languageDesc')}</span>
                     </div>
                 </div>
+
+                ${IS_TOUCH_DEVICE ? `
+                <!-- ── Power Saving (mobile only, isolated above Reset) ──────── -->
+                <div class="settings-section settings-section-powersave">
+                    <h3 class="settings-section-title">${t('settings.powerSave')}</h3>
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-power-save"
+                                ${this._powerSave ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.powerSaveToggle')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.powerSaveDesc')}</span>
+                    </div>
+                </div>` : ''}
 
                 <!-- ── Reset ───────────────────────────────────────────────── -->
                 <div class="settings-section">
@@ -723,6 +809,10 @@ export class SettingsView {
         // Language selector — changing it persists the choice and reloads.
         const langSelect = this.container.querySelector('#settings-language');
         if (langSelect) langSelect.addEventListener('change', () => setLanguage(langSelect.value));
+
+        const powerSaveCheck = this.container.querySelector('#settings-power-save');
+        if (powerSaveCheck) powerSaveCheck.addEventListener('change',
+            () => this._togglePowerSave(powerSaveCheck.checked));
 
         const resetBtn = this.container.querySelector('#btn-settings-reset');
         if (resetBtn) resetBtn.addEventListener('click', () => this._resetDefaults());

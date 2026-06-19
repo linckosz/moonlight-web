@@ -55,7 +55,8 @@
     "loading": "Loading applications...",
     "loadFailed": "Failed to load applications",
     "loadFailedHint": "The host is unreachable or took too long to respond",
-    "launchAria": "Launch {{name}}"
+    "launchAria": "Launch {{name}}",
+    "launching": "Launching…"
   },
   "login": {
     "connecting": "Connecting to server...",
@@ -98,7 +99,6 @@
     "advanced": "Advanced",
     "resolution": "Streamed Resolution",
     "resolutionDesc": "Higher resolution needs more bandwidth and GPU power",
-    "sameAsHost": "Same as Host",
     "frameRate": "Frame Rate",
     "frameRateDesc": "Higher frame rates provide smoother motion but need more bandwidth",
     "fpsSuffix": "{{fps}} FPS",
@@ -132,7 +132,10 @@
     "resetDefaultsDesc": "Restore all streaming settings to their default values",
     "saved": "Saved",
     "settingsReset": "Settings reset to defaults",
-    "algoAuto": "Auto (mobile→SGSR, desktop→FSR1)",
+    "powerSave": "Power Saving",
+    "powerSaveToggle": "Power Saving Mode",
+    "powerSaveDesc": "Forces the lightest pipeline on battery: native video transport (UDP first), H.264, no HDR, no enhancement, VSync on, 720p / 60fps. Resolution, frame rate and bitrate stay adjustable. Unchecking restores your previous values if you didn't change them.",
+    "algoAuto": "Auto",
     "algoSgsr": "SGSR (Snapdragon)",
     "algoFsr1": "FSR 1 (AMD)",
     "algoForce2d": "Force Canvas 2D (debug)",

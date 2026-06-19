@@ -77,6 +77,9 @@ public:
     /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,
      *  i.e. the token hash), NOT the raw cookie token. */
     void destroySession(const QString& token);
+    /** Rename a session by its opaque id (the token hash exposed in toJson),
+     *  NOT the raw cookie token. No-op for unknown ids. Returns true on success. */
+    bool renameSession(const QString& token, const QString& machineName);
     void destroyAllSessions();
     /** Drop sessions inactive beyond SESSION_TTL_SECS. Called periodically. */
     void purgeExpiredSessions();

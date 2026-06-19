@@ -121,6 +121,7 @@ export class BackendClient {
 
     static async getAuthSessions()              { return this.get('/api/auth/sessions'); }
     static async revokeSession(token)           { return this.post('/api/auth/sessions/revoke', { token }); }
+    static async renameSession(token, name)     { return this.post('/api/auth/sessions/rename', { token, machine_name: name }); }
 
     // ── Server Info ──────────────────────────────────────────────────────────
 

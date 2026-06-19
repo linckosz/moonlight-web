@@ -634,6 +634,15 @@ const MoonlightApp = {
             streamingSettings.video_codec = codecOverride;
         }
 
+        // Power Saving (mobile): force the native video transport, UDP first.
+        // webrtc-media-udp is tried before any TCP/DataChannel fallback, so the
+        // <video> pipeline (no canvas) and UDP have priority. The other settings
+        // (H.264, no HDR/enhancement, VSync, 720p/60) are already in the stored
+        // object because SettingsView applied them when the mode was enabled.
+        if (streamingSettings.power_save) {
+            streamingSettings.transport_mode = 'webrtc-media-udp';
+        }
+
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id, streamingSettings);
             // Log only safe fields — never log the full response as it may contain

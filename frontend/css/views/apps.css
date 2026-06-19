@@ -91,6 +91,23 @@
     word-break: break-word;
 }
 
+/* ── Launching state — discreet label only, no card effect ──────────────── */
+.app-card--launching { cursor: progress; }
+/* Status label: mono accent yellow, gently blinking to read as "loading". */
+.app-card--launching .app-card-name {
+    color: var(--accent-1);
+    font-family: var(--font-mono);
+    letter-spacing: 0.04em;
+    animation: app-launch-blink 1.6s ease-in-out infinite;
+}
+@keyframes app-launch-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .app-card--launching .app-card-name { animation: none; }
+}
+
 @media (max-width: 600px) {
     .apps-grid {
         grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

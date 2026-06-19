@@ -61,6 +61,17 @@ public:
     void sendMouseButton(bool down, int button);
     void sendMouseScroll(short scrollAmount);
 
+    // --- Game controller (gamepad) ---
+    // Announce a newly connected controller (preferred over an empty state event):
+    // lets the host pick the best emulated controller type and capabilities.
+    void sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask,
+                               uint8_t type, bool hasRumble);
+    // Send a full controller state snapshot (buttons + triggers + sticks).
+    // Used for updates and, with an empty payload + cleared mask bit, for removal.
+    void sendControllerState(short controllerNumber, short activeGamepadMask,
+                             int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+                             short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+
     // Request an IDR frame from the host (Sunshine).
     // Called when the browser needs a keyframe to configure its decoder.
     void requestIdrFrame();
@@ -94,6 +105,8 @@ signals:
     void videoFrameReady(QByteArray data, int frameType, int frameNumber);
     void audioSampleReady(QByteArray data);
     void connectionStopped();
+    // Host requested controller rumble (forwarded to the browser's vibration API).
+    void rumble(int controllerNumber, int lowFreqMotor, int highFreqMotor);
 
 private:
     QPointer<QThread> m_WorkerThread;

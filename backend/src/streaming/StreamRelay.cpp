@@ -32,6 +32,19 @@ StreamRelay::StreamRelay(MoonlightShim* shim,
     connect(m_Shim, &MoonlightShim::connectionTerminated,
             this, &StreamRelay::onShimConnectionTerminated);
 
+    // Forward host rumble requests to the browser over the WebSocket.
+    connect(m_Shim, &MoonlightShim::rumble, this,
+            [this](int controller, int low, int high) {
+        if (!m_WsClient || m_WsClient->state() != QAbstractSocket::ConnectedState) return;
+        QJsonObject m;
+        m["type"] = "rumble";
+        m["index"] = controller;
+        m["low"] = low;
+        m["high"] = high;
+        m_WsClient->sendTextMessage(
+            QString::fromUtf8(QJsonDocument(m).toJson(QJsonDocument::Compact)));
+    });
+
     bool secure = !sslConfig.isNull();
     m_WsServer = new QWebSocketServer(
         QString("Moonlight-Relay"),
@@ -606,6 +619,31 @@ void StreamRelay::onWsTextMessage(const QString& message)
             m_WsClient->sendTextMessage(
                 QString::fromUtf8(QJsonDocument(pong).toJson(QJsonDocument::Compact)));
         }
+    }
+    else if (type == "gamepad") {
+        m_Shim->sendControllerState(
+            static_cast<short>(msg["index"].toInt(0)),
+            static_cast<short>(msg["mask"].toInt(0)),
+            msg["buttons"].toInt(0),
+            static_cast<unsigned char>(msg["lt"].toInt(0)),
+            static_cast<unsigned char>(msg["rt"].toInt(0)),
+            static_cast<short>(msg["lx"].toInt(0)),
+            static_cast<short>(msg["ly"].toInt(0)),
+            static_cast<short>(msg["rx"].toInt(0)),
+            static_cast<short>(msg["ry"].toInt(0)));
+    }
+    else if (type == "gamepadconnect") {
+        m_Shim->sendControllerArrival(
+            static_cast<uint8_t>(msg["index"].toInt(0)),
+            static_cast<uint16_t>(msg["mask"].toInt(0)),
+            static_cast<uint8_t>(msg["ctype"].toInt(0)),
+            msg["rumble"].toBool(false));
+    }
+    else if (type == "gamepaddisconnect") {
+        m_Shim->sendControllerState(
+            static_cast<short>(msg["index"].toInt(0)),
+            static_cast<short>(msg["mask"].toInt(0)),
+            0, 0, 0, 0, 0, 0, 0);
     }
     else {
         qWarning() << "[StreamRelay] Unknown input type:" << type;

@@ -518,6 +518,22 @@ void AuthManager::destroySession(const QString& token)
     }
 }
 
+bool AuthManager::renameSession(const QString& token, const QString& machineName)
+{
+    // The id exposed to the admin UI is already the token hash (the map key).
+    auto it = m_sessions.find(token);
+    if (it == m_sessions.end()) {
+        Logger::warning(QString("[Auth] renameSession: token not found — token='%1'").arg(token));
+        return false;
+    }
+
+    it->machineName = machineName;
+    saveSessions();
+    emit sessionsChanged();
+    Logger::info(QString("[Auth] Session renamed to '%1' for %2").arg(machineName, it->ip));
+    return true;
+}
+
 void AuthManager::destroyAllSessions()
 {
     int count = m_sessions.size();

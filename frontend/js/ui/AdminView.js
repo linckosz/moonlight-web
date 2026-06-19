@@ -149,7 +149,10 @@ export class AdminView {
             await this._loadAuthStatus();
             await this._loadSessions();
             const sessionsDisplay = this.container.querySelector('#admin-sessions-table');
-            if (sessionsDisplay) {
+            // Don't clobber an in-progress rename: skip the re-render while a
+            // session name cell has focus.
+            const editing = this.container.querySelector('.session-name-edit:focus');
+            if (sessionsDisplay && !editing) {
                 this._renderSessionsTable();
             }
             // Keep the session count header in the Active Sessions section in sync
@@ -557,7 +560,10 @@ export class AdminView {
                 : '';
             return `
             <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
-                <td>${this.esc(s.machine_name || t('common.unknown'))}${streamingBadge}</td>
+                <td><span class="session-name-edit" contenteditable="plaintext-only"
+                          spellcheck="false"
+                          data-token="${this.esc(s.token)}"
+                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(s.machine_name || t('common.unknown'))}</span>${streamingBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>
@@ -636,6 +642,9 @@ export class AdminView {
         container.querySelectorAll('.btn-session-revoke').forEach(btn => {
             btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
         });
+
+        // Re-bind editable session names
+        this._bindSessionNameEdits(container);
 
         // Re-bind pagination buttons
         const prevBtn = container.querySelector('#btn-page-prev');
@@ -924,6 +933,9 @@ export class AdminView {
             btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
         });
 
+        // Editable session names
+        this._bindSessionNameEdits(this.container);
+
         // Close button
         const closeBtn = this.container.querySelector('#btn-admin-close');
         if (closeBtn) {
@@ -968,6 +980,53 @@ export class AdminView {
                 btn.disabled = false;
                 btn.textContent = t('admin.revoke');
             }
+        }
+    }
+
+    // --- Editable session names ---
+
+    _bindSessionNameEdits(root) {
+        root.querySelectorAll('.session-name-edit').forEach(el => {
+            el.dataset.original = el.textContent.trim();
+            el.addEventListener('focus', () => {
+                el.dataset.original = el.textContent.trim();
+            });
+            el.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    el.blur();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    el.textContent = el.dataset.original || '';
+                    el.blur();
+                }
+            });
+            el.addEventListener('blur', () => this._commitSessionName(el));
+        });
+    }
+
+    async _commitSessionName(el) {
+        const token = el.dataset.token;
+        const original = (el.dataset.original || '').trim();
+        let name = el.textContent.trim();
+
+        // Empty or unchanged: revert to the stored value, no request.
+        if (!name) { el.textContent = original; return; }
+        if (name === original) { el.textContent = name; return; }
+        if (name.length > 64) name = name.slice(0, 64);
+
+        try {
+            const result = await BackendClient.renameSession(token, name);
+            const finalName = result.machine_name || name;
+            el.textContent = finalName;
+            el.dataset.original = finalName;
+            const s = this._sessions.find(s => s.token === token);
+            if (s) s.machine_name = finalName;
+            Toast.success(t('admin.sessionRenamed'));
+        } catch (err) {
+            console.error('[Admin] Failed to rename session:', err);
+            Toast.error(t('admin.renameFailed', { message: err.message }));
+            el.textContent = original; // revert on failure
         }
     }
 

@@ -488,7 +488,13 @@ void MoonlightShim::clLogMessage(const char* format, ...)
     fprintf(stderr, "[moonlight] %s", buffer);
 }
 
-void MoonlightShim::clRumble(unsigned short, unsigned short, unsigned short) {}
+void MoonlightShim::clRumble(unsigned short controller, unsigned short low, unsigned short high)
+{
+    MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
+    if (!instance || instance->m_Stopping.load()) return;
+    // Forward to the relay (queued: this runs on the moonlight worker thread).
+    emit instance->rumble(controller, low, high);
+}
 void MoonlightShim::clConnectionStatusUpdate(int) {}
 void MoonlightShim::clSetHdrMode(bool) {}
 
@@ -533,6 +539,37 @@ void MoonlightShim::sendMouseScroll(short scrollAmount)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
     LiSendHighResScrollEvent(scrollAmount);
+}
+
+// Standard gamepad button set exposed by the browser Gamepad API
+// ("standard mapping"): A/B/X/Y, dpad, bumpers, start/back, stick clicks, guide.
+static constexpr int kStandardGamepadButtons =
+    A_FLAG | B_FLAG | X_FLAG | Y_FLAG |
+    UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG |
+    LB_FLAG | RB_FLAG | PLAY_FLAG | BACK_FLAG |
+    LS_CLK_FLAG | RS_CLK_FLAG | SPECIAL_FLAG;
+
+void MoonlightShim::sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask,
+                                          uint8_t type, bool hasRumble)
+{
+    if (!m_Connected.load(std::memory_order_acquire)) return;
+    // Browser triggers are always analog; rumble depends on the gamepad's
+    // vibrationActuator (reported by the client). Gyro/touchpad/LED are not
+    // reachable via the Gamepad API, so they are not advertised.
+    uint16_t caps = LI_CCAP_ANALOG_TRIGGERS;
+    if (hasRumble) caps |= LI_CCAP_RUMBLE;
+    LiSendControllerArrivalEvent(controllerNumber, activeGamepadMask, type,
+                                 kStandardGamepadButtons, caps);
+}
+
+void MoonlightShim::sendControllerState(short controllerNumber, short activeGamepadMask,
+                                        int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+                                        short leftStickX, short leftStickY, short rightStickX, short rightStickY)
+{
+    if (!m_Connected.load(std::memory_order_acquire)) return;
+    LiSendMultiControllerEvent(controllerNumber, activeGamepadMask, buttonFlags,
+                               leftTrigger, rightTrigger,
+                               leftStickX, leftStickY, rightStickX, rightStickY);
 }
 
 void MoonlightShim::requestIdrFrame()

@@ -155,9 +155,12 @@ export class AppListView {
         // Space when focused). No separate Launch/Play button.
         this.container.querySelectorAll('.app-card').forEach(card => {
             const launch = () => {
+                // Ignore re-taps while a launch is already in flight on this card.
+                if (card.classList.contains('app-card--launching')) return;
                 const appId = parseInt(card.dataset.appId);
                 const app = this.apps.find(a => a.id === appId);
                 if (app) {
+                    this.setLaunching(card);
                     this.onLaunch && this.onLaunch(app);
                 }
             };
@@ -169,6 +172,18 @@ export class AppListView {
                 }
             });
         });
+    }
+
+    // Switch a card into the "launching" state: a discreet Cyberpunk scan/glow
+    // animation driven entirely by CSS, plus a status label over the name.
+    setLaunching(card) {
+        card.classList.add('app-card--launching');
+        card.setAttribute('aria-busy', 'true');
+        const nameEl = card.querySelector('.app-card-name');
+        if (nameEl && !nameEl.dataset.label) {
+            nameEl.dataset.label = nameEl.textContent;
+            nameEl.textContent = t('apps.launching');
+        }
     }
 
     bindBackButton() {

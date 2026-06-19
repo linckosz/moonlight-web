@@ -930,8 +930,9 @@ int main(int argc, char* argv[])
         //
         //   - "auto"      → the priority-ordered list (enhancement-aware, codec-
         //                   filtered).
-        //   - explicit X  → X first, then the rest of the auto order (a manual
-        //                   choice that fails falls back through the auto chain).
+        //   - explicit X  → X first; if X is a "-udp" mode, its "-tcp" sibling is
+        //                   promoted to second (prefer the same transport family
+        //                   before switching), then the rest of the auto order.
         QStringList autoOrder = filterTransportsByCodec(
             TransportPriorities::orderedTransports(reqVideoEnhancement), reqCodec, host);
 
@@ -940,8 +941,17 @@ int main(int argc, char* argv[])
             transportChain = autoOrder;
         } else {
             transportChain.append(transportMode); // forced mode first
+            // Keep the same transport family on first fallback: a forced "-udp"
+            // mode prefers its "-tcp" sibling second (e.g. webrtc-media-udp →
+            // webrtc-media-tcp) before falling through to other transports.
+            QString sibling;
+            if (transportMode.endsWith(QStringLiteral("-udp")))
+                sibling = transportMode.left(transportMode.length() - 4)
+                          + QStringLiteral("-tcp");
+            if (!sibling.isEmpty() && autoOrder.contains(sibling))
+                transportChain.append(sibling);
             for (const QString& m : autoOrder)
-                if (m != transportMode)
+                if (m != transportMode && m != sibling)
                     transportChain.append(m);
         }
         qInfo() << "[Session] Transport chain:" << transportChain

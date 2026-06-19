@@ -11,6 +11,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
 import { JitterController } from '../stream/JitterController.js';
+import { GamepadManager } from '../stream/GamepadManager.js';
 import {
     NalParser,
     splitNals,
@@ -321,6 +322,9 @@ export class StreamView {
         this._jitterAuto = false;
         try { this._jitterAuto = localStorage.getItem('mw_jitter_auto') === '1'; } catch (e) {}
         this._jitterController = new JitterController();
+
+        // Gamepad bridge (Xbox/PlayStation) — created lazily on first connect.
+        this._gamepadManager = null;
 
         // Forward stats/pong messages from backend to the stats overlay system.
         // Set before setupWebRtc() so it's active when connect() is called.
@@ -2039,6 +2043,14 @@ export class StreamView {
                 this.webrtc.send({ type: 'ping', seq, ts: performance.now() });
             }, 2000);
 
+            // Start polling connected gamepads (Xbox/PlayStation). Sends a
+            // controller snapshot over the input transport only on change.
+            if (!this._gamepadManager && navigator.getGamepads) {
+                this._gamepadManager = new GamepadManager(
+                    (msg) => { if (!this._quitting) this.webrtc.send(msg); });
+            }
+            if (this._gamepadManager) this._gamepadManager.start();
+
             if (this._transport === 'webrtc-media') {
                 // Media track mode: video arrives natively via <video> element.
                 // No WebCodecs decoder needed. The first video frame triggers
@@ -2375,6 +2387,10 @@ export class StreamView {
     // ── Stats message handler (ping/pong + periodic backend stats) ─────────
 
     _handleStatsMessage(msg) {
+        if (msg.type === 'rumble') {
+            if (this._gamepadManager) this._gamepadManager.rumble(msg.index, msg.low, msg.high);
+            return;
+        }
         if (msg.type === 'pong') {
             const browserRtt = performance.now() - msg.ts;
             if (browserRtt > 0 && browserRtt < 10000) {
@@ -2781,6 +2797,11 @@ export class StreamView {
     // =========================================================================
 
     bindEvents() {
+        // Lock keys (Num/Caps/Scroll) are toggles and the Moonlight protocol
+        // carries no initial lock state, so the host can't know the client
+        // started with e.g. NumLock on. Re-sync once per session on the first
+        // real keyboard event (getModifierState requires a KeyboardEvent).
+        this._locksSynced = false;
         // Common events (both modes)
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
@@ -2966,6 +2987,7 @@ export class StreamView {
     }
 
     unbindEvents() {
+        if (this._gamepadManager) this._gamepadManager.stop();
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener('keyup', this._onKeyUp);
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
@@ -3096,12 +3118,39 @@ export class StreamView {
         return map[code] !== undefined ? map[code] : 0;
     }
 
+    // Align the host's toggle-lock state with the client's. The Moonlight
+    // protocol has no lock-state field, so the host can't know the client
+    // booted with NumLock on. We assume the host starts with locks off (the
+    // common case) and tap each lock that is active client-side to toggle the
+    // host on. Runs once per session — subsequent presses pass through as
+    // normal toggles. getModifierState only works on a real KeyboardEvent.
+    _syncLockState(e) {
+        this._locksSynced = true;
+        if (typeof e.getModifierState !== 'function') return;
+        const locks = [
+            ['NumLock', 0x90],
+            ['CapsLock', 0x14],
+            ['ScrollLock', 0x91],
+        ];
+        for (const [name, vk] of locks) {
+            // Skip the key currently being pressed: its state is mid-toggle.
+            if (e.code === name) continue;
+            if (!e.getModifierState(name)) continue;
+            const base = { keyCode: vk, code: name, key: name };
+            this.webrtc.send({ type: 'keydown', ...base });
+            this.webrtc.send({ type: 'keyup', ...base });
+        }
+    }
+
     handleKeyDown(e) {
         // Ignore all keyboard input while the stream is being shut down
         if (this._quitting) return;
         // Soft-keyboard events on the capture element are handled by its own
         // listeners (beforeinput/keydown) — don't double-process here.
         if (e.target === this._kbdCapture) return;
+
+        // Sync lock keys to the host once, on the first real keyboard event.
+        if (!this._locksSynced) this._syncLockState(e);
 
         // ── CSS fallback fullscreen Escape ─────────────────────────────────
         // When in CSS fake fullscreen (no native Fullscreen API), Escape
@@ -3259,7 +3308,10 @@ export class StreamView {
 
     handleWheel(e) {
         e.preventDefault();
-        this.webrtc.send({ type: 'mousewheel', delta: e.deltaY });
+        // Browser deltaY is positive scrolling down; LiSendHighResScrollEvent
+        // expects positive = up. Negate so standard wheels scroll the right way
+        // (macOS "natural scrolling" already flips the sign at the OS level).
+        this.webrtc.send({ type: 'mousewheel', delta: -e.deltaY });
     }
 
     // =========================================================================
@@ -3858,6 +3910,12 @@ export class StreamView {
      *   2 fingers (simultaneous) → right click (mousedown+mouseup button=3).
      */
     handleTouchStart(e) {
+        // A touch anywhere on screen dismisses the gesture hint, not just a tap
+        // on the slide itself (it takes up real estate on mobile).
+        if (this._shortcutsSlide && this._shortcutsSlide.style.display !== 'none' &&
+            !this._shortcutsSlide.classList.contains('fading-out')) {
+            this._hideShortcutsSlide();
+        }
         // Let UI buttons (Stop, Fullscreen, Keyboard) receive their native taps
         if (e.target.closest('button')) return;
         e.preventDefault();
@@ -4453,6 +4511,10 @@ export class StreamView {
         if (this._revealPlayed || !this._revealEl) return;
         this._revealPlayed = true;
         const el = this._revealEl;
+        // Size the reveal to the actual frame rectangle (object-fit: contain
+        // letterboxes the image inside the area) so the boot animation covers
+        // only the streamed image, not the surrounding black bars.
+        this._fitRevealToFrame();
         el.style.display = 'block';
         // Force reflow so the animation always (re)starts from frame 0.
         void el.offsetWidth;
@@ -4462,6 +4524,35 @@ export class StreamView {
             el.classList.remove('playing');
             el.style.display = 'none';
         }, 1000);
+    }
+
+    /**
+     * Position the reveal overlay to match the letterboxed frame rectangle.
+     * object-fit: contain centers the image and leaves black bars; the reveal
+     * must align with the image only, not the full canvas area.
+     */
+    _fitRevealToFrame() {
+        const el = this._revealEl;
+        if (!el || !this.canvasArea) return;
+        const rect = this.canvasArea.getBoundingClientRect();
+        const disp = this._displayEl();
+        let iw = 0, ih = 0;
+        if (this._transport === 'webrtc-media' && disp) { iw = disp.videoWidth; ih = disp.videoHeight; }
+        else if (this.canvas) { iw = this.canvas.width; ih = this.canvas.height; }
+        if (iw > 0 && ih > 0 && rect.width > 0 && rect.height > 0) {
+            // Restrict the reveal to the frame's height only; width stays 100%.
+            const fit = Math.min(rect.width / iw, rect.height / ih);
+            const imgH = ih * fit;
+            el.style.inset = 'auto';
+            el.style.left = '0';
+            el.style.width = '100%';
+            el.style.top = ((rect.height - imgH) / 2) + 'px';
+            el.style.height = imgH + 'px';
+        } else {
+            // Fallback: no known frame size → cover the whole area.
+            el.style.inset = '0';
+            el.style.left = el.style.top = el.style.width = el.style.height = '';
+        }
     }
 
     /**
