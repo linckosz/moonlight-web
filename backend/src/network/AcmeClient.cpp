@@ -1236,13 +1236,18 @@ void AcmeClient::stepFinalize()
         qInfo() << "[AcmeClient] Order still processing (" << status << "), will poll";
         emit progress(QStringLiteral("Waiting for order to be ready..."));
 
-        // Poll the order URL until valid
+        // Poll the order URL until valid.
+        // The recursive poll closure must outlive this callback's stack frame:
+        // it is re-scheduled from inside its own async response, long after
+        // stepFinalize() has returned. Hold it in a shared_ptr captured BY VALUE
+        // so each lambda keeps it alive (capturing &pollOrder by reference would
+        // dangle on the first re-schedule → use-after-free crash).
         m_PollRetries = 0;
-        std::function<void()> pollOrder;
-        pollOrder = [this, orderUrl, &pollOrder]() {
+        auto pollOrder = std::make_shared<std::function<void()>>();
+        *pollOrder = [this, orderUrl, pollOrder]() {
             if (m_Cancelled) return;
             acmePostAsGet(orderUrl,
-                [this, &pollOrder](int code, const QByteArray& body) {
+                [this, pollOrder](int code, const QByteArray& body) {
                     if (m_Cancelled) return;
                     if (code != 200) {
                         emit errorOccurred(QStringLiteral("Order poll failed (HTTP %1)").arg(code));
@@ -1273,7 +1278,7 @@ void AcmeClient::stepFinalize()
                     }
                     // Still processing — poll again
                     if (++m_PollRetries < 12) { // 12 * 5s = 60s
-                        QTimer::singleShot(5000, this, pollOrder);
+                        QTimer::singleShot(5000, this, *pollOrder);
                     } else {
                         emit errorOccurred(QStringLiteral("Order processing timed out"));
                         emit finished(false);
@@ -1281,7 +1286,7 @@ void AcmeClient::stepFinalize()
                 });
         };
 
-        QTimer::singleShot(3000, this, pollOrder);
+        QTimer::singleShot(3000, this, *pollOrder);
     });
 }
 

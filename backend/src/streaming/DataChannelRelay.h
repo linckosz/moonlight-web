@@ -50,6 +50,8 @@ public:
 
     void stop() override;
 
+    void notifyClientTakenOver() override;
+
     /// Retrieve and clear the buffered keyframe (if any).
     /// Used by SignalingServer before stop() to preserve the keyframe for
     /// WebSocket fallback — without this, the fallback starts with delta

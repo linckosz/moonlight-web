@@ -803,3 +803,147 @@ body.streaming-active .app-footer {
     100% { opacity: 0; }
 }
 
+
+/* ════════════════════════════════════════════════════════════════════════
+   Take-over overlay — session interrupted by another device (CP2077 exit)
+   ════════════════════════════════════════════════════════════════════════ */
+.stream-takeover-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(900px 600px at 50% 50%,
+                rgba(255, 42, 109, 0.10) 0%, transparent 60%),
+                rgba(3, 5, 8, 0.0);
+    opacity: 0;
+    transition: opacity 0.35s ease, background 0.35s ease;
+    pointer-events: none;
+}
+.stream-takeover-overlay.is-active {
+    opacity: 1;
+    background: radial-gradient(900px 600px at 50% 50%,
+                rgba(255, 42, 109, 0.16) 0%, transparent 60%),
+                rgba(3, 5, 8, 0.86);
+    pointer-events: all;
+}
+.stream-takeover-overlay.is-closing { opacity: 0; }
+
+/* Moving scanlines wash */
+.takeover-scanlines {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 229, 255, 0.05) 0px,
+        rgba(0, 229, 255, 0.05) 1px,
+        transparent 2px,
+        transparent 4px);
+    mix-blend-mode: screen;
+    animation: takeover-scan 7s linear infinite;
+    opacity: 0.55;
+}
+@keyframes takeover-scan {
+    0%   { background-position-y: 0; }
+    100% { background-position-y: 64px; }
+}
+
+/* Notched neon box */
+.takeover-box {
+    position: relative;
+    max-width: min(86vw, 520px);
+    padding: 28px 34px;
+    text-align: center;
+    background: var(--surface-glass);
+    backdrop-filter: blur(8px);
+    clip-path: var(--notch-lg);
+    box-shadow: var(--edge-cyan), 0 0 34px rgba(255, 42, 109, 0.28);
+    transform: translateY(14px) scale(0.96);
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stream-takeover-overlay.is-active .takeover-box {
+    transform: translateY(0) scale(1);
+}
+
+/* Glitch title (duplicated via data-text, magenta/cyan channel split) */
+.takeover-title {
+    position: relative;
+    font-family: var(--font-ui);
+    font-weight: 700;
+    font-size: clamp(1.4rem, 4.4vw, 2rem);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-1);
+    text-shadow: 0 0 12px rgba(252, 238, 10, 0.55);
+}
+.takeover-title::before,
+.takeover-title::after {
+    content: attr(data-text);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    clip-path: inset(0 0 0 0);
+}
+.takeover-title::before {
+    color: var(--neon-magenta);
+    animation: takeover-glitch-x 1.9s infinite steps(2);
+    mix-blend-mode: screen;
+}
+.takeover-title::after {
+    color: var(--neon-cyan);
+    animation: takeover-glitch-y 2.3s infinite steps(2);
+    mix-blend-mode: screen;
+}
+@keyframes takeover-glitch-x {
+    0%, 100% { transform: translate(0, 0); }
+    20%      { transform: translate(-2px, 1px); }
+    40%      { transform: translate(2px, -1px); }
+    60%      { transform: translate(-1px, 0); }
+}
+@keyframes takeover-glitch-y {
+    0%, 100% { transform: translate(0, 0); }
+    25%      { transform: translate(1px, -1px); }
+    55%      { transform: translate(-2px, 1px); }
+    80%      { transform: translate(1px, 1px); }
+}
+
+.takeover-sub {
+    margin-top: 12px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    letter-spacing: 0.04em;
+}
+
+/* Depleting connection bar (2s) */
+.takeover-bar {
+    margin: 20px auto 2px;
+    width: 70%;
+    height: 3px;
+    background: rgba(0, 229, 255, 0.16);
+    overflow: hidden;
+}
+.takeover-bar > span {
+    display: block;
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, var(--neon-magenta), var(--accent-1));
+    transform-origin: right center;
+    transform: scaleX(1);
+}
+.stream-takeover-overlay.is-active .takeover-bar > span {
+    animation: takeover-deplete 2s linear forwards;
+}
+@keyframes takeover-deplete {
+    from { transform: scaleX(1); }
+    to   { transform: scaleX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .takeover-scanlines,
+    .takeover-title::before,
+    .takeover-title::after,
+    .takeover-bar > span { animation: none; }
+}

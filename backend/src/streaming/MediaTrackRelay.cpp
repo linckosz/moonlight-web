@@ -698,6 +698,17 @@ void MediaTrackRelay::onIceCheckTimeout()
 
 // ── Stop ────────────────────────────────────────────────────────────────────────
 
+void MediaTrackRelay::notifyClientTakenOver()
+{
+    // Best-effort "taken over" notice on the input DC before stop() closes it.
+    if (!m_InputDc || m_Stopping.load()) return;
+    QByteArray json = QJsonDocument(QJsonObject{{"type", "takeover"}})
+                          .toJson(QJsonDocument::Compact);
+    try {
+        m_InputDc->send(std::string(json.constData(), json.size()));
+    } catch (...) {}
+}
+
 void MediaTrackRelay::stop()
 {
     // Marshal onto the relay's session thread when called cross-thread (main:

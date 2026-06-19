@@ -39,6 +39,11 @@ public:
     /// Stop the relay, close all channels and the PeerConnection.
     virtual void stop() = 0;
 
+    /// Notify the browser that its session was taken over by another device,
+    /// so it can show a graceful "session interrupted" exit before the channels
+    /// close. Best-effort: sent on the control channel just before stop().
+    virtual void notifyClientTakenOver() {}
+
     /// Request an IDR frame from Sunshine (keyframe).
     virtual void requestIdrFrame() = 0;
 

@@ -519,8 +519,8 @@ export class SettingsView {
         const veDisabledAttr = webgpuUnavailable ? ' disabled' : '';
         const veAlgos = [
             { value: 'auto',    label: t('settings.algoAuto'), disabled: false },
-            { value: 'sgsr',    label: t('settings.algoSgsr'), disabled: false },
             { value: 'fsr1',    label: t('settings.algoFsr1'), disabled: false },
+            { value: 'sgsr',    label: t('settings.algoSgsr'), disabled: false },
             { value: 'force2d', label: t('settings.algoForce2d'), disabled: false }
         ];
         const veAlgoOptions = veAlgos.map(a =>

@@ -330,6 +330,9 @@ export class StreamView {
         // Set before setupWebRtc() so it's active when connect() is called.
         this.webrtc.onStats = (msg) => this._handleStatsMessage(msg);
 
+        // Session taken over by another device → graceful cyberpunk exit.
+        this.webrtc.onTakeover = () => this._handleTakeover();
+
         // Bound handlers
         this._onKeyDown = (e) => this.handleKeyDown(e);
         this._onKeyUp = (e) => this.handleKeyUp(e);
@@ -474,6 +477,10 @@ export class StreamView {
 
         // Guard flag to prevent re-entrant quit() calls
         this._quitting = false;
+
+        // Set when the session was taken over by another device, so the generic
+        // disconnect path (onClose) stays silent — _handleTakeover() owns the exit.
+        this._takenOver = false;
 
         // HEVC fallback: set to true when the browser does not support HEVC decoding
         // (e.g. Windows Chrome). The onQuit callback should detect this and re-launch
@@ -2113,6 +2120,8 @@ export class StreamView {
         };
         this.webrtc.onClose = () => {
             if (this._quitting) return;
+            // Taken over by another device — _handleTakeover() drives the exit.
+            if (this._takenOver) return;
             // Never connected → connection failure, let the chain try the next
             // transport instead of showing a disconnect error.
             if (!this._everConnected && this._reportConnectionFailed('closed before connect')) return;
@@ -4574,10 +4583,47 @@ export class StreamView {
     // Quit / Cleanup
     // =========================================================================
 
+    /**
+     * The session was taken over by another device. Show a 2s cyberpunk
+     * "connection terminated" transition, then quit. Guarded so the generic
+     * onClose disconnect path stays silent.
+     */
+    _handleTakeover() {
+        if (this._quitting || this._takenOver) return;
+        this._takenOver = true;
+        this.connected = false;
+
+        // Full-screen glitch overlay (CP2077 style — see stream.css).
+        const el = document.createElement('div');
+        el.className = 'stream-takeover-overlay';
+        const title = t('stream.takenOverTitle');
+        el.innerHTML =
+            '<div class="takeover-scanlines"></div>' +
+            '<div class="takeover-box">' +
+                '<div class="takeover-title" data-text="' + title + '">' + title + '</div>' +
+                '<div class="takeover-sub">' + t('stream.takenOverBody') + '</div>' +
+                '<div class="takeover-bar"><span></span></div>' +
+            '</div>';
+        const root = document.getElementById('stream-view') || document.body;
+        root.appendChild(el);
+        // Trigger the close-in animation on the next frame.
+        requestAnimationFrame(() => el.classList.add('is-active'));
+
+        // After the transition, quit. quit() tears down the overlay with the view.
+        setTimeout(() => {
+            try { el.classList.add('is-closing'); } catch (e) {}
+            setTimeout(() => this.quit({ takenOver: true }), 400);
+        }, 2000);
+    }
+
     async quit(opts = {}) {
         // silent: suppress the "Stream end" toast (used by transport fallback
         // relaunch, which shows its own warning toast instead).
         const silent = opts.silent === true;
+        // takenOver: our Sunshine session was already reclaimed by another
+        // device — do NOT call the backend /quit (it acts on the GLOBAL active
+        // relay, which is now the new owner's session: quitting would kill it).
+        const takenOver = opts.takenOver === true;
         // Guard: prevent re-entrant calls (e.g. from WS onClose -> setTimeout)
         if (this._quitting) return;
         this._quitting = true;
@@ -4745,16 +4791,21 @@ export class StreamView {
         // is still reachable.
         this.webrtc.markStopping();
 
-        try {
-            await BackendClient.quitApp(this.host.uuid);
+        if (takenOver) {
+            // Session already reclaimed — just close our transport locally.
             this.webrtc.close();
-            if (!silent) {
-                await Toast.dismissAll();
-                Toast.success(t('stream.streamEnd'));
+        } else {
+            try {
+                await BackendClient.quitApp(this.host.uuid);
+                this.webrtc.close();
+                if (!silent) {
+                    await Toast.dismissAll();
+                    Toast.success(t('stream.streamEnd'));
+                }
+            } catch (err) {
+                console.warn('[StreamView] Quit failed:', err);
+                this.webrtc.close();
             }
-        } catch (err) {
-            console.warn('[StreamView] Quit failed:', err);
-            this.webrtc.close();
         }
 
         this.destroy();

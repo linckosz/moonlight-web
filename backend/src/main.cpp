@@ -215,6 +215,14 @@ int main(int argc, char* argv[])
     QPointer<DataChannelRelay> g_ActiveRelay;
     QPointer<MediaTrackRelay> g_ActiveMediaTrackRelay;
     QPointer<StreamRelay> g_ActiveStreamRelay;
+    // The StreamSession that owns the single active relay+signaling graph. Needed
+    // so a take-over can call its quit() (stops the SignalingServer FIRST, freeing
+    // the fixed signaling port before the slow relay/moonlight teardown).
+    QPointer<StreamSession> g_ActiveSession;
+    // Per-browser uniqueid of the relay that currently owns the single active
+    // session. Used to reject a stale /quit from a client that was taken over
+    // (its quit would otherwise tear down the NEW owner via the global pointer).
+    QString g_ActiveClientUniqueId;
 
     // Suspend host polling whenever a relay is active, so we stop hammering
     // Sunshine's HTTP server while a stream is running (avoids wedging it and
@@ -693,7 +701,7 @@ int main(int argc, char* argv[])
     auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
 
     server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &server, &appSettings, &authManager, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveClientUniqueId, &server, &appSettings, &authManager, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -704,6 +712,61 @@ int main(int argc, char* argv[])
         if (!host) {
             respond(HttpResponse::error(404, "Host not found"));
             return;
+        }
+
+        // ── Take-over: this backend streams ONE session at a time ──────────────
+        // moonlight-common-c is a process-global singleton and the signaling port
+        // is fixed, so a second Web stream cannot coexist with an active one.
+        // Rather than fail (and freeze the first), the newcomer takes over: notify
+        // the live client so it shows a graceful exit, then tear its relay down
+        // locally WITHOUT quitting Sunshine — the /launch→/resume below reclaims
+        // the same session (Sunshine reassigns the RTSP stream on /resume). No
+        // /cancel is sent. The relay's sessionEnded is disconnected first so the
+        // auto-quit lambda never fires during the take-over.
+        //
+        // A CONNECTED relay means another device is live-streaming → real take-over
+        // (send the notice). A non-connected relay is a dying same-browser fallback
+        // attempt → tear it down silently, no notice (avoids a false exit animation
+        // mid transport-fallback).
+        if (g_ActiveSession) {
+            StreamSession* oldSession = g_ActiveSession;
+            g_ActiveSession = nullptr;
+
+            // Notify the live client + sever the relay's sessionEnded BEFORE the
+            // controlled teardown: otherwise it would (a) fire the auto-/cancel
+            // lambda — cancelling the Sunshine session the newcomer is about to
+            // /resume — and (b) double-drive the session self-destruct.
+            if (g_ActiveRelay) {
+                if (g_ActiveRelay->isConnected()) g_ActiveRelay->notifyClientTakenOver();
+                QObject::disconnect(g_ActiveRelay, &DataChannelRelay::sessionEnded, nullptr, nullptr);
+            }
+            if (g_ActiveMediaTrackRelay) {
+                if (g_ActiveMediaTrackRelay->isConnected()) g_ActiveMediaTrackRelay->notifyClientTakenOver();
+                QObject::disconnect(g_ActiveMediaTrackRelay, &MediaTrackRelay::sessionEnded, nullptr, nullptr);
+            }
+            if (g_ActiveStreamRelay) {
+                if (g_ActiveStreamRelay->isClientConnected()) g_ActiveStreamRelay->notifyClientTakenOver();
+                QObject::disconnect(g_ActiveStreamRelay, &StreamRelay::sessionEnded, nullptr, nullptr);
+            }
+
+            // Full local teardown: stops the SignalingServer FIRST (frees the fixed
+            // signaling port promptly, before the slow relay/moonlight teardown),
+            // then the relay + MoonlightShim. No /cancel is sent — the new
+            // /launch→/resume below reclaims the same Sunshine session.
+            qInfo() << "[Session] Take-over: tearing down active session" << oldSession;
+            oldSession->quit();
+
+            // Now release the graph: deleting the relay also deletes its child
+            // SignalingServer + MoonlightShim and quits the relay thread.
+            if (g_ActiveRelay) g_ActiveRelay->deleteLater();
+            if (g_ActiveMediaTrackRelay) g_ActiveMediaTrackRelay->deleteLater();
+            if (g_ActiveStreamRelay) g_ActiveStreamRelay->deleteLater();
+            oldSession->deleteLater();
+
+            g_ActiveRelay = nullptr;
+            g_ActiveMediaTrackRelay = nullptr;
+            g_ActiveStreamRelay = nullptr;
+            g_ActiveClientUniqueId.clear();
         }
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
@@ -991,9 +1054,10 @@ int main(int argc, char* argv[])
 
             // WSS mode: StreamRelay tracking
             QObject::connect(s, &StreamSession::streamRelayCreated,
-                [&g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host, quitUid](StreamRelay* r) {
+                [&g_ActiveStreamRelay, &g_ActiveClientUniqueId, &computerManager, &authManager, sessionToken, host, quitUid](StreamRelay* r) {
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
+                    g_ActiveClientUniqueId = quitUid;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp so the lambda runs on the main thread: the relay
@@ -1016,9 +1080,10 @@ int main(int argc, char* argv[])
 
             // WebRTC DataChannel mode: DataChannelRelay tracking
             QObject::connect(s, &StreamSession::relayCreated,
-                [&g_ActiveRelay, &computerManager, &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
+                [&g_ActiveRelay, &g_ActiveClientUniqueId, &computerManager, &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
+                    g_ActiveClientUniqueId = quitUid;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
@@ -1041,9 +1106,10 @@ int main(int argc, char* argv[])
 
             // WebRTC Media Track mode: MediaTrackRelay tracking
             QObject::connect(s, &StreamSession::mediaTrackRelayCreated,
-                [&g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host, quitUid](MediaTrackRelay* r) {
+                [&g_ActiveMediaTrackRelay, &g_ActiveClientUniqueId, &computerManager, &authManager, sessionToken, host, quitUid](MediaTrackRelay* r) {
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
+                    g_ActiveClientUniqueId = quitUid;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
@@ -1101,6 +1167,10 @@ int main(int argc, char* argv[])
             s->setEnableIceTcp(iceTcp);
             s->setClientUniqueId(reqClientUniqueId);
             attachRelayTracking(s);
+            // Track the active session so a later take-over can quit() it (stops
+            // the SignalingServer first → frees the fixed port). QPointer auto-
+            // nulls when the session self-destructs on normal end.
+            g_ActiveSession = s;
             return s;
         };
 
@@ -1146,7 +1216,7 @@ int main(int argc, char* argv[])
 
     // Phase 5: Quit running app
     server.router()->postAsync("/api/hosts/:id/quit",
-        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay](const HttpRequest& req, ResponseCallback respond) {
+        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveClientUniqueId](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                 << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -1180,10 +1250,27 @@ int main(int argc, char* argv[])
             }
         }
 
+        // Ownership guard: a client that was taken over by another device may
+        // still send a late /quit. The relay teardown below acts on the GLOBAL
+        // active relay — which is now the NEW owner's session — so tearing it
+        // down would kill the wrong stream. Only stop the relay when this request
+        // owns the active session (matching uniqueid). The quitAppAsync below is
+        // keyed by uniqueid and harmlessly cancels only the requester's own
+        // (already-gone) Sunshine session. Empty ids (localhost) keep legacy
+        // behaviour.
+        bool ownsSession = g_ActiveClientUniqueId.isEmpty()
+                        || quitUniqueId.isEmpty()
+                        || quitUniqueId == g_ActiveClientUniqueId;
+        if (!ownsSession) {
+            qInfo() << "[quit] Stale quit from non-owner uniqueid=" << quitUniqueId
+                    << "(active owner=" << g_ActiveClientUniqueId
+                    << ") — skipping relay teardown";
+        }
+
         // Stop the transport relay first (closes PeerConnection or WS)
         bool relayStopped = false;
 
-        if (g_ActiveRelay) {
+        if (ownsSession && g_ActiveRelay) {
             qInfo() << "[quit] WebRTC relay exists, stopping relay=" << g_ActiveRelay.data();
             DataChannelRelay* relay = g_ActiveRelay;
             g_ActiveRelay = nullptr;
@@ -1196,7 +1283,7 @@ int main(int argc, char* argv[])
             relayStopped = true;
         }
 
-        if (g_ActiveMediaTrackRelay) {
+        if (ownsSession && g_ActiveMediaTrackRelay) {
             qInfo() << "[quit] MediaTrackRelay exists, stopping relay=" << g_ActiveMediaTrackRelay.data();
             MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
             g_ActiveMediaTrackRelay = nullptr;
@@ -1208,13 +1295,22 @@ int main(int argc, char* argv[])
             relayStopped = true;
         }
 
-        if (g_ActiveStreamRelay) {
+        if (ownsSession && g_ActiveStreamRelay) {
             qInfo() << "[quit] StreamRelay exists, stopping relay=" << g_ActiveStreamRelay.data();
             StreamRelay* relay = g_ActiveStreamRelay;
             g_ActiveStreamRelay = nullptr;
             relay->stop();
             relay->deleteLater();
             relayStopped = true;
+        }
+
+        // Drop the active-session handle too (its relay was just torn down above)
+        // so a later take-over never calls quit() on a session whose relay is
+        // already gone. The session shell self-destructs here.
+        if (ownsSession && g_ActiveSession) {
+            g_ActiveSession->deleteLater();
+            g_ActiveSession = nullptr;
+            g_ActiveClientUniqueId.clear();
         }
 
         if (!relayStopped) {

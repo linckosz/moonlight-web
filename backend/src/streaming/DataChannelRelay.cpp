@@ -1481,6 +1481,19 @@ void DataChannelRelay::onStatsTimerTick()
 
 // --- Stop ---
 
+void DataChannelRelay::notifyClientTakenOver()
+{
+    // Best-effort control message on the input DC, sent before stop() closes it,
+    // so the browser can show a graceful "taken over" exit instead of a generic
+    // disconnect. Reliable/ordered channel → flushed ahead of the close.
+    if (!m_InputDc || m_Stopping.load()) return;
+    QByteArray json = QJsonDocument(QJsonObject{{"type", "takeover"}})
+                          .toJson(QJsonDocument::Compact);
+    try {
+        m_InputDc->send(std::string(json.constData(), json.size()));
+    } catch (...) {}
+}
+
 void DataChannelRelay::stop()
 {
     // The relay lives on its own session thread. If stop() is called from another
