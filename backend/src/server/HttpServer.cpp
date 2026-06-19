@@ -1001,9 +1001,14 @@ void HttpServer::ensureLocalSslConfig()
     QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
     QDir().mkpath(certDir);
 
-    QString certPath = certDir + "cert.pem";
-    QString keyPath = certDir + "key.pem";
-    QString configPath = certDir + "openssl-san.cnf";
+    // Dedicated filenames for the local self-signed cert. These MUST NOT collide
+    // with the public cert key (cert/key.pem), which onAcmeFinished writes from
+    // the ACME issuance. Sharing "key.pem" caused this regen to clobber the
+    // ZeroSSL/LE private key, breaking the public cert on the next boot
+    // (cert=fullchain.pem ZeroSSL + key=self-signed -> "key values mismatch").
+    QString certPath = certDir + "local-cert.pem";
+    QString keyPath = certDir + "local-key.pem";
+    QString configPath = certDir + "local-san.cnf";
 
     // Delete old files and regenerate with fresh SANs and current LAN IPs
     QFile::remove(certPath);

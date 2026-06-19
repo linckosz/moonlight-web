@@ -269,7 +269,11 @@
     display: block;
     width: 100%;
     padding: 10px 14px;
-    font-size: var(--fs-sm);
+    /* Mirror the admin .pin-display font, one notch smaller (1.6rem → 1.3rem). */
+    font-family: var(--font-mono);
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: 2px;
     background-color: var(--surface-1);
     border: 1px solid var(--border-1);
     border-radius: var(--radius-sm);
