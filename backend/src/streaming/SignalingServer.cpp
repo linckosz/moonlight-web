@@ -53,10 +53,22 @@ bool SignalingServer::start()
 {
     qInfo() << "[SignalingServer] Starting on port" << m_WsPort;
 
-    if (!m_WsServer->listen(QHostAddress::Any, m_WsPort)) {
-        qWarning() << "[SignalingServer] Failed to listen on port" << m_WsPort
-                   << "error:" << m_WsServer->errorString();
-        return false;
+    // Bind with a short bounded retry. The signaling port is a fixed singleton;
+    // on take-over the previous session's SignalingServer may still be releasing
+    // it on its own thread when this new one binds. Retry briefly (this runs on
+    // the relay thread during startup, nothing else uses it yet). Non-AddressInUse
+    // errors fail immediately. Normally listen() succeeds on the first attempt.
+    int bindAttempts = 0;
+    while (!m_WsServer->listen(QHostAddress::Any, m_WsPort)) {
+        if (++bindAttempts > 20) {
+            qWarning() << "[SignalingServer] Failed to listen on port" << m_WsPort
+                       << "error:" << m_WsServer->errorString()
+                       << "after" << bindAttempts << "attempt(s)";
+            return false;
+        }
+        qInfo() << "[SignalingServer] Port" << m_WsPort << "busy:" << m_WsServer->errorString()
+                << "(take-over in progress?), retrying" << bindAttempts << "/20";
+        QThread::msleep(50);  // max ~1s; on the relay thread
     }
 
     connect(m_WsServer, &QWebSocketServer::newConnection,

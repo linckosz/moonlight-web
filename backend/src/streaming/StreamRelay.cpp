@@ -86,6 +86,15 @@ bool StreamRelay::start()
     return true;
 }
 
+void StreamRelay::notifyClientTakenOver()
+{
+    // Best-effort "taken over" notice over the WS before stop() closes it.
+    if (!m_WsClient || m_Stopping) return;
+    QJsonObject obj{{"type", "takeover"}};
+    m_WsClient->sendTextMessage(
+        QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+}
+
 void StreamRelay::stop()
 {
     // Marshal onto the relay's session thread when called cross-thread (main:

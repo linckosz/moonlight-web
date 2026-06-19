@@ -53,6 +53,8 @@ public:
 
     void stop() override;
 
+    void notifyClientTakenOver() override;
+
     void requestIdrFrame() override;
 
     // UPnP NAT traversal

@@ -90,6 +90,7 @@ export class WebRtcDataChannel {
         this.onVideo = null;      // (frame: Uint8Array, isKeyframe: boolean, backendTs: number)
         this.onAudio = null;      // (sample: Uint8Array)
         this.onStats = null;      // (msg: object) stats/pong messages from backend
+        this.onTakeover = null;   // () session taken over by another device
 
         // Stats
         this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
@@ -697,6 +698,8 @@ export class WebRtcDataChannel {
                     const msg = JSON.parse(evt.data);
                     if (msg.type === 'stats' || msg.type === 'pong') {
                         if (this.onStats) this.onStats(msg);
+                    } else if (msg.type === 'takeover') {
+                        if (this.onTakeover) this.onTakeover();
                     } else {
                         console.log('[WebRTC] Input DC message:', msg);
                     }
@@ -1201,6 +1204,8 @@ export class WebRtcDataChannel {
                 const msg = JSON.parse(evt.data);
                 if ((msg.type === 'stats' || msg.type === 'pong') && this.onStats) {
                     this.onStats(msg);
+                } else if (msg.type === 'takeover' && this.onTakeover) {
+                    this.onTakeover();
                 }
             } catch (e) { /* ignore non-JSON text */ }
             return;
@@ -1263,6 +1268,8 @@ export class WebRtcDataChannel {
                 const msg = JSON.parse(evt.data);
                 if (msg.type === 'stats' || msg.type === 'pong') {
                     if (this.onStats) this.onStats(msg);
+                } else if (msg.type === 'takeover') {
+                    if (this.onTakeover) this.onTakeover();
                 }
             } catch (e) { /* non-JSON text — ignore */ }
         }

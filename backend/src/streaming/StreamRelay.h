@@ -23,10 +23,18 @@ public:
     bool start();
     void stop();
 
+    /// Notify the browser (over the WS) that its session was taken over by
+    /// another device, just before stop() closes the socket. Best-effort.
+    void notifyClientTakenOver();
+
     void setServerHost(const QString& host) { m_ServerHost = host; }
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
     quint16 wsPort() const { return m_WsPort; }
     QString wsUrl() const;
+
+    /// A WS client is attached (wss connects immediately, no ICE) — an active
+    /// StreamRelay therefore means a live stream, used for take-over detection.
+    bool isClientConnected() const { return m_WsClient != nullptr; }
 
     /// Access the MoonlightShim for explicit stopConnection() before cleanup.
     MoonlightShim* moonlightShim() const { return m_Shim; }
