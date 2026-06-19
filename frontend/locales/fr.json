@@ -64,7 +64,7 @@
     "nameSession": "Nommer cette session",
     "namePlaceholder": "ex. BrunoXT Chrome",
     "pinLabel": "PIN",
-    "pinPlaceholder": "Saisissez le PIN",
+    "pinPlaceholder": "--- ---",
     "unlock": "Déverrouiller",
     "attemptsRemaining": "{{count}} tentative(s) restante(s) avant blocage",
     "lockout": "Réessayez dans {{seconds}} secondes",

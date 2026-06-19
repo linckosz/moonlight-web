@@ -64,7 +64,7 @@
     "nameSession": "Name this session",
     "namePlaceholder": "e.g. BrunoXT Chrome",
     "pinLabel": "PIN",
-    "pinPlaceholder": "Enter the PIN",
+    "pinPlaceholder": "--- ---",
     "unlock": "Unlock",
     "attemptsRemaining": "{{count}} attempt(s) remaining before lockout",
     "lockout": "Try again in {{seconds}} seconds",

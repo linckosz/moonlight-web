@@ -269,11 +269,11 @@
     display: block;
     width: 100%;
     padding: 10px 14px;
-    /* Mirror the admin .pin-display font, one notch smaller (1.6rem → 1.3rem). */
+    /* Same mono font as admin .pin-display, but discreet (smaller, lighter). */
     font-family: var(--font-mono);
-    font-size: 1.3rem;
-    font-weight: 700;
-    letter-spacing: 2px;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 1px;
     background-color: var(--surface-1);
     border: 1px solid var(--border-1);
     border-radius: var(--radius-sm);
@@ -292,6 +292,22 @@
 .login-input::placeholder,
 .login-pin-input::placeholder {
     color: var(--text-3);
+}
+
+/* Login name: left-aligned, full width to fit a 24-char session name. */
+.login-input {
+    text-align: left;
+}
+/* Login PIN: centered "123 456", larger and a bit wider. letter-spacing keeps
+ * normal digit tracking; word-spacing trims the mono space to a small gap. */
+.login-pin-input {
+    text-align: center;
+    width: 11ch;
+    margin-left: auto;
+    margin-right: auto;
+    font-size: 1.3rem;
+    letter-spacing: 1px;
+    word-spacing: -0.35em;
 }
 
 /* Select — custom chevron, identical everywhere */
