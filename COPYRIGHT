@@ -1,0 +1,37 @@
+Moonlight-Web
+Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program.  See the LICENSE file or <https://www.gnu.org/licenses/>.
+
+If you fork or redistribute this project, you must keep this copyright notice
+and credit the original author (Bruno Martin).
+
+----------------------------------------------------------------------------
+Third-party components (bundled under backend/third_party/)
+----------------------------------------------------------------------------
+
+  moonlight-common-c .................. GPL-3.0
+  libdatachannel ...................... MPL-2.0
+    deps/libjuice ..................... MPL-2.0
+    deps/libsrtp ...................... BSD-3-Clause
+    deps/usrsctp ...................... BSD-3-Clause
+    deps/plog ......................... MPL-2.0
+    deps/json (nlohmann) .............. MIT
+  qmdnsengine ......................... BSD-2-Clause
+  miniupnpc ........................... BSD-3-Clause
+  enet ................................ MIT
+  nanors .............................. CC0-1.0
+
+Each component retains its own license; see the corresponding LICENSE files in
+backend/third_party/. This project as a whole is distributed under GPL-3.0 to
+remain compatible with its GPL-licensed dependencies (notably moonlight-common-c).
