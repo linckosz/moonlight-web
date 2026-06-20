@@ -258,6 +258,8 @@
     "streamEnd": "Stream end",
     "takenOverTitle": "Connection terminated",
     "takenOverBody": "This session was taken over by another device.",
+    "disconnectTitle": "Disconnecting",
+    "disconnectBody": "Closing session — see you soon.",
     "statResolution": "Resolution:",
     "statFramerate": "Framerate:",
     "statBitrate": "Bitrate:",

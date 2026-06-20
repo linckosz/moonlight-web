@@ -738,7 +738,7 @@ export class StreamView {
         this.statusEl = null;
         this.hintEl = document.getElementById('stream-hint');
 
-        document.getElementById('btn-stream-quit').onclick = () => this.quit();
+        document.getElementById('btn-stream-quit').onclick = () => this._handleManualQuit();
 
         // ── Streaming stats overlay (top-center card, elegant styling) ─────
         this._overlayEl = document.createElement('div');
@@ -3018,7 +3018,7 @@ export class StreamView {
             // Quit: Ctrl+Alt+Shift+Q (Win) / Cmd+Option+Ctrl+Q (Mac)
             if (chk('q', 'KeyQ')) {
                 e.preventDefault();
-                this.quit();
+                this._handleManualQuit();
                 return;
             }
             // Fullscreen toggle: Ctrl+Alt+Shift+X (Win) / Cmd+Option+Ctrl+X (Mac)
@@ -4399,6 +4399,38 @@ export class StreamView {
             try { el.classList.add('is-closing'); } catch (e) {}
             setTimeout(() => this.quit({ takenOver: true }), 400);
         }, 2000);
+    }
+
+    /**
+     * User pressed Stop. Play a short cyberpunk "disconnecting" transition
+     * (clean-exit variant — signature yellow/cyan, no alarm magenta), then
+     * quit normally (backend /quit). Guarded so a double-tap is a no-op.
+     */
+    _handleManualQuit() {
+        if (this._quitting || this._takenOver || this._manualQuitting) return;
+        this._manualQuitting = true;
+        this.connected = false;
+
+        // Full-screen glitch overlay (CP2077 style — see stream.css).
+        const el = document.createElement('div');
+        el.className = 'stream-takeover-overlay is-quit';
+        const title = t('stream.disconnectTitle');
+        el.innerHTML =
+            '<div class="takeover-scanlines"></div>' +
+            '<div class="takeover-box">' +
+                '<div class="takeover-title" data-text="' + title + '">' + title + '</div>' +
+                '<div class="takeover-sub">' + t('stream.disconnectBody') + '</div>' +
+                '<div class="takeover-bar"><span></span></div>' +
+            '</div>';
+        const root = document.getElementById('stream-view') || document.body;
+        root.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('is-active'));
+
+        // Shorter than take-over (1.2s deplete) — voluntary, friendly exit.
+        setTimeout(() => {
+            try { el.classList.add('is-closing'); } catch (e) {}
+            setTimeout(() => this.quit(), 350);
+        }, 1200);
     }
 
     async quit(opts = {}) {
