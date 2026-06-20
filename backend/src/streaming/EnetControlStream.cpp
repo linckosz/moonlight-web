@@ -132,15 +132,6 @@ void EnetControlStream::sendInput(const QByteArray& inputPacket, quint8 channel)
 {
     if (!m_Connected || !m_Peer) return;
     // Use RELIABLE to match moonlight-qt — input events must not be dropped
-
-    // Hex dump first few packets per channel for debugging
-    static int hexDumpCount[0x30] = {};
-    if (channel < 0x30 && hexDumpCount[channel]++ < 3) {
-        QByteArray hex = inputPacket.toHex(' ');
-        qDebug() << "[ENet] Input hex dump ch=" << channel
-                 << "len=" << inputPacket.size() << ":" << hex;
-    }
-
     sendMessage(inputPacket, PKT_TYPE_INPUT, channel, ENET_PACKET_FLAG_RELIABLE);
 }
 
@@ -152,12 +143,6 @@ void EnetControlStream::service()
     while (enet_host_service(m_Host, &event, 0) > 0) {
         switch (event.type) {
         case ENET_EVENT_TYPE_RECEIVE: {
-            uint16_t recvType = 0;
-            if (event.packet->dataLength >= 2)
-                recvType = qFromLittleEndian<uint16_t>(event.packet->data);
-            qDebug() << "[ENet] RECV type=0x" << Qt::hex << recvType
-                     << "ch=" << event.channelID
-                     << "len=" << event.packet->dataLength;
             enet_packet_destroy(event.packet);
             break;
         }
@@ -213,9 +198,6 @@ bool EnetControlStream::sendMessage(const QByteArray& payload, uint16_t type,
         return false;
     }
 
-    qDebug() << "[ENet] Sent packet type=0x" << Qt::hex << type
-             << "channel=" << channel << "size=" << data.size();
-
     return true;
 }
 
@@ -251,9 +233,6 @@ bool EnetControlStream::sendAndWaitReply(const QByteArray& payload, uint16_t typ
     enet_peer_send(m_Peer, channel, pkt);
     enet_host_flush(m_Host);
 
-    qDebug() << "[ENet] Sent packet type=0x" << Qt::hex << type
-             << "channel=" << channel << "size=" << data.size();
-
     // Wait for reply
     ENetEvent event;
     int elapsed = 0;
@@ -271,11 +250,6 @@ bool EnetControlStream::sendAndWaitReply(const QByteArray& payload, uint16_t typ
             if (event.packet->dataLength >= 2)
                 replyType = qFromLittleEndian<uint16_t>(event.packet->data);
 
-            qDebug() << "[ENet] RECV type=0x" << Qt::hex << replyType
-                     << "ch=" << event.channelID
-                     << "len=" << event.packet->dataLength
-                     << "at" << elapsed << "ms";
-
             if (event.channelID == channel && replyType == type) {
                 enet_packet_destroy(event.packet);
                 return true;
@@ -289,7 +263,6 @@ bool EnetControlStream::sendAndWaitReply(const QByteArray& payload, uint16_t typ
             return false;
         }
         default:
-            qDebug() << "[ENet] event type=" << event.type << "at" << elapsed << "ms";
             break;
         }
     }

@@ -345,14 +345,6 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     // Derive the RTP timestamp from real arrival time (any FPS, real jitter).
     uint32_t rtpTs = computeRtpTimestamp();
 
-    static int logCounter = 0;
-    logCounter++;
-    if (logCounter <= 5 || logCounter % 120 == 0) {
-        qInfo() << "[MediaTrackRelay] Video frame #" << logCounter
-                << "size=" << data.size() << "type=" << frameType
-                << "rtpTimestamp=" << rtpTs;
-    }
-
     // Create FrameInfo with isKeyFrame flag. The H264RtpPacketizer reads this
     // to decide STAP-A (single NAL) vs FU-A (fragmented) packetization.
     auto frameInfo = std::make_shared<rtc::FrameInfo>(rtpTs);
@@ -374,12 +366,6 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     }
 
     m_FrameCount++;
-
-    if (m_FrameCount <= 3 || m_FrameCount % 300 == 0) {
-        qInfo() << "[MediaTrackRelay] Sent video frame #" << m_FrameCount
-                << "size=" << data.size() << "isKeyframe=" << isKeyframe
-                << "rtpTimestamp=" << rtpTs;
-    }
 }
 
 uint32_t MediaTrackRelay::computeRtpTimestamp()
@@ -450,13 +436,6 @@ void MediaTrackRelay::onAudioSample(const QByteArray& data)
         return;
     }
 
-    static int audioCount = 0;
-    audioCount++;
-    if (audioCount <= 3) {
-        qInfo() << "[MediaTrackRelay] Audio sample #" << audioCount
-                << "size=" << data.size();
-    }
-
     sendAudioFragmented(data, m_AudioDc);
 }
 
@@ -483,13 +462,6 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
 
     QJsonObject msg = doc.object();
     QString type = msg["type"].toString();
-
-    static QMap<QString, int> inputCounts;
-    int& count = inputCounts[type];
-    count++;
-    if (count <= 2) {
-        qInfo() << "[MediaTrackRelay] Input #" << count << "type=" << type;
-    }
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");

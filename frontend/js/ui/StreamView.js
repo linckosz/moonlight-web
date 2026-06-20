@@ -520,45 +520,7 @@ export class StreamView {
         this.setupWebRtc();
         this.bindEvents();
         this.startRenderLoop();
-        this.startDiagnostics();
         this.initAudioAsync();
-    }
-
-    // --- Diagnostics ---------------------------------------------------------
-
-    startDiagnostics() {
-        this._diagCount = 0;
-        this._diagHandle = setInterval(() => {
-            this._diagCount++;
-            console.log('[DIAG] #' + this._diagCount +
-                ' decoderConfigured=' + this.decoderConfigured +
-                ' decoderConfiguring=' + this.decoderConfiguring +
-                ' nalParser.isReady=' + this.nalParser.isReady() +
-                ' pendingFrames=' + this.pendingFrames.length +
-                ' frameQueue=' + this.frameQueue.length +
-                ' frameCount=' + this.frameCount +
-                ' received=' + this.stats.received +
-                ' decoded=' + this.stats.decoded +
-                ' rendered=' + this.stats.rendered +
-                ' dropped=' + this.stats.dropped +
-                ' canvas=' + this.canvas.width + 'x' + this.canvas.height +
-                ' decoder=' + (this.decoder ? this.decoder.state : 'null') +
-                ' renderer=' + (this._renderer ? 'ok' : 'null') +
-                ' recoveryAttempts=' + this._recoveryAttempts +
-                ' idrRequested=' + this._idrRequested +
-                ' totalBytes=' + this._totalBytes +
-                ' audio.ready=' + (this.audioPipeline ? this.audioPipeline.ready : 'no') +
-                ' audio.samples=' + (this.audioPipeline ? this.audioPipeline.getStats().writtenSamples : 0) +
-                ' audio.underrun=' + (this.audioPipeline ? this.audioPipeline.getStats().underrunCount : 0) +
-                (this._lastFrameColorSpace ? ' cs=' + JSON.stringify(this._lastFrameColorSpace) : ''));
-        }, 10000);
-    }
-
-    stopDiagnostics() {
-        if (this._diagHandle) {
-            clearInterval(this._diagHandle);
-            this._diagHandle = null;
-        }
     }
 
     // --- Connectivity pre-flight (non-blocking diagnostic) ------------------
@@ -647,19 +609,6 @@ export class StreamView {
                 'should handle this automatically.');
         }
 
-        // HEVC codec capability check for diagnostics
-        if (typeof VideoDecoder !== 'undefined' && typeof VideoDecoder.isConfigSupported === 'function') {
-            const hevcCodecs = ['hev1.1.6.L153.B0', 'hvc1.1.6.L153.B0', 'hev1.1.2.L153.B0'];
-            Promise.all(hevcCodecs.map(c => VideoDecoder.isConfigSupported({
-                codec: c,
-                codedWidth: 1920,
-                codedHeight: 1080
-            }))).then(results => {
-                hevcCodecs.forEach((c, i) => {
-                    console.log('[Platform-HEVC] ' + c + ' isConfigSupported: ' + results[i].supported);
-                });
-            }).catch(() => {});
-        }
     }
 
     // =========================================================================
@@ -1211,37 +1160,10 @@ export class StreamView {
     configureDecoder() {
         if (this._quitting) return;
         if (this.decoderConfigured || this.decoderConfiguring || !this.nalParser.isReady()) {
-            console.log('[StreamView] configureDecoder guard blocked: configured=' +
-                this.decoderConfigured + ' configuring=' + this.decoderConfiguring +
-                ' nalReady=' + this.nalParser.isReady());
             return;
         }
         this.decoderConfiguring = true;
         const codecType = this.nalParser.codec;
-
-        // Log HEVC parser state before configuring
-        console.log('[HEVC-CONFIG] nalParser state:' +
-            ' codec=' + codecType +
-            ' vps.len=' + (this.nalParser.vps?.length || 0) +
-            ' sps.len=' + (this.nalParser.sps?.length || 0) +
-            ' pps.len=' + (this.nalParser.pps?.length || 0) +
-            ' videoCodec=' + this.videoCodec +
-            ' _noDescription=' + this._noDescription);
-
-        // Log raw parameter set bytes for first-time diagnostics
-        if (this.stats.decoded === 0) {
-            if (this.nalParser.vps) {
-                console.log('[HEVC-CONFIG] VPS raw bytes:',
-                    Array.from(this.nalParser.vps.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-            }
-            if (this.nalParser.sps) {
-                console.log('[HEVC-CONFIG] SPS raw bytes:',
-                    Array.from(this.nalParser.sps.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-            }
-        }
-
-        console.log('[StreamView] configureDecoder STARTED, codec=' + codecType +
-            ', decoder state=' + (this.decoder ? this.decoder.state : 'null'));
 
         const desc = buildDescription(this.nalParser);
         if (!desc) {
@@ -1276,21 +1198,13 @@ export class StreamView {
                     ? { ...config, hardwareAcceleration: 'prefer-hardware' }
                     : config;
                 try {
-                    console.log('[StreamView] Calling decoder.configure() with codec=' + cfgToUse.codec +
-                        ' descriptionLen=' + (cfgToUse.description ? cfgToUse.description.byteLength : 0) +
-                        ' noDescription=' + noDescription +
-                        ' hwAccel=' + (cfgToUse.hardwareAcceleration || 'default') +
-                        ' isChromeWin=' + this._isChromeWindowsHevc +
-                        ' nalParser.codec=' + this.nalParser.codec);
                     this.decoder.configure(cfgToUse);
                     this.decoderConfigured = true;
                     this.decoderConfiguring = false;
                     this._noDescription = noDescription;
-                    console.log('[HEVC-CONFIG-OK] *** VideoDecoder CONFIGURED *** codec=' + cfgToUse.codec +
-                        ' state=' + this.decoder.state +
-                        ' noDescription=' + this._noDescription +
+                    console.log('[StreamView] VideoDecoder configured: codec=' + cfgToUse.codec +
                         ' hwAccel=' + (cfgToUse.hardwareAcceleration || 'none') +
-                        ' dequeuing ' + this.pendingFrames.length + ' pending frames');
+                        ', dequeuing ' + this.pendingFrames.length + ' pending frames');
                     this.flushPendingFrames();
 
                     // Proactive IDR after initial decoder configuration.
@@ -1312,9 +1226,6 @@ export class StreamView {
                     return true;
                 } catch (e) {
                     console.error('[StreamView] decoder.configure() failed:', e.message, e);
-                    if (this.decoder) {
-                        console.log('[StreamView] Decoder state after failed configure: ' + this.decoder.state);
-                    }
                     this.decoderConfiguring = false;
                     // Re-throw NotSupportedError to trigger HW fallback
                     if (hwAccel && e.name === 'NotSupportedError') {
@@ -1342,20 +1253,9 @@ export class StreamView {
 
             const cfg = configs[index];
             const noDescription = cfg._noDescription === true;
-            console.log('[HEVC-CONFIG] Testing config[' + index + ']: codec=' + cfg.codec +
-                ' hasDescription=' + (cfg.description ? 'yes' : 'no') +
-                ' hasColorSpace=' + (cfg.colorSpace ? 'yes' : 'no') +
-                ' _noDescription=' + noDescription +
-                ' coded=' + (cfg.codedWidth || '?') + 'x' + (cfg.codedHeight || '?'));
             VideoDecoder.isConfigSupported(cfg).then((result) => {
-                console.log('[HEVC-CONFIG] isConfigSupported for ' + cfg.codec +
-                    ': supported=' + result.supported +
-                    ' (desc=' + (cfg.description ? 'yes' : 'no') + ')');
                 if (result.supported) {
-                    console.log('[StreamView] Config supported: codec=' + cfg.codec +
-                                ' hasDescription=' + !!cfg.description);
                     if (!applyConfig(cfg, noDescription)) {
-                        console.log('[StreamView] applyConfig failed, trying next config');
                         tryCodecs(configs, index + 1, onExhausted);
                     }
                 } else {
@@ -1430,11 +1330,7 @@ export class StreamView {
                 annexBCfgs.push({ codec: fb, ...shared, _noDescription: true });
             }
 
-            console.log('[StreamView] Phase A: ' + annexBCfgs.length +
-                ' Annex B configs (no description, hev1)');
-
             tryCodecs(annexBCfgs, 0, () => {
-                console.log('[StreamView] Annex B exhausted, Phase B: AVCC with description');
                 this._tryHevcAvccConfigs(codec, desc, fallbacks, shared, vColor);
             });
             return;
@@ -1502,8 +1398,6 @@ export class StreamView {
             });
         }
 
-        console.log('[StreamView] Trying ' + configsToTry.length + ' codec configs (' +
-            (codecType === CODEC_HEVC ? 'HEVC' : 'H.264') + ')');
         tryCodecs(configsToTry, 0, () => {
             // All avc1 configs exhausted — try avc3 (in-band SPS/PPS).
             // Some browsers/devices prefer avc3 over avc1 for hardware decoding.
@@ -1545,8 +1439,6 @@ export class StreamView {
         cfgs.push({ codec, ...shared });
         cfgs.push({ codec, optimizeForLatency: true });
 
-        console.log('[StreamView] Phase B: ' + cfgs.length + ' AVCC configs (with desc)');
-
         const tryNext = (idx) => {
             if (idx >= cfgs.length) {
                 console.warn('[StreamView] Phase B exhausted, H.264 fallback');
@@ -1555,8 +1447,6 @@ export class StreamView {
                 return;
             }
             const cfg = cfgs[idx];
-            console.log('[StreamView] Phase B[' + idx + ']: ' + cfg.codec +
-                ' desc=' + (cfg.description ? 'yes' : 'no'));
             VideoDecoder.isConfigSupported(cfg).then((r) => {
                 if (r.supported) {
                     try {
@@ -1624,7 +1514,6 @@ export class StreamView {
     }
 
     flushPendingFrames() {
-        console.log('[StreamView] flushPendingFrames: draining ' + this.pendingFrames.length + ' frames');
         // After decoder configure, a keyframe MUST be the first frame fed.
         // Delta frames can arrive before the keyframe (SCTP unordered delivery
         // over high-latency links, e.g. remote UPnP). Feeding a delta first
@@ -1632,8 +1521,8 @@ export class StreamView {
         if (this.pendingFrames.length > 1 && !this.pendingFrames[0].isKeyframe) {
             const keyIdx = this.pendingFrames.findIndex(e => e.isKeyframe);
             if (keyIdx > 0) {
-                console.log('[StreamView] flushPendingFrames: moving keyframe from index ' +
-                    keyIdx + ' to front (delta arrived first due to SCTP reordering)');
+                // Delta arrived before the keyframe (SCTP reordering): move the
+                // keyframe to the front so the decoder is fed it first.
                 const [keyframe] = this.pendingFrames.splice(keyIdx, 1);
                 this.pendingFrames.unshift(keyframe);
             }
@@ -1642,7 +1531,6 @@ export class StreamView {
             const entry = this.pendingFrames.shift();
             this.decodeFrame(entry.data, entry.isKeyframe, entry.backendTs);
         }
-        console.log('[StreamView] flushPendingFrames done, decoder state=' + this.decoder.state);
     }
 
     decodeFrame(data, isKeyframe, backendTs) {
@@ -1650,14 +1538,6 @@ export class StreamView {
             // Buffer until decoder is ready (limit to avoid OOM)
             if (this.pendingFrames.length < 120) {
                 this.pendingFrames.push({ data, isKeyframe, backendTs });
-                if (this.pendingFrames.length === 1) {
-                    console.log('[StreamView] First frame buffered (pending), waiting for decoder config, webrtc.video=' +
-                    (this.webrtc && this.webrtc.dataChannels && this.webrtc.dataChannels.video ?
-                        this.webrtc.dataChannels.video.readyState : '?'));
-                }
-                if (this.pendingFrames.length % 30 === 0) {
-                    console.log('[StreamView] Buffered frames: ' + this.pendingFrames.length);
-                }
             }
             return;
         }
@@ -1806,28 +1686,6 @@ export class StreamView {
             }
         }
 
-        if (this.stats.decoded <= 3) {
-            const cs = frame.colorSpace;
-            console.log('[HEVC-FRAME-' + this.stats.decoded + ']' +
-                ' display=' + (frame.displayWidth || '?') + 'x' + (frame.displayHeight || '?') +
-                ' coded=' + (frame.codedWidth || '?') + 'x' + (frame.codedHeight || '?') +
-                ' format=' + (frame.format || '?') +
-                ' visibleRect=' + JSON.stringify(frame.visibleRect || 'none') +
-                ' colorSpace=' + JSON.stringify({
-                    primaries: cs?.primaries,
-                    transfer: cs?.transfer,
-                    matrix: cs?.matrix,
-                    fullRange: cs?.fullRange
-                }) +
-                ' timestamp=' + frame.timestamp +
-                ' duration=' + frame.duration);
-        }
-        if (this.stats.decoded === 1) {
-            const cs = frame.colorSpace;
-            this._lastFrameColorSpace = cs ? {
-                p: cs.primaries, t: cs.transfer, m: cs.matrix, f: cs.fullRange
-            } : null;
-        }
 
         // Limit queue depth to prevent unbounded memory growth.
         // Drop the NEW frame instead of closing an old one — the old frame
@@ -1946,15 +1804,6 @@ export class StreamView {
         this._renderer.draw(frame)
             .then(() => {
                 this.stats.rendered++;
-                // Log stats periodically (every ~5s at 60fps)
-                if (this.stats.rendered % 300 === 0) {
-                    console.log('[StreamView] Stats:',
-                        'received=' + this.stats.received,
-                        'decoded=' + this.stats.decoded,
-                        'rendered=' + this.stats.rendered,
-                        'dropped=' + this.stats.dropped,
-                        'queue=' + this.frameQueue.length);
-                }
             })
             .finally(() => {
                 this._rendering = false;
@@ -2540,27 +2389,10 @@ export class StreamView {
      * Called in monotonically-increasing frameId order.
      */
     _processVideoFrame(data, isKeyframe, backendTs) {
-        // Log first frame details
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
             console.log('[StreamView] First video frame: isKeyframe=' + isKeyframe,
                         'size=' + data.length + ' codec=' + this.videoCodec);
-            const hex = Array.from(data.slice(0, Math.min(16, data.length)))
-                .map(b => b.toString(16).padStart(2, '0')).join(' ');
-            console.log('[StreamView] First 16 bytes:', hex);
-
-            // Debug: log all NAL types in the first frame (HEVC-aware)
-            const nals = splitNals(data);
-            const nalInfo = nals.map(n => {
-                if (n.length >= 2) {
-                    const hevcType = (n[0] >> 1) & 0x3F;
-                    const h264Type = n[0] & 0x1F;
-                    return (hevcType === 32 || hevcType === 33 || hevcType === 34 || (hevcType >= 16 && hevcType <= 21))
-                        ? 'H:' + hevcType : 'A:' + h264Type;
-                }
-                return 'len=' + n.length;
-            });
-            console.log('[StreamView] First frame NAL types (H=HEVC type / A=H264 type):', nalInfo.join(', '));
         }
 
         // Worker mode: hand the frame to the OffscreenCanvas worker for decode
@@ -2607,23 +2439,9 @@ export class StreamView {
                     this._idrRequested = false;
                 }
 
-                console.log('[StreamView] Feeding first keyframe to NalParser...');
                 const ready = this.nalParser.feed(data);
-                console.log('[StreamView] NalParser.feed() returned: ready=' + ready +
-                    ' sps=' + (this.nalParser.sps ? this.nalParser.sps.length : 'null') +
-                    ' pps=' + (this.nalParser.pps ? this.nalParser.pps.length : 'null'));
                 if (ready) {
-                    console.log('[StreamView] SPS/PPS extracted from first keyframe');
-                    console.log('[StreamView] SPS first byte (NAL type): 0x' +
-                        this.nalParser.sps[0].toString(16) + ' type=' + (this.nalParser.sps[0] & 0x1F));
-                    console.log('[StreamView] PPS first byte (NAL type): 0x' +
-                        this.nalParser.pps[0].toString(16) + ' type=' + (this.nalParser.pps[0] & 0x1F));
                     this.configureDecoder();
-                } else {
-                    // Feed didn't find SPS/PPS — log what it found instead
-                    const nals = splitNals(data);
-                    console.log('[StreamView] NalParser found ' + nals.length + ' NALs, types:',
-                        nals.map(n => '0x' + n[0].toString(16) + '(type=' + (n[0] & 0x1F) + ')').join(', '));
                 }
             } else {
                 // First frame is not a keyframe — this is a problem
@@ -2643,8 +2461,6 @@ export class StreamView {
 
         // Try to configure decoder if SPS/PPS just became available
         if (!this.decoderConfigured && this.nalParser.isReady()) {
-            console.log('[StreamView] Calling configureDecoder from second check, configuring=' +
-                this.decoderConfiguring);
             this.configureDecoder();
         }
 
@@ -2669,13 +2485,9 @@ export class StreamView {
                 }
                 this._idrRequested = false;
 
-                console.log('[StreamView] AV1: extracting Sequence Header OBU from first keyframe');
+                // Extract the Sequence Header OBU from the first keyframe (may be
+                // absent — the decoder is then configured without a description).
                 const seqHeader = findSequenceHeader(data);
-                if (seqHeader) {
-                    console.log('[StreamView] AV1: Sequence Header OBU found, size=' + seqHeader.length);
-                } else {
-                    console.log('[StreamView] AV1: no Sequence Header OBU found, configuring without description');
-                }
                 this.configureAv1Decoder(seqHeader || undefined);
             } else {
                 // Wait for a keyframe before configuring — buffer until then
@@ -2708,9 +2520,6 @@ export class StreamView {
         }
         this.decoderConfiguring = true;
 
-        console.log('[StreamView] configureAv1Decoder STARTED, seqHeader=' +
-            (seqHeaderObu ? seqHeaderObu.length + ' bytes' : 'none'));
-
         const configs = buildAv1DecoderConfigs(seqHeaderObu || null);
 
         const tryCodecs = (index) => {
@@ -2722,17 +2531,13 @@ export class StreamView {
             }
 
             const cfg = configs[index];
-            console.log('[StreamView] Testing AV1 config[' + index + ']: codec=' + cfg.codec +
-                ' desc=' + (cfg.description ? cfg.description.byteLength + ' bytes' : 'none'));
-
             VideoDecoder.isConfigSupported(cfg).then((result) => {
                 if (result.supported) {
-                    console.log('[StreamView] AV1 config supported: codec=' + cfg.codec);
                     try {
                         this.decoder.configure(cfg);
                         this.decoderConfigured = true;
                         this.decoderConfiguring = false;
-                        console.log('[StreamView] AV1 VideoDecoder configured OK with codec=' + cfg.codec +
+                        console.log('[StreamView] AV1 VideoDecoder configured: codec=' + cfg.codec +
                             ', dequeuing ' + this.pendingFrames.length + ' pending frames');
                         // Drain pending frames using AV1 decoder path (not flushPendingFrames
                         // which calls toAvcc() and corrupts OBU data). The first
@@ -2750,7 +2555,6 @@ export class StreamView {
                         tryCodecs(index + 1);
                     }
                 } else {
-                    console.log('[StreamView] AV1 config NOT supported: codec=' + cfg.codec + ', trying next');
                     tryCodecs(index + 1);
                 }
             }).catch((err) => {
@@ -3178,25 +2982,6 @@ export class StreamView {
         const modCtrl = e.ctrlKey || e.metaKey;
         const isMac = /Mac/.test(navigator.platform);
         const modThird = isMac ? e.ctrlKey : e.shiftKey;  // Ctrl on Mac, Shift elsewhere
-
-        // Debug: log potential combo key events so we can see exactly what
-        // modifiers and key values the browser reports. Only logs when at
-        // least Ctrl+Alt (or Meta+Alt) are pressed — avoids spam.
-        // TODO: remove after debugging shortcut regression (2026-06-03).
-        if (modCtrl && e.altKey) {
-            console.log('[StreamView] Combo candidate:', {
-                key: e.key,
-                code: e.code,
-                ctrlKey: e.ctrlKey,
-                altKey: e.altKey,
-                shiftKey: e.shiftKey,
-                metaKey: e.metaKey,
-                platform: navigator.platform,
-                isMac: isMac,
-                modThird: modThird,
-                modThirdExpected: isMac ? 'ctrlKey' : 'shiftKey'
-            });
-        }
 
         // ── Escape key ────────────────────────────────────────────────────
         // Prevent the browser from exiting fullscreen or releasing pointer
@@ -4638,7 +4423,6 @@ export class StreamView {
         }
 
         this.stopRenderLoop();
-        this.stopDiagnostics();
         this.unbindEvents();
 
         // Tear down the video worker (if active): stop its pipeline, then
@@ -4821,7 +4605,6 @@ export class StreamView {
     destroy() {
         this._exitCssFallbackFullscreen();
         this.stopRenderLoop();
-        this.stopDiagnostics();
         this.unbindEvents();
         this.webrtc.close();
 
