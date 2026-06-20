@@ -259,8 +259,6 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
                  .arg(query));
 
     qDebug() << "[NvHTTP] launchApp URL:" << url.toString();
-    qDebug() << "[NvHTTP]   client cert size:" << clientCertPem.size()
-             << "key size:" << clientKeyPem.size();
 
     QNetworkRequest req(url);
     req.setTransferTimeout(120000);  // launch can take up to 120s per spec
@@ -269,32 +267,14 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
     QSslConfiguration sslConfig = req.sslConfiguration();
     QSslCertificate clientCert(clientCertPem, QSsl::Pem);
     QSslKey clientKey(clientKeyPem, QSsl::Rsa, QSsl::Pem);
-
-    qDebug() << "[NvHTTP]   client cert valid:" << !clientCert.isNull()
-             << "key valid:" << !clientKey.isNull();
-
     sslConfig.setLocalCertificate(clientCert);
     sslConfig.setPrivateKey(clientKey);
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(sslConfig);
 
-    // Log proxy settings
-    QNetworkProxy proxy = m_Nam->proxy();
-    qDebug() << "[NvHTTP]   proxy type:" << proxy.type()
-             << "host:" << proxy.hostName() << "port:" << proxy.port();
-
-    QNetworkReply* reply = m_Nam->get(req);
-
-    // SSL errors are expected (Sunshine self-signed cert), logged as debug
-    QObject::connect(reply, &QNetworkReply::sslErrors,
-                     [url](const QList<QSslError>& errors) {
-        qDebug() << "[NvHTTP] SSL errors for" << url.toString();
-        for (const auto& e : errors) {
-            qDebug() << "[NvHTTP]   -" << e.errorString();
-        }
-    });
-
-    return reply;
+    // SSL errors are expected (Sunshine self-signed cert) and ignored via
+    // VerifyNone above; no handler needed.
+    return m_Nam->get(req);
 }
 
 QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPort,

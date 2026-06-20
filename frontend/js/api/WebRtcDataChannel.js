@@ -99,12 +99,6 @@ export class WebRtcDataChannel {
         this._reassembly = new Map();
         this._cleanupTimer = null;
 
-        // TEST B: Debug — capture first keyframe bytes for DC vs WSS comparison
-        // Use window-level flags so captures survive across stream restarts
-        if (window._dcKfCaptured === undefined) window._dcKfCaptured = false;
-        if (window._wssKfCaptured === undefined) window._wssKfCaptured = false;
-        window._webRtcRef = this;
-
         // Logging
         this._logCount = 0;
         this._frameLogCount = 0;
@@ -163,9 +157,6 @@ export class WebRtcDataChannel {
         this.DC_AUDIO_LABEL = 'audio';
         this.DC_INPUT_LABEL = 'input';
 
-        // WSS mode received frame count (for logging only)
-        this._wssFrameCount = 0;
-
         // Shared IDR request throttle: minimum interval between any requestidr sent.
         // Covers stale-frame drops, starvation, and onFrameLoss — one timestamp for all.
         this._lastIdrRequestTime = 0;
@@ -174,13 +165,7 @@ export class WebRtcDataChannel {
         // Callback: (frameId, wasKeyframe) — fired when an assembled frame is dropped incomplete.
         this.onFrameLoss = null;
 
-        // Diagnostics: classify skipped frameIds at assembly time.
-        // - missNoChunk: no chunk ever arrived for the frameId (message lost whole)
-        // - missPartial: some chunks arrived but frame is incomplete (packet loss)
         this._lastAssembledFrameId = -1;
-        this._missNoChunk = 0;
-        this._missPartial = 0;
-        this._diagTick = 0;
     }
 
     /**
@@ -443,7 +428,7 @@ export class WebRtcDataChannel {
         console.log('[WebRTC] Closing...');
 
         // Stop the cleanup timer in ALL modes — the WSS early-return below
-        // used to leak it, leaving a zombie [DC-PIPE] logger running forever.
+        // used to leak it, leaving a zombie interval running forever.
         if (this._cleanupTimer) {
             clearInterval(this._cleanupTimer);
             this._cleanupTimer = null;
@@ -767,9 +752,6 @@ export class WebRtcDataChannel {
         }
 
         try {
-            // Show first 200 chars of SDP for debugging
-            console.log('[WebRTC] SDP offer (first 200):', sdp.substring(0, 200));
-
             const remoteDesc = new RTCSessionDescription({
                 type: 'offer',
                 sdp: sdp
@@ -935,13 +917,6 @@ export class WebRtcDataChannel {
         this.stats.framesAssembled++;
         this.stats.framesReceived++;
 
-        // Diagnostics: classify frameIds skipped since the last assembled frame.
-        if (this._lastAssembledFrameId >= 0 && frameId > this._lastAssembledFrameId + 1) {
-            for (let id = this._lastAssembledFrameId + 1; id < frameId; id++) {
-                if (this._reassembly.has(id)) this._missPartial++;
-                else this._missNoChunk++;
-            }
-        }
         if (frameId > this._lastAssembledFrameId) this._lastAssembledFrameId = frameId;
 
         // Track last assembled frame time for starvation detection.
@@ -949,14 +924,6 @@ export class WebRtcDataChannel {
         // delivering chunks of incomplete frames must still trigger starvation.
         this._lastAssembledTime = performance.now();
         this._starvationRequested = false;
-
-        if (this.stats.framesAssembled <= 3 || this.stats.framesAssembled % 600 === 0) {
-            console.log('[WebRTC] Assembled frame #' + frameId +
-                ' size=' + assembled.length +
-                ' keyframe=' + entry.keyframe +
-                ' chunks=' + entry.received + '/' + entry.total +
-                ' totalFrames=' + this.stats.framesAssembled);
-        }
 
         // Emit video frame with backend timestamp for latency calculations
         if (this.onVideo) {
@@ -1027,16 +994,6 @@ export class WebRtcDataChannel {
         // Sunshine so we can recover quickly.
         if (staleCount >= 1) {
             this._requestIdrFrame('stale frames (' + staleCount + ' dropped)');
-        }
-
-        // Diagnostics: pipeline summary every 2s (cleanup runs every 100ms).
-        if (++this._diagTick % 20 === 0 && this.stats.chunksReceived > 0) {
-            console.log('[DC-PIPE] chunks=' + this.stats.chunksReceived +
-                ' assembled=' + this.stats.framesAssembled +
-                ' dropped=' + this.stats.framesDropped +
-                ' missNoChunk=' + this._missNoChunk +
-                ' missPartial=' + this._missPartial +
-                ' pending=' + this._reassembly.size);
         }
 
         // Starvation detection: if no frame was assembled for STARVATION_TIMEOUT_MS
@@ -1243,11 +1200,6 @@ export class WebRtcDataChannel {
                 // Video frame
                 const isKeyframe = (flags & 0x01) !== 0;
 
-                this._wssFrameCount++;
-                if (this._wssFrameCount <= 3 || this._wssFrameCount % 600 === 0) {
-                    console.log('[WSS] Video frame #' + this._wssFrameCount +
-                        ' keyframe=' + isKeyframe + ' size=' + payload.length);
-                }
                 if (this.onVideo) {
                     this.onVideo(payload, isKeyframe, undefined);
                 }
@@ -1286,42 +1238,3 @@ export class WebRtcDataChannel {
         this.close();
     }
 }
-
-// =========================================================================
-// TEST B: Console utility — compare DC vs WSS first keyframes
-// =========================================================================
-// Usage in Chrome console after running both WSS and DC streams:
-//   _compareKeyframes()
-// Reset captures to re-test:
-//   _resetKeyframes()
-window._resetKeyframes = function() {
-    window._dcKfCaptured = false;
-    window._wssKfCaptured = false;
-    window._dcFirstKeyframe = null;
-    window._wssFirstKeyframe = null;
-    console.log('Keyframe captures reset. Run streams again.');
-};
-window._compareKeyframes = function() {
-    const dc = window._dcFirstKeyframe;
-    const wss = window._wssFirstKeyframe;
-    if (!dc) { console.log('No DC keyframe captured yet'); return; }
-    if (!wss) { console.log('No WSS keyframe captured yet'); return; }
-    console.log('DC  size=' + dc.length + ' first48=' +
-        Array.from(dc.subarray(0, 48)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-    console.log('WSS size=' + wss.length + ' first48=' +
-        Array.from(wss.subarray(0, 48)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-    let diffs = 0;
-    const minLen = Math.min(dc.length, wss.length);
-    for (let i = 0; i < minLen; i++) {
-        if (dc[i] !== wss[i]) {
-            diffs++;
-            if (diffs <= 20) console.log('DIFF at byte ' + i + ': DC=' + dc[i] + ' WSS=' + wss[i]);
-        }
-    }
-    console.log('Total byte diffs: ' + diffs + ' / ' + minLen + ' (DC=' + dc.length + ' WSS=' + wss.length + ')');
-    if (diffs === 0 && dc.length === wss.length) {
-        console.log('✅ IDENTICAL — reassembly is perfect, bug is elsewhere');
-    } else {
-        console.log('❌ DIFFER — reassembly/data corruption confirmed');
-    }
-};

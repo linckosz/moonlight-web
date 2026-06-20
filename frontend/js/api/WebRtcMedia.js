@@ -559,7 +559,6 @@ export class WebRtcMedia {
 
             for (const codec of sdpCodecs) {
                 if (browserCodecs.has(codec)) {
-                    console.log('[WebRtcMedia] Codec supported by browser:', codec);
                     return true;
                 }
             }
@@ -576,8 +575,6 @@ export class WebRtcMedia {
         console.log('[WebRtcMedia] Received SDP offer, length=' + sdp.length);
 
         try {
-            console.log('[WebRtcMedia] SDP offer (first 200):', sdp.substring(0, 200));
-
             // Validate codec support before committing
             const codecOk = this._validateCodecSupport(sdp);
             if (!codecOk) {

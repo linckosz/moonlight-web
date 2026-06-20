@@ -132,60 +132,6 @@ static QString hevcHexDump(const QByteArray& data, int maxLen = 64) {
     return hex;
 }
 
-/// Log HEVC VPS/SPS/PPS parameters for debugging.
-/// Logs both parsed values AND raw hex bytes for bit-level analysis.
-static void logHevcParameters(const QByteArray& vps, const QByteArray& sps,
-                               const QByteArray& pps, const QString& label)
-{
-    if (!vps.isEmpty()) {
-        QByteArray cleanVps = removeHvcEp(vps);
-        if (cleanVps.size() >= 4) {
-            const unsigned char* v = reinterpret_cast<const unsigned char*>(cleanVps.constData());
-            // vps_max_sub_layers_minus1 at RBSP byte 1 bits 3-1 = clean[3] bits 3-1
-            int subLayers = (v[3] >> 1) & 0x07;
-            int profileIdc = v[6] & 0x1F;
-            int tierFlag = (v[6] >> 5) & 0x01;
-            int levelIdc = v[17];
-            qInfo().noquote()
-                << QString("[HEVC-PARAM %1] VPS: subLayers=%2 profile=%3 tier=%4 level=%5 "
-                           "size=%6 raw=[%7...]")
-                       .arg(label)
-                       .arg(subLayers)
-                       .arg(profileIdc)
-                       .arg(tierFlag)
-                       .arg(levelIdc)
-                       .arg(cleanVps.size())
-                       .arg(QString(hevcHexDump(cleanVps, 24)));
-        }
-    }
-    if (!sps.isEmpty()) {
-        QByteArray cleanSps = removeHvcEp(sps);
-        if (cleanSps.size() >= 15) {
-            const unsigned char* s = reinterpret_cast<const unsigned char*>(cleanSps.constData());
-            int subLayers = (s[2] >> 1) & 0x07;
-            int profileIdc = s[3] & 0x1F;
-            int tierFlag = (s[3] >> 5) & 0x01;
-            int levelIdc = s[14];
-            uint32_t compatFlags = (static_cast<uint32_t>(s[4]) << 24) |
-                                   (static_cast<uint32_t>(s[5]) << 16) |
-                                   (static_cast<uint32_t>(s[6]) << 8) |
-                                   static_cast<uint32_t>(s[7]);
-
-            qInfo().noquote()
-                << QString("[HEVC-PARAM %1] SPS: subLayers=%2 profile=%3 tier=%4 level=%5 "
-                           "compat=0x%6 size=%7 raw=[%8...]")
-                       .arg(label)
-                       .arg(subLayers)
-                       .arg(profileIdc)
-                       .arg(tierFlag)
-                       .arg(levelIdc)
-                       .arg(compatFlags, 8, 16, QChar('0'))
-                       .arg(cleanSps.size())
-                       .arg(QString(hevcHexDump(cleanSps, 24)));
-        }
-    }
-}
-
 /// Rebuild HEVC VPS NAL unit with vps_max_sub_layers_minus1=0.
 ///
 /// Takes the EP-removed VPS NAL unit (including 2-byte NAL header) and returns
@@ -471,20 +417,6 @@ static bool patchHevcKeyframe(QByteArray& data)
     return patched;
 }
 
-/// Extract VPS/SPS/PPS from a HEVC keyframe for logging.
-static void extractHevcParameterSets(const QByteArray& data,
-                                      QByteArray& vps, QByteArray& sps, QByteArray& pps)
-{
-    auto nals = scanNals(data);
-    for (const auto& loc : nals) {
-        QByteArray nal = data.mid(loc.nalOffset, loc.nalLen);
-        int type = hevcNalType(nal);
-        if (type == 32 && vps.isEmpty()) vps = nal;
-        else if (type == 33 && sps.isEmpty()) sps = nal;
-        else if (type == 34 && pps.isEmpty()) pps = nal;
-    }
-}
-
 // ============================================================================
 
 DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
@@ -495,23 +427,6 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
 
     // Dedicated sender thread: fragmentation + dc->send() run off the main thread.
     m_Sender = std::make_unique<FrameSender>();
-
-    // Enable HEVC debug test mode via environment variable (1-4)
-    {
-        QByteArray envVal = qgetenv("MW_HEVC_TEST");
-        if (!envVal.isEmpty()) {
-            bool ok = false;
-            int mode = envVal.toInt(&ok);
-            if (ok && mode >= 1 && mode <= 4) {
-                m_HevcTestMode = mode;
-                if (mode == 3) {
-                    m_StaleBufferCheckDisabled = true;  // Test 3: don't drop buffered keyframe
-                    qInfo() << "[DataChannelRelay] HEVC TEST MODE 3: stale buffer check DISABLED";
-                }
-                qInfo() << "[DataChannelRelay] HEVC TEST MODE" << mode << "ENABLED";
-            }
-        }
-    }
 
     connect(m_Shim, &MoonlightShim::videoFrameReady,
             this, &DataChannelRelay::onVideoFrame);
@@ -809,7 +724,7 @@ void DataChannelRelay::createDataChannels()
 
 // --- Video/Audio forwarding (from MoonlightShim signals, on main thread) ---
 
-void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int frameNumber)
+void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /*frameNumber*/)
 {
     // Balance the worker→main pending counter (incremented before each emit).
     // m_Shim lifetime is guaranteed: the shim is Qt-parented to this relay
@@ -832,110 +747,34 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
     }
 
     bool isKeyframe = (frameType == 1);
-    m_FramesInCount++;
 
-    // ── DEBUG LOG: First frames detailed hex dump (test mode only) ────────
-    // Gated behind m_HevcTestMode: hex/NAL formatting is too expensive for
-    // the hot video path during normal operation.
-    static int debugFrameNumber = 0;
-    debugFrameNumber++;
-    if (m_HevcTestMode > 0 && (debugFrameNumber <= 3 || debugFrameNumber % 120 == 0)) {
-        qInfo() << "[DataChannelRelay] onVideoFrame #" << debugFrameNumber
-                << "type=" << frameType << "size=" << data.size()
-                << "dcOpen=" << (m_VideoDc && m_VideoDc->isOpen())
-                << "haveBuffered=" << m_HaveBufferedKeyframe
-                << "framesSent=" << m_FramesSentCount;
-        if (data.size() > 0) {
-            int dumpLen = qMin(48, data.size());
-            QByteArray hexDump;
-            for (int i = 0; i < dumpLen; i++) {
-                hexDump += QString::asprintf("%02x ", (unsigned char)data[i]).toUtf8();
-            }
-            qInfo() << "[DataChannelRelay]   HEX:" << hexDump;
-            // Log NAL unit types for debugging
-            QByteArray nalTypes;
-            for (int i = 0; i < qMin(data.size() - 3, 4096); i++) {
-                if (data[i] == 0 && data[i+1] == 0 &&
-                    (data[i+2] == 1 || (i+3 < data.size() && data[i+2] == 0 && data[i+3] == 1))) {
-                    int startCodeLen = (data[i+2] == 1) ? 3 : 4;
-                    if (i + startCodeLen < data.size()) {
-                        unsigned char nalByte = (unsigned char)data[i + startCodeLen];
-                        int nalType = (nalByte & 0x1F);
-                        int hevcType = (nalByte >> 1) & 0x3F;
-                        if (!nalTypes.isEmpty()) nalTypes += " ";
-                        nalTypes += QString::asprintf("H264:%d/HEVC:%d@%d", nalType, hevcType, i).toUtf8();
-                    }
-                }
-            }
-            if (!nalTypes.isEmpty())
-                qInfo() << "[DataChannelRelay]   NALs:" << nalTypes;
-        }
-    }
-
-    // ── HEVC VPS/SPS patch for Chrome Windows black screen ────────────────
-    // Only apply to the first keyframe, once per session.
-    // Makes a mutable copy so we can patch VPS/SPS parameters that Chrome's
-    // decoder has trouble with (high level_idc, temporal sublayers).
+    // HEVC VPS/SPS patch for Chrome Windows black screen.
+    // Patch the first keyframe once per session: Chrome's HEVC decoder chokes
+    // on some VPS/SPS parameters (high level_idc, temporal sublayers). H.264
+    // needs no patch. Work on a mutable copy.
     QByteArray frameData = data;
     if (isKeyframe && !m_HevcPatched) {
-        qInfo() << "[HEVC-DIAG] === FIRST KEYFRAME DETECTED === frame#"
-                << debugFrameNumber << "size=" << data.size();
-
-        // Detect if this is HEVC by checking the first NAL type
-        auto nals = scanNals(frameData);
+        // Detect HEVC via the presence of a VPS NAL (type 32).
         bool isHevc = false;
-        int vpsIdx = -1, spsIdx = -1, ppsIdx = -1;
-        for (int i = 0; i < nals.size(); i++) {
-            const auto& loc = nals[i];
-            QByteArray nal = frameData.mid(loc.nalOffset, qMin(loc.nalLen, 16));
-            int type = hevcNalType(nal);
-            qInfo() << "[HEVC-DIAG]   NAL[" << i << "] type=" << type
-                    << "offset=" << loc.nalOffset << "len=" << loc.nalLen;
-            if (type == 32) { isHevc = true; vpsIdx = i; }
-            else if (type == 33) { spsIdx = i; }
-            else if (type == 34) { ppsIdx = i; }
-        }
-        qInfo() << "[HEVC-DIAG] HEVC detected=" << isHevc
-                << "VPS=" << vpsIdx << "SPS=" << spsIdx << "PPS=" << ppsIdx
-                << "totalNALs=" << nals.size();
-
-        if (isHevc) {
-            // Log original (unpatched) parameter sets
-            QByteArray origVps, origSps, origPps;
-            extractHevcParameterSets(frameData, origVps, origSps, origPps);
-            logHevcParameters(origVps, origSps, origPps, "ORIG");
-
-            // Apply patch
-            if (patchHevcKeyframe(frameData)) {
-                qInfo() << "[HEVC-DIAG] *** PATCH APPLIED *** frameData now"
-                        << frameData.size() << "bytes";
-                m_HevcPatched = true;
-
-                // Log patched parameter sets for comparison
-                QByteArray patchedVps, patchedSps, patchedPps;
-                extractHevcParameterSets(frameData, patchedVps, patchedSps, patchedPps);
-                logHevcParameters(patchedVps, patchedSps, patchedPps, "PATCHED");
-            } else {
-                qInfo() << "[HEVC-DIAG] No patch applied (already safe or error)";
-                m_HevcPatched = true;  // Don't re-check every keyframe
+        for (const auto& loc : scanNals(frameData)) {
+            if (hevcNalType(frameData.mid(loc.nalOffset, qMin(loc.nalLen, 16))) == 32) {
+                isHevc = true;
+                break;
             }
-        } else {
-            qInfo() << "[HEVC-DIAG] Not HEVC (H.264), skipping patch";
-            m_HevcPatched = true;  // No need to check again for H.264
         }
+        if (isHevc) {
+            patchHevcKeyframe(frameData);
+        }
+        m_HevcPatched = true;  // Only the first keyframe is checked
     }
 
     // Buffer keyframes arriving before the Video DC is ready.
-    // NOTE: Must be BEFORE test mode code — test mode modifies frameData.
     // Without this buffer, the keyframe (containing SPS/PPS) is lost, the
     // browser's VideoDecoder can never configure, and we get decoder=null.
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
         m_BufferedKeyframe = frameData;
         m_HaveBufferedKeyframe = true;
         m_NewKeyframeArrived = false;  // Reset — we have the latest buffer
-        qInfo() << "[DataChannelRelay] BUFFERED keyframe size=" << frameData.size()
-                << "(DC ready=" << (m_VideoDc && m_VideoDc->isOpen())
-                << " newKeyframeArrived=false)";
         return;
     }
 
@@ -961,98 +800,15 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int f
 
     // Awaiting IDR: drop all deltas until a keyframe resets the decoder reference.
     if (m_AwaitingIdr && !isKeyframe) {
-        m_AwaitingDropCount++;
         sendIdrRequestThrottled();  // Throttle absorbs bursts; keeps requesting until IDR arrives
         return;
-    }
-
-    // ── HEVC Debug Test Modes ────────────────────────────────────────────────
-    // NOTE: Buffer was checked ABOVE before this block.
-    // Test mode code below modifies frameData for delta frames only.
-    // Keyframes (already buffered above) are NOT affected.
-
-    // Detect HEVC to enable test modes.
-    // Gated on test mode — the per-frame NAL scan is wasted work otherwise.
-    static int testModeFrameCount = 0;
-    static int testModeLogged = 0;
-    bool isHevcFrame = false;
-    if (m_HevcTestMode > 0) {
-        auto nals = scanNals(data);
-        for (int i = 0; i < nals.size() && i < 10; i++) {
-            QByteArray nal = data.mid(nals[i].nalOffset, qMin(nals[i].nalLen, 4));
-            int type = hevcNalType(nal);
-            if (type >= 0) { isHevcFrame = true; break; }
-        }
-    }
-
-    if (m_HevcTestMode > 0 && isHevcFrame) {
-        testModeFrameCount++;
-        if (testModeLogged == 0) {
-            qInfo() << "[HEVC-TEST] Mode" << m_HevcTestMode << "active — frameCount=" << testModeFrameCount
-                    << "isKeyframe=" << isKeyframe << "isHevc=" << isHevcFrame;
-            testModeLogged = 1;
-        }
-
-        // Test 1: Stop sending after first keyframe (freeze on frame #1)
-        if (m_HevcTestMode == 1 && testModeFrameCount > 1) {
-            if (testModeFrameCount <= 3)
-                qInfo() << "[HEVC-TEST1] Dropping frame (sending only frame #1), count=" << testModeFrameCount;
-            return;  // Drop all subsequent frames
-        }
-
-        // Test 2: Repeat first keyframe at every frame rate
-        if (m_HevcTestMode == 2) {
-            if (testModeFrameCount == 1) {
-                m_FirstKeyframe = frameData;
-                qInfo() << "[HEVC-TEST2] Saved first keyframe size=" << frameData.size()
-                        << ", will repeat it every frame";
-            }
-            if (!m_FirstKeyframe.isEmpty()) {
-                frameData = m_FirstKeyframe;
-                isKeyframe = true;  // Treat as keyframe so decoder doesn't drop it
-                if (testModeFrameCount <= 3)
-                    qInfo() << "[HEVC-TEST2] Sending repeated keyframe frame#" << testModeFrameCount;
-            }
-        }
-
-        // Test 3: Force all frames as keyframes
-        if (m_HevcTestMode == 3) {
-            if (!isKeyframe) {
-                qInfo() << "[HEVC-TEST3] Frame" << testModeFrameCount << "forced to keyframe";
-                isKeyframe = true;
-            }
-        }
-
-        // Test 4: Sequence test — inject colored frames
-        if (m_HevcTestMode == 4) {
-            // State machine: 0=normal, 1=black, 2=white
-            const int kFramesPerState = 60;  // ~1 second at 60fps per state
-            int newState = (testModeFrameCount / kFramesPerState) % 3;
-            if (newState != m_Test4State) {
-                const char* stateNames[] = {"NORMAL", "BLACK", "WHITE"};
-                qInfo() << "[HEVC-TEST4] State:" << m_Test4State << "->" << stateNames[newState];
-                m_Test4State = newState;
-            }
-
-            if (m_Test4State == 1) {
-                // Inject full black frame: zero out the data
-                frameData.fill(0);
-                qInfo() << "[HEVC-TEST4] Sending BLACK frame";
-            } else if (m_Test4State == 2) {
-                // Inject full white frame: fill with 0xFF
-                frameData.fill(0xFF);
-                qInfo() << "[HEVC-TEST4] Sending WHITE frame";
-            }
-        }
     }
 
     // If a new keyframe arrives directly while a buffered keyframe exists,
     // mark it as stale. Delta frames do NOT invalidate the buffer — they
     // are useless without a keyframe, so we must still send the buffered
     // one when sendBufferedKeyframe() fires.
-    // NOTE: Disabled in Test 3 — every frame is forced as keyframe, which
-    // would incorrectly mark the buffer as stale.
-    if (isKeyframe && m_HaveBufferedKeyframe && !m_StaleBufferCheckDisabled) {
+    if (isKeyframe && m_HaveBufferedKeyframe) {
         m_NewKeyframeArrived = true;
     }
 
@@ -1081,17 +837,7 @@ void DataChannelRelay::sendBufferedKeyframe()
     if (m_NewKeyframeArrived) {
         qInfo() << "[DataChannelRelay] STALE: buffered keyframe DROPPED —"
                 << "new keyframe arrived while buffer was held, discarding"
-                << m_BufferedKeyframe.size() << "bytes"
-                << "(framesSentCount=" << m_FramesSentCount << ")";
-        // HEX dump the stale keyframe for debugging
-        if (m_BufferedKeyframe.size() > 0) {
-            int dumpLen = qMin(48, m_BufferedKeyframe.size());
-            QByteArray hexDump;
-            for (int i = 0; i < dumpLen; i++) {
-                hexDump += QString::asprintf("%02x ", (unsigned char)m_BufferedKeyframe[i]).toUtf8();
-            }
-            qInfo() << "[DataChannelRelay]   STALE keyframe HEX:" << hexDump;
-        }
+                << m_BufferedKeyframe.size() << "bytes";
         m_BufferedKeyframe.clear();
         m_HaveBufferedKeyframe = false;
         m_NewKeyframeArrived = false;
@@ -1100,15 +846,6 @@ void DataChannelRelay::sendBufferedKeyframe()
 
     qInfo() << "[DataChannelRelay] Sending buffered keyframe, size="
             << m_BufferedKeyframe.size();
-    // HEX dump the buffered keyframe before sending
-    if (m_BufferedKeyframe.size() > 0) {
-        int dumpLen = qMin(48, m_BufferedKeyframe.size());
-        QByteArray hexDump;
-        for (int i = 0; i < dumpLen; i++) {
-            hexDump += QString::asprintf("%02x ", (unsigned char)m_BufferedKeyframe[i]).toUtf8();
-        }
-        qInfo() << "[DataChannelRelay]   BUFFERED keyframe HEX:" << hexDump;
-    }
     sendFragmented(m_BufferedKeyframe, true, m_VideoDc);
     m_BufferedKeyframe.clear();
     m_HaveBufferedKeyframe = false;
@@ -1136,13 +873,6 @@ void DataChannelRelay::onAudioSample(const QByteArray& data)
         if (++notOpenCount <= 3)
             qInfo() << "[DataChannelRelay] onAudioSample dropped — Audio DC not yet open";
         return;
-    }
-
-    static int audioCount = 0;
-    audioCount++;
-    if (audioCount <= 3) {
-        qInfo() << "[DataChannelRelay] Audio sample #" << audioCount
-                << "size=" << data.size();
     }
 
     // Audio uses the same fragmented format as video (isKeyframe=false).
@@ -1175,13 +905,6 @@ void DataChannelRelay::onInputMessage(const std::string& message)
 
     QJsonObject msg = doc.object();
     QString type = msg["type"].toString();
-
-    static QMap<QString, int> inputCounts;
-    int& count = inputCounts[type];
-    count++;
-    if (count <= 2) {
-        qInfo() << "[DataChannelRelay] Input #" << count << "type=" << type;
-    }
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
@@ -1365,27 +1088,12 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         m_BackpressureDropCount = 0;
     }
 
-    int totalSize = data.size();
-    int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
 
     // Audio shares this path but uses its own id counter: at ~200 Opus pkt/s it
     // would otherwise punch permanent holes in the video frameId sequence and
     // trip the frontend gap detection on nearly every video frame (IDR loop).
     const bool isAudio = (dc == m_AudioDc);
     uint32_t frameId = isAudio ? m_AudioFrameId++ : m_FrameId++;
-
-    // Log FNV-1a hash for ALL frames (first 20) for end-to-end comparison
-    if (!isAudio && frameId < 20) {
-        // FNV-1a 32-bit hash
-        uint32_t hash = 0x811c9dc5;
-        for (int i = 0; i < totalSize; i++) {
-            hash ^= (unsigned char)data[i];
-            hash *= 0x01000193;
-        }
-        qInfo() << "[DC-FRAME] frameId=" << frameId
-                << "size=" << totalSize << "keyframe=" << isKeyframe
-                << "fnv1a=" << Qt::hex << hash << Qt::dec;
-    }
 
     // ── End-to-end latency timestamp ───────────────────────────────────────
     // Send the frame's capture time in steady_clock domain (monotonic ms).
@@ -1414,15 +1122,9 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // so an in-flight send cannot outlive the channel during stop().
     m_Sender->enqueue(dc, data, isKeyframe, isAudio, frameId, backendTs);
 
-    // Video-only counters: audio packets are not "frames" for diagnostics.
+    // Video-only counter: audio packets are not "frames" for diagnostics.
     if (!isAudio) {
         m_FrameCount++;
-        m_FramesSentCount++;
-        if (m_FrameCount <= 3 || m_FrameCount % 300 == 0) {
-            qInfo() << "[DataChannelRelay] Sent frame #" << m_FrameCount
-                    << "totalSize=" << totalSize << "chunks=" << totalChunks
-                    << "isKeyframe=" << isKeyframe << "frameId=" << frameId;
-        }
     }
 }
 
@@ -1432,19 +1134,6 @@ void DataChannelRelay::onStatsTimerTick()
 {
     if (m_Stopping.load() || !m_Connected) return;
     if (!m_InputDc || !m_InputDc->isOpen()) return;
-
-    // Pipeline diagnostics: localize where frames are lost (every 2s).
-    // Gated behind test mode — too verbose for normal operation.
-    if (m_HevcTestMode > 0 && m_FramesInCount > 0) {
-        size_t vidBuf = (m_VideoDc && m_VideoDc->isOpen()) ? m_VideoDc->bufferedAmount() : 0;
-        qInfo() << "[DC-PIPE] in=" << m_FramesInCount
-                << "sent=" << m_FramesSentCount
-                << "dropAwait=" << m_AwaitingDropCount
-                << "dropBackpressure=" << m_DeltaDroppedCount
-                << "nextFrameId=" << m_FrameId
-                << "bufferedAmount=" << vidBuf
-                << "awaitingIdr=" << m_AwaitingIdr;
-    }
 
     double hostRttMs = 0.0;
     int64_t decodeLatUs = m_LastDecodeLatencyUs.load(std::memory_order_acquire);

@@ -190,18 +190,6 @@ void StreamRelay::sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe
     uint32_t backendTs = static_cast<uint32_t>(
         QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
-    // Log FNV-1a hash for first frames
-    if (frameId < 20) {
-        uint32_t hash = 0x811c9dc5;
-        for (int i = 0; i < totalSize; i++) {
-            hash ^= static_cast<unsigned char>(data[i]);
-            hash *= 0x01000193;
-        }
-        qInfo() << "[WS-FRAME] frameId=" << frameId
-                << "size=" << totalSize << "keyframe=" << isKeyframe
-                << "fnv1a=" << Qt::hex << hash << Qt::dec;
-    }
-
     for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
         int offset = chunkIdx * kMaxPayloadSize;
         int payloadSize = std::min(kMaxPayloadSize, totalSize - offset);
@@ -333,55 +321,12 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
     msg.append(static_cast<char>(isKeyframe ? 0x01 : 0x00));
     msg.append(data);
 
-    // Log first WS message sent
-    static int wsMsgCount = 0;
-    wsMsgCount++;
-    if (wsMsgCount <= 2) {
-        qInfo() << "[StreamRelay] WS binary msg #" << wsMsgCount
-                << "totalSize=" << msg.size()
-                << "channel=" << (unsigned char)msg[0]
-                << "flags=" << (unsigned char)msg[1]
-                << "frameType=" << frameType;
-        // Log first 48 bytes of the actual payload (after 2-byte header)
-        if (msg.size() > 2) {
-            int dumpLen = qMin(48, msg.size() - 2);
-            QByteArray hexDump;
-            for (int i = 2; i < 2 + dumpLen; i++) {
-                hexDump += QString("%1 ").arg((unsigned char)msg[i], 2, 16, QChar('0')).toUtf8();
-            }
-            qInfo() << "[StreamRelay]   WS payload hex:" << hexDump;
-        }
-
-        // Also send a text debug message to the browser with the first 48 bytes hex
-        if (m_WsClient && msg.size() > 2) {
-            int dumpLen = qMin(48, msg.size() - 2);
-            QByteArray hexDump;
-            for (int i = 2; i < 2 + dumpLen; i++) {
-                hexDump += QString::asprintf("%02x ", (unsigned char)msg[i]).toUtf8();
-            }
-            hexDump.chop(1); // remove trailing space
-            QJsonObject dbgMsg;
-            dbgMsg["type"] = "debug_hex";
-            dbgMsg["payload"] = QString::fromUtf8(hexDump);
-            QJsonDocument dbgDoc(dbgMsg);
-            m_WsClient->sendTextMessage(QString::fromUtf8(dbgDoc.toJson(QJsonDocument::Compact)));
-        }
-    }
-
     m_WsClient->sendBinaryMessage(msg);
     m_FrameCount++;
 }
 
 void StreamRelay::onAudioSample(const QByteArray& data)
 {
-    static int audioCount = 0;
-    audioCount++;
-    if (audioCount <= 3) {
-        qInfo() << "[StreamRelay] onAudioSample #" << audioCount << "size=" << data.size()
-                << "WSclient=" << (m_WsClient != nullptr)
-                << "streamStarted=" << m_StreamStarted;
-    }
-
     if (!m_WsClient || !m_Running || !m_StreamStarted) {
         if (m_Running && m_PendingAudioFrames.size() < 120) {
             m_PendingAudioFrames.append(data);

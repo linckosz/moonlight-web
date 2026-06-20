@@ -93,11 +93,10 @@ export class AdminView {
             this._upnpAvailable = status.upnp_available || false;
             this._pendingRegistration = status.pending_registration || false;
             this._lastError = status.last_error || '';
-            // Do NOT overwrite _httpsPort from internet status.
-            // The authoritative source is /api/admin/settings (_loadState()).
-            // InternetAccessManager may have a stale port if setPorts()
-            // was not called after a changeHttpsPort() on the backend.
-            // this._httpsPort = status.https_port || this._httpsPort;
+            // Do NOT overwrite _httpsPort from internet status: the authoritative
+            // source is /api/admin/settings (_loadState()). InternetAccessManager
+            // may hold a stale port if setPorts() was not called after a backend
+            // changeHttpsPort().
         } catch (err) {
             console.warn('[Admin] Failed to load internet status:', err);
         }
