@@ -16,6 +16,7 @@
  */
 
 #include "AcmeClient.h"
+#include "PdnsClient.h"
 
 #include <QBuffer>
 #include <QDir>
@@ -50,10 +51,7 @@ static constexpr int kHttpTimeoutMs  = 30000;
 static constexpr int kPollIntervalMs = 5000;
 static constexpr int kMaxPollRetries = 36;     // 36 x 5s = 3 min
 static constexpr int kChallengeTtl   = 60;     // TXT record TTL
-static const QString kPdnsApiBase =
-    QStringLiteral("https://api.moonlightweb.top/api/v1/servers/localhost");
-static const QString kPdnsZoneName =
-    QStringLiteral("moonlightweb.top.");
+// PowerDNS endpoint and zone come from PdnsClient (env-driven, single source).
 
 // ---------------------------------------------------------------------------
 // Construction / Destruction
@@ -615,7 +613,7 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
 
     QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
 
-    QUrl url(kPdnsApiBase + QStringLiteral("/zones/") + kPdnsZoneName);
+    QUrl url(PdnsClient::apiBaseUrl() + QStringLiteral("/zones/") + PdnsClient::zoneName());
     QNetworkRequest req{url};
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
@@ -677,7 +675,7 @@ bool AcmeClient::deleteChallengeTxtRecord()
 
     QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
 
-    QUrl url(kPdnsApiBase + QStringLiteral("/zones/") + kPdnsZoneName);
+    QUrl url(PdnsClient::apiBaseUrl() + QStringLiteral("/zones/") + PdnsClient::zoneName());
     QNetworkRequest req{url};
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
@@ -858,8 +856,8 @@ void AcmeClient::stepCreateAccount()
 
     QJsonObject payload;
     payload[QStringLiteral("termsOfServiceAgreed")] = true;
-    // Also set "onlyReturnExisting": false — this is the default
-    // but we'll be explicit: we want to create if not exists
+    // "onlyReturnExisting" defaults to false, i.e. create the account if it
+    // does not already exist.
 
     // External Account Binding (ZeroSSL / Google Trust Services require it).
     QJsonObject eab = buildEabJws(url);
@@ -895,15 +893,10 @@ void AcmeClient::stepCreateAccount()
         if (!location.isEmpty()) {
             m_AccountUrl = location;
         } else {
-            // Fallback: try to extract from response body
+            // The ACME v2 account URL is only carried by the Location header,
+            // never in the response body, so a missing header is fatal here.
             QJsonDocument d = QJsonDocument::fromJson(respBody);
             if (d.isObject()) {
-                QStringList keys = d.object().keys();
-                // ACME v2 response may include the account URL in the body
-                // as a child of the "keyChange" or similar field
-                // But typically Location header is set. Let's try to parse it.
-                // Actually the response body doesn't contain the account URL.
-                // Let's set it from the URL we posted to, with the account ID from body.
                 emit errorOccurred(QStringLiteral("Missing Location header in account response"));
                 emit finished(false);
                 return;

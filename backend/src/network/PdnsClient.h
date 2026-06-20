@@ -25,9 +25,9 @@
 /**
  * @brief Client for the PowerDNS API (self-hosted).
  *
- * Manages A and TXT records for the zone "moonlightweb.top." through
- * the PowerDNS API at api.moonlightweb.top. The zone must already exist
- * in the PowerDNS server.
+ * Manages A and TXT records for the zone "{MW_DOMAIN}." through the
+ * PowerDNS API ({MW_PDNS_URL}, default "https://api.{MW_DOMAIN}/..."). The
+ * zone must already exist in the PowerDNS server.
  *
  * All API calls are synchronous (blocking via QEventLoop).
  * Thread safety: call from the Qt main thread only.
@@ -46,11 +46,17 @@ public:
     void setToken(const QString& token) { m_Token = token; }
     QString token() const { return m_Token; }
 
-    /// Base URL for the PowerDNS API.
-    static QString apiBaseUrl() { return QStringLiteral("https://api.moonlightweb.top/api/v1/servers/localhost"); }
+    /// Parent domain (e.g. "moonlightweb.top"), from the MW_DOMAIN env var
+    /// (fallback "moonlightweb.top"). Single source of truth for a fork.
+    static QString baseDomain();
 
-    /// Zone name with trailing dot (e.g. "moonlightweb.top.").
-    static QString zoneName() { return QStringLiteral("moonlightweb.top."); }
+    /// Full base URL for the PowerDNS API. From the MW_PDNS_URL env var
+    /// (the API may live on a different domain than the app), or
+    /// "https://api.{baseDomain}/api/v1/servers/localhost" when unset.
+    static QString apiBaseUrl();
+
+    /// Zone name with trailing dot (e.g. "moonlightweb.top."), from baseDomain().
+    static QString zoneName();
 
     // ── Subdomain (A record) management ──────────────────────────────────────
 

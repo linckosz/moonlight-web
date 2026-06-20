@@ -104,12 +104,40 @@ QNetworkReply* PdnsClient::sendPatch(const QString& url, const QByteArray& body,
 }
 
 // ---------------------------------------------------------------------------
+// Endpoint / zone configuration (env-driven, single source of truth)
+// ---------------------------------------------------------------------------
+
+QString PdnsClient::baseDomain()
+{
+    QString env = QString::fromUtf8(qgetenv("MW_DOMAIN"));
+    return env.isEmpty() ? QStringLiteral("moonlightweb.top") : env;
+}
+
+QString PdnsClient::apiBaseUrl()
+{
+    // Full PowerDNS API base URL. The API host is independent of MW_DOMAIN
+    // (it need not live under the application's domain), so it is configured
+    // explicitly. Fallback derives "https://api.{MW_DOMAIN}/..." when unset.
+    QString env = QString::fromUtf8(qgetenv("MW_PDNS_URL"));
+    if (!env.isEmpty())
+        return env;
+    return QStringLiteral("https://api.") + baseDomain()
+           + QStringLiteral("/api/v1/servers/localhost");
+}
+
+QString PdnsClient::zoneName()
+{
+    return baseDomain() + QStringLiteral(".");
+}
+
+// ---------------------------------------------------------------------------
 // Helper: build FQDN with trailing dot for the PowerDNS API
 // ---------------------------------------------------------------------------
 
 QString PdnsClient::fqdn(const QString& subname)
 {
-    return subname + QStringLiteral(".moonlightweb.top.");
+    // zoneName() already carries the trailing dot.
+    return subname + QLatin1Char('.') + zoneName();
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +166,7 @@ bool PdnsClient::checkSubdomainAvailable(const QString& subname,
     QNetworkReply* reply = sendGet(urlStr);
 
     if (!reply) {
-        errorMsg = QStringLiteral("PowerDNS request timed out (check network to api.moonlightweb.top)");
+        errorMsg = QStringLiteral("PowerDNS request timed out (check network to %1)").arg(apiBaseUrl());
         qWarning() << "[PdnsClient]" << errorMsg;
         emit error(errorMsg);
         return false;
