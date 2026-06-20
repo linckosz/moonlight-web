@@ -258,6 +258,8 @@
     "streamEnd": "Fin du flux",
     "takenOverTitle": "Connexion terminée",
     "takenOverBody": "Cette session a été interrompue par un autre appareil.",
+    "disconnectTitle": "Déconnexion",
+    "disconnectBody": "Fermeture de la session — à bientôt.",
     "statResolution": "Résolution :",
     "statFramerate": "Fréquence :",
     "statBitrate": "Débit :",

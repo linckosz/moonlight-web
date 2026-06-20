@@ -28,7 +28,11 @@ MoonlightShim::~MoonlightShim()
     if (!m_CleanupDone.load(std::memory_order_acquire)) {
         blockingStopConnection();
     }
-    s_Instance.store(nullptr, std::memory_order_release);
+    // Only clear if we are still the registered instance. During an overlapping
+    // teardown a newer session's shim may already own s_Instance — never clobber
+    // it (that would silently drop the new connection's decode callbacks).
+    MoonlightShim* expected = this;
+    s_Instance.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
 }
 
 void MoonlightShim::startConnection(const InitParams& params)

@@ -941,6 +941,28 @@ body.streaming-active .app-footer {
     to   { transform: scaleX(0); }
 }
 
+/* Clean-exit variant — user pressed Stop. Signature yellow/cyan instead of
+   the hostile magenta/red take-over wash, and a faster 1.2s deplete. */
+.stream-takeover-overlay.is-quit {
+    background: radial-gradient(900px 600px at 50% 50%,
+                rgba(252, 238, 10, 0.08) 0%, transparent 60%),
+                rgba(3, 5, 8, 0.0);
+}
+.stream-takeover-overlay.is-quit.is-active {
+    background: radial-gradient(900px 600px at 50% 50%,
+                rgba(252, 238, 10, 0.14) 0%, transparent 60%),
+                rgba(3, 5, 8, 0.86);
+}
+.stream-takeover-overlay.is-quit .takeover-box {
+    box-shadow: var(--edge-cyan), 0 0 34px rgba(252, 238, 10, 0.26);
+}
+.stream-takeover-overlay.is-quit .takeover-bar > span {
+    background: linear-gradient(90deg, var(--neon-cyan), var(--accent-1));
+}
+.stream-takeover-overlay.is-quit.is-active .takeover-bar > span {
+    animation-duration: 1.2s;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .takeover-scanlines,
     .takeover-title::before,
