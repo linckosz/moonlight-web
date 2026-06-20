@@ -521,10 +521,17 @@ export class WebGpuRenderer extends VideoRenderer {
         r._hasOutputSize = false;
         r._armDeviceLost();
 
+        // HDR: when the source is HDR (10-bit PQ/HLG), the canvas is configured
+        // rgba16float + 'extended' tone mapping so the UA presents real HDR on HDR
+        // displays and tone-maps cleanly to SDR elsewhere (one robust path covers
+        // both). Detected from the toggle here and re-checked per-frame in draw()
+        // (a host can push HDR even with the toggle off).
+        r._hdr = !!opts.hdr;
+        r._hdrAutoChecked = false;
+
         // ── Canvas is now committed to WebGPU (no going back to '2d') ─────────
         r.ctx = canvas.getContext('webgpu');
-        r._format = navigator.gpu.getPreferredCanvasFormat();
-        r._configure();
+        r._configure();         // sets _format / _interFormat (HDR-aware)
         r._buildResources();
         canvas.width = 1920;
         canvas.height = 1080;
@@ -544,12 +551,36 @@ export class WebGpuRenderer extends VideoRenderer {
     }
 
     _configure() {
+        const sdrFormat = navigator.gpu.getPreferredCanvasFormat();
+        if (this._hdr) {
+            try {
+                // rgba16float preserves extended-range (HDR) values; 'extended'
+                // tone mapping delegates HDR-vs-SDR display handling to the UA;
+                // display-p3 widens the gamut. Unknown dict members (toneMapping
+                // on older UAs) are ignored → graceful SDR-ish degradation.
+                this.ctx.configure({
+                    device: this._device,
+                    format: 'rgba16float',
+                    alphaMode: 'opaque',
+                    colorSpace: 'display-p3',
+                    toneMapping: { mode: 'extended' }
+                });
+                this._format = 'rgba16float';
+                this._interFormat = 'rgba16float';
+                return;
+            } catch (e) {
+                console.warn('[WebGpuRenderer] HDR canvas config failed, using SDR: ' + e.message);
+                this._hdr = false;
+            }
+        }
         this.ctx.configure({
             device: this._device,
-            format: this._format,
+            format: sdrFormat,
             alphaMode: 'opaque',
             colorSpace: 'srgb'
         });
+        this._format = sdrFormat;
+        this._interFormat = 'rgba8unorm';
     }
 
     _buildResources() {
@@ -570,7 +601,7 @@ export class WebGpuRenderer extends VideoRenderer {
         this._blitPipeline = device.createRenderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._blitLayout] }),
             vertex: { module: blitModule, entryPoint: 'vs' },
-            fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+            fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: this._interFormat }] },
             primitive: { topology: 'triangle-list' }
         });
 
@@ -649,7 +680,7 @@ export class WebGpuRenderer extends VideoRenderer {
         this._easuPipeline = device.createRenderPipeline({
             layout: fsrPipelineLayout,
             vertex: { module: easuModule, entryPoint: 'vs_main' },
-            fragment: { module: easuModule, entryPoint: 'fs_main', targets: [{ format: 'rgba8unorm' }] },
+            fragment: { module: easuModule, entryPoint: 'fs_main', targets: [{ format: this._interFormat }] },
             primitive: { topology: 'triangle-list' }
         });
         const rcasModule = device.createShaderModule({ code: RCAS_WGSL });
@@ -667,7 +698,7 @@ export class WebGpuRenderer extends VideoRenderer {
         if (this._inputTex) { try { this._inputTex.destroy(); } catch (e) {} }
         this._inputTex = this._device.createTexture({
             size: { width: inW, height: inH },
-            format: 'rgba8unorm',
+            format: this._interFormat,
             usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
         });
         this._inputTexView = this._inputTex.createView();
@@ -701,7 +732,7 @@ export class WebGpuRenderer extends VideoRenderer {
         if (this._intermTex) { try { this._intermTex.destroy(); } catch (e) {} }
         this._intermTex = this._device.createTexture({
             size: { width: w, height: h },
-            format: 'rgba8unorm',
+            format: this._interFormat,
             usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
         });
         this._intermTexView = this._intermTex.createView();
@@ -749,12 +780,42 @@ export class WebGpuRenderer extends VideoRenderer {
         this._hasOutputSize = true;
     }
 
+    // One-shot HDR probe from the decoded frame's color space. A PQ/HLG transfer
+    // means the stream is HDR; switch the canvas to the HDR path even if the HDR
+    // toggle is off (point 2). Stops probing once any valid transfer is seen.
+    _maybeDetectHdr(frame) {
+        if (this._hdr || this._hdrAutoChecked) return;
+        const cs = frame.colorSpace;
+        const transfer = cs && cs.transfer;
+        if (transfer === 'pq' || transfer === 'hlg') {
+            this._hdrAutoChecked = true;
+            this._hdr = true;
+            this._switchToHdr();
+        } else if (transfer) {
+            this._hdrAutoChecked = true; // SDR confirmed; stop probing
+        }
+    }
+
+    // Reconfigure the canvas + rebuild pipelines/textures for HDR (one-time).
+    // _configure() may clear _hdr if the HDR canvas config is unsupported, in
+    // which case this rebuilds the SDR path — harmless, and we won't re-probe.
+    _switchToHdr() {
+        try { if (this._inputTex) this._inputTex.destroy(); } catch (e) {}
+        try { if (this._intermTex) this._intermTex.destroy(); } catch (e) {}
+        this._configure();
+        this._buildResources();
+    }
+
     async draw(frame) {
         if (!this._ready || !this.ctx) { try { frame.close(); } catch (e) {} return; }
 
         const inW = frame.displayWidth || frame.codedWidth || 0;
         const inH = frame.displayHeight || frame.codedHeight || 0;
         if (inW <= 0 || inH <= 0) { try { frame.close(); } catch (e) {} return; }
+
+        // Point 2: upgrade to the HDR path if the stream is HDR-tagged even when
+        // the toggle is off (host pushed HDR). Checked once on the first frame.
+        this._maybeDetectHdr(frame);
 
         // Canvas backing = frame-aspect rect fitting the output box (else frame res).
         let cw = inW, ch = inH;
@@ -780,7 +841,7 @@ export class WebGpuRenderer extends VideoRenderer {
         try {
             // External texture + its blit bind group are per-frame (texture expires).
             const externalTex = this._device.importExternalTexture({
-                source: frame, colorSpace: 'srgb'
+                source: frame, colorSpace: this._hdr ? 'display-p3' : 'srgb'
             });
             const blitBindGroup = this._device.createBindGroup({
                 layout: this._blitLayout,

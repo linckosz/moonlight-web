@@ -508,9 +508,44 @@ bool InternetAccessManager::claimOrVerifyOwnership(QString& errorMsg)
     return false;
 }
 
+void InternetAccessManager::releaseOldSubdomain()
+{
+    const QString oldUid = m_Settings->registeredUid();
+    if (oldUid.isEmpty() || oldUid == m_UniqueId)
+        return;  // nothing to release, or unchanged
+
+    const QString ownerFqdn = QStringLiteral("_owner.") + oldUid
+                            + QLatin1Char('.') + baseDomain() + QLatin1Char('.');
+
+    // Only release a subdomain we can prove we own. If the TXT exists but does
+    // not match our token, another instance took it over — leave it alone.
+    QString existing, getErr;
+    if (m_Pdns.getTxtRecord(ownerFqdn, existing, getErr)) {
+        if (!existing.isEmpty() && existing != m_Settings->ownerToken()) {
+            qInfo() << "[InternetAccess] Old subdomain" << oldUid
+                    << "now owned by another instance — not releasing";
+            return;
+        }
+    } else {
+        // Transient DNS API error — skip release this round, retry next time.
+        qWarning() << "[InternetAccess] Could not verify old subdomain ownership"
+                   << "(skipping release):" << getErr;
+        return;
+    }
+
+    qInfo() << "[InternetAccess] Releasing previous subdomain:" << oldUid;
+    QString delErr;
+    m_Pdns.deleteSubdomain(oldUid, delErr);
+    m_Pdns.deleteTxtRecord(ownerFqdn, delErr);
+}
+
 bool InternetAccessManager::createOrUpdateARecord()
 {
     qInfo() << "[InternetAccess] Checking A record for subdomain:" << m_UniqueId;
+
+    // One subdomain per owner: free the previously registered one if unique_id
+    // changed, before claiming the new one.
+    releaseOldSubdomain();
 
     // Cooperative ownership guard: never clobber another instance's subdomain.
     QString ownErr;
@@ -519,6 +554,10 @@ bool InternetAccessManager::createOrUpdateARecord()
         emit error(ownErr);
         return false;
     }
+
+    // We now hold the _owner TXT for m_UniqueId — record it as the registered
+    // subdomain so a future unique_id change releases this one.
+    m_Settings->setRegisteredUid(m_UniqueId);
 
     QString errorMsg;
     bool available = m_Pdns.checkSubdomainAvailable(m_UniqueId, errorMsg);

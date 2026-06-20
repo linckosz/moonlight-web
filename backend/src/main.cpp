@@ -44,6 +44,7 @@
 #include "backend/IdentityManager.h"
 #include "streaming/Session.h"
 #include "streaming/MoonlightShim.h"
+#include "Limelight.h" // SCM_* codec-support masks
 #include "streaming/DataChannelRelay.h"
 #include "streaming/MediaTrackRelay.h"
 #include "streaming/StreamRelay.h"
@@ -875,6 +876,10 @@ int main(int argc, char* argv[])
             ? body["hdr_enabled"].toBool()
             : appSettings.hdrEnabled();
 
+        bool reqYuv444 = body.contains("chroma_444_enabled")
+            ? body["chroma_444_enabled"].toBool()
+            : appSettings.chroma444Enabled();
+
         // Video enhancement (WebGPU): the browser renders via canvas, so when it
         // is on the transport negotiation must avoid webrtc-media (<video>).
         bool reqVideoEnhancement = body.contains("video_enhancement")
@@ -900,6 +905,7 @@ int main(int argc, char* argv[])
                 << "height=" << reqHeight
                 << "fps=" << reqFps
                 << "hdr=" << reqHdr
+                << "yuv444=" << reqYuv444
                 << "videoEnhancement=" << reqVideoEnhancement;
 
         // Determine signaling host from the browser's Host header.
@@ -940,10 +946,13 @@ int main(int argc, char* argv[])
         // Helper: does the host support a given codec?
         auto hostSupportsCodec = [](NvComputer* h, VideoCodec c) -> bool {
             int support = h->serverCodecModeSupport;
+            // Use the canonical SCM_MASK_* values (Limelight.h). The old GFE-era
+            // literals (HEVC 0x02, AV1 0x20) are wrong for Sunshine, which reports
+            // HEVC at 0x100 and AV1 at 0x10000 → HEVC/AV1 were seen as unsupported.
             switch (c) {
-            case VideoCodec::H264: return (support & 0x01) != 0; // SERVER_CODEC_MODE_H264
-            case VideoCodec::HEVC: return (support & 0x02) != 0; // SERVER_CODEC_MODE_H265
-            case VideoCodec::AV1:  return (support & 0x20) != 0; // SERVER_CODEC_MODE_AV1
+            case VideoCodec::H264: return (support & SCM_MASK_H264) != 0;
+            case VideoCodec::HEVC: return (support & SCM_MASK_HEVC) != 0;
+            case VideoCodec::AV1:  return (support & SCM_MASK_AV1) != 0;
             default:               return true;
             }
         };
@@ -954,15 +963,18 @@ int main(int argc, char* argv[])
         // HEVC — provided the host supports it. If the host has no HEVC, HDR is
         // disabled (we keep the requested codec and stream SDR).
         if (reqHdr) {
-            if (hostSupportsCodec(host, VideoCodec::HEVC)) {
+            // HDR needs 10-bit HEVC (SCM_HEVC_MAIN10). Generic HEVC support is not
+            // enough — an 8-bit-only host can't carry HDR. H.264 can't either, and
+            // AV1 is force-fallbacked to H.264 here, so HEVC Main10 is the target.
+            if ((host->serverCodecModeSupport & SCM_HEVC_MAIN10) != 0) {
                 if (reqCodec != VideoCodec::HEVC) {
                     qInfo() << "[Session] HDR requested — forcing codec HEVC (was"
                             << AppSettings::videoCodecToString(reqCodec) << ")";
                     reqCodec = VideoCodec::HEVC;
                 }
             } else {
-                qWarning() << "[Session] HDR requested but host has no HEVC support"
-                           << "— disabling HDR, streaming SDR";
+                qWarning() << "[Session] HDR requested but host has no 10-bit HEVC"
+                           << "(SCM_HEVC_MAIN10) — disabling HDR, streaming SDR";
                 reqHdr = false;
             }
         }
@@ -1105,8 +1117,11 @@ int main(int argc, char* argv[])
                                 host->activeAddress, host->activeHttpsPort,
                                 identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            r->stop();
-                            r->deleteLater();
+                            // Relay/shim teardown is owned by StreamSession::quit()
+                            // (single owner, correct order: shim stop while relay
+                            // alive, then relay deleteLater). Deleting it here would
+                            // cancel that handler before it runs. Just drop the
+                            // global handle (QPointer auto-nulls on destroy).
                             if (g_ActiveStreamRelay == r) g_ActiveStreamRelay = nullptr;
                         });
                 });
@@ -1130,8 +1145,11 @@ int main(int argc, char* argv[])
                                 host->activeAddress, host->activeHttpsPort,
                                 identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            r->stop();
-                            r->deleteLater();
+                            // Relay/shim teardown is owned by StreamSession::quit()
+                            // (single owner, correct order: shim stop while relay
+                            // alive, then relay deleteLater). Deleting it here would
+                            // cancel that handler before it runs. Just drop the
+                            // global handle (QPointer auto-nulls on destroy).
                             if (g_ActiveRelay == r) {
                                 g_ActiveRelay = nullptr;
                             }
@@ -1157,8 +1175,11 @@ int main(int argc, char* argv[])
                                 host->activeAddress, host->activeHttpsPort,
                                 identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            r->stop();
-                            r->deleteLater();
+                            // Relay/shim teardown is owned by StreamSession::quit()
+                            // (single owner, correct order: shim stop while relay
+                            // alive, then relay deleteLater). Deleting it here would
+                            // cancel that handler before it runs. Just drop the
+                            // global handle (QPointer auto-nulls on destroy).
                             if (g_ActiveMediaTrackRelay == r) g_ActiveMediaTrackRelay = nullptr;
                         });
                 });
@@ -1194,7 +1215,8 @@ int main(int argc, char* argv[])
                 reqWidth,
                 reqFps,
                 reqBitrate,
-                reqHdr
+                reqHdr,
+                reqYuv444
             );
             s->setHttpsPort(server.activeHttpsPort());
             s->setStreamRelayPort(signalingPort + 1);
@@ -1616,6 +1638,7 @@ int main(int argc, char* argv[])
         obj["stream_aspect"] = appSettings.streamAspect();
         obj["stream_fps"] = appSettings.streamFps();
         obj["hdr_enabled"] = appSettings.hdrEnabled();
+        obj["chroma_444_enabled"] = appSettings.chroma444Enabled();
         obj["video_enhancement"] = appSettings.videoEnhancement();
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
         // Debug build flag: the UI exposes the enhancement algo selector only in
@@ -1698,6 +1721,14 @@ int main(int argc, char* argv[])
             bool enabled = body["hdr_enabled"].toBool();
             appSettings.setHdrEnabled(enabled);
             obj["hdr_enabled"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("chroma_444_enabled")) {
+            bool enabled = body["chroma_444_enabled"].toBool();
+            appSettings.setChroma444Enabled(enabled);
+            obj["chroma_444_enabled"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
         }

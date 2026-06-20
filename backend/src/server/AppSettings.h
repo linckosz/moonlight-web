@@ -111,6 +111,16 @@ public:
     bool hdrEnabled() const;
     void setHdrEnabled(bool enabled);
 
+    // ── Chroma 4:4:4 ───────────────────────────────────────────────────────────
+    //
+    // Whether full-resolution YUV 4:4:4 chroma is requested (vs the default
+    // 4:2:0). Stored as JSON bool "chroma_444_enabled", default false. Requires
+    // significantly higher bandwidth and a browser able to decode the 4:4:4
+    // codec profile.
+
+    bool chroma444Enabled() const;
+    void setChroma444Enabled(bool enabled);
+
     // ── Video enhancement (WebGPU upscale/sharpen) ─────────────────────────────
     //
     // Client-side feature (the browser renders via WebGPU). Persisted here so the
@@ -161,6 +171,12 @@ public:
     /// Unique 8-char hex identifier for the PowerDNS subdomain.
     QString uniqueId() const;
     void setUniqueId(const QString& id);
+
+    /// Last subdomain actually registered in DNS (the one whose _owner TXT we
+    /// hold). Used to release the previous subdomain when unique_id changes,
+    /// so an owner never holds more than one live subdomain.
+    QString registeredUid() const;
+    void setRegisteredUid(const QString& id);
 
     /// Full domain name: "{uniqueId}.{MW_DOMAIN}" or the stored FQDN.
     ///

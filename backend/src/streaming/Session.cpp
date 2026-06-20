@@ -73,6 +73,7 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                int streamFps,
                                int streamBitrateKbps,
                                bool hdr,
+                               bool yuv444,
                                QObject* parent)
     : QObject(parent)
     , m_Host(host)
@@ -98,6 +99,11 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     // compatible codec (HEVC) before constructing the session.
     m_Config.hdr = hdr ? HdrMode::HDR : HdrMode::SDR;
     qInfo() << "[Session] HDR" << (hdr ? "enabled" : "disabled");
+
+    // YUV 4:4:4 chroma: adds the YUV444 profile flags to the negotiated formats
+    // (full chroma resolution, higher bandwidth). Off by default.
+    m_Config.chroma = yuv444 ? ChromaSampling::C444 : ChromaSampling::C420;
+    qInfo() << "[Session] Chroma 4:4:4" << (yuv444 ? "enabled" : "disabled");
 
     // Width: explicit when provided (ultrawide 21:9 / 32:9), otherwise derived
     // from height using a 16:9 aspect ratio.
@@ -275,6 +281,22 @@ void StreamSession::quit()
     } else {
         qInfo() << "[Session::quit] No m_Shim to stop";
     }
+
+    // Delete the relay graph now that the shim's LiStopConnection has been
+    // initiated while the relay is still fully alive (stopConnection() calls
+    // LiInterruptConnection first, so moonlight stops invoking relay callbacks
+    // before destruction — same ordering as the /quit and take-over paths).
+    // The SignalingServer and MoonlightShim are children of the relay and are
+    // destroyed with it. quit() is the SINGLE teardown owner for the disconnect
+    // path: main.cpp's sessionEnded handler only sends the Sunshine /quit and no
+    // longer deletes the relay — its deleteLater() used to cancel THIS handler
+    // (sender destroyed), deferring LiStopConnection into the relay destructor
+    // where late moonlight callbacks hit a half-destroyed relay (UAF crash).
+    if (m_StreamRelay)     { m_StreamRelay->deleteLater();     m_StreamRelay = nullptr; }
+    if (m_MediaTrackRelay) { m_MediaTrackRelay->deleteLater(); m_MediaTrackRelay = nullptr; }
+    if (m_Relay)           { m_Relay->deleteLater();           m_Relay = nullptr; }
+    m_Signaling = nullptr;  // child of the relay — deleted with it
+    m_Shim = nullptr;       // child of the relay — deleted with it
 
     qInfo() << "[Session::quit] EXIT";
 }
@@ -589,10 +611,12 @@ void StreamSession::onShimConnectionStarted()
     }
 
     // Log the negotiated codec for debugging
+    // Use the codec MASKs (not single base bits): the 4:4:4 RExt/High profiles
+    // have distinct bits and would otherwise be misdetected as H.264.
     const char* codecName = "h264";
-    if (m_NegotiatedVideoFormat & VIDEO_FORMAT_H265) {
+    if (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265) {
         codecName = "hevc";
-    } else if (m_NegotiatedVideoFormat & VIDEO_FORMAT_AV1_MAIN8) {
+    } else if (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_AV1) {
         codecName = "av1";
     }
     qInfo() << "[Session] Negotiated video codec:" << codecName
@@ -642,6 +666,10 @@ void StreamSession::onShimConnectionStarted()
     // Report whether HDR (10-bit) was actually negotiated, so the frontend can
     // configure the decoder with a BT.2020/PQ color space instead of BT.709.
     result["hdr"] = (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_10BIT) != 0;
+
+    // Report whether YUV 4:4:4 chroma was actually negotiated (vs the default
+    // 4:2:0), so the frontend can surface it in the stats overlay.
+    result["yuv444"] = (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_YUV444) != 0;
 
     // If the codec was overridden (e.g. HEVC → H.264 for MediaTrack),
     // report the original selection so the frontend can log or adapt.

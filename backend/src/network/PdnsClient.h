@@ -92,6 +92,17 @@ public:
                                   const QString& ip, int ttl,
                                   QString& errorMsg);
 
+    /**
+     * @brief Delete a subdomain's A record via PATCH DELETE.
+     *
+     * PATCH /api/v1/servers/localhost/zones/{zone}
+     * Body: {"rrsets": [{"name": "{subname}.{zone}", "type": "A",
+     *        "changetype": "DELETE", "records": []}]}
+     *
+     * @return true on HTTP 204 (or 404/422 if already gone), false otherwise.
+     */
+    bool deleteSubdomain(const QString& subname, QString& errorMsg);
+
     // ── TXT record management (ACME DNS-01 challenge) ─────────────────────────
 
     /**

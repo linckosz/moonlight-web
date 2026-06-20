@@ -49,6 +49,7 @@ export class SettingsView {
         this._streamAspect = 'auto';
         this._streamFps = 60;
         this._hdrEnabled = false;
+        this._chroma444 = false;
         this._touchSensitivity = 2.2;
         this._vsync = true;
         // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
@@ -128,6 +129,7 @@ export class SettingsView {
         this._streamAspect = ['auto', '16:9', '21:9', '32:9'].includes(data.stream_aspect) ? data.stream_aspect : 'auto';
         this._streamFps = data.stream_fps || 60;
         this._hdrEnabled = data.hdr_enabled === true;
+        this._chroma444 = data.chroma_444_enabled === true;
         this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
             ? data.touch_sensitivity : 2.2;
         this._vsync = data.vsync_enabled !== false;
@@ -147,7 +149,7 @@ export class SettingsView {
      * Recommended bitrate derived from the 1080p@60 SDR reference (20 Mbps):
      *   × pixel-count ratio vs 1080p (e.g. 1440p → 1.78)
      *   × framerate ratio vs 60 fps (e.g. 120 fps → 2.00)
-     *   × 1.5 when HDR is enabled
+     *   × 1.5 when HDR and/or YUV 4:4:4 is enabled (not cumulative — single 1.5×)
      * Clamped to the slider range [5, 150] Mbps.
      * "Same as Host" (height 0) uses the 1080p reference.
      */
@@ -160,7 +162,7 @@ export class SettingsView {
         return 16 / 9;
     }
 
-    _computeAutoBitrate(height, fps, hdr, aspect) {
+    _computeAutoBitrate(height, fps, hdr, aspect, chroma444) {
         const REF_BITRATE = 20;   // Mbps at 1920×1080 / 60fps / SDR
         const h = height > 0 ? height : 1080;
         // Pixel count = (h × aspectRatio) × h, normalised to the 1920×1080 ref.
@@ -168,8 +170,11 @@ export class SettingsView {
         const aspRatio = this._aspectToNumber(aspect);
         const pixelRatio = (h * h * aspRatio) / (1080 * 1080 * (16 / 9));
         const fpsRatio = (fps > 0 ? fps : 60) / 60;
-        const hdrRatio = hdr ? 1.5 : 1.0;
-        const mbps = Math.round(REF_BITRATE * pixelRatio * fpsRatio * hdrRatio);
+        // HDR (10-bit) and 4:4:4 (4× chroma samples) each justify ~1.5× bitrate,
+        // but they do NOT stack: enabling both still applies a single 1.5×, not
+        // 2.25×. The dominant factor wins.
+        const richRatio = (hdr || chroma444) ? 1.5 : 1.0;
+        const mbps = Math.round(REF_BITRATE * pixelRatio * fpsRatio * richRatio);
         return Math.max(1, Math.min(150, mbps));
     }
 
@@ -178,11 +183,12 @@ export class SettingsView {
         const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10);
         const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
         const hdr = this.container.querySelector('#settings-hdr')?.checked === true;
+        const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked === true;
         const aspect = this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
         const mbps = this._computeAutoBitrate(
             isNaN(height) ? this._streamHeight : height,
             isNaN(fps) ? this._streamFps : fps,
-            hdr, aspect);
+            hdr, aspect, chroma444);
 
         const slider = this.container.querySelector('#settings-stream-bitrate');
         const label = this.container.querySelector('#settings-bitrate-value');
@@ -203,6 +209,7 @@ export class SettingsView {
             stream_aspect: this._streamAspect,
             stream_fps: this._streamFps,
             hdr_enabled: this._hdrEnabled,
+            chroma_444_enabled: this._chroma444,
             touch_sensitivity: this._touchSensitivity,
             vsync_enabled: this._vsync,
             video_worker: this._videoWorker,
@@ -349,6 +356,7 @@ export class SettingsView {
             const aspect = this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
             const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10) || this._streamFps;
             const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
+            const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked ?? this._chroma444;
             const sensRaw = parseFloat(this.container.querySelector('#settings-sensitivity')?.value);
             const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
             const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
@@ -368,6 +376,7 @@ export class SettingsView {
             this._streamAspect = aspect;
             this._streamFps = fps;
             this._hdrEnabled = hdr;
+            this._chroma444 = chroma444;
             this._touchSensitivity = sensitivity;
             this._vsync = vsync;
             this._videoWorker = videoWorker;
@@ -390,6 +399,7 @@ export class SettingsView {
         this._streamAspect = 'auto';
         this._streamFps = 60;
         this._hdrEnabled = false;
+        this._chroma444 = false;
         this._touchSensitivity = 2.2;
         this._vsync = true;
         this._videoWorker = 'auto';
@@ -422,6 +432,7 @@ export class SettingsView {
             this._powerSaveBackup = {
                 video_codec: this._videoCodec,
                 hdr_enabled: this._hdrEnabled,
+                chroma_444_enabled: this._chroma444,
                 video_enhancement: this._videoEnhancement,
                 vsync_enabled: this._vsync,
                 stream_height: this._streamHeight,
@@ -430,6 +441,7 @@ export class SettingsView {
             };
             this._videoCodec = 'h264';
             this._hdrEnabled = false;
+            this._chroma444 = false;
             this._videoEnhancement = 'off';
             this._vsync = true;
             this._streamHeight = 720;
@@ -443,6 +455,7 @@ export class SettingsView {
                 // Restore each value only if untouched (still at the power-save default).
                 if (this._videoCodec === 'h264') this._videoCodec = b.video_codec;
                 if (this._hdrEnabled === false) this._hdrEnabled = b.hdr_enabled;
+                if (this._chroma444 === false) this._chroma444 = b.chroma_444_enabled;
                 if (this._videoEnhancement === 'off') this._videoEnhancement = b.video_enhancement;
                 if (this._vsync === true) this._vsync = b.vsync_enabled;
                 if (this._streamHeight === 720) this._streamHeight = b.stream_height;
@@ -467,6 +480,14 @@ export class SettingsView {
         // lock icon so it's clearly read-only (not just subtly greyed).
         const psDisabled = this._powerSave ? ' disabled' : '';
         const psLocked = this._powerSave ? ' settings-field-locked' : '';
+
+        // HDR needs the WebGPU canvas path (rgba16float + extended tone mapping);
+        // without WebGPU the stream is forced SDR (Canvas2D cannot present HDR), so
+        // lock the toggle off on such devices.
+        const noWebGpu = !(typeof navigator !== 'undefined' && navigator.gpu);
+        const hdrDisabled = psDisabled || (noWebGpu ? ' disabled' : '');
+        const hdrLocked = psLocked || (noWebGpu ? ' settings-field-locked' : '');
+        const hdrChecked = (this._hdrEnabled && !noWebGpu) ? 'checked' : '';
 
         // Codec options (explicit, no "Auto")
         const codecs = [
@@ -579,15 +600,15 @@ export class SettingsView {
                         </select>
                     </div>
 
-                    <div class="settings-field${psLocked}">
+                    <div class="settings-field${hdrLocked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-hdr"
-                                ${this._hdrEnabled ? 'checked' : ''}${psDisabled} />
+                                ${hdrChecked}${hdrDisabled} />
                             <span class="settings-checkbox-text">
                                 <strong>${t('settings.hdr')}</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">${t('settings.hdrDesc')}</span>
+                        <span class="setting-desc">${t('settings.hdrDesc')}${noWebGpu ? ' ' + t('settings.hdrNoWebgpu') : ''}</span>
                     </div>
 
                     <div class="settings-field${psLocked}">
@@ -645,6 +666,17 @@ export class SettingsView {
                             ${codecOptions}
                         </select>
                         ${codecHintHtml}
+                    </div>
+
+                    <div class="settings-field${psLocked}">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-chroma-444"
+                                ${this._chroma444 ? 'checked' : ''}${psDisabled} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.chroma444')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.chroma444Desc')}</span>
                     </div>
 
                     <div class="settings-field">
@@ -795,6 +827,13 @@ export class SettingsView {
 
         const hdrCheck = this.container.querySelector('#settings-hdr');
         if (hdrCheck) hdrCheck.addEventListener('change', () => {
+            this._applyAutoBitrate();
+            this._autoSave();
+        });
+
+        // 4:4:4 chroma bumps the recommended bitrate (higher bandwidth) before saving.
+        const chroma444Check = this.container.querySelector('#settings-chroma-444');
+        if (chroma444Check) chroma444Check.addEventListener('change', () => {
             this._applyAutoBitrate();
             this._autoSave();
         });

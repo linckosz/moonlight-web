@@ -280,6 +280,62 @@ bool PdnsClient::createOrUpdateSubdomain(const QString& subname,
 }
 
 // ---------------------------------------------------------------------------
+// Delete A record (PATCH DELETE)
+// ---------------------------------------------------------------------------
+
+bool PdnsClient::deleteSubdomain(const QString& subname, QString& errorMsg)
+{
+    QString zone = zoneName();
+
+    QJsonObject rrset;
+    rrset[QStringLiteral("name")] = fqdn(subname);
+    rrset[QStringLiteral("type")] = QStringLiteral("A");
+    rrset[QStringLiteral("changetype")] = QStringLiteral("DELETE");
+    rrset[QStringLiteral("records")] = QJsonArray();
+
+    QJsonArray rrsets;
+    rrsets.append(rrset);
+
+    QJsonObject body;
+    body[QStringLiteral("rrsets")] = rrsets;
+
+    QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
+
+    QString url = apiBaseUrl() + QStringLiteral("/zones/") + zone;
+
+    qInfo() << "[PdnsClient] Deleting A record:" << subname;
+    QNetworkReply* reply = sendPatch(url, payload);
+
+    if (!reply) {
+        errorMsg = QStringLiteral("PowerDNS delete A record request timed out");
+        qWarning() << "[PdnsClient]" << errorMsg;
+        emit error(errorMsg);
+        return false;
+    }
+
+    int statusCode = reply->attribute(
+        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    reply->deleteLater();
+
+    qInfo() << "[PdnsClient] deleteSubdomain HTTP" << statusCode;
+
+    if (statusCode == 204) {
+        qInfo() << "[PdnsClient] A record deleted:" << subname;
+        return true;
+    } else if (statusCode == 404 || statusCode == 422) {
+        qInfo() << "[PdnsClient] A record already deleted:" << subname
+                << "(HTTP" << statusCode << ")";
+        return true;
+    } else {
+        errorMsg = QStringLiteral("PowerDNS delete A record failed (HTTP %1)")
+                   .arg(QString::number(statusCode));
+        qWarning() << "[PdnsClient]" << errorMsg;
+        emit error(errorMsg);
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // TXT record management (ACME DNS-01 challenge)
 // ---------------------------------------------------------------------------
 
