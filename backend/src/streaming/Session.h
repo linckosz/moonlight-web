@@ -53,6 +53,7 @@ public:
                   int streamFps = 60,
                   int streamBitrateKbps = 20000,
                   bool hdr = false,
+                  bool yuv444 = false,
                   QObject* parent = nullptr);
     ~StreamSession();
 

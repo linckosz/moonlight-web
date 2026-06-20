@@ -233,6 +233,21 @@ void AppSettings::setHdrEnabled(bool enabled)
     writeAll(obj);
 }
 
+// ── Chroma 4:4:4 ───────────────────────────────────────────────────────────────
+
+bool AppSettings::chroma444Enabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("chroma_444_enabled").toBool(false);
+}
+
+void AppSettings::setChroma444Enabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["chroma_444_enabled"] = enabled;
+    writeAll(obj);
+}
+
 // ── Show performance stats ────────────────────────────────────────────────────────
 
 bool AppSettings::showPerformanceStats() const
@@ -341,6 +356,19 @@ void AppSettings::setUniqueId(const QString& id)
 {
     QJsonObject obj = readAll();
     obj["unique_id"] = id;
+    writeAll(obj);
+}
+
+QString AppSettings::registeredUid() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("registered_uid").toString();
+}
+
+void AppSettings::setRegisteredUid(const QString& id)
+{
+    QJsonObject obj = readAll();
+    obj["registered_uid"] = id;
     writeAll(obj);
 }
 

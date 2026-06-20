@@ -40,6 +40,7 @@
 
 #include <QUdpSocket>
 #include <QHostAddress>
+#include <QNetworkInterface>
 
 #include <QSslConfiguration>
 #include <QSslCertificate>
@@ -508,18 +509,52 @@ void ComputerManager::onMdnsServiceAdded(const QMdnsEngine::Service& service)
     m_PendingResolutions.append(pending);
 }
 
+// Among the IPv4 addresses an mDNS host advertises, pick the one most likely
+// reachable. A multi-homed Sunshine machine advertises every NIC — including
+// virtual adapters (VirtualBox 192.168.56.x, Hyper-V, etc.) the router cannot
+// route to. Prefer a candidate on the same subnet as our default-route LAN
+// interface so the real LAN address always wins over a virtual one; taking the
+// first IPv4 blindly silently switches activeAddress to a dead interface.
+static QHostAddress chooseBestMdnsAddress(const QVector<QHostAddress>& addresses)
+{
+    QVector<QHostAddress> ipv4;
+    for (const QHostAddress& a : addresses)
+        if (a.protocol() == QAbstractSocket::IPv4Protocol)
+            ipv4.append(a);
+    if (ipv4.size() <= 1)
+        return ipv4.isEmpty() ? QHostAddress() : ipv4.first();
+
+    // Default-route local IP: connecting a UDP socket makes the OS pick the
+    // routable interface, never a host-only/virtual adapter (no packet sent).
+    QUdpSocket probe;
+    probe.connectToHost(QHostAddress("8.8.8.8"), 53);
+    QHostAddress localIp = probe.localAddress();
+    probe.close();
+
+    if (!localIp.isNull()) {
+        int prefix = 24;  // sane default if the interface entry is not found
+        for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces())
+            for (const QNetworkAddressEntry& e : iface.addressEntries())
+                if (e.ip() == localIp && e.prefixLength() > 0)
+                    prefix = e.prefixLength();
+
+        for (const QHostAddress& cand : ipv4)
+            if (cand.isInSubnet(localIp, prefix))
+                return cand;  // same subnet as our routable LAN — best match
+    }
+
+    return ipv4.first();
+}
+
 void ComputerManager::onMdnsResolved(MdnsPendingComputer* computer,
                                       const QVector<QHostAddress>& addresses)
 {
     m_PendingResolutions.removeOne(computer);
 
-    // Filter for IPv4 addresses
-    for (const QHostAddress& addr : addresses) {
-        if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
-            NvAddress nvAddr(addr, computer->port());
-            tryAddHostFromAddress(nvAddr, true, computer->hostname());
-            break;  // Use first IPv4 address only
-        }
+    QHostAddress best = chooseBestMdnsAddress(addresses);
+    if (!best.isNull()) {
+        NvAddress nvAddr(best, computer->port());
+        tryAddHostFromAddress(nvAddr, true, computer->hostname());
     }
 
     computer->deleteLater();

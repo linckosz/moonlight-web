@@ -332,7 +332,8 @@ QString RtspClient::buildAnnounceSdp() const
     sdp += "a=x-ml-general.featureFlags:0\r\n";
     sdp += QString("a=x-ml-video.configuredBitrateKbps:%1\r\n").arg(m_Config.kBitrateKbps);
     sdp += "a=x-ss-general.encryptionEnabled:0\r\n";
-    sdp += "a=x-ss-video[0].chromaSamplingType:0\r\n";
+    sdp += QString("a=x-ss-video[0].chromaSamplingType:%1\r\n")
+               .arg(m_Config.chroma == ChromaSampling::C444 ? 1 : 0);
     sdp += "a=x-ss-video[0].intraRefresh:0\r\n";
     return sdp;
 }

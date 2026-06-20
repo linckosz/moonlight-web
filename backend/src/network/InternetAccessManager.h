@@ -136,6 +136,11 @@ private:
     /// _owner.<uid> TXT record. Returns false only when another instance owns it.
     bool claimOrVerifyOwnership(QString& errorMsg);
 
+    /// Release the previously registered subdomain when unique_id changed, so an
+    /// owner never holds more than one live subdomain. Deletes the old A record
+    /// and its _owner TXT, but only after verifying we own it (TXT == ownerToken).
+    void releaseOldSubdomain();
+
     /// Detect public IP via STUN (with fallback chain).
     bool detectPublicIp();
 

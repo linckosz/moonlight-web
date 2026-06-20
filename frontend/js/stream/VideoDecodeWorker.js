@@ -592,6 +592,7 @@ self.onmessage = (e) => {
             desynchronized: true,
             videoCodec: S.videoCodec,
             isChromeWindowsHevc: S.isChromeWindowsHevc,
+            hdr: S.hdr,
             webgpu: !!m.webgpu,
             algo: m.algo
         }).then((r) => {
