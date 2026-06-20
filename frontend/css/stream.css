@@ -289,7 +289,13 @@ body.streaming-active .app-footer {
     /* Above the CSS-fallback fullscreen canvas area (z-index 9999) so the stats
        stay visible in fullscreen. */
     z-index: 10000;
-    pointer-events: none;
+    /* Draggable: must receive pointer events. Kept small so it barely
+       intercepts input; the user can move it off the game when needed. */
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
     background: rgba(8, 8, 14, 0.45);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
@@ -302,6 +308,11 @@ body.streaming-active .app-footer {
     line-height: 1.45;
     color: rgba(255, 255, 255, 0.70);
     transition: opacity 0.3s ease;
+}
+
+.stream-stats-overlay.dragging {
+    cursor: grabbing;
+    transition: none;
 }
 
 .stats-waiting {
@@ -968,4 +979,75 @@ body.streaming-active .app-footer {
     .takeover-title::before,
     .takeover-title::after,
     .takeover-bar > span { animation: none; }
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   CRT power-off — plays after the disconnect/take-over transition. The whole
+   "screen" implodes into a glowing horizontal phosphor line, then a single
+   dot, like an old terminal monitor cutting power. Cyberpunk neon tint.
+   ════════════════════════════════════════════════════════════════════════ */
+/* Phosphor scan line — scoped INSIDE .stream-canvas-area so it collapses
+   together with the real frame (it is a child of the collapsing element).
+   Transparent away from the centre + screen blend so the streamed image shows
+   through and implodes into this glowing band, not just an overlay on top. */
+.crt-poweroff {
+    position: absolute;
+    inset: 0;
+    z-index: 9999; /* above canvas/video, within the frame area */
+    pointer-events: none;
+    mix-blend-mode: screen;
+    background:
+        linear-gradient(
+            0deg,
+            transparent 0%,
+            transparent 44%,
+            rgba(0, 229, 255, 0.45) 47%,
+            rgba(178, 255, 214, 0.95) 49.5%,
+            #eafff6 50%,
+            rgba(178, 255, 214, 0.95) 50.5%,
+            rgba(252, 238, 10, 0.50) 53%,
+            transparent 56%,
+            transparent 100%);
+    opacity: 0;
+}
+.crt-poweroff.is-active {
+    animation: crt-flash 0.6s cubic-bezier(0.5, 0, 0.7, 0.2) forwards;
+}
+@keyframes crt-flash {
+    0%   { opacity: 0; filter: brightness(1); }
+    55%  { opacity: 1; filter: brightness(2.2); }
+    100% { opacity: 1; filter: brightness(6); }
+}
+
+/* The actual streamed frame (canvas + video) implodes into the line: squash
+   to a thin horizontal band, then to a dot, like an old CRT cutting power. */
+.stream-canvas-area.crt-collapsing {
+    transform-origin: center center;
+    will-change: transform, filter;
+    animation: crt-collapse 0.6s cubic-bezier(0.5, 0, 0.7, 0.2) forwards;
+}
+@keyframes crt-collapse {
+    0% {
+        transform: scale(1, 1);
+        filter: brightness(1.1) saturate(1.2);
+    }
+    55% {
+        transform: scale(1, 0.012); /* squash into a horizontal line */
+        filter: brightness(2.4) saturate(1.4);
+    }
+    78% {
+        transform: scale(0.45, 0.012);
+        filter: brightness(3.2) saturate(1.4);
+    }
+    100% {
+        transform: scale(0, 0.0006); /* collapse to a dot, then fade */
+        filter: brightness(7) saturate(1.6);
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .crt-poweroff { display: none; }
+    .stream-canvas-area.crt-collapsing { animation: none; }
 }

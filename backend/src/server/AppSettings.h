@@ -203,13 +203,13 @@ public:
 
     /// Certificate PEM source: env var name (e.g. "MW_CERT_PEM") or file path.
     /// Defaults to "MW_CERT_PEM" (reads the PEM from environment variable).
-    /// After Let's Encrypt issuance, set to a file path (e.g. letsencrypt/fullchain.pem).
+    /// After ACME issuance, set to a file path (e.g. letsencrypt/fullchain.pem).
     QString certPem() const;
     void setCertPem(const QString& value);
 
     /// Private key source: env var name (e.g. "MW_CERT_KEY") or file path.
     /// Defaults to "MW_CERT_KEY" (reads the PEM from environment variable).
-    /// After Let's Encrypt issuance, set to a file path (e.g. letsencrypt/domain_key.pem).
+    /// After ACME issuance, set to a file path (e.g. letsencrypt/domain_key.pem).
     QString certKey() const;
     void setCertKey(const QString& value);
 

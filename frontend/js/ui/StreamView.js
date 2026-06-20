@@ -764,6 +764,11 @@ export class StreamView {
         this._overlayEl.innerHTML = '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
         document.getElementById('stream-view').appendChild(this._overlayEl);
 
+        // The stats card can sit over the game; let the user drag it out of the
+        // way. Position is intentionally not persisted so it resets to the
+        // top-left default on every new streaming session.
+        this._makeStatsDraggable(this._overlayEl);
+
         // ── Cyberpunk "signal acquired" reveal ─────────────────────────────
         // Full-screen one-shot boot animation played the instant the first
         // frame arrives (see _playStreamReveal, triggered from step 3): a cyan
@@ -2124,6 +2129,47 @@ export class StreamView {
             clearInterval(this._mediaStatsTimer);
             this._mediaStatsTimer = null;
         }
+    }
+
+    // ── Draggable stats overlay ──────────────────────────────────────────
+    // Pointer-driven drag so the card can be moved off important parts of the
+    // game. Switches the card from CSS top/left anchoring to inline px coords,
+    // clamped to the viewport. Not persisted: reset on every new session.
+    _makeStatsDraggable(el) {
+        let dragging = false;
+        let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+        const onMove = (e) => {
+            if (!dragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            const maxLeft = Math.max(0, window.innerWidth - el.offsetWidth);
+            const maxTop = Math.max(0, window.innerHeight - el.offsetHeight);
+            el.style.left = Math.min(maxLeft, Math.max(0, startLeft + dx)) + 'px';
+            el.style.top = Math.min(maxTop, Math.max(0, startTop + dy)) + 'px';
+            el.style.right = 'auto';
+            e.preventDefault();
+        };
+        const onUp = (e) => {
+            if (!dragging) return;
+            dragging = false;
+            el.classList.remove('dragging');
+            try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+        };
+        el.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
+            const rect = el.getBoundingClientRect();
+            startX = e.clientX; startY = e.clientY;
+            startLeft = rect.left; startTop = rect.top;
+            dragging = true;
+            el.classList.add('dragging');
+            try { el.setPointerCapture(e.pointerId); } catch (_) {}
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp);
+            e.preventDefault();
+        });
     }
 
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
@@ -4411,10 +4457,10 @@ export class StreamView {
         // Trigger the close-in animation on the next frame.
         requestAnimationFrame(() => el.classList.add('is-active'));
 
-        // After the transition, quit. quit() tears down the overlay with the view.
+        // After the transition, power off the "screen", then quit.
         setTimeout(() => {
             try { el.classList.add('is-closing'); } catch (e) {}
-            setTimeout(() => this.quit({ takenOver: true }), 400);
+            this._playPowerOff(() => this.quit({ takenOver: true }));
         }, 2000);
     }
 
@@ -4444,10 +4490,42 @@ export class StreamView {
         requestAnimationFrame(() => el.classList.add('is-active'));
 
         // Shorter than take-over (1.2s deplete) — voluntary, friendly exit.
+        // Then power off the "screen" like an old CRT terminal before quitting.
         setTimeout(() => {
             try { el.classList.add('is-closing'); } catch (e) {}
-            setTimeout(() => this.quit(), 350);
+            this._playPowerOff(() => this.quit());
         }, 1200);
+    }
+
+    /**
+     * CRT power-off transition — collapses the screen into a bright phosphor
+     * scan line, then a single dot, like an old terminal monitor losing power.
+     * Cyberpunk-tinted (cyan/yellow phosphor over green). Calls `done` once the
+     * ~600ms animation completes (guarded so it fires exactly once).
+     */
+    _playPowerOff(done) {
+        let fired = false;
+        const finish = () => { if (fired) return; fired = true; try { done(); } catch (e) {} };
+
+        const crt = document.createElement('div');
+        crt.className = 'crt-poweroff';
+        // Scope the phosphor line to the frame area and collapse the real frame
+        // (canvas + video) with it, so the streamed image implodes into the
+        // line instead of staying fully visible behind an overlay.
+        const area = this.canvasArea;
+        if (area) {
+            area.appendChild(crt);
+        } else {
+            (document.getElementById('stream-view') || document.body).appendChild(crt);
+        }
+
+        crt.addEventListener('animationend', finish, { once: true });
+        requestAnimationFrame(() => {
+            crt.classList.add('is-active');
+            if (area) area.classList.add('crt-collapsing');
+        });
+        // Fallback in case animationend doesn't fire (e.g. reduced motion).
+        setTimeout(finish, 700);
     }
 
     async quit(opts = {}) {

@@ -874,7 +874,7 @@ bool InternetAccessManager::checkCertificate()
         return false;
     }
 
-    // Case 2: cert_pem is a file path (Let's Encrypt managed)
+    // Case 2: cert_pem is a file path (ACME managed)
     QString certPath = certPem;
     QString certExpiry = readCertExpiry(certPath);
 
@@ -1044,7 +1044,8 @@ void InternetAccessManager::onAcmeFinished(bool success)
         // so we copy them one level up.
         QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
         QString srcDir  = appData + QStringLiteral("/cert/") + kAcmeCertDir;
-        QString dstDir  = appData + QStringLiteral("/cert/");
+        // No trailing slash: child paths add their own "/" (avoids "cert//key.pem").
+        QString dstDir  = appData + QStringLiteral("/cert");
 
         qInfo() << "[InternetAccess] onAcmeFinished: appData=" << appData
                 << "srcDir=" << srcDir << "dstDir=" << dstDir;

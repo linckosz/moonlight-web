@@ -424,7 +424,7 @@ QString HttpServer::scanKeyInDir(const QString& dir) const
     while (it.hasNext()) {
         QString filePath = it.next();
 
-        // Skip ACME account key — it's for Let's Encrypt account auth, not TLS
+        // Skip ACME account key — it's for ACME account auth, not TLS
         if (filePath.endsWith("account_key.pem"))
             continue;
 
@@ -734,7 +734,7 @@ bool HttpServer::loadCert()
 
         // If domain is set, verify CN matches. An embedded cert for a
         // different domain (e.g. leftover from a previous unique_id) must
-        // not be used — fall through to Let's Encrypt file-based mode.
+        // not be used — fall through to ACME file-based mode.
         if (!m_Domain.isEmpty() && !chain.isEmpty()) {
             QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
             if (cn.compare(m_Domain, Qt::CaseInsensitive) != 0) {
@@ -1019,7 +1019,7 @@ bool HttpServer::generateSelfSignedCert()
 void HttpServer::ensureLocalSslConfig()
 {
     // The local self-signed cert lives in AppData/cert/, separate from any
-    // public cert (Let's Encrypt certs are in .lego/ or a configured dir).
+    // public cert (ACME-issued certs live in the configured cert dir).
     // This cert is ALWAYS regenerated with SANs for localhost + all current
     // LAN IPs so that every local access method gets a hostname-matching
     // certificate (DHCP changes are reflected on restart).
