@@ -1117,11 +1117,17 @@ int main(int argc, char* argv[])
                                 host->activeAddress, host->activeHttpsPort,
                                 identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            // Relay/shim teardown is owned by StreamSession::quit()
-                            // (single owner, correct order: shim stop while relay
-                            // alive, then relay deleteLater). Deleting it here would
-                            // cancel that handler before it runs. Just drop the
-                            // global handle (QPointer auto-nulls on destroy).
+                            // The StreamSession is ephemeral (self-deletes once
+                            // streaming starts), so its own sessionEnded->quit()
+                            // handler is gone by the time the client disconnects —
+                            // this qApp lambda is the only surviving teardown owner.
+                            // Stop the shim FIRST (while the relay is alive) so
+                            // moonlight stops calling back before destruction (no
+                            // UAF), then stop + deleteLater. destroyed() frees the
+                            // signaling port and lets a deferred start() proceed.
+                            if (r->moonlightShim()) r->moonlightShim()->stopConnection();
+                            r->stop();
+                            r->deleteLater();
                             if (g_ActiveStreamRelay == r) g_ActiveStreamRelay = nullptr;
                         });
                 });
@@ -1145,11 +1151,17 @@ int main(int argc, char* argv[])
                                 host->activeAddress, host->activeHttpsPort,
                                 identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            // Relay/shim teardown is owned by StreamSession::quit()
-                            // (single owner, correct order: shim stop while relay
-                            // alive, then relay deleteLater). Deleting it here would
-                            // cancel that handler before it runs. Just drop the
-                            // global handle (QPointer auto-nulls on destroy).
+                            // The StreamSession is ephemeral (self-deletes once
+                            // streaming starts), so its own sessionEnded->quit()
+                            // handler is gone by the time the client disconnects —
+                            // this qApp lambda is the only surviving teardown owner.
+                            // Stop the shim FIRST (while the relay is alive) so
+                            // moonlight stops calling back before destruction (no
+                            // UAF), then stop + deleteLater. destroyed() frees the
+                            // signaling port and lets a deferred start() proceed.
+                            if (r->moonlightShim()) r->moonlightShim()->stopConnection();
+                            r->stop();
+                            r->deleteLater();
                             if (g_ActiveRelay == r) {
                                 g_ActiveRelay = nullptr;
                             }
@@ -1175,11 +1187,17 @@ int main(int argc, char* argv[])
                                 host->activeAddress, host->activeHttpsPort,
                                 identity->getCertificate(), identity->getPrivateKey(), quitUid);
                             QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            // Relay/shim teardown is owned by StreamSession::quit()
-                            // (single owner, correct order: shim stop while relay
-                            // alive, then relay deleteLater). Deleting it here would
-                            // cancel that handler before it runs. Just drop the
-                            // global handle (QPointer auto-nulls on destroy).
+                            // The StreamSession is ephemeral (self-deletes once
+                            // streaming starts), so its own sessionEnded->quit()
+                            // handler is gone by the time the client disconnects —
+                            // this qApp lambda is the only surviving teardown owner.
+                            // Stop the shim FIRST (while the relay is alive) so
+                            // moonlight stops calling back before destruction (no
+                            // UAF), then stop + deleteLater. destroyed() frees the
+                            // signaling port and lets a deferred start() proceed.
+                            if (r->moonlightShim()) r->moonlightShim()->stopConnection();
+                            r->stop();
+                            r->deleteLater();
                             if (g_ActiveMediaTrackRelay == r) g_ActiveMediaTrackRelay = nullptr;
                         });
                 });
