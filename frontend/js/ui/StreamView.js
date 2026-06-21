@@ -130,11 +130,8 @@ class SlidingStats {
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, hdr = false, videoWorker = true, videoEnhancement = 'off', videoEnhancementAlgo = 'auto', yuv444 = false) {
+    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, videoWorker = true, videoEnhancement = 'off', videoEnhancementAlgo = 'auto', yuv444 = false) {
         this.container = container;
-        // HDR (10-bit) negotiated by the backend. When true, the decoder is
-        // configured with a BT.2020/PQ color space instead of BT.709.
-        this._hdr = hdr === true;
         // YUV 4:4:4 chroma negotiated by the backend (vs default 4:2:0). Used
         // only to annotate the codec in the stats overlay.
         this._yuv444 = yuv444 === true;
@@ -969,7 +966,6 @@ export class StreamView {
                 type: 'init',
                 canvas: offscreen,
                 videoCodec: this.videoCodec,
-                hdr: this._hdr,
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 transport: this._transport,
                 vsync: this._vsync,
@@ -989,7 +985,6 @@ export class StreamView {
                 desynchronized: !this._vsync,
                 videoCodec: this.videoCodec,
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
-                hdr: this._hdr,
                 webgpu: this._wantWebGpu,
                 algo: this._videoEnhancementAlgo
             }).then((r) => {
@@ -1316,25 +1311,15 @@ export class StreamView {
             optimizeForLatency: true
         };
 
-        // Decoder color space. HEVC HDR streams are BT.2020 + PQ (SMPTE 2084);
-        // every other path stays BT.709 SDR. (HDR is only ever negotiated with HEVC.)
-        const vColor = (this._hdr && codecType === CODEC_HEVC)
-            ? {
-                colorSpace: {
-                    primaries: 'bt2020',
-                    transfer: 'pq',
-                    matrix: 'bt2020ncl',
-                    fullRange: false
-                }
-              }
-            : {
-                colorSpace: {
-                    primaries: 'bt709',
-                    transfer: 'bt709',
-                    matrix: 'bt709',
-                    fullRange: false
-                }
-              };
+        // Decoder color space: BT.709 SDR.
+        const vColor = {
+            colorSpace: {
+                primaries: 'bt709',
+                transfer: 'bt709',
+                matrix: 'bt709',
+                fullRange: false
+            }
+        };
 
         // Build configs: for HEVC, try Annex B (no description) first.
         // Chromium's keyframe validator (AnalyzeAnnexB) only parses start-code
@@ -1992,7 +1977,6 @@ export class StreamView {
                         desynchronized: !this._vsync,
                         videoCodec: this.videoCodec,
                         isChromeWindowsHevc: this._isChromeWindowsHevc,
-                        hdr: this._hdr,
                         webgpu: this._wantWebGpu,
                         algo: this._videoEnhancementAlgo
                     }).then((r) => {

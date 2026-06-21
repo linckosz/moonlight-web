@@ -38,11 +38,6 @@ enum class ChromaSampling {
     C444 = 1
 };
 
-enum class HdrMode {
-    SDR = 0,
-    HDR = 1
-};
-
 // Stream configuration — 1080p60, HEVC preferred, 20 Mbps
 struct StreamConfig {
     static constexpr int kWidth = 1920;
@@ -57,7 +52,6 @@ struct StreamConfig {
     // Codec preferences — will be user-selectable later
     VideoCodec codec = VideoCodec::Auto;
     ChromaSampling chroma = ChromaSampling::C420;
-    HdrMode hdr = HdrMode::SDR;
 
     // Audio: stereo Opus, 5ms packets
     static constexpr int kAudioChannels = 2;
@@ -72,10 +66,9 @@ struct StreamConfig {
     void generateKeys();
 
     // Build the supportedVideoFormats bitmask (VIDEO_FORMAT_* flags from Limelight.h)
-    // based on the codec/chroma/hdr preferences.
+    // based on the codec/chroma preferences.
     int computeVideoFormats() const;
 
-    // colorSpace value for STREAM_CONFIGURATION.colorSpace
-    // Returns 0 (BT.601 SDR), 1 (BT.709 SDR), or adds flags for HDR.
+    // colorSpace value for STREAM_CONFIGURATION.colorSpace. Returns 1 (BT.709 SDR).
     int computeColorSpace() const;
 };

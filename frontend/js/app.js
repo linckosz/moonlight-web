@@ -651,15 +651,6 @@ const MoonlightApp = {
             streamingSettings.video_codec = codecOverride;
         }
 
-        // HDR requires the WebGPU canvas path (rgba16float + extended tone mapping).
-        // Without WebGPU the Canvas2D fallback cannot present HDR (it would look
-        // washed out), and a device lacking WebGPU is almost certainly SDR anyway →
-        // drop the HDR request so the host streams clean SDR instead.
-        if (streamingSettings.hdr_enabled && !navigator.gpu) {
-            streamingSettings.hdr_enabled = false;
-            console.log('[MW] HDR disabled: WebGPU unavailable (Canvas2D cannot present HDR)');
-        }
-
         // Power Saving (mobile): force the native video transport, UDP first.
         // webrtc-media-udp is tried before any TCP/DataChannel fallback, so the
         // <video> pipeline (no canvas) and UDP have priority. The other settings
@@ -676,7 +667,6 @@ const MoonlightApp = {
             console.log('[MW] Launch result:', {
                 status: result.status,
                 videoCodec: result.videoCodec,
-                hdr: result.hdr,
                 gamingMode: result.gamingMode,
                 transport: result.transport,
                 transport_mode: result.transport_mode,
@@ -765,7 +755,6 @@ const MoonlightApp = {
             showPerfStats,
             touchSensitivity,
             vsync,
-            result.hdr === true,
             videoWorker,
             videoEnhancement,
             videoEnhancementAlgo,

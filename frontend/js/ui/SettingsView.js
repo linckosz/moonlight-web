@@ -162,7 +162,7 @@ export class SettingsView {
         return 16 / 9;
     }
 
-    _computeAutoBitrate(height, fps, hdr, aspect, chroma444) {
+    _computeAutoBitrate(height, fps, aspect, chroma444) {
         const REF_BITRATE = 20;   // Mbps at 1920×1080 / 60fps / SDR
         const h = height > 0 ? height : 1080;
         // Pixel count = (h × aspectRatio) × h, normalised to the 1920×1080 ref.
@@ -170,10 +170,8 @@ export class SettingsView {
         const aspRatio = this._aspectToNumber(aspect);
         const pixelRatio = (h * h * aspRatio) / (1080 * 1080 * (16 / 9));
         const fpsRatio = (fps > 0 ? fps : 60) / 60;
-        // HDR (10-bit) and 4:4:4 (4× chroma samples) each justify ~1.5× bitrate,
-        // but they do NOT stack: enabling both still applies a single 1.5×, not
-        // 2.25×. The dominant factor wins.
-        const richRatio = (hdr || chroma444) ? 1.5 : 1.0;
+        // 4:4:4 (4× chroma samples) justifies ~1.5× bitrate.
+        const richRatio = chroma444 ? 1.5 : 1.0;
         const mbps = Math.round(REF_BITRATE * pixelRatio * fpsRatio * richRatio);
         return Math.max(1, Math.min(150, mbps));
     }
@@ -182,13 +180,12 @@ export class SettingsView {
     _applyAutoBitrate() {
         const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10);
         const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
-        const hdr = this.container.querySelector('#settings-hdr')?.checked === true;
         const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked === true;
         const aspect = this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
         const mbps = this._computeAutoBitrate(
             isNaN(height) ? this._streamHeight : height,
             isNaN(fps) ? this._streamFps : fps,
-            hdr, aspect, chroma444);
+            aspect, chroma444);
 
         const slider = this.container.querySelector('#settings-stream-bitrate');
         const label = this.container.querySelector('#settings-bitrate-value');
@@ -481,13 +478,9 @@ export class SettingsView {
         const psDisabled = this._powerSave ? ' disabled' : '';
         const psLocked = this._powerSave ? ' settings-field-locked' : '';
 
-        // HDR needs the WebGPU canvas path (rgba16float + extended tone mapping);
-        // without WebGPU the stream is forced SDR (Canvas2D cannot present HDR), so
-        // lock the toggle off on such devices.
-        const noWebGpu = !(typeof navigator !== 'undefined' && navigator.gpu);
-        const hdrDisabled = psDisabled || (noWebGpu ? ' disabled' : '');
-        const hdrLocked = psLocked || (noWebGpu ? ' settings-field-locked' : '');
-        const hdrChecked = (this._hdrEnabled && !noWebGpu) ? 'checked' : '';
+        const hdrDisabled = psDisabled;
+        const hdrLocked = psLocked;
+        const hdrChecked = this._hdrEnabled ? 'checked' : '';
 
         // Codec options (explicit, no "Auto")
         const codecs = [
@@ -608,7 +601,7 @@ export class SettingsView {
                                 <strong>${t('settings.hdr')}</strong>
                             </span>
                         </label>
-                        <span class="setting-desc">${t('settings.hdrDesc')}${noWebGpu ? ' ' + t('settings.hdrNoWebgpu') : ''}</span>
+                        <span class="setting-desc">${t('settings.hdrDesc')}</span>
                     </div>
 
                     <div class="settings-field${psLocked}">

@@ -872,10 +872,6 @@ int main(int argc, char* argv[])
             ? body["stream_fps"].toInt()
             : appSettings.streamFps();
 
-        bool reqHdr = body.contains("hdr_enabled")
-            ? body["hdr_enabled"].toBool()
-            : appSettings.hdrEnabled();
-
         bool reqYuv444 = body.contains("chroma_444_enabled")
             ? body["chroma_444_enabled"].toBool()
             : appSettings.chroma444Enabled();
@@ -904,7 +900,6 @@ int main(int argc, char* argv[])
                 << "bitrate=" << reqBitrate
                 << "height=" << reqHeight
                 << "fps=" << reqFps
-                << "hdr=" << reqHdr
                 << "yuv444=" << reqYuv444
                 << "videoEnhancement=" << reqVideoEnhancement;
 
@@ -956,28 +951,6 @@ int main(int argc, char* argv[])
             default:               return true;
             }
         };
-
-        // ── HDR codec compatibility ───────────────────────────────────────────
-        // HDR requires 10-bit HEVC (or AV1). H.264 cannot carry HDR, and the
-        // MediaTrack transport is H.264-only. So when HDR is requested we force
-        // HEVC — provided the host supports it. If the host has no HEVC, HDR is
-        // disabled (we keep the requested codec and stream SDR).
-        if (reqHdr) {
-            // HDR needs 10-bit HEVC (SCM_HEVC_MAIN10). Generic HEVC support is not
-            // enough — an 8-bit-only host can't carry HDR. H.264 can't either, and
-            // AV1 is force-fallbacked to H.264 here, so HEVC Main10 is the target.
-            if ((host->serverCodecModeSupport & SCM_HEVC_MAIN10) != 0) {
-                if (reqCodec != VideoCodec::HEVC) {
-                    qInfo() << "[Session] HDR requested — forcing codec HEVC (was"
-                            << AppSettings::videoCodecToString(reqCodec) << ")";
-                    reqCodec = VideoCodec::HEVC;
-                }
-            } else {
-                qWarning() << "[Session] HDR requested but host has no 10-bit HEVC"
-                           << "(SCM_HEVC_MAIN10) — disabling HDR, streaming SDR";
-                reqHdr = false;
-            }
-        }
 
         // Helper: filter transport list by codec compatibility.
         //
@@ -1233,7 +1206,6 @@ int main(int argc, char* argv[])
                 reqWidth,
                 reqFps,
                 reqBitrate,
-                reqHdr,
                 reqYuv444
             );
             s->setHttpsPort(server.activeHttpsPort());
