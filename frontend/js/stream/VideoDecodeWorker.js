@@ -510,6 +510,8 @@ function onDecodedFrame(frame) {
 
     if (!S._firstFrameReported) {
         S._firstFrameReported = true;
+        console.log('[VideoWorker] Posting firstframe, resolution=' +
+            (S._lastResolution || '?'));
         post({ type: 'firstframe', resolution: S._lastResolution || '' });
     }
 
@@ -599,6 +601,7 @@ self.onmessage = (e) => {
             S.renderer = r;
             // Apply an output size that may have arrived before the renderer.
             if (S.outW > 0 && S.outH > 0) r.setOutputSize(S.outW, S.outH);
+            console.log('[VideoWorker] renderer=' + r.kind + ' (webgpu requested=' + !!m.webgpu + ', hdr=' + S.hdr + ')');
             post({ type: 'rendererinfo', kind: r.kind });
         });
         S.nalParser = new NalParser();
