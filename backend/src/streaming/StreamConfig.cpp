@@ -50,24 +50,6 @@ int StreamConfig::computeVideoFormats() const
         break;
     }
 
-    // HDR adds the 10-bit profile — ONLY for the selected codec. The broad
-    // VIDEO_FORMAT_MASK_10BIT also pulls in AV1 Main10, which moonlight-common-c
-    // tests first and picks over HEVC (codec switched for nothing, and AV1 10-bit
-    // often fails to decode in the browser). Same rationale as the 4:4:4 block.
-    if (hdr == HdrMode::HDR) {
-        switch (codec) {
-        case VideoCodec::AV1:
-            fmt |= VIDEO_FORMAT_AV1_MAIN10;
-            break;
-        case VideoCodec::Auto:
-        case VideoCodec::HEVC:
-            fmt |= VIDEO_FORMAT_H265_MAIN10;
-            break;
-        case VideoCodec::H264:
-            break; // H.264 cannot carry HDR
-        }
-    }
-
     // Chroma 4:4:4: add the YUV444 profile ONLY for the selected codec.
     // Offering every codec's 444 profile drags the negotiation into AV1 (which
     // moonlight-common-c tests first) and, when the host lacks AV1 444, silently
@@ -80,12 +62,10 @@ int StreamConfig::computeVideoFormats() const
             break;
         case VideoCodec::AV1:
             fmt |= VIDEO_FORMAT_AV1_HIGH8_444;
-            if (hdr == HdrMode::HDR) fmt |= VIDEO_FORMAT_AV1_HIGH10_444;
             break;
         case VideoCodec::Auto:
         case VideoCodec::HEVC:
             fmt |= VIDEO_FORMAT_H265_REXT8_444;
-            if (hdr == HdrMode::HDR) fmt |= VIDEO_FORMAT_H265_REXT10_444;
             break;
         }
     }
@@ -95,12 +75,5 @@ int StreamConfig::computeVideoFormats() const
 
 int StreamConfig::computeColorSpace() const
 {
-    // 0 = BT.601 SDR, 1 = BT.709 SDR
-    // Bit 0 (1): Rec 709, Bit 1 (2): Rec 2020 primaries
-    // Bit 2 (4): PQ (ST 2084), Bit 3 (8): full-range encoding
-    // BT.2020 + PQ (SMPTE 2084) = 2 | 4 = 6
-    if (hdr == HdrMode::HDR) {
-        return 6;  // BT.2020 + PQ (HDR10)
-    }
     return 1;  // BT.709 SDR
 }

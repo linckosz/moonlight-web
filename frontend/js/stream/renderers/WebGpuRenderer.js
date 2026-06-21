@@ -72,50 +72,6 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 }
 `;
 
-// HDR blit: explicit PQ→SDR tone map. importExternalTexture('srgb') of a PQ HDR
-// frame leaves the values effectively PQ-encoded (Chrome does not apply the PQ
-// EOTF / tone mapping here → washed out if shown as-is). We linearize PQ, map the
-// SDR reference white (BT.2408 graphics white, 203 nits) to 1.0, clip highlights,
-// then sRGB-encode for the standard sRGB canvas. Per channel (simple but stable).
-// Primaries: content is BT.2020; left as-is (transfer is the dominant fix) — minor
-// oversaturation only. If the result looks too DARK, importExternalTexture already
-// linearized and the PQ EOTF should be dropped (flip MW_HDR_PQ behavior).
-const BLIT_HDR_WGSL = FULLSCREEN_VS + /* wgsl */ `
-@group(0) @binding(0) var samp : sampler;
-@group(0) @binding(1) var tex : texture_external;
-
-const SDR_WHITE_NITS : f32 = 203.0;
-
-// SMPTE ST 2084 (PQ) EOTF: code [0,1] -> linear, 1.0 == 10000 nits.
-fn pqEotf(c : f32) -> f32 {
-    let m1 = 0.1593017578125;
-    let m2 = 78.84375;
-    let k1 = 0.8359375;
-    let k2 = 18.8515625;
-    let k3 = 18.6875;
-    let p = pow(max(c, 0.0), 1.0 / m2);
-    let num = max(p - k1, 0.0);
-    let den = k2 - k3 * p;
-    return pow(num / den, 1.0 / m1);
-}
-
-fn srgbOetf(c : f32) -> f32 {
-    let x = clamp(c, 0.0, 1.0);
-    if (x <= 0.0031308) { return 12.92 * x; }
-    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
-}
-
-@fragment
-fn fs(in : VSOut) -> @location(0) vec4f {
-    let s = textureSampleBaseClampToEdge(tex, samp, in.uv);
-    // PQ -> absolute linear nits, per channel.
-    let lin = vec3f(pqEotf(s.r), pqEotf(s.g), pqEotf(s.b)) * 10000.0;
-    // Normalize so SDR white == 1.0; highlights above clip (SDR rendition).
-    let c = lin / SDR_WHITE_NITS;
-    return vec4f(srgbOetf(c.r), srgbOetf(c.g), srgbOetf(c.b), 1.0);
-}
-`;
-
 // SGSRv1 (mode 1, green luma). Ported from sgsr1.h, SGSR_MOBILE variant.
 const SGSR_WGSL = FULLSCREEN_VS + /* wgsl */ `
 struct Uniforms { viewport : vec4f }; // (1/inW, 1/inH, inW, inH)
@@ -565,14 +521,6 @@ export class WebGpuRenderer extends VideoRenderer {
         r._hasOutputSize = false;
         r._armDeviceLost();
 
-        // HDR: when the source is HDR (10-bit PQ/HLG), the canvas is configured
-        // rgba16float + 'extended' tone mapping so the UA presents real HDR on HDR
-        // displays and tone-maps cleanly to SDR elsewhere (one robust path covers
-        // both). Detected from the toggle here and re-checked per-frame in draw()
-        // (a host can push HDR even with the toggle off).
-        r._hdr = !!opts.hdr;
-        r._hdrAutoChecked = false;
-
         // ── Canvas is now committed to WebGPU (no going back to '2d') ─────────
         r.ctx = canvas.getContext('webgpu');
         r._configure();         // sets _format / _interFormat (HDR-aware)
@@ -595,12 +543,7 @@ export class WebGpuRenderer extends VideoRenderer {
     }
 
     _configure() {
-        // Standard SDR sRGB canvas for ALL content, including HDR. An rgba16float
-        // + toneMapping:'extended' canvas made importExternalTexture emit linear
-        // extended-range values the canvas displayed with a gamma transfer →
-        // washed out. With a plain sRGB canvas, HDR frames are tone-mapped PQ→SDR
-        // explicitly in BLIT_HDR_WGSL (Chrome's importExternalTexture does not do
-        // it). No real HDR-display output, but correct colors — see the HDR memory.
+        // Standard sRGB canvas.
         this._format = navigator.gpu.getPreferredCanvasFormat();
         this._interFormat = 'rgba8unorm';
         this.ctx.configure({
@@ -625,8 +568,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} }
             ]
         });
-        // HDR frames get the PQ→SDR tone-mapping blit; SDR uses the plain blit.
-        const blitModule = device.createShaderModule({ code: this._hdr ? BLIT_HDR_WGSL : BLIT_WGSL });
+        const blitModule = device.createShaderModule({ code: BLIT_WGSL });
         this._blitPipeline = device.createRenderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._blitLayout] }),
             vertex: { module: blitModule, entryPoint: 'vs' },
@@ -658,8 +600,7 @@ export class WebGpuRenderer extends VideoRenderer {
     // 'off' mode: a blit pipeline targeting the canvas (external → canvas, no upscaler).
     _buildPassthroughResources() {
         const device = this._device;
-        // HDR: tone-map PQ→SDR straight to the canvas; SDR: plain pass-through.
-        const blitModule = device.createShaderModule({ code: this._hdr ? BLIT_HDR_WGSL : BLIT_WGSL });
+        const blitModule = device.createShaderModule({ code: BLIT_WGSL });
         this._passthroughPipeline = device.createRenderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._blitLayout] }),
             vertex: { module: blitModule, entryPoint: 'vs' },
@@ -810,53 +751,12 @@ export class WebGpuRenderer extends VideoRenderer {
         this._hasOutputSize = true;
     }
 
-    // One-shot HDR probe from the decoded frame's color space. A PQ/HLG transfer
-    // means the stream is HDR; switch the canvas to the HDR path even if the HDR
-    // toggle is off (point 2). Stops probing once any valid transfer is seen.
-    _maybeDetectHdr(frame) {
-        if (this._hdr || this._hdrAutoChecked) return;
-        const cs = frame.colorSpace;
-        const transfer = cs && cs.transfer;
-        if (transfer === 'pq' || transfer === 'hlg') {
-            this._hdrAutoChecked = true;
-            this._hdr = true;
-            this._switchToHdr();
-        } else if (transfer) {
-            this._hdrAutoChecked = true; // SDR confirmed; stop probing
-        }
-    }
-
-    // Reconfigure the canvas + rebuild pipelines/textures for HDR (one-time).
-    // _configure() may clear _hdr if the HDR canvas config is unsupported, in
-    // which case this rebuilds the SDR path — harmless, and we won't re-probe.
-    _switchToHdr() {
-        try { if (this._inputTex) this._inputTex.destroy(); } catch (e) {}
-        try { if (this._intermTex) this._intermTex.destroy(); } catch (e) {}
-        this._configure();
-        this._buildResources();
-    }
-
     async draw(frame) {
         if (!this._ready || !this.ctx) { try { frame.close(); } catch (e) {} return; }
 
         const inW = frame.displayWidth || frame.codedWidth || 0;
         const inH = frame.displayHeight || frame.codedHeight || 0;
         if (inW <= 0 || inH <= 0) { try { frame.close(); } catch (e) {} return; }
-
-        // Point 2: upgrade to the HDR path if the stream is HDR-tagged even when
-        // the toggle is off (host pushed HDR). Checked once on the first frame.
-        this._maybeDetectHdr(frame);
-
-        // One-time diagnostic: what color space did the decoder actually tag the
-        // frame with, and is the HDR canvas path active?
-        if (!this._loggedColor) {
-            this._loggedColor = true;
-            const cs = frame.colorSpace || {};
-            console.log('[WebGpuRenderer] first frame: hdrPath=' + this._hdr +
-                ' format=' + this._format +
-                ' frame.colorSpace={primaries:' + cs.primaries + ',transfer:' + cs.transfer +
-                ',matrix:' + cs.matrix + ',fullRange:' + cs.fullRange + '} frame.format=' + frame.format);
-        }
 
         // Canvas backing = frame-aspect rect fitting the output box (else frame res).
         let cw = inW, ch = inH;

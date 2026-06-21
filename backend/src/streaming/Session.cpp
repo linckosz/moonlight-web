@@ -72,7 +72,6 @@ StreamSession::StreamSession(NvComputer* host, int appId,
                                int streamWidth,
                                int streamFps,
                                int streamBitrateKbps,
-                               bool hdr,
                                bool yuv444,
                                QObject* parent)
     : QObject(parent)
@@ -94,11 +93,6 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     // Apply video codec preference from settings (default Auto)
     m_Config.codec = videoCodec;
     qInfo() << "[Session] Video codec preference set to" << static_cast<int>(videoCodec);
-
-    // HDR requires 10-bit HEVC/AV1; the caller is responsible for forcing a
-    // compatible codec (HEVC) before constructing the session.
-    m_Config.hdr = hdr ? HdrMode::HDR : HdrMode::SDR;
-    qInfo() << "[Session] HDR" << (hdr ? "enabled" : "disabled");
 
     // YUV 4:4:4 chroma: adds the YUV444 profile flags to the negotiated formats
     // (full chroma resolution, higher bandwidth). Off by default.
@@ -206,7 +200,7 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert,
         m_StreamWidth, m_StreamHeight, m_StreamFps,
         m_StreamBitrateKbps,
         clientCert, clientKey,
-        (m_Config.hdr == HdrMode::HDR) ? 1 : 0);
+        0);  // hdrMode: SDR
 
     connect(m_LaunchReply, &QNetworkReply::finished,
             this, &StreamSession::onLaunchReplyFinished);
@@ -395,7 +389,7 @@ void StreamSession::onLaunchReplyFinished()
     // Default is HEVC preferred with H.264 fallback.
     params.supportedVideoFormats = m_Config.computeVideoFormats();
 
-    // Pass color space from config (BT.709 SDR or BT.2020 HDR)
+    // Pass color space from config (BT.709 SDR)
     params.colorSpace = m_Config.computeColorSpace();
 
     // Audio: stereo Opus matching StreamConfig
@@ -662,10 +656,6 @@ void StreamSession::onShimConnectionStarted()
     // This ensures the frontend decodes with the correct codec type even when
     // the auto-negotiation falls back from HEVC/AV1 to H.264.
     result["videoCodec"] = QString::fromLatin1(codecName);
-
-    // Report whether HDR (10-bit) was actually negotiated, so the frontend can
-    // configure the decoder with a BT.2020/PQ color space instead of BT.709.
-    result["hdr"] = (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_10BIT) != 0;
 
     // Report whether YUV 4:4:4 chroma was actually negotiated (vs the default
     // 4:2:0), so the frontend can surface it in the stats overlay.

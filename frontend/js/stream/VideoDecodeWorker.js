@@ -62,7 +62,6 @@ const S = {
     outW: 0,
     outH: 0,
     videoCodec: 'h264',
-    hdr: false,
     isChromeWindowsHevc: false,
     transport: 'webrtc',
 
@@ -255,9 +254,7 @@ function configureDecoder() {
     };
 
     const shared = { codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true };
-    const vColor = (S.hdr && codecType === CODEC_HEVC)
-        ? { colorSpace: { primaries: 'bt2020', transfer: 'pq', matrix: 'bt2020ncl', fullRange: false } }
-        : { colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false } };
+    const vColor = { colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false } };
 
     const fallbacks = (codecType === CODEC_HEVC) ? HEVC_FALLBACK_CODEC_STRINGS : H264_FALLBACK_CODEC_STRINGS;
     const colorConfig = { codec, description: desc.buffer, ...shared, ...vColor };
@@ -580,7 +577,6 @@ self.onmessage = (e) => {
     case 'init':
         S.canvas = m.canvas;
         S.videoCodec = m.videoCodec;
-        S.hdr = !!m.hdr;
         S.isChromeWindowsHevc = !!m.isChromeWindowsHevc;
         S.transport = m.transport || 'webrtc';
         // Always use a low-latency (desynchronized) context in the worker: it
@@ -594,19 +590,18 @@ self.onmessage = (e) => {
             desynchronized: true,
             videoCodec: S.videoCodec,
             isChromeWindowsHevc: S.isChromeWindowsHevc,
-            hdr: S.hdr,
             webgpu: !!m.webgpu,
             algo: m.algo
         }).then((r) => {
             S.renderer = r;
             // Apply an output size that may have arrived before the renderer.
             if (S.outW > 0 && S.outH > 0) r.setOutputSize(S.outW, S.outH);
-            console.log('[VideoWorker] renderer=' + r.kind + ' (webgpu requested=' + !!m.webgpu + ', hdr=' + S.hdr + ')');
+            console.log('[VideoWorker] renderer=' + r.kind + ' (webgpu requested=' + !!m.webgpu + ')');
             post({ type: 'rendererinfo', kind: r.kind });
         });
         S.nalParser = new NalParser();
         setupDecoder();
-        console.log('[VideoWorker] init codec=' + S.videoCodec + ' hdr=' + S.hdr +
+        console.log('[VideoWorker] init codec=' + S.videoCodec +
             ' chromeWinHevc=' + S.isChromeWindowsHevc);
         break;
     case 'frame': {
