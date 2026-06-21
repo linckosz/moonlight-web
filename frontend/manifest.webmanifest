@@ -1,6 +1,6 @@
 {
-  "name": "Moonlight-Web",
-  "short_name": "Moonlight",
+  "name": "Moonlight Web",
+  "short_name": "Moonlight Web",
   "description": "Sunshine game streaming in the browser",
   "start_url": "/",
   "scope": "/",

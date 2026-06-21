@@ -681,6 +681,14 @@ export class StreamView {
     // =========================================================================
 
     render() {
+        // Remove any stale #stream-view left over from a previous session whose
+        // teardown hasn't completed (e.g. relaunch/resume while the prior view is
+        // still tearing down). Two containers would each carry their own
+        // #stream-startup-overlay, and getElementById('stream-view') below would
+        // resolve to the OLD one — leaving a step-2-stuck overlay visible on top
+        // while the live overlay (this._startupOverlay) advances unseen.
+        document.querySelectorAll('#stream-view').forEach((stale) => stale.remove());
+
         const el = document.createElement('div');
         el.id = 'stream-view';
         el.className = 'stream-overlay';
@@ -1011,15 +1019,20 @@ export class StreamView {
             this._handleHevcFallback();
             break;
         case 'firstframe':
-            if (!this._firstFrameRendered) {
-                if (m.resolution) this._resolution = m.resolution;
-                this.setStatus('live', 'Live');
-                this._firstFrameRendered = true;
-                if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
-                this._updateStartupStep(3);
-                setTimeout(() => this._hideStartupOverlay(), 500);
-                this._showShortcutsSlide();
-            }
+            console.log('[StreamView] firstframe received from worker, ' +
+                'alreadyRendered=' + !!this._firstFrameRendered +
+                ' resolution=' + (m.resolution || '?'));
+            if (m.resolution) this._resolution = m.resolution;
+            this.setStatus('live', 'Live');
+            this._firstFrameRendered = true;
+            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+            // Always advance the overlay to step 3 + schedule hide, even if a
+            // previous path already flipped _firstFrameRendered: the overlay
+            // teardown is idempotent and must never be skipped, otherwise it
+            // stays stuck on step 2 while the stream plays.
+            this._updateStartupStep(3);
+            setTimeout(() => this._hideStartupOverlay(), 500);
+            this._showShortcutsSlide();
             break;
         case 'status':
             this.setStatus(m.state, m.msg);
@@ -1938,21 +1951,31 @@ export class StreamView {
                 // No WebCodecs decoder needed. The first video frame triggers
                 // the 'live' status via the video element's playing event.
                 if (this.videoEl) {
-                    this.videoEl.onplaying = () => {
-                        if (!this._firstFrameRendered) {
-                            this._firstFrameRendered = true;
-                            const w = this.videoEl.videoWidth || 0;
-                            const h = this.videoEl.videoHeight || 0;
-                            if (w > 0) this._resolution = w + '×' + h;
-                            this.setStatus('live', 'Live');
-                            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
-                            // Mark startup step 3 ("Stream prêt !") and hide overlay after 1.5s
-                            this._updateStartupStep(3);
-                            setTimeout(() => this._hideStartupOverlay(), 500);
-                            // Show keyboard shortcuts slide (5s auto-hide)
-                            this._showShortcutsSlide();
-                        }
+                    const onMediaLive = () => {
+                        if (this._firstFrameRendered) return;
+                        this._firstFrameRendered = true;
+                        const w = this.videoEl.videoWidth || 0;
+                        const h = this.videoEl.videoHeight || 0;
+                        if (w > 0) this._resolution = w + '×' + h;
+                        this.setStatus('live', 'Live');
+                        if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+                        // Mark startup step 3 ("Stream prêt !") and hide overlay after 1.5s
+                        this._updateStartupStep(3);
+                        setTimeout(() => this._hideStartupOverlay(), 500);
+                        // Show keyboard shortcuts slide (5s auto-hide)
+                        this._showShortcutsSlide();
                     };
+                    // The video track may already be playing by the time the
+                    // DataChannels open (ontrack + play() can fire before onOpen),
+                    // so a one-shot 'playing' listener would miss it and leave the
+                    // overlay stuck on step 2. Bind several signals AND check the
+                    // current state; onMediaLive is idempotent.
+                    this.videoEl.onplaying = onMediaLive;
+                    this.videoEl.addEventListener('timeupdate', onMediaLive);
+                    if (!this.videoEl.paused && this.videoEl.currentTime > 0 &&
+                        this.videoEl.readyState >= 2) {
+                        onMediaLive();
+                    }
                 }
                 // Native RTP stats: poll getStats() for fps/bitrate/latency,
                 // since these frames never reach the WebCodecs pipeline.
@@ -4343,6 +4366,8 @@ export class StreamView {
      * @param {number} step - 1-indexed step to activate.
      */
     _updateStartupStep(step) {
+        console.log('[StreamView] _updateStartupStep(' + step + ') overlay=' +
+            (this._startupOverlay ? 'present' : 'NULL'));
         if (!this._startupOverlay) return;
         // The overlay defaults to display:none in CSS — reveal it while the
         // stream initializes (hidden again by _hideStartupOverlay after step 3).
@@ -4361,7 +4386,12 @@ export class StreamView {
         });
 
         // Step 3 == first frame == stream arrival → fire the boot reveal.
-        if (step >= 3) this._playStreamReveal();
+        // Guard against a reveal exception bubbling up and aborting the
+        // caller's _hideStartupOverlay() scheduling (overlay stuck on step 2).
+        if (step >= 3) {
+            try { this._playStreamReveal(); }
+            catch (e) { console.warn('[StreamView] _playStreamReveal failed:', e); }
+        }
     }
 
     /**
@@ -4423,12 +4453,18 @@ export class StreamView {
      * Called ~0.5s after the first video frame is decoded (step 3).
      */
     _hideStartupOverlay() {
+        const domCount = document.querySelectorAll('#stream-startup-overlay').length;
+        const inDom = this._startupOverlay && document.body.contains(this._startupOverlay);
+        console.log('[StreamView] _hideStartupOverlay called, overlay=' +
+            (this._startupOverlay ? 'present' : 'NULL') +
+            ' inDom=' + inDom + ' domCount=' + domCount);
         if (!this._startupOverlay) return;
         this._startupOverlay.classList.add('hidden');
         // Remove from DOM after the CSS transition completes
         setTimeout(() => {
             if (this._startupOverlay) {
                 this._startupOverlay.style.display = 'none';
+                console.log('[StreamView] _hideStartupOverlay: display=none applied');
             }
         }, 500);
     }
