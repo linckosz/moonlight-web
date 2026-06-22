@@ -3950,11 +3950,13 @@ export class StreamView {
         }
     }
 
-    /** Send a single key press (down+up), applying any latched toolbar mods. */
+    /** Send a single key press (down+up), applying any latched toolbar mods,
+     *  then release those mods (one-shot, see _releaseLatchedMods). */
     _sendKey(vk) {
         const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
         this.webrtc.send({ type: 'keydown', ...base });
         this.webrtc.send({ type: 'keyup', ...base });
+        this._releaseLatchedMods();
     }
 
     // =========================================================================
@@ -3988,6 +3990,7 @@ export class StreamView {
     /** Build the special-keys bar (hidden until the soft keyboard opens). */
     _buildKbToolbar() {
         this._heldMods = { ctrl: false, shift: false, alt: false, meta: false };
+        this._modBtns = {}; // id → button, to clear the latch highlight on release
 
         const bar = document.createElement('div');
         bar.id = 'stream-kbd-toolbar';
@@ -4022,6 +4025,7 @@ export class StreamView {
                 else this._sendToolbarKey(id);
                 this._refocusCapture();
             });
+            if (kind === 'mod') this._modBtns[id] = btn;
             bar.appendChild(btn);
         }
 
@@ -4057,12 +4061,35 @@ export class StreamView {
         }
     }
 
-    /** Send a toolbar action key (down+up) with the current latched mods.
-     *  Latches stay held so e.g. Shift + arrows keeps selecting. */
+    /** Send a toolbar action key (down+up) with the current latched mods, then
+     *  release the latches (one-shot sticky keys: Shift/Ctrl/Alt apply to the
+     *  next key only and auto-clear once it fires). */
     _sendToolbarKey(vk) {
         const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
         this.webrtc.send({ type: 'keydown', ...base });
         this.webrtc.send({ type: 'keyup', ...base });
+        this._releaseLatchedMods();
+    }
+
+    /** Release any latched toolbar modifiers, sending the matching keyup and
+     *  clearing each button highlight. Called after a key action so the user
+     *  never has to tap a modifier a second time to turn it off. */
+    _releaseLatchedMods() {
+        const m = this._heldMods;
+        if (!m) return;
+        for (const name of ['ctrl', 'shift', 'alt', 'meta']) {
+            if (!m[name]) continue;
+            m[name] = false; // clear before flags so this one reads as released
+            this.webrtc.send({
+                type: 'keyup',
+                keyCode: StreamView.MOD_VK[name],
+                code: '',
+                key: '',
+                ...this._modFlags(),
+            });
+            const btn = this._modBtns && this._modBtns[name];
+            if (btn) btn.classList.remove('active');
+        }
     }
 
     /** Re-focus the hidden capture so the soft keyboard stays open after a tap. */

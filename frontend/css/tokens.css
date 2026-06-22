@@ -37,6 +37,10 @@
     --cyan-soft: rgba(0, 229, 255, 0.12);
     --magenta-soft: rgba(255, 42, 109, 0.14);
 
+    /* ── On-screen keyboard (touch) — neon cyan, matching the Stop button ── */
+    --kbd-on: var(--cyan-soft);      /* latched / active fill */
+    --kbd-on-edge: var(--neon-cyan); /* neon edge + text, like the Stop border */
+
     /* ── Semantic ──────────────────────────────────────────────────────── */
     --c-success: #2ad4a0;
     --c-warning: #ffb627;
