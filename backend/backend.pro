@@ -206,3 +206,29 @@ macx {
 unix:!macx {
     LIBS += -lpthread -ldl
 }
+
+# ── AddressSanitizer (opt-in: set env MW_ASAN=1) ───────────────────────────
+# Runtime memory-error detection (heap/stack overflow, use-after-free, leaks).
+# CI-friendly (GitHub Actions): just export MW_ASAN=1 before the build; qmake is
+# re-run every build so the flag is picked up. The binary is ~2-3x slower and is
+# for testing only (not release). NOTE: ASan only reports while the instrumented
+# code actually runs — exercise a real stream to surface anything.
+MW_ASAN_ENV = $$(MW_ASAN)
+equals(MW_ASAN_ENV, 1) {
+    message("AddressSanitizer ENABLED (MW_ASAN=1)")
+    win32-msvc {
+        QMAKE_CFLAGS += /fsanitize=address /Zi
+        QMAKE_CXXFLAGS += /fsanitize=address /Zi
+        # Linking goes through link.exe (not the cl driver), so the ASan runtime
+        # libs must be referenced explicitly. They live in the MSVC lib dir,
+        # already on LIB via vcvars64.
+        QMAKE_LFLAGS += /DEBUG /INCREMENTAL:NO
+        QMAKE_LFLAGS += /wholearchive:clang_rt.asan_dynamic_runtime_thunk-x86_64.lib
+        LIBS += clang_rt.asan_dynamic-x86_64.lib
+        LIBS += clang_rt.asan_dynamic_runtime_thunk-x86_64.lib
+    } else {
+        QMAKE_CFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
+        QMAKE_CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
+        QMAKE_LFLAGS += -fsanitize=address
+    }
+}
