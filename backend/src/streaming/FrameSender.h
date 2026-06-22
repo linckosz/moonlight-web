@@ -67,10 +67,10 @@ private:
     struct Job {
         std::shared_ptr<rtc::DataChannel> dc;
         QByteArray data;
-        bool isKeyframe;
-        bool isAudio;
-        uint32_t frameId;
-        uint32_t backendTs;
+        bool isKeyframe = false;
+        bool isAudio = false;
+        uint32_t frameId = 0;
+        uint32_t backendTs = 0;
     };
 
     // Must match DataChannelRelay's fragmentation format exactly.

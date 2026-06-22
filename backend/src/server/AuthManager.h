@@ -78,7 +78,7 @@ public:
     enum Result { Valid, InvalidPin, RateLimited };
 
     struct ValidateResult {
-        Result result;
+        Result result = InvalidPin; // fail-closed default
         int remainingAttempts = 0;
         int lockoutSeconds = 0;
     };
