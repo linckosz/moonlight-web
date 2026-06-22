@@ -37,21 +37,19 @@
  */
 import {
     NalParser,
-    splitNals,
     buildDescription,
     getCodecString,
     toAvcc,
     H264_FALLBACK_CODEC_STRINGS,
     HEVC_FALLBACK_CODEC_STRINGS,
     HEVC_ANNEXB_CODEC_STRINGS,
-    CODEC_H264,
-    CODEC_HEVC
+    CODEC_HEVC,
 } from '../util/Mp4Muxer.js';
 import {
     findSequenceHeader,
     buildAv1DecoderConfigs,
     stripNonEssentialObus,
-    CODEC_AV1
+    CODEC_AV1,
 } from '../util/Av1Utils.js';
 import { createVideoRenderer } from './renderers/createRenderer.js';
 
@@ -105,12 +103,16 @@ const S = {
 
     stats: { received: 0, decoded: 0, rendered: 0, dropped: 0 },
     _lastCountersPost: 0,
-    _lastLatencyMs: 0
+    _lastLatencyMs: 0,
 };
 
-function post(msg, transfer) { self.postMessage(msg, transfer || []); }
+function post(msg, transfer) {
+    self.postMessage(msg, transfer || []);
+}
 
-function setStatus(state, msg) { post({ type: 'status', state, msg }); }
+function setStatus(state, msg) {
+    post({ type: 'status', state, msg });
+}
 
 // Level-triggered IDR request with a 1s throttle (mirrors StreamView._requestIdr).
 function requestIdr(reason) {
@@ -132,7 +134,7 @@ function postCounters(force) {
         rendered: S.stats.rendered,
         dropped: S.stats.dropped,
         latencyMs: S._lastLatencyMs,
-        resolution: S._lastResolution || ''
+        resolution: S._lastResolution || '',
     });
 }
 
@@ -140,7 +142,9 @@ function postCounters(force) {
 
 function setupDecoder() {
     if (S.decoder) {
-        try { S.decoder.close(); } catch (e) {}
+        try {
+            S.decoder.close();
+        } catch (e) {}
         S.decoder = null;
     }
     S.decoderConfigured = false;
@@ -150,17 +154,21 @@ function setupDecoder() {
         output: (frame) => {
             if (!S._firstDecoderOutputLogged) {
                 S._firstDecoderOutputLogged = true;
-                console.log('[VideoWorker] First decoded frame: ' +
-                    (frame.displayWidth || frame.codedWidth) + 'x' +
-                    (frame.displayHeight || frame.codedHeight) +
-                    ' format=' + (frame.format || 'null'));
+                console.log(
+                    '[VideoWorker] First decoded frame: ' +
+                        (frame.displayWidth || frame.codedWidth) +
+                        'x' +
+                        (frame.displayHeight || frame.codedHeight) +
+                        ' format=' +
+                        (frame.format || 'null'),
+                );
             }
             onDecodedFrame(frame);
         },
         error: (err) => {
             console.error('[VideoWorker] VideoDecoder error:', err.message);
             handleDecoderError(err);
-        }
+        },
     });
 }
 
@@ -172,10 +180,18 @@ function handleDecoderError(err) {
     // AV1 that never produced a frame → broken AV1 decode in this browser.
     if (S.videoCodec === CODEC_AV1 && S.stats.decoded === 0 && S._recoveryAttempts >= 3) {
         S._fatalDecodeError = true;
-        if (S.decoder) { try { S.decoder.close(); } catch (e) {} S.decoder = null; }
+        if (S.decoder) {
+            try {
+                S.decoder.close();
+            } catch (e) {}
+            S.decoder = null;
+        }
         S.decoderConfigured = false;
         S.pendingFrames = [];
-        post({ type: 'fatal', msg: 'AV1 decoding failed in this browser — select H.264 or HEVC in Settings' });
+        post({
+            type: 'fatal',
+            msg: 'AV1 decoding failed in this browser — select H.264 or HEVC in Settings',
+        });
         return;
     }
     if (S._recoveryAttempts > S.MAX_RECOVERY_ATTEMPTS) {
@@ -184,12 +200,21 @@ function handleDecoderError(err) {
     }
     S._decoderRecovering = true;
 
-    if (S.decoder) { try { S.decoder.close(); } catch (e) {} S.decoder = null; }
+    if (S.decoder) {
+        try {
+            S.decoder.close();
+        } catch (e) {}
+        S.decoder = null;
+    }
     S.decoderConfigured = false;
     S.decoderConfiguring = false;
     S._referenceValid = false;
 
-    for (const frame of S.frameQueue) { try { frame.close(); } catch (e) {} }
+    for (const frame of S.frameQueue) {
+        try {
+            frame.close();
+        } catch (e) {}
+    }
     S.frameQueue = [];
     S.pendingFrames = [];
     S.nalParser.reset();
@@ -209,25 +234,42 @@ function configureDecoder() {
     const codecType = S.nalParser.codec;
 
     const desc = buildDescription(S.nalParser);
-    if (!desc) { S.decoderConfiguring = false; return; }
+    if (!desc) {
+        S.decoderConfiguring = false;
+        return;
+    }
 
     const codec = getCodecString(S.nalParser);
-    if (!codec) { S.decoderConfiguring = false; setStatus('error', 'Unknown codec'); return; }
+    if (!codec) {
+        S.decoderConfiguring = false;
+        setStatus('error', 'Unknown codec');
+        return;
+    }
 
     const applyConfig = (cfg, noDescription = false) => {
         const _doConfigure = (config, hwAccel) => {
-            const cfgToUse = hwAccel ? { ...config, hardwareAcceleration: 'prefer-hardware' } : config;
+            const cfgToUse = hwAccel
+                ? { ...config, hardwareAcceleration: 'prefer-hardware' }
+                : config;
             try {
                 S.decoder.configure(cfgToUse);
                 S.decoderConfigured = true;
                 S.decoderConfiguring = false;
                 S._noDescription = noDescription;
-                console.log('[VideoWorker] Decoder CONFIGURED codec=' + cfgToUse.codec +
-                    ' noDescription=' + noDescription + ' hw=' + (cfgToUse.hardwareAcceleration || 'none'));
+                console.log(
+                    '[VideoWorker] Decoder CONFIGURED codec=' +
+                        cfgToUse.codec +
+                        ' noDescription=' +
+                        noDescription +
+                        ' hw=' +
+                        (cfgToUse.hardwareAcceleration || 'none'),
+                );
                 flushPendingFrames();
                 if (!S._proactiveIdrScheduled) {
                     S._proactiveIdrScheduled = true;
-                    setTimeout(() => { if (!S.stopped) post({ type: 'requestidr', reason: 'proactive' }); }, 250);
+                    setTimeout(() => {
+                        if (!S.stopped) post({ type: 'requestidr', reason: 'proactive' });
+                    }, 250);
                 }
                 return true;
             } catch (e) {
@@ -236,27 +278,39 @@ function configureDecoder() {
                 return false;
             }
         };
-        try { return _doConfigure(cfg, true); }
-        catch (hwErr) { return _doConfigure(cfg, false); }
+        try {
+            return _doConfigure(cfg, true);
+        } catch (hwErr) {
+            return _doConfigure(cfg, false);
+        }
     };
 
     const tryCodecs = (configs, index, onExhausted) => {
-        if (index >= configs.length) { onExhausted(); return; }
+        if (index >= configs.length) {
+            onExhausted();
+            return;
+        }
         const cfg = configs[index];
         const noDescription = cfg._noDescription === true;
-        VideoDecoder.isConfigSupported(cfg).then((result) => {
-            if (result.supported) {
-                if (!applyConfig(cfg, noDescription)) tryCodecs(configs, index + 1, onExhausted);
-            } else {
-                tryCodecs(configs, index + 1, onExhausted);
-            }
-        }).catch(() => tryCodecs(configs, index + 1, onExhausted));
+        VideoDecoder.isConfigSupported(cfg)
+            .then((result) => {
+                if (result.supported) {
+                    if (!applyConfig(cfg, noDescription))
+                        tryCodecs(configs, index + 1, onExhausted);
+                } else {
+                    tryCodecs(configs, index + 1, onExhausted);
+                }
+            })
+            .catch(() => tryCodecs(configs, index + 1, onExhausted));
     };
 
     const shared = { codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true };
-    const vColor = { colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false } };
+    const vColor = {
+        colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false },
+    };
 
-    const fallbacks = (codecType === CODEC_HEVC) ? HEVC_FALLBACK_CODEC_STRINGS : H264_FALLBACK_CODEC_STRINGS;
+    const fallbacks =
+        codecType === CODEC_HEVC ? HEVC_FALLBACK_CODEC_STRINGS : H264_FALLBACK_CODEC_STRINGS;
     const colorConfig = { codec, description: desc.buffer, ...shared, ...vColor };
 
     // HEVC: Annex B (no description) first — Chromium keyframe validator only
@@ -279,12 +333,31 @@ function configureDecoder() {
     const configsToTry = [colorConfig];
     for (const fbCodec of fallbacks) {
         if (fbCodec === codec) continue;
-        configsToTry.push({ codec: fbCodec, description: desc.buffer, codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true, ...vColor });
-        configsToTry.push({ codec: fbCodec, description: desc.buffer, codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true });
+        configsToTry.push({
+            codec: fbCodec,
+            description: desc.buffer,
+            codedWidth: 1920,
+            codedHeight: 1080,
+            optimizeForLatency: true,
+            ...vColor,
+        });
+        configsToTry.push({
+            codec: fbCodec,
+            description: desc.buffer,
+            codedWidth: 1920,
+            codedHeight: 1080,
+            optimizeForLatency: true,
+        });
     }
     configsToTry.push({ codec, description: desc.buffer, codedWidth: 1920, codedHeight: 1080 });
     configsToTry.push({ codec, description: desc.buffer });
-    configsToTry.push({ codec, description: desc, codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true });
+    configsToTry.push({
+        codec,
+        description: desc,
+        codedWidth: 1920,
+        codedHeight: 1080,
+        optimizeForLatency: true,
+    });
     configsToTry.push({ codec, optimizeForLatency: true });
     configsToTry.push({ codec });
 
@@ -292,7 +365,7 @@ function configureDecoder() {
         const avc3Configs = [
             { codec: 'avc3.42E01E', ...shared, ...vColor, optimizeForLatency: true },
             { codec: 'avc3.42E01E', ...shared, optimizeForLatency: true },
-            { codec: 'avc3.42E01E', ...shared }
+            { codec: 'avc3.42E01E', ...shared },
         ];
         tryCodecs(avc3Configs, 0, () => {
             S.decoderConfiguring = false;
@@ -318,19 +391,30 @@ function tryHevcAvccConfigs(codec, desc, fallbacks, shared, vColor) {
     cfgs.push({ codec, optimizeForLatency: true });
 
     const tryNext = (idx) => {
-        if (idx >= cfgs.length) { S.decoderConfiguring = false; handleHevcFallback(); return; }
+        if (idx >= cfgs.length) {
+            S.decoderConfiguring = false;
+            handleHevcFallback();
+            return;
+        }
         const cfg = cfgs[idx];
-        VideoDecoder.isConfigSupported(cfg).then((r) => {
-            if (r.supported) {
-                try {
-                    S.decoder.configure(cfg);
-                    S.decoderConfigured = true;
-                    S.decoderConfiguring = false;
-                    S._noDescription = false;
-                    flushPendingFrames();
-                } catch (e) { S.decoderConfiguring = false; handleHevcFallback(); }
-            } else { tryNext(idx + 1); }
-        }).catch(() => tryNext(idx + 1));
+        VideoDecoder.isConfigSupported(cfg)
+            .then((r) => {
+                if (r.supported) {
+                    try {
+                        S.decoder.configure(cfg);
+                        S.decoderConfigured = true;
+                        S.decoderConfiguring = false;
+                        S._noDescription = false;
+                        flushPendingFrames();
+                    } catch (e) {
+                        S.decoderConfiguring = false;
+                        handleHevcFallback();
+                    }
+                } else {
+                    tryNext(idx + 1);
+                }
+            })
+            .catch(() => tryNext(idx + 1));
     };
     tryNext(0);
 }
@@ -345,7 +429,7 @@ function handleHevcFallback() {
 function flushPendingFrames() {
     // After configure, a keyframe MUST be fed first (delta-first → green output).
     if (S.pendingFrames.length > 1 && !S.pendingFrames[0].isKeyframe) {
-        const keyIdx = S.pendingFrames.findIndex(e => e.isKeyframe);
+        const keyIdx = S.pendingFrames.findIndex((e) => e.isKeyframe);
         if (keyIdx > 0) {
             const [keyframe] = S.pendingFrames.splice(keyIdx, 1);
             S.pendingFrames.unshift(keyframe);
@@ -363,7 +447,10 @@ function decodeFrame(data, isKeyframe, backendTs) {
         return;
     }
     if (!S.decoder) return;
-    if (S.decoder.state === 'closed') { handleDecoderError(new Error('Decoder state is closed')); return; }
+    if (S.decoder.state === 'closed') {
+        handleDecoderError(new Error('Decoder state is closed'));
+        return;
+    }
 
     if (!isKeyframe && !S._referenceValid) {
         S.stats.dropped++;
@@ -390,7 +477,8 @@ function decodeFrame(data, isKeyframe, backendTs) {
         S._queueStallStart = 0;
     }
 
-    let timestamp = (backendTs !== undefined && backendTs > 0) ? backendTs * 1000 : S.frameCount * 16667;
+    let timestamp =
+        backendTs !== undefined && backendTs > 0 ? backendTs * 1000 : S.frameCount * 16667;
     if (timestamp <= S._lastChunkTs) timestamp = S._lastChunkTs + 1;
     S._lastChunkTs = timestamp;
     S.frameCount++;
@@ -403,7 +491,11 @@ function decodeFrame(data, isKeyframe, backendTs) {
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: avccData });
         S.decoder.decode(chunk);
         S.stats.received++;
-        if (isKeyframe) { S._referenceValid = true; S._idrRequested = false; S._queueStallStart = 0; }
+        if (isKeyframe) {
+            S._referenceValid = true;
+            S._idrRequested = false;
+            S._queueStallStart = 0;
+        }
     } catch (err) {
         S.stats.dropped++;
         handleDecoderError(err);
@@ -443,22 +535,29 @@ function configureAv1Decoder(seqHeaderObu) {
             return;
         }
         const cfg = configs[index];
-        VideoDecoder.isConfigSupported(cfg).then((result) => {
-            if (result.supported) {
-                try {
-                    S.decoder.configure(cfg);
-                    S.decoderConfigured = true;
-                    S.decoderConfiguring = false;
-                    while (S.pendingFrames.length > 0 && !S.pendingFrames[0].isKeyframe) {
-                        S.pendingFrames.shift(); S.stats.dropped++;
+        VideoDecoder.isConfigSupported(cfg)
+            .then((result) => {
+                if (result.supported) {
+                    try {
+                        S.decoder.configure(cfg);
+                        S.decoderConfigured = true;
+                        S.decoderConfiguring = false;
+                        while (S.pendingFrames.length > 0 && !S.pendingFrames[0].isKeyframe) {
+                            S.pendingFrames.shift();
+                            S.stats.dropped++;
+                        }
+                        while (S.pendingFrames.length > 0) {
+                            const entry = S.pendingFrames.shift();
+                            decodeAv1Frame(entry.data, entry.isKeyframe);
+                        }
+                    } catch (e) {
+                        tryCodecs(index + 1);
                     }
-                    while (S.pendingFrames.length > 0) {
-                        const entry = S.pendingFrames.shift();
-                        decodeAv1Frame(entry.data, entry.isKeyframe);
-                    }
-                } catch (e) { tryCodecs(index + 1); }
-            } else { tryCodecs(index + 1); }
-        }).catch(() => tryCodecs(index + 1));
+                } else {
+                    tryCodecs(index + 1);
+                }
+            })
+            .catch(() => tryCodecs(index + 1));
     };
     tryCodecs(0);
 }
@@ -497,7 +596,11 @@ function onDecodedFrame(frame) {
         if (latency > 0 && latency < 5000) S._lastLatencyMs = latency;
     }
 
-    if (S.frameQueue.length >= 3) { frame.close(); S.stats.dropped++; return; }
+    if (S.frameQueue.length >= 3) {
+        frame.close();
+        S.stats.dropped++;
+        return;
+    }
     S.frameQueue.push(frame);
 
     // Track resolution from frame dims; retry past the first frame since some
@@ -507,8 +610,7 @@ function onDecodedFrame(frame) {
 
     if (!S._firstFrameReported) {
         S._firstFrameReported = true;
-        console.log('[VideoWorker] Posting firstframe, resolution=' +
-            (S._lastResolution || '?'));
+        console.log('[VideoWorker] Posting firstframe, resolution=' + (S._lastResolution || '?'));
         post({ type: 'firstframe', resolution: S._lastResolution || '' });
     }
 
@@ -519,20 +621,32 @@ function onDecodedFrame(frame) {
 // VideoFrames are never touched concurrently (Chrome Windows HEVC NV12 race).
 function pump() {
     if (S.stopped || S.rendering || S.frameQueue.length === 0) return;
-    while (S.frameQueue.length > 1) { S.frameQueue.shift().close(); S.stats.dropped++; }
+    while (S.frameQueue.length > 1) {
+        S.frameQueue.shift().close();
+        S.stats.dropped++;
+    }
     const frame = S.frameQueue.shift();
     S.rendering = true;
-    drawFrame(frame).then((ok) => { if (ok) S.stats.rendered++; }).finally(() => {
-        S.rendering = false;
-        postCounters(false);
-        pump();
-    });
+    drawFrame(frame)
+        .then((ok) => {
+            if (ok) S.stats.rendered++;
+        })
+        .finally(() => {
+            S.rendering = false;
+            postCounters(false);
+            pump();
+        });
 }
 
 // Delegate to the renderer (owns context + HEVC NV12 fallbacks). The renderer
 // closes the frame; stats stay here per the render boundary.
 async function drawFrame(frame) {
-    if (!S.renderer) { try { frame.close(); } catch (e) {} return false; }
+    if (!S.renderer) {
+        try {
+            frame.close();
+        } catch (e) {}
+        return false;
+    }
     await S.renderer.draw(frame);
     return true;
 }
@@ -549,7 +663,10 @@ function processFrame(data, isKeyframe, backendTs) {
         S._steadyToPerfOffset = backendTs - performance.now() - 30; // 30ms LAN floor
     }
 
-    if (S.videoCodec === CODEC_AV1) { handleAv1Frame(data, isKeyframe); return; }
+    if (S.videoCodec === CODEC_AV1) {
+        handleAv1Frame(data, isKeyframe);
+        return;
+    }
 
     // H.264 / HEVC: extract SPS/PPS from the first keyframe, then configure.
     if (!S.nalParser.isReady()) {
@@ -574,55 +691,70 @@ function processFrame(data, isKeyframe, backendTs) {
 self.onmessage = (e) => {
     const m = e.data;
     switch (m.type) {
-    case 'init':
-        S.canvas = m.canvas;
-        S.videoCodec = m.videoCodec;
-        S.isChromeWindowsHevc = !!m.isChromeWindowsHevc;
-        S.transport = m.transport || 'webrtc';
-        // Always use a low-latency (desynchronized) context in the worker: it
-        // lets the canvas bypass the document compositor and present sooner,
-        // clawing back the ~1-frame latency that an OffscreenCanvas presented
-        // from a worker otherwise adds vs the main-thread rAF path. (m.vsync is
-        // kept for reference; tearing is acceptable for a real-time game stream.)
-        // Renderer assigned in a microtask; well before any decoded frame reaches
-        // drawFrame. mw_webgpu flag arrives via the message (no localStorage here).
-        createVideoRenderer(S.canvas, {
-            desynchronized: true,
-            videoCodec: S.videoCodec,
-            isChromeWindowsHevc: S.isChromeWindowsHevc,
-            webgpu: !!m.webgpu,
-            algo: m.algo
-        }).then((r) => {
-            S.renderer = r;
-            // Apply an output size that may have arrived before the renderer.
-            if (S.outW > 0 && S.outH > 0) r.setOutputSize(S.outW, S.outH);
-            console.log('[VideoWorker] renderer=' + r.kind + ' (webgpu requested=' + !!m.webgpu + ')');
-            post({ type: 'rendererinfo', kind: r.kind });
-        });
-        S.nalParser = new NalParser();
-        setupDecoder();
-        console.log('[VideoWorker] init codec=' + S.videoCodec +
-            ' chromeWinHevc=' + S.isChromeWindowsHevc);
-        break;
-    case 'frame': {
-        const data = new Uint8Array(m.data);
-        processFrame(data, m.isKeyframe, m.backendTs);
-        break;
-    }
-    case 'frameloss':
-        S._referenceValid = false;
-        break;
-    case 'resize':
-        S.outW = m.outW;
-        S.outH = m.outH;
-        if (S.renderer) S.renderer.setOutputSize(S.outW, S.outH);
-        break;
-    case 'stop':
-        S.stopped = true;
-        if (S.decoder) { try { S.decoder.close(); } catch (e) {} S.decoder = null; }
-        for (const f of S.frameQueue) { try { f.close(); } catch (e) {} }
-        S.frameQueue = [];
-        S.pendingFrames = [];
-        break;
+        case 'init':
+            S.canvas = m.canvas;
+            S.videoCodec = m.videoCodec;
+            S.isChromeWindowsHevc = !!m.isChromeWindowsHevc;
+            S.transport = m.transport || 'webrtc';
+            // Always use a low-latency (desynchronized) context in the worker: it
+            // lets the canvas bypass the document compositor and present sooner,
+            // clawing back the ~1-frame latency that an OffscreenCanvas presented
+            // from a worker otherwise adds vs the main-thread rAF path. (m.vsync is
+            // kept for reference; tearing is acceptable for a real-time game stream.)
+            // Renderer assigned in a microtask; well before any decoded frame reaches
+            // drawFrame. mw_webgpu flag arrives via the message (no localStorage here).
+            createVideoRenderer(S.canvas, {
+                desynchronized: true,
+                videoCodec: S.videoCodec,
+                isChromeWindowsHevc: S.isChromeWindowsHevc,
+                webgpu: !!m.webgpu,
+                algo: m.algo,
+            }).then((r) => {
+                S.renderer = r;
+                // Apply an output size that may have arrived before the renderer.
+                if (S.outW > 0 && S.outH > 0) r.setOutputSize(S.outW, S.outH);
+                console.log(
+                    '[VideoWorker] renderer=' + r.kind + ' (webgpu requested=' + !!m.webgpu + ')',
+                );
+                post({ type: 'rendererinfo', kind: r.kind });
+            });
+            S.nalParser = new NalParser();
+            setupDecoder();
+            console.log(
+                '[VideoWorker] init codec=' +
+                    S.videoCodec +
+                    ' chromeWinHevc=' +
+                    S.isChromeWindowsHevc,
+            );
+            break;
+        case 'frame': {
+            const data = new Uint8Array(m.data);
+            processFrame(data, m.isKeyframe, m.backendTs);
+            break;
+        }
+        case 'frameloss':
+            S._referenceValid = false;
+            break;
+        case 'resize':
+            S.outW = m.outW;
+            S.outH = m.outH;
+            if (S.renderer) S.renderer.setOutputSize(S.outW, S.outH);
+            break;
+        case 'stop':
+            S.stopped = true;
+            if (S.decoder) {
+                try {
+                    S.decoder.close();
+                } catch (e) {}
+                S.decoder = null;
+            }
+            for (const f of S.frameQueue) {
+                try {
+                    f.close();
+                } catch (e) {}
+            }
+            S.frameQueue = [];
+            S.pendingFrames = [];
+            break;
     }
 };

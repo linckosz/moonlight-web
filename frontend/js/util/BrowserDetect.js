@@ -33,7 +33,8 @@ export function detectPlatform() {
     // --- Tablet detection (must come before mobile) ---
 
     // iPad: "iPad" in UA, OR (Mac + touch support) for iPadOS 13+
-    const isIpad = /ipad/i.test(ua) ||
+    const isIpad =
+        /ipad/i.test(ua) ||
         (/mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1);
 
     // Android tablet: "Android" + no "Mobile" in UA
@@ -48,7 +49,7 @@ export function detectPlatform() {
     if (isIpad || isAndroidTablet || isKindle || isWindowsTablet) {
         return {
             type: 'tablet',
-            isTouchDevice: true
+            isTouchDevice: true,
         };
     }
 
@@ -62,17 +63,18 @@ export function detectPlatform() {
     if (isIphone || isAndroidPhone || isWindowsPhone || isBlackberry) {
         return {
             type: 'mobile',
-            isTouchDevice: true
+            isTouchDevice: true,
         };
     }
 
     // Touchscreen laptop (Surface, Chromebook, etc.) — detected as desktop
-    const isTouchDevice = 'ontouchstart' in window ||
+    const isTouchDevice =
+        'ontouchstart' in window ||
         (typeof navigator.maxTouchPoints !== 'undefined' && navigator.maxTouchPoints > 0);
 
     return {
         type: 'desktop',
-        isTouchDevice: isTouchDevice
+        isTouchDevice: isTouchDevice,
     };
 }
 
@@ -101,12 +103,15 @@ export const PLATFORM_TYPE = platform.type;
  */
 export const IS_IOS = (() => {
     const ua = navigator.userAgent || '';
-    return /iphone|ipad|ipod/i.test(ua) ||
-        (/mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1);
+    return (
+        /iphone|ipad|ipod/i.test(ua) ||
+        (/mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1)
+    );
 })();
 
 /** True when the app runs as an installed PWA (no browser chrome). */
-export const IS_STANDALONE = window.navigator.standalone === true ||
-    (window.matchMedia && (
-        window.matchMedia('(display-mode: standalone)').matches ||
-        window.matchMedia('(display-mode: fullscreen)').matches));
+export const IS_STANDALONE =
+    window.navigator.standalone === true ||
+    (window.matchMedia &&
+        (window.matchMedia('(display-mode: standalone)').matches ||
+            window.matchMedia('(display-mode: fullscreen)').matches));

@@ -62,7 +62,9 @@ fn vs(@builtin(vertex_index) vid : u32) -> VSOut {
 `;
 
 // Pass 0: sample the external (video) texture into inputTex (materialization).
-const BLIT_WGSL = FULLSCREEN_VS + /* wgsl */ `
+const BLIT_WGSL =
+    FULLSCREEN_VS +
+    /* wgsl */ `
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var tex : texture_external;
 
@@ -73,7 +75,9 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 `;
 
 // SGSRv1 (mode 1, green luma). Ported from sgsr1.h, SGSR_MOBILE variant.
-const SGSR_WGSL = FULLSCREEN_VS + /* wgsl */ `
+const SGSR_WGSL =
+    FULLSCREEN_VS +
+    /* wgsl */ `
 struct Uniforms { viewport : vec4f }; // (1/inW, 1/inH, inW, inH)
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var inputTex : texture_2d<f32>;
@@ -511,7 +515,7 @@ export class WebGpuRenderer extends VideoRenderer {
         r.canvas = canvas;
         r.videoCodec = opts.videoCodec;
         // 'off' = WebGPU pass-through (blit only, no upscaler); sgsr is the safe default.
-        r._algo = (opts.algo === 'fsr1' || opts.algo === 'off') ? opts.algo : 'sgsr';
+        r._algo = opts.algo === 'fsr1' || opts.algo === 'off' ? opts.algo : 'sgsr';
         r._adapter = adapter;
         r._device = device;
         r._ready = false;
@@ -523,7 +527,7 @@ export class WebGpuRenderer extends VideoRenderer {
 
         // ── Canvas is now committed to WebGPU (no going back to '2d') ─────────
         r.ctx = canvas.getContext('webgpu');
-        r._configure();         // sets _format / _interFormat (HDR-aware)
+        r._configure(); // sets _format / _interFormat (HDR-aware)
         r._buildResources();
         canvas.width = 1920;
         canvas.height = 1080;
@@ -531,9 +535,13 @@ export class WebGpuRenderer extends VideoRenderer {
         return r;
     }
 
-    get ready() { return this._ready; }
+    get ready() {
+        return this._ready;
+    }
 
-    get kind() { return 'webgpu'; }
+    get kind() {
+        return 'webgpu';
+    }
 
     /** Effective algorithm name for the overlay: 'SGSR' | 'FSR1' | 'Off'. */
     get algoName() {
@@ -550,30 +558,36 @@ export class WebGpuRenderer extends VideoRenderer {
             device: this._device,
             format: this._format,
             alphaMode: 'opaque',
-            colorSpace: 'srgb'
+            colorSpace: 'srgb',
         });
     }
 
     _buildResources() {
         const device = this._device;
         this._sampler = device.createSampler({
-            magFilter: 'linear', minFilter: 'linear',
-            addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge'
+            magFilter: 'linear',
+            minFilter: 'linear',
+            addressModeU: 'clamp-to-edge',
+            addressModeV: 'clamp-to-edge',
         });
 
         // Pass 0 — blit external → inputTex (both algos).
         this._blitLayout = device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-                { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} }
-            ]
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} },
+            ],
         });
         const blitModule = device.createShaderModule({ code: BLIT_WGSL });
         this._blitPipeline = device.createRenderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._blitLayout] }),
             vertex: { module: blitModule, entryPoint: 'vs' },
-            fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: this._interFormat }] },
-            primitive: { topology: 'triangle-list' }
+            fragment: {
+                module: blitModule,
+                entryPoint: 'fs',
+                targets: [{ format: this._interFormat }],
+            },
+            primitive: { topology: 'triangle-list' },
         });
 
         if (this._algo === 'fsr1') {
@@ -594,7 +608,7 @@ export class WebGpuRenderer extends VideoRenderer {
         this._intermW = 0;
         this._intermH = 0;
         this._enhanceBindGroup = null; // SGSR / EASU bind group (samples inputTex)
-        this._rcasBindGroup = null;    // FSR1 RCAS bind group (samples intermTex)
+        this._rcasBindGroup = null; // FSR1 RCAS bind group (samples intermTex)
     }
 
     // 'off' mode: a blit pipeline targeting the canvas (external → canvas, no upscaler).
@@ -605,72 +619,97 @@ export class WebGpuRenderer extends VideoRenderer {
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._blitLayout] }),
             vertex: { module: blitModule, entryPoint: 'vs' },
             fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: this._format }] },
-            primitive: { topology: 'triangle-list' }
+            primitive: { topology: 'triangle-list' },
         });
     }
 
     _buildSgsrResources() {
         const device = this._device;
         this._uniformBuf = device.createBuffer({
-            size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
         this._enhanceLayout = device.createBindGroupLayout({
             entries: [
                 { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-                { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-                { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: {} }
-            ]
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'float' },
+                },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+            ],
         });
         const sgsrModule = device.createShaderModule({ code: SGSR_WGSL });
         this._enhancePipeline = device.createRenderPipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [this._enhanceLayout] }),
             vertex: { module: sgsrModule, entryPoint: 'vs' },
             fragment: { module: sgsrModule, entryPoint: 'fs', targets: [{ format: this._format }] },
-            primitive: { topology: 'triangle-list' }
+            primitive: { topology: 'triangle-list' },
         });
     }
 
     _buildFsr1Resources() {
         const device = this._device;
         this._easuUniform = device.createBuffer({
-            size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
         this._rcasUniform = device.createBuffer({
-            size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
         // EASU and RCAS share the same layout shape: texture(0) + sampler(1) + uniform(2).
         this._fsrLayout = device.createBindGroupLayout({
             entries: [
-                { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'float' },
+                },
                 { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-                { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: {} }
-            ]
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+            ],
         });
-        const fsrPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this._fsrLayout] });
+        const fsrPipelineLayout = device.createPipelineLayout({
+            bindGroupLayouts: [this._fsrLayout],
+        });
         const easuModule = device.createShaderModule({ code: EASU_WGSL });
         this._easuPipeline = device.createRenderPipeline({
             layout: fsrPipelineLayout,
             vertex: { module: easuModule, entryPoint: 'vs_main' },
-            fragment: { module: easuModule, entryPoint: 'fs_main', targets: [{ format: this._interFormat }] },
-            primitive: { topology: 'triangle-list' }
+            fragment: {
+                module: easuModule,
+                entryPoint: 'fs_main',
+                targets: [{ format: this._interFormat }],
+            },
+            primitive: { topology: 'triangle-list' },
         });
         const rcasModule = device.createShaderModule({ code: RCAS_WGSL });
         this._rcasPipeline = device.createRenderPipeline({
             layout: fsrPipelineLayout,
             vertex: { module: rcasModule, entryPoint: 'vs_main' },
-            fragment: { module: rcasModule, entryPoint: 'fs_main', targets: [{ format: this._format }] },
-            primitive: { topology: 'triangle-list' }
+            fragment: {
+                module: rcasModule,
+                entryPoint: 'fs_main',
+                targets: [{ format: this._format }],
+            },
+            primitive: { topology: 'triangle-list' },
         });
     }
 
     // inputTex = frame resolution (Pass 0 target / enhancer source).
     _ensureInputTex(inW, inH) {
         if (this._inputTex && this._inW === inW && this._inH === inH) return;
-        if (this._inputTex) { try { this._inputTex.destroy(); } catch (e) {} }
+        if (this._inputTex) {
+            try {
+                this._inputTex.destroy();
+            } catch (e) {}
+        }
         this._inputTex = this._device.createTexture({
             size: { width: inW, height: inH },
             format: this._interFormat,
-            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
         this._inputTexView = this._inputTex.createView();
         this._inW = inW;
@@ -682,8 +721,8 @@ export class WebGpuRenderer extends VideoRenderer {
                 entries: [
                     { binding: 0, resource: this._inputTexView },
                     { binding: 1, resource: this._sampler },
-                    { binding: 2, resource: { buffer: this._easuUniform } }
-                ]
+                    { binding: 2, resource: { buffer: this._easuUniform } },
+                ],
             });
         } else {
             this._enhanceBindGroup = this._device.createBindGroup({
@@ -691,8 +730,8 @@ export class WebGpuRenderer extends VideoRenderer {
                 entries: [
                     { binding: 0, resource: this._sampler },
                     { binding: 1, resource: this._inputTexView },
-                    { binding: 2, resource: { buffer: this._uniformBuf } }
-                ]
+                    { binding: 2, resource: { buffer: this._uniformBuf } },
+                ],
             });
         }
     }
@@ -700,11 +739,15 @@ export class WebGpuRenderer extends VideoRenderer {
     // intermTex = output resolution (FSR1 only: EASU target / RCAS source).
     _ensureIntermTex(w, h) {
         if (this._intermTex && this._intermW === w && this._intermH === h) return;
-        if (this._intermTex) { try { this._intermTex.destroy(); } catch (e) {} }
+        if (this._intermTex) {
+            try {
+                this._intermTex.destroy();
+            } catch (e) {}
+        }
         this._intermTex = this._device.createTexture({
             size: { width: w, height: h },
             format: this._interFormat,
-            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
         this._intermTexView = this._intermTex.createView();
         this._intermW = w;
@@ -714,8 +757,8 @@ export class WebGpuRenderer extends VideoRenderer {
             entries: [
                 { binding: 0, resource: this._intermTexView },
                 { binding: 1, resource: this._sampler },
-                { binding: 2, resource: { buffer: this._rcasUniform } }
-            ]
+                { binding: 2, resource: { buffer: this._rcasUniform } },
+            ],
         });
     }
 
@@ -752,18 +795,29 @@ export class WebGpuRenderer extends VideoRenderer {
     }
 
     async draw(frame) {
-        if (!this._ready || !this.ctx) { try { frame.close(); } catch (e) {} return; }
+        if (!this._ready || !this.ctx) {
+            try {
+                frame.close();
+            } catch (e) {}
+            return;
+        }
 
         const inW = frame.displayWidth || frame.codedWidth || 0;
         const inH = frame.displayHeight || frame.codedHeight || 0;
-        if (inW <= 0 || inH <= 0) { try { frame.close(); } catch (e) {} return; }
+        if (inW <= 0 || inH <= 0) {
+            try {
+                frame.close();
+            } catch (e) {}
+            return;
+        }
 
         // Canvas backing = frame-aspect rect fitting the output box (else frame res).
-        let cw = inW, ch = inH;
+        let cw = inW,
+            ch = inH;
         if (this._hasOutputSize) {
             const frameAspect = inW / inH;
             const boxAspect = this._outW / this._outH;
-            cw = (frameAspect >= boxAspect) ? this._outW : Math.round(this._outH * frameAspect);
+            cw = frameAspect >= boxAspect ? this._outW : Math.round(this._outH * frameAspect);
             ch = Math.round(cw / frameAspect);
             // Clamp to the max texture dimension (preserve aspect): bounds GPU cost
             // when the output box is inflated by pinch-zoom.
@@ -782,14 +836,15 @@ export class WebGpuRenderer extends VideoRenderer {
         try {
             // External texture + its blit bind group are per-frame (texture expires).
             const externalTex = this._device.importExternalTexture({
-                source: frame, colorSpace: 'srgb'
+                source: frame,
+                colorSpace: 'srgb',
             });
             const blitBindGroup = this._device.createBindGroup({
                 layout: this._blitLayout,
                 entries: [
                     { binding: 0, resource: this._sampler },
-                    { binding: 1, resource: externalTex }
-                ]
+                    { binding: 1, resource: externalTex },
+                ],
             });
 
             const encoder = this._device.createCommandEncoder();
@@ -797,11 +852,14 @@ export class WebGpuRenderer extends VideoRenderer {
             // 'off' mode: single pass, external → canvas (linear scale, no upscaler).
             if (this._algo === 'off') {
                 const pass = encoder.beginRenderPass({
-                    colorAttachments: [{
-                        view: this.ctx.getCurrentTexture().createView(),
-                        loadOp: 'clear', storeOp: 'store',
-                        clearValue: { r: 0, g: 0, b: 0, a: 1 }
-                    }]
+                    colorAttachments: [
+                        {
+                            view: this.ctx.getCurrentTexture().createView(),
+                            loadOp: 'clear',
+                            storeOp: 'store',
+                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                        },
+                    ],
                 });
                 pass.setPipeline(this._passthroughPipeline);
                 pass.setBindGroup(0, blitBindGroup);
@@ -812,7 +870,9 @@ export class WebGpuRenderer extends VideoRenderer {
                 // Backpressure: resolve only when the GPU finished, so the caller's
                 // render guard reflects real GPU throughput (drop-to-latest then
                 // discards the backlog instead of letting it grow → no lag creep).
-                try { await this._device.queue.onSubmittedWorkDone(); } catch (e) {}
+                try {
+                    await this._device.queue.onSubmittedWorkDone();
+                } catch (e) {}
                 return;
             }
 
@@ -820,11 +880,14 @@ export class WebGpuRenderer extends VideoRenderer {
 
             // Pass 0: external → inputTex (frame res).
             const p0 = encoder.beginRenderPass({
-                colorAttachments: [{
-                    view: this._inputTexView,
-                    loadOp: 'clear', storeOp: 'store',
-                    clearValue: { r: 0, g: 0, b: 0, a: 1 }
-                }]
+                colorAttachments: [
+                    {
+                        view: this._inputTexView,
+                        loadOp: 'clear',
+                        storeOp: 'store',
+                        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                    },
+                ],
             });
             p0.setPipeline(this._blitPipeline);
             p0.setBindGroup(0, blitBindGroup);
@@ -834,19 +897,28 @@ export class WebGpuRenderer extends VideoRenderer {
             if (this._algo === 'fsr1') {
                 this._ensureIntermTex(cw, ch);
                 // EASU uniform = (inW, inH, outW, outH) in pixels.
-                this._device.queue.writeBuffer(this._easuUniform, 0,
-                    new Float32Array([inW, inH, cw, ch]));
+                this._device.queue.writeBuffer(
+                    this._easuUniform,
+                    0,
+                    new Float32Array([inW, inH, cw, ch]),
+                );
                 // RCAS samples intermTex (cw×ch) at TEXEL offsets → output* = 1/cw, 1/ch.
-                this._device.queue.writeBuffer(this._rcasUniform, 0,
-                    new Float32Array([cw, ch, 1 / cw, 1 / ch]));
+                this._device.queue.writeBuffer(
+                    this._rcasUniform,
+                    0,
+                    new Float32Array([cw, ch, 1 / cw, 1 / ch]),
+                );
 
                 // Pass 1: EASU inputTex → intermTex (output res).
                 const p1 = encoder.beginRenderPass({
-                    colorAttachments: [{
-                        view: this._intermTexView,
-                        loadOp: 'clear', storeOp: 'store',
-                        clearValue: { r: 0, g: 0, b: 0, a: 1 }
-                    }]
+                    colorAttachments: [
+                        {
+                            view: this._intermTexView,
+                            loadOp: 'clear',
+                            storeOp: 'store',
+                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                        },
+                    ],
                 });
                 p1.setPipeline(this._easuPipeline);
                 p1.setBindGroup(0, this._enhanceBindGroup);
@@ -855,11 +927,14 @@ export class WebGpuRenderer extends VideoRenderer {
 
                 // Pass 2: RCAS intermTex → canvas.
                 const p2 = encoder.beginRenderPass({
-                    colorAttachments: [{
-                        view: this.ctx.getCurrentTexture().createView(),
-                        loadOp: 'clear', storeOp: 'store',
-                        clearValue: { r: 0, g: 0, b: 0, a: 1 }
-                    }]
+                    colorAttachments: [
+                        {
+                            view: this.ctx.getCurrentTexture().createView(),
+                            loadOp: 'clear',
+                            storeOp: 'store',
+                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                        },
+                    ],
                 });
                 p2.setPipeline(this._rcasPipeline);
                 p2.setBindGroup(0, this._rcasBindGroup);
@@ -867,15 +942,21 @@ export class WebGpuRenderer extends VideoRenderer {
                 p2.end();
             } else {
                 // SGSR: viewport = (1/inW, 1/inH, inW, inH).
-                this._device.queue.writeBuffer(this._uniformBuf, 0,
-                    new Float32Array([1 / inW, 1 / inH, inW, inH]));
+                this._device.queue.writeBuffer(
+                    this._uniformBuf,
+                    0,
+                    new Float32Array([1 / inW, 1 / inH, inW, inH]),
+                );
                 // Pass 1: SGSR inputTex → canvas.
                 const p1 = encoder.beginRenderPass({
-                    colorAttachments: [{
-                        view: this.ctx.getCurrentTexture().createView(),
-                        loadOp: 'clear', storeOp: 'store',
-                        clearValue: { r: 0, g: 0, b: 0, a: 1 }
-                    }]
+                    colorAttachments: [
+                        {
+                            view: this.ctx.getCurrentTexture().createView(),
+                            loadOp: 'clear',
+                            storeOp: 'store',
+                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                        },
+                    ],
                 });
                 p1.setPipeline(this._enhancePipeline);
                 p1.setBindGroup(0, this._enhanceBindGroup);
@@ -893,15 +974,23 @@ export class WebGpuRenderer extends VideoRenderer {
         // the caller's render guard self-paces to GPU capacity. Without it the
         // VSync-off / worker path submits faster than the GPU presents and the
         // backlog grows unbounded → progressive latency (4K + FSR1 + zoom).
-        try { await this._device.queue.onSubmittedWorkDone(); } catch (e) {}
+        try {
+            await this._device.queue.onSubmittedWorkDone();
+        } catch (e) {}
     }
 
     dispose() {
         this._disposed = true;
         this._ready = false;
-        try { if (this._inputTex) this._inputTex.destroy(); } catch (e) {}
-        try { if (this._intermTex) this._intermTex.destroy(); } catch (e) {}
-        try { if (this._device) this._device.destroy(); } catch (e) {}
+        try {
+            if (this._inputTex) this._inputTex.destroy();
+        } catch (e) {}
+        try {
+            if (this._intermTex) this._intermTex.destroy();
+        } catch (e) {}
+        try {
+            if (this._device) this._device.destroy();
+        } catch (e) {}
         this._inputTex = null;
         this._intermTex = null;
         this._device = null;

@@ -1,0 +1,5 @@
+# Vendored / minified third-party code — never reformat
+js/vendor/
+**/*.min.js
+build/
+locales/

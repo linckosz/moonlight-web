@@ -39,16 +39,21 @@ import {
     HEVC_FALLBACK_CODEC_STRINGS,
     HEVC_ANNEXB_CODEC_STRINGS,
     CODEC_H264,
-    CODEC_HEVC
+    CODEC_HEVC,
 } from '../util/Mp4Muxer.js';
 import {
     findSequenceHeader,
     buildAv1DecoderConfigs,
     stripNonEssentialObus,
-    CODEC_AV1
+    CODEC_AV1,
 } from '../util/Av1Utils.js';
 
-import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetect.js';
+import {
+    IS_TOUCH_DEVICE,
+    IS_MOBILE_OR_TABLET,
+    IS_IOS,
+    IS_STANDALONE,
+} from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
@@ -125,12 +130,30 @@ class SlidingStats {
 
     _prune() {
         const cutoff = performance.now() - this._windowMs;
-        this._samples = this._samples.filter(s => s.time > cutoff);
+        this._samples = this._samples.filter((s) => s.time > cutoff);
     }
 }
 
 export class StreamView {
-    constructor(container, signalingUrl, host, videoCodec, gamingMode = true, upnpEnabled = true, upnpAvailable = true, transport = 'webrtc', transportMode = undefined, isRemote = false, showPerformanceStats = true, touchSensitivity = 2.0, vsync = true, videoWorker = true, videoEnhancement = 'off', videoEnhancementAlgo = 'auto', yuv444 = false) {
+    constructor(
+        container,
+        signalingUrl,
+        host,
+        videoCodec,
+        gamingMode = true,
+        upnpEnabled = true,
+        upnpAvailable = true,
+        transport = 'webrtc',
+        transportMode = undefined,
+        isRemote = false,
+        showPerformanceStats = true,
+        touchSensitivity = 2.0,
+        vsync = true,
+        videoWorker = true,
+        videoEnhancement = 'off',
+        videoEnhancementAlgo = 'auto',
+        yuv444 = false,
+    ) {
         this.container = container;
         // YUV 4:4:4 chroma negotiated by the backend (vs default 4:2:0). Used
         // only to annotate the codec in the stats overlay.
@@ -167,9 +190,8 @@ export class StreamView {
         // Never used for the native RTP media transport (the browser renders the
         // <video> directly). Falls back to the main-thread pipeline automatically
         // if the worker cannot start.
-        const workerMode = (videoWorker === true) ? 'on'
-            : (videoWorker === false) ? 'off'
-            : (videoWorker || 'auto');
+        const workerMode =
+            videoWorker === true ? 'on' : videoWorker === false ? 'off' : videoWorker || 'auto';
         let workerWanted;
         if (workerMode === 'on') {
             workerWanted = true;
@@ -182,13 +204,16 @@ export class StreamView {
         }
         this._useWorker = false;
         try {
-            this._useWorker = workerWanted
-                && transport !== 'webrtc-media'
-                && typeof Worker !== 'undefined'
-                && typeof OffscreenCanvas !== 'undefined'
-                && typeof HTMLCanvasElement !== 'undefined'
-                && typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function';
-        } catch (e) { this._useWorker = false; }
+            this._useWorker =
+                workerWanted &&
+                transport !== 'webrtc-media' &&
+                typeof Worker !== 'undefined' &&
+                typeof OffscreenCanvas !== 'undefined' &&
+                typeof HTMLCanvasElement !== 'undefined' &&
+                typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function';
+        } catch (e) {
+            this._useWorker = false;
+        }
         this._videoWorker = null;
         // Renderer selection for the canvas path (DC/WSS; webrtc-media uses <video>).
         // WebGPU is the preferred renderer on ALL devices; createVideoRenderer falls
@@ -196,8 +221,8 @@ export class StreamView {
         // does: 'off' = pass-through (Enhancer disabled), 'sgsr'/'fsr1' = upscaler.
         // 'force2d' (debug) bypasses WebGPU to exercise the Canvas2D path.
         // Forwarded to the worker too (localStorage is unavailable there).
-        let algo = 'off';        // default: WebGPU pass-through (no upscaler)
-        let wantWebGpu = true;   // WebGPU is the preferred canvas renderer
+        let algo = 'off'; // default: WebGPU pass-through (no upscaler)
+        let wantWebGpu = true; // WebGPU is the preferred canvas renderer
         if (videoEnhancement === 'on') {
             const sel = videoEnhancementAlgo || 'auto';
             if (sel === 'force2d') {
@@ -206,16 +231,18 @@ export class StreamView {
                 // 'auto' picks by platform (mobile→SGSR, desktop→FSR1).
                 algo = IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
             } else {
-                algo = (sel === 'sgsr' || sel === 'fsr1') ? sel : 'sgsr';
+                algo = sel === 'sgsr' || sel === 'fsr1' ? sel : 'sgsr';
             }
         }
         this._videoEnhancementAlgo = algo;
         // Whether the user enabled the Enhancer (used to flag it OFF in the overlay
         // when the stream lands on webrtc-media, where it can't be applied).
-        this._videoEnhancementRequested = (videoEnhancement === 'on');
+        this._videoEnhancementRequested = videoEnhancement === 'on';
         this._wantWebGpu = wantWebGpu;
         // Dev override (no UI): also force the Canvas2D path for comparison.
-        try { if (localStorage.getItem('mw_force_2d') === '1') this._wantWebGpu = false; } catch (e) {}
+        try {
+            if (localStorage.getItem('mw_force_2d') === '1') this._wantWebGpu = false;
+        } catch (e) {}
         this._workerLastDecoded = 0;
 
         // Backend timestamp tracking for stale frame detection.
@@ -251,7 +278,10 @@ export class StreamView {
         } else if (this._transport === 'wss') {
             // Legacy WSS mode: direct WebSocket passthrough via StreamRelay,
             // without any WebRTC PeerConnection or DataChannels.
-            this.webrtc = new WebRtcDataChannel(signalingUrl, { wssMode: true, wssFragmented: false });
+            this.webrtc = new WebRtcDataChannel(signalingUrl, {
+                wssMode: true,
+                wssFragmented: false,
+            });
         } else {
             this.webrtc = new WebRtcDataChannel(signalingUrl);
         }
@@ -275,12 +305,12 @@ export class StreamView {
         this.decoderConfiguring = false;
         this.nalParser = new NalParser();
         this.frameQueue = [];
-        this.pendingFrames = [];    // frames buffered before decoder config
+        this.pendingFrames = []; // frames buffered before decoder config
         this.frameCount = 0;
         this.renderRunning = false;
-        this._rendering = false;     // Guard: prevents overlapping GPU render ops
+        this._rendering = false; // Guard: prevents overlapping GPU render ops
         this._immediateRender = false; // VSync off: draw is driven by decoder output, not rAF
-        this._renderer = null;       // VideoRenderer (Canvas2D / WebGPU); owns the context
+        this._renderer = null; // VideoRenderer (Canvas2D / WebGPU); owns the context
         this._activeRendererKind = null; // 'canvas2d' | 'webgpu' (for the overlay)
         this._resizeObserver = null; // tracks the DOM output size (device px)
         this._outW = 0;
@@ -300,23 +330,23 @@ export class StreamView {
         // Overlay stats
         this._overlayEl = null;
         this._overlayInterval = null;
-        this._resolution = '';              // "1920x1080" — set once on first frame
-        this._codec = this.videoCodec;      // Same as videoCodec
-        this._transport = transport;        // "webrtc" or "wss"
-        this._totalBytes = 0;               // Cumulative video bytes for bitrate
-        this._startTime = performance.now();// Stream start time for bitrate calc
-        this._fpsTimestamps = [];           // performance.now() per decoded frame
-        this._latencySamples = [];          // { time: perfNow, latency: ms }
+        this._resolution = ''; // "1920x1080" — set once on first frame
+        this._codec = this.videoCodec; // Same as videoCodec
+        this._transport = transport; // "webrtc" or "wss"
+        this._totalBytes = 0; // Cumulative video bytes for bitrate
+        this._startTime = performance.now(); // Stream start time for bitrate calc
+        this._fpsTimestamps = []; // performance.now() per decoded frame
+        this._latencySamples = []; // { time: perfNow, latency: ms }
 
         // ── Stats overlay ───────────────────────────────────────────────────
-        this._hostRttStats = new SlidingStats(5000);          // backend ↔ Sunshine one-way (ms)
-        this._browserRttStats = new SlidingStats(5000);       // browser ↔ backend RTT (ms)
-        this._decodeLatencyStats = new SlidingStats(5000);    // backend pipeline latency (ms)
-        this._e2eLatencyStats = new SlidingStats(5000);       // Sunshine capture → canvas display (ms)
-        this._streamTimeMs = 0;                              // Last known steady_clock ms from backend stats
-        this._streamTimeReceiptTime = 0;                     // performance.now() when _streamTimeMs was received
-        this._steadyToPerfOffset = null;                     // perfTime = steadyTime - offset (set once)
-        this._offsetFromStats = false;                       // true once a stats msg refined the offset (authoritative)
+        this._hostRttStats = new SlidingStats(5000); // backend ↔ Sunshine one-way (ms)
+        this._browserRttStats = new SlidingStats(5000); // browser ↔ backend RTT (ms)
+        this._decodeLatencyStats = new SlidingStats(5000); // backend pipeline latency (ms)
+        this._e2eLatencyStats = new SlidingStats(5000); // Sunshine capture → canvas display (ms)
+        this._streamTimeMs = 0; // Last known steady_clock ms from backend stats
+        this._streamTimeReceiptTime = 0; // performance.now() when _streamTimeMs was received
+        this._steadyToPerfOffset = null; // perfTime = steadyTime - offset (set once)
+        this._offsetFromStats = false; // true once a stats msg refined the offset (authoritative)
         this._pingSeq = 0;
         this._pingInterval = null;
 
@@ -337,7 +367,9 @@ export class StreamView {
         // loss/freezes appear, which also reactivates the backend NACK (neutralized
         // at target=0). Control law lives in JitterController; we feed it raw stats.
         this._jitterAuto = false;
-        try { this._jitterAuto = localStorage.getItem('mw_jitter_auto') === '1'; } catch (e) {}
+        try {
+            this._jitterAuto = localStorage.getItem('mw_jitter_auto') === '1';
+        } catch (e) {}
         this._jitterController = new JitterController();
 
         // Gamepad bridge (Xbox/PlayStation) — created lazily on first connect.
@@ -375,37 +407,37 @@ export class StreamView {
         this._touchLastY = 0;
         this._touchStartTime = 0;
         this._touchFingerCount = 0;
-        this._touchTapThreshold = 10;        // px max distance for a tap (vs drag)
-        this._touchTapTimeThreshold = 300;   // ms max duration for a tap
-        this._touchHadTwoFingers = false;     // true if 2 fingers were active during the current touch sequence
-        this._touchMaxFingers = 0;            // max simultaneous fingers in the current sequence (1/2/3)
-        this._touchMoved = false;             // true once the primary finger moved past the tap threshold
-        this._touchDragging = false;          // true while a long-press drag holds the left button down
-        this._touchLongPressTimer = null;     // timer that engages drag after a still hold
-        this._touchLongPressMs = 450;         // ms hold (still) before a drag engages
+        this._touchTapThreshold = 10; // px max distance for a tap (vs drag)
+        this._touchTapTimeThreshold = 300; // ms max duration for a tap
+        this._touchHadTwoFingers = false; // true if 2 fingers were active during the current touch sequence
+        this._touchMaxFingers = 0; // max simultaneous fingers in the current sequence (1/2/3)
+        this._touchMoved = false; // true once the primary finger moved past the tap threshold
+        this._touchDragging = false; // true while a long-press drag holds the left button down
+        this._touchLongPressTimer = null; // timer that engages drag after a still hold
+        this._touchLongPressMs = 450; // ms hold (still) before a drag engages
         // Pinch-zoom state (mobile): scale + pan applied to the streamed display only.
-        this._zoom = 1;                       // current display scale (1..8)
-        this._panX = 0;                       // pan offset in CSS px (applied before scale)
+        this._zoom = 1; // current display scale (1..8)
+        this._panX = 0; // pan offset in CSS px (applied before scale)
         this._panY = 0;
-        this._pinchPrevDist = 0;              // previous finger spacing during a multi-finger gesture
-        this._pinchPrevCx = null;             // previous centroid (of all touches)
+        this._pinchPrevDist = 0; // previous finger spacing during a multi-finger gesture
+        this._pinchPrevCx = null; // previous centroid (of all touches)
         this._pinchPrevCy = null;
-        this._lastMoveFingerCount = 0;        // finger count of the last touchmove (reseed trackers on change)
+        this._lastMoveFingerCount = 0; // finger count of the last touchmove (reseed trackers on change)
         // Two-finger scroll: amplification + inertial (momentum) glide after release.
-        this._scrollScale = 4;                // finger px → wheel delta units (faster scroll)
-        this._scrollAccum = 0;                // fractional wheel-delta carry between frames
-        this._scrollSamples = [];             // recent {t, y} centroid samples (flick velocity)
-        this._scrollMomentumRaf = null;       // rAF id for the inertial glide loop
+        this._scrollScale = 4; // finger px → wheel delta units (faster scroll)
+        this._scrollAccum = 0; // fractional wheel-delta carry between frames
+        this._scrollSamples = []; // recent {t, y} centroid samples (flick velocity)
+        this._scrollMomentumRaf = null; // rAF id for the inertial glide loop
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
-        this._touchSensitivity = (typeof touchSensitivity === 'number' && touchSensitivity > 0)
-            ? touchSensitivity : 2.0;
+        this._touchSensitivity =
+            typeof touchSensitivity === 'number' && touchSensitivity > 0 ? touchSensitivity : 2.0;
 
         // Virtual keyboard (touch devices): hidden capture element + toggle button.
         this._kbdBtn = null;
         this._kbdCapture = null;
         this._kbdVisible = false;
-        this._kbdBlurAt = 0;                  // timestamp of last capture blur
-        this._onViewportResize = null;        // VisualViewport handler (keyboard push-up)
+        this._kbdBlurAt = 0; // timestamp of last capture blur
+        this._onViewportResize = null; // VisualViewport handler (keyboard push-up)
 
         // Mobile fullscreen button state
         this._mobileFsBtn = null;
@@ -445,7 +477,8 @@ export class StreamView {
             if (this._quitting) return;
             navigator.sendBeacon(
                 `/api/hosts/${this.host.uuid}/quit`,
-                new Blob(['{}'], { type: 'application/json' }));
+                new Blob(['{}'], { type: 'application/json' }),
+            );
         };
 
         // Reference validity: false after a gap/error, true once a keyframe is decoded.
@@ -561,19 +594,30 @@ export class StreamView {
             clearTimeout(timeoutId);
 
             if (resp.ok) {
-                console.log('[PreFlight] HTTPS /api/health OK (status=' +
-                    resp.status + ') — server is reachable');
+                console.log(
+                    '[PreFlight] HTTPS /api/health OK (status=' +
+                        resp.status +
+                        ') — server is reachable',
+                );
             } else {
-                console.warn('[PreFlight] HTTPS /api/health returned ' +
-                    resp.status + ' — unexpected status');
+                console.warn(
+                    '[PreFlight] HTTPS /api/health returned ' +
+                        resp.status +
+                        ' — unexpected status',
+                );
             }
         } catch (err) {
             if (err.name === 'AbortError') {
-                console.warn('[PreFlight] HTTPS /api/health timed out (5s) — ' +
-                    'possible firewall blocking port 443');
+                console.warn(
+                    '[PreFlight] HTTPS /api/health timed out (5s) — ' +
+                        'possible firewall blocking port 443',
+                );
             } else {
-                console.warn('[PreFlight] HTTPS /api/health failed: "' +
-                    err.message + '" — possible DNS or TLS issue');
+                console.warn(
+                    '[PreFlight] HTTPS /api/health failed: "' +
+                        err.message +
+                        '" — possible DNS or TLS issue',
+                );
             }
         }
     }
@@ -584,48 +628,63 @@ export class StreamView {
      *  Helps identify iOS WebKit limitations (createImageBitmap, AudioWorklet). */
     _logPlatformInfo() {
         const ua = navigator.userAgent || '';
-        const isIOS = /iPad|iPhone|iPod/.test(ua) ||
-            (/Mac/.test(ua) && 'ontouchend' in document);
+        const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Mac/.test(ua) && 'ontouchend' in document);
         const isSafari = /Safari\//.test(ua) && !/Chrome\//.test(ua);
         const hasVideoDecoder = typeof VideoDecoder !== 'undefined';
-        const hasIsConfigSupported = hasVideoDecoder &&
-            typeof VideoDecoder.isConfigSupported === 'function';
+        const hasIsConfigSupported =
+            hasVideoDecoder && typeof VideoDecoder.isConfigSupported === 'function';
         const hasCreateImageBitmap = typeof createImageBitmap !== 'undefined';
         const hasAudioWorklet = typeof AudioWorkletNode !== 'undefined';
         const hasCanvas2D = typeof CanvasRenderingContext2D !== 'undefined';
-        const hasIsContextLost = hasCanvas2D &&
-            typeof CanvasRenderingContext2D.prototype.isContextLost === 'function';
+        const hasIsContextLost =
+            hasCanvas2D && typeof CanvasRenderingContext2D.prototype.isContextLost === 'function';
 
         if (!hasIsContextLost) {
-            console.warn('[Platform] CanvasRenderingContext2D.isContextLost() is NOT supported ' +
-                '— Safari/WebKit limitation. Context loss detection disabled.');
+            console.warn(
+                '[Platform] CanvasRenderingContext2D.isContextLost() is NOT supported ' +
+                    '— Safari/WebKit limitation. Context loss detection disabled.',
+            );
         }
 
         // Detect Chrome on Windows — the HEVC NV12 RGBA copyTo path
         // (green-tint workaround for Chrome Windows D3D11 compositor) is
         // only safe on Windows. Chrome macOS/iOS has a stride bug in
         // frame.copyTo({ format: 'RGBA' }) that causes 4x horizontal stretch.
-        const _isChromeWin = /Chrome\//.test(ua) && /Windows/.test(ua) && !/Edg\//.test(ua) && !/OPR\//.test(ua);
+        const _isChromeWin =
+            /Chrome\//.test(ua) && /Windows/.test(ua) && !/Edg\//.test(ua) && !/OPR\//.test(ua);
         this._isChromeWindowsHevc = _isChromeWin;
 
-        console.log('[Platform] iOS=' + isIOS +
-            ' Safari=' + isSafari +
-            ' VideoDecoder=' + hasVideoDecoder +
-            ' isConfigSupported=' + hasIsConfigSupported +
-            ' createImageBitmap=' + hasCreateImageBitmap +
-            ' AudioWorklet=' + hasAudioWorklet +
-            ' Canvas2D=' + hasCanvas2D +
-            ' isContextLost=' + hasIsContextLost +
-            ' ChromeWinHEVC=' + _isChromeWin +
-            ' UA: ' + ua.substring(0, 120));
+        console.log(
+            '[Platform] iOS=' +
+                isIOS +
+                ' Safari=' +
+                isSafari +
+                ' VideoDecoder=' +
+                hasVideoDecoder +
+                ' isConfigSupported=' +
+                hasIsConfigSupported +
+                ' createImageBitmap=' +
+                hasCreateImageBitmap +
+                ' AudioWorklet=' +
+                hasAudioWorklet +
+                ' Canvas2D=' +
+                hasCanvas2D +
+                ' isContextLost=' +
+                hasIsContextLost +
+                ' ChromeWinHEVC=' +
+                _isChromeWin +
+                ' UA: ' +
+                ua.substring(0, 120),
+        );
 
         if (isIOS || isSafari) {
-            console.log('[Platform] Running on Apple platform — ' +
-                'createImageBitmap(VideoFrame) requires iOS 17+ / Safari 17+. ' +
-                'If the screen is black, the Canvas2DRenderer fallback chain ' +
-                'should handle this automatically.');
+            console.log(
+                '[Platform] Running on Apple platform — ' +
+                    'createImageBitmap(VideoFrame) requires iOS 17+ / Safari 17+. ' +
+                    'If the screen is black, the Canvas2DRenderer fallback chain ' +
+                    'should handle this automatically.',
+            );
         }
-
     }
 
     // =========================================================================
@@ -644,8 +703,7 @@ export class StreamView {
             console.log('[StreamView] AudioPipeline ready');
             // Resume if the context was suspended (autoplay policy).
             // StreamView is created after a user click, so this usually succeeds.
-            if (this.audioPipeline.context &&
-                this.audioPipeline.context.state === 'suspended') {
+            if (this.audioPipeline.context && this.audioPipeline.context.state === 'suspended') {
                 await this.audioPipeline.resume();
             }
         } else {
@@ -662,8 +720,11 @@ export class StreamView {
         if (this._quitting) return;
 
         if (!this._audioLogged) {
-            console.log('[StreamView] Audio sample received, size=' + sample.length +
-                ', writing to pipeline...');
+            console.log(
+                '[StreamView] Audio sample received, size=' +
+                    sample.length +
+                    ', writing to pipeline...',
+            );
             this._audioLogged = true;
         }
 
@@ -769,7 +830,8 @@ export class StreamView {
         this._overlayEl = document.createElement('div');
         this._overlayEl.id = 'stream-stats-overlay';
         this._overlayEl.className = 'stream-stats-overlay';
-        this._overlayEl.innerHTML = '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
+        this._overlayEl.innerHTML =
+            '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
         document.getElementById('stream-view').appendChild(this._overlayEl);
 
         // The stats card can sit over the game; let the user drag it out of the
@@ -792,10 +854,12 @@ export class StreamView {
             '<div class="reveal-beam"></div>' +
             '<div class="reveal-glitch"></div>' +
             '<div class="reveal-brackets">' +
-                '<span class="rb tl"></span><span class="rb tr"></span>' +
-                '<span class="rb bl"></span><span class="rb br"></span>' +
+            '<span class="rb tl"></span><span class="rb tr"></span>' +
+            '<span class="rb bl"></span><span class="rb br"></span>' +
             '</div>' +
-            '<div class="reveal-text">' + t('stream.signalAcquired') + '</div>';
+            '<div class="reveal-text">' +
+            t('stream.signalAcquired') +
+            '</div>';
         this._revealEl.style.display = 'none';
         // Append to the canvas area (not the whole overlay) so the reveal only
         // covers the streamed image, leaving the header/letterbox untouched.
@@ -842,7 +906,7 @@ export class StreamView {
             '<div class="startup-step" data-step="3">',
             '  <span class="startup-step-dot"></span>',
             '  <span class="startup-step-label">' + t('stream.streamReady') + '</span>',
-            '</div>'
+            '</div>',
         ].join('');
         document.getElementById('stream-view').appendChild(this._startupOverlay);
 
@@ -936,7 +1000,10 @@ export class StreamView {
                 if (t && t.closest && t.closest('.stream-header')) return;
                 e.preventDefault();
             };
-            document.addEventListener('touchstart', this._onDocKeepFocus, { capture: true, passive: false });
+            document.addEventListener('touchstart', this._onDocKeepFocus, {
+                capture: true,
+                passive: false,
+            });
             document.addEventListener('mousedown', this._onDocKeepFocus, { capture: true });
         }
     }
@@ -952,9 +1019,9 @@ export class StreamView {
     // path if the Worker cannot be created (before the canvas is transferred).
     _initVideoWorker() {
         try {
-            const worker = new Worker(
-                new URL('../stream/VideoDecodeWorker.js', import.meta.url),
-                { type: 'module' });
+            const worker = new Worker(new URL('../stream/VideoDecodeWorker.js', import.meta.url), {
+                type: 'module',
+            });
             // Transfer only AFTER the worker exists, so a construction failure
             // leaves the canvas intact for the main-thread fallback below.
             const offscreen = this.canvas.transferControlToOffscreen();
@@ -962,16 +1029,19 @@ export class StreamView {
             worker.onerror = (err) => {
                 console.error('[StreamView] Video worker error:', err.message || err);
             };
-            worker.postMessage({
-                type: 'init',
-                canvas: offscreen,
-                videoCodec: this.videoCodec,
-                isChromeWindowsHevc: this._isChromeWindowsHevc,
-                transport: this._transport,
-                vsync: this._vsync,
-                webgpu: this._wantWebGpu,
-                algo: this._videoEnhancementAlgo
-            }, [offscreen]);
+            worker.postMessage(
+                {
+                    type: 'init',
+                    canvas: offscreen,
+                    videoCodec: this.videoCodec,
+                    isChromeWindowsHevc: this._isChromeWindowsHevc,
+                    transport: this._transport,
+                    vsync: this._vsync,
+                    webgpu: this._wantWebGpu,
+                    algo: this._videoEnhancementAlgo,
+                },
+                [offscreen],
+            );
             this._videoWorker = worker;
             // Forward the measured output size (worker has no DOM / ResizeObserver).
             this._applyOutputSize();
@@ -986,7 +1056,7 @@ export class StreamView {
                 videoCodec: this.videoCodec,
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 webgpu: this._wantWebGpu,
-                algo: this._videoEnhancementAlgo
+                algo: this._videoEnhancementAlgo,
             }).then((r) => {
                 this._renderer = r;
                 this._activeRendererKind = r.kind;
@@ -1002,62 +1072,69 @@ export class StreamView {
     // status/overlay updates).
     _onWorkerMessage(m) {
         switch (m.type) {
-        case 'requestidr':
-            this._requestIdr(m.reason || 'worker');
-            break;
-        case 'rendererinfo':
-            // Worker reports which renderer it created (for the stats overlay).
-            this._activeRendererKind = m.kind;
-            break;
-        case 'codecfallback':
-            // HEVC unsupported in this browser → re-launch with H.264.
-            this._handleHevcFallback();
-            break;
-        case 'firstframe':
-            console.log('[StreamView] firstframe received from worker, ' +
-                'alreadyRendered=' + !!this._firstFrameRendered +
-                ' resolution=' + (m.resolution || '?'));
-            if (m.resolution) this._resolution = m.resolution;
-            this.setStatus('live', 'Live');
-            this._firstFrameRendered = true;
-            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
-            // Always advance the overlay to step 3 + schedule hide, even if a
-            // previous path already flipped _firstFrameRendered: the overlay
-            // teardown is idempotent and must never be skipped, otherwise it
-            // stays stuck on step 2 while the stream plays.
-            this._updateStartupStep(3);
-            setTimeout(() => this._hideStartupOverlay(), 500);
-            this._showShortcutsSlide();
-            break;
-        case 'status':
-            this.setStatus(m.state, m.msg);
-            break;
-        case 'counters': {
-            // Approximate decode fps: push one timestamp per newly decoded frame
-            // into the sliding window the overlay already uses.
-            const dDecoded = m.decoded - this._workerLastDecoded;
-            this._workerLastDecoded = m.decoded;
-            const now = performance.now();
-            for (let i = 0; i < dDecoded && i < 240; i++) this._fpsTimestamps.push(now);
-            this.stats.received = m.received;
-            this.stats.decoded = m.decoded;
-            this.stats.rendered = m.rendered;
-            this.stats.dropped = m.dropped;
-            if (m.resolution && m.resolution !== this._resolution) this._resolution = m.resolution;
-            if (m.latencyMs > 0) this._e2eLatencyStats.addSample(m.latencyMs);
-            break;
-        }
-        case 'fatal':
-            this._fatalDecodeError = true;
-            this.setStatus('error', m.msg);
-            break;
+            case 'requestidr':
+                this._requestIdr(m.reason || 'worker');
+                break;
+            case 'rendererinfo':
+                // Worker reports which renderer it created (for the stats overlay).
+                this._activeRendererKind = m.kind;
+                break;
+            case 'codecfallback':
+                // HEVC unsupported in this browser → re-launch with H.264.
+                this._handleHevcFallback();
+                break;
+            case 'firstframe':
+                console.log(
+                    '[StreamView] firstframe received from worker, ' +
+                        'alreadyRendered=' +
+                        !!this._firstFrameRendered +
+                        ' resolution=' +
+                        (m.resolution || '?'),
+                );
+                if (m.resolution) this._resolution = m.resolution;
+                this.setStatus('live', 'Live');
+                this._firstFrameRendered = true;
+                if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+                // Always advance the overlay to step 3 + schedule hide, even if a
+                // previous path already flipped _firstFrameRendered: the overlay
+                // teardown is idempotent and must never be skipped, otherwise it
+                // stays stuck on step 2 while the stream plays.
+                this._updateStartupStep(3);
+                setTimeout(() => this._hideStartupOverlay(), 500);
+                this._showShortcutsSlide();
+                break;
+            case 'status':
+                this.setStatus(m.state, m.msg);
+                break;
+            case 'counters': {
+                // Approximate decode fps: push one timestamp per newly decoded frame
+                // into the sliding window the overlay already uses.
+                const dDecoded = m.decoded - this._workerLastDecoded;
+                this._workerLastDecoded = m.decoded;
+                const now = performance.now();
+                for (let i = 0; i < dDecoded && i < 240; i++) this._fpsTimestamps.push(now);
+                this.stats.received = m.received;
+                this.stats.decoded = m.decoded;
+                this.stats.rendered = m.rendered;
+                this.stats.dropped = m.dropped;
+                if (m.resolution && m.resolution !== this._resolution)
+                    this._resolution = m.resolution;
+                if (m.latencyMs > 0) this._e2eLatencyStats.addSample(m.latencyMs);
+                break;
+            }
+            case 'fatal':
+                this._fatalDecodeError = true;
+                this.setStatus('error', m.msg);
+                break;
         }
     }
 
     setupDecoder() {
         if (this.decoder) {
             console.log('[StreamView] Closing existing decoder');
-            try { this.decoder.close(); } catch (e) {}
+            try {
+                this.decoder.close();
+            } catch (e) {}
             this.decoder = null;
         }
         this.decoderConfigured = false;
@@ -1070,10 +1147,14 @@ export class StreamView {
                 // the console at 60fps and costs CPU on mobile.
                 if (!this._firstDecoderOutputLogged) {
                     this._firstDecoderOutputLogged = true;
-                    console.log('[StreamView] First decoded frame: ' +
-                        (frame.displayWidth || frame.codedWidth) + 'x' +
-                        (frame.displayHeight || frame.codedHeight) +
-                        ' format=' + (frame.format || 'null'));
+                    console.log(
+                        '[StreamView] First decoded frame: ' +
+                            (frame.displayWidth || frame.codedWidth) +
+                            'x' +
+                            (frame.displayHeight || frame.codedHeight) +
+                            ' format=' +
+                            (frame.format || 'null'),
+                    );
                 }
                 this.onDecodedFrame(frame);
             },
@@ -1081,7 +1162,7 @@ export class StreamView {
                 console.error('[StreamView] VideoDecoder error:', err.message, err);
                 if (err.code) console.error('[StreamView] Error code:', err.code);
                 this._handleDecoderError(err);
-            }
+            },
         });
         console.log('[StreamView] VideoDecoder created, state=' + this.decoder.state);
     }
@@ -1115,35 +1196,56 @@ export class StreamView {
         // AV1 decoder that NEVER produced a frame: the browser's AV1 decode is
         // broken despite isConfigSupported=true (WebKit bug in early Safari 18).
         // Retrying forever just spams IDR requests — fail with a clear message.
-        if (this.videoCodec === 'av1' && this.stats.decoded === 0 &&
-            this._recoveryAttempts >= 3) {
-            console.error('[StreamView] AV1 decoder never produced a frame after ' +
-                this._recoveryAttempts + ' attempts — AV1 decoding is broken in this browser');
+        if (this.videoCodec === 'av1' && this.stats.decoded === 0 && this._recoveryAttempts >= 3) {
+            console.error(
+                '[StreamView] AV1 decoder never produced a frame after ' +
+                    this._recoveryAttempts +
+                    ' attempts — AV1 decoding is broken in this browser',
+            );
             this._fatalDecodeError = true;
             if (this.decoder) {
-                try { this.decoder.close(); } catch (e) { /* ignore */ }
+                try {
+                    this.decoder.close();
+                } catch (e) {
+                    /* ignore */
+                }
                 this.decoder = null;
             }
             this.decoderConfigured = false;
             this.pendingFrames = [];
-            this.setStatus('error', 'AV1 decoding failed in this browser — select H.264 or HEVC in Settings');
+            this.setStatus(
+                'error',
+                'AV1 decoding failed in this browser — select H.264 or HEVC in Settings',
+            );
             return;
         }
         if (this._recoveryAttempts > this.MAX_RECOVERY_ATTEMPTS) {
-            console.error('[StreamView] Max recovery attempts (' + this.MAX_RECOVERY_ATTEMPTS +
-                ') reached, giving up');
+            console.error(
+                '[StreamView] Max recovery attempts (' +
+                    this.MAX_RECOVERY_ATTEMPTS +
+                    ') reached, giving up',
+            );
             this.setStatus('error', 'Max recovery attempts exceeded');
             return;
         }
         this._decoderRecovering = true;
 
-        console.warn('[StreamView] Starting decoder recovery (' + this._recoveryAttempts +
-            '/' + this.MAX_RECOVERY_ATTEMPTS + ') from: ' +
-            (err ? err.message : 'unknown'));
+        console.warn(
+            '[StreamView] Starting decoder recovery (' +
+                this._recoveryAttempts +
+                '/' +
+                this.MAX_RECOVERY_ATTEMPTS +
+                ') from: ' +
+                (err ? err.message : 'unknown'),
+        );
 
         // 1. Close the broken decoder
         if (this.decoder) {
-            try { this.decoder.close(); } catch (e) { /* ignore */ }
+            try {
+                this.decoder.close();
+            } catch (e) {
+                /* ignore */
+            }
             this.decoder = null;
         }
         this.decoderConfigured = false;
@@ -1154,7 +1256,11 @@ export class StreamView {
         // 2. Clear frame queue — frames output by the old decoder are invalid
         //    once the decoder is closed
         for (const frame of this.frameQueue) {
-            try { frame.close(); } catch (e) { /* ignore */ }
+            try {
+                frame.close();
+            } catch (e) {
+                /* ignore */
+            }
         }
         this.frameQueue = [];
 
@@ -1214,9 +1320,11 @@ export class StreamView {
             return;
         }
 
-        console.log('[StreamView] Configuring VideoDecoder: codec=' + codec,
-                    'descLen=' + desc.length,
-                    'codecType=' + this.nalParser.codec);
+        console.log(
+            '[StreamView] Configuring VideoDecoder: codec=' + codec,
+            'descLen=' + desc.length,
+            'codecType=' + this.nalParser.codec,
+        );
 
         if (!VideoDecoder.isConfigSupported) {
             console.error('[StreamView] WebCodecs VideoDecoder not available');
@@ -1236,9 +1344,15 @@ export class StreamView {
                     this.decoderConfigured = true;
                     this.decoderConfiguring = false;
                     this._noDescription = noDescription;
-                    console.log('[StreamView] VideoDecoder configured: codec=' + cfgToUse.codec +
-                        ' hwAccel=' + (cfgToUse.hardwareAcceleration || 'none') +
-                        ', dequeuing ' + this.pendingFrames.length + ' pending frames');
+                    console.log(
+                        '[StreamView] VideoDecoder configured: codec=' +
+                            cfgToUse.codec +
+                            ' hwAccel=' +
+                            (cfgToUse.hardwareAcceleration || 'none') +
+                            ', dequeuing ' +
+                            this.pendingFrames.length +
+                            ' pending frames',
+                    );
                     this.flushPendingFrames();
 
                     // Proactive IDR after initial decoder configuration.
@@ -1251,7 +1365,9 @@ export class StreamView {
                         this._proactiveIdrScheduled = true;
                         setTimeout(() => {
                             if (!this._quitting && this.webrtc) {
-                                console.log('[StreamView] Proactive IDR after initial decoder config');
+                                console.log(
+                                    '[StreamView] Proactive IDR after initial decoder config',
+                                );
                                 this.webrtc.send({ type: 'requestidr' });
                             }
                         }, 250);
@@ -1274,7 +1390,11 @@ export class StreamView {
                 return _doConfigure(cfg, true);
             } catch (hwErr) {
                 // Phase 2: fallback to software when prefer-hardware is not supported
-                console.warn('[GPU] prefer-hardware rejected (' + hwErr.message + '), falling back to software');
+                console.warn(
+                    '[GPU] prefer-hardware rejected (' +
+                        hwErr.message +
+                        '), falling back to software',
+                );
                 return _doConfigure(cfg, false);
             }
         };
@@ -1287,28 +1407,36 @@ export class StreamView {
 
             const cfg = configs[index];
             const noDescription = cfg._noDescription === true;
-            VideoDecoder.isConfigSupported(cfg).then((result) => {
-                if (result.supported) {
-                    if (!applyConfig(cfg, noDescription)) {
+            VideoDecoder.isConfigSupported(cfg)
+                .then((result) => {
+                    if (result.supported) {
+                        if (!applyConfig(cfg, noDescription)) {
+                            tryCodecs(configs, index + 1, onExhausted);
+                        }
+                    } else {
+                        console.warn(
+                            '[StreamView] Config NOT supported: codec=' +
+                                cfg.codec +
+                                ', trying next',
+                        );
                         tryCodecs(configs, index + 1, onExhausted);
                     }
-                } else {
-                    console.warn('[StreamView] Config NOT supported: codec=' + cfg.codec +
-                                 ', trying next');
+                })
+                .catch((err) => {
+                    console.error(
+                        '[StreamView] isConfigSupported error for codec=' + cfg.codec + ':',
+                        err.message,
+                        err,
+                    );
                     tryCodecs(configs, index + 1, onExhausted);
-                }
-            }).catch((err) => {
-                console.error('[StreamView] isConfigSupported error for codec=' +
-                              cfg.codec + ':', err.message, err);
-                tryCodecs(configs, index + 1, onExhausted);
-            });
+                });
         };
 
         // Shared config fields
         const shared = {
             codedWidth: 1920,
             codedHeight: 1080,
-            optimizeForLatency: true
+            optimizeForLatency: true,
         };
 
         // Decoder color space: BT.709 SDR.
@@ -1317,8 +1445,8 @@ export class StreamView {
                 primaries: 'bt709',
                 transfer: 'bt709',
                 matrix: 'bt709',
-                fullRange: false
-            }
+                fullRange: false,
+            },
         };
 
         // Build configs: for HEVC, try Annex B (no description) first.
@@ -1326,9 +1454,8 @@ export class StreamView {
         // format — without Annex B, HEVC keyframes are falsely rejected on
         // Chrome/Edge.  Non-Chromium browsers fall back to AVCC + description.
         const configsToTry = [];
-        const fallbacks = (codecType === CODEC_HEVC)
-            ? HEVC_FALLBACK_CODEC_STRINGS
-            : H264_FALLBACK_CODEC_STRINGS;
+        const fallbacks =
+            codecType === CODEC_HEVC ? HEVC_FALLBACK_CODEC_STRINGS : H264_FALLBACK_CODEC_STRINGS;
         // Chrome WebCodecs has historically rejected HEVC configs that include
         // an explicit colorSpace. We attempt it as the primary config for HEVC
         // too; if Chrome rejects it, the fallback chain skips to the next
@@ -1337,7 +1464,7 @@ export class StreamView {
             codec: codec,
             description: desc.buffer,
             ...shared,
-            ...vColor
+            ...vColor,
         };
 
         // ── HEVC Annex B phase (no description) ──
@@ -1372,7 +1499,7 @@ export class StreamView {
                 codedWidth: 1920,
                 codedHeight: 1080,
                 optimizeForLatency: true,
-                ...vColor
+                ...vColor,
             });
             // Without colorSpace (Safari iOS does not support colorSpace in configure())
             configsToTry.push({
@@ -1380,7 +1507,7 @@ export class StreamView {
                 description: desc.buffer,
                 codedWidth: 1920,
                 codedHeight: 1080,
-                optimizeForLatency: true
+                optimizeForLatency: true,
             });
         }
 
@@ -1395,12 +1522,12 @@ export class StreamView {
                 codec: codec,
                 description: desc.buffer,
                 codedWidth: 1920,
-                codedHeight: 1080
+                codedHeight: 1080,
             });
             // Variant B: no optimizeForLatency, no codedWidth/codedHeight
             configsToTry.push({
                 codec: codec,
-                description: desc.buffer
+                description: desc.buffer,
             });
             // Variant C: use Uint8Array directly (some Safari versions reject
             // ArrayBuffer-based description)
@@ -1409,16 +1536,16 @@ export class StreamView {
                 description: desc,
                 codedWidth: 1920,
                 codedHeight: 1080,
-                optimizeForLatency: true
+                optimizeForLatency: true,
             });
             // Last resort: bare codec string, no description at all.
             // Safari iOS may auto-detect the H.264 config from the bitstream.
             configsToTry.push({
                 codec: codec,
-                optimizeForLatency: true
+                optimizeForLatency: true,
             });
             configsToTry.push({
-                codec: codec
+                codec: codec,
             });
         }
 
@@ -1429,7 +1556,7 @@ export class StreamView {
             const avc3Configs = [
                 { codec: 'avc3.42E01E', ...shared, ...vColor, optimizeForLatency: true },
                 { codec: 'avc3.42E01E', ...shared, optimizeForLatency: true },
-                { codec: 'avc3.42E01E', ...shared }
+                { codec: 'avc3.42E01E', ...shared },
             ];
             tryCodecs(avc3Configs, 0, () => {
                 console.error('[StreamView] All H.264 configs (including avc3) rejected');
@@ -1471,28 +1598,30 @@ export class StreamView {
                 return;
             }
             const cfg = cfgs[idx];
-            VideoDecoder.isConfigSupported(cfg).then((r) => {
-                if (r.supported) {
-                    try {
-                        this.decoder.configure(cfg);
-                        this.decoderConfigured = true;
-                        this.decoderConfiguring = false;
-                        this._noDescription = false;
-                        console.log('[StreamView] Phase B OK: ' + cfg.codec);
-                        this.flushPendingFrames();
-                    } catch (e) {
-                        console.error('[StreamView] Phase B configure() fail:', e.message);
-                        this.decoderConfiguring = false;
-                        // configure() throw leaves decoder in unknown state — abort
-                        this._handleHevcFallback();
+            VideoDecoder.isConfigSupported(cfg)
+                .then((r) => {
+                    if (r.supported) {
+                        try {
+                            this.decoder.configure(cfg);
+                            this.decoderConfigured = true;
+                            this.decoderConfiguring = false;
+                            this._noDescription = false;
+                            console.log('[StreamView] Phase B OK: ' + cfg.codec);
+                            this.flushPendingFrames();
+                        } catch (e) {
+                            console.error('[StreamView] Phase B configure() fail:', e.message);
+                            this.decoderConfiguring = false;
+                            // configure() throw leaves decoder in unknown state — abort
+                            this._handleHevcFallback();
+                        }
+                    } else {
+                        tryNext(idx + 1);
                     }
-                } else {
+                })
+                .catch((err) => {
+                    console.error('[StreamView] Phase B isConfigSupported error:', err.message);
                     tryNext(idx + 1);
-                }
-            }).catch((err) => {
-                console.error('[StreamView] Phase B isConfigSupported error:', err.message);
-                tryNext(idx + 1);
-            });
+                });
         };
         tryNext(0);
     }
@@ -1525,7 +1654,7 @@ export class StreamView {
                 this.webrtc.send({
                     type: 'codec_fallback',
                     from: 'hevc',
-                    to: 'h264'
+                    to: 'h264',
                 });
             }
         } catch (e) {
@@ -1543,7 +1672,7 @@ export class StreamView {
         // over high-latency links, e.g. remote UPnP). Feeding a delta first
         // produces green/garbage output — the green-image bug.
         if (this.pendingFrames.length > 1 && !this.pendingFrames[0].isKeyframe) {
-            const keyIdx = this.pendingFrames.findIndex(e => e.isKeyframe);
+            const keyIdx = this.pendingFrames.findIndex((e) => e.isKeyframe);
             if (keyIdx > 0) {
                 // Delta arrived before the keyframe (SCTP reordering): move the
                 // keyframe to the front so the decoder is fed it first.
@@ -1600,8 +1729,13 @@ export class StreamView {
             if (this._queueStallStart === 0) this._queueStallStart = now;
             const saturatedMs = now - this._queueStallStart;
             if (saturatedMs > this.QUEUE_RESET_MS) {
-                console.warn('[StreamView] Decode queue stalled >' + this.QUEUE_RESET_MS +
-                    'ms (queueSize=' + this.decoder.decodeQueueSize + ') — resetting decoder');
+                console.warn(
+                    '[StreamView] Decode queue stalled >' +
+                        this.QUEUE_RESET_MS +
+                        'ms (queueSize=' +
+                        this.decoder.decodeQueueSize +
+                        ') — resetting decoder',
+                );
                 this._queueStallStart = 0;
                 this._handleDecoderError(new Error('Decode queue stalled'));
                 return;
@@ -1620,9 +1754,8 @@ export class StreamView {
         // Timestamp from the backend capture clock (ms → µs) when available —
         // reflects real frame pacing instead of a synthetic 60fps clock.
         // Monotonicity is enforced (WebCodecs dislikes duplicate timestamps).
-        let timestamp = (backendTs !== undefined && backendTs > 0)
-            ? backendTs * 1000
-            : this.frameCount * 16667;
+        let timestamp =
+            backendTs !== undefined && backendTs > 0 ? backendTs * 1000 : this.frameCount * 16667;
         if (timestamp <= this._lastChunkTs) timestamp = this._lastChunkTs + 1;
         this._lastChunkTs = timestamp;
         this.frameCount++;
@@ -1637,16 +1770,23 @@ export class StreamView {
 
         // Debug: catch empty AVCC data (all NALs stripped, including the IRAP)
         if (avccData.length === 0) {
-            console.error('[StreamView] EMPTY AVCC DATA for ' + type + ' frame #' + this.frameCount +
-                ' — stripParams=' + this.decoderConfigured +
-                ' codec=' + this.nalParser.codec +
-                ' inputSize=' + data.length);
+            console.error(
+                '[StreamView] EMPTY AVCC DATA for ' +
+                    type +
+                    ' frame #' +
+                    this.frameCount +
+                    ' — stripParams=' +
+                    this.decoderConfigured +
+                    ' codec=' +
+                    this.nalParser.codec +
+                    ' inputSize=' +
+                    data.length,
+            );
             // Check if all NALs were stripped: split and log types
             const nals = splitNals(data);
-            const types = nals.map(n => {
-                if (n.length >= 2 && this.nalParser.codec === CODEC_HEVC)
-                    return (n[0] >> 1) & 0x3F;
-                return n.length >= 1 ? (n[0] & 0x1F) : -1;
+            const types = nals.map((n) => {
+                if (n.length >= 2 && this.nalParser.codec === CODEC_HEVC) return (n[0] >> 1) & 0x3f;
+                return n.length >= 1 ? n[0] & 0x1f : -1;
             });
             console.error('[StreamView] NAL types in empty-avcc frame:', types.join(', '));
         }
@@ -1656,7 +1796,7 @@ export class StreamView {
                 type: type,
                 timestamp: timestamp,
                 duration: 16667,
-                data: avccData
+                data: avccData,
             });
             this.decoder.decode(chunk);
             this.stats.received++;
@@ -1705,11 +1845,11 @@ export class StreamView {
         if (this._latestBackendTs !== undefined && this._steadyToPerfOffset !== null) {
             const capturePerfTime = this._latestBackendTs - this._steadyToPerfOffset;
             const latency = performance.now() - capturePerfTime;
-            if (latency > 0 && latency < 5000) { // ignore outliers
+            if (latency > 0 && latency < 5000) {
+                // ignore outliers
                 this._e2eLatencyStats.addSample(latency);
             }
         }
-
 
         // Limit queue depth to prevent unbounded memory growth.
         // Drop the NEW frame instead of closing an old one — the old frame
@@ -1740,7 +1880,6 @@ export class StreamView {
             setTimeout(() => this._hideStartupOverlay(), 500);
             // Show keyboard shortcuts slide (5s auto-hide)
             this._showShortcutsSlide();
-
         }
     }
 
@@ -1776,7 +1915,9 @@ export class StreamView {
                 const header = document.querySelector('.stream-header');
                 if (header) {
                     header.style.transform = 'translateZ(0)';
-                    requestAnimationFrame(() => { header.style.transform = ''; });
+                    requestAnimationFrame(() => {
+                        header.style.transform = '';
+                    });
                 }
             }
 
@@ -1825,7 +1966,8 @@ export class StreamView {
 
         // Fire-and-forget with guard: the renderer resizes the canvas to the frame,
         // draws and closes it; stats stay here.
-        this._renderer.draw(frame)
+        this._renderer
+            .draw(frame)
             .then(() => {
                 this.stats.rendered++;
             })
@@ -1875,7 +2017,8 @@ export class StreamView {
         if (this._outW <= 0 || this._outH <= 0) return;
         const s = this._outputZoomScale();
         this._lastOutputZoomScale = s;
-        const w = this._outW * s, h = this._outH * s;
+        const w = this._outW * s,
+            h = this._outH * s;
         if (this._useWorker) {
             if (this._videoWorker) {
                 this._videoWorker.postMessage({ type: 'resize', outW: w, outH: h });
@@ -1926,8 +2069,9 @@ export class StreamView {
             // Start polling connected gamepads (Xbox/PlayStation). Sends a
             // controller snapshot over the input transport only on change.
             if (!this._gamepadManager && navigator.getGamepads) {
-                this._gamepadManager = new GamepadManager(
-                    (msg) => { if (!this._quitting) this.webrtc.send(msg); });
+                this._gamepadManager = new GamepadManager((msg) => {
+                    if (!this._quitting) this.webrtc.send(msg);
+                });
             }
             if (this._gamepadManager) this._gamepadManager.start();
 
@@ -1943,7 +2087,8 @@ export class StreamView {
                         const h = this.videoEl.videoHeight || 0;
                         if (w > 0) this._resolution = w + '×' + h;
                         this.setStatus('live', 'Live');
-                        if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+                        if (this._overlayEl && this._showPerfStats)
+                            this._overlayEl.style.display = '';
                         // Mark startup step 3 ("Stream prêt !") and hide overlay after 1.5s
                         this._updateStartupStep(3);
                         setTimeout(() => this._hideStartupOverlay(), 500);
@@ -1957,8 +2102,11 @@ export class StreamView {
                     // current state; onMediaLive is idempotent.
                     this.videoEl.onplaying = onMediaLive;
                     this.videoEl.addEventListener('timeupdate', onMediaLive);
-                    if (!this.videoEl.paused && this.videoEl.currentTime > 0 &&
-                        this.videoEl.readyState >= 2) {
+                    if (
+                        !this.videoEl.paused &&
+                        this.videoEl.currentTime > 0 &&
+                        this.videoEl.readyState >= 2
+                    ) {
                         onMediaLive();
                     }
                 }
@@ -1978,7 +2126,7 @@ export class StreamView {
                         videoCodec: this.videoCodec,
                         isChromeWindowsHevc: this._isChromeWindowsHevc,
                         webgpu: this._wantWebGpu,
-                        algo: this._videoEnhancementAlgo
+                        algo: this._videoEnhancementAlgo,
                     }).then((r) => {
                         this._renderer = r;
                         this._activeRendererKind = r.kind;
@@ -1992,7 +2140,9 @@ export class StreamView {
                 // own IDRs, so skip the main-thread nalParser readiness probe.
                 this._idrTimeout = setTimeout(() => {
                     if (!this._useWorker && !this.nalParser.isReady()) {
-                        console.warn('[StreamView] No keyframe after 3s, requesting IDR from backend');
+                        console.warn(
+                            '[StreamView] No keyframe after 3s, requesting IDR from backend',
+                        );
                         this._requestIdr('no keyframe after 3s');
                     }
                 }, 3000);
@@ -2007,7 +2157,8 @@ export class StreamView {
             if (this._takenOver) return;
             // Never connected → connection failure, let the chain try the next
             // transport instead of showing a disconnect error.
-            if (!this._everConnected && this._reportConnectionFailed('closed before connect')) return;
+            if (!this._everConnected && this._reportConnectionFailed('closed before connect'))
+                return;
             this.connected = false;
             this.setStatus('disconnected', 'Disconnected');
             Toast.error(t('stream.streamDisconnected'));
@@ -2022,7 +2173,8 @@ export class StreamView {
         };
         // Video frames: DataChannel mode uses WebCodecs callbacks
         if (this._transport !== 'webrtc-media') {
-            this.webrtc.onVideo = (frame, isKeyframe, backendTs, frameId) => this.handleVideoFrame(frame, isKeyframe, backendTs, frameId);
+            this.webrtc.onVideo = (frame, isKeyframe, backendTs, frameId) =>
+                this.handleVideoFrame(frame, isKeyframe, backendTs, frameId);
             // Frame loss from reassembly: invalidate reference until next keyframe.
             // IDR is already requested by WebRtcDataChannel (throttled) — don't double it.
             this.webrtc.onFrameLoss = (frameId, wasKeyframe) => {
@@ -2060,8 +2212,10 @@ export class StreamView {
                 let candidatePair = null;
                 report.forEach((s) => {
                     if (s.type === 'inbound-rtp' && s.kind === 'video') inbound = s;
-                    else if (s.type === 'candidate-pair' &&
-                             (s.nominated || s.selected || s.state === 'succeeded')) {
+                    else if (
+                        s.type === 'candidate-pair' &&
+                        (s.nominated || s.selected || s.state === 'succeeded')
+                    ) {
                         candidatePair = s;
                     }
                 });
@@ -2079,7 +2233,8 @@ export class StreamView {
                     const dt = (now - this._lastInboundStatsTime) / 1000;
                     if (dt > 0) {
                         this._mediaFps = Math.round(
-                            ((inbound.framesDecoded || 0) - this._lastInboundFrames) / dt);
+                            ((inbound.framesDecoded || 0) - this._lastInboundFrames) / dt,
+                        );
                     }
                 }
                 // Bitrate from bytesReceived delta
@@ -2102,26 +2257,40 @@ export class StreamView {
                         packetsReceived: inbound.packetsReceived || 0,
                         freezeCount: inbound.freezeCount || 0,
                         jitterMs: (typeof inbound.jitter === 'number' ? inbound.jitter : 0) * 1000,
-                        rttMs: (candidatePair && candidatePair.currentRoundTripTime > 0)
-                            ? candidatePair.currentRoundTripTime * 1000 : 0
+                        rttMs:
+                            candidatePair && candidatePair.currentRoundTripTime > 0
+                                ? candidatePair.currentRoundTripTime * 1000
+                                : 0,
                     });
                     if (cmd !== null) {
-                        if (this.webrtc && typeof this.webrtc.setVideoJitterBufferTarget === 'function') {
+                        if (
+                            this.webrtc &&
+                            typeof this.webrtc.setVideoJitterBufferTarget === 'function'
+                        ) {
                             this.webrtc.setVideoJitterBufferTarget(cmd);
                         }
                         const s = this._jitterController.lastSignals;
-                        console.log('[JitterAuto] target=' + Math.round(cmd) +
-                            'ms jitter=' + (s ? s.jitterEwma.toFixed(1) : '?') +
-                            ' loss=' + (s ? (s.lossRate * 100).toFixed(1) : '?') + '%' +
-                            ' rtt=' + (s ? Math.round(s.rttMs) : '?') +
-                            ' freezes=' + (s ? s.freezes : '?'));
+                        console.log(
+                            '[JitterAuto] target=' +
+                                Math.round(cmd) +
+                                'ms jitter=' +
+                                (s ? s.jitterEwma.toFixed(1) : '?') +
+                                ' loss=' +
+                                (s ? (s.lossRate * 100).toFixed(1) : '?') +
+                                '%' +
+                                ' rtt=' +
+                                (s ? Math.round(s.rttMs) : '?') +
+                                ' freezes=' +
+                                (s ? s.freezes : '?'),
+                        );
                     }
                 }
 
                 // Latency ≈ jitter-buffer delay + network RTT/2 + backend↔Sunshine RTT.
                 let latency = 0;
                 if (inbound.jitterBufferDelay > 0 && inbound.jitterBufferEmittedCount > 0) {
-                    latency += (inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000;
+                    latency +=
+                        (inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000;
                 }
                 if (candidatePair && candidatePair.currentRoundTripTime > 0) {
                     latency += (candidatePair.currentRoundTripTime * 1000) / 2;
@@ -2149,7 +2318,10 @@ export class StreamView {
     // clamped to the viewport. Not persisted: reset on every new session.
     _makeStatsDraggable(el) {
         let dragging = false;
-        let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+        let startX = 0,
+            startY = 0,
+            startLeft = 0,
+            startTop = 0;
 
         const onMove = (e) => {
             if (!dragging) return;
@@ -2166,18 +2338,24 @@ export class StreamView {
             if (!dragging) return;
             dragging = false;
             el.classList.remove('dragging');
-            try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+            try {
+                el.releasePointerCapture(e.pointerId);
+            } catch (_) {}
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
         };
         el.addEventListener('pointerdown', (e) => {
             if (e.button !== 0 && e.pointerType === 'mouse') return;
             const rect = el.getBoundingClientRect();
-            startX = e.clientX; startY = e.clientY;
-            startLeft = rect.left; startTop = rect.top;
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
             dragging = true;
             el.classList.add('dragging');
-            try { el.setPointerCapture(e.pointerId); } catch (_) {}
+            try {
+                el.setPointerCapture(e.pointerId);
+            } catch (_) {}
             window.addEventListener('pointermove', onMove);
             window.addEventListener('pointerup', onUp);
             e.preventDefault();
@@ -2197,7 +2375,8 @@ export class StreamView {
 
         // Before first frame: show minimal waiting state
         if (!this._firstFrameRendered) {
-            this._overlayEl.innerHTML = '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
+            this._overlayEl.innerHTML =
+                '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
             this._overlayEl.style.display = '';
             return;
         }
@@ -2215,12 +2394,12 @@ export class StreamView {
         } else {
             // FPS: decoded frames in the last 2 seconds
             const cutoff = now - 2000;
-            this._fpsTimestamps = this._fpsTimestamps.filter(t => t > cutoff);
+            this._fpsTimestamps = this._fpsTimestamps.filter((t) => t > cutoff);
             fps = Math.round(this._fpsTimestamps.length / 2);
 
             // Bitrate: total bytes / elapsed seconds
             if (elapsed > 0.5) {
-                bitrateMbps = ((this._totalBytes * 8) / elapsed) / 1e6;
+                bitrateMbps = (this._totalBytes * 8) / elapsed / 1e6;
             }
         }
 
@@ -2230,28 +2409,48 @@ export class StreamView {
         let html = '<div class="stats-body">';
 
         // Resolution
-        html += '<div class="stats-row">' +
-            '<span class="stats-label">' + t('stream.statResolution') + '</span>' +
-            '<span class="stats-value">' + (this._resolution || '?') + '</span>' +
+        html +=
+            '<div class="stats-row">' +
+            '<span class="stats-label">' +
+            t('stream.statResolution') +
+            '</span>' +
+            '<span class="stats-value">' +
+            (this._resolution || '?') +
+            '</span>' +
             '</div>';
 
         // Framerate
-        html += '<div class="stats-row">' +
-            '<span class="stats-label">' + t('stream.statFramerate') + '</span>' +
-            '<span class="stats-value">' + fps + ' fps</span>' +
+        html +=
+            '<div class="stats-row">' +
+            '<span class="stats-label">' +
+            t('stream.statFramerate') +
+            '</span>' +
+            '<span class="stats-value">' +
+            fps +
+            ' fps</span>' +
             '</div>';
 
         // Bitrate
-        html += '<div class="stats-row">' +
-            '<span class="stats-label">' + t('stream.statBitrate') + '</span>' +
-            '<span class="stats-value">' + bitrateMbps.toFixed(1) + ' Mbps</span>' +
+        html +=
+            '<div class="stats-row">' +
+            '<span class="stats-label">' +
+            t('stream.statBitrate') +
+            '</span>' +
+            '<span class="stats-value">' +
+            bitrateMbps.toFixed(1) +
+            ' Mbps</span>' +
             '</div>';
 
         // Codec (annotated with 4:4:4 when full-chroma was negotiated)
         const codecLabel = codec.toUpperCase() + (this._yuv444 ? ' 4:4:4' : '');
-        html += '<div class="stats-row">' +
-            '<span class="stats-label">' + t('stream.statCodec') + '</span>' +
-            '<span class="stats-value">' + codecLabel + '</span>' +
+        html +=
+            '<div class="stats-row">' +
+            '<span class="stats-label">' +
+            t('stream.statCodec') +
+            '</span>' +
+            '<span class="stats-value">' +
+            codecLabel +
+            '</span>' +
             '</div>';
 
         // Enhancer: show the active algo when the WebGPU renderer is up. On
@@ -2259,22 +2458,36 @@ export class StreamView {
         // user enabled it, flag it OFF so they know it isn't active.
         let enhancerName = null;
         if (this._activeRendererKind === 'webgpu') {
-            enhancerName = this._videoEnhancementAlgo === 'fsr1' ? 'FSR1'
-                : this._videoEnhancementAlgo === 'off' ? t('stream.enhancerOff') : 'SGSR';
+            enhancerName =
+                this._videoEnhancementAlgo === 'fsr1'
+                    ? 'FSR1'
+                    : this._videoEnhancementAlgo === 'off'
+                      ? t('stream.enhancerOff')
+                      : 'SGSR';
         } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
             enhancerName = 'OFF (not available on MediaTrack)';
         }
         if (enhancerName !== null) {
-            html += '<div class="stats-row">' +
-                '<span class="stats-label">' + t('stream.statEnhancer') + '</span>' +
-                '<span class="stats-value">' + enhancerName + '</span>' +
+            html +=
+                '<div class="stats-row">' +
+                '<span class="stats-label">' +
+                t('stream.statEnhancer') +
+                '</span>' +
+                '<span class="stats-value">' +
+                enhancerName +
+                '</span>' +
                 '</div>';
         }
 
         // Transport
-        html += '<div class="stats-row">' +
-            '<span class="stats-label">' + t('stream.statTransport') + '</span>' +
-            '<span class="stats-value">' + this._transportMode + '</span>' +
+        html +=
+            '<div class="stats-row">' +
+            '<span class="stats-label">' +
+            t('stream.statTransport') +
+            '</span>' +
+            '<span class="stats-value">' +
+            this._transportMode +
+            '</span>' +
             '</div>';
 
         // End-to-end latency
@@ -2308,9 +2521,14 @@ export class StreamView {
                 avgLatency = this._e2eLatencyStats.avg.toFixed(1) + 'ms';
             }
         }
-        html += '<div class="stats-row stats-latency-row">' +
-            '<span class="stats-label">' + t('stream.statLatency') + '</span>' +
-            '<span class="stats-value stats-latency">' + avgLatency + '</span>' +
+        html +=
+            '<div class="stats-row stats-latency-row">' +
+            '<span class="stats-label">' +
+            t('stream.statLatency') +
+            '</span>' +
+            '<span class="stats-value stats-latency">' +
+            avgLatency +
+            '</span>' +
             '</div>';
 
         html += '</div>';
@@ -2353,16 +2571,20 @@ export class StreamView {
                     // floor and pinned the latency near that floor).
                     this._steadyToPerfOffset = refinedOffset;
                     this._offsetFromStats = true;
-                    console.log('[StreamView] Clock offset (stats): steadyToPerfOffset=' +
-                        Math.round(this._steadyToPerfOffset) +
-                        ' streamTimeMs=' + msg.streamTimeMs +
-                        ' perf=' + Math.round(this._streamTimeReceiptTime) +
-                        ' rtt=' + rtt.toFixed(1));
+                    console.log(
+                        '[StreamView] Clock offset (stats): steadyToPerfOffset=' +
+                            Math.round(this._steadyToPerfOffset) +
+                            ' streamTimeMs=' +
+                            msg.streamTimeMs +
+                            ' perf=' +
+                            Math.round(this._streamTimeReceiptTime) +
+                            ' rtt=' +
+                            rtt.toFixed(1),
+                    );
                 } else {
                     // Blend new measurement with existing offset (70% old, 30% new)
                     // to smooth out jitter while adapting to clock drift.
-                    this._steadyToPerfOffset =
-                        this._steadyToPerfOffset * 0.7 + refinedOffset * 0.3;
+                    this._steadyToPerfOffset = this._steadyToPerfOffset * 0.7 + refinedOffset * 0.3;
                 }
             }
         }
@@ -2425,8 +2647,13 @@ export class StreamView {
             // out-of-order frame (already filtered by the backendTs check above
             // in most cases) — never a loss signal.
             if (this._lastFrameId !== -1 && frameId > this._lastFrameId + 1) {
-                console.warn('[StreamView] Frame gap: expected ' + (this._lastFrameId + 1) +
-                    ' got ' + frameId + ' — invalidating reference, requesting IDR');
+                console.warn(
+                    '[StreamView] Frame gap: expected ' +
+                        (this._lastFrameId + 1) +
+                        ' got ' +
+                        frameId +
+                        ' — invalidating reference, requesting IDR',
+                );
                 this._referenceValid = false;
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
                 this._requestIdr('frame gap');
@@ -2449,10 +2676,14 @@ export class StreamView {
             if (this._steadyToPerfOffset === null) {
                 const pipelineFloor = 30; // ms — conservative LAN pipeline minimum
                 this._steadyToPerfOffset = backendTs - performance.now() - pipelineFloor;
-                console.log('[StreamView] Clock offset (frame-based): steadyToPerfOffset=' +
-                    Math.round(this._steadyToPerfOffset) +
-                    ' backendTs=' + backendTs +
-                    ' perf=' + Math.round(performance.now()));
+                console.log(
+                    '[StreamView] Clock offset (frame-based): steadyToPerfOffset=' +
+                        Math.round(this._steadyToPerfOffset) +
+                        ' backendTs=' +
+                        backendTs +
+                        ' perf=' +
+                        Math.round(performance.now()),
+                );
             }
         }
 
@@ -2467,8 +2698,10 @@ export class StreamView {
     _processVideoFrame(data, isKeyframe, backendTs) {
         if (!this._firstFrameProcessed) {
             this._firstFrameProcessed = true;
-            console.log('[StreamView] First video frame: isKeyframe=' + isKeyframe,
-                        'size=' + data.length + ' codec=' + this.videoCodec);
+            console.log(
+                '[StreamView] First video frame: isKeyframe=' + isKeyframe,
+                'size=' + data.length + ' codec=' + this.videoCodec,
+            );
         }
 
         // Worker mode: hand the frame to the OffscreenCanvas worker for decode
@@ -2484,11 +2717,11 @@ export class StreamView {
                 if (data.byteOffset === 0 && data.byteLength === data.buffer.byteLength) {
                     buf = data.buffer;
                 } else {
-                    buf = data.buffer.slice(
-                        data.byteOffset, data.byteOffset + data.byteLength);
+                    buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
                 }
-                this._videoWorker.postMessage(
-                    { type: 'frame', data: buf, isKeyframe, backendTs }, [buf]);
+                this._videoWorker.postMessage({ type: 'frame', data: buf, isKeyframe, backendTs }, [
+                    buf,
+                ]);
             }
             return;
         }
@@ -2509,8 +2742,11 @@ export class StreamView {
                 // the old (lost) IDR. They would corrupt the decoder if fed with the
                 // new SPS/PPS.
                 if (this._idrRequested && this.pendingFrames.length > 0) {
-                    console.log('[StreamView] IDR received, clearing ' +
-                        this.pendingFrames.length + ' stale pending frames');
+                    console.log(
+                        '[StreamView] IDR received, clearing ' +
+                            this.pendingFrames.length +
+                            ' stale pending frames',
+                    );
                     this.pendingFrames = [];
                     this._idrRequested = false;
                 }
@@ -2527,8 +2763,11 @@ export class StreamView {
                 // Threshold: 30 frames (~0.5s at 60fps) without a keyframe (warn sampled).
                 if (this.pendingFrames.length > 30) {
                     if (this.pendingFrames.length % 30 === 0) {
-                        console.warn('[StreamView] No keyframe after ' + this.pendingFrames.length +
-                            ' frames, requesting IDR from backend');
+                        console.warn(
+                            '[StreamView] No keyframe after ' +
+                                this.pendingFrames.length +
+                                ' frames, requesting IDR from backend',
+                        );
                     }
                     this._requestIdr('no keyframe while buffering');
                 }
@@ -2555,8 +2794,11 @@ export class StreamView {
                 // reference and would be submitted first after configure,
                 // throwing "Key frame is required" (seen on Safari).
                 if (this.pendingFrames.length > 0) {
-                    console.log('[StreamView] AV1: keyframe received, clearing ' +
-                        this.pendingFrames.length + ' stale pending frames');
+                    console.log(
+                        '[StreamView] AV1: keyframe received, clearing ' +
+                            this.pendingFrames.length +
+                            ' stale pending frames',
+                    );
                     this.pendingFrames = [];
                 }
                 this._idrRequested = false;
@@ -2575,8 +2817,11 @@ export class StreamView {
                 // (warn sampled: 1 line per 30 frames, not one per frame)
                 if (this.pendingFrames.length > 30) {
                     if (this.pendingFrames.length % 30 === 0) {
-                        console.warn('[StreamView] AV1: No keyframe after ' +
-                            this.pendingFrames.length + ' frames, requesting IDR');
+                        console.warn(
+                            '[StreamView] AV1: No keyframe after ' +
+                                this.pendingFrames.length +
+                                ' frames, requesting IDR',
+                        );
                     }
                     this._requestIdr('AV1 no keyframe while buffering');
                 }
@@ -2607,36 +2852,52 @@ export class StreamView {
             }
 
             const cfg = configs[index];
-            VideoDecoder.isConfigSupported(cfg).then((result) => {
-                if (result.supported) {
-                    try {
-                        this.decoder.configure(cfg);
-                        this.decoderConfigured = true;
-                        this.decoderConfiguring = false;
-                        console.log('[StreamView] AV1 VideoDecoder configured: codec=' + cfg.codec +
-                            ', dequeuing ' + this.pendingFrames.length + ' pending frames');
-                        // Drain pending frames using AV1 decoder path (not flushPendingFrames
-                        // which calls toAvcc() and corrupts OBU data). The first
-                        // submitted chunk MUST be a keyframe — skip leading deltas.
-                        while (this.pendingFrames.length > 0 && !this.pendingFrames[0].isKeyframe) {
-                            this.pendingFrames.shift();
-                            this.stats.dropped++;
+            VideoDecoder.isConfigSupported(cfg)
+                .then((result) => {
+                    if (result.supported) {
+                        try {
+                            this.decoder.configure(cfg);
+                            this.decoderConfigured = true;
+                            this.decoderConfiguring = false;
+                            console.log(
+                                '[StreamView] AV1 VideoDecoder configured: codec=' +
+                                    cfg.codec +
+                                    ', dequeuing ' +
+                                    this.pendingFrames.length +
+                                    ' pending frames',
+                            );
+                            // Drain pending frames using AV1 decoder path (not flushPendingFrames
+                            // which calls toAvcc() and corrupts OBU data). The first
+                            // submitted chunk MUST be a keyframe — skip leading deltas.
+                            while (
+                                this.pendingFrames.length > 0 &&
+                                !this.pendingFrames[0].isKeyframe
+                            ) {
+                                this.pendingFrames.shift();
+                                this.stats.dropped++;
+                            }
+                            while (this.pendingFrames.length > 0) {
+                                const entry = this.pendingFrames.shift();
+                                this.decodeAv1Frame(entry.data, entry.isKeyframe);
+                            }
+                        } catch (e) {
+                            console.warn(
+                                '[StreamView] AV1 applyConfig failed, trying next:',
+                                e.message,
+                            );
+                            tryCodecs(index + 1);
                         }
-                        while (this.pendingFrames.length > 0) {
-                            const entry = this.pendingFrames.shift();
-                            this.decodeAv1Frame(entry.data, entry.isKeyframe);
-                        }
-                    } catch (e) {
-                        console.warn('[StreamView] AV1 applyConfig failed, trying next:', e.message);
+                    } else {
                         tryCodecs(index + 1);
                     }
-                } else {
+                })
+                .catch((err) => {
+                    console.warn(
+                        '[StreamView] AV1 isConfigSupported error for codec=' + cfg.codec + ':',
+                        err.message,
+                    );
                     tryCodecs(index + 1);
-                }
-            }).catch((err) => {
-                console.warn('[StreamView] AV1 isConfigSupported error for codec=' + cfg.codec + ':', err.message);
-                tryCodecs(index + 1);
-            });
+                });
         };
 
         tryCodecs(0);
@@ -2671,7 +2932,7 @@ export class StreamView {
                 type: type,
                 timestamp: timestamp,
                 duration: 16667,
-                data: obuData
+                data: obuData,
             });
             this.decoder.decode(chunk);
             this.stats.received++;
@@ -2729,17 +2990,18 @@ export class StreamView {
      *  coordinates map to the real picture, not the surrounding black bars. */
     _mediaRect() {
         const r = this._displayEl().getBoundingClientRect();
-        const iw = this._transport === 'webrtc-media'
-            ? this.videoEl.videoWidth : this.canvas.width;
-        const ih = this._transport === 'webrtc-media'
-            ? this.videoEl.videoHeight : this.canvas.height;
+        const iw = this._transport === 'webrtc-media' ? this.videoEl.videoWidth : this.canvas.width;
+        const ih =
+            this._transport === 'webrtc-media' ? this.videoEl.videoHeight : this.canvas.height;
         if (!iw || !ih) return r;
         const scale = Math.min(r.width / iw, r.height / ih);
-        const w = iw * scale, h = ih * scale;
+        const w = iw * scale,
+            h = ih * scale;
         return {
             left: r.left + (r.width - w) / 2,
             top: r.top + (r.height - h) / 2,
-            width: w, height: h,
+            width: w,
+            height: h,
         };
     }
 
@@ -2765,8 +3027,11 @@ export class StreamView {
                 const refW = Math.round(rect.width);
                 const refH = Math.round(rect.height);
                 this.webrtc.send({
-                    type: 'mousemove', x, y,
-                    referenceWidth: refW, referenceHeight: refH
+                    type: 'mousemove',
+                    x,
+                    y,
+                    referenceWidth: refW,
+                    referenceHeight: refH,
                 });
             }
         };
@@ -2774,7 +3039,7 @@ export class StreamView {
 
         // Click to capture focus: set host cursor at clicked position, then grab pointer.
         this._onGamingClick = (e) => {
-            if (this._mouseFocused) return;  // Already focused — click handled by mousedown/mouseup
+            if (this._mouseFocused) return; // Already focused — click handled by mousedown/mouseup
             e.preventDefault();
 
             // Send absolute position so the host cursor teleports to the clicked point
@@ -2784,8 +3049,11 @@ export class StreamView {
             const refW = Math.round(rect.width);
             const refH = Math.round(rect.height);
             this.webrtc.send({
-                type: 'mousemove', x, y,
-                referenceWidth: refW, referenceHeight: refH
+                type: 'mousemove',
+                x,
+                y,
+                referenceWidth: refW,
+                referenceHeight: refH,
             });
             this.inputEl.requestPointerLock();
         };
@@ -2819,8 +3087,7 @@ export class StreamView {
 
             // Hide the local cursor only when it is over the actual picture;
             // show it over the surrounding black bars.
-            const inside = rawX >= 0 && rawY >= 0 &&
-                rawX <= rect.width && rawY <= rect.height;
+            const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
             if (!IS_TOUCH_DEVICE) {
                 this.inputEl.style.cursor = inside ? 'none' : 'default';
             }
@@ -2842,7 +3109,7 @@ export class StreamView {
                 x: x,
                 y: y,
                 referenceWidth: refW,
-                referenceHeight: refH
+                referenceHeight: refH,
             });
         };
 
@@ -2885,7 +3152,9 @@ export class StreamView {
         document.removeEventListener('fullscreenchange', this._onFsChangeLock);
         // Release the keyboard lock if still held (e.g. quit while fullscreen).
         if (this._keyboardLocked && navigator.keyboard && navigator.keyboard.unlock) {
-            try { navigator.keyboard.unlock(); } catch (e) {}
+            try {
+                navigator.keyboard.unlock();
+            } catch (e) {}
             this._keyboardLocked = false;
         }
         if (this.streamEl) {
@@ -2950,59 +3219,139 @@ export class StreamView {
     static codeToWindowsVk(code) {
         const map = {
             // Letters (A-Z) — VK_A=0x41 through VK_Z=0x5A
-            'KeyA': 0x41, 'KeyB': 0x42, 'KeyC': 0x43, 'KeyD': 0x44,
-            'KeyE': 0x45, 'KeyF': 0x46, 'KeyG': 0x47, 'KeyH': 0x48,
-            'KeyI': 0x49, 'KeyJ': 0x4A, 'KeyK': 0x4B, 'KeyL': 0x4C,
-            'KeyM': 0x4D, 'KeyN': 0x4E, 'KeyO': 0x4F, 'KeyP': 0x50,
-            'KeyQ': 0x51, 'KeyR': 0x52, 'KeyS': 0x53, 'KeyT': 0x54,
-            'KeyU': 0x55, 'KeyV': 0x56, 'KeyW': 0x57, 'KeyX': 0x58,
-            'KeyY': 0x59, 'KeyZ': 0x5A,
+            KeyA: 0x41,
+            KeyB: 0x42,
+            KeyC: 0x43,
+            KeyD: 0x44,
+            KeyE: 0x45,
+            KeyF: 0x46,
+            KeyG: 0x47,
+            KeyH: 0x48,
+            KeyI: 0x49,
+            KeyJ: 0x4a,
+            KeyK: 0x4b,
+            KeyL: 0x4c,
+            KeyM: 0x4d,
+            KeyN: 0x4e,
+            KeyO: 0x4f,
+            KeyP: 0x50,
+            KeyQ: 0x51,
+            KeyR: 0x52,
+            KeyS: 0x53,
+            KeyT: 0x54,
+            KeyU: 0x55,
+            KeyV: 0x56,
+            KeyW: 0x57,
+            KeyX: 0x58,
+            KeyY: 0x59,
+            KeyZ: 0x5a,
             // Digits — VK_0=0x30 through VK_9=0x39
-            'Digit1': 0x31, 'Digit2': 0x32, 'Digit3': 0x33, 'Digit4': 0x34,
-            'Digit5': 0x35, 'Digit6': 0x36, 'Digit7': 0x37, 'Digit8': 0x38,
-            'Digit9': 0x39, 'Digit0': 0x30,
+            Digit1: 0x31,
+            Digit2: 0x32,
+            Digit3: 0x33,
+            Digit4: 0x34,
+            Digit5: 0x35,
+            Digit6: 0x36,
+            Digit7: 0x37,
+            Digit8: 0x38,
+            Digit9: 0x39,
+            Digit0: 0x30,
             // Special keys
-            'Enter': 0x0D, 'Escape': 0x1B, 'Backspace': 0x08, 'Tab': 0x09,
-            'Space': 0x20,
-            'Minus': 0xBD, 'Equal': 0xBB,
-            'BracketLeft': 0xDB, 'BracketRight': 0xDD, 'Backslash': 0xDC,
-            'IntlBackslash': 0xE2,  // VK_OEM_102 — ISO key; backend applies SS_KBE_FLAG_NON_NORMALIZED
-            'Semicolon': 0xBA, 'Quote': 0xDE, 'Backquote': 0xC0,
-            'Comma': 0xBC, 'Period': 0xBE, 'Slash': 0xBF,
-            'CapsLock': 0x14,
+            Enter: 0x0d,
+            Escape: 0x1b,
+            Backspace: 0x08,
+            Tab: 0x09,
+            Space: 0x20,
+            Minus: 0xbd,
+            Equal: 0xbb,
+            BracketLeft: 0xdb,
+            BracketRight: 0xdd,
+            Backslash: 0xdc,
+            IntlBackslash: 0xe2, // VK_OEM_102 — ISO key; backend applies SS_KBE_FLAG_NON_NORMALIZED
+            Semicolon: 0xba,
+            Quote: 0xde,
+            Backquote: 0xc0,
+            Comma: 0xbc,
+            Period: 0xbe,
+            Slash: 0xbf,
+            CapsLock: 0x14,
             // Function keys — VK_F1=0x70 through VK_F24=0x87
-            'F1': 0x70, 'F2': 0x71, 'F3': 0x72, 'F4': 0x73,
-            'F5': 0x74, 'F6': 0x75, 'F7': 0x76, 'F8': 0x77,
-            'F9': 0x78, 'F10': 0x79, 'F11': 0x7A, 'F12': 0x7B,
-            'F13': 0x7C, 'F14': 0x7D, 'F15': 0x7E, 'F16': 0x7F,
-            'F17': 0x80, 'F18': 0x81, 'F19': 0x82, 'F20': 0x83,
-            'F21': 0x84, 'F22': 0x85, 'F23': 0x86, 'F24': 0x87,
+            F1: 0x70,
+            F2: 0x71,
+            F3: 0x72,
+            F4: 0x73,
+            F5: 0x74,
+            F6: 0x75,
+            F7: 0x76,
+            F8: 0x77,
+            F9: 0x78,
+            F10: 0x79,
+            F11: 0x7a,
+            F12: 0x7b,
+            F13: 0x7c,
+            F14: 0x7d,
+            F15: 0x7e,
+            F16: 0x7f,
+            F17: 0x80,
+            F18: 0x81,
+            F19: 0x82,
+            F20: 0x83,
+            F21: 0x84,
+            F22: 0x85,
+            F23: 0x86,
+            F24: 0x87,
             // Navigation cluster
-            'PrintScreen': 0x2C, 'ScrollLock': 0x91, 'Pause': 0x13,
-            'Insert': 0x2D, 'Home': 0x24, 'PageUp': 0x21,
-            'Delete': 0x2E, 'End': 0x23, 'PageDown': 0x22,
+            PrintScreen: 0x2c,
+            ScrollLock: 0x91,
+            Pause: 0x13,
+            Insert: 0x2d,
+            Home: 0x24,
+            PageUp: 0x21,
+            Delete: 0x2e,
+            End: 0x23,
+            PageDown: 0x22,
             // Arrow keys
-            'ArrowRight': 0x27, 'ArrowLeft': 0x25, 'ArrowDown': 0x28, 'ArrowUp': 0x26,
+            ArrowRight: 0x27,
+            ArrowLeft: 0x25,
+            ArrowDown: 0x28,
+            ArrowUp: 0x26,
             // Numpad
-            'NumLock': 0x90, 'NumpadDivide': 0x6F, 'NumpadMultiply': 0x6A,
-            'NumpadSubtract': 0x6D, 'NumpadAdd': 0x6B, 'NumpadEnter': 0x0D,
-            'Numpad1': 0x61, 'Numpad2': 0x62, 'Numpad3': 0x63,
-            'Numpad4': 0x64, 'Numpad5': 0x65, 'Numpad6': 0x66,
-            'Numpad7': 0x67, 'Numpad8': 0x68, 'Numpad9': 0x69,
-            'Numpad0': 0x60, 'NumpadDecimal': 0x6E,
+            NumLock: 0x90,
+            NumpadDivide: 0x6f,
+            NumpadMultiply: 0x6a,
+            NumpadSubtract: 0x6d,
+            NumpadAdd: 0x6b,
+            NumpadEnter: 0x0d,
+            Numpad1: 0x61,
+            Numpad2: 0x62,
+            Numpad3: 0x63,
+            Numpad4: 0x64,
+            Numpad5: 0x65,
+            Numpad6: 0x66,
+            Numpad7: 0x67,
+            Numpad8: 0x68,
+            Numpad9: 0x69,
+            Numpad0: 0x60,
+            NumpadDecimal: 0x6e,
             // Modifiers (physical position — logical state sent via ctrlKey etc.)
-            'ControlLeft': 0x11, 'ShiftLeft': 0x10, 'AltLeft': 0x12, 'MetaLeft': 0x5B,
-            'ControlRight': 0x11, 'ShiftRight': 0x10, 'AltRight': 0x12, 'MetaRight': 0x5C,
+            ControlLeft: 0x11,
+            ShiftLeft: 0x10,
+            AltLeft: 0x12,
+            MetaLeft: 0x5b,
+            ControlRight: 0x11,
+            ShiftRight: 0x10,
+            AltRight: 0x12,
+            MetaRight: 0x5c,
             // Context menu
-            'ContextMenu': 0x5D,
+            ContextMenu: 0x5d,
             // International
-            'IntlRo': 0x73,         // JIS \ key — backend applies SS_KBE_FLAG_NON_NORMALIZED
-            'IntlYen': 0xFF,        // VK_OEM_AUTO (yen sign)
-            'Lang1': 0xF2,          // VK_HANGUL
-            'Lang2': 0xF1,          // VK_HANJA
-            'Lang3': 0xF4,          // VK_KATAKANA
-            'Lang4': 0xF3,          // VK_HIRAGANA
-            'Lang5': 0xF5,          // VK_ZENKAKU
+            IntlRo: 0x73, // JIS \ key — backend applies SS_KBE_FLAG_NON_NORMALIZED
+            IntlYen: 0xff, // VK_OEM_AUTO (yen sign)
+            Lang1: 0xf2, // VK_HANGUL
+            Lang2: 0xf1, // VK_HANJA
+            Lang3: 0xf4, // VK_KATAKANA
+            Lang4: 0xf3, // VK_HIRAGANA
+            Lang5: 0xf5, // VK_ZENKAKU
         };
         return map[code] !== undefined ? map[code] : 0;
     }
@@ -3057,7 +3406,7 @@ export class StreamView {
         // system-level macOS keyboard shortcuts.
         const modCtrl = e.ctrlKey || e.metaKey;
         const isMac = /Mac/.test(navigator.platform);
-        const modThird = isMac ? e.ctrlKey : e.shiftKey;  // Ctrl on Mac, Shift elsewhere
+        const modThird = isMac ? e.ctrlKey : e.shiftKey; // Ctrl on Mac, Shift elsewhere
 
         // ── Escape key ────────────────────────────────────────────────────
         // Prevent the browser from exiting fullscreen or releasing pointer
@@ -3143,7 +3492,7 @@ export class StreamView {
             ctrlKey: e.ctrlKey,
             shiftKey: e.shiftKey,
             altKey: e.altKey,
-            metaKey: e.metaKey
+            metaKey: e.metaKey,
         });
     }
 
@@ -3159,7 +3508,7 @@ export class StreamView {
             ctrlKey: e.ctrlKey,
             shiftKey: e.shiftKey,
             altKey: e.altKey,
-            metaKey: e.metaKey
+            metaKey: e.metaKey,
         });
     }
 
@@ -3256,7 +3605,8 @@ export class StreamView {
         if (this._cssFullscreen) return;
 
         if (document.documentElement.requestFullscreen) {
-            document.documentElement.requestFullscreen()
+            document.documentElement
+                .requestFullscreen()
                 .then(() => {
                     // Success — button visibility handled by fullscreenchange
                 })
@@ -3334,7 +3684,9 @@ export class StreamView {
             kb.lock(['Escape']).catch(() => {});
             this._keyboardLocked = true;
         } else if (this._keyboardLocked) {
-            try { kb.unlock(); } catch (e) {}
+            try {
+                kb.unlock();
+            } catch (e) {}
             this._keyboardLocked = false;
         }
     }
@@ -3407,7 +3759,9 @@ export class StreamView {
         if (this.videoEl && typeof this.videoEl.webkitExitFullscreen === 'function') {
             try {
                 this.videoEl.webkitExitFullscreen();
-            } catch (e) { /* silently ignored */ }
+            } catch (e) {
+                /* silently ignored */
+            }
         }
 
         // Standard Fullscreen API exit
@@ -3426,7 +3780,8 @@ export class StreamView {
     _updateMobileFsButtonVisibility() {
         if (!this._mobileFsBtn) return;
 
-        const inFullscreen = !!document.fullscreenElement ||
+        const inFullscreen =
+            !!document.fullscreenElement ||
             (this.videoEl && this.videoEl.webkitDisplayingFullscreen) ||
             this._cssFullscreen;
         if (inFullscreen) {
@@ -3440,8 +3795,8 @@ export class StreamView {
             return;
         }
 
-        const isLandscape = window.matchMedia &&
-            window.matchMedia('(orientation: landscape)').matches;
+        const isLandscape =
+            window.matchMedia && window.matchMedia('(orientation: landscape)').matches;
         this._mobileFsBtn.style.display = isLandscape ? '' : 'none';
     }
 
@@ -3491,17 +3846,16 @@ export class StreamView {
                 return;
             }
             if (it === 'insertLineBreak' || it === 'insertParagraph') {
-                this._sendKey(0x0D);                 // Enter
+                this._sendKey(0x0d); // Enter
                 this._resetKbdCapture();
                 return;
             }
             if (it === 'deleteContentBackward') {
-                this._sendKey(0x08);                 // Backspace
+                this._sendKey(0x08); // Backspace
                 this._resetKbdCapture();
                 return;
             }
-            if ((it === 'insertFromPaste' || it === 'insertReplacementText') &&
-                e.data != null) {
+            if ((it === 'insertFromPaste' || it === 'insertReplacementText') && e.data != null) {
                 this.webrtc.send({ type: 'textinput', text: e.data });
                 this._resetKbdCapture();
                 return;
@@ -3518,7 +3872,7 @@ export class StreamView {
             const maxS = Math.min(sent.length - p, val.length - p);
             while (s < maxS && sent[sent.length - 1 - s] === val[val.length - 1 - s]) s++;
 
-            const deleted = sent.length - p - s;        // chars removed from sentinel
+            const deleted = sent.length - p - s; // chars removed from sentinel
             const inserted = val.slice(p, val.length - s); // chars added by the user
 
             if (deleted > 0) {
@@ -3527,7 +3881,7 @@ export class StreamView {
             if (inserted) {
                 // Enter shows up as an inserted line break — send it as a key.
                 if (inserted === '\n' || inserted === '\r' || inserted === '\r\n') {
-                    this._sendKey(0x0D); // Enter
+                    this._sendKey(0x0d); // Enter
                 } else {
                     this.webrtc.send({ type: 'textinput', text: inserted });
                 }
@@ -3538,9 +3892,17 @@ export class StreamView {
 
         // Navigation/control keys not covered by the input diff.
         const navKeys = {
-            'Tab': 0x09, 'Escape': 0x1B, 'Delete': 0x2E,
-            'ArrowUp': 0x26, 'ArrowDown': 0x28, 'ArrowLeft': 0x25, 'ArrowRight': 0x27,
-            'Home': 0x24, 'End': 0x23, 'PageUp': 0x21, 'PageDown': 0x22
+            Tab: 0x09,
+            Escape: 0x1b,
+            Delete: 0x2e,
+            ArrowUp: 0x26,
+            ArrowDown: 0x28,
+            ArrowLeft: 0x25,
+            ArrowRight: 0x27,
+            Home: 0x24,
+            End: 0x23,
+            PageUp: 0x21,
+            PageDown: 0x22,
         };
         cap.addEventListener('keydown', (e) => {
             const vk = navKeys[e.code] ?? navKeys[e.key];
@@ -3556,11 +3918,13 @@ export class StreamView {
         });
         cap.addEventListener('blur', () => {
             this._kbdVisible = false;
-            this._kbdBlurAt = performance.now();   // for the toggle-button race
+            this._kbdBlurAt = performance.now(); // for the toggle-button race
             if (this._kbdBtn) this._kbdBtn.classList.remove('active');
             // A genuine dismiss hides the bar; a tap on a toolbar button refocuses
             // immediately, so defer to let _refocusCapture cancel the hide.
-            setTimeout(() => { if (!this._kbdVisible) this._hideKbToolbar(); }, 50);
+            setTimeout(() => {
+                if (!this._kbdVisible) this._hideKbToolbar();
+            }, 50);
         });
     }
 
@@ -3578,10 +3942,12 @@ export class StreamView {
             const sel = window.getSelection();
             const range = document.createRange();
             range.selectNodeContents(cap);
-            range.collapse(false);              // caret at end
+            range.collapse(false); // caret at end
             sel.removeAllRanges();
             sel.addRange(range);
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+            /* ignore */
+        }
     }
 
     /** Send a single key press (down+up), applying any latched toolbar mods. */
@@ -3596,23 +3962,22 @@ export class StreamView {
     // =========================================================================
 
     // Windows virtual-key codes for the latching modifier buttons.
-    static MOD_VK = { ctrl: 0x11, shift: 0x10, alt: 0x12, meta: 0x5B };
+    static MOD_VK = { ctrl: 0x11, shift: 0x10, alt: 0x12, meta: 0x5b };
 
     /** Map a single printable character to a Windows VK (letters/digits only),
      *  so a character typed with a latched modifier becomes Ctrl/Alt/… + key. */
     static charToVk(ch) {
         if (!ch || ch.length !== 1) return null;
         const c = ch.toUpperCase().charCodeAt(0);
-        if (c >= 0x30 && c <= 0x39) return c;   // 0-9
-        if (c >= 0x41 && c <= 0x5A) return c;   // A-Z
+        if (c >= 0x30 && c <= 0x39) return c; // 0-9
+        if (c >= 0x41 && c <= 0x5a) return c; // A-Z
         return null;
     }
 
     /** Current latched modifier state as DOM-event-style flags. */
     _modFlags() {
         const m = this._heldMods || {};
-        return { ctrlKey: !!m.ctrl, shiftKey: !!m.shift,
-                 altKey: !!m.alt, metaKey: !!m.meta };
+        return { ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta };
     }
 
     _anyModHeld() {
@@ -3630,17 +3995,17 @@ export class StreamView {
 
         // [label, kind, id]. kind: 'mod' | 'key'.
         const items = [
-            ['Win',  'key',  0x5B],   // momentary tap → Start menu (single press)
-            ['Esc',  'key',  0x1B],
-            ['Tab',  'key',  0x09],
-            ['Shift','mod',  'shift'],
-            ['Ctrl', 'mod',  'ctrl'],
-            ['Alt',  'mod',  'alt'],
-            ['Del',  'key',  0x2E],
-            ['←', 'key',  0x25],
-            ['↑', 'key',  0x26],
-            ['↓', 'key',  0x28],
-            ['→', 'key',  0x27],
+            ['Win', 'key', 0x5b], // momentary tap → Start menu (single press)
+            ['Esc', 'key', 0x1b],
+            ['Tab', 'key', 0x09],
+            ['Shift', 'mod', 'shift'],
+            ['Ctrl', 'mod', 'ctrl'],
+            ['Alt', 'mod', 'alt'],
+            ['Del', 'key', 0x2e],
+            ['←', 'key', 0x25],
+            ['↑', 'key', 0x26],
+            ['↓', 'key', 0x28],
+            ['→', 'key', 0x27],
         ];
 
         for (const [label, kind, id] of items) {
@@ -3653,8 +4018,8 @@ export class StreamView {
             btn.addEventListener('pointerdown', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (kind === 'mod')  this._toggleMod(id, btn);
-                else                 this._sendToolbarKey(id);
+                if (kind === 'mod') this._toggleMod(id, btn);
+                else this._sendToolbarKey(id);
                 this._refocusCapture();
             });
             bar.appendChild(btn);
@@ -3670,12 +4035,24 @@ export class StreamView {
         const vk = StreamView.MOD_VK[name];
         if (this._heldMods[name]) {
             this._heldMods[name] = false;
-            this.webrtc.send({ type: 'keyup', keyCode: vk, code: '', key: '', ...this._modFlags() });
+            this.webrtc.send({
+                type: 'keyup',
+                keyCode: vk,
+                code: '',
+                key: '',
+                ...this._modFlags(),
+            });
             btn.classList.remove('active');
         } else {
             this._heldMods[name] = true;
             // Flags reflect already-held mods (this one now included).
-            this.webrtc.send({ type: 'keydown', keyCode: vk, code: '', key: '', ...this._modFlags() });
+            this.webrtc.send({
+                type: 'keydown',
+                keyCode: vk,
+                code: '',
+                key: '',
+                ...this._modFlags(),
+            });
             btn.classList.add('active');
         }
     }
@@ -3692,14 +4069,18 @@ export class StreamView {
     _refocusCapture() {
         const cap = this._kbdCapture;
         if (!cap) return;
-        try { cap.focus({ preventScroll: true }); } catch (e) { cap.focus(); }
+        try {
+            cap.focus({ preventScroll: true });
+        } catch (e) {
+            cap.focus();
+        }
     }
 
     _toggleVirtualKeyboard() {
         // Tapping the toggle button blurs the capture <textarea> first, which
         // flips _kbdVisible to false before this runs. Treat a very recent blur
         // as "keyboard was open" so the second tap actually hides it.
-        const justBlurred = (performance.now() - (this._kbdBlurAt || 0)) < 350;
+        const justBlurred = performance.now() - (this._kbdBlurAt || 0) < 350;
         if (this._kbdVisible || justBlurred) this._hideVirtualKeyboard();
         else this._showVirtualKeyboard();
     }
@@ -3709,8 +4090,11 @@ export class StreamView {
     _showVirtualKeyboard() {
         if (!this._kbdCapture) return;
         this._resetKbdCapture();
-        try { this._kbdCapture.focus({ preventScroll: true }); }
-        catch (e) { this._kbdCapture.focus(); }
+        try {
+            this._kbdCapture.focus({ preventScroll: true });
+        } catch (e) {
+            this._kbdCapture.focus();
+        }
     }
 
     _hideVirtualKeyboard() {
@@ -3759,11 +4143,19 @@ export class StreamView {
             for (const name of Object.keys(this._heldMods)) {
                 if (!this._heldMods[name]) continue;
                 this._heldMods[name] = false;
-                this.webrtc.send({ type: 'keyup', keyCode: StreamView.MOD_VK[name],
-                    code: '', key: '', ctrlKey: false, shiftKey: false,
-                    altKey: false, metaKey: false });
+                this.webrtc.send({
+                    type: 'keyup',
+                    keyCode: StreamView.MOD_VK[name],
+                    code: '',
+                    key: '',
+                    ctrlKey: false,
+                    shiftKey: false,
+                    altKey: false,
+                    metaKey: false,
+                });
             }
-            this._kbToolbar.querySelectorAll('.stream-kbd-key.active')
+            this._kbToolbar
+                .querySelectorAll('.stream-kbd-key.active')
                 .forEach((b) => b.classList.remove('active'));
         }
     }
@@ -3782,8 +4174,11 @@ export class StreamView {
     handleTouchStart(e) {
         // A touch anywhere on screen dismisses the gesture hint, not just a tap
         // on the slide itself (it takes up real estate on mobile).
-        if (this._shortcutsSlide && this._shortcutsSlide.style.display !== 'none' &&
-            !this._shortcutsSlide.classList.contains('fading-out')) {
+        if (
+            this._shortcutsSlide &&
+            this._shortcutsSlide.style.display !== 'none' &&
+            !this._shortcutsSlide.classList.contains('fading-out')
+        ) {
             this._hideShortcutsSlide();
         }
         // Let UI buttons (Stop, Fullscreen, Keyboard) receive their native taps
@@ -3821,8 +4216,12 @@ export class StreamView {
             // (lets you move windows / select text without a physical button).
             this._clearLongPress();
             this._touchLongPressTimer = setTimeout(() => {
-                if (this._touchActive && !this._touchMoved &&
-                    this._touchFingerCount === 1 && !this._touchDragging) {
+                if (
+                    this._touchActive &&
+                    !this._touchMoved &&
+                    this._touchFingerCount === 1 &&
+                    !this._touchDragging
+                ) {
                     this._touchDragging = true;
                     this.webrtc.send({ type: 'mousedown', button: 1 });
                 }
@@ -3843,10 +4242,15 @@ export class StreamView {
     _seedMultiTouch(touches) {
         const n = touches.length;
         if (n < 2) return;
-        const t0 = touches[0], t1 = touches[1];
+        const t0 = touches[0],
+            t1 = touches[1];
         this._pinchPrevDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
-        let cx = 0, cy = 0;
-        for (let i = 0; i < n; i++) { cx += touches[i].clientX; cy += touches[i].clientY; }
+        let cx = 0,
+            cy = 0;
+        for (let i = 0; i < n; i++) {
+            cx += touches[i].clientX;
+            cy += touches[i].clientY;
+        }
         this._pinchPrevCx = cx / n;
         this._pinchPrevCy = cy / n;
     }
@@ -3863,22 +4267,31 @@ export class StreamView {
             // inside the area). Clamp the pan so the *scaled image* always covers
             // the area — its edges can never reveal the black bars.
             const el = this._displayEl();
-            let iw = 0, ih = 0;
-            if (this._transport === 'webrtc-media') { iw = el.videoWidth; ih = el.videoHeight; }
-            else if (this.canvas) { iw = this.canvas.width; ih = this.canvas.height; }
-            let imgW = rect.width, imgH = rect.height;
+            let iw = 0,
+                ih = 0;
+            if (this._transport === 'webrtc-media') {
+                iw = el.videoWidth;
+                ih = el.videoHeight;
+            } else if (this.canvas) {
+                iw = this.canvas.width;
+                ih = this.canvas.height;
+            }
+            let imgW = rect.width,
+                imgH = rect.height;
             if (iw > 0 && ih > 0) {
                 const fit = Math.min(rect.width / iw, rect.height / ih);
-                imgW = iw * fit; imgH = ih * fit;
+                imgW = iw * fit;
+                imgH = ih * fit;
             }
             const maxX = Math.max(0, (imgW * this._zoom - rect.width) / 2);
             const maxY = Math.max(0, (imgH * this._zoom - rect.height) / 2);
             this._panX = Math.max(-maxX, Math.min(maxX, this._panX));
             this._panY = Math.max(-maxY, Math.min(maxY, this._panY));
         }
-        const transform = this._zoom > 1.001
-            ? `translate(${this._panX}px, ${this._panY}px) scale(${this._zoom})`
-            : '';
+        const transform =
+            this._zoom > 1.001
+                ? `translate(${this._panX}px, ${this._panY}px) scale(${this._zoom})`
+                : '';
         if (this.canvas) this.canvas.style.transform = transform;
         if (this.videoEl) this.videoEl.style.transform = transform;
     }
@@ -3928,8 +4341,10 @@ export class StreamView {
             const touch = e.touches[0];
 
             // Past the tap threshold → it's a move, cancel long-press arming.
-            const movedDist = Math.hypot(touch.clientX - this._touchStartX,
-                                         touch.clientY - this._touchStartY);
+            const movedDist = Math.hypot(
+                touch.clientX - this._touchStartX,
+                touch.clientY - this._touchStartY,
+            );
             if (movedDist > this._touchTapThreshold) {
                 this._touchMoved = true;
                 if (!this._touchDragging) this._clearLongPress();
@@ -3941,7 +4356,7 @@ export class StreamView {
                 this.webrtc.send({
                     type: 'mousemove',
                     dx: Math.round(dx),
-                    dy: Math.round(dy)
+                    dy: Math.round(dy),
                 });
             }
 
@@ -3975,11 +4390,14 @@ export class StreamView {
                     this._panY = focalY * (1 - f) + f * this._panY;
                 }
                 this._zoom = newZoom;
-                if (this._zoom <= 1.001) { this._panX = 0; this._panY = 0; }
+                if (this._zoom <= 1.001) {
+                    this._panX = 0;
+                    this._panY = 0;
+                }
                 this._applyZoomTransform();
                 // Re-render the enhancer backing at the new zoom step (crisp pinch-zoom).
                 if (this._outputZoomScale() !== this._lastOutputZoomScale) this._applyOutputSize();
-                this._scrollSamples.length = 0;   // pinching cancels pending inertia
+                this._scrollSamples.length = 0; // pinching cancels pending inertia
             } else if (Math.abs(dCy) > 0.1) {
                 // Parallel two-finger drag → vertical scroll wheel, amplified and
                 // with fractional carry so slow drags still register. Record
@@ -3994,8 +4412,7 @@ export class StreamView {
                 const now = performance.now();
                 this._scrollSamples.push({ t: now, y: cy });
                 // Keep only the last ~120 ms of samples.
-                while (this._scrollSamples.length > 2 &&
-                       now - this._scrollSamples[0].t > 120) {
+                while (this._scrollSamples.length > 2 && now - this._scrollSamples[0].t > 120) {
                     this._scrollSamples.shift();
                 }
             }
@@ -4007,9 +4424,14 @@ export class StreamView {
             // Three fingers: pan the zoomed display (no effect at base zoom).
             this._touchMoved = true;
             this._clearLongPress();
-            let cx = 0, cy = 0;
-            for (let i = 0; i < count; i++) { cx += e.touches[i].clientX; cy += e.touches[i].clientY; }
-            cx /= count; cy /= count;
+            let cx = 0,
+                cy = 0;
+            for (let i = 0; i < count; i++) {
+                cx += e.touches[i].clientX;
+                cy += e.touches[i].clientY;
+            }
+            cx /= count;
+            cy /= count;
             const dCx = this._pinchPrevCx != null ? cx - this._pinchPrevCx : 0;
             const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
             if (this._zoom > 1.01) {
@@ -4042,7 +4464,8 @@ export class StreamView {
         const dist = tch
             ? Math.hypot(tch.clientX - this._touchStartX, tch.clientY - this._touchStartY)
             : 0;
-        const isTap = !this._touchMoved &&
+        const isTap =
+            !this._touchMoved &&
             dist < this._touchTapThreshold &&
             elapsed < this._touchTapTimeThreshold &&
             this._touchStartTime > 0;
@@ -4052,13 +4475,13 @@ export class StreamView {
             this.webrtc.send({ type: 'mouseup', button: 1 });
         } else if (isTap) {
             if (this._touchMaxFingers >= 3) {
-                this._toggleVirtualKeyboard();              // 3-finger tap → keyboard
+                this._toggleVirtualKeyboard(); // 3-finger tap → keyboard
             } else if (this._touchMaxFingers === 2) {
                 this.webrtc.send({ type: 'mousedown', button: 3 });
-                this.webrtc.send({ type: 'mouseup', button: 3 });   // 2-finger tap → right click
+                this.webrtc.send({ type: 'mouseup', button: 3 }); // 2-finger tap → right click
             } else {
                 this.webrtc.send({ type: 'mousedown', button: 1 });
-                this.webrtc.send({ type: 'mouseup', button: 1 });   // 1-finger tap → left click
+                this.webrtc.send({ type: 'mouseup', button: 1 }); // 1-finger tap → left click
             }
         }
 
@@ -4093,19 +4516,23 @@ export class StreamView {
         // Flick velocity from the oldest→newest recent sample (px per frame).
         const s = this._scrollSamples;
         if (s.length < 2) return;
-        const a = s[0], b = s[s.length - 1];
+        const a = s[0],
+            b = s[s.length - 1];
         const dt = b.t - a.t;
         // Only glide on a fresh flick (last sample very recent, real movement).
         if (dt <= 0 || performance.now() - b.t > 80) return;
         let v = ((b.y - a.y) / dt) * 16.67 * this._scrollScale; // wheel units/frame
-        v = Math.max(-400, Math.min(400, v));                   // clamp wild flicks
-        if (Math.abs(v) < 1.5) return;                          // too slow → no glide
+        v = Math.max(-400, Math.min(400, v)); // clamp wild flicks
+        if (Math.abs(v) < 1.5) return; // too slow → no glide
 
-        let acc = this._scrollAccum;        // carry leftover fractional delta
-        const friction = 0.95;              // per-frame decay (higher = longer glide)
+        let acc = this._scrollAccum; // carry leftover fractional delta
+        const friction = 0.95; // per-frame decay (higher = longer glide)
         const step = () => {
             v *= friction;
-            if (Math.abs(v) < 0.4) { this._scrollMomentumRaf = null; return; }
+            if (Math.abs(v) < 0.4) {
+                this._scrollMomentumRaf = null;
+                return;
+            }
             acc += v;
             const whole = Math.trunc(acc);
             if (whole !== 0) {
@@ -4126,7 +4553,7 @@ export class StreamView {
     }
 
     handlePointerLockChange() {
-        this.pointerLocked = (document.pointerLockElement === this.inputEl);
+        this.pointerLocked = document.pointerLockElement === this.inputEl;
         this._mouseFocused = this.pointerLocked;
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
@@ -4143,7 +4570,7 @@ export class StreamView {
      */
     toggleFullscreen() {
         if (document.fullscreenElement) {
-            document.exitFullscreen().catch(err => {
+            document.exitFullscreen().catch((err) => {
                 console.warn('[StreamView] exitFullscreen failed:', err.message);
             });
         } else if (this._cssFullscreen) {
@@ -4167,8 +4594,7 @@ export class StreamView {
         if (this._gamingMode) {
             if (this._onGamingMouseMove)
                 this.inputEl.removeEventListener('mousemove', this._onGamingMouseMove);
-            if (this._onGamingClick)
-                this.inputEl.removeEventListener('click', this._onGamingClick);
+            if (this._onGamingClick) this.inputEl.removeEventListener('click', this._onGamingClick);
             if (this._onGamingMouseDown)
                 this.inputEl.removeEventListener('mousedown', this._onGamingMouseDown);
             if (this._onGamingMouseUp)
@@ -4205,10 +4631,16 @@ export class StreamView {
             if (this.hintEl) this.hintEl.style.display = 'none';
         }
 
-        console.log('[StreamView] Mouse mode toggled: ' +
-            (this._gamingMode ? 'gaming (relative+lock)' : 'desktop (absolute)'));
+        console.log(
+            '[StreamView] Mouse mode toggled: ' +
+                (this._gamingMode ? 'gaming (relative+lock)' : 'desktop (absolute)'),
+        );
 
-        Toast.info(t('stream.mouseMode', { mode: this._gamingMode ? t('stream.mouseModeGaming') : t('stream.mouseModeDesktop') }));
+        Toast.info(
+            t('stream.mouseMode', {
+                mode: this._gamingMode ? t('stream.mouseModeGaming') : t('stream.mouseModeDesktop'),
+            }),
+        );
     }
 
     // =========================================================================
@@ -4238,21 +4670,21 @@ export class StreamView {
             return;
         }
         const isMac = /Mac/.test(navigator.platform);
-        const modA = isMac ? 'Cmd' : 'Ctrl';          // Primary modifier
-        const modB = isMac ? 'Option' : 'Alt';         // Secondary modifier
-        const modC = isMac ? 'Ctrl' : 'Shift';         // Tertiary modifier
+        const modA = isMac ? 'Cmd' : 'Ctrl'; // Primary modifier
+        const modB = isMac ? 'Option' : 'Alt'; // Secondary modifier
+        const modC = isMac ? 'Ctrl' : 'Shift'; // Tertiary modifier
 
         // Win order: Shift + Ctrl + Alt + ?
         // Mac order: Ctrl  + Option + Cmd + ?
-        const comboWin  = [modC, modA, modB];
-        const comboMac  = [modC, modB, modA];
+        const comboWin = [modC, modA, modB];
+        const comboMac = [modC, modB, modA];
         const comboMods = isMac ? comboMac : comboWin;
 
         const rows = [
-            [t('stream.scQuit'),       ...comboMods, 'Q'],
+            [t('stream.scQuit'), ...comboMods, 'Q'],
             [t('stream.scFullscreen'), ...comboMods, 'X'],
-            [t('stream.scRelease'),    ...comboMods, 'Z'],
-            [t('stream.scMouseMode'),  ...comboMods, 'M'],
+            [t('stream.scRelease'), ...comboMods, 'Z'],
+            [t('stream.scMouseMode'), ...comboMods, 'M'],
         ];
 
         let html = '<div class="shortcuts-slide-title">' + t('stream.shortcutsTitle') + '</div>';
@@ -4279,13 +4711,13 @@ export class StreamView {
     _buildTouchHelpContent() {
         const rows = [
             [t('stream.tcMoveCursor'), t('stream.tcMoveCursorVal')],
-            [t('stream.tcLeftClick'),  t('stream.tcLeftClickVal')],
+            [t('stream.tcLeftClick'), t('stream.tcLeftClickVal')],
             [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
-            [t('stream.tcDrag'),       t('stream.tcDragVal')],
-            [t('stream.tcScroll'),     t('stream.tcScrollVal')],
-            [t('stream.tcZoom'),       t('stream.tcZoomVal')],
-            [t('stream.tcPanZoom'),    t('stream.tcPanZoomVal')],
-            [t('stream.tcKeyboard'),   t('stream.tcKeyboardVal')],
+            [t('stream.tcDrag'), t('stream.tcDragVal')],
+            [t('stream.tcScroll'), t('stream.tcScrollVal')],
+            [t('stream.tcZoom'), t('stream.tcZoomVal')],
+            [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
+            [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
         ];
 
         let html = '<div class="shortcuts-slide-title">' + t('stream.touchTitle') + '</div>';
@@ -4313,9 +4745,12 @@ export class StreamView {
             clearTimeout(this._shortcutsTimeout);
         }
         // Touch help has more rows to read than the keyboard combos.
-        this._shortcutsTimeout = setTimeout(() => {
-            this._hideShortcutsSlide();
-        }, IS_TOUCH_DEVICE ? 7000 : 4000);
+        this._shortcutsTimeout = setTimeout(
+            () => {
+                this._hideShortcutsSlide();
+            },
+            IS_TOUCH_DEVICE ? 7000 : 4000,
+        );
     }
 
     /**
@@ -4328,15 +4763,18 @@ export class StreamView {
             this._shortcutsTimeout = null;
         }
         const slide = this._shortcutsSlide;
-        if (!slide || slide.style.display === 'none' ||
-            slide.classList.contains('fading-out')) {
+        if (!slide || slide.style.display === 'none' || slide.classList.contains('fading-out')) {
             return;
         }
         slide.classList.add('fading-out');
-        slide.addEventListener('animationend', () => {
-            slide.style.display = 'none';
-            slide.classList.remove('fading-out');
-        }, { once: true });
+        slide.addEventListener(
+            'animationend',
+            () => {
+                slide.style.display = 'none';
+                slide.classList.remove('fading-out');
+            },
+            { once: true },
+        );
     }
 
     // =========================================================================
@@ -4350,8 +4788,12 @@ export class StreamView {
      * @param {number} step - 1-indexed step to activate.
      */
     _updateStartupStep(step) {
-        console.log('[StreamView] _updateStartupStep(' + step + ') overlay=' +
-            (this._startupOverlay ? 'present' : 'NULL'));
+        console.log(
+            '[StreamView] _updateStartupStep(' +
+                step +
+                ') overlay=' +
+                (this._startupOverlay ? 'present' : 'NULL'),
+        );
         if (!this._startupOverlay) return;
         // The overlay defaults to display:none in CSS — reveal it while the
         // stream initializes (hidden again by _hideStartupOverlay after step 3).
@@ -4373,8 +4815,11 @@ export class StreamView {
         // Guard against a reveal exception bubbling up and aborting the
         // caller's _hideStartupOverlay() scheduling (overlay stuck on step 2).
         if (step >= 3) {
-            try { this._playStreamReveal(); }
-            catch (e) { console.warn('[StreamView] _playStreamReveal failed:', e); }
+            try {
+                this._playStreamReveal();
+            } catch (e) {
+                console.warn('[StreamView] _playStreamReveal failed:', e);
+            }
         }
     }
 
@@ -4413,9 +4858,15 @@ export class StreamView {
         if (!el || !this.canvasArea) return;
         const rect = this.canvasArea.getBoundingClientRect();
         const disp = this._displayEl();
-        let iw = 0, ih = 0;
-        if (this._transport === 'webrtc-media' && disp) { iw = disp.videoWidth; ih = disp.videoHeight; }
-        else if (this.canvas) { iw = this.canvas.width; ih = this.canvas.height; }
+        let iw = 0,
+            ih = 0;
+        if (this._transport === 'webrtc-media' && disp) {
+            iw = disp.videoWidth;
+            ih = disp.videoHeight;
+        } else if (this.canvas) {
+            iw = this.canvas.width;
+            ih = this.canvas.height;
+        }
         if (iw > 0 && ih > 0 && rect.width > 0 && rect.height > 0) {
             // Restrict the reveal to the frame's height only; width stays 100%.
             const fit = Math.min(rect.width / iw, rect.height / ih);
@@ -4423,7 +4874,7 @@ export class StreamView {
             el.style.inset = 'auto';
             el.style.left = '0';
             el.style.width = '100%';
-            el.style.top = ((rect.height - imgH) / 2) + 'px';
+            el.style.top = (rect.height - imgH) / 2 + 'px';
             el.style.height = imgH + 'px';
         } else {
             // Fallback: no known frame size → cover the whole area.
@@ -4439,9 +4890,14 @@ export class StreamView {
     _hideStartupOverlay() {
         const domCount = document.querySelectorAll('#stream-startup-overlay').length;
         const inDom = this._startupOverlay && document.body.contains(this._startupOverlay);
-        console.log('[StreamView] _hideStartupOverlay called, overlay=' +
-            (this._startupOverlay ? 'present' : 'NULL') +
-            ' inDom=' + inDom + ' domCount=' + domCount);
+        console.log(
+            '[StreamView] _hideStartupOverlay called, overlay=' +
+                (this._startupOverlay ? 'present' : 'NULL') +
+                ' inDom=' +
+                inDom +
+                ' domCount=' +
+                domCount,
+        );
         if (!this._startupOverlay) return;
         this._startupOverlay.classList.add('hidden');
         // Remove from DOM after the CSS transition completes
@@ -4474,9 +4930,15 @@ export class StreamView {
         el.innerHTML =
             '<div class="takeover-scanlines"></div>' +
             '<div class="takeover-box">' +
-                '<div class="takeover-title" data-text="' + title + '">' + title + '</div>' +
-                '<div class="takeover-sub">' + t('stream.takenOverBody') + '</div>' +
-                '<div class="takeover-bar"><span></span></div>' +
+            '<div class="takeover-title" data-text="' +
+            title +
+            '">' +
+            title +
+            '</div>' +
+            '<div class="takeover-sub">' +
+            t('stream.takenOverBody') +
+            '</div>' +
+            '<div class="takeover-bar"><span></span></div>' +
             '</div>';
         const root = document.getElementById('stream-view') || document.body;
         root.appendChild(el);
@@ -4485,7 +4947,9 @@ export class StreamView {
 
         // After the transition, power off the "screen", then quit.
         setTimeout(() => {
-            try { el.classList.add('is-closing'); } catch (e) {}
+            try {
+                el.classList.add('is-closing');
+            } catch (e) {}
             this._playPowerOff(() => this.quit({ takenOver: true }));
         }, 2000);
     }
@@ -4502,7 +4966,11 @@ export class StreamView {
 
         // Pre-build the apps view in the background during the ~1.8s exit
         // animation, so its content is already there once the animation ends.
-        if (this.onQuitStart) { try { this.onQuitStart(); } catch (e) {} }
+        if (this.onQuitStart) {
+            try {
+                this.onQuitStart();
+            } catch (e) {}
+        }
 
         // Full-screen glitch overlay (CP2077 style — see stream.css).
         const el = document.createElement('div');
@@ -4511,9 +4979,15 @@ export class StreamView {
         el.innerHTML =
             '<div class="takeover-scanlines"></div>' +
             '<div class="takeover-box">' +
-                '<div class="takeover-title" data-text="' + title + '">' + title + '</div>' +
-                '<div class="takeover-sub">' + t('stream.disconnectBody') + '</div>' +
-                '<div class="takeover-bar"><span></span></div>' +
+            '<div class="takeover-title" data-text="' +
+            title +
+            '">' +
+            title +
+            '</div>' +
+            '<div class="takeover-sub">' +
+            t('stream.disconnectBody') +
+            '</div>' +
+            '<div class="takeover-bar"><span></span></div>' +
             '</div>';
         const root = document.getElementById('stream-view') || document.body;
         root.appendChild(el);
@@ -4522,7 +4996,9 @@ export class StreamView {
         // Shorter than take-over (1.2s deplete) — voluntary, friendly exit.
         // Then power off the "screen" like an old CRT terminal before quitting.
         setTimeout(() => {
-            try { el.classList.add('is-closing'); } catch (e) {}
+            try {
+                el.classList.add('is-closing');
+            } catch (e) {}
             this._playPowerOff(() => this.quit());
         }, 1200);
     }
@@ -4535,7 +5011,13 @@ export class StreamView {
      */
     _playPowerOff(done) {
         let fired = false;
-        const finish = () => { if (fired) return; fired = true; try { done(); } catch (e) {} };
+        const finish = () => {
+            if (fired) return;
+            fired = true;
+            try {
+                done();
+            } catch (e) {}
+        };
 
         const crt = document.createElement('div');
         crt.className = 'crt-poweroff';
@@ -4585,18 +5067,26 @@ export class StreamView {
         // Tear down the video worker (if active): stop its pipeline, then
         // terminate so the decoder/OffscreenCanvas are released.
         if (this._videoWorker) {
-            try { this._videoWorker.postMessage({ type: 'stop' }); } catch (e) {}
-            try { this._videoWorker.terminate(); } catch (e) {}
+            try {
+                this._videoWorker.postMessage({ type: 'stop' });
+            } catch (e) {}
+            try {
+                this._videoWorker.terminate();
+            } catch (e) {}
             this._videoWorker = null;
         }
 
         // Stop tracking output size and release the renderer (GPU resources).
         if (this._resizeObserver) {
-            try { this._resizeObserver.disconnect(); } catch (e) {}
+            try {
+                this._resizeObserver.disconnect();
+            } catch (e) {}
             this._resizeObserver = null;
         }
         if (this._renderer) {
-            try { this._renderer.dispose(); } catch (e) {}
+            try {
+                this._renderer.dispose();
+            } catch (e) {}
             this._renderer = null;
         }
 
@@ -4710,7 +5200,9 @@ export class StreamView {
         if (this.decoder) {
             try {
                 this.decoder.close();
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+                /* ignore */
+            }
             this.decoder = null;
         }
 
@@ -4721,7 +5213,11 @@ export class StreamView {
 
         // Close any pending frames
         for (const frame of this.frameQueue) {
-            try { frame.close(); } catch (e) { /* ignore */ }
+            try {
+                frame.close();
+            } catch (e) {
+                /* ignore */
+            }
         }
         this.frameQueue = [];
         this.pendingFrames = [];
@@ -4754,7 +5250,7 @@ export class StreamView {
         // Notify MoonlightApp that streaming ended (restores apps/hosts view).
         if (this.onQuit) {
             const cb = this.onQuit;
-            this.onQuit = null;  // Fire once
+            this.onQuit = null; // Fire once
             cb();
         }
     }
@@ -4839,7 +5335,11 @@ export class StreamView {
         }
 
         if (this.decoder) {
-            try { this.decoder.close(); } catch (e) { /* ignore */ }
+            try {
+                this.decoder.close();
+            } catch (e) {
+                /* ignore */
+            }
             this.decoder = null;
         }
         this.decoderConfigured = false;
@@ -4850,7 +5350,11 @@ export class StreamView {
         }
 
         for (const frame of this.frameQueue) {
-            try { frame.close(); } catch (e) { /* ignore */ }
+            try {
+                frame.close();
+            } catch (e) {
+                /* ignore */
+            }
         }
         this.frameQueue = [];
         this.pendingFrames = [];

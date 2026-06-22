@@ -46,6 +46,9 @@ backend/certs/
 # Private key embedding (never committed)
 .env
 
+# Node tooling (frontend lint/format/typecheck)
+node_modules/
+
 # OS files
 .DS_Store
 Thumbs.db

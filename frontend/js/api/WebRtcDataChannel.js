@@ -21,19 +21,32 @@
  */
 function wsCloseDescription(code) {
     switch (code) {
-        case 1000: return 'normal closure';
-        case 1001: return 'endpoint going away';
-        case 1002: return 'protocol error';
-        case 1003: return 'unsupported data';
-        case 1005: return 'no status code (normal)';
-        case 1006: return 'abnormal closure — DNS / TLS / network timeout';
-        case 1007: return 'invalid frame payload data';
-        case 1008: return 'policy violation';
-        case 1009: return 'message too big';
-        case 1010: return 'mandatory extension';
-        case 1011: return 'internal server error';
-        case 1015: return 'TLS handshake failure — check system date/time';
-        default:   return 'code=' + code;
+        case 1000:
+            return 'normal closure';
+        case 1001:
+            return 'endpoint going away';
+        case 1002:
+            return 'protocol error';
+        case 1003:
+            return 'unsupported data';
+        case 1005:
+            return 'no status code (normal)';
+        case 1006:
+            return 'abnormal closure — DNS / TLS / network timeout';
+        case 1007:
+            return 'invalid frame payload data';
+        case 1008:
+            return 'policy violation';
+        case 1009:
+            return 'message too big';
+        case 1010:
+            return 'mandatory extension';
+        case 1011:
+            return 'internal server error';
+        case 1015:
+            return 'TLS handshake failure — check system date/time';
+        default:
+            return 'code=' + code;
     }
 }
 
@@ -97,17 +110,17 @@ export class WebRtcDataChannel {
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun.cloudflare.com:3478' },
             { urls: 'stun:stun.nextcloud.com:443' },
-            { urls: 'stun:relay.metered.ca:80' }
+            { urls: 'stun:relay.metered.ca:80' },
         ];
 
         // Callbacks — set by the caller
-        this.onOpen = null;       // All DataChannels open
-        this.onClose = null;      // Disconnected / error
-        this.onError = null;      // Error event
-        this.onVideo = null;      // (frame: Uint8Array, isKeyframe: boolean, backendTs: number)
-        this.onAudio = null;      // (sample: Uint8Array)
-        this.onStats = null;      // (msg: object) stats/pong messages from backend
-        this.onTakeover = null;   // () session taken over by another device
+        this.onOpen = null; // All DataChannels open
+        this.onClose = null; // Disconnected / error
+        this.onError = null; // Error event
+        this.onVideo = null; // (frame: Uint8Array, isKeyframe: boolean, backendTs: number)
+        this.onAudio = null; // (sample: Uint8Array)
+        this.onStats = null; // (msg: object) stats/pong messages from backend
+        this.onTakeover = null; // () session taken over by another device
 
         // Stats
         this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
@@ -126,15 +139,15 @@ export class WebRtcDataChannel {
         // to kick-start the decoder.
         this._lastAssembledTime = 0;
         this._starvationRequested = false;
-        this.STARVATION_TIMEOUT_MS = 1000;  // 1s without a frame — avoids false positives at 60fps with jitter
+        this.STARVATION_TIMEOUT_MS = 1000; // 1s without a frame — avoids false positives at 60fps with jitter
 
         // Guard
         this._stopping = false;
-        this._closed = false;  // separate from _stopping: markStopping() must not block close()
+        this._closed = false; // separate from _stopping: markStopping() must not block close()
 
         // WS open/error tracking for better error diagnostics
-        this._wsHadOpen = false;          // set true once onopen fires
-        this._wsHadError = false;          // set true once onerror fires
+        this._wsHadOpen = false; // set true once onopen fires
+        this._wsHadError = false; // set true once onerror fires
 
         // WS fallback mode: when ICE times out (UDP blocked), the backend
         // sends video/audio data over the existing signaling WebSocket as
@@ -162,11 +175,11 @@ export class WebRtcDataChannel {
         // connected but DataChannels haven't opened yet, we wait this long
         // for SCTP to complete before treating it as an error.
         this._wsCloseTimer = null;
-        this.WS_GRACE_PERIOD_MS = 10000;  // 10 seconds
+        this.WS_GRACE_PERIOD_MS = 10000; // 10 seconds
 
         // Constants (must match backend)
         this.FRAG_HEADER_SIZE = 17;
-        this.CLEANUP_INTERVAL_MS = 100;  // Fast stale-frame detection (was 500)
+        this.CLEANUP_INTERVAL_MS = 100; // Fast stale-frame detection (was 500)
         this.FRAME_TIMEOUT_MS = 500;
 
         // Channel labels (must match backend)
@@ -177,7 +190,7 @@ export class WebRtcDataChannel {
         // Shared IDR request throttle: minimum interval between any requestidr sent.
         // Covers stale-frame drops, starvation, and onFrameLoss — one timestamp for all.
         this._lastIdrRequestTime = 0;
-        this.IDR_THROTTLE_MS = 500;  // minimum ms between IDR requests (> backend 300ms cooldown)
+        this.IDR_THROTTLE_MS = 500; // minimum ms between IDR requests (> backend 300ms cooldown)
 
         // Callback: (frameId, wasKeyframe) — fired when an assembled frame is dropped incomplete.
         this.onFrameLoss = null;
@@ -212,35 +225,47 @@ export class WebRtcDataChannel {
             this.signalingWs.onmessage = (evt) => this._onWssMessage(evt);
 
             this.signalingWs.onerror = (err) => {
-                console.error('[WSS] WS onerror' +
-                    (this._wsHadOpen ? ' (after open)' : ' (BEFORE open)'));
+                console.error(
+                    '[WSS] WS onerror' + (this._wsHadOpen ? ' (after open)' : ' (BEFORE open)'),
+                );
                 this._wsHadError = true;
                 if (!this._stopping) {
                     if (!this._wsHadOpen) {
-                        this._onError("Connexion au serveur de streaming impossible. " +
-                            "Verifiez votre pare-feu, antivirus (HTTPS Scanning), " +
-                            "ou proxy.");
+                        this._onError(
+                            'Connexion au serveur de streaming impossible. ' +
+                                'Verifiez votre pare-feu, antivirus (HTTPS Scanning), ' +
+                                'ou proxy.',
+                        );
                     } else {
-                        this._onError("Erreur de connexion au serveur de streaming");
+                        this._onError('Erreur de connexion au serveur de streaming');
                     }
                 }
             };
 
             this.signalingWs.onclose = (evt) => {
                 const desc = wsCloseDescription(evt.code);
-                console.log('[WSS] WS closed: ' + desc + ' (code=' + evt.code + ')' +
-                    (evt.reason ? ', reason=' + evt.reason : ''));
+                console.log(
+                    '[WSS] WS closed: ' +
+                        desc +
+                        ' (code=' +
+                        evt.code +
+                        ')' +
+                        (evt.reason ? ', reason=' + evt.reason : ''),
+                );
                 if (!this._stopping && !this._wsHadError) {
                     // onerror may have already triggered — only act if it didn't.
                     if (evt.code === 1015) {
-                        this._onError("Erreur de securite TLS. " +
-                            "Verifiez la date et l'heure du systeme.");
+                        this._onError(
+                            'Erreur de securite TLS. ' + "Verifiez la date et l'heure du systeme.",
+                        );
                     } else if (this.connected) {
-                        this._onError("Connexion au serveur de streaming interrompue");
+                        this._onError('Connexion au serveur de streaming interrompue');
                     } else {
-                        this._onError("Connexion au serveur de streaming impossible. " +
-                            "Verifiez votre pare-feu, antivirus (HTTPS Scanning), " +
-                            "ou proxy.");
+                        this._onError(
+                            'Connexion au serveur de streaming impossible. ' +
+                                'Verifiez votre pare-feu, antivirus (HTTPS Scanning), ' +
+                                'ou proxy.',
+                        );
                     }
                 }
             };
@@ -262,31 +287,42 @@ export class WebRtcDataChannel {
             };
 
             this.signalingWs.onerror = (err) => {
-                console.error('[WebRTC] Signaling WS onerror' +
-                    (this._wsHadOpen ? ' (after open)' : ' (BEFORE open)'));
+                console.error(
+                    '[WebRTC] Signaling WS onerror' +
+                        (this._wsHadOpen ? ' (after open)' : ' (BEFORE open)'),
+                );
                 this._wsHadError = true;
                 if (!this._stopping) {
                     // onerror fires before onclose but carries no close code.
                     // Let onclose handle the user-facing error (it has the code).
                     // Only trigger now if we were already connected (runtime error).
                     if (this._wsHadOpen) {
-                        this._onError("Erreur de connexion au serveur de streaming");
+                        this._onError('Erreur de connexion au serveur de streaming');
                     }
                 }
             };
 
             this.signalingWs.onclose = (evt) => {
                 const desc = wsCloseDescription(evt.code);
-                console.log('[WebRTC] Signaling WS closed: ' + desc + ' (code=' + evt.code + ')' +
-                    (evt.reason ? ', reason=' + evt.reason : ''));
+                console.log(
+                    '[WebRTC] Signaling WS closed: ' +
+                        desc +
+                        ' (code=' +
+                        evt.code +
+                        ')' +
+                        (evt.reason ? ', reason=' + evt.reason : ''),
+                );
                 this._wsHadError = false; // Reset so onclose can trigger its own error
 
                 // If already connected (DCs open) or stopping, WS close is expected
                 if (this.connected || this._stopping) return;
 
                 if (this._iceConnected) {
-                    console.log('[WebRTC] WS closed after ICE connected — waiting ' +
-                        (this.WS_GRACE_PERIOD_MS / 1000) + 's for DataChannels...');
+                    console.log(
+                        '[WebRTC] WS closed after ICE connected — waiting ' +
+                            this.WS_GRACE_PERIOD_MS / 1000 +
+                            's for DataChannels...',
+                    );
                     this._wsCloseTimer = setTimeout(() => {
                         if (!this.connected && !this._stopping) {
                             this._onError('Timed out waiting for DataChannels after WS closed');
@@ -295,20 +331,26 @@ export class WebRtcDataChannel {
                 } else {
                     // Close code tells us what went wrong
                     if (evt.code === 1015) {
-                        this._onError("Erreur de securite TLS. " +
-                            "Verifiez la date et l'heure du systeme.");
+                        this._onError(
+                            'Erreur de securite TLS. ' + "Verifiez la date et l'heure du systeme.",
+                        );
                     } else if (evt.code === 1006 || !this._wsHadOpen) {
-                        this._onError("Connexion au serveur de streaming impossible. " +
-                            "Verifiez votre pare-feu, antivirus (HTTPS Scanning), " +
-                            "ou proxy.");
+                        this._onError(
+                            'Connexion au serveur de streaming impossible. ' +
+                                'Verifiez votre pare-feu, antivirus (HTTPS Scanning), ' +
+                                'ou proxy.',
+                        );
                     } else {
-                        this._onError("Connexion au serveur de streaming interrompue");
+                        this._onError('Connexion au serveur de streaming interrompue');
                     }
                 }
             };
 
             // Start cleanup timer (for chunk reassembly in WebRTC mode)
-            this._cleanupTimer = setInterval(() => this._cleanupStaleFrames(), this.CLEANUP_INTERVAL_MS);
+            this._cleanupTimer = setInterval(
+                () => this._cleanupStaleFrames(),
+                this.CLEANUP_INTERVAL_MS,
+            );
         }
     }
 
@@ -364,7 +406,7 @@ export class WebRtcDataChannel {
     _startIceTimer() {
         this._clearIceTimer();
         this._iceTimeout = setTimeout(() => this._onIceTimeout(), this.ICE_TIMEOUT_MS);
-        console.log('[WebRTC] ICE timeout set to ' + (this.ICE_TIMEOUT_MS / 1000) + 's');
+        console.log('[WebRTC] ICE timeout set to ' + this.ICE_TIMEOUT_MS / 1000 + 's');
     }
 
     /** Cancel the ICE connection timeout timer. */
@@ -380,8 +422,11 @@ export class WebRtcDataChannel {
         if (this._stopping || this.connected || this._iceConnected) return;
         this._iceTimeout = null;
 
-        console.warn('[WebRTC] ICE timeout — connection not established within ' +
-            (this.ICE_TIMEOUT_MS / 1000) + 's');
+        console.warn(
+            '[WebRTC] ICE timeout — connection not established within ' +
+                this.ICE_TIMEOUT_MS / 1000 +
+                's',
+        );
 
         // Chain-fallback: surface as an error so the caller relaunches with the
         // next transport instead of rerouting over the signaling WS in-session.
@@ -396,8 +441,10 @@ export class WebRtcDataChannel {
             this._requestWsFallback('timeout');
         } else {
             // WS is gone — no fallback possible, display error
-            this._onError("La connexion WebRTC n'a pas pu être établie. " +
-                "Vérifiez que votre réseau autorise l'UDP sortant.");
+            this._onError(
+                "La connexion WebRTC n'a pas pu être établie. " +
+                    "Vérifiez que votre réseau autorise l'UDP sortant.",
+            );
         }
     }
 
@@ -424,8 +471,10 @@ export class WebRtcDataChannel {
         this._fallbackRequestTimer = setTimeout(() => {
             if (!this._wsFallback && !this._stopping) {
                 console.error('[WebRTC] WS fallback response not received within 5s — error');
-                this._onError("La connexion WebRTC n'a pas pu être établie. " +
-                    "Vérifiez que votre réseau autorise l'UDP sortant.");
+                this._onError(
+                    "La connexion WebRTC n'a pas pu être établie. " +
+                        "Vérifiez que votre réseau autorise l'UDP sortant.",
+                );
             }
         }, 5000);
 
@@ -439,7 +488,7 @@ export class WebRtcDataChannel {
 
     /** Close all connections and clean up. */
     close() {
-        if (this._closed) return;  // idempotent — but markStopping() must NOT short-circuit this
+        if (this._closed) return; // idempotent — but markStopping() must NOT short-circuit this
         this._closed = true;
         this._stopping = true;
         console.log('[WebRTC] Closing...');
@@ -459,9 +508,15 @@ export class WebRtcDataChannel {
                 this.signalingWs.onmessage = null;
                 this.signalingWs.onerror = null;
                 this.signalingWs.onclose = null;
-                if (this.signalingWs.readyState === WebSocket.OPEN ||
-                    this.signalingWs.readyState === WebSocket.CONNECTING) {
-                    try { this.signalingWs.close(); } catch (e) { /* ignore */ }
+                if (
+                    this.signalingWs.readyState === WebSocket.OPEN ||
+                    this.signalingWs.readyState === WebSocket.CONNECTING
+                ) {
+                    try {
+                        this.signalingWs.close();
+                    } catch (e) {
+                        /* ignore */
+                    }
                 }
                 this.signalingWs = null;
             }
@@ -492,14 +547,22 @@ export class WebRtcDataChannel {
         // Close DataChannels
         for (const [label, dc] of Object.entries(this.dataChannels)) {
             if (dc && dc.readyState !== 'closed') {
-                try { dc.close(); } catch (e) { /* ignore */ }
+                try {
+                    dc.close();
+                } catch (e) {
+                    /* ignore */
+                }
             }
             this.dataChannels[label] = null;
         }
 
         // Close PeerConnection
         if (this.pc) {
-            try { this.pc.close(); } catch (e) { /* ignore */ }
+            try {
+                this.pc.close();
+            } catch (e) {
+                /* ignore */
+            }
             this.pc = null;
         }
 
@@ -509,9 +572,15 @@ export class WebRtcDataChannel {
             this.signalingWs.onmessage = null;
             this.signalingWs.onerror = null;
             this.signalingWs.onclose = null;
-            if (this.signalingWs.readyState === WebSocket.OPEN ||
-                this.signalingWs.readyState === WebSocket.CONNECTING) {
-                try { this.signalingWs.close(); } catch (e) { /* ignore */ }
+            if (
+                this.signalingWs.readyState === WebSocket.OPEN ||
+                this.signalingWs.readyState === WebSocket.CONNECTING
+            ) {
+                try {
+                    this.signalingWs.close();
+                } catch (e) {
+                    /* ignore */
+                }
             }
             this.signalingWs = null;
         }
@@ -534,7 +603,7 @@ export class WebRtcDataChannel {
             iceServers: iceServers,
             iceTransportPolicy: 'all',
             bundlePolicy: 'max-bundle',
-            rtcpMuxPolicy: 'require'
+            rtcpMuxPolicy: 'require',
         };
         console.log('[WebRTC] ICE servers:', JSON.stringify(iceServers));
 
@@ -542,8 +611,11 @@ export class WebRtcDataChannel {
 
         // --- ICE candidate handler (filter TURN, prioritize UDP) ---
         this.pc.onicecandidate = (evt) => {
-            if (!evt.candidate || !this.signalingWs ||
-                this.signalingWs.readyState !== WebSocket.OPEN) {
+            if (
+                !evt.candidate ||
+                !this.signalingWs ||
+                this.signalingWs.readyState !== WebSocket.OPEN
+            ) {
                 return;
             }
 
@@ -556,7 +628,7 @@ export class WebRtcDataChannel {
             this._sendSignaling({
                 type: 'ice',
                 candidate: evt.candidate.candidate,
-                mid: evt.candidate.sdpMid || '0'
+                mid: evt.candidate.sdpMid || '0',
             });
         };
 
@@ -617,7 +689,7 @@ export class WebRtcDataChannel {
             negotiated: true,
             id: 0,
             ordered: false,
-            maxRetransmits: 3
+            maxRetransmits: 3,
         };
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
         this._setupDataChannel('video', this.dataChannels.video);
@@ -630,7 +702,7 @@ export class WebRtcDataChannel {
             negotiated: true,
             id: 1,
             ordered: true,
-            maxPacketLifeTime: 250
+            maxPacketLifeTime: 250,
         };
         this.dataChannels.audio = this.pc.createDataChannel('audio', audioInit);
         this._setupDataChannel('audio', this.dataChannels.audio);
@@ -639,7 +711,7 @@ export class WebRtcDataChannel {
         const inputInit = {
             negotiated: true,
             id: 2,
-            ordered: true
+            ordered: true,
         };
         this.dataChannels.input = this.pc.createDataChannel('input', inputInit);
         this._setupDataChannel('input', this.dataChannels.input);
@@ -713,12 +785,14 @@ export class WebRtcDataChannel {
     }
 
     _allDcOpen() {
-        return this.dataChannels.video &&
+        return (
+            this.dataChannels.video &&
             this.dataChannels.video.readyState === 'open' &&
             this.dataChannels.audio &&
             this.dataChannels.audio.readyState === 'open' &&
             this.dataChannels.input &&
-            this.dataChannels.input.readyState === 'open';
+            this.dataChannels.input.readyState === 'open'
+        );
     }
 
     // =========================================================================
@@ -771,7 +845,7 @@ export class WebRtcDataChannel {
         try {
             const remoteDesc = new RTCSessionDescription({
                 type: 'offer',
-                sdp: sdp
+                sdp: sdp,
             });
             await this.pc.setRemoteDescription(remoteDesc);
             console.log('[WebRTC] Remote description set (offer)');
@@ -789,7 +863,7 @@ export class WebRtcDataChannel {
             // Send answer via signaling WS
             this._sendSignaling({
                 type: 'sdp',
-                sdp: this.pc.localDescription.sdp
+                sdp: this.pc.localDescription.sdp,
             });
         } catch (e) {
             console.error('[WebRTC] SDP handling error:', e.message);
@@ -803,7 +877,7 @@ export class WebRtcDataChannel {
         try {
             const iceCandidate = new RTCIceCandidate({
                 candidate: candidate,
-                sdpMid: mid
+                sdpMid: mid,
             });
             await this.pc.addIceCandidate(iceCandidate);
             if (this._logCount < 5) {
@@ -828,9 +902,15 @@ export class WebRtcDataChannel {
             this.signalingWs.onmessage = null;
             this.signalingWs.onerror = null;
             this.signalingWs.onclose = null;
-            if (this.signalingWs.readyState === WebSocket.OPEN ||
-                this.signalingWs.readyState === WebSocket.CONNECTING) {
-                try { this.signalingWs.close(); } catch (e) { /* ignore */ }
+            if (
+                this.signalingWs.readyState === WebSocket.OPEN ||
+                this.signalingWs.readyState === WebSocket.CONNECTING
+            ) {
+                try {
+                    this.signalingWs.close();
+                } catch (e) {
+                    /* ignore */
+                }
             }
             this.signalingWs = null;
         }
@@ -858,13 +938,17 @@ export class WebRtcDataChannel {
 
         // Parse header (big endian)
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const frameId = view.getUint32(0, false);       // offset 0, big endian
-        const chunkIndex = view.getUint16(4, false);    // offset 4, big endian
-        const totalChunks = view.getUint16(6, false);   // offset 6, big endian
-        const isKeyframe = view.getUint8(8) !== 0;      // offset 8
-        const payloadSize = view.getUint32(9, false);   // offset 9, big endian
-        const backendTs = view.getUint32(13, false);    // offset 13, big endian
-        const payload = new Uint8Array(data.buffer, data.byteOffset + this.FRAG_HEADER_SIZE, payloadSize);
+        const frameId = view.getUint32(0, false); // offset 0, big endian
+        const chunkIndex = view.getUint16(4, false); // offset 4, big endian
+        const totalChunks = view.getUint16(6, false); // offset 6, big endian
+        const isKeyframe = view.getUint8(8) !== 0; // offset 8
+        const payloadSize = view.getUint32(9, false); // offset 9, big endian
+        const backendTs = view.getUint32(13, false); // offset 13, big endian
+        const payload = new Uint8Array(
+            data.buffer,
+            data.byteOffset + this.FRAG_HEADER_SIZE,
+            payloadSize,
+        );
 
         // Check if we already have an entry for this frame
         let entry = this._reassembly.get(frameId);
@@ -876,7 +960,7 @@ export class WebRtcDataChannel {
                 keyframe: isKeyframe,
                 firstChunkTime: performance.now(),
                 completed: false,
-                backendTs: backendTs   // Same for all chunks in a frame
+                backendTs: backendTs, // Same for all chunks in a frame
             };
             // Pre-allocate array
             for (let i = 0; i < totalChunks; i++) entry.chunks[i] = null;
@@ -907,8 +991,17 @@ export class WebRtcDataChannel {
             this.stats.framesDropped++;
             if (this._frameLogCount < 10) {
                 const tag = entry.keyframe ? 'keyframe' : 'delta';
-                console.warn('[WebRTC] Dropping incomplete ' + tag + ' #' + frameId +
-                    ': got ' + entry.received + '/' + entry.total + ' chunks');
+                console.warn(
+                    '[WebRTC] Dropping incomplete ' +
+                        tag +
+                        ' #' +
+                        frameId +
+                        ': got ' +
+                        entry.received +
+                        '/' +
+                        entry.total +
+                        ' chunks',
+                );
                 this._frameLogCount++;
             }
             // Notify StreamView so it can invalidate decoder reference state
@@ -962,7 +1055,11 @@ export class WebRtcDataChannel {
         // Parse header (same format, but isKeyframe is always 0 for audio)
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
         const payloadSize = view.getUint32(9, false);
-        const payload = new Uint8Array(data.buffer, data.byteOffset + this.FRAG_HEADER_SIZE, payloadSize);
+        const payload = new Uint8Array(
+            data.buffer,
+            data.byteOffset + this.FRAG_HEADER_SIZE,
+            payloadSize,
+        );
 
         // Audio packets are typically single-chunk, so we emit directly
         if (this.onAudio) {
@@ -991,8 +1088,16 @@ export class WebRtcDataChannel {
                 this.stats.framesDropped++;
                 staleCount++;
                 if (this._frameLogCount < 5) {
-                    console.warn('[WebRTC] Dropping stale frame #' + frameId +
-                        ': age=' + Math.round(age) + 'ms, got ' + entry.received + '/' + entry.total);
+                    console.warn(
+                        '[WebRTC] Dropping stale frame #' +
+                            frameId +
+                            ': age=' +
+                            Math.round(age) +
+                            'ms, got ' +
+                            entry.received +
+                            '/' +
+                            entry.total,
+                    );
                     this._frameLogCount++;
                 }
                 // Notify StreamView so it can invalidate decoder reference state
@@ -1015,13 +1120,16 @@ export class WebRtcDataChannel {
 
         // Starvation detection: if no frame was assembled for STARVATION_TIMEOUT_MS
         // and we haven't already requested an IDR for this episode, request one.
-        if (!this._starvationRequested &&
+        if (
+            !this._starvationRequested &&
             this._lastAssembledTime > 0 &&
-            (now - this._lastAssembledTime) > this.STARVATION_TIMEOUT_MS &&
-            this.stats.framesAssembled > 5 /* skip initial quiet period */) {
+            now - this._lastAssembledTime > this.STARVATION_TIMEOUT_MS &&
+            this.stats.framesAssembled > 5 /* skip initial quiet period */
+        ) {
             this._starvationRequested = true;
-            this._requestIdrFrame('starvation (' +
-                Math.round(now - this._lastAssembledTime) + 'ms since last frame)');
+            this._requestIdrFrame(
+                'starvation (' + Math.round(now - this._lastAssembledTime) + 'ms since last frame)',
+            );
         }
     }
 
@@ -1030,7 +1138,7 @@ export class WebRtcDataChannel {
     _requestIdrFrame(reason) {
         const now = performance.now();
         if (now - this._lastIdrRequestTime < this.IDR_THROTTLE_MS) {
-            return;  // Throttled — too soon since last request
+            return; // Throttled — too soon since last request
         }
         this._lastIdrRequestTime = now;
 
@@ -1039,16 +1147,20 @@ export class WebRtcDataChannel {
             if (this.signalingWs && this.signalingWs.readyState === WebSocket.OPEN) {
                 this._idrLogCount++;
                 if (this._idrLogCount <= 5 || this._idrLogCount % 10 === 0) {
-                    console.warn('[' + (this._wssMode ? 'WSS' : 'WebRTC') +
-                        '] Requesting IDR frame via WS fallback (' + reason + ')');
+                    console.warn(
+                        '[' +
+                            (this._wssMode ? 'WSS' : 'WebRTC') +
+                            '] Requesting IDR frame via WS fallback (' +
+                            reason +
+                            ')',
+                    );
                 }
                 this.signalingWs.send(JSON.stringify({ type: 'requestidr' }));
             }
             return;
         }
 
-        if (!this.dataChannels.input ||
-            this.dataChannels.input.readyState !== 'open') {
+        if (!this.dataChannels.input || this.dataChannels.input.readyState !== 'open') {
             // Cannot request IDR yet — input DC not open.  The backend will
             // buffer the keyframe from Sunshine and send it when the Video
             // DataChannel opens.
@@ -1107,7 +1219,9 @@ export class WebRtcDataChannel {
         // Close the PeerConnection — we're done with WebRTC
         // (DataChannels will never open since ICE failed)
         if (this.pc) {
-            try { this.pc.close(); } catch (e) {}
+            try {
+                this.pc.close();
+            } catch (e) {}
             this.pc = null;
         }
         this.dataChannels = { video: null, audio: null, input: null };
@@ -1181,7 +1295,9 @@ export class WebRtcDataChannel {
                 } else if (msg.type === 'takeover' && this.onTakeover) {
                     this.onTakeover();
                 }
-            } catch (e) { /* ignore non-JSON text */ }
+            } catch (e) {
+                /* ignore non-JSON text */
+            }
             return;
         }
 
@@ -1195,7 +1311,7 @@ export class WebRtcDataChannel {
             // Protocol: [channel:1][frag_header:17][payload...]
             // Routes to existing _onVideoChunk / _onAudioChunk reassembly logic.
             if (this._wssFragmented) {
-                const fragData = raw.subarray(1);  // Strip channel prefix byte
+                const fragData = raw.subarray(1); // Strip channel prefix byte
                 if (fragData.length < this.FRAG_HEADER_SIZE) return;
 
                 if (channel === 0x01) {
@@ -1203,7 +1319,9 @@ export class WebRtcDataChannel {
                 } else if (channel === 0x02) {
                     this._onAudioChunk(fragData);
                 } else {
-                    console.warn('[WSS] Fragmented: unknown channel byte: 0x' + channel.toString(16));
+                    console.warn(
+                        '[WSS] Fragmented: unknown channel byte: 0x' + channel.toString(16),
+                    );
                 }
                 return;
             }
@@ -1240,7 +1358,9 @@ export class WebRtcDataChannel {
                 } else if (msg.type === 'takeover') {
                     if (this.onTakeover) this.onTakeover();
                 }
-            } catch (e) { /* non-JSON text — ignore */ }
+            } catch (e) {
+                /* non-JSON text — ignore */
+            }
         }
     }
 

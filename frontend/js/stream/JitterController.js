@@ -35,19 +35,19 @@
  */
 
 const DEFAULTS = {
-    MIN: 0,            // ms — clean-link floor (== today's behavior)
-    MAX: 200,          // ms — playable cap for a game stream
-    JITTER_K: 2.5,     // cover the jitter peak, not the mean
-    RTT_K: 1.5,        // window so a NACK retransmission lands in time
-    BUMP_FREEZE: 50,   // ms — immediate step-up on an underrun
-    BUMP_LOSS: 30,     // ms — immediate step-up on a loss spike
-    LOSS_HI: 0.02,     // loss rate triggering a bump
-    LOSS_LO: 0.003,    // loss rate below which decay is allowed
-    JITTER_LO: 8,      // ms — jitter below which decay is allowed
-    EWMA_ALPHA: 0.3,   // jitter smoothing
-    CLEAN_HOLD: 5,     // ticks of sustained calm before decaying
-    DECAY_STEP: 10,    // ms removed per decay tick
-    DEADBAND: 15       // ms — minimum change worth pushing to the receiver
+    MIN: 0, // ms — clean-link floor (== today's behavior)
+    MAX: 200, // ms — playable cap for a game stream
+    JITTER_K: 2.5, // cover the jitter peak, not the mean
+    RTT_K: 1.5, // window so a NACK retransmission lands in time
+    BUMP_FREEZE: 50, // ms — immediate step-up on an underrun
+    BUMP_LOSS: 30, // ms — immediate step-up on a loss spike
+    LOSS_HI: 0.02, // loss rate triggering a bump
+    LOSS_LO: 0.003, // loss rate below which decay is allowed
+    JITTER_LO: 8, // ms — jitter below which decay is allowed
+    EWMA_ALPHA: 0.3, // jitter smoothing
+    CLEAN_HOLD: 5, // ticks of sustained calm before decaying
+    DECAY_STEP: 10, // ms removed per decay tick
+    DEADBAND: 15, // ms — minimum change worth pushing to the receiver
 };
 
 export class JitterController {
@@ -68,7 +68,9 @@ export class JitterController {
     }
 
     /** Current target in ms (the controller's internal state, always available). */
-    get targetMs() { return this._targetMs; }
+    get targetMs() {
+        return this._targetMs;
+    }
 
     /**
      * Advance one tick.
@@ -98,7 +100,7 @@ export class JitterController {
         this._prevPacketsReceived = recv;
         this._prevFreezeCount = freezeCount;
 
-        const lossRate = (dLost + dRecv) > 0 ? dLost / (dLost + dRecv) : 0;
+        const lossRate = dLost + dRecv > 0 ? dLost / (dLost + dRecv) : 0;
         const jitterMs = raw.jitterMs || 0;
         const rttMs = raw.rttMs || 0;
 
@@ -116,7 +118,8 @@ export class JitterController {
             this._cleanTicks = 0;
         } else {
             // Decay only after sustained calm — release latency cautiously.
-            if (freezes === 0 && lossRate < c.LOSS_LO && this._jitterEwma < c.JITTER_LO) this._cleanTicks++;
+            if (freezes === 0 && lossRate < c.LOSS_LO && this._jitterEwma < c.JITTER_LO)
+                this._cleanTicks++;
             else this._cleanTicks = 0;
             if (this._cleanTicks >= c.CLEAN_HOLD) {
                 this._targetMs = Math.max(c.MIN, this._targetMs - c.DECAY_STEP);
@@ -125,7 +128,7 @@ export class JitterController {
 
         // Deadband: only command on a significant change, or when settling back to
         // the minimum so we don't leave a small residual buffer pinned.
-        const settledToMin = (this._targetMs === c.MIN && this._lastCommanded > c.MIN);
+        const settledToMin = this._targetMs === c.MIN && this._lastCommanded > c.MIN;
         if (Math.abs(this._targetMs - this._lastCommanded) >= c.DEADBAND || settledToMin) {
             this._lastCommanded = this._targetMs;
             this._lastSignals = { lossRate, jitterEwma: this._jitterEwma, rttMs, freezes };
@@ -135,5 +138,7 @@ export class JitterController {
     }
 
     /** Signals at the last commanded change (for logging/overlay). */
-    get lastSignals() { return this._lastSignals || null; }
+    get lastSignals() {
+        return this._lastSignals || null;
+    }
 }

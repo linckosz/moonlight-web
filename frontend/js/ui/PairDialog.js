@@ -51,13 +51,6 @@ export class PairDialog {
         }
     }
 
-    stopPolling() {
-        if (this.pollTimer) {
-            clearInterval(this.pollTimer);
-            this.pollTimer = null;
-        }
-    }
-
     async startPairing() {
         const statusEl = this.overlay.querySelector('.pairing-status-text');
         const pinEl = this.overlay.querySelector('.pairing-pin-display');
@@ -115,8 +108,7 @@ export class PairDialog {
                 this.stopPolling();
                 statusEl.textContent = t('pairing.paired');
                 statusEl.className = 'pairing-status-text pairing-success';
-                if (this.onComplete)
-                    this.onComplete();
+                if (this.onComplete) this.onComplete();
                 setTimeout(() => this.close(), 1500);
             } else if (result.status === 'awaiting_pin') {
                 // Still waiting — keep polling, keep the PIN displayed
@@ -151,18 +143,15 @@ export class PairDialog {
     }
 
     bindEvents() {
-        this.overlay.querySelector('.btn-pair-cancel')
-            .addEventListener('click', () => {
-                this.close();
-                if (this.onCancel)
-                    this.onCancel();
-            });
+        this.overlay.querySelector('.btn-pair-cancel').addEventListener('click', () => {
+            this.close();
+            if (this.onCancel) this.onCancel();
+        });
 
         this.overlay.addEventListener('click', (e) => {
             if (e.target === this.overlay) {
                 this.close();
-                if (this.onCancel)
-                    this.onCancel();
+                if (this.onCancel) this.onCancel();
             }
         });
     }

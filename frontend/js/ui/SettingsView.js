@@ -31,7 +31,8 @@ import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
-const IS_TOUCH_DEVICE = 'ontouchstart' in window ||
+const IS_TOUCH_DEVICE =
+    'ontouchstart' in window ||
     (typeof navigator.maxTouchPoints !== 'undefined' && navigator.maxTouchPoints > 0);
 
 const STORAGE_KEY = 'mw-streaming-settings';
@@ -126,23 +127,30 @@ export class SettingsView {
         const kbps = data.stream_bitrate || 20000;
         this._streamBitrateMbps = Math.round(kbps / 1000);
         this._streamHeight = data.stream_height || 1080;
-        this._streamAspect = ['auto', '16:9', '21:9', '32:9'].includes(data.stream_aspect) ? data.stream_aspect : 'auto';
+        this._streamAspect = ['auto', '16:9', '21:9', '32:9'].includes(data.stream_aspect)
+            ? data.stream_aspect
+            : 'auto';
         this._streamFps = data.stream_fps || 60;
         this._hdrEnabled = data.hdr_enabled === true;
         this._chroma444 = data.chroma_444_enabled === true;
-        this._touchSensitivity = typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
-            ? data.touch_sensitivity : 2.2;
+        this._touchSensitivity =
+            typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
+                ? data.touch_sensitivity
+                : 2.2;
         this._vsync = data.vsync_enabled !== false;
         // Back-compat: older saves stored a boolean; map it onto the tri-state.
         const vw = data.video_worker;
-        this._videoWorker = (vw === true || vw === 'on') ? 'on'
-            : (vw === false || vw === 'off') ? 'off' : 'auto';
+        this._videoWorker =
+            vw === true || vw === 'on' ? 'on' : vw === false || vw === 'off' ? 'off' : 'auto';
         this._videoEnhancement = data.video_enhancement === 'on' ? 'on' : 'off';
         const algo = data.video_enhancement_algo;
-        this._videoEnhancementAlgo = (algo === 'sgsr' || algo === 'fsr1' || algo === 'force2d') ? algo : 'auto';
+        this._videoEnhancementAlgo =
+            algo === 'sgsr' || algo === 'fsr1' || algo === 'force2d' ? algo : 'auto';
         this._powerSave = data.power_save === true;
-        this._powerSaveBackup = (data.power_save_backup && typeof data.power_save_backup === 'object')
-            ? data.power_save_backup : null;
+        this._powerSaveBackup =
+            data.power_save_backup && typeof data.power_save_backup === 'object'
+                ? data.power_save_backup
+                : null;
     }
 
     /**
@@ -163,7 +171,7 @@ export class SettingsView {
     }
 
     _computeAutoBitrate(height, fps, aspect, chroma444) {
-        const REF_BITRATE = 20;   // Mbps at 1920×1080 / 60fps / SDR
+        const REF_BITRATE = 20; // Mbps at 1920×1080 / 60fps / SDR
         const h = height > 0 ? height : 1080;
         // Pixel count = (h × aspectRatio) × h, normalised to the 1920×1080 ref.
         // Ultrawide (21:9, 32:9) therefore scales the bitrate up accordingly.
@@ -181,11 +189,14 @@ export class SettingsView {
         const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10);
         const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
         const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked === true;
-        const aspect = this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
+        const aspect =
+            this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
         const mbps = this._computeAutoBitrate(
             isNaN(height) ? this._streamHeight : height,
             isNaN(fps) ? this._streamFps : fps,
-            aspect, chroma444);
+            aspect,
+            chroma444,
+        );
 
         const slider = this.container.querySelector('#settings-stream-bitrate');
         const label = this.container.querySelector('#settings-bitrate-value');
@@ -214,7 +225,7 @@ export class SettingsView {
             video_enhancement_algo: this._videoEnhancementAlgo,
             // Per-device only (server ignores these unknown fields).
             power_save: this._powerSave,
-            power_save_backup: this._powerSaveBackup
+            power_save_backup: this._powerSaveBackup,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 
@@ -244,8 +255,10 @@ export class SettingsView {
         const support = { h264: false, hevc: false, av1: false };
 
         if (typeof VideoDecoder?.isConfigSupported !== 'function') {
-            console.warn('[Settings] VideoDecoder.isConfigSupported not available — ' +
-                'assuming all codecs supported');
+            console.warn(
+                '[Settings] VideoDecoder.isConfigSupported not available — ' +
+                    'assuming all codecs supported',
+            );
             support.h264 = true;
             support.hevc = true;
             support.av1 = true;
@@ -266,20 +279,20 @@ export class SettingsView {
         };
 
         support.h264 = await testCodec([
-            'avc1.64002A',  // High 4.2
-            'avc1.42001E',  // Baseline 3.0
-            'avc1.64001E',  // High 3.0
+            'avc1.64002A', // High 4.2
+            'avc1.42001E', // Baseline 3.0
+            'avc1.64001E', // High 3.0
         ]);
         support.hevc = await testCodec([
-            'hev1.1.6.L153.B0',  // hev1 used for actual streaming (Annex B fmt)
-            'hvc1.1.6.L153.B0',  // Main, High tier, Level 5.1
-            'hvc1.1.6.L120.B0',  // Main, High tier, Level 4.0
-            'hvc1.1.2.L153.B0',  // Main, Main tier, Level 5.1
+            'hev1.1.6.L153.B0', // hev1 used for actual streaming (Annex B fmt)
+            'hvc1.1.6.L153.B0', // Main, High tier, Level 5.1
+            'hvc1.1.6.L120.B0', // Main, High tier, Level 4.0
+            'hvc1.1.2.L153.B0', // Main, Main tier, Level 5.1
         ]);
-        support.av1  = await testCodec([
-            'av01.0.08M.08',    // Main, 1080p, 8-bit
-            'av01.0.04M.08',    // Main, 720p, 8-bit
-            'av01.0.01M.08',    // Main, 480p, 8-bit
+        support.av1 = await testCodec([
+            'av01.0.08M.08', // Main, 1080p, 8-bit
+            'av01.0.04M.08', // Main, 720p, 8-bit
+            'av01.0.01M.08', // Main, 480p, 8-bit
         ]);
 
         console.log('[Settings] Browser codec support:', JSON.stringify(support));
@@ -344,25 +357,42 @@ export class SettingsView {
             // When MediaTrack transport is forced, only H.264 is available
             const codec = this._mediaTrackOnlyH264
                 ? 'h264'
-                : (this.container.querySelector('#settings-video-codec')?.value || this._videoCodec);
-            const gamingMode = this.container.querySelector('#settings-gaming-mode')?.checked ?? this._gamingMode;
-            const showPerf = this.container.querySelector('#settings-show-perf-stats')?.checked ?? this._showPerformanceStats;
-            const bitrateMbps = parseInt(this.container.querySelector('#settings-stream-bitrate')?.value, 10) || this._streamBitrateMbps;
+                : this.container.querySelector('#settings-video-codec')?.value || this._videoCodec;
+            const gamingMode =
+                this.container.querySelector('#settings-gaming-mode')?.checked ?? this._gamingMode;
+            const showPerf =
+                this.container.querySelector('#settings-show-perf-stats')?.checked ??
+                this._showPerformanceStats;
+            const bitrateMbps =
+                parseInt(this.container.querySelector('#settings-stream-bitrate')?.value, 10) ||
+                this._streamBitrateMbps;
             const heightRaw = this.container.querySelector('#settings-stream-height')?.value;
             const height = heightRaw !== undefined ? parseInt(heightRaw, 10) : this._streamHeight;
-            const aspect = this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
-            const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10) || this._streamFps;
+            const aspect =
+                this.container.querySelector('#settings-stream-aspect')?.value ||
+                this._streamAspect;
+            const fps =
+                parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10) ||
+                this._streamFps;
             const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
-            const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked ?? this._chroma444;
-            const sensRaw = parseFloat(this.container.querySelector('#settings-sensitivity')?.value);
+            const chroma444 =
+                this.container.querySelector('#settings-chroma-444')?.checked ?? this._chroma444;
+            const sensRaw = parseFloat(
+                this.container.querySelector('#settings-sensitivity')?.value,
+            );
             const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
             const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
-            const videoWorker = this.container.querySelector('#settings-video-worker')?.value ?? this._videoWorker;
+            const videoWorker =
+                this.container.querySelector('#settings-video-worker')?.value ?? this._videoWorker;
             const veCheck = this.container.querySelector('#settings-video-enhancement');
-            const videoEnhancement = veCheck ? (veCheck.checked ? 'on' : 'off') : this._videoEnhancement;
+            const videoEnhancement = veCheck
+                ? veCheck.checked
+                    ? 'on'
+                    : 'off'
+                : this._videoEnhancement;
             // Algo dropdown only exists in debug builds; production forces 'auto'.
             const veAlgoEl = this.container.querySelector('#settings-video-enhancement-algo');
-            const videoEnhancementAlgo = (this._debugBuild && veAlgoEl) ? veAlgoEl.value : 'auto';
+            const videoEnhancementAlgo = this._debugBuild && veAlgoEl ? veAlgoEl.value : 'auto';
 
             // Update internal state
             this._videoCodec = codec;
@@ -434,7 +464,7 @@ export class SettingsView {
                 vsync_enabled: this._vsync,
                 stream_height: this._streamHeight,
                 stream_fps: this._streamFps,
-                stream_bitrate_mbps: this._streamBitrateMbps
+                stream_bitrate_mbps: this._streamBitrateMbps,
             };
             this._videoCodec = 'h264';
             this._hdrEnabled = false;
@@ -457,7 +487,8 @@ export class SettingsView {
                 if (this._vsync === true) this._vsync = b.vsync_enabled;
                 if (this._streamHeight === 720) this._streamHeight = b.stream_height;
                 if (this._streamFps === 60) this._streamFps = b.stream_fps;
-                if (this._streamBitrateMbps === psBitrate) this._streamBitrateMbps = b.stream_bitrate_mbps;
+                if (this._streamBitrateMbps === psBitrate)
+                    this._streamBitrateMbps = b.stream_bitrate_mbps;
             }
             this._powerSave = false;
             this._powerSaveBackup = null;
@@ -486,41 +517,49 @@ export class SettingsView {
         const codecs = [
             { value: 'h264', label: t('settings.codecH264') },
             { value: 'hevc', label: t('settings.codecHevc') },
-            { value: 'av1',  label: t('settings.codecAv1') }
+            { value: 'av1', label: t('settings.codecAv1') },
         ];
         const effectiveCodec = this._getEffectiveCodec();
-        const codecOptions = codecs.map(c => {
-            const browserDisabled = this._codecSupport && !this._codecSupport[c.value];
-            const mediaTrackDisabled = this._mediaTrackOnlyH264 &&
-                (c.value === 'hevc' || c.value === 'av1');
-            const disabled = browserDisabled || mediaTrackDisabled;
-            const selected = c.value === effectiveCodec ? ' selected' : '';
+        const codecOptions = codecs
+            .map((c) => {
+                const browserDisabled = this._codecSupport && !this._codecSupport[c.value];
+                const mediaTrackDisabled =
+                    this._mediaTrackOnlyH264 && (c.value === 'hevc' || c.value === 'av1');
+                const disabled = browserDisabled || mediaTrackDisabled;
+                const selected = c.value === effectiveCodec ? ' selected' : '';
 
-            let label = c.label;
-            if (browserDisabled || mediaTrackDisabled) {
-                label = t('settings.codecUnavailable', { codec: c.value.toUpperCase() });
-            }
+                let label = c.label;
+                if (browserDisabled || mediaTrackDisabled) {
+                    label = t('settings.codecUnavailable', { codec: c.value.toUpperCase() });
+                }
 
-            return `<option value="${c.value}"${selected}${disabled ? ' disabled' : ''}>${this.esc(label)}</option>`;
-        }).join('');
+                return `<option value="${c.value}"${selected}${disabled ? ' disabled' : ''}>${this.esc(label)}</option>`;
+            })
+            .join('');
 
         // Warning when codec preference is overridden due to browser support
-        const codecChanged = this._codecSupport &&
+        const codecChanged =
+            this._codecSupport &&
             this._codecSupport[this._videoCodec] === false &&
             effectiveCodec !== this._videoCodec;
         let codecHintHtml = '';
         if (codecChanged) {
             codecHintHtml = `<div class="settings-note">
-                ${this.esc(t('settings.codecFallback', {
-                    selected: this._videoCodec.toUpperCase(),
-                    effective: effectiveCodec.toUpperCase()
-                }))}
+                ${this.esc(
+                    t('settings.codecFallback', {
+                        selected: this._videoCodec.toUpperCase(),
+                        effective: effectiveCodec.toUpperCase(),
+                    }),
+                )}
             </div>`;
         }
 
         // Critical warning when no codec is supported at all
-        const noCodecSupported = this._codecSupport &&
-            !this._codecSupport.h264 && !this._codecSupport.hevc && !this._codecSupport.av1;
+        const noCodecSupported =
+            this._codecSupport &&
+            !this._codecSupport.h264 &&
+            !this._codecSupport.hevc &&
+            !this._codecSupport.av1;
         if (noCodecSupported) {
             codecHintHtml = `<div class="settings-status settings-status-pending u-mb-2">
                 <strong>${t('settings.noCodecSupportedTitle')}</strong> ${t('settings.noCodecSupportedBody')}
@@ -529,34 +568,43 @@ export class SettingsView {
 
         // Resolution options (short labels: "1080p")
         const heights = [
-            { value: 720,  label: '720p' },
+            { value: 720, label: '720p' },
             { value: 1080, label: '1080p' },
             { value: 1440, label: '1440p' },
-            { value: 2160, label: '2160p' }
+            { value: 2160, label: '2160p' },
         ];
-        const heightOptions = heights.map(h =>
-            `<option value="${h.value}" ${h.value === this._streamHeight ? 'selected' : ''}>${this.esc(h.label)}</option>`
-        ).join('');
+        const heightOptions = heights
+            .map(
+                (h) =>
+                    `<option value="${h.value}" ${h.value === this._streamHeight ? 'selected' : ''}>${this.esc(h.label)}</option>`,
+            )
+            .join('');
 
         // FPS options
         const fpsValues = [15, 30, 60, 75, 90, 120, 144, 165, 240];
-        const fpsOptions = fpsValues.map(f =>
-            `<option value="${f}" ${f === this._streamFps ? 'selected' : ''}>${this.esc(t('settings.fpsSuffix', { fps: f }))}</option>`
-        ).join('');
+        const fpsOptions = fpsValues
+            .map(
+                (f) =>
+                    `<option value="${f}" ${f === this._streamFps ? 'selected' : ''}>${this.esc(t('settings.fpsSuffix', { fps: f }))}</option>`,
+            )
+            .join('');
 
         // Video Enhancement (WebGPU upscale/sharpen) — grayed out if WebGPU is
         // unavailable, like the per-codec graying.
         const webgpuUnavailable = !this._webgpuUsable;
         const veDisabledAttr = webgpuUnavailable ? ' disabled' : '';
         const veAlgos = [
-            { value: 'auto',    label: t('settings.algoAuto'), disabled: false },
-            { value: 'fsr1',    label: t('settings.algoFsr1'), disabled: false },
-            { value: 'sgsr',    label: t('settings.algoSgsr'), disabled: false },
-            { value: 'force2d', label: t('settings.algoForce2d'), disabled: false }
+            { value: 'auto', label: t('settings.algoAuto'), disabled: false },
+            { value: 'fsr1', label: t('settings.algoFsr1'), disabled: false },
+            { value: 'sgsr', label: t('settings.algoSgsr'), disabled: false },
+            { value: 'force2d', label: t('settings.algoForce2d'), disabled: false },
         ];
-        const veAlgoOptions = veAlgos.map(a =>
-            `<option value="${a.value}" ${a.value === this._videoEnhancementAlgo ? 'selected' : ''}${a.disabled ? ' disabled' : ''}>${this.esc(a.label)}</option>`
-        ).join('');
+        const veAlgoOptions = veAlgos
+            .map(
+                (a) =>
+                    `<option value="${a.value}" ${a.value === this._videoEnhancementAlgo ? 'selected' : ''}${a.disabled ? ' disabled' : ''}>${this.esc(a.label)}</option>`,
+            )
+            .join('');
         const veNote = webgpuUnavailable
             ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
             : '';
@@ -647,9 +695,13 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.videoEnhancementDesc')}</span>
-                        ${this._debugBuild ? `<select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veDisabledAttr}>
+                        ${
+                            this._debugBuild
+                                ? `<select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veDisabledAttr}>
                             ${veAlgoOptions}
-                        </select>` : ''}
+                        </select>`
+                                : ''
+                        }
                         ${veNote}
                     </div>
 
@@ -686,7 +738,10 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.showPerfStatsDesc')}</span>
                     </div>
 
-                    ${IS_TOUCH_DEVICE ? '' : `
+                    ${
+                        IS_TOUCH_DEVICE
+                            ? ''
+                            : `
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-gaming-mode"
@@ -696,7 +751,8 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.gamingModeDesc')}</span>
-                    </div>`}
+                    </div>`
+                    }
 
                     <!-- Hidden: too technical for the average user. Kept in the DOM
                          (display:none) as a debug override; defaults to 'auto'. -->
@@ -731,15 +787,18 @@ export class SettingsView {
                     <h3 class="settings-section-title">${t('settings.language')}</h3>
                     <div class="settings-field">
                         <select id="settings-language" class="settings-select">
-                            ${AVAILABLE_LANGUAGES.map(l =>
-                                `<option value="${l.code}" ${l.code === getLanguage() ? 'selected' : ''}>${this.esc(l.label)}</option>`
+                            ${AVAILABLE_LANGUAGES.map(
+                                (l) =>
+                                    `<option value="${l.code}" ${l.code === getLanguage() ? 'selected' : ''}>${this.esc(l.label)}</option>`,
                             ).join('')}
                         </select>
                         <span class="setting-desc">${t('settings.languageDesc')}</span>
                     </div>
                 </div>
 
-                ${IS_TOUCH_DEVICE ? `
+                ${
+                    IS_TOUCH_DEVICE
+                        ? `
                 <!-- ── Power Saving (mobile only, isolated above Reset) ──────── -->
                 <div class="settings-section settings-section-powersave">
                     <h3 class="settings-section-title">${t('settings.powerSave')}</h3>
@@ -753,7 +812,9 @@ export class SettingsView {
                         </label>
                         <span class="setting-desc">${t('settings.powerSaveDesc')}</span>
                     </div>
-                </div>` : ''}
+                </div>`
+                        : ''
+                }
 
                 <!-- ── Reset ───────────────────────────────────────────────── -->
                 <div class="settings-section">
@@ -810,29 +871,33 @@ export class SettingsView {
         // Resolution / FPS / HDR changes recompute the recommended bitrate
         // from the 1080p60 SDR reference before saving.
         const heightSelect = this.container.querySelector('#settings-stream-height');
-        if (heightSelect) heightSelect.addEventListener('change', () => {
-            this._applyAutoBitrate();
-            this._autoSave();
-        });
+        if (heightSelect)
+            heightSelect.addEventListener('change', () => {
+                this._applyAutoBitrate();
+                this._autoSave();
+            });
 
         const fpsSelect = this.container.querySelector('#settings-stream-fps');
-        if (fpsSelect) fpsSelect.addEventListener('change', () => {
-            this._applyAutoBitrate();
-            this._autoSave();
-        });
+        if (fpsSelect)
+            fpsSelect.addEventListener('change', () => {
+                this._applyAutoBitrate();
+                this._autoSave();
+            });
 
         const hdrCheck = this.container.querySelector('#settings-hdr');
-        if (hdrCheck) hdrCheck.addEventListener('change', () => {
-            this._applyAutoBitrate();
-            this._autoSave();
-        });
+        if (hdrCheck)
+            hdrCheck.addEventListener('change', () => {
+                this._applyAutoBitrate();
+                this._autoSave();
+            });
 
         // 4:4:4 chroma bumps the recommended bitrate (higher bandwidth) before saving.
         const chroma444Check = this.container.querySelector('#settings-chroma-444');
-        if (chroma444Check) chroma444Check.addEventListener('change', () => {
-            this._applyAutoBitrate();
-            this._autoSave();
-        });
+        if (chroma444Check)
+            chroma444Check.addEventListener('change', () => {
+                this._applyAutoBitrate();
+                this._autoSave();
+            });
 
         const bitrateSlider = this.container.querySelector('#settings-stream-bitrate');
         if (bitrateSlider) bitrateSlider.addEventListener('change', () => this._autoSave());
@@ -863,8 +928,10 @@ export class SettingsView {
         if (langSelect) langSelect.addEventListener('change', () => setLanguage(langSelect.value));
 
         const powerSaveCheck = this.container.querySelector('#settings-power-save');
-        if (powerSaveCheck) powerSaveCheck.addEventListener('change',
-            () => this._togglePowerSave(powerSaveCheck.checked));
+        if (powerSaveCheck)
+            powerSaveCheck.addEventListener('change', () =>
+                this._togglePowerSave(powerSaveCheck.checked),
+            );
 
         const resetBtn = this.container.querySelector('#btn-settings-reset');
         if (resetBtn) resetBtn.addEventListener('click', () => this._resetDefaults());

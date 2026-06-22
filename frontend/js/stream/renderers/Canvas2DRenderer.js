@@ -60,7 +60,9 @@ export class Canvas2DRenderer extends VideoRenderer {
         return r;
     }
 
-    get kind() { return 'canvas2d'; }
+    get kind() {
+        return 'canvas2d';
+    }
 
     setOutputSize(width, height) {
         // No-op: the Canvas2D backing follows the frame resolution; the display
@@ -69,7 +71,7 @@ export class Canvas2DRenderer extends VideoRenderer {
 
     isContextLost() {
         // Safari/WebKit lacks CanvasRenderingContext2D.isContextLost().
-        return (this.ctx && typeof this.ctx.isContextLost === 'function')
+        return this.ctx && typeof this.ctx.isContextLost === 'function'
             ? this.ctx.isContextLost()
             : false;
     }
@@ -80,18 +82,25 @@ export class Canvas2DRenderer extends VideoRenderer {
     }
 
     async draw(frame) {
-        if (!this.canvas || !this.ctx) { try { frame.close(); } catch (e) {} return; }
+        if (!this.canvas || !this.ctx) {
+            try {
+                frame.close();
+            } catch (e) {}
+            return;
+        }
 
         // Resize the backing buffer to the frame size when needed.
-        if (frame.displayWidth && frame.displayHeight &&
-            (this.canvas.width !== frame.displayWidth ||
-             this.canvas.height !== frame.displayHeight)) {
+        if (
+            frame.displayWidth &&
+            frame.displayHeight &&
+            (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight)
+        ) {
             this.canvas.width = frame.displayWidth;
             this.canvas.height = frame.displayHeight;
         }
 
-        const isHevcNv12 = this.videoCodec === CODEC_HEVC && frame.format === 'NV12' &&
-            this.isChromeWindowsHevc;
+        const isHevcNv12 =
+            this.videoCodec === CODEC_HEVC && frame.format === 'NV12' && this.isChromeWindowsHevc;
 
         if (isHevcNv12) {
             // ── HEVC NV12: createImageBitmap(VideoFrame) PRIMARY + 'copy' ─────
@@ -101,7 +110,9 @@ export class Canvas2DRenderer extends VideoRenderer {
             //   2. ctx.drawImage(VideoFrame, 'copy')          (some Safari)
             //   3. copyTo(RGBA) → ImageData → putImageData     (last resort)
             let bitmap = null;
-            try { bitmap = await createImageBitmap(frame); } catch (e) {}
+            try {
+                bitmap = await createImageBitmap(frame);
+            } catch (e) {}
 
             this.ctx.save();
             this.ctx.globalCompositeOperation = 'copy';
@@ -117,7 +128,9 @@ export class Canvas2DRenderer extends VideoRenderer {
                     this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
                     success = true;
                 } catch (e) {
-                    console.warn('[Canvas2DRenderer] ctx.drawImage(VideoFrame) failed: ' + e.message);
+                    console.warn(
+                        '[Canvas2DRenderer] ctx.drawImage(VideoFrame) failed: ' + e.message,
+                    );
                 }
             }
             if (!success) {
@@ -141,7 +154,11 @@ export class Canvas2DRenderer extends VideoRenderer {
 
             // Force GPU sync on the first frames to flush stale compositor caches;
             // per-frame readback would cost ~1-3ms, so only the first 30.
-            if (this._rendered < 30) { try { this.ctx.getImageData(0, 0, 1, 1); } catch (e) {} }
+            if (this._rendered < 30) {
+                try {
+                    this.ctx.getImageData(0, 0, 1, 1);
+                } catch (e) {}
+            }
 
             frame.close();
             this._rendered++;
@@ -176,7 +193,11 @@ export class Canvas2DRenderer extends VideoRenderer {
                             const size = w * h * 4;
                             const buf = new ArrayBuffer(size);
                             await frame.copyTo(buf, { format: 'RGBA' });
-                            const imageData = new ImageData(new Uint8ClampedArray(buf, 0, size), w, h);
+                            const imageData = new ImageData(
+                                new Uint8ClampedArray(buf, 0, size),
+                                w,
+                                h,
+                            );
                             this.ctx.putImageData(imageData, 0, 0);
                             rendered = true;
                         }

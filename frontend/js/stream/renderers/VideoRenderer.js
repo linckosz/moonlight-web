@@ -64,15 +64,21 @@ export class VideoRenderer {
      * these (its 2D context can be lost and recreated); WebGPU recovers on its
      * own via device.lost, so the defaults are inert.
      */
-    isContextLost() { return false; }
+    isContextLost() {
+        return false;
+    }
     recreateContext() {}
 
     /** Release context/GPU resources. */
     dispose() {}
 
     /** Async-init renderers report readiness here; Canvas2D is always ready. */
-    get ready() { return true; }
+    get ready() {
+        return true;
+    }
 
     /** Renderer kind for the stats overlay: 'canvas2d' | 'webgpu'. */
-    get kind() { return 'base'; }
+    get kind() {
+        return 'base';
+    }
 }

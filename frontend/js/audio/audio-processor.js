@@ -42,20 +42,20 @@ class AudioProcessor extends AudioWorkletProcessor {
 
         /** @type {Float32Array[]} Queue of Float32 interleaved stereo chunks. */
         this._queue = [];
-        this._readOffset = 0;        // read offset (float elements) into head chunk
-        this._queuedFrames = 0;      // stereo-frames currently queued
-        this._consumedFrames = 0;    // total stereo-frames played (diagnostics)
-        this._underrunFrames = 0;    // underrun frames since last diag report
-        this._underrunEvents = 0;    // underrun episodes since last diag report
-        this._playing = false;       // true once buffer filled and draining
+        this._readOffset = 0; // read offset (float elements) into head chunk
+        this._queuedFrames = 0; // stereo-frames currently queued
+        this._consumedFrames = 0; // total stereo-frames played (diagnostics)
+        this._underrunFrames = 0; // underrun frames since last diag report
+        this._underrunEvents = 0; // underrun episodes since last diag report
+        this._playing = false; // true once buffer filled and draining
 
         // Adaptive jitter-buffer targets (stereo-frames at context sample rate).
-        this._baseTarget = Math.round(sampleRate * 0.06);   // 60 ms steady state
-        this._maxTarget = Math.round(sampleRate * 0.24);    // 240 ms ceiling
+        this._baseTarget = Math.round(sampleRate * 0.06); // 60 ms steady state
+        this._maxTarget = Math.round(sampleRate * 0.24); // 240 ms ceiling
         this._target = this._baseTarget;
-        this.GROW_FRAMES = Math.round(sampleRate * 0.03);   // +30 ms per underrun
-        this.MAX_BUFFER_FRAMES = Math.round(sampleRate * 0.50); // 500 ms hard cap
-        this.DECAY_INTERVAL = Math.round(sampleRate * 5);   // shrink after 5 s stable
+        this.GROW_FRAMES = Math.round(sampleRate * 0.03); // +30 ms per underrun
+        this.MAX_BUFFER_FRAMES = Math.round(sampleRate * 0.5); // 500 ms hard cap
+        this.DECAY_INTERVAL = Math.round(sampleRate * 5); // shrink after 5 s stable
 
         // De-click fade length (samples). ~1.3 ms at 48 kHz.
         this.FADE_SAMPLES = 64;
@@ -68,7 +68,7 @@ class AudioProcessor extends AudioWorkletProcessor {
             // Allow the main thread to override the base latency target.
             if (evt.data && evt.data.type === 'config') {
                 if (typeof evt.data.baseLatencyMs === 'number') {
-                    this._baseTarget = Math.round(sampleRate * evt.data.baseLatencyMs / 1000);
+                    this._baseTarget = Math.round((sampleRate * evt.data.baseLatencyMs) / 1000);
                     this._target = Math.max(this._target, this._baseTarget);
                 }
                 return;
@@ -107,7 +107,7 @@ class AudioProcessor extends AudioWorkletProcessor {
                     type: 'started',
                     outChannels: out.length,
                     queuedFrames: this._queuedFrames,
-                    targetMs: Math.round(this._target / sampleRate * 1000)
+                    targetMs: Math.round((this._target / sampleRate) * 1000),
                 });
             } else {
                 left.fill(0);
@@ -131,7 +131,7 @@ class AudioProcessor extends AudioWorkletProcessor {
                 let l = chunk[si];
                 let r = chunk[si + 1];
                 if (this._fadeInRemaining > 0) {
-                    const g = 1 - (this._fadeInRemaining / this.FADE_SAMPLES);
+                    const g = 1 - this._fadeInRemaining / this.FADE_SAMPLES;
                     l *= g;
                     r *= g;
                     this._fadeInRemaining--;
@@ -166,7 +166,7 @@ class AudioProcessor extends AudioWorkletProcessor {
             const gap = numFrames - outIdx;
             const fade = Math.min(this.FADE_SAMPLES, gap);
             for (let i = 0; i < gap; i++) {
-                const g = i < fade ? (1 - i / fade) : 0;
+                const g = i < fade ? 1 - i / fade : 0;
                 left[outIdx + i] = this._lastL * g;
                 right[outIdx + i] = this._lastR * g;
             }
@@ -184,8 +184,10 @@ class AudioProcessor extends AudioWorkletProcessor {
         } else {
             // Stable playback — slowly decay the target back toward the base.
             this._framesSinceUnderrun += numFrames;
-            if (this._framesSinceUnderrun > this.DECAY_INTERVAL &&
-                this._target > this._baseTarget) {
+            if (
+                this._framesSinceUnderrun > this.DECAY_INTERVAL &&
+                this._target > this._baseTarget
+            ) {
                 this._target = Math.max(this._baseTarget, this._target - this.GROW_FRAMES);
                 this._framesSinceUnderrun = 0;
             }
@@ -197,10 +199,10 @@ class AudioProcessor extends AudioWorkletProcessor {
                 type: 'diag',
                 queueDepth: this._queue.length,
                 queuedFrames: this._queuedFrames,
-                targetMs: Math.round(this._target / sampleRate * 1000),
+                targetMs: Math.round((this._target / sampleRate) * 1000),
                 underrunFrames: this._underrunFrames,
                 underrunEvents: this._underrunEvents,
-                consumedFrames: this._consumedFrames
+                consumedFrames: this._consumedFrames,
             });
             this._underrunFrames = 0;
             this._underrunEvents = 0;

@@ -49,7 +49,7 @@ export class AppListView {
         try {
             const data = await BackendClient.getAppList(this.host.uuid);
             if (data.status === 'ok') {
-                this.apps = (data.apps || []).map(a => new App(a, this.host.uuid));
+                this.apps = (data.apps || []).map((a) => new App(a, this.host.uuid));
                 this.error = null;
             } else {
                 this.error = data.message || 'Failed to load apps';
@@ -94,14 +94,15 @@ export class AppListView {
                     </div>
                     <div class="apps-spacer"></div>
                 </div>
-                ${this.apps.length === 0
-                    ? `<div class="apps-empty">
+                ${
+                    this.apps.length === 0
+                        ? `<div class="apps-empty">
                          <span class="empty-icon">\u{1F4E6}</span>
                          <p>${t('apps.empty')}</p>
                          <p class="hint">${t('apps.emptyHint')}</p>
                        </div>`
-                    : `<div class="apps-grid">
-                         ${this.apps.map(a => this.renderCard(a)).join('')}
+                        : `<div class="apps-grid">
+                         ${this.apps.map((a) => this.renderCard(a)).join('')}
                        </div>`
                 }
             </div>
@@ -118,12 +119,13 @@ export class AppListView {
                  role="button" tabindex="0"
                  aria-label="${this.esc(t('apps.launchAria', { name: app.displayName }))}">
                 <div class="app-card-image">
-                    ${app.boxArtUrl
-                        ? `<img src="${this.esc(app.boxArtUrl)}"
+                    ${
+                        app.boxArtUrl
+                            ? `<img src="${this.esc(app.boxArtUrl)}"
                                alt="${this.esc(app.displayName)}"
                                loading="lazy"
                                onerror="this.outerHTML='<span class=\\'app-icon\\'>\u{1F3AE}</span>'">`
-                        : `<span class="app-icon">\u{1F3AE}</span>`
+                            : `<span class="app-icon">\u{1F3AE}</span>`
                     }
                 </div>
                 <div class="app-card-name">${this.esc(app.displayName)}</div>
@@ -178,12 +180,12 @@ export class AppListView {
 
         // The whole card is the launch action (click/tap anywhere, or Enter/
         // Space when focused). No separate Launch/Play button.
-        this.container.querySelectorAll('.app-card').forEach(card => {
+        this.container.querySelectorAll('.app-card').forEach((card) => {
             const launch = () => {
                 // Ignore re-taps while a launch is already in flight on this card.
                 if (card.classList.contains('app-card--launching')) return;
                 const appId = parseInt(card.dataset.appId);
-                const app = this.apps.find(a => a.id === appId);
+                const app = this.apps.find((a) => a.id === appId);
                 if (app) {
                     this.setLaunching(card);
                     this.onLaunch && this.onLaunch(app);

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    // Advisory only (not a PR gate): full `strict` floods untyped Vanilla JS
+    // with implicit-any / null-check noise. Lenient mode surfaces genuine
+    // structural issues. Tighten incrementally as JSDoc types are added.
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": []
+  },
+  "include": ["js/**/*.js"],
+  "exclude": ["js/vendor/**", "**/*.min.js", "node_modules"]
+}
