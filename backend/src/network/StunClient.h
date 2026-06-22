@@ -46,8 +46,8 @@ public:
      */
     struct StunServer
     {
-        QString host; ///< Hostname or IP
-        quint16 port; ///< Port (typically 3478, 19302, 443, 80)
+        QString host;     ///< Hostname or IP
+        quint16 port = 0; ///< Port (typically 3478, 19302, 443, 80)
     };
 
     /// Default STUN server list (fallback chain).

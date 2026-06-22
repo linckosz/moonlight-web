@@ -159,7 +159,6 @@ private:
         if (pos >= data.size()) return {};
 
         // Compression Methods (1 + var)
-        if (pos >= data.size()) return {};
         int compLen = d[pos++];
         pos += compLen;
         if (pos >= data.size()) return {};
