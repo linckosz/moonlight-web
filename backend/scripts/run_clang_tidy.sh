@@ -18,9 +18,7 @@ bash scripts/gen_compile_commands.sh >/dev/null
 if [ "$#" -gt 0 ]; then
     files=("$@")
 else
-    # RtspClient.cpp is an orphaned file (not in backend.pro SOURCES, references a
-    # non-existent StreamConfig::kVideoFormat) — exclude it from analysis.
-    mapfile -t files < <(find src -name '*.cpp' -not -path '*/build/*' -not -name 'RtspClient.cpp')
+    mapfile -t files < <(find src -name '*.cpp' -not -path '*/build/*')
 fi
 
 "$CT" -p . --quiet "${files[@]}"
