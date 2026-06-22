@@ -306,10 +306,14 @@ export class LoginView {
         // Show the "--- ---" template (centered) while focused, caret on the
         // first dash; clear it on blur so the dim placeholder shows when empty.
         input.addEventListener('focus', () => {
-            if (input.value.replace(/\D/g, '').length === 0) {
+            const digits = input.value.replace(/\D/g, '');
+            if (digits.length === 0) {
                 input.value = '--- ---';
-                input.setSelectionRange(0, 0);
             }
+            // Caret on the first dash: right after the last digit (start when none).
+            // Defer so it wins over the mouse-click caret placement.
+            const caret = digits.length + (digits.length > 3 ? 1 : 0);
+            setTimeout(() => input.setSelectionRange(caret, caret), 0);
         });
         input.addEventListener('blur', () => {
             if (input.value.replace(/\D/g, '').length === 0) {
