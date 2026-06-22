@@ -593,7 +593,10 @@ export class SettingsView {
                         </select>
                     </div>
 
-                    <div class="settings-field${hdrLocked}">
+                    <!-- HDR hidden: not offered while the PQ→SDR rendering bug is
+                         unresolved. Input kept in the DOM (read elsewhere) but the
+                         field is not shown. -->
+                    <div class="settings-field${hdrLocked}" style="display:none">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-hdr"
                                 ${hdrChecked}${hdrDisabled} />
