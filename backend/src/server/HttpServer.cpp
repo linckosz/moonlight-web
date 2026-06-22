@@ -1532,7 +1532,8 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     // Copy the upgrade request BEFORE removing from m_Buffers.  requestData is a
     // const reference to the QByteArray inside m_Buffers — remove() destroys it.
-    const QByteArray& upgradeRequest = requestData;
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) — copy is required.
+    QByteArray upgradeRequest = requestData;
 
     // Remove from our tracking — HttpServer should no longer manage this socket.
     m_Buffers.remove(clientSocket);
