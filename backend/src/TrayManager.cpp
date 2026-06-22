@@ -32,13 +32,11 @@ TrayManager::TrayManager(HttpServer* server, QObject* parent)
     , m_Server(server)
     , m_TrayIcon(nullptr)
     , m_Menu(nullptr)
-{
-}
+{}
 
 TrayManager::~TrayManager()
 {
-    if (m_TrayIcon)
-        m_TrayIcon->hide();
+    if (m_TrayIcon) m_TrayIcon->hide();
 }
 
 bool TrayManager::init()
@@ -86,8 +84,7 @@ bool TrayManager::init()
 void TrayManager::onActivated(QSystemTrayIcon::ActivationReason reason)
 {
     // Double-click opens the browser (Windows convention for tray default action)
-    if (reason == QSystemTrayIcon::DoubleClick)
-        onOpen();
+    if (reason == QSystemTrayIcon::DoubleClick) onOpen();
 }
 
 void TrayManager::onOpen()
@@ -121,8 +118,7 @@ void TrayManager::onRestart()
     // Launch a new instance with the same arguments, then quit this one
     QString appPath = QCoreApplication::applicationFilePath();
     QStringList args = QCoreApplication::arguments();
-    if (!args.isEmpty())
-        args.removeFirst();  // argv[0] is the app path, startDetached handles it
+    if (!args.isEmpty()) args.removeFirst(); // argv[0] is the app path, startDetached handles it
 
     if (!QProcess::startDetached(appPath, args)) {
         qWarning() << "[TrayManager] Restart failed — could not launch new process";

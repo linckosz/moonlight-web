@@ -79,7 +79,8 @@ public:
     /// such as ZeroSSL / Google Trust Services. @p hmacKeyB64Url is the EAB HMAC
     /// key as provided by the CA (base64url, no padding). When both are set, the
     /// newAccount request carries an "externalAccountBinding" field.
-    void setExternalAccountBinding(const QString& kid, const QString& hmacKeyB64Url) {
+    void setExternalAccountBinding(const QString& kid, const QString& hmacKeyB64Url)
+    {
         m_EabKid = kid;
         m_EabHmacKey = hmacKeyB64Url;
     }
@@ -119,7 +120,8 @@ private:
     // ── ACME HTTP helpers ─────────────────────────────────────────────────────
 
     /// ACME response data passed to callbacks.
-    struct AcmeResponse {
+    struct AcmeResponse
+    {
         int statusCode = 0;
         QByteArray body;
         QString location;
@@ -141,8 +143,7 @@ private:
                   int retriesLeft = 3);
 
     /// POST-as-GET equivalent: JWS with empty payload.
-    void acmePostAsGet(const QString& url,
-                       std::function<void(int, const QByteArray&)> callback);
+    void acmePostAsGet(const QString& url, std::function<void(int, const QByteArray&)> callback);
 
     /// Get a fresh Replay-Nonce via HEAD to newNonce endpoint.
     void fetchNonce(std::function<void(bool)> callback);
@@ -200,13 +201,13 @@ private:
     QString m_AccountKeyPath;
     QString m_DomainKeyPath;
     QString m_CertOutputDir;
-    QString m_Host;        // FQDN: "92b8d127.moonlightweb.top"
-    QString m_BaseDomain;  // PowerDNS zone (e.g. "moonlightweb.top")
+    QString m_Host;       // FQDN: "92b8d127.moonlightweb.top"
+    QString m_BaseDomain; // PowerDNS zone (e.g. "moonlightweb.top")
     QString m_PdnsToken;
 
     QString m_DirectoryUrl;
-    QString m_EabKid;      // External Account Binding key identifier
-    QString m_EabHmacKey;  // EAB HMAC key (base64url, as given by the CA)
+    QString m_EabKid;     // External Account Binding key identifier
+    QString m_EabHmacKey; // EAB HMAC key (base64url, as given by the CA)
 
     // ACME protocol state
     QJsonObject m_Directory;
@@ -214,12 +215,12 @@ private:
     QByteArray m_Nonce;
     QString m_AccountUrl;
     QString m_FinalizeUrl;
-    QString m_OrderUrl;       // from newOrder Location header (for polling)
+    QString m_OrderUrl; // from newOrder Location header (for polling)
     QString m_CertUrl;
     QString m_ChallengeToken;
     QString m_ChallengeUrl;
     QString m_AuthorizationUrl;
-    QString m_TxtSubname;     // "_acme-challenge.92b8d127"
+    QString m_TxtSubname; // "_acme-challenge.92b8d127"
     int m_PollRetries = 0;
     bool m_Cancelled = false;
 };

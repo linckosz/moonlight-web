@@ -28,30 +28,23 @@
 #include <QMap>
 #include <chrono>
 
-StreamRelay::StreamRelay(MoonlightShim* shim,
-                           quint16 wsPort,
-                           const QSslConfiguration& sslConfig,
-                           QObject* parent)
+StreamRelay::StreamRelay(MoonlightShim* shim, quint16 wsPort, const QSslConfiguration& sslConfig,
+                         QObject* parent)
     : QObject(parent)
     , m_Shim(shim)
     , m_WsPort(wsPort)
 {
     qInfo() << "[StreamRelay] Created, wsPort=" << wsPort;
 
-    connect(m_Shim, &MoonlightShim::videoFrameReady,
-            this, &StreamRelay::onVideoFrame);
-    connect(m_Shim, &MoonlightShim::audioSampleReady,
-            this, &StreamRelay::onAudioSample);
-    connect(m_Shim, &MoonlightShim::connectionStarted,
-            this, &StreamRelay::onShimConnectionStarted);
-    connect(m_Shim, &MoonlightShim::connectionFailed,
-            this, &StreamRelay::onShimConnectionFailed);
-    connect(m_Shim, &MoonlightShim::connectionTerminated,
-            this, &StreamRelay::onShimConnectionTerminated);
+    connect(m_Shim, &MoonlightShim::videoFrameReady, this, &StreamRelay::onVideoFrame);
+    connect(m_Shim, &MoonlightShim::audioSampleReady, this, &StreamRelay::onAudioSample);
+    connect(m_Shim, &MoonlightShim::connectionStarted, this, &StreamRelay::onShimConnectionStarted);
+    connect(m_Shim, &MoonlightShim::connectionFailed, this, &StreamRelay::onShimConnectionFailed);
+    connect(m_Shim, &MoonlightShim::connectionTerminated, this,
+            &StreamRelay::onShimConnectionTerminated);
 
     // Forward host rumble requests to the browser over the WebSocket.
-    connect(m_Shim, &MoonlightShim::rumble, this,
-            [this](int controller, int low, int high) {
+    connect(m_Shim, &MoonlightShim::rumble, this, [this](int controller, int low, int high) {
         if (!m_WsClient || m_WsClient->state() != QAbstractSocket::ConnectedState) return;
         QJsonObject m;
         m["type"] = "rumble";
@@ -65,10 +58,8 @@ StreamRelay::StreamRelay(MoonlightShim* shim,
     bool secure = !sslConfig.isNull();
     m_WsServer = new QWebSocketServer(
         QString("Moonlight-Relay"),
-        secure ? QWebSocketServer::SecureMode : QWebSocketServer::NonSecureMode,
-        this);
-    if (secure)
-        m_WsServer->setSslConfiguration(sslConfig);
+        secure ? QWebSocketServer::SecureMode : QWebSocketServer::NonSecureMode, this);
+    if (secure) m_WsServer->setSslConfiguration(sslConfig);
 
     // Periodic stats timer — started when a client connects, stopped on
     // disconnect. Mirrors DataChannelRelay so the WSS latency overlay works.
@@ -95,8 +86,7 @@ bool StreamRelay::start()
         return false;
     }
 
-    connect(m_WsServer, &QWebSocketServer::newConnection,
-            this, &StreamRelay::onNewWsConnection);
+    connect(m_WsServer, &QWebSocketServer::newConnection, this, &StreamRelay::onNewWsConnection);
 
     qInfo() << "[StreamRelay] WS server listening OK, m_StreamStarted=" << m_StreamStarted;
     m_Running = true;
@@ -122,11 +112,8 @@ void StreamRelay::stop()
         return;
     }
 
-    qInfo() << "[StreamRelay::stop] ENTER, m_Stopping=" << m_Stopping
-            << "m_Running=" << m_Running
-            << "m_WsClient=" << m_WsClient
-            << "m_WsServer=" << m_WsServer
-            << "m_Shim=" << m_Shim
+    qInfo() << "[StreamRelay::stop] ENTER, m_Stopping=" << m_Stopping << "m_Running=" << m_Running
+            << "m_WsClient=" << m_WsClient << "m_WsServer=" << m_WsServer << "m_Shim=" << m_Shim
             << "frames sent=" << m_FrameCount;
 
     // Guard against re-entrant calls: closing m_WsClient may fire the
@@ -141,8 +128,8 @@ void StreamRelay::stop()
     if (m_StatsTimer) m_StatsTimer->stop();
 
     m_Running = false;
-    qInfo() << "[StreamRelay::stop] m_Running=false, pending video="
-            << m_PendingVideoFrames.size() << "pending audio=" << m_PendingAudioFrames.size();
+    qInfo() << "[StreamRelay::stop] m_Running=false, pending video=" << m_PendingVideoFrames.size()
+            << "pending audio=" << m_PendingAudioFrames.size();
 
     if (m_Shim) {
         qInfo() << "[StreamRelay::stop] Calling m_Shim->stopConnection() ...";
@@ -182,8 +169,7 @@ QString StreamRelay::wsUrl() const
     // The browser connects via the HttpServer WSS proxy on the unified HTTPS port.
     // The proxy routes /ws/stream to this StreamRelay's local WS port.
     QString host = m_ServerHost;
-    if (m_HttpsPort != 443)
-        host += ":" + QString::number(m_HttpsPort);
+    if (m_HttpsPort != 443) host += ":" + QString::number(m_HttpsPort);
     return QString("wss://%1/ws/stream").arg(host);
 }
 
@@ -204,8 +190,7 @@ void StreamRelay::sendVideoFragmentedWss(const QByteArray& data, bool isKeyframe
     uint32_t frameId = m_FrameId++;
 
     // Compute backend timestamp for end-to-end latency
-    uint32_t backendTs = static_cast<uint32_t>(
-        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+    uint32_t backendTs = static_cast<uint32_t>(QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
     for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
         int offset = chunkIdx * kMaxPayloadSize;
@@ -283,14 +268,10 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
 
     if (shouldLog) {
         qint64 now = QDateTime::currentMSecsSinceEpoch();
-        qInfo() << "[StreamRelay] onVideoFrame #" << logCounter
-                << "frameNum=" << frameNumber
-                << "type=" << frameType
-                << "size=" << data.size()
-                << "WSclient=" << (m_WsClient != nullptr)
-                << "running=" << m_Running
-                << "streamStarted=" << m_StreamStarted
-                << "pending=" << m_PendingVideoFrames.size()
+        qInfo() << "[StreamRelay] onVideoFrame #" << logCounter << "frameNum=" << frameNumber
+                << "type=" << frameType << "size=" << data.size()
+                << "WSclient=" << (m_WsClient != nullptr) << "running=" << m_Running
+                << "streamStarted=" << m_StreamStarted << "pending=" << m_PendingVideoFrames.size()
                 << "time=" << now;
     }
 
@@ -299,7 +280,8 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
         if (m_Running && m_PendingVideoFrames.size() < 120) {
             m_PendingVideoFrames.append(data);
             if (m_PendingVideoFrames.size() <= 3 || m_PendingVideoFrames.size() % 60 == 0) {
-                qInfo() << "[StreamRelay] Buffering video frame, pending=" << m_PendingVideoFrames.size();
+                qInfo() << "[StreamRelay] Buffering video frame, pending="
+                        << m_PendingVideoFrames.size();
             }
         }
         return;
@@ -313,18 +295,19 @@ void StreamRelay::onVideoFrame(const QByteArray& data, int frameType, int frameN
             sendVideoFragmentedWss(m_PendingVideoFrames.takeFirst(), true);
         }
         sendVideoFragmentedWss(data, isKeyframe);
-        return;  // Fragmented path handles its own logging
+        return; // Fragmented path handles its own logging
     }
 
     // --- Legacy non-fragmented path (2-byte header) ---
 
     // Flush pending frames (assume they could be keyframes)
     if (!m_PendingVideoFrames.isEmpty()) {
-        qInfo() << "[StreamRelay] Flushing" << m_PendingVideoFrames.size() << "pending video frames";
+        qInfo() << "[StreamRelay] Flushing" << m_PendingVideoFrames.size()
+                << "pending video frames";
         while (!m_PendingVideoFrames.isEmpty()) {
             QByteArray msg;
             msg.append(static_cast<char>(0x01));
-            msg.append(static_cast<char>(0x01));  // flags: assume keyframe
+            msg.append(static_cast<char>(0x01)); // flags: assume keyframe
             msg.append(m_PendingVideoFrames.takeFirst());
             m_WsClient->sendBinaryMessage(msg);
             m_FrameCount++;
@@ -354,8 +337,8 @@ void StreamRelay::onAudioSample(const QByteArray& data)
     // Helper to send a single audio frame with 17-byte frag header (matching _onAudioChunk)
     auto sendAudioFragmented = [this](const QByteArray& audioData) {
         uint32_t frameId = m_FrameId++;
-        uint32_t backendTs = static_cast<uint32_t>(
-            QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+        uint32_t backendTs =
+            static_cast<uint32_t>(QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
         QByteArray msg;
         msg.reserve(1 + kFragHeaderSize + audioData.size());
@@ -413,14 +396,14 @@ void StreamRelay::onAudioSample(const QByteArray& data)
     while (!m_PendingAudioFrames.isEmpty()) {
         QByteArray msg;
         msg.append(static_cast<char>(0x02));
-        msg.append(static_cast<char>(0x00));  // flags unused
+        msg.append(static_cast<char>(0x00)); // flags unused
         msg.append(m_PendingAudioFrames.takeFirst());
         m_WsClient->sendBinaryMessage(msg);
     }
 
     QByteArray msg;
     msg.append(static_cast<char>(0x02));
-    msg.append(static_cast<char>(0x00));  // flags unused
+    msg.append(static_cast<char>(0x00)); // flags unused
     msg.append(data);
     m_WsClient->sendBinaryMessage(msg);
 }
@@ -447,14 +430,11 @@ void StreamRelay::onNewWsConnection()
 
     qInfo() << "[StreamRelay] WS client created, connecting signals...";
 
-    connect(m_WsClient, &QWebSocket::textMessageReceived,
-            this, &StreamRelay::onWsTextMessage);
-    connect(m_WsClient, &QWebSocket::disconnected,
-            this, &StreamRelay::onWsDisconnected);
+    connect(m_WsClient, &QWebSocket::textMessageReceived, this, &StreamRelay::onWsTextMessage);
+    connect(m_WsClient, &QWebSocket::disconnected, this, &StreamRelay::onWsDisconnected);
 
     // Log WS errors
-    connect(m_WsClient, &QWebSocket::errorOccurred,
-            [](QAbstractSocket::SocketError err) {
+    connect(m_WsClient, &QWebSocket::errorOccurred, [](QAbstractSocket::SocketError err) {
         qWarning() << "[StreamRelay] WebSocket error:" << err;
     });
 
@@ -465,9 +445,8 @@ void StreamRelay::onNewWsConnection()
     // send stale deltas mislabeled as keyframes, poisoning strict mobile
     // decoders and saturating their decode queue. Start clean from a fresh IDR.
     if (!m_PendingVideoFrames.isEmpty() || !m_PendingAudioFrames.isEmpty()) {
-        qInfo() << "[StreamRelay] Discarding" << m_PendingVideoFrames.size()
-                << "stale video /" << m_PendingAudioFrames.size()
-                << "audio frames, requesting fresh IDR";
+        qInfo() << "[StreamRelay] Discarding" << m_PendingVideoFrames.size() << "stale video /"
+                << m_PendingAudioFrames.size() << "audio frames, requesting fresh IDR";
         m_PendingVideoFrames.clear();
         m_PendingAudioFrames.clear();
     }
@@ -498,8 +477,7 @@ void StreamRelay::sendStats()
 
     {
         using namespace std::chrono;
-        int64_t nowMs = duration_cast<milliseconds>(
-            steady_clock::now().time_since_epoch()).count();
+        int64_t nowMs = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
         stats["streamTimeMs"] = static_cast<double>(nowMs);
     }
 
@@ -530,17 +508,16 @@ void StreamRelay::onWsTextMessage(const QString& message)
         bool down = (type == "keydown");
         int vk = msg["keyCode"].toInt(0);
         char mods = 0;
-        if (msg["ctrlKey"].toBool(false))  mods |= 0x02;
+        if (msg["ctrlKey"].toBool(false)) mods |= 0x02;
         if (msg["shiftKey"].toBool(false)) mods |= 0x01;
-        if (msg["altKey"].toBool(false))   mods |= 0x04;
-        if (msg["metaKey"].toBool(false))  mods |= 0x08;
+        if (msg["altKey"].toBool(false)) mods |= 0x04;
+        if (msg["metaKey"].toBool(false)) mods |= 0x08;
         m_Shim->sendKeyEvent(static_cast<short>(vk), down, mods, 0);
-    }
-    else if (type == "mousemove") {
+    } else if (type == "mousemove") {
         // Absolute mouse position (non-gaming mode) — same handling as
         // DataChannelRelay, otherwise the host cursor never moves in WSS.
-        if (msg.contains("x") && msg.contains("y") &&
-            msg.contains("referenceWidth") && msg.contains("referenceHeight")) {
+        if (msg.contains("x") && msg.contains("y") && msg.contains("referenceWidth") &&
+            msg.contains("referenceHeight")) {
             short x = static_cast<short>(msg["x"].toInt(0));
             short y = static_cast<short>(msg["y"].toInt(0));
             short refW = static_cast<short>(msg["referenceWidth"].toInt(0));
@@ -552,21 +529,17 @@ void StreamRelay::onWsTextMessage(const QString& message)
             short dy = static_cast<short>(msg["dy"].toInt(0));
             m_Shim->sendMouseMove(dx, dy);
         }
-    }
-    else if (type == "mousedown" || type == "mouseup") {
+    } else if (type == "mousedown" || type == "mouseup") {
         bool down = (type == "mousedown");
         int button = msg["button"].toInt(1);
         m_Shim->sendMouseButton(down, button);
-    }
-    else if (type == "mousewheel") {
+    } else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
-    }
-    else if (type == "textinput") {
+    } else if (type == "textinput") {
         // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
         m_Shim->sendUtf8Text(msg["text"].toString());
-    }
-    else if (type == "requestidr") {
+    } else if (type == "requestidr") {
         // Browser lost its reference picture — forward to Sunshine (throttled).
         // Without this, a single decode-queue overflow freezes the WSS stream
         // forever (deltas dropped until a keyframe that never comes).
@@ -578,8 +551,7 @@ void StreamRelay::onWsTextMessage(const QString& message)
             // Swallowed by cooldown — the browser retries every 1s, so log only.
             qInfo() << "[StreamRelay] IDR request throttled (cooldown)";
         }
-    }
-    else if (type == "ping") {
+    } else if (type == "ping") {
         // Echo a pong so the browser can compute its RTT (stats overlay),
         // matching the DataChannelRelay behaviour.
         if (m_WsClient && m_WsClient->state() == QAbstractSocket::ConnectedState) {
@@ -590,33 +562,22 @@ void StreamRelay::onWsTextMessage(const QString& message)
             m_WsClient->sendTextMessage(
                 QString::fromUtf8(QJsonDocument(pong).toJson(QJsonDocument::Compact)));
         }
-    }
-    else if (type == "gamepad") {
+    } else if (type == "gamepad") {
         m_Shim->sendControllerState(
-            static_cast<short>(msg["index"].toInt(0)),
-            static_cast<short>(msg["mask"].toInt(0)),
-            msg["buttons"].toInt(0),
-            static_cast<unsigned char>(msg["lt"].toInt(0)),
-            static_cast<unsigned char>(msg["rt"].toInt(0)),
-            static_cast<short>(msg["lx"].toInt(0)),
-            static_cast<short>(msg["ly"].toInt(0)),
-            static_cast<short>(msg["rx"].toInt(0)),
+            static_cast<short>(msg["index"].toInt(0)), static_cast<short>(msg["mask"].toInt(0)),
+            msg["buttons"].toInt(0), static_cast<unsigned char>(msg["lt"].toInt(0)),
+            static_cast<unsigned char>(msg["rt"].toInt(0)), static_cast<short>(msg["lx"].toInt(0)),
+            static_cast<short>(msg["ly"].toInt(0)), static_cast<short>(msg["rx"].toInt(0)),
             static_cast<short>(msg["ry"].toInt(0)));
-    }
-    else if (type == "gamepadconnect") {
-        m_Shim->sendControllerArrival(
-            static_cast<uint8_t>(msg["index"].toInt(0)),
-            static_cast<uint16_t>(msg["mask"].toInt(0)),
-            static_cast<uint8_t>(msg["ctype"].toInt(0)),
-            msg["rumble"].toBool(false));
-    }
-    else if (type == "gamepaddisconnect") {
-        m_Shim->sendControllerState(
-            static_cast<short>(msg["index"].toInt(0)),
-            static_cast<short>(msg["mask"].toInt(0)),
-            0, 0, 0, 0, 0, 0, 0);
-    }
-    else {
+    } else if (type == "gamepadconnect") {
+        m_Shim->sendControllerArrival(static_cast<uint8_t>(msg["index"].toInt(0)),
+                                      static_cast<uint16_t>(msg["mask"].toInt(0)),
+                                      static_cast<uint8_t>(msg["ctype"].toInt(0)),
+                                      msg["rumble"].toBool(false));
+    } else if (type == "gamepaddisconnect") {
+        m_Shim->sendControllerState(static_cast<short>(msg["index"].toInt(0)),
+                                    static_cast<short>(msg["mask"].toInt(0)), 0, 0, 0, 0, 0, 0, 0);
+    } else {
         qWarning() << "[StreamRelay] Unknown input type:" << type;
     }
 }
@@ -624,10 +585,8 @@ void StreamRelay::onWsTextMessage(const QString& message)
 void StreamRelay::onWsDisconnected()
 {
     qInfo() << "[StreamRelay::onWsDisconnected] ENTER, m_Running=" << m_Running
-            << "m_Stopping=" << m_Stopping
-            << "m_StreamStarted=" << m_StreamStarted
-            << "frames sent=" << m_FrameCount
-            << "pending video=" << m_PendingVideoFrames.size()
+            << "m_Stopping=" << m_Stopping << "m_StreamStarted=" << m_StreamStarted
+            << "frames sent=" << m_FrameCount << "pending video=" << m_PendingVideoFrames.size()
             << "pending audio=" << m_PendingAudioFrames.size();
 
     if (m_StatsTimer) m_StatsTimer->stop();
@@ -639,8 +598,7 @@ void StreamRelay::onWsDisconnected()
         closeCode = m_WsClient->closeCode();
         closeReason = m_WsClient->closeReason();
         qInfo() << "[StreamRelay::onWsDisconnected] WS state=" << m_WsClient->state()
-                << "closeCode=" << closeCode
-                << "closeReason=" << closeReason;
+                << "closeCode=" << closeCode << "closeReason=" << closeReason;
         m_WsClient->deleteLater();
         m_WsClient = nullptr;
     } else {

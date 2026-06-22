@@ -39,20 +39,14 @@ class StreamSession : public QObject
     Q_OBJECT
 
 public:
-    StreamSession(NvComputer* host, int appId,
-                  NvHTTP* http, ResponseCallback respond,
-                  quint16 wsPort = 48001,
-                  const QString& serverHost = "localhost",
-                  VideoCodec videoCodec = VideoCodec::Auto,
-                  bool gamingMode = true,
-                  bool upnpEnabled = true,
-                  const QString& transport = "webrtc",
+    StreamSession(NvComputer* host, int appId, NvHTTP* http, ResponseCallback respond,
+                  quint16 wsPort = 48001, const QString& serverHost = "localhost",
+                  VideoCodec videoCodec = VideoCodec::Auto, bool gamingMode = true,
+                  bool upnpEnabled = true, const QString& transport = "webrtc",
                   const QString& stunServer = "stun:stun.l.google.com:19302",
                   int streamHeight = 1080,
-                  int streamWidth = 0,   // 0 = derive from height (16:9); >0 = explicit (ultrawide)
-                  int streamFps = 60,
-                  int streamBitrateKbps = 20000,
-                  bool yuv444 = false,
+                  int streamWidth = 0, // 0 = derive from height (16:9); >0 = explicit (ultrawide)
+                  int streamFps = 60, int streamBitrateKbps = 20000, bool yuv444 = false,
                   QObject* parent = nullptr);
     ~StreamSession();
 
@@ -78,7 +72,8 @@ public:
     /// Example: MediaTrack forced but user selected HEVC → codec forced to H.264.
     /// When set, onShimConnectionStarted() includes codecOverridden + originalCodec
     /// in the JSON response so the frontend can adjust decoder expectations.
-    void setCodecOverridden(bool overridden, VideoCodec originalCodec) {
+    void setCodecOverridden(bool overridden, VideoCodec originalCodec)
+    {
         m_CodecOverridden = overridden;
         m_OriginalCodec = originalCodec;
     }
@@ -88,7 +83,8 @@ public:
     /// Set the ordered transport fallback chain and the index of the attempt
     /// this session represents. Echoed back to the browser so the frontend can
     /// walk the chain (relaunch with the next index) when a transport fails.
-    void setTransportChain(const QStringList& chain, int index) {
+    void setTransportChain(const QStringList& chain, int index)
+    {
         m_TransportChain = chain;
         m_TransportIndex = index;
     }

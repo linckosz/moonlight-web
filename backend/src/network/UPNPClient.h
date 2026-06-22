@@ -50,23 +50,18 @@ public:
     // desc: human-readable description shown in the router admin UI.
     // protocol: "TCP" or "UDP" (default: "UDP" for backward compat).
     // Returns true if the mapping was added successfully.
-    bool addPortMapping(uint16_t externalPort,
-                        uint16_t internalPort,
-                        uint32_t leaseDurationSec = 0,
+    bool addPortMapping(uint16_t externalPort, uint16_t internalPort, uint32_t leaseDurationSec = 0,
                         const std::string& desc = "Moonlight-Web",
                         const std::string& protocol = "UDP");
 
     // Check if a port mapping already exists on the IGD.
     // Returns true if a mapping exists; internalClient and internalPort are set.
     // Returns false if no mapping exists or the IGD is not available.
-    bool getExistingPortMapping(uint16_t externalPort,
-                                const std::string& protocol,
-                                std::string& internalClient,
-                                std::string& internalPort);
+    bool getExistingPortMapping(uint16_t externalPort, const std::string& protocol,
+                                std::string& internalClient, std::string& internalPort);
 
     // Remove a port mapping. protocol must match the original mapping.
-    bool removePortMapping(uint16_t externalPort,
-                           const std::string& protocol = "UDP");
+    bool removePortMapping(uint16_t externalPort, const std::string& protocol = "UDP");
 
     // Get the public IP address as seen by the IGD.
     // Returns empty string on failure or if no IGD is available.

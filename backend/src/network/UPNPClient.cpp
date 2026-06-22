@@ -77,7 +77,8 @@ bool UPNPClient::discover(int timeoutMs)
     devlist = upnpDiscover(timeoutMs, nullptr, nullptr, 0, 0, 2, &discoverError);
     if (!devlist) {
         qWarning() << "[UPNP] No UPnP devices found, error=" << discoverError;
-        emit error(QString("UPnP discovery failed: no devices found (error=%1)").arg(discoverError));
+        emit error(
+            QString("UPnP discovery failed: no devices found (error=%1)").arg(discoverError));
         return false;
     }
 
@@ -87,9 +88,8 @@ bool UPNPClient::discover(int timeoutMs)
     memset(m_LanAddr, 0, sizeof(m_LanAddr));
 
     char wanAddr[64] = {};
-    int igdStatus = UPNP_GetValidIGD(devlist, m_Urls, m_Data,
-                                     m_LanAddr, sizeof(m_LanAddr),
-                                     wanAddr, sizeof(wanAddr));
+    int igdStatus = UPNP_GetValidIGD(devlist, m_Urls, m_Data, m_LanAddr, sizeof(m_LanAddr), wanAddr,
+                                     sizeof(wanAddr));
 
     // Free the device list — we have extracted what we need
     freeUPNPDevlist(devlist);
@@ -122,17 +122,14 @@ bool UPNPClient::discover(int timeoutMs)
     m_Available = true;
     m_GatewayAddr = QHostAddress(QString::fromLatin1(m_LanAddr));
 
-    qInfo() << "[UPNP] IGD found: LAN addr=" << m_LanAddr
-            << "controlURL=" << m_Urls->controlURL
+    qInfo() << "[UPNP] IGD found: LAN addr=" << m_LanAddr << "controlURL=" << m_Urls->controlURL
             << "serviceType=" << m_Data->first.servicetype;
     return true;
 #endif
 }
 
-bool UPNPClient::getExistingPortMapping(uint16_t externalPort,
-                                            const std::string& protocol,
-                                            std::string& internalClient,
-                                            std::string& internalPort)
+bool UPNPClient::getExistingPortMapping(uint16_t externalPort, const std::string& protocol,
+                                        std::string& internalClient, std::string& internalPort)
 {
 #ifndef MW_HAVE_MINIUPNPC
     Q_UNUSED(externalPort);
@@ -154,17 +151,10 @@ bool UPNPClient::getExistingPortMapping(uint16_t externalPort,
     char enabled[4] = {};
     char leaseDur[16] = {};
 
-    int ret = UPNP_GetSpecificPortMappingEntry(
-        m_Urls->controlURL,
-        m_Data->first.servicetype,
-        portStr,
-        protocol.c_str(),
-        nullptr,        // remoteHost
-        intClient,
-        intPort,
-        desc,
-        enabled,
-        leaseDur);
+    int ret = UPNP_GetSpecificPortMappingEntry(m_Urls->controlURL, m_Data->first.servicetype,
+                                               portStr, protocol.c_str(),
+                                               nullptr, // remoteHost
+                                               intClient, intPort, desc, enabled, leaseDur);
 
     if (ret != 0) {
         // 714 = NoSuchEntryInArray (not an error, just means the port is free)
@@ -179,9 +169,8 @@ bool UPNPClient::getExistingPortMapping(uint16_t externalPort,
     internalClient = std::string(intClient);
     internalPort = std::string(intPort);
 
-    qInfo() << "[UPNP] Existing port mapping found:" << externalPort
-            << protocol.c_str() << "->" << intClient << ":" << intPort
-            << "desc='" << desc << "' enabled='" << enabled
+    qInfo() << "[UPNP] Existing port mapping found:" << externalPort << protocol.c_str() << "->"
+            << intClient << ":" << intPort << "desc='" << desc << "' enabled='" << enabled
             << "' lease='" << leaseDur << "'";
 
     return true;
@@ -189,8 +178,8 @@ bool UPNPClient::getExistingPortMapping(uint16_t externalPort,
 }
 
 bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
-                                 uint32_t leaseDurationSec, const std::string& desc,
-                                 const std::string& protocol)
+                                uint32_t leaseDurationSec, const std::string& desc,
+                                const std::string& protocol)
 {
 #ifndef MW_HAVE_MINIUPNPC
     Q_UNUSED(externalPort);
@@ -219,27 +208,24 @@ bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
     char intAddr[64] = {};
     strncpy(intAddr, m_LanAddr, sizeof(intAddr) - 1);
 
-    qInfo() << "[UPNP] Adding port mapping:" << externalPort << protocol.c_str() << "->"
-            << intAddr << ":" << internalPort
-            << "(lease=" << leaseDurationSec << "s, desc=" << desc.c_str() << ")";
+    qInfo() << "[UPNP] Adding port mapping:" << externalPort << protocol.c_str() << "->" << intAddr
+            << ":" << internalPort << "(lease=" << leaseDurationSec << "s, desc=" << desc.c_str()
+            << ")";
 
-    int ret = UPNP_AddPortMapping(
-        m_Urls->controlURL,
-        m_Data->first.servicetype,
-        portStr,                    // external port (string)
-        internalPortStr,            // internal port (string)
-        intAddr,                    // internal client address
-        desc.c_str(),               // description
-        protocol.c_str(),           // protocol
-        nullptr,                    // remote host (null = any)
-        leaseDurationSec > 0 ? std::to_string(leaseDurationSec).c_str() : nullptr);
+    int ret = UPNP_AddPortMapping(m_Urls->controlURL, m_Data->first.servicetype,
+                                  portStr,          // external port (string)
+                                  internalPortStr,  // internal port (string)
+                                  intAddr,          // internal client address
+                                  desc.c_str(),     // description
+                                  protocol.c_str(), // protocol
+                                  nullptr,          // remote host (null = any)
+                                  leaseDurationSec > 0 ? std::to_string(leaseDurationSec).c_str()
+                                                       : nullptr);
 
     if (ret != 0) {
         const char* errStr = strupnperror(ret);
         qWarning() << "[UPNP] AddPortMapping failed:" << errStr << "(error=" << ret << ")";
-        emit error(QString("AddPortMapping failed (port=%1): %2")
-                   .arg(externalPort)
-                   .arg(errStr));
+        emit error(QString("AddPortMapping failed (port=%1): %2").arg(externalPort).arg(errStr));
         return false;
     }
 
@@ -266,12 +252,10 @@ bool UPNPClient::removePortMapping(uint16_t externalPort, const std::string& pro
 
     qInfo() << "[UPNP] Removing port mapping:" << externalPort << protocol.c_str();
 
-    int ret = UPNP_DeletePortMapping(
-        m_Urls->controlURL,
-        m_Data->first.servicetype,
-        portStr,      // external port
-        protocol.c_str(), // protocol
-        nullptr);     // remote host (null = any)
+    int ret = UPNP_DeletePortMapping(m_Urls->controlURL, m_Data->first.servicetype,
+                                     portStr,          // external port
+                                     protocol.c_str(), // protocol
+                                     nullptr);         // remote host (null = any)
 
     if (ret != 0) {
         const char* errStr = strupnperror(ret);
@@ -298,10 +282,7 @@ std::string UPNPClient::getExternalIPAddress()
     }
 
     char extAddr[64] = {};
-    int ret = UPNP_GetExternalIPAddress(
-        m_Urls->controlURL,
-        m_Data->first.servicetype,
-        extAddr);
+    int ret = UPNP_GetExternalIPAddress(m_Urls->controlURL, m_Data->first.servicetype, extAddr);
 
     if (ret != 0) {
         const char* errStr = strupnperror(ret);
@@ -335,9 +316,8 @@ bool UPNPClient::getLocalIP(char* buf, size_t bufsize)
 #ifdef Q_OS_WIN
     // Use GetAdaptersAddresses to find the default interface IP
     DWORD buflen = 0;
-    GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST
-                         | GAA_FLAG_SKIP_MULTICAST
-                         | GAA_FLAG_SKIP_DNS_SERVER,
+    GetAdaptersAddresses(AF_INET,
+                         GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
                          nullptr, nullptr, &buflen);
 
     if (buflen == 0) return false;
@@ -345,23 +325,19 @@ bool UPNPClient::getLocalIP(char* buf, size_t bufsize)
     std::vector<unsigned char> bufVec(buflen);
     PIP_ADAPTER_ADDRESSES addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(bufVec.data());
 
-    DWORD ret = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST
-                                      | GAA_FLAG_SKIP_MULTICAST
-                                      | GAA_FLAG_SKIP_DNS_SERVER,
-                                      nullptr, addresses, &buflen);
+    DWORD ret = GetAdaptersAddresses(
+        AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
+        nullptr, addresses, &buflen);
 
     if (ret != ERROR_SUCCESS) return false;
 
     for (PIP_ADAPTER_ADDRESSES aa = addresses; aa; aa = aa->Next) {
         // Skip loopback and tunnel adapters
-        if (aa->IfType == IF_TYPE_SOFTWARE_LOOPBACK ||
-            aa->IfType == IF_TYPE_TUNNEL)
-            continue;
+        if (aa->IfType == IF_TYPE_SOFTWARE_LOOPBACK || aa->IfType == IF_TYPE_TUNNEL) continue;
 
         // Prefer Ethernet / Wi-Fi
         for (PIP_ADAPTER_UNICAST_ADDRESS ua = aa->FirstUnicastAddress; ua; ua = ua->Next) {
-            if (ua->Address.lpSockaddr->sa_family != AF_INET)
-                continue;
+            if (ua->Address.lpSockaddr->sa_family != AF_INET) continue;
 
             sockaddr_in* sa = reinterpret_cast<sockaddr_in*>(ua->Address.lpSockaddr);
             inet_ntop(AF_INET, &sa->sin_addr, buf, static_cast<DWORD>(bufsize));
@@ -383,15 +359,12 @@ bool UPNPClient::getLocalIP(char* buf, size_t bufsize)
 #else
     // Unix/macOS: getifaddrs
     struct ifaddrs* ifaddr = nullptr;
-    if (getifaddrs(&ifaddr) == -1)
-        return false;
+    if (getifaddrs(&ifaddr) == -1) return false;
 
     bool found = false;
     for (struct ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET)
-            continue;
-        if (ifa->ifa_flags & IFF_LOOPBACK)
-            continue;
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
 
         struct sockaddr_in* sa = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
         inet_ntop(AF_INET, &sa->sin_addr, buf, bufsize);

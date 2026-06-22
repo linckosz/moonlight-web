@@ -37,18 +37,16 @@ class MoonlightShim;
 // and the DataChannelRelay's libdatachannel PeerConnection.
 //
 // Protocol (JSON over WebSocket):
-//   browser -> server: {"type":"sdp","sdp":"..."}          // SDP answer (after receiving offer from us)
-//   server -> browser: {"type":"sdp","sdp":"..."}          // SDP offer
-//   browser -> server: {"type":"ice","candidate":"...","mid":"0"}
-//   server -> browser: {"type":"ice","candidate":"...","mid":"0"}
+//   browser -> server: {"type":"sdp","sdp":"..."}          // SDP answer (after receiving offer
+//   from us) server -> browser: {"type":"sdp","sdp":"..."}          // SDP offer browser -> server:
+//   {"type":"ice","candidate":"...","mid":"0"} server -> browser:
+//   {"type":"ice","candidate":"...","mid":"0"}
 class SignalingServer : public QObject
 {
     Q_OBJECT
 
 public:
-    SignalingServer(RelayBase* relay,
-                    quint16 wsPort,
-                    const QString& serverHost = "localhost",
+    SignalingServer(RelayBase* relay, quint16 wsPort, const QString& serverHost = "localhost",
                     QObject* parent = nullptr);
     ~SignalingServer();
 
@@ -137,7 +135,7 @@ private:
     void forwardAudioViaWs(const QByteArray& data);
 
     bool m_WsFallbackActive = false;
-    bool m_AllowWsFallback = true;  ///< Default: WS fallback allowed. Auto mode sets false.
+    bool m_AllowWsFallback = true; ///< Default: WS fallback allowed. Auto mode sets false.
     bool m_ShimConnected = false;  ///< MoonlightShim signals connected for fallback
 
     /// ── Members ─────────────────────────────────────────────────────────────
@@ -190,10 +188,9 @@ private:
     /// Build the rtc::Configuration with ICE servers and port range.
     /// ICE-TCP is always enabled as fallback. STUN is always present in
     /// Internet mode. UPnP sets a fixed port range and rewrites host candidates.
-    static rtc::Configuration buildIceConfig(bool isInternet,
-                                              uint16_t upnpMappedPort,
-                                              const QString& stunServerUrl,
-                                              bool forceIceTcp = false);
+    static rtc::Configuration buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
+                                             const QString& stunServerUrl,
+                                             bool forceIceTcp = false);
 
     bool m_UseUPnP = true;
     UPNPClient* m_Upnp = nullptr;

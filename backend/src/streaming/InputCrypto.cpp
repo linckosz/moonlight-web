@@ -70,8 +70,7 @@ QByteArray InputCrypto::encrypt(const QByteArray& plaintext)
     QByteArray out(16 + plainLen, '\0');
 
     int outLen = 0;
-    if (EVP_EncryptUpdate(ctx, reinterpret_cast<unsigned char*>(out.data()) + 16,
-                          &outLen,
+    if (EVP_EncryptUpdate(ctx, reinterpret_cast<unsigned char*>(out.data()) + 16, &outLen,
                           reinterpret_cast<const unsigned char*>(plaintext.constData()),
                           plainLen) != 1) {
         qWarning() << "[InputCrypto] EVP_EncryptUpdate failed";
@@ -106,8 +105,7 @@ QByteArray InputCrypto::encrypt(const QByteArray& plaintext)
 QByteArray InputCrypto::wrapAndEncrypt(const QByteArray& plaintext)
 {
     QByteArray taggedCipher = encrypt(plaintext);
-    if (taggedCipher.isEmpty())
-        return {};
+    if (taggedCipher.isEmpty()) return {};
 
     // Prepend BE length of tagged_cipher
     uint32_t len = static_cast<uint32_t>(taggedCipher.size());

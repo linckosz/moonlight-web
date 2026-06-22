@@ -70,18 +70,15 @@ static void loadEnvFile()
         path = QStringLiteral(PROJECT_ROOT) + ".env";
     }
     QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-        return;
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
 
     int count = 0;
     while (!f.atEnd()) {
         QByteArray line = f.readLine().trimmed();
-        if (line.isEmpty() || line.startsWith('#'))
-            continue;
+        if (line.isEmpty() || line.startsWith('#')) continue;
 
         int eq = line.indexOf('=');
-        if (eq <= 0)
-            continue;
+        if (eq <= 0) continue;
 
         QByteArray key = line.left(eq).trimmed();
         QByteArray value = line.mid(eq + 1).trimmed();
@@ -105,8 +102,7 @@ static void loadEnvFile()
                     QByteArray peek;
                     while (!f.atEnd()) {
                         peek = f.readLine().trimmed();
-                        if (!peek.isEmpty() && !peek.startsWith('#'))
-                            break;
+                        if (!peek.isEmpty() && !peek.startsWith('#')) break;
                     }
                     if (peek.startsWith("-----BEGIN")) {
                         pem += peek + '\n';
@@ -154,8 +150,7 @@ int main(int argc, char* argv[])
     parser.process(app);
 
     // Configure logging
-    if (parser.isSet(logOption))
-        Logger::instance()->setLogFile(parser.value(logOption));
+    if (parser.isSet(logOption)) Logger::instance()->setLogFile(parser.value(logOption));
 
     Logger::info("Moonlight-Web server starting...");
     Logger::info("Version: " + QCoreApplication::applicationVersion());
@@ -164,8 +159,7 @@ int main(int argc, char* argv[])
     // CLI --port overrides the persisted HTTP port when explicitly provided.
     AppSettings appSettings;
     quint16 httpPort = appSettings.httpPort(80);
-    if (parser.isSet("port"))
-        httpPort = parser.value("port").toUShort();
+    if (parser.isSet("port")) httpPort = parser.value("port").toUShort();
 
     HttpServer server(httpPort);
 
@@ -188,9 +182,9 @@ int main(int argc, char* argv[])
     // triggers a race on the static init mutex, SSL_ERROR_SYSCALL can occur.
     // Doing a synchronous init here avoids the race entirely.
     {
-        OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS
-                         | OPENSSL_INIT_LOAD_CRYPTO_STRINGS
-                         | OPENSSL_INIT_NO_ATEXIT, nullptr);
+        OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS |
+                             OPENSSL_INIT_NO_ATEXIT,
+                         nullptr);
         OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
         Logger::info("OpenSSL initialized");
     }
@@ -200,11 +194,11 @@ int main(int argc, char* argv[])
     VideoCodec preferredCodec = appSettings.videoCodec();
     bool upnpEnabled = appSettings.upnpEnabled();
     QString stunServer = appSettings.stunServer();
-    Logger::info("[main] Settings: http_port=" + QString::number(httpPort)
-                 + ", https_port=" + QString::number(httpsPort)
-                 + ", video_codec=" + AppSettings::videoCodecToString(preferredCodec)
-                 + ", upnp_enabled=" + (upnpEnabled ? "true" : "false")
-                 + ", stun_server=" + stunServer);
+    Logger::info("[main] Settings: http_port=" + QString::number(httpPort) +
+                 ", https_port=" + QString::number(httpsPort) +
+                 ", video_codec=" + AppSettings::videoCodecToString(preferredCodec) +
+                 ", upnp_enabled=" + (upnpEnabled ? "true" : "false") +
+                 ", stun_server=" + stunServer);
 
     // ── AuthManager (PIN-based + certificate authentication) ────────────────
     AuthManager authManager(&appSettings);
@@ -212,8 +206,8 @@ int main(int argc, char* argv[])
     // Generate certificate token on first startup (persisted forever)
     if (authManager.certificateToken().isEmpty()) {
         QString token = authManager.generateCertificateToken();
-        Logger::info(QString("[Auth] Initial certificate token generated (%1 chars)")
-            .arg(token.size()));
+        Logger::info(
+            QString("[Auth] Initial certificate token generated (%1 chars)").arg(token.size()));
     } else {
         Logger::info("[Auth] Certificate token already exists");
     }
@@ -223,10 +217,9 @@ int main(int argc, char* argv[])
     Logger::info("[Auth] Remote access requires a generated PIN");
     server.setAuthManager(&authManager);
 
-    QObject::connect(&authManager, &AuthManager::pinChanged,
-        [](const QString& pin) {
-            Logger::info(QString("[Auth] PIN changed: %1").arg(pin));
-        });
+    QObject::connect(&authManager, &AuthManager::pinChanged, [](const QString& pin) {
+        Logger::info(QString("[Auth] PIN changed: %1").arg(pin));
+    });
 
     // Phase 5b: WebRTC DataChannel relay + signaling tracking
     quint16 signalingPort = parser.value("ws-port").toUShort();
@@ -257,15 +250,13 @@ int main(int argc, char* argv[])
     // polling suspended across the whole transition, so a poll never opens an
     // HTTPS 47984 socket that would linger ~120s and hide the host from native
     // clients.
-    computerManager.setStreamActivePredicate(
-        [&g_ActiveRelay, &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay,
-         &g_ActiveRelayRoot, &g_ActiveSession]() {
-            return !g_ActiveRelay.isNull()
-                || !g_ActiveMediaTrackRelay.isNull()
-                || !g_ActiveStreamRelay.isNull()
-                || !g_ActiveRelayRoot.isNull()
-                || !g_ActiveSession.isNull();
-        });
+    computerManager.setStreamActivePredicate([&g_ActiveRelay, &g_ActiveMediaTrackRelay,
+                                              &g_ActiveStreamRelay, &g_ActiveRelayRoot,
+                                              &g_ActiveSession]() {
+        return !g_ActiveRelay.isNull() || !g_ActiveMediaTrackRelay.isNull() ||
+               !g_ActiveStreamRelay.isNull() || !g_ActiveRelayRoot.isNull() ||
+               !g_ActiveSession.isNull();
+    });
 
     InternetAccessManager internetAccess(&appSettings);
     GeoIpService geoIpService;
@@ -291,15 +282,13 @@ int main(int argc, char* argv[])
         if (!domain.isEmpty()) {
             // Resolve MW_CERT_PEM from process env (loadEnvFile already ran)
             QByteArray certData = qgetenv("MW_CERT_PEM");
-    #ifdef MW_CERT_PEM
-            if (certData.isEmpty())
-                certData = QByteArray(MW_CERT_PEM);
-    #endif
+#ifdef MW_CERT_PEM
+            if (certData.isEmpty()) certData = QByteArray(MW_CERT_PEM);
+#endif
             QByteArray keyData = qgetenv("MW_CERT_KEY");
-    #ifdef MW_CERT_KEY
-            if (keyData.isEmpty())
-                keyData = QByteArray(MW_CERT_KEY);
-    #endif
+#ifdef MW_CERT_KEY
+            if (keyData.isEmpty()) keyData = QByteArray(MW_CERT_KEY);
+#endif
 
             if (!certData.isEmpty() && !keyData.isEmpty()) {
                 QList<QSslCertificate> certs = QSslCertificate::fromData(certData, QSsl::Pem);
@@ -310,7 +299,7 @@ int main(int argc, char* argv[])
                         // references, overwriting any stale LE file paths from settings.
                         Logger::info(QString("[main] Embedded cert CN=%1 matches domain=%2 "
                                              "-- restoring cert_pem/cert_key to env var refs")
-                            .arg(cn, domain));
+                                         .arg(cn, domain));
                         appSettings.setCertPem(QStringLiteral("MW_CERT_PEM"));
                         appSettings.setCertKey(QStringLiteral("MW_CERT_KEY"));
                         server.setCertPem(QStringLiteral("MW_CERT_PEM"));
@@ -318,7 +307,7 @@ int main(int argc, char* argv[])
                     } else {
                         Logger::info(QString("[main] Embedded cert CN=%1 does not match "
                                              "domain=%2 -- leaving settings as-is")
-                            .arg(cn, domain));
+                                         .arg(cn, domain));
                     }
                 }
             }
@@ -327,19 +316,19 @@ int main(int argc, char* argv[])
 
     // Hot-reload TLS when certificate is renewed (no server restart needed)
     QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged,
-        [&server, &appSettings]() {
-            qInfo() << "[main] Certificate renewed, reloading TLS";
-            // Sync the domain on HttpServer too — it may have been updated since
-            // the initial setDomain() call (e.g. unique_id changed via API).
-            // Without this, reloadTls() uses the stale m_Domain and can reject
-            // the newly issued certificate due to CN mismatch.
-            server.setDomain(appSettings.domain());
-            server.setCertPem(appSettings.certPem());
-            server.setCertKey(appSettings.certKey());
-            if (!server.reloadTls()) {
-                qWarning() << "[main] TLS reload failed -- restart may be required";
-            }
-        });
+                     [&server, &appSettings]() {
+                         qInfo() << "[main] Certificate renewed, reloading TLS";
+                         // Sync the domain on HttpServer too — it may have been updated since
+                         // the initial setDomain() call (e.g. unique_id changed via API).
+                         // Without this, reloadTls() uses the stale m_Domain and can reject
+                         // the newly issued certificate due to CN mismatch.
+                         server.setDomain(appSettings.domain());
+                         server.setCertPem(appSettings.certPem());
+                         server.setCertKey(appSettings.certKey());
+                         if (!server.reloadTls()) {
+                             qWarning() << "[main] TLS reload failed -- restart may be required";
+                         }
+                     });
 
     // Register API routes
     server.router()->get("/api/health", [](const HttpRequest&) {
@@ -364,272 +353,267 @@ int main(int argc, char* argv[])
         obj["os"] = "Windows";
 #else
         obj["hostname"] = QHostInfo::localHostName();
-    #ifdef Q_OS_MACOS
+#ifdef Q_OS_MACOS
         obj["os"] = "macOS";
-    #elif defined(Q_OS_LINUX)
+#elif defined(Q_OS_LINUX)
         obj["os"] = "Linux";
-    #else
+#else
         obj["os"] = "Unknown";
-    #endif
+#endif
 #endif
         return HttpResponse::json(obj);
     });
 
     // ── Auth routes ─────────────────────────────────────────────────────────
     // POST /api/auth/validate — validate PIN or certificate, create session, set cookie
-    server.router()->post("/api/auth/validate",
-        [&authManager, &geoIpService](const HttpRequest& req) {
-            QJsonDocument doc = QJsonDocument::fromJson(req.body);
-            QJsonObject body = doc.object();
-            QString pin = body["pin"].toString();
-            QString certificate = body["certificate"].toString();
-            QString machineName = body["machine_name"].toString();
+    server.router()->post("/api/auth/validate", [&authManager,
+                                                 &geoIpService](const HttpRequest& req) {
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QJsonObject body = doc.object();
+        QString pin = body["pin"].toString();
+        QString certificate = body["certificate"].toString();
+        QString machineName = body["machine_name"].toString();
 
-            // ── Certificate authentication (alternative to PIN) ────────────
-            if (!certificate.isEmpty() && authManager.certAuthEnabled()) {
-                if (authManager.validateCertificate(certificate)) {
-                    // Certificate valid — create session (same flow as PIN success)
-                    QString token = authManager.createSession(req.clientAddress, machineName);
-                    geoIpService.lookupIp(req.clientAddress,
-                        [&authManager, token](const QString& city, const QString& country) {
-                            authManager.setSessionGeo(token, city, country);
-                        });
-
-                    QJsonObject obj;
-                    obj["status"] = "ok";
-                    obj["auth_method"] = "certificate";
-                    HttpResponse resp = HttpResponse::json(obj);
-                    resp.headers["Set-Cookie"] = QString(
-                        "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
-                        .arg(token);
-                    return resp;
-                } else {
-                    // Certificate invalid
-                    QJsonObject obj;
-                    obj["status"] = "error";
-                    obj["error"] = "invalid_certificate";
-                    return HttpResponse::json(obj, 401);
-                }
-            }
-
-            // ── PIN validation (default path) ──────────────────────────────
-            if (pin.isEmpty())
-                return HttpResponse::error(400, "Missing 'pin' field");
-
-            // Rate limiting uses the real socket IP
-            auto result = authManager.validatePin(req.clientAddress, pin);
-
-            QJsonObject obj;
-            switch (result.result) {
-            case AuthManager::Valid: {
+        // ── Certificate authentication (alternative to PIN) ────────────
+        if (!certificate.isEmpty() && authManager.certAuthEnabled()) {
+            if (authManager.validateCertificate(certificate)) {
+                // Certificate valid — create session (same flow as PIN success)
                 QString token = authManager.createSession(req.clientAddress, machineName);
-
-                // Look up the IP geolocation asynchronously and store in the session
-                geoIpService.lookupIp(req.clientAddress,
+                geoIpService.lookupIp(
+                    req.clientAddress,
                     [&authManager, token](const QString& city, const QString& country) {
                         authManager.setSessionGeo(token, city, country);
                     });
 
-                // Auto-regenerate PIN — immediately invalidate the just-used PIN
-                authManager.autoRegeneratePin();
-
+                QJsonObject obj;
                 obj["status"] = "ok";
-                obj["pin_regenerated"] = true;
+                obj["auth_method"] = "certificate";
                 HttpResponse resp = HttpResponse::json(obj);
-                // Set HttpOnly session cookie, 10-year expiry, Strict SameSite
-                resp.headers["Set-Cookie"] = QString(
-                    "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
-                    .arg(token);
+                resp.headers["Set-Cookie"] =
+                    QString(
+                        "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
+                        .arg(token);
                 return resp;
-            }
-            case AuthManager::InvalidPin:
+            } else {
+                // Certificate invalid
+                QJsonObject obj;
                 obj["status"] = "error";
-                obj["error"] = "invalid_pin";
-                obj["remaining"] = result.remainingAttempts;
-                obj["lockout_seconds"] = result.lockoutSeconds;
+                obj["error"] = "invalid_certificate";
                 return HttpResponse::json(obj, 401);
-            case AuthManager::RateLimited:
-                obj["status"] = "error";
-                obj["error"] = "rate_limited";
-                obj["lockout_seconds"] = result.lockoutSeconds;
-                return HttpResponse::json(obj, 429);
             }
-            return HttpResponse::error(500, "Internal error");
-        });
+        }
+
+        // ── PIN validation (default path) ──────────────────────────────
+        if (pin.isEmpty()) return HttpResponse::error(400, "Missing 'pin' field");
+
+        // Rate limiting uses the real socket IP
+        auto result = authManager.validatePin(req.clientAddress, pin);
+
+        QJsonObject obj;
+        switch (result.result) {
+        case AuthManager::Valid: {
+            QString token = authManager.createSession(req.clientAddress, machineName);
+
+            // Look up the IP geolocation asynchronously and store in the session
+            geoIpService.lookupIp(req.clientAddress, [&authManager, token](const QString& city,
+                                                                           const QString& country) {
+                authManager.setSessionGeo(token, city, country);
+            });
+
+            // Auto-regenerate PIN — immediately invalidate the just-used PIN
+            authManager.autoRegeneratePin();
+
+            obj["status"] = "ok";
+            obj["pin_regenerated"] = true;
+            HttpResponse resp = HttpResponse::json(obj);
+            // Set HttpOnly session cookie, 10-year expiry, Strict SameSite
+            resp.headers["Set-Cookie"] =
+                QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
+                    .arg(token);
+            return resp;
+        }
+        case AuthManager::InvalidPin:
+            obj["status"] = "error";
+            obj["error"] = "invalid_pin";
+            obj["remaining"] = result.remainingAttempts;
+            obj["lockout_seconds"] = result.lockoutSeconds;
+            return HttpResponse::json(obj, 401);
+        case AuthManager::RateLimited:
+            obj["status"] = "error";
+            obj["error"] = "rate_limited";
+            obj["lockout_seconds"] = result.lockoutSeconds;
+            return HttpResponse::json(obj, 429);
+        }
+        return HttpResponse::error(500, "Internal error");
+    });
 
     // POST /api/admin/pin/generate — generate a new PIN without revoking sessions (localhost only)
-    server.router()->post("/api/admin/pin/generate",
-        [&authManager](const HttpRequest& req) {
-            if (!HttpServer::isLocalRequest(req.clientAddress))
-                return HttpResponse::error(403, "Only available from localhost");
+    server.router()->post("/api/admin/pin/generate", [&authManager](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
 
-            QString pin = authManager.generatePin();
-            QJsonObject obj;
-            obj["status"] = "ok";
-            obj["pin"] = pin;
-            return HttpResponse::json(obj);
-        });
+        QString pin = authManager.generatePin();
+        QJsonObject obj;
+        obj["status"] = "ok";
+        obj["pin"] = pin;
+        return HttpResponse::json(obj);
+    });
 
     // POST /api/auth/regenerate — regenerate PIN (localhost only)
-    server.router()->post("/api/auth/regenerate",
-        [&authManager](const HttpRequest& req) {
-            if (!HttpServer::isLocalRequest(req.clientAddress))
-                return HttpResponse::error(403, "Only available from localhost");
+    server.router()->post("/api/auth/regenerate", [&authManager](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
 
-            authManager.regeneratePin();
-            QJsonObject obj;
-            obj["status"] = "ok";
-            obj["pin"] = authManager.currentPin();
-            return HttpResponse::json(obj);
-        });
+        authManager.regeneratePin();
+        QJsonObject obj;
+        obj["status"] = "ok";
+        obj["pin"] = authManager.currentPin();
+        return HttpResponse::json(obj);
+    });
 
     // POST /api/admin/pin/clear — reset PIN to "--------" (localhost only)
-    server.router()->post("/api/admin/pin/clear",
-        [&authManager](const HttpRequest& req) {
-            if (!HttpServer::isLocalRequest(req.clientAddress))
-                return HttpResponse::error(403, "Only available from localhost");
+    server.router()->post("/api/admin/pin/clear", [&authManager](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
 
-            authManager.clearPin();
-            QJsonObject obj;
-            obj["status"] = "ok";
-            obj["pin"] = authManager.currentPin();
-            return HttpResponse::json(obj);
-        });
+        authManager.clearPin();
+        QJsonObject obj;
+        obj["status"] = "ok";
+        obj["pin"] = authManager.currentPin();
+        return HttpResponse::json(obj);
+    });
 
     // GET /api/auth/status — check current auth status
-    server.router()->get("/api/auth/status",
-        [&authManager, &geoIpService](const HttpRequest& req) {
-            QJsonObject obj;
-            QString authedToken;  // set when a valid session cookie is found below
+    server.router()->get("/api/auth/status", [&authManager, &geoIpService](const HttpRequest& req) {
+        QJsonObject obj;
+        QString authedToken; // set when a valid session cookie is found below
 
-            bool isLocal = HttpServer::isLocalRequest(req.clientAddress);
-            obj["is_localhost"] = isLocal;
+        bool isLocal = HttpServer::isLocalRequest(req.clientAddress);
+        obj["is_localhost"] = isLocal;
 
-            if (isLocal) {
-                obj["authenticated"] = true;  // localhost is always authenticated
-                obj["pin"] = authManager.currentPin();
-                obj["pin_consumed"] = authManager.isPinConsumed();
-            } else {
-                // Check session cookie
-                bool auth = false;
-                QString cookie = req.headers.value("cookie");
-                if (!cookie.isEmpty()) {
-                    QStringList cookies = cookie.split(";");
-                    for (const QString& c : cookies) {
-                        QString trimmed = c.trimmed();
-                        if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
-                            QString token = trimmed.mid(QStringLiteral("mw_session=").length());
-                            if (authManager.validateSession(token)) {
-                                auth = true;
-                                authedToken = token;
-                                // Activity → slide the session's expiration window.
-                                authManager.touchSession(token);
-                                // Reconnection: refresh source IP and re-run
-                                // geolocation if it changed since last seen.
-                                if (authManager.updateSessionAddress(token, req.clientAddress)) {
-                                    geoIpService.lookupIp(req.clientAddress,
-                                        [&authManager, token](const QString& city, const QString& country) {
-                                            authManager.setSessionGeo(token, city, country);
-                                        });
-                                }
-                                break;
+        if (isLocal) {
+            obj["authenticated"] = true; // localhost is always authenticated
+            obj["pin"] = authManager.currentPin();
+            obj["pin_consumed"] = authManager.isPinConsumed();
+        } else {
+            // Check session cookie
+            bool auth = false;
+            QString cookie = req.headers.value("cookie");
+            if (!cookie.isEmpty()) {
+                QStringList cookies = cookie.split(";");
+                for (const QString& c : cookies) {
+                    QString trimmed = c.trimmed();
+                    if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
+                        QString token = trimmed.mid(QStringLiteral("mw_session=").length());
+                        if (authManager.validateSession(token)) {
+                            auth = true;
+                            authedToken = token;
+                            // Activity → slide the session's expiration window.
+                            authManager.touchSession(token);
+                            // Reconnection: refresh source IP and re-run
+                            // geolocation if it changed since last seen.
+                            if (authManager.updateSessionAddress(token, req.clientAddress)) {
+                                geoIpService.lookupIp(
+                                    req.clientAddress,
+                                    [&authManager, token](const QString& city,
+                                                          const QString& country) {
+                                        authManager.setSessionGeo(token, city, country);
+                                    });
                             }
+                            break;
                         }
                     }
                 }
-                obj["authenticated"] = auth;
-                if (!auth) {
-                    obj["remaining"] = authManager.remainingAttempts(req.clientAddress);
-                    int lockoutSecs = authManager.lockoutSeconds(req.clientAddress);
-                    if (lockoutSecs > 0)
-                        obj["lockout_seconds"] = lockoutSecs;
-                }
             }
+            obj["authenticated"] = auth;
+            if (!auth) {
+                obj["remaining"] = authManager.remainingAttempts(req.clientAddress);
+                int lockoutSecs = authManager.lockoutSeconds(req.clientAddress);
+                if (lockoutSecs > 0) obj["lockout_seconds"] = lockoutSecs;
+            }
+        }
 
-            obj["requires_pin"] = !isLocal;
-            obj["active_sessions"] = authManager.activeSessionCount();
-            obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+        obj["requires_pin"] = !isLocal;
+        obj["active_sessions"] = authManager.activeSessionCount();
+        obj["cert_auth_enabled"] = authManager.certAuthEnabled();
 
-            HttpResponse resp = HttpResponse::json(obj);
-            // Slide the cookie browser-side too, so an active client keeps a
-            // fresh 90-day window without ever re-entering the PIN.
-            if (!authedToken.isEmpty()) {
-                resp.headers["Set-Cookie"] = QString(
-                    "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
+        HttpResponse resp = HttpResponse::json(obj);
+        // Slide the cookie browser-side too, so an active client keeps a
+        // fresh 90-day window without ever re-entering the PIN.
+        if (!authedToken.isEmpty()) {
+            resp.headers["Set-Cookie"] =
+                QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
                     .arg(authedToken);
-            }
-            return resp;
-        });
+        }
+        return resp;
+    });
 
     // GET /api/auth/sessions — list active sessions with metadata (localhost only)
     server.router()->get("/api/auth/sessions",
-        [&authManager, &geoIpService](const HttpRequest& req) {
-            if (!HttpServer::isLocalRequest(req.clientAddress))
-                return HttpResponse::error(403, "Only available from localhost");
+                         [&authManager, &geoIpService](const HttpRequest& req) {
+                             if (!HttpServer::isLocalRequest(req.clientAddress))
+                                 return HttpResponse::error(403, "Only available from localhost");
 
-            QJsonArray arr;
-            const auto sessions = authManager.sessions();
-            for (const auto& s : sessions) {
-                QJsonObject entry = s.toJson();
-                // "Local" for private IPs, else city/country from stored geo data
-                entry["location"] = AuthManager::isPrivateIP(s.ip);
-                arr.append(entry);
-            }
-            QJsonObject obj;
-            obj["sessions"] = arr;
-            return HttpResponse::json(obj);
-        });
+                             QJsonArray arr;
+                             const auto sessions = authManager.sessions();
+                             for (const auto& s : sessions) {
+                                 QJsonObject entry = s.toJson();
+                                 // "Local" for private IPs, else city/country from stored geo data
+                                 entry["location"] = AuthManager::isPrivateIP(s.ip);
+                                 arr.append(entry);
+                             }
+                             QJsonObject obj;
+                             obj["sessions"] = arr;
+                             return HttpResponse::json(obj);
+                         });
 
     // POST /api/auth/sessions/revoke — revoke a session (token in JSON body, localhost only)
-    server.router()->post("/api/auth/sessions/revoke",
-        [&authManager](const HttpRequest& req) {
-            if (!HttpServer::isLocalRequest(req.clientAddress))
-                return HttpResponse::error(403, "Only available from localhost");
+    server.router()->post("/api/auth/sessions/revoke", [&authManager](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
 
-            QJsonDocument doc = QJsonDocument::fromJson(req.body);
-            QString token = doc.object().value("token").toString();
-            Logger::info(QString("[Auth] Revoke request — token='%1', size=%2")
-                .arg(token, QString::number(token.size())));
-            if (token.isEmpty())
-                return HttpResponse::error(400, "Missing 'token' in request body");
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QString token = doc.object().value("token").toString();
+        Logger::info(QString("[Auth] Revoke request — token='%1', size=%2")
+                         .arg(token, QString::number(token.size())));
+        if (token.isEmpty()) return HttpResponse::error(400, "Missing 'token' in request body");
 
-            authManager.destroySession(token);
-            QJsonObject obj;
-            obj["status"] = "revoked";
-            return HttpResponse::json(obj);
-        });
+        authManager.destroySession(token);
+        QJsonObject obj;
+        obj["status"] = "revoked";
+        return HttpResponse::json(obj);
+    });
 
     // GET /api/admin/certificate/download — download certificate token (localhost only)
-    server.router()->get("/api/admin/certificate/download",
-        [&authManager](const HttpRequest& req) {
-            if (!HttpServer::isLocalRequest(req.clientAddress))
-                return HttpResponse::error(403, "Only available from localhost");
+    server.router()->get("/api/admin/certificate/download", [&authManager](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
 
-            QString token = authManager.certificateToken();
-            if (token.isEmpty())
-                return HttpResponse::error(500, "Certificate token not initialized");
+        QString token = authManager.certificateToken();
+        if (token.isEmpty()) return HttpResponse::error(500, "Certificate token not initialized");
 
-            HttpResponse resp;
-            resp.statusCode = 200;
-            resp.contentType = "text/plain; charset=utf-8";
-            resp.headers["Content-Disposition"] = "attachment; filename=\"moonlight-web-certificate.txt\"";
-            resp.body = token.toUtf8();
-            return resp;
-        });
+        HttpResponse resp;
+        resp.statusCode = 200;
+        resp.contentType = "text/plain; charset=utf-8";
+        resp.headers["Content-Disposition"] =
+            "attachment; filename=\"moonlight-web-certificate.txt\"";
+        resp.body = token.toUtf8();
+        return resp;
+    });
 
     // POST /api/admin/certificate/regenerate — generate a new certificate token (localhost only)
     server.router()->post("/api/admin/certificate/regenerate",
-        [&authManager](const HttpRequest& req) {
-            if (!HttpServer::isLocalRequest(req.clientAddress))
-                return HttpResponse::error(403, "Only available from localhost");
+                          [&authManager](const HttpRequest& req) {
+                              if (!HttpServer::isLocalRequest(req.clientAddress))
+                                  return HttpResponse::error(403, "Only available from localhost");
 
-            QString newToken = authManager.generateCertificateToken();
-            QJsonObject obj;
-            obj["status"] = "ok";
-            obj["certificate_regenerated"] = true;
-            Logger::info("[Auth] Certificate token regenerated by admin");
-            return HttpResponse::json(obj);
-        });
+                              QString newToken = authManager.generateCertificateToken();
+                              QJsonObject obj;
+                              obj["status"] = "ok";
+                              obj["certificate_regenerated"] = true;
+                              Logger::info("[Auth] Certificate token regenerated by admin");
+                              return HttpResponse::json(obj);
+                          });
 
     server.router()->get("/api/server/status", [&server](const HttpRequest&) {
         QJsonObject obj;
@@ -657,8 +641,7 @@ int main(int argc, char* argv[])
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
         QString address = body["address"].toString();
-        if (address.isEmpty())
-            return HttpResponse::error(400, "Missing 'address' field");
+        if (address.isEmpty()) return HttpResponse::error(400, "Missing 'address' field");
 
         auto [status, result] = computerManager.handleAddManualHost(address);
         return HttpResponse::json(result, status);
@@ -666,8 +649,7 @@ int main(int argc, char* argv[])
 
     server.router()->del("/api/hosts/:id", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty())
-            return HttpResponse::error(400, "Missing host ID");
+        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
 
         auto [status, result] = computerManager.handleDeleteHost(uuid);
         return HttpResponse::json(result, status);
@@ -675,8 +657,7 @@ int main(int argc, char* argv[])
 
     server.router()->post("/api/hosts/:id/wol", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty())
-            return HttpResponse::error(400, "Missing host ID");
+        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
 
         auto [status, result] = computerManager.handleWakeHost(uuid);
         return HttpResponse::json(result, status);
@@ -685,16 +666,14 @@ int main(int argc, char* argv[])
     // Phase 3: Pairing routes
     server.router()->get("/api/hosts/:id/pair", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty())
-            return HttpResponse::error(400, "Missing host ID");
+        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
         auto [status, result] = computerManager.handleStartPairing(uuid);
         return HttpResponse::json(result, status);
     });
 
     server.router()->post("/api/hosts/:id/pair", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty())
-            return HttpResponse::error(400, "Missing host ID");
+        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
 
         auto [status, result] = computerManager.handleSubmitPin(uuid);
         return HttpResponse::json(result, status);
@@ -702,39 +681,46 @@ int main(int argc, char* argv[])
 
     // Phase 4: App list (async — fetches from Sunshine via HTTPS)
     server.router()->getAsync("/api/hosts/:id/apps",
-        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-        QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty()) {
-            respond(HttpResponse::error(400, "Missing host ID"));
-            return;
-        }
-        computerManager.handleGetAppList(uuid, std::move(respond));
-    });
+                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+                                  QString uuid = req.pathParams.value("id");
+                                  if (uuid.isEmpty()) {
+                                      respond(HttpResponse::error(400, "Missing host ID"));
+                                      return;
+                                  }
+                                  computerManager.handleGetAppList(uuid, std::move(respond));
+                              });
 
     // Phase 4: App asset proxy — PNG (async, fetches on demand if not cached)
-    server.router()->getAsync("/api/hosts/:id/appasset",
+    server.router()->getAsync(
+        "/api/hosts/:id/appasset",
         [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-        QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty()) {
-            respond(HttpResponse::error(400, "Missing host ID"));
-            return;
-        }
+            QString uuid = req.pathParams.value("id");
+            if (uuid.isEmpty()) {
+                respond(HttpResponse::error(400, "Missing host ID"));
+                return;
+            }
 
-        bool ok;
-        int appId = req.queryParams.value("appid").toInt(&ok);
-        if (!ok || appId <= 0) {
-            respond(HttpResponse::error(400, "Missing or invalid appid parameter"));
-            return;
-        }
+            bool ok;
+            int appId = req.queryParams.value("appid").toInt(&ok);
+            if (!ok || appId <= 0) {
+                respond(HttpResponse::error(400, "Missing or invalid appid parameter"));
+                return;
+            }
 
-        computerManager.handleGetBoxArt(uuid, appId, std::move(respond));
-    });
+            computerManager.handleGetBoxArt(uuid, appId, std::move(respond));
+        });
 
     // Phase 5: Start streaming — launch app + RTSP handshake
-    auto effectiveUpnpEnabled = upnpEnabled;  // Capture by value for the lambda
+    auto effectiveUpnpEnabled = upnpEnabled; // Capture by value for the lambda
 
-    server.router()->postAsync("/api/hosts/:id/start",
-        [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &server, &appSettings, &authManager, effectiveUpnpEnabled, stunServer](const HttpRequest& req, ResponseCallback respond) {
+    server.router()->postAsync("/api/hosts/:id/start", [&computerManager, signalingPort,
+                                                        &g_ActiveRelay, &g_ActiveStreamRelay,
+                                                        &g_ActiveMediaTrackRelay, &g_ActiveSession,
+                                                        &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
+                                                        &server, &appSettings, &authManager,
+                                                        effectiveUpnpEnabled,
+                                                        stunServer](const HttpRequest& req,
+                                                                    ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -833,26 +819,26 @@ int main(int argc, char* argv[])
         if (body.contains("video_codec"))
             reqCodec = AppSettings::videoCodecFromString(body["video_codec"].toString());
 
-        bool reqGamingMode = body.contains("gaming_mode")
-            ? body["gaming_mode"].toBool()
-            : appSettings.gamingMode();
+        bool reqGamingMode =
+            body.contains("gaming_mode") ? body["gaming_mode"].toBool() : appSettings.gamingMode();
 
         int reqBitrate = body.contains("stream_bitrate") && body["stream_bitrate"].toInt() > 0
-            ? body["stream_bitrate"].toInt()
-            : appSettings.streamBitrate();
+                             ? body["stream_bitrate"].toInt()
+                             : appSettings.streamBitrate();
 
         int reqHeight = body.contains("stream_height") && body["stream_height"].toInt() > 0
-            ? body["stream_height"].toInt()
-            : appSettings.streamHeight();
+                            ? body["stream_height"].toInt()
+                            : appSettings.streamHeight();
 
         // Aspect ratio → explicit width. Fix the height, derive the width from
         // the host's actual screen format so ultrawide hosts (21:9 / 32:9) stream
         // un-stretched. "auto" (default) reads the host's largest reported
         // DisplayMode — the host format is detected here, not assumed in advance.
         // An explicit "W:H" overrides it (manual 16:9 / 21:9 / 32:9).
-        QString reqAspect = body.contains("stream_aspect") && !body["stream_aspect"].toString().isEmpty()
-            ? body["stream_aspect"].toString()
-            : appSettings.streamAspect();
+        QString reqAspect =
+            body.contains("stream_aspect") && !body["stream_aspect"].toString().isEmpty()
+                ? body["stream_aspect"].toString()
+                : appSettings.streamAspect();
         double aspect = 16.0 / 9.0;
         if (reqAspect.contains(':')) {
             const QStringList parts = reqAspect.split(':');
@@ -869,18 +855,17 @@ int main(int argc, char* argv[])
         qInfo() << "[Session] Aspect" << reqAspect << "→" << reqWidth << "x" << reqHeight;
 
         int reqFps = body.contains("stream_fps") && body["stream_fps"].toInt() > 0
-            ? body["stream_fps"].toInt()
-            : appSettings.streamFps();
+                         ? body["stream_fps"].toInt()
+                         : appSettings.streamFps();
 
-        bool reqYuv444 = body.contains("chroma_444_enabled")
-            ? body["chroma_444_enabled"].toBool()
-            : appSettings.chroma444Enabled();
+        bool reqYuv444 = body.contains("chroma_444_enabled") ? body["chroma_444_enabled"].toBool()
+                                                             : appSettings.chroma444Enabled();
 
         // Video enhancement (WebGPU): the browser renders via canvas, so when it
         // is on the transport negotiation must avoid webrtc-media (<video>).
         bool reqVideoEnhancement = body.contains("video_enhancement")
-            ? (body["video_enhancement"].toString() == "on")
-            : (appSettings.videoEnhancement() == "on");
+                                       ? (body["video_enhancement"].toString() == "on")
+                                       : (appSettings.videoEnhancement() == "on");
 
         // Per-browser Sunshine unique ID (from the browser's localStorage).
         // Sanitized to hex (max 32 chars) before it reaches the launch URL.
@@ -888,27 +873,21 @@ int main(int argc, char* argv[])
         QString reqClientUniqueId;
         for (const QChar& c : body["client_uniqueid"].toString()) {
             QChar u = c.toUpper();
-            if (u.isDigit() || (u >= 'A' && u <= 'F'))
-                reqClientUniqueId += u;
-            if (reqClientUniqueId.size() >= 32)
-                break;
+            if (u.isDigit() || (u >= 'A' && u <= 'F')) reqClientUniqueId += u;
+            if (reqClientUniqueId.size() >= 32) break;
         }
 
         qInfo() << "[Session] Per-request streaming settings:"
                 << "codec=" << AppSettings::videoCodecToString(reqCodec)
-                << "gaming=" << reqGamingMode
-                << "bitrate=" << reqBitrate
-                << "height=" << reqHeight
-                << "fps=" << reqFps
-                << "yuv444=" << reqYuv444
+                << "gaming=" << reqGamingMode << "bitrate=" << reqBitrate << "height=" << reqHeight
+                << "fps=" << reqFps << "yuv444=" << reqYuv444
                 << "videoEnhancement=" << reqVideoEnhancement;
 
         // Determine signaling host from the browser's Host header.
         // Works for both LAN (localhost:443) and remote access via moonlightweb.top.
         QString serverHost = req.headers.value("host");
         int colon = serverHost.indexOf(':');
-        if (colon >= 0)
-            serverHost = serverHost.left(colon);
+        if (colon >= 0) serverHost = serverHost.left(colon);
 
         // ================================================================
         // Resolve transport mode (from AppSettings).
@@ -922,8 +901,7 @@ int main(int argc, char* argv[])
         //   "wss"                 → StreamRelay (WebSocket, always works)
         // ================================================================
         QString transportMode = appSettings.transportMode();
-        if (transportMode.isEmpty())
-            transportMode = "auto";
+        if (transportMode.isEmpty()) transportMode = "auto";
 
         // A per-request transport_mode (sent by the browser) overrides the admin
         // setting. The browser does NOT normally send it; it only sends
@@ -933,8 +911,8 @@ int main(int argc, char* argv[])
 
         // Index into the fallback chain that this attempt targets (the browser
         // increments it and relaunches when a transport fails to connect).
-        int reqTransportIndex = body.contains("transport_index")
-            ? body["transport_index"].toInt(0) : 0;
+        int reqTransportIndex =
+            body.contains("transport_index") ? body["transport_index"].toInt(0) : 0;
 
         // ── Auto-mode: priority-ordered transport list from header ─────
 
@@ -947,8 +925,8 @@ int main(int argc, char* argv[])
             switch (c) {
             case VideoCodec::H264: return (support & SCM_MASK_H264) != 0;
             case VideoCodec::HEVC: return (support & SCM_MASK_HEVC) != 0;
-            case VideoCodec::AV1:  return (support & SCM_MASK_AV1) != 0;
-            default:               return true;
+            case VideoCodec::AV1: return (support & SCM_MASK_AV1) != 0;
+            default: return true;
             }
         };
 
@@ -961,14 +939,13 @@ int main(int argc, char* argv[])
         //     is more reliable).
         //   - If the host doesn't support the selected codec, try H.264
         //     instead (if host supports it).
-        auto filterTransportsByCodec = [&](const QStringList& transports,
-                                            VideoCodec codec,
-                                            NvComputer* h) -> QStringList {
+        auto filterTransportsByCodec = [&](const QStringList& transports, VideoCodec codec,
+                                           NvComputer* h) -> QStringList {
             // Determine effective codec (resolve Auto → HEVC if host supports)
             VideoCodec effective = codec;
             if (effective == VideoCodec::Auto) {
-                effective = hostSupportsCodec(h, VideoCodec::HEVC)
-                    ? VideoCodec::HEVC : VideoCodec::H264;
+                effective =
+                    hostSupportsCodec(h, VideoCodec::HEVC) ? VideoCodec::HEVC : VideoCodec::H264;
             }
 
             // If host doesn't support the effective codec, fall back to H.264
@@ -987,10 +964,9 @@ int main(int argc, char* argv[])
 
             QStringList result;
             for (const auto& t : transports) {
-                if ((effective == VideoCodec::AV1 || effective == VideoCodec::HEVC)
-                    && t.startsWith("webrtc-media")) {
-                    qInfo() << "[Auto] Skipping" << t
-                            << "(MediaTrack only supports H.264, codec is"
+                if ((effective == VideoCodec::AV1 || effective == VideoCodec::HEVC) &&
+                    t.startsWith("webrtc-media")) {
+                    qInfo() << "[Auto] Skipping" << t << "(MediaTrack only supports H.264, codec is"
                             << static_cast<int>(effective) << ")";
                     continue; // Skip non-H.264 codecs on MediaTrack
                 }
@@ -1026,20 +1002,16 @@ int main(int argc, char* argv[])
             // webrtc-media-tcp) before falling through to other transports.
             QString sibling;
             if (transportMode.endsWith(QStringLiteral("-udp")))
-                sibling = transportMode.left(transportMode.length() - 4)
-                          + QStringLiteral("-tcp");
-            if (!sibling.isEmpty() && autoOrder.contains(sibling))
-                transportChain.append(sibling);
+                sibling = transportMode.left(transportMode.length() - 4) + QStringLiteral("-tcp");
+            if (!sibling.isEmpty() && autoOrder.contains(sibling)) transportChain.append(sibling);
             for (const QString& m : autoOrder)
-                if (m != transportMode && m != sibling)
-                    transportChain.append(m);
+                if (m != transportMode && m != sibling) transportChain.append(m);
         }
         qInfo() << "[Session] Transport chain:" << transportChain
                 << "requested index=" << reqTransportIndex;
 
-        if (transportChain.isEmpty()
-            || reqTransportIndex < 0
-            || reqTransportIndex >= transportChain.size()) {
+        if (transportChain.isEmpty() || reqTransportIndex < 0 ||
+            reqTransportIndex >= transportChain.size()) {
             qWarning() << "[Session] Transport index out of range — chain exhausted";
             respond(HttpResponse::error(502, "All transport modes failed"));
             return;
@@ -1055,9 +1027,9 @@ int main(int argc, char* argv[])
             internalTransport = QStringLiteral("webrtc");
         else
             internalTransport = QStringLiteral("wss");
-        qInfo() << "[Session] Attempt" << (reqTransportIndex + 1) << "/"
-                << transportChain.size() << ":" << chainMode
-                << "internal=" << internalTransport << "iceTcp=" << enableIceTcp;
+        qInfo() << "[Session] Attempt" << (reqTransportIndex + 1) << "/" << transportChain.size()
+                << ":" << chainMode << "internal=" << internalTransport
+                << "iceTcp=" << enableIceTcp;
 
         // ── Helper: attach lifecycle relay tracking for a new session ───────────
         // Adds the standard relay-created and session-ended connections that
@@ -1070,8 +1042,10 @@ int main(int argc, char* argv[])
             QString quitUid = reqClientUniqueId;
 
             // WSS mode: StreamRelay tracking
-            QObject::connect(s, &StreamSession::streamRelayCreated,
-                [&g_ActiveStreamRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &computerManager, &authManager, sessionToken, host, quitUid](StreamRelay* r) {
+            QObject::connect(
+                s, &StreamSession::streamRelayCreated,
+                [&g_ActiveStreamRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
+                 &computerManager, &authManager, sessionToken, host, quitUid](StreamRelay* r) {
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
                     g_ActiveRelayRoot = r;
@@ -1082,32 +1056,39 @@ int main(int argc, char* argv[])
                     // emits sessionEnded from its dedicated thread, but quitAppAsync()
                     // touches the shared QNAM that lives on the main thread.
                     QObject::connect(r, &StreamRelay::sessionEnded, qApp,
-                        [r, &g_ActiveStreamRelay, &computerManager, &authManager, sessionToken, host, quitUid]() {
-                            qInfo() << "[main] StreamRelay sessionEnded";
-                            authManager.setSessionStreaming(sessionToken, false);
-                            auto* identity = IdentityManager::get();
-                            auto* quitReply = computerManager.http()->quitAppAsync(
-                                host->activeAddress, host->activeHttpsPort,
-                                identity->getCertificate(), identity->getPrivateKey(), quitUid);
-                            QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            // The StreamSession is ephemeral (self-deletes once
-                            // streaming starts), so its own sessionEnded->quit()
-                            // handler is gone by the time the client disconnects —
-                            // this qApp lambda is the only surviving teardown owner.
-                            // Stop the shim FIRST (while the relay is alive) so
-                            // moonlight stops calling back before destruction (no
-                            // UAF), then stop + deleteLater. destroyed() frees the
-                            // signaling port and lets a deferred start() proceed.
-                            if (r->moonlightShim()) r->moonlightShim()->stopConnection();
-                            r->stop();
-                            r->deleteLater();
-                            if (g_ActiveStreamRelay == r) g_ActiveStreamRelay = nullptr;
-                        });
+                                     [r, &g_ActiveStreamRelay, &computerManager, &authManager,
+                                      sessionToken, host, quitUid]() {
+                                         qInfo() << "[main] StreamRelay sessionEnded";
+                                         authManager.setSessionStreaming(sessionToken, false);
+                                         auto* identity = IdentityManager::get();
+                                         auto* quitReply = computerManager.http()->quitAppAsync(
+                                             host->activeAddress, host->activeHttpsPort,
+                                             identity->getCertificate(), identity->getPrivateKey(),
+                                             quitUid);
+                                         QObject::connect(quitReply, &QNetworkReply::finished,
+                                                          quitReply, &QNetworkReply::deleteLater);
+                                         // The StreamSession is ephemeral (self-deletes once
+                                         // streaming starts), so its own sessionEnded->quit()
+                                         // handler is gone by the time the client disconnects —
+                                         // this qApp lambda is the only surviving teardown owner.
+                                         // Stop the shim FIRST (while the relay is alive) so
+                                         // moonlight stops calling back before destruction (no
+                                         // UAF), then stop + deleteLater. destroyed() frees the
+                                         // signaling port and lets a deferred start() proceed.
+                                         if (r->moonlightShim())
+                                             r->moonlightShim()->stopConnection();
+                                         r->stop();
+                                         r->deleteLater();
+                                         if (g_ActiveStreamRelay == r)
+                                             g_ActiveStreamRelay = nullptr;
+                                     });
                 });
 
             // WebRTC DataChannel mode: DataChannelRelay tracking
-            QObject::connect(s, &StreamSession::relayCreated,
-                [&g_ActiveRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &computerManager, &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
+            QObject::connect(
+                s, &StreamSession::relayCreated,
+                [&g_ActiveRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &computerManager,
+                 &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
                     g_ActiveRelayRoot = r;
@@ -1116,34 +1097,40 @@ int main(int argc, char* argv[])
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
                     QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
-                        [r, &g_ActiveRelay, &computerManager, &authManager, sessionToken, host, quitUid]() {
-                            qInfo() << "[main] sessionEnded fired, relay=" << r;
-                            authManager.setSessionStreaming(sessionToken, false);
-                            auto* identity = IdentityManager::get();
-                            auto* quitReply = computerManager.http()->quitAppAsync(
-                                host->activeAddress, host->activeHttpsPort,
-                                identity->getCertificate(), identity->getPrivateKey(), quitUid);
-                            QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
-                            // The StreamSession is ephemeral (self-deletes once
-                            // streaming starts), so its own sessionEnded->quit()
-                            // handler is gone by the time the client disconnects —
-                            // this qApp lambda is the only surviving teardown owner.
-                            // Stop the shim FIRST (while the relay is alive) so
-                            // moonlight stops calling back before destruction (no
-                            // UAF), then stop + deleteLater. destroyed() frees the
-                            // signaling port and lets a deferred start() proceed.
-                            if (r->moonlightShim()) r->moonlightShim()->stopConnection();
-                            r->stop();
-                            r->deleteLater();
-                            if (g_ActiveRelay == r) {
-                                g_ActiveRelay = nullptr;
-                            }
-                        });
+                                     [r, &g_ActiveRelay, &computerManager, &authManager,
+                                      sessionToken, host, quitUid]() {
+                                         qInfo() << "[main] sessionEnded fired, relay=" << r;
+                                         authManager.setSessionStreaming(sessionToken, false);
+                                         auto* identity = IdentityManager::get();
+                                         auto* quitReply = computerManager.http()->quitAppAsync(
+                                             host->activeAddress, host->activeHttpsPort,
+                                             identity->getCertificate(), identity->getPrivateKey(),
+                                             quitUid);
+                                         QObject::connect(quitReply, &QNetworkReply::finished,
+                                                          quitReply, &QNetworkReply::deleteLater);
+                                         // The StreamSession is ephemeral (self-deletes once
+                                         // streaming starts), so its own sessionEnded->quit()
+                                         // handler is gone by the time the client disconnects —
+                                         // this qApp lambda is the only surviving teardown owner.
+                                         // Stop the shim FIRST (while the relay is alive) so
+                                         // moonlight stops calling back before destruction (no
+                                         // UAF), then stop + deleteLater. destroyed() frees the
+                                         // signaling port and lets a deferred start() proceed.
+                                         if (r->moonlightShim())
+                                             r->moonlightShim()->stopConnection();
+                                         r->stop();
+                                         r->deleteLater();
+                                         if (g_ActiveRelay == r) {
+                                             g_ActiveRelay = nullptr;
+                                         }
+                                     });
                 });
 
             // WebRTC Media Track mode: MediaTrackRelay tracking
-            QObject::connect(s, &StreamSession::mediaTrackRelayCreated,
-                [&g_ActiveMediaTrackRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &computerManager, &authManager, sessionToken, host, quitUid](MediaTrackRelay* r) {
+            QObject::connect(
+                s, &StreamSession::mediaTrackRelayCreated,
+                [&g_ActiveMediaTrackRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
+                 &computerManager, &authManager, sessionToken, host, quitUid](MediaTrackRelay* r) {
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
                     g_ActiveRelayRoot = r;
@@ -1151,15 +1138,18 @@ int main(int argc, char* argv[])
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
-                    QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
-                        [r, &g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken, host, quitUid]() {
+                    QObject::connect(
+                        r, &MediaTrackRelay::sessionEnded, qApp,
+                        [r, &g_ActiveMediaTrackRelay, &computerManager, &authManager, sessionToken,
+                         host, quitUid]() {
                             qInfo() << "[main] MediaTrackRelay sessionEnded, relay=" << r;
                             authManager.setSessionStreaming(sessionToken, false);
                             auto* identity = IdentityManager::get();
                             auto* quitReply = computerManager.http()->quitAppAsync(
                                 host->activeAddress, host->activeHttpsPort,
                                 identity->getCertificate(), identity->getPrivateKey(), quitUid);
-                            QObject::connect(quitReply, &QNetworkReply::finished, quitReply, &QNetworkReply::deleteLater);
+                            QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
+                                             &QNetworkReply::deleteLater);
                             // The StreamSession is ephemeral (self-deletes once
                             // streaming starts), so its own sessionEnded->quit()
                             // handler is gone by the time the client disconnects —
@@ -1179,9 +1169,8 @@ int main(int argc, char* argv[])
         // ── Helper: create a session with the given transport mode and attach tracking ─
         // transportMode: full mode string ("webrtc-media-udp", "wss", etc.)
         // iceTcp: whether to enable ICE-TCP candidates
-        auto createSession = [&](const QString& transportMode, bool iceTcp,
-                                  ResponseCallback rsp,
-                                  VideoCodec codecOverride = VideoCodec::Auto) -> StreamSession* {
+        auto createSession = [&](const QString& transportMode, bool iceTcp, ResponseCallback rsp,
+                                 VideoCodec codecOverride = VideoCodec::Auto) -> StreamSession* {
             // Map transport mode to internal transport string
             QString internal;
             if (transportMode == "webrtc-media-udp" || transportMode == "webrtc-media-tcp")
@@ -1192,22 +1181,10 @@ int main(int argc, char* argv[])
                 internal = transportMode; // "wss"
 
             auto* s = new StreamSession(
-                host, appId,
-                computerManager.http(),
-                std::move(rsp),
-                signalingPort,
-                serverHost,
-                (codecOverride != VideoCodec::Auto) ? codecOverride : reqCodec,
-                reqGamingMode,
-                effectiveUpnpEnabled,
-                internal,
-                stunServer,
-                reqHeight,
-                reqWidth,
-                reqFps,
-                reqBitrate,
-                reqYuv444
-            );
+                host, appId, computerManager.http(), std::move(rsp), signalingPort, serverHost,
+                (codecOverride != VideoCodec::Auto) ? codecOverride : reqCodec, reqGamingMode,
+                effectiveUpnpEnabled, internal, stunServer, reqHeight, reqWidth, reqFps, reqBitrate,
+                reqYuv444);
             s->setHttpsPort(server.activeHttpsPort());
             s->setStreamRelayPort(signalingPort + 1);
             s->setTransportMode(transportMode); // Full mode for response
@@ -1237,9 +1214,8 @@ int main(int argc, char* argv[])
             bool codecOverridden = false;
             VideoCodec originalCodec = VideoCodec::Auto;
 
-            if (internalTransport == "webrtc-media"
-                && (effectiveCodec == VideoCodec::HEVC
-                    || effectiveCodec == VideoCodec::AV1)) {
+            if (internalTransport == "webrtc-media" &&
+                (effectiveCodec == VideoCodec::HEVC || effectiveCodec == VideoCodec::AV1)) {
                 qInfo() << "[Session] MediaTrack attempt but codec is"
                         << AppSettings::videoCodecToString(effectiveCodec)
                         << "- forcing H.264 (MediaTrack only supports H.264)";
@@ -1248,8 +1224,8 @@ int main(int argc, char* argv[])
                 codecOverridden = true;
             }
 
-            auto* session = createSession(chainMode, enableIceTcp,
-                std::move(respond), effectiveCodec);
+            auto* session =
+                createSession(chainMode, enableIceTcp, std::move(respond), effectiveCodec);
             if (codecOverridden) {
                 session->setCodecOverridden(true, originalCodec);
             }
@@ -1268,11 +1244,11 @@ int main(int argc, char* argv[])
             if (g_ActiveRelayRoot) {
                 qInfo() << "[Session] Previous relay" << g_ActiveRelayRoot.data()
                         << "still tearing down — deferring start() until destroyed";
-                QObject::connect(g_ActiveRelayRoot, &QObject::destroyed, qApp,
-                    [session]() {
-                        qInfo() << "[Session] Previous relay gone — starting deferred session" << session;
-                        session->start();
-                    });
+                QObject::connect(g_ActiveRelayRoot, &QObject::destroyed, qApp, [session]() {
+                    qInfo() << "[Session] Previous relay gone — starting deferred session"
+                            << session;
+                    session->start();
+                });
             } else {
                 session->start();
             }
@@ -1280,137 +1256,136 @@ int main(int argc, char* argv[])
     });
 
     // Phase 5: Quit running app
-    server.router()->postAsync("/api/hosts/:id/quit",
-        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveClientUniqueId](const HttpRequest& req, ResponseCallback respond) {
-        QString uuid = req.pathParams.value("id");
-        qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
-                << "relay valid=" << (!g_ActiveRelay.isNull());
+    server.router()->postAsync(
+        "/api/hosts/:id/quit",
+        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
+         &g_ActiveSession,
+         &g_ActiveClientUniqueId](const HttpRequest& req, ResponseCallback respond) {
+            QString uuid = req.pathParams.value("id");
+            qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
+                    << "relay valid=" << (!g_ActiveRelay.isNull());
 
-        if (uuid.isEmpty()) {
-            qWarning() << "[quit] Empty uuid, returning 400";
-            respond(HttpResponse::error(400, "Missing host ID"));
-            return;
-        }
-
-        NvComputer* host = computerManager.getHost(uuid);
-        if (!host) {
-            qWarning() << "[quit] Host not found for uuid=" << uuid;
-            respond(HttpResponse::error(404, "Host not found"));
-            return;
-        }
-        qInfo() << "[quit] Host found:" << host->name << host->activeAddress.address()
-                << ":" << host->activeHttpsPort;
-
-        // Per-browser unique ID so the cancel targets this browser's own
-        // session (must match the one used at /launch). Sanitized to hex.
-        QString quitUniqueId;
-        {
-            QJsonObject qbody = QJsonDocument::fromJson(req.body).object();
-            for (const QChar& c : qbody["client_uniqueid"].toString()) {
-                QChar u = c.toUpper();
-                if (u.isDigit() || (u >= 'A' && u <= 'F'))
-                    quitUniqueId += u;
-                if (quitUniqueId.size() >= 32)
-                    break;
+            if (uuid.isEmpty()) {
+                qWarning() << "[quit] Empty uuid, returning 400";
+                respond(HttpResponse::error(400, "Missing host ID"));
+                return;
             }
-        }
 
-        // Ownership guard: a client that was taken over by another device may
-        // still send a late /quit. The relay teardown below acts on the GLOBAL
-        // active relay — which is now the NEW owner's session — so tearing it
-        // down would kill the wrong stream. Only stop the relay when this request
-        // owns the active session (matching uniqueid). The quitAppAsync below is
-        // keyed by uniqueid and harmlessly cancels only the requester's own
-        // (already-gone) Sunshine session. Empty ids (localhost) keep legacy
-        // behaviour.
-        bool ownsSession = g_ActiveClientUniqueId.isEmpty()
-                        || quitUniqueId.isEmpty()
-                        || quitUniqueId == g_ActiveClientUniqueId;
-        if (!ownsSession) {
-            qInfo() << "[quit] Stale quit from non-owner uniqueid=" << quitUniqueId
-                    << "(active owner=" << g_ActiveClientUniqueId
-                    << ") — skipping relay teardown";
-        }
-
-        // Stop the transport relay first (closes PeerConnection or WS)
-        bool relayStopped = false;
-
-        if (ownsSession && g_ActiveRelay) {
-            qInfo() << "[quit] WebRTC relay exists, stopping relay=" << g_ActiveRelay.data();
-            DataChannelRelay* relay = g_ActiveRelay;
-            g_ActiveRelay = nullptr;
-            // Explicitly stop MoonlightShim before relay cleanup so LiStopConnection
-            // runs on the main thread, not deferred to the relay destructor.
-            if (relay->moonlightShim())
-                relay->moonlightShim()->stopConnection();
-            relay->stop();
-            relay->deleteLater();
-            relayStopped = true;
-        }
-
-        if (ownsSession && g_ActiveMediaTrackRelay) {
-            qInfo() << "[quit] MediaTrackRelay exists, stopping relay=" << g_ActiveMediaTrackRelay.data();
-            MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
-            g_ActiveMediaTrackRelay = nullptr;
-            // Explicitly stop MoonlightShim before relay cleanup.
-            if (relay->moonlightShim())
-                relay->moonlightShim()->stopConnection();
-            relay->stop();
-            relay->deleteLater();
-            relayStopped = true;
-        }
-
-        if (ownsSession && g_ActiveStreamRelay) {
-            qInfo() << "[quit] StreamRelay exists, stopping relay=" << g_ActiveStreamRelay.data();
-            StreamRelay* relay = g_ActiveStreamRelay;
-            g_ActiveStreamRelay = nullptr;
-            relay->stop();
-            relay->deleteLater();
-            relayStopped = true;
-        }
-
-        // Drop the active-session handle too (its relay was just torn down above)
-        // so a later take-over never calls quit() on a session whose relay is
-        // already gone. The session shell self-destructs here.
-        if (ownsSession && g_ActiveSession) {
-            g_ActiveSession->deleteLater();
-            g_ActiveSession = nullptr;
-            g_ActiveClientUniqueId.clear();
-        }
-
-        if (!relayStopped) {
-            qInfo() << "[quit] No active relay (already stopped or never started)";
-        }
-
-        qInfo() << "[quit] Sending quitAppAsync to Sunshine ...";
-        auto* identity = IdentityManager::get();
-        QNetworkReply* reply = computerManager.http()->quitAppAsync(
-            host->activeAddress, host->activeHttpsPort,
-            identity->getCertificate(), identity->getPrivateKey(), quitUniqueId);
-        qInfo() << "[quit] quitAppAsync reply=" << reply;
-
-        // Wait for quit to complete, then respond
-        QObject::connect(reply, &QNetworkReply::finished, [reply, respond]() {
-            reply->deleteLater();
-            if (reply->error() != QNetworkReply::NoError) {
-                qWarning() << "[quit] Sunshine quit failed: error=" << reply->error()
-                           << "errorString=" << reply->errorString();
-                qInfo() << "[quit] EXIT — returning 502";
-                respond(HttpResponse::error(502, "Quit failed: " + reply->errorString()));
-            } else {
-                QByteArray body = reply->readAll();
-                qInfo() << "[quit] Sunshine quit OK, body size=" << body.size()
-                        << "body=" << body.left(200);
-                QJsonObject result;
-                result["status"] = "quit";
-                qInfo() << "[quit] EXIT — returning 200 OK";
-                respond(HttpResponse::json(result));
+            NvComputer* host = computerManager.getHost(uuid);
+            if (!host) {
+                qWarning() << "[quit] Host not found for uuid=" << uuid;
+                respond(HttpResponse::error(404, "Host not found"));
+                return;
             }
+            qInfo() << "[quit] Host found:" << host->name << host->activeAddress.address() << ":"
+                    << host->activeHttpsPort;
+
+            // Per-browser unique ID so the cancel targets this browser's own
+            // session (must match the one used at /launch). Sanitized to hex.
+            QString quitUniqueId;
+            {
+                QJsonObject qbody = QJsonDocument::fromJson(req.body).object();
+                for (const QChar& c : qbody["client_uniqueid"].toString()) {
+                    QChar u = c.toUpper();
+                    if (u.isDigit() || (u >= 'A' && u <= 'F')) quitUniqueId += u;
+                    if (quitUniqueId.size() >= 32) break;
+                }
+            }
+
+            // Ownership guard: a client that was taken over by another device may
+            // still send a late /quit. The relay teardown below acts on the GLOBAL
+            // active relay — which is now the NEW owner's session — so tearing it
+            // down would kill the wrong stream. Only stop the relay when this request
+            // owns the active session (matching uniqueid). The quitAppAsync below is
+            // keyed by uniqueid and harmlessly cancels only the requester's own
+            // (already-gone) Sunshine session. Empty ids (localhost) keep legacy
+            // behaviour.
+            bool ownsSession = g_ActiveClientUniqueId.isEmpty() || quitUniqueId.isEmpty() ||
+                               quitUniqueId == g_ActiveClientUniqueId;
+            if (!ownsSession) {
+                qInfo() << "[quit] Stale quit from non-owner uniqueid=" << quitUniqueId
+                        << "(active owner=" << g_ActiveClientUniqueId
+                        << ") — skipping relay teardown";
+            }
+
+            // Stop the transport relay first (closes PeerConnection or WS)
+            bool relayStopped = false;
+
+            if (ownsSession && g_ActiveRelay) {
+                qInfo() << "[quit] WebRTC relay exists, stopping relay=" << g_ActiveRelay.data();
+                DataChannelRelay* relay = g_ActiveRelay;
+                g_ActiveRelay = nullptr;
+                // Explicitly stop MoonlightShim before relay cleanup so LiStopConnection
+                // runs on the main thread, not deferred to the relay destructor.
+                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                relay->stop();
+                relay->deleteLater();
+                relayStopped = true;
+            }
+
+            if (ownsSession && g_ActiveMediaTrackRelay) {
+                qInfo() << "[quit] MediaTrackRelay exists, stopping relay="
+                        << g_ActiveMediaTrackRelay.data();
+                MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
+                g_ActiveMediaTrackRelay = nullptr;
+                // Explicitly stop MoonlightShim before relay cleanup.
+                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                relay->stop();
+                relay->deleteLater();
+                relayStopped = true;
+            }
+
+            if (ownsSession && g_ActiveStreamRelay) {
+                qInfo() << "[quit] StreamRelay exists, stopping relay="
+                        << g_ActiveStreamRelay.data();
+                StreamRelay* relay = g_ActiveStreamRelay;
+                g_ActiveStreamRelay = nullptr;
+                relay->stop();
+                relay->deleteLater();
+                relayStopped = true;
+            }
+
+            // Drop the active-session handle too (its relay was just torn down above)
+            // so a later take-over never calls quit() on a session whose relay is
+            // already gone. The session shell self-destructs here.
+            if (ownsSession && g_ActiveSession) {
+                g_ActiveSession->deleteLater();
+                g_ActiveSession = nullptr;
+                g_ActiveClientUniqueId.clear();
+            }
+
+            if (!relayStopped) {
+                qInfo() << "[quit] No active relay (already stopped or never started)";
+            }
+
+            qInfo() << "[quit] Sending quitAppAsync to Sunshine ...";
+            auto* identity = IdentityManager::get();
+            QNetworkReply* reply = computerManager.http()->quitAppAsync(
+                host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
+                identity->getPrivateKey(), quitUniqueId);
+            qInfo() << "[quit] quitAppAsync reply=" << reply;
+
+            // Wait for quit to complete, then respond
+            QObject::connect(reply, &QNetworkReply::finished, [reply, respond]() {
+                reply->deleteLater();
+                if (reply->error() != QNetworkReply::NoError) {
+                    qWarning() << "[quit] Sunshine quit failed: error=" << reply->error()
+                               << "errorString=" << reply->errorString();
+                    qInfo() << "[quit] EXIT — returning 502";
+                    respond(HttpResponse::error(502, "Quit failed: " + reply->errorString()));
+                } else {
+                    QByteArray body = reply->readAll();
+                    qInfo() << "[quit] Sunshine quit OK, body size=" << body.size()
+                            << "body=" << body.left(200);
+                    QJsonObject result;
+                    result["status"] = "quit";
+                    qInfo() << "[quit] EXIT — returning 200 OK";
+                    respond(HttpResponse::json(result));
+                }
+            });
         });
-    });
 
-    if (!server.start(httpsPort))
-        return 1;
+    if (!server.start(httpsPort)) return 1;
 
     // Persist active ports (may differ from preferred due to fallback)
     {
@@ -1419,8 +1394,7 @@ int main(int argc, char* argv[])
             appSettings.setHttpsPort(activeHttps);
 
         quint16 activeHttp = server.httpPort();
-        if (appSettings.httpPort(0) != activeHttp)
-            appSettings.setHttpPort(activeHttp);
+        if (appSettings.httpPort(0) != activeHttp) appSettings.setHttpPort(activeHttp);
     }
 
     // Sync UPnP port mapping port with the actual server port
@@ -1452,8 +1426,8 @@ int main(int argc, char* argv[])
         // The admin UI runs on localhost and needs the full payload. Remote
         // sessions must not learn the internal network topology / file layout.
         if (!HttpServer::isLocalRequest(req.clientAddress)) {
-            for (const char* key : { "local_ip", "public_ip", "unique_id",
-                                     "cert_pem", "cert_key", "last_error" })
+            for (const char* key :
+                 {"local_ip", "public_ip", "unique_id", "cert_pem", "cert_key", "last_error"})
                 obj.remove(QLatin1String(key));
         }
         return HttpResponse::json(obj);
@@ -1463,7 +1437,8 @@ int main(int argc, char* argv[])
     server.router()->post("/api/internet/enable", [&](const HttpRequest& req) {
         // Only localhost can modify internet access settings
         if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Internet access settings can only be modified from localhost");
+            return HttpResponse::error(
+                403, "Internet access settings can only be modified from localhost");
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
@@ -1477,22 +1452,22 @@ int main(int argc, char* argv[])
             appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
         if (body.contains("transport_mode"))
             appSettings.setTransportMode(body["transport_mode"].toString());
-        if (body.contains("public_ip"))
-            appSettings.setPublicIp(body["public_ip"].toString());
+        if (body.contains("public_ip")) appSettings.setPublicIp(body["public_ip"].toString());
 
         if (body.contains("internet_access_enabled"))
             appSettings.setInternetAccessEnabled(body["internet_access_enabled"].toBool());
         if (body.contains("upnp_enabled"))
             appSettings.setUpnpEnabled(body["upnp_enabled"].toBool());
 
-        bool enabled = body.value("internet_access_enabled").toBool(
-            appSettings.internetAccessEnabled());
+        bool enabled =
+            body.value("internet_access_enabled").toBool(appSettings.internetAccessEnabled());
 
         if (enabled) {
             qInfo() << "[main] POST /api/internet/enable — calling internetAccess.start()...";
             internetAccess.start();
             QJsonObject obj = internetAccess.statusJson();
-            qInfo() << "[main] internetAccess.start() completed — active:" << internetAccess.isActive()
+            qInfo() << "[main] internetAccess.start() completed — active:"
+                    << internetAccess.isActive()
                     << "lastError:" << obj.value("last_error").toString();
             obj["status"] = "enabled";
             return HttpResponse::json(obj);
@@ -1509,7 +1484,8 @@ int main(int argc, char* argv[])
     server.router()->post("/api/internet/disable", [&](const HttpRequest& req) {
         // Only localhost can modify internet access settings
         if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Internet access settings can only be modified from localhost");
+            return HttpResponse::error(
+                403, "Internet access settings can only be modified from localhost");
 
         internetAccess.stop();
         appSettings.setInternetAccessEnabled(false);
@@ -1535,15 +1511,17 @@ int main(int argc, char* argv[])
 
     // — Admin settings (localhost only, server config) —
 
-    server.router()->get("/api/admin/settings", [&server, &appSettings, &authManager](const HttpRequest&) {
-        QJsonObject obj;
-        obj["http_port"] = static_cast<int>(server.httpPort());
-        obj["https_port"] = static_cast<int>(server.activeHttpsPort());
-        obj["cert_auth_enabled"] = authManager.certAuthEnabled();
-        return HttpResponse::json(obj);
-    });
+    server.router()->get("/api/admin/settings",
+                         [&server, &appSettings, &authManager](const HttpRequest&) {
+                             QJsonObject obj;
+                             obj["http_port"] = static_cast<int>(server.httpPort());
+                             obj["https_port"] = static_cast<int>(server.activeHttpsPort());
+                             obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+                             return HttpResponse::json(obj);
+                         });
 
-    server.router()->post("/api/admin/settings", [&server, &appSettings, &authManager, &internetAccess](const HttpRequest& req) {
+    server.router()->post("/api/admin/settings", [&server, &appSettings, &authManager,
+                                                  &internetAccess](const HttpRequest& req) {
         // Only localhost can modify server admin settings
         if (!HttpServer::isLocalRequest(req.clientAddress))
             return HttpResponse::error(403, "Admin settings can only be modified from localhost");
@@ -1576,8 +1554,8 @@ int main(int argc, char* argv[])
                 obj["status"] = "saved";
                 obj["port_changed"] = true;
 
-                qInfo() << "[admin] Scheduled deferred HTTPS port change from"
-                        << oldPort << "to" << newPort;
+                qInfo() << "[admin] Scheduled deferred HTTPS port change from" << oldPort << "to"
+                        << newPort;
 
                 QTimer::singleShot(0, [&server, &internetAccess, newPort, oldPort]() {
                     qInfo() << "[admin] Deferred: changing HTTPS port to" << newPort;
@@ -1594,8 +1572,7 @@ int main(int argc, char* argv[])
             hadChange = true;
         }
 
-        if (!hadChange)
-            return HttpResponse::error(400, "No supported settings provided");
+        if (!hadChange) return HttpResponse::error(400, "No supported settings provided");
 
         return HttpResponse::json(obj);
     });
@@ -1609,8 +1586,7 @@ int main(int argc, char* argv[])
         // Existing settings.json entries with "video_codec":"auto" are migrated on read.
         VideoCodec codec = appSettings.videoCodec();
         QString codecStr = AppSettings::videoCodecToString(codec);
-        if (codecStr == "auto")
-            codecStr = "hevc";
+        if (codecStr == "auto") codecStr = "hevc";
         obj["video_codec"] = codecStr;
 
         obj["gaming_mode"] = appSettings.gamingMode();
@@ -1621,7 +1597,8 @@ int main(int argc, char* argv[])
         obj["internet_access_enabled"] = appSettings.internetAccessEnabled();
         QString transportMode = appSettings.transportMode();
         obj["transport_mode"] = transportMode;
-        obj["media_track_only_h264"] = (transportMode == "webrtc-media-udp" || transportMode == "webrtc-media-tcp");
+        obj["media_track_only_h264"] =
+            (transportMode == "webrtc-media-udp" || transportMode == "webrtc-media-tcp");
         obj["auto_ip_detection"] = appSettings.autoIpDetection();
         obj["stream_bitrate"] = appSettings.streamBitrate();
         obj["stream_height"] = appSettings.streamHeight();
@@ -1644,7 +1621,8 @@ int main(int argc, char* argv[])
     server.router()->post("/api/settings/streaming", [&appSettings](const HttpRequest& req) {
         // Only localhost can modify server-side streaming settings
         if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Streaming settings can only be modified from localhost");
+            return HttpResponse::error(403,
+                                       "Streaming settings can only be modified from localhost");
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
@@ -1745,8 +1723,7 @@ int main(int argc, char* argv[])
             hadChange = true;
         }
 
-        if (!hadChange)
-            return HttpResponse::error(400, "No supported settings provided");
+        if (!hadChange) return HttpResponse::error(400, "No supported settings provided");
 
         return HttpResponse::json(obj);
     });
@@ -1755,7 +1732,9 @@ int main(int argc, char* argv[])
     TrayManager trayManager(&server);
     trayManager.init();
 
-    Logger::info("Server ready. Open https://localhost" + (httpsPort != 443 ? ":" + QString::number(server.activeHttpsPort()) : QString()) + " in your browser.");
+    Logger::info("Server ready. Open https://localhost" +
+                 (httpsPort != 443 ? ":" + QString::number(server.activeHttpsPort()) : QString()) +
+                 " in your browser.");
 
     return app.exec();
 }

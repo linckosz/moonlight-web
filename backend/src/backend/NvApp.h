@@ -27,7 +27,10 @@ public:
     NvApp() = default;
 
     NvApp(int id, const QString& name, bool hdrSupported = false)
-        : m_Id(id), m_Name(name), m_HdrSupported(hdrSupported) {}
+        : m_Id(id)
+        , m_Name(name)
+        , m_HdrSupported(hdrSupported)
+    {}
 
     explicit NvApp(QSettings& settings)
     {
@@ -60,8 +63,8 @@ public:
 
     bool operator==(const NvApp& other) const
     {
-        return m_Id == other.m_Id && m_Name == other.m_Name
-            && m_HdrSupported == other.m_HdrSupported;
+        return m_Id == other.m_Id && m_Name == other.m_Name &&
+               m_HdrSupported == other.m_HdrSupported;
     }
 
     bool operator!=(const NvApp& other) const { return !(*this == other); }

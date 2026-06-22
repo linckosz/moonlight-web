@@ -22,20 +22,20 @@
 #include <QtEndian>
 
 // Channel IDs
-static const quint8 CTRL_CHANNEL_GENERIC  = 0x00;
+static const quint8 CTRL_CHANNEL_GENERIC = 0x00;
 static const quint8 CTRL_CHANNEL_KEYBOARD = 0x02;
-static const quint8 CTRL_CHANNEL_MOUSE    = 0x03;
-static const quint8 CTRL_CHANNEL_COUNT    = 0x30;
+static const quint8 CTRL_CHANNEL_MOUSE = 0x03;
+static const quint8 CTRL_CHANNEL_COUNT = 0x30;
 
 // Packet types (Gen5+)
-static const uint16_t PKT_TYPE_START_A   = 0x0305;
-static const uint16_t PKT_TYPE_START_B   = 0x0307;
-static const uint16_t PKT_TYPE_INPUT     = 0x0206;
+static const uint16_t PKT_TYPE_START_A = 0x0305;
+static const uint16_t PKT_TYPE_START_B = 0x0307;
+static const uint16_t PKT_TYPE_INPUT = 0x0206;
 
 bool EnetControlStream::s_EnetInitialized = false;
 
-EnetControlStream::EnetControlStream(const QString& host, quint16 port,
-                                       uint32_t connectData, QObject* parent)
+EnetControlStream::EnetControlStream(const QString& host, quint16 port, uint32_t connectData,
+                                     QObject* parent)
     : QObject(parent)
     , m_HostName(host)
     , m_Port(port)
@@ -170,24 +170,22 @@ void EnetControlStream::service()
             emit disconnected();
             break;
 
-        default:
-            break;
+        default: break;
         }
     }
 }
 
 // --- Private helpers --------------------------------------------------------
 
-bool EnetControlStream::sendMessage(const QByteArray& payload, uint16_t type,
-                                     uint8_t channel, uint32_t flags)
+bool EnetControlStream::sendMessage(const QByteArray& payload, uint16_t type, uint8_t channel,
+                                    uint32_t flags)
 {
     if (!m_Peer) return false;
 
     QByteArray data;
     data.resize(2 + payload.size());
     qToLittleEndian(type, data.data());
-    if (!payload.isEmpty())
-        std::memcpy(data.data() + 2, payload.constData(), payload.size());
+    if (!payload.isEmpty()) std::memcpy(data.data() + 2, payload.constData(), payload.size());
 
     ENetPacket* pkt = enet_packet_create(data.constData(), data.size(), flags);
     if (!pkt) {
@@ -235,18 +233,16 @@ bool EnetControlStream::waitForConnect(int timeoutMs)
     return false;
 }
 
-bool EnetControlStream::sendAndWaitReply(const QByteArray& payload, uint16_t type,
-                                          uint8_t channel, int timeoutMs)
+bool EnetControlStream::sendAndWaitReply(const QByteArray& payload, uint16_t type, uint8_t channel,
+                                         int timeoutMs)
 {
     // Build packet: type (LE16) + payload
     QByteArray data;
     data.resize(2 + payload.size());
     qToLittleEndian(type, data.data());
-    if (!payload.isEmpty())
-        std::memcpy(data.data() + 2, payload.constData(), payload.size());
+    if (!payload.isEmpty()) std::memcpy(data.data() + 2, payload.constData(), payload.size());
 
-    ENetPacket* pkt = enet_packet_create(data.constData(), data.size(),
-                                          ENET_PACKET_FLAG_RELIABLE);
+    ENetPacket* pkt = enet_packet_create(data.constData(), data.size(), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(m_Peer, channel, pkt);
     enet_host_flush(m_Host);
 
@@ -279,12 +275,10 @@ bool EnetControlStream::sendAndWaitReply(const QByteArray& payload, uint16_t typ
                        << "data=" << event.data;
             return false;
         }
-        default:
-            break;
+        default: break;
         }
     }
 
-    qWarning() << "[ENet] No reply for type 0x" << Qt::hex << type
-               << "within" << elapsed << "ms";
+    qWarning() << "[ENet] No reply for type 0x" << Qt::hex << type << "within" << elapsed << "ms";
     return false;
 }

@@ -110,7 +110,8 @@ private slots:
     /// Called every 5 minutes for periodic checks.
     void onPeriodicCheck();
 
-    /// Called when pending registration is active. Retries with fixed delay (3s, 3s, 3s), max 3 attempts.
+    /// Called when pending registration is active. Retries with fixed delay (3s, 3s, 3s), max 3
+    /// attempts.
     void onPendingRegistrationRetry();
 
     /// Called when ACME client reports progress.
@@ -183,15 +184,16 @@ private:
     bool m_Active = false;
     QString m_Domain;
     QString m_PublicIp;
-    QString m_LocalIp;       ///< LAN IP address of this host (discovered via UPnP or GetAdaptersAddresses)
+    QString
+        m_LocalIp; ///< LAN IP address of this host (discovered via UPnP or GetAdaptersAddresses)
     QString m_UniqueId;
     QString m_LastError;
-    bool m_CertIssuing = false;  ///< True while ACME issuance is in progress
-    quint16 m_HttpPort = 0;      ///< Actual HTTP server port
-    quint16 m_HttpsPort = 0;     ///< Actual HTTPS server port
+    bool m_CertIssuing = false; ///< True while ACME issuance is in progress
+    quint16 m_HttpPort = 0;     ///< Actual HTTP server port
+    quint16 m_HttpsPort = 0;    ///< Actual HTTPS server port
 
     // Retry state
-    int m_PendingRetryCount = 0;          ///< Current retry attempt (0..3) for pending registration
+    int m_PendingRetryCount = 0; ///< Current retry attempt (0..3) for pending registration
 
     // Last DNS check timestamp (spaced to 24h)
     QDateTime m_LastDnsCheck;

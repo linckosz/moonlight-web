@@ -35,7 +35,8 @@ class RtspClient : public QObject
     Q_OBJECT
 
 public:
-    struct SessionInfo {
+    struct SessionInfo
+    {
         quint16 videoPort = 0;
         quint16 audioPort = 0;
         quint16 controlPort = 0;
@@ -44,8 +45,8 @@ public:
         QString sessionId;
         QString host;
         quint16 rtspPort = 0;
-        QByteArray rikey;   // AES-128 key for input encryption (16 bytes)
-        int rikeyid = 0;    // IV prefix (BE uint32 in first 4 bytes)
+        QByteArray rikey; // AES-128 key for input encryption (16 bytes)
+        int rikeyid = 0;  // IV prefix (BE uint32 in first 4 bytes)
     };
 
     explicit RtspClient(QObject* parent = nullptr);
@@ -67,7 +68,8 @@ signals:
     void stateChanged(const QString& state, const QString& stage);
 
 private:
-    struct RtspResponse {
+    struct RtspResponse
+    {
         int statusCode = 0;
         QMap<QString, QString> headers;
         QByteArray body;
@@ -75,8 +77,7 @@ private:
 
     // Blocking I/O helpers — each opens its own TCP connection
     bool sendAndWait(const QByteArray& method, const QString& pathSuffix,
-                     const QMap<QString, QString>& extraHeaders = {},
-                     const QByteArray& body = {});
+                     const QMap<QString, QString>& extraHeaders = {}, const QByteArray& body = {});
     bool sendSetupAndWait(const QString& streamType);
     bool waitForResponse(QTcpSocket& sock, const QByteArray& method);
 
@@ -97,6 +98,11 @@ private:
     int m_SetupCount = 0;
     QMap<QString, quint16> m_StreamPorts;
 
-    enum State { Idle, Ready, Error };
+    enum State
+    {
+        Idle,
+        Ready,
+        Error
+    };
     State m_State = Idle;
 };

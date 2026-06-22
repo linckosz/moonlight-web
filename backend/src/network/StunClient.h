@@ -44,9 +44,10 @@ public:
     /**
      * @brief A STUN server descriptor.
      */
-    struct StunServer {
-        QString host;   ///< Hostname or IP
-        quint16 port;   ///< Port (typically 3478, 19302, 443, 80)
+    struct StunServer
+    {
+        QString host; ///< Hostname or IP
+        quint16 port; ///< Port (typically 3478, 19302, 443, 80)
     };
 
     /// Default STUN server list (fallback chain).
@@ -63,9 +64,7 @@ public:
      * @param[out] publicIp Set to the detected public IP on success.
      * @return true if a STUN server responded with our public IPv4 address.
      */
-    bool detectPublicIp(const QList<StunServer>& servers,
-                        int timeoutMs,
-                        QString& publicIp);
+    bool detectPublicIp(const QList<StunServer>& servers, int timeoutMs, QString& publicIp);
 
 signals:
     void error(const QString& message);
@@ -80,6 +79,5 @@ private:
 
     /// Parse a STUN response and extract XOR-MAPPED-ADDRESS (type 0x0020).
     /// Returns the parsed IPv4 address as a string, or empty on failure.
-    QString parseXorMappedAddress(const QByteArray& response,
-                                  const QByteArray& transactionId);
+    QString parseXorMappedAddress(const QByteArray& response, const QByteArray& transactionId);
 };

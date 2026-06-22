@@ -25,7 +25,7 @@
 namespace rtc {
 class PeerConnection;
 struct Configuration;
-}
+} // namespace rtc
 
 class MoonlightShim;
 
@@ -38,7 +38,9 @@ class RelayBase : public QObject
     Q_OBJECT
 
 public:
-    explicit RelayBase(QObject* parent = nullptr) : QObject(parent) {}
+    explicit RelayBase(QObject* parent = nullptr)
+        : QObject(parent)
+    {}
     ~RelayBase() override = default;
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────

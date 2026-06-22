@@ -31,9 +31,7 @@ class StreamRelay : public QObject
     Q_OBJECT
 
 public:
-    StreamRelay(MoonlightShim* shim,
-                quint16 wsPort,
-                const QSslConfiguration& sslConfig = {},
+    StreamRelay(MoonlightShim* shim, quint16 wsPort, const QSslConfiguration& sslConfig = {},
                 QObject* parent = nullptr);
     ~StreamRelay();
 
@@ -97,8 +95,8 @@ private:
     void sendStats();
 
     MoonlightShim* m_Shim;
-    QTimer* m_StatsTimer = nullptr;    // Periodic stats to the browser (500ms)
-    QElapsedTimer m_IdrCooldownTimer;  // Throttle browser IDR requests (300ms)
+    QTimer* m_StatsTimer = nullptr;   // Periodic stats to the browser (500ms)
+    QElapsedTimer m_IdrCooldownTimer; // Throttle browser IDR requests (300ms)
     QWebSocketServer* m_WsServer = nullptr;
     QWebSocket* m_WsClient = nullptr;
     quint16 m_WsPort = 48001;
@@ -107,8 +105,9 @@ private:
     bool m_Running = false;
     bool m_Stopping = false;
     bool m_StreamStarted = false;
-    bool m_UseVideoFragmentation = false;  // WSS fragmentation OFF — full frames sent as single WS messages
-    uint32_t m_FrameId = 0;              // Monotonic frame ID for fragmentation
+    bool m_UseVideoFragmentation =
+        false;              // WSS fragmentation OFF — full frames sent as single WS messages
+    uint32_t m_FrameId = 0; // Monotonic frame ID for fragmentation
     QList<QByteArray> m_PendingVideoFrames;
     QList<QByteArray> m_PendingAudioFrames;
     int m_FrameCount = 0;

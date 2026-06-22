@@ -53,9 +53,10 @@
 // Declared locally to avoid winsock2/windows.h include-ordering conflicts with
 // Qt headers. Links against iphlpapi (already in LIBS). IPAddr/DWORD/ULONG are
 // all unsigned long.
-extern "C" __declspec(dllimport) unsigned long __stdcall SendARP(
-    unsigned long DestIP, unsigned long SrcIP,
-    void* pMacAddr, unsigned long* PhysAddrLen);
+extern "C"
+    __declspec(dllimport) unsigned long __stdcall SendARP(unsigned long DestIP, unsigned long SrcIP,
+                                                          void* pMacAddr,
+                                                          unsigned long* PhysAddrLen);
 #endif
 
 #define SER_HOSTS "hosts"
@@ -85,8 +86,7 @@ class MdnsPendingComputer : public QObject
     Q_OBJECT
 
 public:
-    MdnsPendingComputer(QMdnsEngine::Server* server,
-                        const QMdnsEngine::Service& service)
+    MdnsPendingComputer(QMdnsEngine::Server* server, const QMdnsEngine::Service& service)
         : m_Hostname(service.hostname())
         , m_Port(service.port())
         , m_Server(server)
@@ -94,23 +94,16 @@ public:
         resolve();
     }
 
-    ~MdnsPendingComputer()
-    {
-        delete m_Resolver;
-    }
+    ~MdnsPendingComputer() { delete m_Resolver; }
 
     QString hostname() const { return m_Hostname; }
     quint16 port() const { return m_Port; }
 
 signals:
-    void resolvedHost(MdnsPendingComputer* computer,
-                      const QVector<QHostAddress>& addresses);
+    void resolvedHost(MdnsPendingComputer* computer, const QVector<QHostAddress>& addresses);
 
 private slots:
-    void handleResolvedAddress(const QHostAddress& addr)
-    {
-        m_Addresses.append(addr);
-    }
+    void handleResolvedAddress(const QHostAddress& addr) { m_Addresses.append(addr); }
 
     void handleResolvedTimeout()
     {
@@ -119,10 +112,9 @@ private slots:
         else if (m_Retries-- > 0)
             resolve();
         else
-            emit resolvedHost(this, m_Addresses);  // empty → host unreachable
+            emit resolvedHost(this, m_Addresses); // empty → host unreachable
 
-        if (m_Addresses.isEmpty() && m_Retries <= 0)
-            deleteLater();
+        if (m_Addresses.isEmpty() && m_Retries <= 0) deleteLater();
     }
 
 private:
@@ -130,8 +122,8 @@ private:
     {
         delete m_Resolver;
         m_Resolver = new QMdnsEngine::Resolver(m_Server, m_Hostname);
-        connect(m_Resolver, &QMdnsEngine::Resolver::resolved,
-                this, &MdnsPendingComputer::handleResolvedAddress);
+        connect(m_Resolver, &QMdnsEngine::Resolver::resolved, this,
+                &MdnsPendingComputer::handleResolvedAddress);
         QTimer::singleShot(2000, this, &MdnsPendingComputer::handleResolvedTimeout);
     }
 
@@ -170,8 +162,7 @@ void ComputerManager::init()
     // Single-shot timer that closes each mDNS discovery window and frees 5353.
     m_MdnsWindowTimer = new QTimer(this);
     m_MdnsWindowTimer->setSingleShot(true);
-    connect(m_MdnsWindowTimer, &QTimer::timeout,
-            this, &ComputerManager::stopMdnsDiscovery);
+    connect(m_MdnsWindowTimer, &QTimer::timeout, this, &ComputerManager::stopMdnsDiscovery);
 
     // NOTE: mDNS is NOT started at boot. Binding UDP 5353 at idle steals mDNS
     // traffic from any other client on the same machine (Moonlight Qt, or
@@ -179,8 +170,8 @@ void ComputerManager::init()
     // window on an explicit scan request. Known hosts stay fresh via HTTP
     // polling, which never touches 5353.
 
-    Logger::info(QString("ComputerManager initialized: %1 hosts loaded (mDNS idle)")
-                     .arg(m_Hosts.size()));
+    Logger::info(
+        QString("ComputerManager initialized: %1 hosts loaded (mDNS idle)").arg(m_Hosts.size()));
 }
 
 // --- Persistence -----------------------------------------------------------
@@ -244,8 +235,7 @@ void ComputerManager::onPollTick()
     // client owning the session polls nothing, and our extra connection churn
     // (Connection: close + 2s abort) wedges Sunshine's single-threaded HTTP
     // server during encode, making the host appear offline to other clients.
-    if (m_StreamActivePredicate && m_StreamActivePredicate())
-        return;
+    if (m_StreamActivePredicate && m_StreamActivePredicate()) return;
 
     // --- Stalled poll cleanup: force-remove hosts stuck in polling for >10s ---
     QList<QString> stalled;
@@ -266,59 +256,56 @@ void ComputerManager::onPollTick()
         NvComputer* host = it.value();
 
         // Verify pairing via /applist for hosts claiming to be paired
-        if (host->pairState == NvComputer::PS_PAIRED && !host->serverCertPem.isEmpty()
-            && !m_PendingPairChecks.contains(uuid)) {
+        if (host->pairState == NvComputer::PS_PAIRED && !host->serverCertPem.isEmpty() &&
+            !m_PendingPairChecks.contains(uuid)) {
             QDateTime now = QDateTime::currentDateTime();
-            if (!m_LastPairCheck.contains(uuid)
-                || m_LastPairCheck[uuid].secsTo(now) >= PAIR_CHECK_INTERVAL_SEC) {
+            if (!m_LastPairCheck.contains(uuid) ||
+                m_LastPairCheck[uuid].secsTo(now) >= PAIR_CHECK_INTERVAL_SEC) {
                 m_LastPairCheck[uuid] = now;
                 QVector<NvAddress> addrs = host->uniqueAddresses();
                 if (!addrs.isEmpty()) {
                     IdentityManager* im = IdentityManager::get();
-                    quint16 httpsPort = host->activeHttpsPort > 0
-                        ? host->activeHttpsPort : MW_HTTPS_PORT;
+                    quint16 httpsPort =
+                        host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
                     m_PendingPairChecks.insert(uuid);
                     // [NETWORK] diagnostic: trace HTTPS pair-check (every 5 min).
                     Logger::info(QString("[NETWORK] pair-check applist HTTPS -> %1:%2 (%3)")
-                                     .arg(addrs.first().address()).arg(httpsPort).arg(host->name));
+                                     .arg(addrs.first().address())
+                                     .arg(httpsPort)
+                                     .arg(host->name));
                     QNetworkReply* reply = m_Http->getAppListAsync(
-                        addrs.first(), httpsPort,
-                        im->getCertificate(), im->getPrivateKey());
+                        addrs.first(), httpsPort, im->getCertificate(), im->getPrivateKey());
                     reply->setProperty("mwHostUuid", uuid);
-                    connect(reply, &QNetworkReply::finished,
-                            this, &ComputerManager::onPairCheckFinished);
+                    connect(reply, &QNetworkReply::finished, this,
+                            &ComputerManager::onPairCheckFinished);
                 }
             }
         }
 
         // Skip if this host is already being polled (robust tracking via QSet)
-        if (m_PollingHosts.contains(uuid))
-            continue;
+        if (m_PollingHosts.contains(uuid)) continue;
 
         QVector<NvAddress> addrs = host->uniqueAddresses();
-        if (addrs.isEmpty())
-            continue;
+        if (addrs.isEmpty()) continue;
 
         // Use first address for polling
         NvAddress addr = addrs.first();
 
         // [NETWORK] diagnostic: trace every outbound serverinfo poll.
-        Logger::info(QString("[NETWORK] poll serverinfo HTTP -> %1 (%2)")
-                         .arg(addr.toString(), host->name));
+        Logger::info(
+            QString("[NETWORK] poll serverinfo HTTP -> %1 (%2)").arg(addr.toString(), host->name));
 
         QNetworkReply* reply = m_Http->getServerInfoAsync(addr, clientUniqueId());
         m_PendingPolls[reply] = uuid;
         m_PollingHosts.insert(uuid);
         m_PollStartedAt[uuid].start();
 
-        connect(reply, &QNetworkReply::finished,
-                this, &ComputerManager::onPollReplyFinished);
+        connect(reply, &QNetworkReply::finished, this, &ComputerManager::onPollReplyFinished);
 
         // 2-second timeout (abort reply, onPollReplyFinished will fire)
         QPointer<QNetworkReply> guard(reply);
         QTimer::singleShot(NvHTTP::FAST_FAIL_TIMEOUT_MS, reply, [guard]() {
-            if (guard && !guard->isFinished())
-                guard->abort();
+            if (guard && !guard->isFinished()) guard->abort();
         });
     }
 }
@@ -326,8 +313,7 @@ void ComputerManager::onPollTick()
 void ComputerManager::onBackupPollTick()
 {
     // Suspend during an active stream — see onPollTick().
-    if (m_StreamActivePredicate && m_StreamActivePredicate())
-        return;
+    if (m_StreamActivePredicate && m_StreamActivePredicate()) return;
 
     Logger::debug("Backup poll tick — safety-net refresh of idle hosts");
 
@@ -339,12 +325,10 @@ void ComputerManager::onBackupPollTick()
         const QString& uuid = it.key();
         NvComputer* host = it.value();
 
-        if (m_PollingHosts.contains(uuid))
-            continue;
+        if (m_PollingHosts.contains(uuid)) continue;
 
         QVector<NvAddress> addrs = host->uniqueAddresses();
-        if (addrs.isEmpty())
-            continue;
+        if (addrs.isEmpty()) continue;
 
         NvAddress addr = addrs.first();
 
@@ -357,13 +341,11 @@ void ComputerManager::onBackupPollTick()
         m_PollingHosts.insert(uuid);
         m_PollStartedAt[uuid].start();
 
-        connect(reply, &QNetworkReply::finished,
-                this, &ComputerManager::onPollReplyFinished);
+        connect(reply, &QNetworkReply::finished, this, &ComputerManager::onPollReplyFinished);
 
         QPointer<QNetworkReply> guard(reply);
         QTimer::singleShot(NvHTTP::FAST_FAIL_TIMEOUT_MS, reply, [guard]() {
-            if (guard && !guard->isFinished())
-                guard->abort();
+            if (guard && !guard->isFinished()) guard->abort();
         });
     }
 }
@@ -404,8 +386,8 @@ void ComputerManager::onPollReplyFinished()
                                 .arg(OFFLINE_FAILURE_THRESHOLD)
                                 .arg(host->name, reason));
         }
-        if (host->consecutivePollFailures >= OFFLINE_FAILURE_THRESHOLD
-            && host->state != NvComputer::CS_OFFLINE) {
+        if (host->consecutivePollFailures >= OFFLINE_FAILURE_THRESHOLD &&
+            host->state != NvComputer::CS_OFFLINE) {
             host->state = NvComputer::CS_OFFLINE;
             changed = true;
         }
@@ -419,9 +401,7 @@ void ComputerManager::onPollReplyFinished()
         try {
             NvHTTP::verifyResponseStatus(xml);
 
-            NvAddress pollAddr(
-                reply->url().host(),
-                static_cast<quint16>(reply->url().port(47989)));
+            NvAddress pollAddr(reply->url().host(), static_cast<quint16>(reply->url().port(47989)));
 
             NvComputer newState(xml, pollAddr);
 
@@ -464,16 +444,16 @@ void ComputerManager::startMdnsDiscovery()
 
     try {
         m_MdnsServer = new QMdnsEngine::Server(this);
-        m_MdnsBrowser = new QMdnsEngine::Browser(m_MdnsServer,
-                                                  "_nvstream._tcp.local.",
-                                                  nullptr, this);
+        m_MdnsBrowser =
+            new QMdnsEngine::Browser(m_MdnsServer, "_nvstream._tcp.local.", nullptr, this);
 
-        connect(m_MdnsBrowser, &QMdnsEngine::Browser::serviceAdded,
-                this, &ComputerManager::onMdnsServiceAdded);
+        connect(m_MdnsBrowser, &QMdnsEngine::Browser::serviceAdded, this,
+                &ComputerManager::onMdnsServiceAdded);
 
         m_MdnsActive = true;
         m_MdnsWindowTimer->start(MDNS_DISCOVERY_WINDOW_MS);
-        Logger::info("[NETWORK] mDNS discovery window opened — UDP 5353 bound (_nvstream._tcp.local.)");
+        Logger::info(
+            "[NETWORK] mDNS discovery window opened — UDP 5353 bound (_nvstream._tcp.local.)");
     } catch (const std::exception& e) {
         Logger::warning(QString("mDNS discovery unavailable: %1").arg(e.what()));
     }
@@ -481,8 +461,7 @@ void ComputerManager::startMdnsDiscovery()
 
 void ComputerManager::stopMdnsDiscovery()
 {
-    if (!m_MdnsActive && !m_MdnsServer)
-        return;
+    if (!m_MdnsActive && !m_MdnsServer) return;
 
     // Cancel pending hostname resolutions first — they hold a pointer to the
     // mDNS server and must not outlive it.
@@ -491,7 +470,7 @@ void ComputerManager::stopMdnsDiscovery()
 
     delete m_MdnsBrowser;
     m_MdnsBrowser = nullptr;
-    delete m_MdnsServer;  // releases UDP 5353
+    delete m_MdnsServer; // releases UDP 5353
     m_MdnsServer = nullptr;
 
     m_MdnsActive = false;
@@ -503,8 +482,7 @@ void ComputerManager::onMdnsServiceAdded(const QMdnsEngine::Service& service)
     Logger::info(QString("mDNS host discovered: %1").arg(QString::fromUtf8(service.hostname())));
 
     MdnsPendingComputer* pending = new MdnsPendingComputer(m_MdnsServer, service);
-    connect(pending, &MdnsPendingComputer::resolvedHost,
-            this, &ComputerManager::onMdnsResolved);
+    connect(pending, &MdnsPendingComputer::resolvedHost, this, &ComputerManager::onMdnsResolved);
 
     m_PendingResolutions.append(pending);
 }
@@ -519,10 +497,8 @@ static QHostAddress chooseBestMdnsAddress(const QVector<QHostAddress>& addresses
 {
     QVector<QHostAddress> ipv4;
     for (const QHostAddress& a : addresses)
-        if (a.protocol() == QAbstractSocket::IPv4Protocol)
-            ipv4.append(a);
-    if (ipv4.size() <= 1)
-        return ipv4.isEmpty() ? QHostAddress() : ipv4.first();
+        if (a.protocol() == QAbstractSocket::IPv4Protocol) ipv4.append(a);
+    if (ipv4.size() <= 1) return ipv4.isEmpty() ? QHostAddress() : ipv4.first();
 
     // Default-route local IP: connecting a UDP socket makes the OS pick the
     // routable interface, never a host-only/virtual adapter (no packet sent).
@@ -532,22 +508,21 @@ static QHostAddress chooseBestMdnsAddress(const QVector<QHostAddress>& addresses
     probe.close();
 
     if (!localIp.isNull()) {
-        int prefix = 24;  // sane default if the interface entry is not found
+        int prefix = 24; // sane default if the interface entry is not found
         for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces())
             for (const QNetworkAddressEntry& e : iface.addressEntries())
-                if (e.ip() == localIp && e.prefixLength() > 0)
-                    prefix = e.prefixLength();
+                if (e.ip() == localIp && e.prefixLength() > 0) prefix = e.prefixLength();
 
         for (const QHostAddress& cand : ipv4)
             if (cand.isInSubnet(localIp, prefix))
-                return cand;  // same subnet as our routable LAN — best match
+                return cand; // same subnet as our routable LAN — best match
     }
 
     return ipv4.first();
 }
 
 void ComputerManager::onMdnsResolved(MdnsPendingComputer* computer,
-                                      const QVector<QHostAddress>& addresses)
+                                     const QVector<QHostAddress>& addresses)
 {
     m_PendingResolutions.removeOne(computer);
 
@@ -563,7 +538,7 @@ void ComputerManager::onMdnsResolved(MdnsPendingComputer* computer,
 // --- Host management --------------------------------------------------------
 
 void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns,
-                                             const QString& name)
+                                            const QString& name)
 {
     Q_UNUSED(fromMdns)
     Q_UNUSED(name)
@@ -578,8 +553,8 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
                 NvHTTP::verifyResponseStatus(xml);
                 addOrUpdateHost(xml, addr);
             } catch (const std::exception& e) {
-                Logger::warning(QString("Failed to query host at %1: %2")
-                                 .arg(addr.toString(), e.what()));
+                Logger::warning(
+                    QString("Failed to query host at %1: %2").arg(addr.toString(), e.what()));
             }
         }
 
@@ -588,8 +563,7 @@ void ComputerManager::tryAddHostFromAddress(const NvAddress& addr, bool fromMdns
 
     QPointer<QNetworkReply> guard(reply);
     QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS, reply, [guard]() {
-        if (guard && !guard->isFinished())
-            guard->abort();
+        if (guard && !guard->isFinished()) guard->abort();
     });
 }
 
@@ -597,8 +571,7 @@ void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
 {
     NvComputer newHost(serverInfo, addr);
 
-    if (newHost.uuid.isEmpty())
-        return;
+    if (newHost.uuid.isEmpty()) return;
 
     NvComputer* existing = findHostByUuid(newHost.uuid);
 
@@ -608,8 +581,7 @@ void ComputerManager::addOrUpdateHost(const QString& serverInfo, const NvAddress
             saveHosts();
             emit hostsChanged();
 
-            Logger::info(QString("Host updated: %1 (%2)")
-                             .arg(existing->name, existing->uuid));
+            Logger::info(QString("Host updated: %1 (%2)").arg(existing->name, existing->uuid));
         }
     } else {
         // New host discovered
@@ -701,8 +673,7 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
                 break;
             }
         }
-        if (hostAddr.isNull())
-            hostAddr = dnsResult.addresses().first();
+        if (hostAddr.isNull()) hostAddr = dnsResult.addresses().first();
     }
 
     NvAddress nvAddr(hostAddr, port);
@@ -713,8 +684,8 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
     url.setHost(nvAddr.address());
     url.setPort(nvAddr.port());
     url.setPath("/serverinfo");
-    url.setQuery("uniqueid=" + clientUniqueId()
-                 + "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    url.setQuery("uniqueid=" + clientUniqueId() +
+                 "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces));
 
     QNetworkRequest req(url);
     req.setTransferTimeout(NvHTTP::REQUEST_TIMEOUT_MS);
@@ -728,8 +699,7 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
     QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS, &loop, &QEventLoop::quit);
     loop.exec(QEventLoop::ExcludeUserInputEvents);
 
-    if (!reply->isFinished())
-        reply->abort();
+    if (!reply->isFinished()) reply->abort();
 
     if (reply->error() != QNetworkReply::NoError) {
         QString err = reply->errorString();
@@ -752,12 +722,12 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
     NvComputer parsedHost(xml, nvAddr);
     NvComputer* host = findHostByUuid(parsedHost.uuid);
     if (!host) {
-        return {500, {{"status", "error"},
-                {"message", "Host was added but could not be retrieved"}}};
+        return {500,
+                {{"status", "error"}, {"message", "Host was added but could not be retrieved"}}};
     }
 
-    Logger::info(QString("Manual host added: %1 (%2) at %3")
-                     .arg(host->name, host->uuid, nvAddr.toString()));
+    Logger::info(
+        QString("Manual host added: %1 (%2) at %3").arg(host->name, host->uuid, nvAddr.toString()));
 
     QJsonObject obj;
     QJsonArray arr;
@@ -769,8 +739,7 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
 std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uuid)
 {
     NvComputer* host = findHostByUuid(uuid);
-    if (!host)
-        return {404, {{"status", "error"}, {"message", "Host not found"}}};
+    if (!host) return {404, {{"status", "error"}, {"message", "Host not found"}}};
 
     QString name = host->name;
     m_Hosts.remove(uuid);
@@ -796,20 +765,18 @@ QByteArray ComputerManager::resolveMacFromArp(const QString& ip)
 {
 #ifdef Q_OS_WIN
     QHostAddress addr(ip);
-    if (addr.protocol() != QAbstractSocket::IPv4Protocol)
-        return {};
+    if (addr.protocol() != QAbstractSocket::IPv4Protocol) return {};
 
     quint32 host = addr.toIPv4Address();
     // SendARP expects the IPv4 address in network byte order.
-    unsigned long destIp =
-        ((host & 0x000000FFu) << 24) | ((host & 0x0000FF00u) << 8) |
-        ((host & 0x00FF0000u) >> 8)  | ((host & 0xFF000000u) >> 24);
+    unsigned long destIp = ((host & 0x000000FFu) << 24) | ((host & 0x0000FF00u) << 8) |
+                           ((host & 0x00FF0000u) >> 8) | ((host & 0xFF000000u) >> 24);
 
     unsigned char mac[8] = {0};
     unsigned long macLen = 6;
     if (SendARP(destIp, 0, mac, &macLen) == 0 /* NO_ERROR */ && macLen == 6) {
         QByteArray out(reinterpret_cast<char*>(mac), 6);
-        if (out != QByteArray(6, '\0'))  // reject all-zero
+        if (out != QByteArray(6, '\0')) // reject all-zero
             return out;
     }
     return {};
@@ -822,12 +789,10 @@ QByteArray ComputerManager::resolveMacFromArp(const QString& ip)
 std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
 {
     NvComputer* host = findHostByUuid(uuid);
-    if (!host)
-        return {404, {{"status", "error"}, {"message", "Host not found"}}};
+    if (!host) return {404, {{"status", "error"}, {"message", "Host not found"}}};
 
     if (host->macAddress.size() != 6)
-        return {400, {{"status", "error"},
-                {"message", "No MAC address known for this host"}}};
+        return {400, {{"status", "error"}, {"message", "No MAC address known for this host"}}};
 
     // Magic packet: 6×0xFF followed by 16 repetitions of the 6-byte MAC.
     QByteArray packet;
@@ -845,7 +810,7 @@ std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
         if (a.address().isEmpty()) return;
         QHostAddress h(a.address());
         if (h.protocol() != QAbstractSocket::IPv4Protocol) return;
-        targets.insert(h.toIPv4Address() | 0x000000FF);  // assume /24
+        targets.insert(h.toIPv4Address() | 0x000000FF); // assume /24
     };
     addSubnetBroadcast(host->localAddress);
     addSubnetBroadcast(host->activeAddress);
@@ -863,14 +828,14 @@ std::pair<int, QJsonObject> ComputerManager::handleWakeHost(const QString& uuid)
     }
 
     if (!sentAny)
-        return {500, {{"status", "error"},
-                {"message", "Failed to send Wake-on-LAN packet"}}};
+        return {500, {{"status", "error"}, {"message", "Failed to send Wake-on-LAN packet"}}};
 
     Logger::info(QString("Wake-on-LAN sent to %1 (%2)")
                      .arg(host->name, QString::fromUtf8(host->macAddress.toHex(':'))));
 
-    return {200, {{"status", "ok"},
-            {"message", QString("Wake-on-LAN packet sent to %1").arg(host->name)}}};
+    return {
+        200,
+        {{"status", "ok"}, {"message", QString("Wake-on-LAN packet sent to %1").arg(host->name)}}};
 }
 
 // --- Client unique ID -------------------------------------------------------
@@ -934,11 +899,9 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
     m_PairingPins[uuid] = pin;
 
     // Create PairingManager (stage 1 runs later in handleSubmitPin)
-    auto* pm = new NvPairingManager(
-        host->appVersion,
-        addr.address(),
-        addr.port(),
-        host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT);
+    auto* pm =
+        new NvPairingManager(host->appVersion, addr.address(), addr.port(),
+                             host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT);
     m_ActivePairings[uuid] = pm;
 
     Logger::info(QString("Pairing initiated for %1, PIN: %2").arg(uuid, pin));
@@ -1126,8 +1089,7 @@ void ComputerManager::onPairCheckFinished()
 
 // --- Box Art -----------------------------------------------------------------
 
-void ComputerManager::handleGetBoxArt(const QString& uuid, int appId,
-                                       ResponseCallback respond)
+void ComputerManager::handleGetBoxArt(const QString& uuid, int appId, ResponseCallback respond)
 {
     // Serve from cache if available
     auto hostIt = m_BoxArtCache.find(uuid);
@@ -1145,8 +1107,7 @@ void ComputerManager::handleGetBoxArt(const QString& uuid, int appId,
 
     // Validate host
     NvComputer* host = findHostByUuid(uuid);
-    if (!host || host->pairState != NvComputer::PS_PAIRED
-        || host->serverCertPem.isEmpty()) {
+    if (!host || host->pairState != NvComputer::PS_PAIRED || host->serverCertPem.isEmpty()) {
         respond(HttpResponse::error(404, "Host not found or not paired"));
         return;
     }
@@ -1161,8 +1122,7 @@ void ComputerManager::handleGetBoxArt(const QString& uuid, int appId,
     bool alreadyFetchingThisApp = !pendingList.isEmpty();
     pendingList.append(std::move(respond));
 
-    if (alreadyFetchingThisApp)
-        return;
+    if (alreadyFetchingThisApp) return;
 
     // Serialize: only one HTTPS fetch per host at a time
     enqueueBoxArtFetch(uuid, appId);
@@ -1194,8 +1154,7 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
         return;
     }
 
-    quint16 httpsPort = host->activeHttpsPort > 0
-        ? host->activeHttpsPort : MW_HTTPS_PORT;
+    quint16 httpsPort = host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
     NvAddress addr = addrs.first();
 
     IdentityManager* im = IdentityManager::get();
@@ -1225,12 +1184,10 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
     QNetworkReply* artReply = m_Nam->get(artReq);
 
     QTimer::singleShot(5000, artReply, [artReply]() {
-        if (!artReply->isFinished())
-            artReply->abort();
+        if (!artReply->isFinished()) artReply->abort();
     });
 
-    connect(artReply, &QNetworkReply::finished, this,
-            [this, uuid, appId, artReply]() {
+    connect(artReply, &QNetworkReply::finished, this, [this, uuid, appId, artReply]() {
         bool ok = false;
         if (artReply->error() == QNetworkReply::NoError) {
             QByteArray data = artReply->readAll();
@@ -1250,8 +1207,7 @@ void ComputerManager::onBoxArtFetchComplete(const QString& uuid, int appId, bool
 {
     // Notify all callbacks waiting for this appId
     auto callbacks = m_PendingBoxArtCallbacks[uuid].take(appId);
-    if (m_PendingBoxArtCallbacks[uuid].isEmpty())
-        m_PendingBoxArtCallbacks.remove(uuid);
+    if (m_PendingBoxArtCallbacks[uuid].isEmpty()) m_PendingBoxArtCallbacks.remove(uuid);
 
     QByteArray pngData = m_BoxArtCache.value(uuid).value(appId);
 
@@ -1282,16 +1238,15 @@ void ComputerManager::onBoxArtFetchComplete(const QString& uuid, int appId, bool
 void ComputerManager::fetchNextBoxArtInBackground(const QString& uuid)
 {
     NvComputer* host = findHostByUuid(uuid);
-    if (!host)
-        return;
+    if (!host) return;
 
     const QVector<NvApp>& apps = host->appList;
 
     // Find first uncached, not-pending app
     for (const auto& app : apps) {
         int appId = app.id();
-        if (!m_BoxArtCache.value(uuid).contains(appId)
-            && !m_PendingBoxArtCallbacks.value(uuid).contains(appId)) {
+        if (!m_BoxArtCache.value(uuid).contains(appId) &&
+            !m_PendingBoxArtCallbacks.value(uuid).contains(appId)) {
             // Mark as pending (empty callbacks → background fetch, no HTTP consumer)
             m_PendingBoxArtCallbacks[uuid][appId];
             enqueueBoxArtFetch(uuid, appId);
@@ -1306,14 +1261,12 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
 {
     NvComputer* host = findHostByUuid(uuid);
     if (!host) {
-        respond(HttpResponse::json(
-            {{"status", "error"}, {"message", "Host not found"}}, 404));
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
         return;
     }
 
     if (host->pairState != NvComputer::PS_PAIRED || host->serverCertPem.isEmpty()) {
-        respond(HttpResponse::json(
-            {{"status", "error"}, {"message", "Host not paired"}}, 400));
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not paired"}}, 400));
         return;
     }
 
@@ -1327,12 +1280,10 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
     IdentityManager* im = IdentityManager::get();
     QByteArray clientCertPem = im->getCertificate();
     QByteArray clientKeyPem = im->getPrivateKey();
-    quint16 httpsPort = host->activeHttpsPort > 0
-        ? host->activeHttpsPort : MW_HTTPS_PORT;
+    quint16 httpsPort = host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
     NvAddress addr = addrs.first();
 
-    QNetworkReply* reply = m_Http->getAppListAsync(
-        addr, httpsPort, clientCertPem, clientKeyPem);
+    QNetworkReply* reply = m_Http->getAppListAsync(addr, httpsPort, clientCertPem, clientKeyPem);
 
     auto responded = std::make_shared<bool>(false);
     auto safeRespond = [responded, respond = std::move(respond)](HttpResponse resp) {
@@ -1343,13 +1294,11 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
     };
 
     // Timeout safety
-    QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS + 2000, reply,
-                       [safeRespond]() {
+    QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS + 2000, reply, [safeRespond]() {
         safeRespond(HttpResponse::error(504, "App list request timed out"));
     });
 
-    connect(reply, &QNetworkReply::finished, this,
-            [this, uuid, safeRespond, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, uuid, safeRespond, reply]() {
         // Re-resolve host pointer — the NvComputer may have been deleted
         // (via handleDeleteHost) since handleGetAppList was called. Capturing
         // the raw host pointer would cause a use-after-free crash if the host
@@ -1361,20 +1310,21 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
             return;
         }
 
-        int httpStatus = reply->attribute(
-            QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
         if (reply->error() != QNetworkReply::NoError) {
-            Logger::warning(QString("App list fetch failed for %1: %2")
-                             .arg(host->name, reply->errorString()));
+            Logger::warning(
+                QString("App list fetch failed for %1: %2").arg(host->name, reply->errorString()));
 
             if (httpStatus == 401 && host->pairState == NvComputer::PS_PAIRED) {
                 host->pairState = NvComputer::PS_NOT_PAIRED;
                 host->serverCertPem.clear();
                 saveHosts();
                 emit hostsChanged();
-                safeRespond(HttpResponse::json({{"status", "error"},
-                    {"message", "Host is no longer paired. Please pair again."}}, 401));
+                safeRespond(HttpResponse::json(
+                    {{"status", "error"},
+                     {"message", "Host is no longer paired. Please pair again."}},
+                    401));
             } else {
                 safeRespond(HttpResponse::error(502, reply->errorString()));
             }
@@ -1396,8 +1346,7 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
         host->appList = apps;
 
         // Start background box art pre-fetching
-        if (!apps.isEmpty())
-            fetchNextBoxArtInBackground(uuid);
+        if (!apps.isEmpty()) fetchNextBoxArtInBackground(uuid);
 
         QJsonArray appsArr;
         for (const auto& app : apps)

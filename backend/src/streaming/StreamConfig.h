@@ -26,20 +26,23 @@
 // VIDEO_FORMAT_MASK_* macros in moonlight-common-c, so computeVideoFormats()
 // can build the supportedVideoFormats bitmask from them.
 
-enum class VideoCodec {
-    Auto  = -1,  // HEVC preferred, H.264 fallback (default)
-    H264  = 0,
-    HEVC  = 1,
-    AV1   = 2
+enum class VideoCodec
+{
+    Auto = -1, // HEVC preferred, H.264 fallback (default)
+    H264 = 0,
+    HEVC = 1,
+    AV1 = 2
 };
 
-enum class ChromaSampling {
+enum class ChromaSampling
+{
     C420 = 0,
     C444 = 1
 };
 
 // Stream configuration — 1080p60, HEVC preferred, 20 Mbps
-struct StreamConfig {
+struct StreamConfig
+{
     static constexpr int kWidth = 1920;
     static constexpr int kHeight = 1080;
     static constexpr int kFps = 60;
@@ -55,13 +58,13 @@ struct StreamConfig {
 
     // Audio: stereo Opus, 5ms packets
     static constexpr int kAudioChannels = 2;
-    static constexpr int kAudioChannelMask = 3;  // FL | FR
+    static constexpr int kAudioChannelMask = 3; // FL | FR
     static constexpr int kAudioPacketDuration = 5;
-    static constexpr int kAudioQuality = 0;       // 0=normal, 1=high
+    static constexpr int kAudioQuality = 0; // 0=normal, 1=high
 
     // Generated per session
-    QByteArray rikey;   // 16 random bytes (AES key for streams)
-    int rikeyid = 0;    // random uint32 (IV prefix)
+    QByteArray rikey; // 16 random bytes (AES key for streams)
+    int rikeyid = 0;  // random uint32 (IV prefix)
 
     void generateKeys();
 

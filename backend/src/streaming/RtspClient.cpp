@@ -23,8 +23,7 @@
 
 RtspClient::RtspClient(QObject* parent)
     : QObject(parent)
-{
-}
+{}
 
 RtspClient::~RtspClient()
 {
@@ -48,32 +47,27 @@ void RtspClient::start(const QUrl& rtspUrl, const QString& uniqueId, const Strea
 
     // --- OPTIONS ---
     emit stateChanged("connecting", "OPTIONS");
-    if (!sendAndWait("OPTIONS", ""))
-        return;
+    if (!sendAndWait("OPTIONS", "")) return;
 
     // --- DESCRIBE ---
     emit stateChanged("connecting", "DESCRIBE");
     QMap<QString, QString> describeHeaders;
     describeHeaders["Accept"] = "application/sdp";
     describeHeaders["If-Modified-Since"] = "Thu, 01 Jan 1970 00:00:00 GMT";
-    if (!sendAndWait("DESCRIBE", "", describeHeaders))
-        return;
+    if (!sendAndWait("DESCRIBE", "", describeHeaders)) return;
 
     // --- SETUP video ---
     emit stateChanged("connecting", "SETUP video");
     m_SetupCount = 0;
-    if (!sendSetupAndWait("video"))
-        return;
+    if (!sendSetupAndWait("video")) return;
 
     // --- SETUP audio ---
     emit stateChanged("connecting", "SETUP audio");
-    if (!sendSetupAndWait("audio"))
-        return;
+    if (!sendSetupAndWait("audio")) return;
 
     // --- SETUP control ---
     emit stateChanged("connecting", "SETUP control");
-    if (!sendSetupAndWait("control"))
-        return;
+    if (!sendSetupAndWait("control")) return;
 
     // --- ANNOUNCE ---
     emit stateChanged("connecting", "ANNOUNCE");
@@ -81,13 +75,11 @@ void RtspClient::start(const QUrl& rtspUrl, const QString& uniqueId, const Strea
     QMap<QString, QString> announceHeaders;
     announceHeaders["Content-Type"] = "application/sdp";
     announceHeaders["Content-Length"] = QString::number(sdp.toUtf8().size());
-    if (!sendAndWait("ANNOUNCE", "", announceHeaders, sdp.toUtf8()))
-        return;
+    if (!sendAndWait("ANNOUNCE", "", announceHeaders, sdp.toUtf8())) return;
 
     // --- PLAY ---
     emit stateChanged("streaming", "PLAY");
-    if (!sendAndWait("PLAY", ""))
-        return;
+    if (!sendAndWait("PLAY", "")) return;
 
     // --- Ready ---
     m_State = Ready;
@@ -120,20 +112,22 @@ void RtspClient::stop()
 {
     m_State = Idle;
 
-    delete m_VideoSocket;   m_VideoSocket = nullptr;
-    delete m_AudioSocket;   m_AudioSocket = nullptr;
-    delete m_ControlSocket; m_ControlSocket = nullptr;
+    delete m_VideoSocket;
+    m_VideoSocket = nullptr;
+    delete m_AudioSocket;
+    m_AudioSocket = nullptr;
+    delete m_ControlSocket;
+    m_ControlSocket = nullptr;
 }
 
 // --- Blocking helpers -------------------------------------------------------
 
 bool RtspClient::sendAndWait(const QByteArray& method, const QString& pathSuffix,
-                              const QMap<QString, QString>& extraHeaders,
-                              const QByteArray& body)
+                             const QMap<QString, QString>& extraHeaders, const QByteArray& body)
 {
     // Build request
-    QString path = "rtsp://" + m_SessionInfo.host + ":" +
-                   QString::number(m_SessionInfo.rtspPort) + pathSuffix;
+    QString path =
+        "rtsp://" + m_SessionInfo.host + ":" + QString::number(m_SessionInfo.rtspPort) + pathSuffix;
 
     QByteArray req;
     req += method + " " + path.toUtf8() + " RTSP/1.0\r\n";
@@ -148,8 +142,7 @@ bool RtspClient::sendAndWait(const QByteArray& method, const QString& pathSuffix
         req += "Session: " + m_SessionInfo.sessionId.toUtf8() + "\r\n";
 
     req += "\r\n";
-    if (!body.isEmpty())
-        req += body;
+    if (!body.isEmpty()) req += body;
 
     // Fresh TCP connection per command — Sunshine closes the socket after each response
     QTcpSocket sock;
@@ -193,11 +186,9 @@ bool RtspClient::sendSetupAndWait(const QString& streamType)
     }
 
     QMap<QString, QString> headers;
-    headers["Transport"] = QString("RTP/AVP;unicast;client_port=%1-%2")
-                               .arg(port).arg(port + 1);
+    headers["Transport"] = QString("RTP/AVP;unicast;client_port=%1-%2").arg(port).arg(port + 1);
 
-    if (!sendAndWait("SETUP", "/streamid=" + streamType + "/0", headers))
-        return false;
+    if (!sendAndWait("SETUP", "/streamid=" + streamType + "/0", headers)) return false;
 
     return true;
 }
@@ -219,8 +210,7 @@ bool RtspClient::waitForResponse(QTcpSocket& sock, const QByteArray& method)
 
         // Check if we have a complete RTSP message (headers terminated by \r\n\r\n)
         int headerEnd = buffer.indexOf("\r\n\r\n");
-        if (headerEnd < 0)
-            continue;
+        if (headerEnd < 0) continue;
 
         // Check Content-Length
         QByteArray headerPart = buffer.left(headerEnd);
@@ -232,16 +222,14 @@ bool RtspClient::waitForResponse(QTcpSocket& sock, const QByteArray& method)
         }
 
         int totalLen = headerEnd + 4 + contentLength;
-        if (buffer.size() < totalLen)
-            continue;
+        if (buffer.size() < totalLen) continue;
 
         RtspResponse resp = parseResponse(buffer);
 
         if (resp.statusCode != 200) {
             qWarning() << "[RTSP]" << method << "returned" << resp.statusCode;
-            emit handshakeFailed(QString("%1 returned %2")
-                                     .arg(QString::fromUtf8(method))
-                                     .arg(resp.statusCode));
+            emit handshakeFailed(
+                QString("%1 returned %2").arg(QString::fromUtf8(method)).arg(resp.statusCode));
             return false;
         }
 
@@ -261,8 +249,8 @@ bool RtspClient::waitForResponse(QTcpSocket& sock, const QByteArray& method)
                 m_SessionInfo.controlPort = serverPort;
                 m_SessionInfo.controlConnectData =
                     resp.headers.value("X-SS-Connect-Data", "0").toUInt();
-                m_SessionInfo.sessionId = resp.headers.value("Session", "")
-                                              .split(';').value(0).trimmed();
+                m_SessionInfo.sessionId =
+                    resp.headers.value("Session", "").split(';').value(0).trimmed();
             }
             m_SetupCount++;
         }
@@ -279,14 +267,12 @@ RtspClient::RtspResponse RtspClient::parseResponse(const QByteArray& data)
 
     if (!lines.isEmpty()) {
         QStringList parts = lines[0].split(' ');
-        if (parts.size() >= 2)
-            resp.statusCode = parts[1].toInt();
+        if (parts.size() >= 2) resp.statusCode = parts[1].toInt();
     }
 
     int i = 1;
     for (; i < lines.size(); ++i) {
-        if (lines[i].isEmpty())
-            break;
+        if (lines[i].isEmpty()) break;
 
         int colon = lines[i].indexOf(':');
         if (colon > 0) {
@@ -297,8 +283,7 @@ RtspClient::RtspResponse RtspClient::parseResponse(const QByteArray& data)
     }
 
     int bodyStart = data.indexOf("\r\n\r\n");
-    if (bodyStart >= 0)
-        resp.body = data.mid(bodyStart + 4);
+    if (bodyStart >= 0) resp.body = data.mid(bodyStart + 4);
 
     return resp;
 }
@@ -316,8 +301,10 @@ QString RtspClient::buildAnnounceSdp() const
     sdp += "a=x-nv-video[0].maxNumReferenceFrames:1\r\n";
     sdp += "a=x-nv-video[0].encoderCscMode:0\r\n";
     sdp += "a=x-nv-video[0].dynamicRangeMode:0\r\n";
-    sdp += QString("a=x-nv-video[0].clientRefreshRateX100:%1\r\n").arg(m_Config.kClientRefreshRateX100);
-    sdp += QString("a=x-nv-video[0].videoEncoderSlicesPerFrame:%1\r\n").arg(m_Config.kVideoEncoderSlicesPerFrame);
+    sdp += QString("a=x-nv-video[0].clientRefreshRateX100:%1\r\n")
+               .arg(m_Config.kClientRefreshRateX100);
+    sdp += QString("a=x-nv-video[0].videoEncoderSlicesPerFrame:%1\r\n")
+               .arg(m_Config.kVideoEncoderSlicesPerFrame);
     sdp += QString("a=x-nv-vqos[0].bw.maximumBitrateKbps:%1\r\n").arg(m_Config.kBitrateKbps);
     sdp += QString("a=x-nv-vqos[0].bitStreamFormat:%1\r\n").arg(m_Config.kVideoFormat);
     sdp += "a=x-nv-vqos[0].fec.minRequiredFecPackets:0\r\n";

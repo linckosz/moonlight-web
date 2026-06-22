@@ -45,9 +45,7 @@ int StreamConfig::computeVideoFormats() const
         // Base: HEVC Main + H.264 (higher profiles added conditionally below)
         fmt |= VIDEO_FORMAT_H265 | VIDEO_FORMAT_MASK_H264;
         break;
-    case VideoCodec::H264:
-        fmt |= VIDEO_FORMAT_MASK_H264;
-        break;
+    case VideoCodec::H264: fmt |= VIDEO_FORMAT_MASK_H264; break;
     }
 
     // Chroma 4:4:4: add the YUV444 profile ONLY for the selected codec.
@@ -57,16 +55,10 @@ int StreamConfig::computeVideoFormats() const
     // chosen codec keeps the preference and lets the host pick its 444 variant.
     if (chroma == ChromaSampling::C444) {
         switch (codec) {
-        case VideoCodec::H264:
-            fmt |= VIDEO_FORMAT_H264_HIGH8_444;
-            break;
-        case VideoCodec::AV1:
-            fmt |= VIDEO_FORMAT_AV1_HIGH8_444;
-            break;
+        case VideoCodec::H264: fmt |= VIDEO_FORMAT_H264_HIGH8_444; break;
+        case VideoCodec::AV1: fmt |= VIDEO_FORMAT_AV1_HIGH8_444; break;
         case VideoCodec::Auto:
-        case VideoCodec::HEVC:
-            fmt |= VIDEO_FORMAT_H265_REXT8_444;
-            break;
+        case VideoCodec::HEVC: fmt |= VIDEO_FORMAT_H265_REXT8_444; break;
         }
     }
 
@@ -75,5 +67,5 @@ int StreamConfig::computeVideoFormats() const
 
 int StreamConfig::computeColorSpace() const
 {
-    return 1;  // BT.709 SDR
+    return 1; // BT.709 SDR
 }

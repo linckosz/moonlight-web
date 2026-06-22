@@ -59,21 +59,11 @@ QThread* spawnRelayThread(QObject* relayRoot)
 }
 } // namespace
 
-StreamSession::StreamSession(NvComputer* host, int appId,
-                               NvHTTP* http, ResponseCallback respond,
-                               quint16 wsPort,
-                               const QString& serverHost,
-                               VideoCodec videoCodec,
-                               bool gamingMode,
-                               bool upnpEnabled,
-                               const QString& transport,
-                               const QString& stunServer,
-                               int streamHeight,
-                               int streamWidth,
-                               int streamFps,
-                               int streamBitrateKbps,
-                               bool yuv444,
-                               QObject* parent)
+StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, ResponseCallback respond,
+                             quint16 wsPort, const QString& serverHost, VideoCodec videoCodec,
+                             bool gamingMode, bool upnpEnabled, const QString& transport,
+                             const QString& stunServer, int streamHeight, int streamWidth,
+                             int streamFps, int streamBitrateKbps, bool yuv444, QObject* parent)
     : QObject(parent)
     , m_Host(host)
     , m_AppId(appId)
@@ -103,19 +93,18 @@ StreamSession::StreamSession(NvComputer* host, int appId,
     // from height using a 16:9 aspect ratio.
     // If height is 0 (Native Host resolution), pass 0 for both width and height
     // so Sunshine uses the display's native resolution.
-    m_StreamWidth = (streamWidth > 0) ? streamWidth
-                  : ((m_StreamHeight > 0) ? (m_StreamHeight * 16 / 9) : 0);
+    m_StreamWidth =
+        (streamWidth > 0) ? streamWidth : ((m_StreamHeight > 0) ? (m_StreamHeight * 16 / 9) : 0);
 
-    qInfo() << "[Session] Stream settings:" << m_StreamWidth << "x" << m_StreamHeight
-            << "@" << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps,"
+    qInfo() << "[Session] Stream settings:" << m_StreamWidth << "x" << m_StreamHeight << "@"
+            << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps,"
             << "gaming:" << (m_GamingMode ? "on" : "off")
             << "codec:" << static_cast<int>(videoCodec);
 }
 
 StreamSession::~StreamSession()
 {
-    if (m_LaunchReply)
-        m_LaunchReply->deleteLater();
+    if (m_LaunchReply) m_LaunchReply->deleteLater();
 }
 
 void StreamSession::start()
@@ -154,8 +143,8 @@ void StreamSession::start()
     // of /launch (which would be rejected with "app already running"). /resume
     // is keyed by uniqueid, so it never touches another client's session.
     if (s_ActiveUniqueIds.contains(effectiveUniqueId())) {
-        qInfo() << "[Session] uniqueid already has a session — resuming"
-                << m_Host->name << m_Host->activeAddress.address();
+        qInfo() << "[Session] uniqueid already has a session — resuming" << m_Host->name
+                << m_Host->activeAddress.address();
         doResumeApp(clientCert, clientKey);
     } else {
         doLaunchApp(clientCert, clientKey);
@@ -164,53 +153,42 @@ void StreamSession::start()
 
 QString StreamSession::effectiveUniqueId() const
 {
-    return m_ClientUniqueId.isEmpty()
-        ? IdentityManager::get()->getUniqueId() : m_ClientUniqueId;
+    return m_ClientUniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : m_ClientUniqueId;
 }
 
-void StreamSession::doResumeApp(const QByteArray& clientCert,
-                                const QByteArray& clientKey)
+void StreamSession::doResumeApp(const QByteArray& clientCert, const QByteArray& clientKey)
 {
-    qInfo() << "[Session] Resuming session on" << m_Host->name
-            << "appid=" << m_AppId;
+    qInfo() << "[Session] Resuming session on" << m_Host->name << "appid=" << m_AppId;
     m_ResumeAttempted = true;
-    m_LaunchReply = m_Http->resumeAppAsync(
-        m_Host->activeAddress, m_Host->activeHttpsPort,
-        effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
-        clientCert, clientKey);
+    m_LaunchReply =
+        m_Http->resumeAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort, effectiveUniqueId(),
+                               m_Config.rikey, m_Config.rikeyid, clientCert, clientKey);
 
-    connect(m_LaunchReply, &QNetworkReply::finished,
-            this, &StreamSession::onLaunchReplyFinished);
+    connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
 }
 
-void StreamSession::doLaunchApp(const QByteArray& clientCert,
-                                const QByteArray& clientKey)
+void StreamSession::doLaunchApp(const QByteArray& clientCert, const QByteArray& clientKey)
 {
     qDebug() << "[Session] Launching app" << m_AppId << "on" << m_Host->name;
     qDebug() << "[Session]   address:" << m_Host->activeAddress.address()
              << "port:" << m_Host->activeHttpsPort;
-    qDebug() << "[Session]   stream:" << m_StreamWidth << "x" << m_StreamHeight
-             << "@" << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps";
+    qDebug() << "[Session]   stream:" << m_StreamWidth << "x" << m_StreamHeight << "@"
+             << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps";
 
     m_LaunchAttempted = true;
-    m_LaunchReply = m_Http->launchAppAsync(
-        m_Host->activeAddress, m_Host->activeHttpsPort,
-        m_AppId, effectiveUniqueId(),
-        m_Config.rikey, m_Config.rikeyid,
-        m_StreamWidth, m_StreamHeight, m_StreamFps,
-        m_StreamBitrateKbps,
-        clientCert, clientKey,
-        0);  // hdrMode: SDR
+    m_LaunchReply = m_Http->launchAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort, m_AppId,
+                                           effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
+                                           m_StreamWidth, m_StreamHeight, m_StreamFps,
+                                           m_StreamBitrateKbps, clientCert, clientKey,
+                                           0); // hdrMode: SDR
 
-    connect(m_LaunchReply, &QNetworkReply::finished,
-            this, &StreamSession::onLaunchReplyFinished);
+    connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
 }
 
 void StreamSession::quit()
 {
-    qInfo() << "[Session::quit] ENTER, m_Shim=" << m_Shim
-            << "m_Relay=" << m_Relay << "m_MediaTrackRelay=" << m_MediaTrackRelay
-            << "m_Signaling=" << m_Signaling
+    qInfo() << "[Session::quit] ENTER, m_Shim=" << m_Shim << "m_Relay=" << m_Relay
+            << "m_MediaTrackRelay=" << m_MediaTrackRelay << "m_Signaling=" << m_Signaling
             << "m_StreamRelay=" << m_StreamRelay
             << "m_Connected=" << (m_Shim ? m_Shim->isConnected() : false)
             << "transport=" << m_Transport;
@@ -286,11 +264,20 @@ void StreamSession::quit()
     // longer deletes the relay — its deleteLater() used to cancel THIS handler
     // (sender destroyed), deferring LiStopConnection into the relay destructor
     // where late moonlight callbacks hit a half-destroyed relay (UAF crash).
-    if (m_StreamRelay)     { m_StreamRelay->deleteLater();     m_StreamRelay = nullptr; }
-    if (m_MediaTrackRelay) { m_MediaTrackRelay->deleteLater(); m_MediaTrackRelay = nullptr; }
-    if (m_Relay)           { m_Relay->deleteLater();           m_Relay = nullptr; }
-    m_Signaling = nullptr;  // child of the relay — deleted with it
-    m_Shim = nullptr;       // child of the relay — deleted with it
+    if (m_StreamRelay) {
+        m_StreamRelay->deleteLater();
+        m_StreamRelay = nullptr;
+    }
+    if (m_MediaTrackRelay) {
+        m_MediaTrackRelay->deleteLater();
+        m_MediaTrackRelay = nullptr;
+    }
+    if (m_Relay) {
+        m_Relay->deleteLater();
+        m_Relay = nullptr;
+    }
+    m_Signaling = nullptr; // child of the relay — deleted with it
+    m_Shim = nullptr;      // child of the relay — deleted with it
 
     qInfo() << "[Session::quit] EXIT";
 }
@@ -343,7 +330,7 @@ void StreamSession::onLaunchReplyFinished()
         if (!m_LaunchAttempted) {
             qWarning() << "[Session] Resume rejected (" << e.what()
                        << ") — falling back to /launch";
-            s_ActiveUniqueIds.remove(effectiveUniqueId());  // stale hint
+            s_ActiveUniqueIds.remove(effectiveUniqueId()); // stale hint
             doLaunchApp(identity->getCertificate(), identity->getPrivateKey());
             return;
         }
@@ -393,9 +380,8 @@ void StreamSession::onLaunchReplyFinished()
     params.colorSpace = m_Config.computeColorSpace();
 
     // Audio: stereo Opus matching StreamConfig
-    params.audioConfiguration = MAKE_AUDIO_CONFIGURATION(
-        StreamConfig::kAudioChannels,
-        StreamConfig::kAudioChannelMask);
+    params.audioConfiguration =
+        MAKE_AUDIO_CONFIGURATION(StreamConfig::kAudioChannels, StreamConfig::kAudioChannelMask);
 
     // Stream settings from user preferences
     params.width = m_StreamWidth;
@@ -416,10 +402,10 @@ void StreamSession::onLaunchReplyFinished()
         streamRelay->setServerHost(m_ServerHost);
         streamRelay->setHttpsPort(m_HttpsPort);
 
-        connect(m_Shim, &MoonlightShim::connectionStarted,
-                this, &StreamSession::onShimConnectionStarted);
-        connect(m_Shim, &MoonlightShim::connectionFailed,
-                this, &StreamSession::onShimConnectionFailed);
+        connect(m_Shim, &MoonlightShim::connectionStarted, this,
+                &StreamSession::onShimConnectionStarted);
+        connect(m_Shim, &MoonlightShim::connectionFailed, this,
+                &StreamSession::onShimConnectionFailed);
 
         // The shim migrates to the relay's dedicated thread with it (child).
         m_Shim->setParent(streamRelay);
@@ -436,10 +422,10 @@ void StreamSession::onLaunchReplyFinished()
         // start() binds the WS listener and must run on the thread that owns the
         // socket. Block only to retrieve the success/failure result.
         bool started = false;
-        QMetaObject::invokeMethod(streamRelay, [&]() { started = streamRelay->start(); },
-                                  Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(
+            streamRelay, [&]() { started = streamRelay->start(); }, Qt::BlockingQueuedConnection);
         if (!started) {
-            streamRelay->deleteLater();  // also deletes the shim (its child)
+            streamRelay->deleteLater(); // also deletes the shim (its child)
             m_Shim = nullptr;
             m_Respond(HttpResponse::error(500, "Failed to start StreamRelay"));
             emit sessionFailed("StreamRelay failed to start");
@@ -452,8 +438,8 @@ void StreamSession::onLaunchReplyFinished()
 
         qDebug() << "[Session] StreamRelay created, starting LiStartConnection...";
         MoonlightShim* shim = m_Shim;
-        QMetaObject::invokeMethod(shim, [shim, params]() { shim->startConnection(params); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            shim, [shim, params]() { shim->startConnection(params); }, Qt::QueuedConnection);
     } else if (m_Transport == "webrtc-media") {
         // ── WebRTC Media Track mode: MediaTrackRelay + SignalingServer ─────────
         qInfo() << "[Session] Transport=webrtc-media — using MediaTrackRelay";
@@ -477,10 +463,10 @@ void StreamSession::onLaunchReplyFinished()
         }
 
         // Connect session-level handlers
-        connect(m_Shim, &MoonlightShim::connectionStarted,
-                this, &StreamSession::onShimConnectionStarted);
-        connect(m_Shim, &MoonlightShim::connectionFailed,
-                this, &StreamSession::onShimConnectionFailed);
+        connect(m_Shim, &MoonlightShim::connectionStarted, this,
+                &StreamSession::onShimConnectionStarted);
+        connect(m_Shim, &MoonlightShim::connectionFailed, this,
+                &StreamSession::onShimConnectionFailed);
 
         // signaling + shim migrate to the relay's dedicated thread (children).
         signaling->setParent(relay);
@@ -498,10 +484,10 @@ void StreamSession::onLaunchReplyFinished()
         // signaling->start() binds the WS listener on the relay thread that owns
         // the socket. Block only to retrieve the success/failure result.
         bool started = false;
-        QMetaObject::invokeMethod(signaling, [&]() { started = signaling->start(); },
-                                  Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(
+            signaling, [&]() { started = signaling->start(); }, Qt::BlockingQueuedConnection);
         if (!started) {
-            relay->deleteLater();  // also deletes signaling + shim (its children)
+            relay->deleteLater(); // also deletes signaling + shim (its children)
             m_Shim = nullptr;
             m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
             emit sessionFailed("Signaling server failed to start");
@@ -515,8 +501,8 @@ void StreamSession::onLaunchReplyFinished()
 
         qDebug() << "[Session] MediaTrackRelay + Signaling created, starting LiStartConnection...";
         MoonlightShim* shim = m_Shim;
-        QMetaObject::invokeMethod(shim, [shim, params]() { shim->startConnection(params); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            shim, [shim, params]() { shim->startConnection(params); }, Qt::QueuedConnection);
     } else {
         // ── WebRTC mode: DataChannelRelay + SignalingServer (default) ─────
         qInfo() << "[Session] Transport=webrtc — using DataChannelRelay";
@@ -541,13 +527,13 @@ void StreamSession::onLaunchReplyFinished()
         }
 
         // Connect the session-level handlers
-        connect(m_Shim, &MoonlightShim::connectionStarted,
-                this, &StreamSession::onShimConnectionStarted);
-        connect(m_Shim, &MoonlightShim::connectionFailed,
-                this, &StreamSession::onShimConnectionFailed);
+        connect(m_Shim, &MoonlightShim::connectionStarted, this,
+                &StreamSession::onShimConnectionStarted);
+        connect(m_Shim, &MoonlightShim::connectionFailed, this,
+                &StreamSession::onShimConnectionFailed);
 
         // signaling + shim migrate to the relay's dedicated thread (children).
-        signaling->setParent(relay);  // Signaling is a child of relay
+        signaling->setParent(relay); // Signaling is a child of relay
         m_Shim->setParent(relay);
 
         // Clean up when relay session ends (DataChannel disconnect, error, etc.)
@@ -567,10 +553,10 @@ void StreamSession::onLaunchReplyFinished()
         // signaling->start() binds the WS listener on the relay thread that owns
         // the socket. Block only to retrieve the success/failure result.
         bool started = false;
-        QMetaObject::invokeMethod(signaling, [&]() { started = signaling->start(); },
-                                  Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(
+            signaling, [&]() { started = signaling->start(); }, Qt::BlockingQueuedConnection);
         if (!started) {
-            relay->deleteLater();  // also deletes signaling + shim (its children)
+            relay->deleteLater(); // also deletes signaling + shim (its children)
             m_Shim = nullptr;
             m_Respond(HttpResponse::error(500, "Failed to start signaling server"));
             emit sessionFailed("Signaling server failed to start");
@@ -584,8 +570,8 @@ void StreamSession::onLaunchReplyFinished()
 
         qDebug() << "[Session] Relay + Signaling created, starting LiStartConnection...";
         MoonlightShim* shim = m_Shim;
-        QMetaObject::invokeMethod(shim, [shim, params]() { shim->startConnection(params); },
-                                  Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            shim, [shim, params]() { shim->startConnection(params); }, Qt::QueuedConnection);
     }
 }
 
@@ -599,9 +585,9 @@ void StreamSession::onShimConnectionStarted()
     m_NegotiatedVideoFormat = m_Shim ? m_Shim->negotiatedVideoFormat() : 0;
     if (m_NegotiatedVideoFormat == 0) {
         // Fallback: if drSetup hasn't fired yet (shouldn't happen), use config
-        m_NegotiatedVideoFormat = (m_Config.codec == VideoCodec::AV1)  ? VIDEO_FORMAT_AV1_MAIN8 :
-                                  (m_Config.codec == VideoCodec::HEVC) ? VIDEO_FORMAT_H265 :
-                                  VIDEO_FORMAT_H264;
+        m_NegotiatedVideoFormat = (m_Config.codec == VideoCodec::AV1)    ? VIDEO_FORMAT_AV1_MAIN8
+                                  : (m_Config.codec == VideoCodec::HEVC) ? VIDEO_FORMAT_H265
+                                                                         : VIDEO_FORMAT_H264;
     }
 
     // Log the negotiated codec for debugging
@@ -667,8 +653,8 @@ void StreamSession::onShimConnectionStarted()
         result["codecOverridden"] = true;
         switch (m_OriginalCodec) {
         case VideoCodec::HEVC: result["originalCodec"] = QStringLiteral("hevc"); break;
-        case VideoCodec::AV1:  result["originalCodec"] = QStringLiteral("av1");  break;
-        default:               result["originalCodec"] = QStringLiteral("auto"); break;
+        case VideoCodec::AV1: result["originalCodec"] = QStringLiteral("av1"); break;
+        default: result["originalCodec"] = QStringLiteral("auto"); break;
         }
     }
 

@@ -57,7 +57,7 @@ public:
 private:
     QNetworkAccessManager* m_nam;
     QHash<QString, QPair<QString, QString>> m_cache; // ip -> (city, country)
-    QHash<QString, QList<GeoCallback>> m_pending;     // ip -> pending callbacks
+    QHash<QString, QList<GeoCallback>> m_pending;    // ip -> pending callbacks
 
-    static constexpr int CACHE_TTL_MS = 86400000;  // 24 hours
+    static constexpr int CACHE_TTL_MS = 86400000; // 24 hours
 };

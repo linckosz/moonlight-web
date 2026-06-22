@@ -20,7 +20,8 @@
 #include <QString>
 #include <QStringList>
 
-struct TransportPriorities {
+struct TransportPriorities
+{
     // Auto-mode fallback order (lowest index = tried first).
     //
     //   Video Enhancement OFF:
@@ -38,18 +39,15 @@ struct TransportPriorities {
     //     3. wss               WebSocket Secure   → <canvas>
     //     4. webrtc-media-udp  MediaTrack  (UDP)  → <video> (no enhancement)
     //     5. webrtc-media-tcp  MediaTrack  (TCP)  → <video> (no enhancement)
-    static QStringList orderedTransports(bool videoEnhancement = false) {
+    static QStringList orderedTransports(bool videoEnhancement = false)
+    {
         if (videoEnhancement) {
-            return {QStringLiteral("webrtc-dc-udp"),
-                    QStringLiteral("webrtc-dc-tcp"),
-                    QStringLiteral("wss"),
-                    QStringLiteral("webrtc-media-udp"),
+            return {QStringLiteral("webrtc-dc-udp"), QStringLiteral("webrtc-dc-tcp"),
+                    QStringLiteral("wss"), QStringLiteral("webrtc-media-udp"),
                     QStringLiteral("webrtc-media-tcp")};
         }
-        return {QStringLiteral("webrtc-dc-udp"),
-                QStringLiteral("webrtc-dc-tcp"),
-                QStringLiteral("webrtc-media-udp"),
-                QStringLiteral("webrtc-media-tcp"),
+        return {QStringLiteral("webrtc-dc-udp"), QStringLiteral("webrtc-dc-tcp"),
+                QStringLiteral("webrtc-media-udp"), QStringLiteral("webrtc-media-tcp"),
                 QStringLiteral("wss")};
     }
 };

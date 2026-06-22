@@ -32,8 +32,7 @@ std::atomic<MoonlightShim*> MoonlightShim::s_Instance{nullptr};
 
 MoonlightShim::MoonlightShim(QObject* parent)
     : QObject(parent)
-{
-}
+{}
 
 MoonlightShim::~MoonlightShim()
 {
@@ -129,15 +128,13 @@ void MoonlightShim::startConnection(const InitParams& params)
         clCallbacks.connectionStatusUpdate = clConnectionStatusUpdate;
         clCallbacks.setHdrMode = clSetHdrMode;
 
-        int err = LiStartConnection(
-            &serverInfo, &streamConfig,
-            &clCallbacks, &drCallbacks, &arCallbacks,
-            nullptr, 0,
-            nullptr, 0);
+        int err = LiStartConnection(&serverInfo, &streamConfig, &clCallbacks, &drCallbacks,
+                                    &arCallbacks, nullptr, 0, nullptr, 0);
 
         if (err != 0) {
             QString msg = QString("LiStartConnection failed: error %1 (socket=%2)")
-                .arg(err).arg(LastSocketFail());
+                              .arg(err)
+                              .arg(LastSocketFail());
             fprintf(stderr, "[MoonlightShim] %s\n", qPrintable(msg));
             emit connectionFailed(msg);
         }
@@ -166,8 +163,7 @@ void MoonlightShim::stopConnection()
     }
 
     qInfo() << "[MoonlightShim::stopConnection] ENTER"
-            << "m_Connected=" << m_Connected.load()
-            << "m_WorkerThread=" << m_WorkerThread;
+            << "m_Connected=" << m_Connected.load() << "m_WorkerThread=" << m_WorkerThread;
 
     m_Connected = false;
 
@@ -190,7 +186,8 @@ void MoonlightShim::stopConnection()
 
     // Thread exists — check if it already finished.
     if (thread->isFinished()) {
-        qInfo() << "[MoonlightShim::stopConnection] Worker thread already finished, calling LiStopConnection() now";
+        qInfo() << "[MoonlightShim::stopConnection] Worker thread already finished, calling "
+                   "LiStopConnection() now";
         thread->deleteLater();
         finishCleanup();
         return;
@@ -212,7 +209,8 @@ void MoonlightShim::stopConnection()
 
     // Post-connect race check: did the thread finish between isFinished() and connect()?
     if (thread->isFinished()) {
-        qInfo() << "[MoonlightShim::stopConnection] Race: thread finished between isFinished() and connect()";
+        qInfo() << "[MoonlightShim::stopConnection] Race: thread finished between isFinished() and "
+                   "connect()";
         // The finished signal was already emitted (or was queued cross-thread).
         // cleanupFn is safe to call directly; m_CleanupDone atomically guards
         // against the queued event running it a second time.
@@ -273,8 +271,8 @@ void MoonlightShim::interruptConnection()
 
 int MoonlightShim::drSetup(int videoFormat, int width, int height, int redrawRate, void*, int)
 {
-    fprintf(stderr, "[MoonlightShim] drSetup: videoFormat=0x%x %dx%d @%d\n",
-            videoFormat, width, height, redrawRate);
+    fprintf(stderr, "[MoonlightShim] drSetup: videoFormat=0x%x %dx%d @%d\n", videoFormat, width,
+            height, redrawRate);
 
     // Store the negotiated video format so the session can report the
     // actual codec to the frontend (not just the user preference).
@@ -312,7 +310,8 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
         static int workerDropCount = 0;
         workerDropCount++;
         if (workerDropCount <= 3 || workerDropCount % 120 == 0) {
-            fprintf(stderr, "[MoonlightShim] Dropped delta worker-side (main thread backlog), total=%d\n",
+            fprintf(stderr,
+                    "[MoonlightShim] Dropped delta worker-side (main thread backlog), total=%d\n",
                     workerDropCount);
         }
         return DR_OK;
@@ -322,8 +321,8 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     // The relay reads this in sendFragmented() to compute end-to-end pipeline latency.
     auto submitTime = std::chrono::steady_clock::now();
     instance->m_FrameSubmitTimeUs.store(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            submitTime.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(submitTime.time_since_epoch())
+            .count(),
         std::memory_order_release);
 
     // ── End-to-end latency tracking ─────────────────────────────────────────
@@ -331,15 +330,13 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     // presentationTimeUs has its epoch at the first captured frame (set to 0).
     // The frame's capture time on the steady_clock:
     //   captureSteadyMs = (firstFrameArrivalTimeUs + presentationTimeUs) / 1000
-    instance->m_FramePresentationTimeUs.store(
-        decodeUnit->presentationTimeUs,
-        std::memory_order_release);
+    instance->m_FramePresentationTimeUs.store(decodeUnit->presentationTimeUs,
+                                              std::memory_order_release);
 
     // Track host processing latency (capture → encode delay on Sunshine).
     // FrameHostProcessingLatency is in 1/10 ms units. Value is 0 when unknown.
-    instance->m_FrameHostProcessingLatencyTenthMs.store(
-        decodeUnit->frameHostProcessingLatency,
-        std::memory_order_release);
+    instance->m_FrameHostProcessingLatencyTenthMs.store(decodeUnit->frameHostProcessingLatency,
+                                                        std::memory_order_release);
 
     // Track the steady_clock arrival time of the first frame.
     // This serves as the reference epoch for capture time calculation:
@@ -348,8 +345,9 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     // messages (streamSteadyMs + performance.now() delta) and subtracts
     // the capture time to get end-to-end latency.
     if (instance->m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire) == 0) {
-        int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-            submitTime.time_since_epoch()).count();
+        int64_t nowUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(submitTime.time_since_epoch())
+                .count();
         instance->m_FirstFrameArrivalTimeUs.store(nowUs, std::memory_order_release);
         qInfo() << "[MoonlightShim] First frame arrival at steadyUs=" << nowUs
                 << "presentationTimeUs=" << decodeUnit->presentationTimeUs
@@ -361,8 +359,9 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     if (decodeUnit->frameType == 1) { // FRAME_TYPE_IDR
         int64_t reqTs = instance->m_IdrRequestTimeUs.load(std::memory_order_acquire);
         if (reqTs > 0) {
-            int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                submitTime.time_since_epoch()).count();
+            int64_t nowUs =
+                std::chrono::duration_cast<std::chrono::microseconds>(submitTime.time_since_epoch())
+                    .count();
             double rttUs = static_cast<double>(nowUs - reqTs);
             // Only update if RTT is plausible (< 10s)
             if (rttUs > 0 && rttUs < 10'000'000) {
@@ -425,8 +424,7 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     // Measure the time spent in buffer concatenation — contributes to decode latency.
     auto concatEnd = std::chrono::steady_clock::now();
     instance->m_LastDecodeLatencyUs.store(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            concatEnd - submitTime).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(concatEnd - submitTime).count(),
         std::memory_order_release);
 
     // Use the local copy — safe even if main thread clears s_Instance concurrently.
@@ -475,8 +473,7 @@ void MoonlightShim::clStageFailed(int stage, int errorCode)
     fprintf(stderr, "[MoonlightShim] Stage %d failed, error=%d\n", stage, errorCode);
     MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
     if (!instance || instance->m_Stopping.load()) return;
-    emit instance->connectionFailed(
-        QString("Stage %1 failed: %2").arg(stage).arg(errorCode));
+    emit instance->connectionFailed(QString("Stage %1 failed: %2").arg(stage).arg(errorCode));
 }
 
 void MoonlightShim::clConnectionStarted()
@@ -490,8 +487,8 @@ void MoonlightShim::clConnectionStarted()
 
 void MoonlightShim::clConnectionTerminated(int errorCode)
 {
-    fprintf(stderr, "[MoonlightShim] Connection terminated, code=%d socketErr=%d\n",
-            errorCode, LastSocketFail());
+    fprintf(stderr, "[MoonlightShim] Connection terminated, code=%d socketErr=%d\n", errorCode,
+            LastSocketFail());
     MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
     if (!instance || instance->m_Stopping.load()) return;
     instance->m_Connected.store(false, std::memory_order_release);
@@ -524,9 +521,8 @@ void MoonlightShim::clSetHdrMode(bool) {}
 void MoonlightShim::sendKeyEvent(short keyCode, bool down, char modifiers, char flags)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    LiSendKeyboardEvent2(keyCode | 0x8000,
-                         down ? KEY_ACTION_DOWN : KEY_ACTION_UP,
-                         modifiers, flags);
+    LiSendKeyboardEvent2(keyCode | 0x8000, down ? KEY_ACTION_DOWN : KEY_ACTION_UP, modifiers,
+                         flags);
 }
 
 void MoonlightShim::sendUtf8Text(const QString& text)
@@ -553,7 +549,7 @@ void MoonlightShim::sendMouseButton(bool down, int button)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
     LiSendMouseButtonEvent(down ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE,
-                          static_cast<char>(button));
+                           static_cast<char>(button));
 }
 
 void MoonlightShim::sendMouseScroll(short scrollAmount)
@@ -565,10 +561,8 @@ void MoonlightShim::sendMouseScroll(short scrollAmount)
 // Standard gamepad button set exposed by the browser Gamepad API
 // ("standard mapping"): A/B/X/Y, dpad, bumpers, start/back, stick clicks, guide.
 static constexpr int kStandardGamepadButtons =
-    A_FLAG | B_FLAG | X_FLAG | Y_FLAG |
-    UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG |
-    LB_FLAG | RB_FLAG | PLAY_FLAG | BACK_FLAG |
-    LS_CLK_FLAG | RS_CLK_FLAG | SPECIAL_FLAG;
+    A_FLAG | B_FLAG | X_FLAG | Y_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LB_FLAG |
+    RB_FLAG | PLAY_FLAG | BACK_FLAG | LS_CLK_FLAG | RS_CLK_FLAG | SPECIAL_FLAG;
 
 void MoonlightShim::sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask,
                                           uint8_t type, bool hasRumble)
@@ -579,18 +573,18 @@ void MoonlightShim::sendControllerArrival(uint8_t controllerNumber, uint16_t act
     // reachable via the Gamepad API, so they are not advertised.
     uint16_t caps = LI_CCAP_ANALOG_TRIGGERS;
     if (hasRumble) caps |= LI_CCAP_RUMBLE;
-    LiSendControllerArrivalEvent(controllerNumber, activeGamepadMask, type,
-                                 kStandardGamepadButtons, caps);
+    LiSendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, kStandardGamepadButtons,
+                                 caps);
 }
 
 void MoonlightShim::sendControllerState(short controllerNumber, short activeGamepadMask,
-                                        int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-                                        short leftStickX, short leftStickY, short rightStickX, short rightStickY)
+                                        int buttonFlags, unsigned char leftTrigger,
+                                        unsigned char rightTrigger, short leftStickX,
+                                        short leftStickY, short rightStickX, short rightStickY)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    LiSendMultiControllerEvent(controllerNumber, activeGamepadMask, buttonFlags,
-                               leftTrigger, rightTrigger,
-                               leftStickX, leftStickY, rightStickX, rightStickY);
+    LiSendMultiControllerEvent(controllerNumber, activeGamepadMask, buttonFlags, leftTrigger,
+                               rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
 }
 
 void MoonlightShim::requestIdrFrame()
@@ -603,9 +597,9 @@ void MoonlightShim::requestIdrFrame()
     // When the next keyframe arrives in drSubmitDecodeUnit(), we compute
     // hostRttMs = (now - requestTimestamp) / 2 (half round-trip).
     m_IdrRequestTimeUs.store(std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count(),
-        std::memory_order_release);
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count(),
+                             std::memory_order_release);
     qInfo() << "[MoonlightShim] Calling LiRequestIdrFrame() to request IDR from Sunshine";
     LiRequestIdrFrame();
 }
-

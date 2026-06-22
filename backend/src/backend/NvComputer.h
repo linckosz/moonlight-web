@@ -31,8 +31,18 @@
 class NvComputer
 {
 public:
-    enum PairState    { PS_UNKNOWN, PS_PAIRED, PS_NOT_PAIRED };
-    enum ComputerState { CS_UNKNOWN, CS_ONLINE, CS_OFFLINE };
+    enum PairState
+    {
+        PS_UNKNOWN,
+        PS_PAIRED,
+        PS_NOT_PAIRED
+    };
+    enum ComputerState
+    {
+        CS_UNKNOWN,
+        CS_ONLINE,
+        CS_OFFLINE
+    };
 
     NvComputer() = default;
 

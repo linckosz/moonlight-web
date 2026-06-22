@@ -33,14 +33,16 @@ struct _OPUS_MULTISTREAM_CONFIGURATION;
 typedef struct _SERVER_INFORMATION SERVER_INFORMATION;
 typedef struct _STREAM_CONFIGURATION STREAM_CONFIGURATION;
 typedef struct _DECODE_UNIT DECODE_UNIT, *PDECODE_UNIT;
-typedef struct _OPUS_MULTISTREAM_CONFIGURATION OPUS_MULTISTREAM_CONFIGURATION, *POPUS_MULTISTREAM_CONFIGURATION;
+typedef struct _OPUS_MULTISTREAM_CONFIGURATION OPUS_MULTISTREAM_CONFIGURATION,
+    *POPUS_MULTISTREAM_CONFIGURATION;
 
 class MoonlightShim : public QObject
 {
     Q_OBJECT
 
 public:
-    struct InitParams {
+    struct InitParams
+    {
         QString hostAddress;
         QString appVersion;
         QString gfeVersion;
@@ -53,11 +55,11 @@ public:
         int bitrateKbps = 20000;
         int packetSize = 1024;
         int supportedVideoFormats = 0x0001; // VIDEO_FORMAT_H264
-        int colorSpace = 1;   // 0=BT.601 1=BT.709 SDR, 6=BT.2020+P(Q(HDR10)
-        int colorRange = 0;   // 0=Limited(TV), 1=Full(PC)
+        int colorSpace = 1;                 // 0=BT.601 1=BT.709 SDR, 6=BT.2020+P(Q(HDR10)
+        int colorRange = 0;                 // 0=Limited(TV), 1=Full(PC)
         int audioConfiguration = 0;
 
-        QByteArray aesKey;  // 16 bytes
+        QByteArray aesKey; // 16 bytes
         int rikeyid = 0;
     };
 
@@ -81,13 +83,14 @@ public:
     // --- Game controller (gamepad) ---
     // Announce a newly connected controller (preferred over an empty state event):
     // lets the host pick the best emulated controller type and capabilities.
-    void sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask,
-                               uint8_t type, bool hasRumble);
+    void sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask, uint8_t type,
+                               bool hasRumble);
     // Send a full controller state snapshot (buttons + triggers + sticks).
     // Used for updates and, with an empty payload + cleared mask bit, for removal.
-    void sendControllerState(short controllerNumber, short activeGamepadMask,
-                             int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-                             short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+    void sendControllerState(short controllerNumber, short activeGamepadMask, int buttonFlags,
+                             unsigned char leftTrigger, unsigned char rightTrigger,
+                             short leftStickX, short leftStickY, short rightStickX,
+                             short rightStickY);
 
     // Request an IDR frame from the host (Sunshine).
     // Called when the browser needs a keyframe to configure its decoder.
@@ -95,16 +98,37 @@ public:
 
     // Metrics for stats overlay
     double hostRttMs() const { return m_HostRttMs.load(std::memory_order_acquire); }
-    int64_t lastDecodeLatencyUs() const { return m_LastDecodeLatencyUs.load(std::memory_order_acquire); }
-    int64_t frameSubmitTimeUs() const { return m_FrameSubmitTimeUs.load(std::memory_order_acquire); }
-    int64_t framePresentationTimeUs() const { return m_FramePresentationTimeUs.load(std::memory_order_acquire); }
-    int64_t firstFrameArrivalTimeUs() const { return m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire); }
-    int64_t firstFrameArrivalSteadyMs() const { return m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire) / 1000; }
-    int64_t frameHostProcessingLatencyTenthMs() const { return m_FrameHostProcessingLatencyTenthMs.load(std::memory_order_acquire); }
+    int64_t lastDecodeLatencyUs() const
+    {
+        return m_LastDecodeLatencyUs.load(std::memory_order_acquire);
+    }
+    int64_t frameSubmitTimeUs() const
+    {
+        return m_FrameSubmitTimeUs.load(std::memory_order_acquire);
+    }
+    int64_t framePresentationTimeUs() const
+    {
+        return m_FramePresentationTimeUs.load(std::memory_order_acquire);
+    }
+    int64_t firstFrameArrivalTimeUs() const
+    {
+        return m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire);
+    }
+    int64_t firstFrameArrivalSteadyMs() const
+    {
+        return m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire) / 1000;
+    }
+    int64_t frameHostProcessingLatencyTenthMs() const
+    {
+        return m_FrameHostProcessingLatencyTenthMs.load(std::memory_order_acquire);
+    }
 
     // Negotiated video format set by drSetup during LiStartConnection.
     // Returns the VIDEO_FORMAT_* mask chosen by Sunshine, or 0 before negotiation.
-    int negotiatedVideoFormat() const { return m_NegotiatedVideoFormat.load(std::memory_order_acquire); }
+    int negotiatedVideoFormat() const
+    {
+        return m_NegotiatedVideoFormat.load(std::memory_order_acquire);
+    }
 
     // Called by the relay at the head of onVideoFrame() to balance the
     // worker→main pending frame counter (incremented before each emit).
@@ -112,7 +136,10 @@ public:
 
     // Consume the worker-side delta drop flag (true once per drop episode).
     // The relay uses it to arm awaiting-IDR recovery on the main thread.
-    bool takeWorkerDroppedDelta() { return m_WorkerDroppedDelta.exchange(false, std::memory_order_acq_rel); }
+    bool takeWorkerDroppedDelta()
+    {
+        return m_WorkerDroppedDelta.exchange(false, std::memory_order_acq_rel);
+    }
 
 signals:
     void stageChanged(int stage);
@@ -137,9 +164,11 @@ private:
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
     std::atomic<int64_t> m_FrameSubmitTimeUs{0};
     std::atomic<int64_t> m_IdrRequestTimeUs{0};
-    std::atomic<int64_t> m_FramePresentationTimeUs{0};     // presentationTimeUs from DECODE_UNIT
-    std::atomic<int64_t> m_FirstFrameArrivalTimeUs{0};     // steady_clock::now() at first frame arrival (us since epoch)
-    std::atomic<int64_t> m_FrameHostProcessingLatencyTenthMs{0}; // frameHostProcessingLatency (tenths of ms)
+    std::atomic<int64_t> m_FramePresentationTimeUs{0}; // presentationTimeUs from DECODE_UNIT
+    std::atomic<int64_t> m_FirstFrameArrivalTimeUs{
+        0}; // steady_clock::now() at first frame arrival (us since epoch)
+    std::atomic<int64_t> m_FrameHostProcessingLatencyTenthMs{
+        0}; // frameHostProcessingLatency (tenths of ms)
 
     // Negotiated video format (set by drSetup during LiStartConnection).
     // 0 = unknown, 0x0001 = H.264, 0x0100 = HEVC, 0x0200 = AV1.
@@ -154,14 +183,16 @@ private:
     void blockingStopConnection();
 
     // Video callbacks
-    static int  drSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags);
+    static int drSetup(int videoFormat, int width, int height, int redrawRate, void* context,
+                       int drFlags);
     static void drStart(void);
     static void drStop(void);
     static void drCleanup(void);
-    static int  drSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
+    static int drSubmitDecodeUnit(PDECODE_UNIT decodeUnit);
 
     // Audio callbacks
-    static int  arInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int arFlags);
+    static int arInit(int audioConfiguration, const POPUS_MULTISTREAM_CONFIGURATION opusConfig,
+                      void* context, int arFlags);
     static void arStart(void);
     static void arStop(void);
     static void arCleanup(void);

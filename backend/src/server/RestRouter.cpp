@@ -45,8 +45,7 @@ HttpResponse HttpResponse::error(int status, const QString& message)
 
 RestRouter::RestRouter(QObject* parent)
     : QObject(parent)
-{
-}
+{}
 
 void RestRouter::get(const QString& path, SyncRouteHandler handler)
 {
@@ -65,7 +64,8 @@ void RestRouter::post(const QString& path, SyncRouteHandler handler)
 
 void RestRouter::del(const QString& path, SyncRouteHandler handler)
 {
-    AsyncRouteHandler wrapped = [h = std::move(handler)](const HttpRequest& req, ResponseCallback respond) {
+    AsyncRouteHandler wrapped = [h = std::move(handler)](const HttpRequest& req,
+                                                         ResponseCallback respond) {
         respond(h(req));
     };
 
@@ -106,12 +106,10 @@ void RestRouter::postAsync(const QString& path, AsyncRouteHandler handler)
     }
 }
 
-bool RestRouter::matchParamRoute(const QStringList& pathSegments,
-                                  const ParamRoute& route,
-                                  QMap<QString, QString>& outParams) const
+bool RestRouter::matchParamRoute(const QStringList& pathSegments, const ParamRoute& route,
+                                 QMap<QString, QString>& outParams) const
 {
-    if (pathSegments.size() != route.segments.size())
-        return false;
+    if (pathSegments.size() != route.segments.size()) return false;
 
     QMap<QString, QString> params;
 
@@ -121,8 +119,7 @@ bool RestRouter::matchParamRoute(const QStringList& pathSegments,
 
         if (pattern.startsWith(':')) {
             QString key = pattern.mid(1);
-            if (actual.isEmpty())
-                return false;
+            if (actual.isEmpty()) return false;
             params[key] = actual;
         } else if (pattern != actual) {
             return false;
@@ -146,8 +143,7 @@ void RestRouter::dispatchAsync(const HttpRequest& request, ResponseCallback resp
     QStringList pathSegments = request.path.split('/', Qt::SkipEmptyParts);
 
     for (const auto& route : m_ParamRoutes) {
-        if (route.method != request.method)
-            continue;
+        if (route.method != request.method) continue;
 
         QMap<QString, QString> params;
         if (matchParamRoute(pathSegments, route, params)) {
@@ -163,16 +159,13 @@ void RestRouter::dispatchAsync(const HttpRequest& request, ResponseCallback resp
 
 bool RestRouter::hasRoute(const QString& method, const QString& path) const
 {
-    if (m_Routes.contains(routeKey(method, path)))
-        return true;
+    if (m_Routes.contains(routeKey(method, path))) return true;
 
     QStringList segments = path.split('/', Qt::SkipEmptyParts);
     for (const auto& route : m_ParamRoutes) {
-        if (route.method != method)
-            continue;
+        if (route.method != method) continue;
         QMap<QString, QString> params;
-        if (matchParamRoute(segments, route, params))
-            return true;
+        if (matchParamRoute(segments, route, params)) return true;
     }
     return false;
 }

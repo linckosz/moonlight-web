@@ -42,10 +42,10 @@
 #include <openssl/bio.h>
 
 #define REQUEST_TIMEOUT_MS 5000
-#define PAIRING_PIN_WAIT_MS  60000  // Stage 1 blocks until user enters PIN in Sunshine
+#define PAIRING_PIN_WAIT_MS 60000 // Stage 1 blocks until user enters PIN in Sunshine
 
-NvPairingManager::NvPairingManager(const QString& appVersion,
-                                   const QString& host, quint16 httpPort, quint16 httpsPort)
+NvPairingManager::NvPairingManager(const QString& appVersion, const QString& host, quint16 httpPort,
+                                   quint16 httpsPort)
     : m_ServerVersion(appVersion.toUtf8())
     , m_Host(host)
     , m_HttpPort(httpPort)
@@ -56,21 +56,18 @@ NvPairingManager::NvPairingManager(const QString& appVersion,
     BIO* bio = BIO_new_mem_buf(certPem.data(), certPem.size());
     m_Cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
-    if (!m_Cert)
-        throw std::runtime_error("Unable to load client certificate");
+    if (!m_Cert) throw std::runtime_error("Unable to load client certificate");
 
     // Load private key
     QByteArray keyPem = IdentityManager::get()->getPrivateKey();
     bio = BIO_new_mem_buf(keyPem.data(), keyPem.size());
     m_PrivateKey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
-    if (!m_PrivateKey)
-        throw std::runtime_error("Unable to load private key");
+    if (!m_PrivateKey) throw std::runtime_error("Unable to load private key");
 
     // Determine server generation
     QVector<int> quad = NvHTTP::parseQuad(appVersion);
-    if (!quad.isEmpty())
-        m_ServerMajorVersion = quad[0];
+    if (!quad.isEmpty()) m_ServerMajorVersion = quad[0];
 
     // Gen 7+ uses SHA-256, older uses SHA-1
     if (m_ServerMajorVersion >= 7) {
@@ -85,17 +82,15 @@ NvPairingManager::NvPairingManager(const QString& appVersion,
 
 NvPairingManager::~NvPairingManager()
 {
-    if (m_Cert)
-        X509_free(m_Cert);
-    if (m_PrivateKey)
-        EVP_PKEY_free(m_PrivateKey);
+    if (m_Cert) X509_free(m_Cert);
+    if (m_PrivateKey) EVP_PKEY_free(m_PrivateKey);
     delete m_Nam;
 }
 
 // --- Synchronous HTTP request ---
 
 QString NvPairingManager::openConnection(const QString& scheme, const QString& command,
-                                          const QString& arguments, int timeoutMs)
+                                         const QString& arguments, int timeoutMs)
 {
     QUrl url;
     url.setScheme(scheme);
@@ -103,10 +98,9 @@ QString NvPairingManager::openConnection(const QString& scheme, const QString& c
     url.setPort(scheme == "https" ? m_HttpsPort : m_HttpPort);
     url.setPath("/" + command);
 
-    QString query = "uniqueid=" + IdentityManager::get()->getUniqueId()
-                    + "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
-    if (!arguments.isEmpty())
-        query += "&" + arguments;
+    QString query = "uniqueid=" + IdentityManager::get()->getUniqueId() +
+                    "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (!arguments.isEmpty()) query += "&" + arguments;
     url.setQuery(query);
 
     QNetworkRequest req(url);
@@ -127,10 +121,9 @@ QString NvPairingManager::openConnection(const QString& scheme, const QString& c
     }
 
     // Ignore SSL errors (self-signed cert)
-    auto sslConn = QObject::connect(m_Nam, &QNetworkAccessManager::sslErrors,
-        [](QNetworkReply* reply, const QList<QSslError>&) {
-            reply->ignoreSslErrors();
-        });
+    auto sslConn = QObject::connect(
+        m_Nam, &QNetworkAccessManager::sslErrors,
+        [](QNetworkReply* reply, const QList<QSslError>&) { reply->ignoreSslErrors(); });
 
     QNetworkReply* reply = m_Nam->get(req);
 
@@ -138,20 +131,17 @@ QString NvPairingManager::openConnection(const QString& scheme, const QString& c
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
 
-    if (timeoutMs > 0)
-        QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+    if (timeoutMs > 0) QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
 
     loop.exec(QEventLoop::ExcludeUserInputEvents);
 
     QObject::disconnect(sslConn);
 
-    if (!reply->isFinished())
-        reply->abort();
+    if (!reply->isFinished()) reply->abort();
 
     if (reply->error() != QNetworkReply::NoError) {
         QString err = reply->errorString();
-        Logger::warning(QString("Pairing request failed: %1 %2 → %3")
-                            .arg(scheme, command, err));
+        Logger::warning(QString("Pairing request failed: %1 %2 → %3").arg(scheme, command, err));
         delete reply;
         throw std::runtime_error(err.toStdString());
     }
@@ -183,16 +173,13 @@ QByteArray NvPairingManager::encrypt(const QByteArray& plaintext, const QByteArr
     QByteArray ciphertext(plaintext.size(), 0);
 
     EVP_CIPHER_CTX* cipher = EVP_CIPHER_CTX_new();
-    EVP_EncryptInit(cipher, EVP_aes_128_ecb(),
-                    reinterpret_cast<const unsigned char*>(key.data()), nullptr);
+    EVP_EncryptInit(cipher, EVP_aes_128_ecb(), reinterpret_cast<const unsigned char*>(key.data()),
+                    nullptr);
     EVP_CIPHER_CTX_set_padding(cipher, 0);
 
     int ciphertextLen = 0;
-    EVP_EncryptUpdate(cipher,
-                      reinterpret_cast<unsigned char*>(ciphertext.data()),
-                      &ciphertextLen,
-                      reinterpret_cast<const unsigned char*>(plaintext.data()),
-                      plaintext.size());
+    EVP_EncryptUpdate(cipher, reinterpret_cast<unsigned char*>(ciphertext.data()), &ciphertextLen,
+                      reinterpret_cast<const unsigned char*>(plaintext.data()), plaintext.size());
 
     EVP_CIPHER_CTX_free(cipher);
     return ciphertext;
@@ -203,16 +190,13 @@ QByteArray NvPairingManager::decrypt(const QByteArray& ciphertext, const QByteAr
     QByteArray plaintext(ciphertext.size(), 0);
 
     EVP_CIPHER_CTX* cipher = EVP_CIPHER_CTX_new();
-    EVP_DecryptInit(cipher, EVP_aes_128_ecb(),
-                    reinterpret_cast<const unsigned char*>(key.data()), nullptr);
+    EVP_DecryptInit(cipher, EVP_aes_128_ecb(), reinterpret_cast<const unsigned char*>(key.data()),
+                    nullptr);
     EVP_CIPHER_CTX_set_padding(cipher, 0);
 
     int plaintextLen = 0;
-    EVP_DecryptUpdate(cipher,
-                      reinterpret_cast<unsigned char*>(plaintext.data()),
-                      &plaintextLen,
-                      reinterpret_cast<const unsigned char*>(ciphertext.data()),
-                      ciphertext.size());
+    EVP_DecryptUpdate(cipher, reinterpret_cast<unsigned char*>(plaintext.data()), &plaintextLen,
+                      reinterpret_cast<const unsigned char*>(ciphertext.data()), ciphertext.size());
 
     EVP_CIPHER_CTX_free(cipher);
     return plaintext;
@@ -223,9 +207,8 @@ QByteArray NvPairingManager::getSignatureFromCert(X509* cert)
     const ASN1_BIT_STRING* asnSignature;
     X509_get0_signature(&asnSignature, nullptr, cert);
 
-    return QByteArray(
-        reinterpret_cast<const char*>(ASN1_STRING_get0_data(asnSignature)),
-        ASN1_STRING_length(asnSignature));
+    return QByteArray(reinterpret_cast<const char*>(ASN1_STRING_get0_data(asnSignature)),
+                      ASN1_STRING_length(asnSignature));
 }
 
 QByteArray NvPairingManager::getSignatureFromPemCert(const QByteArray& certificate)
@@ -239,15 +222,13 @@ QByteArray NvPairingManager::getSignatureFromPemCert(const QByteArray& certifica
     return signature;
 }
 
-bool NvPairingManager::verifySignature(const QByteArray& data,
-                                        const QByteArray& signature,
-                                        const QByteArray& serverCertificate)
+bool NvPairingManager::verifySignature(const QByteArray& data, const QByteArray& signature,
+                                       const QByteArray& serverCertificate)
 {
     BIO* bio = BIO_new_mem_buf(serverCertificate.data(), serverCertificate.size());
     X509* cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
-    if (!cert)
-        return false;
+    if (!cert) return false;
 
     EVP_PKEY* pubKey = X509_get_pubkey(cert);
     if (!pubKey) {
@@ -258,8 +239,8 @@ bool NvPairingManager::verifySignature(const QByteArray& data,
     EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
     EVP_DigestVerifyInit(mdctx, nullptr, EVP_sha256(), nullptr, pubKey);
     EVP_DigestVerifyUpdate(mdctx, data.data(), data.size());
-    int result = EVP_DigestVerifyFinal(mdctx,
-        reinterpret_cast<unsigned char*>(const_cast<char*>(signature.data())),
+    int result = EVP_DigestVerifyFinal(
+        mdctx, reinterpret_cast<unsigned char*>(const_cast<char*>(signature.data())),
         signature.size());
 
     EVP_PKEY_free(pubKey);
@@ -273,17 +254,14 @@ QByteArray NvPairingManager::signMessage(const QByteArray& message)
 {
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     EVP_DigestSignInit(ctx, nullptr, EVP_sha256(), nullptr, m_PrivateKey);
-    EVP_DigestSignUpdate(ctx,
-        reinterpret_cast<unsigned char*>(const_cast<char*>(message.data())),
-        message.size());
+    EVP_DigestSignUpdate(ctx, reinterpret_cast<unsigned char*>(const_cast<char*>(message.data())),
+                         message.size());
 
     size_t signatureLength = 0;
     EVP_DigestSignFinal(ctx, nullptr, &signatureLength);
 
     QByteArray signature(static_cast<int>(signatureLength), 0);
-    EVP_DigestSignFinal(ctx,
-        reinterpret_cast<unsigned char*>(signature.data()),
-        &signatureLength);
+    EVP_DigestSignFinal(ctx, reinterpret_cast<unsigned char*>(signature.data()), &signatureLength);
 
     EVP_MD_CTX_free(ctx);
     return signature;
@@ -293,15 +271,13 @@ QByteArray NvPairingManager::signMessage(const QByteArray& message)
 
 NvPairingManager::InitResult NvPairingManager::initiatePairing()
 {
-    if (m_Stage1Done)
-        return INIT_OK;
+    if (m_Stage1Done) return INIT_OK;
 
     m_Salt = generateRandomBytes(16);
 
     try {
-        QString args = "devicename=roth&updateState=1&phrase=getservercert&salt="
-                       + m_Salt.toHex() + "&clientcert="
-                       + IdentityManager::get()->getCertificate().toHex();
+        QString args = "devicename=roth&updateState=1&phrase=getservercert&salt=" + m_Salt.toHex() +
+                       "&clientcert=" + IdentityManager::get()->getCertificate().toHex();
 
         QString response = openConnection("http", "pair", args, PAIRING_PIN_WAIT_MS);
 
@@ -333,11 +309,10 @@ NvPairingManager::InitResult NvPairingManager::initiatePairing()
 }
 
 NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin,
-                                                               QByteArray& outServerCertPem)
+                                                              QByteArray& outServerCertPem)
 {
     QCryptographicHash::Algorithm hashAlgo =
-        m_ServerMajorVersion >= 7 ? QCryptographicHash::Sha256
-                                  : QCryptographicHash::Sha1;
+        m_ServerMajorVersion >= 7 ? QCryptographicHash::Sha256 : QCryptographicHash::Sha1;
 
     QByteArray aesKey = QCryptographicHash::hash(saltPin(m_Salt, pin), hashAlgo);
     aesKey.truncate(16);
@@ -349,8 +324,9 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
         QByteArray encryptedChallenge = encrypt(randomChallenge, aesKey);
 
         QString challengeXml = openConnection("http", "pair",
-            "devicename=roth&updateState=1&clientchallenge=" + encryptedChallenge.toHex(),
-            REQUEST_TIMEOUT_MS);
+                                              "devicename=roth&updateState=1&clientchallenge=" +
+                                                  encryptedChallenge.toHex(),
+                                              REQUEST_TIMEOUT_MS);
 
         NvHTTP::verifyResponseStatus(challengeXml);
 
@@ -360,8 +336,8 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
             return PIN_WRONG;
         }
 
-        QByteArray challengeResponseData = decrypt(
-            NvHTTP::getXmlStringFromHex(challengeXml, "challengeresponse"), aesKey);
+        QByteArray challengeResponseData =
+            decrypt(NvHTTP::getXmlStringFromHex(challengeXml, "challengeresponse"), aesKey);
 
         QByteArray clientSecretData = generateRandomBytes(16);
         QByteArray challengeResponse;
@@ -381,9 +357,9 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
         // --- Stage 3: server challenge response ---
 
         QString respXml = openConnection("http", "pair",
-            "devicename=roth&updateState=1&serverchallengeresp="
-            + encryptedChallengeResponseHash.toHex(),
-            REQUEST_TIMEOUT_MS);
+                                         "devicename=roth&updateState=1&serverchallengeresp=" +
+                                             encryptedChallengeResponseHash.toHex(),
+                                         REQUEST_TIMEOUT_MS);
 
         NvHTTP::verifyResponseStatus(respXml);
 
@@ -421,9 +397,9 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
         clientPairingSecret.append(clientSecretData);
         clientPairingSecret.append(signMessage(clientSecretData));
 
-        QString secretRespXml = openConnection("http", "pair",
-            "devicename=roth&updateState=1&clientpairingsecret="
-            + clientPairingSecret.toHex(),
+        QString secretRespXml = openConnection(
+            "http", "pair",
+            "devicename=roth&updateState=1&clientpairingsecret=" + clientPairingSecret.toHex(),
             REQUEST_TIMEOUT_MS);
 
         NvHTTP::verifyResponseStatus(secretRespXml);
@@ -438,8 +414,8 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
         // This confirms the client cert is recognized by Sunshine over TLS.
 
         try {
-            QString pairChallengeXml = openConnection("https", "pair",
-                "devicename=roth&updateState=1&phrase=pairchallenge",
+            QString pairChallengeXml = openConnection(
+                "https", "pair", "devicename=roth&updateState=1&phrase=pairchallenge",
                 REQUEST_TIMEOUT_MS);
 
             NvHTTP::verifyResponseStatus(pairChallengeXml);

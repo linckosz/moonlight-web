@@ -73,8 +73,7 @@ public:
      * @return true  if no A record exists (available).
      *         false if a matching A record exists or on error.
      */
-    bool checkSubdomainAvailable(const QString& subname,
-                                 QString& errorMsg);
+    bool checkSubdomainAvailable(const QString& subname, QString& errorMsg);
 
     /**
      * @brief Create or update an A record (unified via PATCH REPLACE).
@@ -88,9 +87,8 @@ public:
      *
      * @return true on HTTP 204, false otherwise.
      */
-    bool createOrUpdateSubdomain(const QString& subname,
-                                  const QString& ip, int ttl,
-                                  QString& errorMsg);
+    bool createOrUpdateSubdomain(const QString& subname, const QString& ip, int ttl,
+                                 QString& errorMsg);
 
     /**
      * @brief Delete a subdomain's A record via PATCH DELETE.
@@ -115,8 +113,8 @@ public:
      *
      * @return true on HTTP 204, false otherwise.
      */
-    bool createTxtRecord(const QString& fqdnSubname, const QString& value,
-                         int ttl, QString& errorMsg);
+    bool createTxtRecord(const QString& fqdnSubname, const QString& value, int ttl,
+                         QString& errorMsg);
 
     /**
      * @brief Delete a TXT record via PATCH DELETE.
@@ -139,16 +137,14 @@ public:
      * @return true if the query succeeded (record may still be absent),
      *         false on network/HTTP error.
      */
-    bool getTxtRecord(const QString& fqdnSubname, QString& valueOut,
-                      QString& errorMsg);
+    bool getTxtRecord(const QString& fqdnSubname, QString& valueOut, QString& errorMsg);
 
 signals:
     void error(const QString& message);
 
 private:
     /// Internal: synchronous PATCH with JSON body.
-    QNetworkReply* sendPatch(const QString& url, const QByteArray& body,
-                             int timeoutMs = 15000);
+    QNetworkReply* sendPatch(const QString& url, const QByteArray& body, int timeoutMs = 15000);
 
     /// Internal: synchronous GET.
     QNetworkReply* sendGet(const QString& url, int timeoutMs = 15000);

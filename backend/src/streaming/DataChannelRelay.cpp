@@ -48,17 +48,17 @@ extern "C" {
 
 /// Strip HEVC emulation prevention bytes (00 00 03) from RBSP data.
 /// Returns cleaned data with 0x03 removal bytes omitted.
-static QByteArray removeHvcEp(const QByteArray& data) {
+static QByteArray removeHvcEp(const QByteArray& data)
+{
     QByteArray result;
     result.reserve(data.size());
     for (int i = 0; i < data.size(); i++) {
-        if (i + 2 < data.size() &&
-            static_cast<unsigned char>(data[i]) == 0x00 &&
-            static_cast<unsigned char>(data[i+1]) == 0x00 &&
-            static_cast<unsigned char>(data[i+2]) == 0x03) {
+        if (i + 2 < data.size() && static_cast<unsigned char>(data[i]) == 0x00 &&
+            static_cast<unsigned char>(data[i + 1]) == 0x00 &&
+            static_cast<unsigned char>(data[i + 2]) == 0x03) {
             result.append('\x00');
             result.append('\x00');
-            i += 2;  // skip the 0x03 — for loop increments past it
+            i += 2; // skip the 0x03 — for loop increments past it
         } else {
             result.append(data[i]);
         }
@@ -68,7 +68,8 @@ static QByteArray removeHvcEp(const QByteArray& data) {
 
 /// Re-insert HEVC emulation prevention bytes (00 00 03) after modifying RBSP.
 /// Inserts 0x03 after any 00 00 pair followed by 00, 01, 02, or 03.
-static QByteArray addHvcEp(const QByteArray& rbsp) {
+static QByteArray addHvcEp(const QByteArray& rbsp)
+{
     QByteArray result;
     result.reserve(rbsp.size() + 16);
     int zeroRun = 0;
@@ -88,25 +89,27 @@ static QByteArray addHvcEp(const QByteArray& rbsp) {
 }
 
 /// Represents one NAL unit found in an Annex B byte stream.
-struct NalLocation {
-    int startOffset;  // offset of start code in the data
-    int startLen;     // start code length (3 or 4)
-    int nalOffset;    // offset of NAL data (after start code)
-    int nalLen;       // length of NAL data
+struct NalLocation
+{
+    int startOffset; // offset of start code in the data
+    int startLen;    // start code length (3 or 4)
+    int nalOffset;   // offset of NAL data (after start code)
+    int nalLen;      // length of NAL data
 };
 
 /// Scan an Annex B byte stream and return all NAL unit locations.
 /// Assumes valid Annex B structure (may be corrupt for invalid streams).
-static QVector<NalLocation> scanNals(const QByteArray& data) {
+static QVector<NalLocation> scanNals(const QByteArray& data)
+{
     QVector<NalLocation> nals;
     int i = 0;
     const unsigned char* d = reinterpret_cast<const unsigned char*>(data.constData());
     while (i < data.size() - 3) {
-        if (d[i] == 0 && d[i+1] == 0) {
+        if (d[i] == 0 && d[i + 1] == 0) {
             int scLen = 0;
-            if (d[i+2] == 1)
+            if (d[i + 2] == 1)
                 scLen = 3;
-            else if (i + 3 < data.size() && d[i+2] == 0 && d[i+3] == 1)
+            else if (i + 3 < data.size() && d[i + 2] == 0 && d[i + 3] == 1)
                 scLen = 4;
             if (scLen) {
                 NalLocation loc;
@@ -116,8 +119,9 @@ static QVector<NalLocation> scanNals(const QByteArray& data) {
                 // End of this NAL = next start code or end of buffer
                 int end = data.size();
                 for (int j = i + scLen; j < data.size() - 3; j++) {
-                    if (d[j] == 0 && d[j+1] == 0 &&
-                        (d[j+2] == 1 || (j + 3 < data.size() && d[j+2] == 0 && d[j+3] == 1))) {
+                    if (d[j] == 0 && d[j + 1] == 0 &&
+                        (d[j + 2] == 1 ||
+                         (j + 3 < data.size() && d[j + 2] == 0 && d[j + 3] == 1))) {
                         end = j;
                         break;
                     }
@@ -134,13 +138,15 @@ static QVector<NalLocation> scanNals(const QByteArray& data) {
 }
 
 /// Extract the HEVC NAL unit type from a NAL unit (after start code, without EP removal).
-static int hevcNalType(const QByteArray& nal) {
+static int hevcNalType(const QByteArray& nal)
+{
     if (nal.size() < 2) return -1;
     return (static_cast<unsigned char>(nal[0]) >> 1) & 0x3F;
 }
 
 /// Format a hex dump string from up to maxLen bytes of a QByteArray.
-static QString hevcHexDump(const QByteArray& data, int maxLen = 64) {
+static QString hevcHexDump(const QByteArray& data, int maxLen = 64)
+{
     QByteArray hex;
     int len = qMin(maxLen, data.size());
     for (int i = 0; i < len; i++) {
@@ -177,8 +183,7 @@ static QByteArray rebuildVpsNoSubLayers(const QByteArray& cleanVps)
     }
 
     qInfo() << "[HEVC-VPS-REBUILD] Input VPS:" << cleanVps.size() << "bytes"
-            << "RBSP[0..8]=" << hevcHexDump(cleanVps, 9)
-            << "subLayers=" << origSubLayers << "→ 0";
+            << "RBSP[0..8]=" << hevcHexDump(cleanVps, 9) << "subLayers=" << origSubLayers << "→ 0";
 
     QByteArray result;
     result.reserve(24);
@@ -226,9 +231,9 @@ static QByteArray rebuildVpsNoSubLayers(const QByteArray& cleanVps)
     result.append(static_cast<char>(0x70));
     result.append(static_cast<char>(0x24));
 
-    qInfo() << "[HEVC-VPS-REBUILD] Output VPS:" << cleanVps.size() << "→" << result.size() << "bytes"
-            << "RBSP[0..8]=" << hevcHexDump(result, 9)
-            << "(sub_layers forced to 0)";
+    qInfo() << "[HEVC-VPS-REBUILD] Output VPS:" << cleanVps.size() << "→" << result.size()
+            << "bytes"
+            << "RBSP[0..8]=" << hevcHexDump(result, 9) << "(sub_layers forced to 0)";
     return result;
 }
 
@@ -278,16 +283,14 @@ static QByteArray rebuildSpsNoSubLayers(const QByteArray& cleanSps)
         if (j < 4) {
             // Byte 0: bit 7=p[0],6=l[0],5=p[1],4=l[1],3=p[2],2=l[2],1=p[3],0=l[3]
             profilePresent = (flagsByte0 >> (7 - j * 2)) & 1;
-            levelPresent   = (flagsByte0 >> (6 - j * 2)) & 1;
+            levelPresent = (flagsByte0 >> (6 - j * 2)) & 1;
         } else {
             // Byte 1: bit 7=p[4],6=l[4],5=p[5],4=l[5],3..0=reserved
             profilePresent = (flagsByte1 >> (15 - j * 2)) & 1;
-            levelPresent   = (flagsByte1 >> (14 - j * 2)) & 1;
+            levelPresent = (flagsByte1 >> (14 - j * 2)) & 1;
         }
-        if (profilePresent)
-            subLayerDataBytes += 12;
-        if (levelPresent)
-            subLayerDataBytes += 1;
+        if (profilePresent) subLayerDataBytes += 12;
+        if (levelPresent) subLayerDataBytes += 1;
     }
 
     // Original PTL end offset in cleanSps (index past the PTL)
@@ -295,12 +298,9 @@ static QByteArray rebuildSpsNoSubLayers(const QByteArray& cleanSps)
     if (ptlEnd > cleanSps.size()) ptlEnd = cleanSps.size();
 
     qInfo() << "[HEVC-SPS-REBUILD] Input SPS:" << cleanSps.size() << "bytes"
-            << "RBSP[0..8]=" << hevcHexDump(cleanSps, 9)
-            << "subLayers=" << origSubLayers << "→ 0"
-            << "subLayerDataBytes=" << subLayerDataBytes
-            << "ptlEnd=" << ptlEnd
-            << "flagsB0=0x" << QString::number(flagsByte0, 16)
-            << "flagsB1=0x" << QString::number(flagsByte1, 16);
+            << "RBSP[0..8]=" << hevcHexDump(cleanSps, 9) << "subLayers=" << origSubLayers << "→ 0"
+            << "subLayerDataBytes=" << subLayerDataBytes << "ptlEnd=" << ptlEnd << "flagsB0=0x"
+            << QString::number(flagsByte0, 16) << "flagsB1=0x" << QString::number(flagsByte1, 16);
 
     QByteArray result;
     result.reserve(cleanSps.size() - subLayerDataBytes);
@@ -322,9 +322,9 @@ static QByteArray rebuildSpsNoSubLayers(const QByteArray& cleanSps)
     if (ptlEnd < cleanSps.size())
         result.append(cleanSps.constData() + ptlEnd, cleanSps.size() - ptlEnd);
 
-    qInfo() << "[HEVC-SPS-REBUILD] Output SPS:" << cleanSps.size() << "→" << result.size() << "bytes"
-            << "RBSP[0..8]=" << hevcHexDump(result, 9)
-            << "(sub_layers forced to 0)";
+    qInfo() << "[HEVC-SPS-REBUILD] Output SPS:" << cleanSps.size() << "→" << result.size()
+            << "bytes"
+            << "RBSP[0..8]=" << hevcHexDump(result, 9) << "(sub_layers forced to 0)";
     return result;
 }
 
@@ -349,19 +349,18 @@ static bool patchHevcKeyframe(QByteArray& data)
         QByteArray nal = data.mid(loc.nalOffset, qMin(loc.nalLen, 8));
         int type = hevcNalType(nal);
         qInfo() << "[HEVC-PATCH]   NAL[" << i << "]"
-                << "type=" << type
-                << "offset=" << loc.nalOffset
-                << "len=" << loc.nalLen
-                << "startCode=" << loc.startLen
-                << "headerHex=" << hevcHexDump(nal, 4);
+                << "type=" << type << "offset=" << loc.nalOffset << "len=" << loc.nalLen
+                << "startCode=" << loc.startLen << "headerHex=" << hevcHexDump(nal, 4);
     }
 
     int vpsIdx = -1, spsIdx = -1;
     for (int i = 0; i < nals.size(); i++) {
         QByteArray nal = data.mid(nals[i].nalOffset, nals[i].nalLen);
         int type = hevcNalType(nal);
-        if (type == 32) vpsIdx = i;       // HEVC_VPS
-        else if (type == 33) spsIdx = i;  // HEVC_SPS
+        if (type == 32)
+            vpsIdx = i; // HEVC_VPS
+        else if (type == 33)
+            spsIdx = i; // HEVC_SPS
     }
 
     qInfo() << "[HEVC-PATCH] VPS at NAL[" << vpsIdx << "], SPS at NAL[" << spsIdx << "]";
@@ -374,12 +373,12 @@ static bool patchHevcKeyframe(QByteArray& data)
         QByteArray vpsNal = data.mid(vpsLoc.nalOffset, vpsLoc.nalLen);
         QByteArray clean = removeHvcEp(vpsNal);
         qInfo() << "[HEVC-PATCH] VPS: original NAL size=" << vpsLoc.nalLen
-                << "clean size=" << clean.size()
-                << "clean[0..8]=" << hevcHexDump(clean, 9);
+                << "clean size=" << clean.size() << "clean[0..8]=" << hevcHexDump(clean, 9);
         QByteArray rebuilt = rebuildVpsNoSubLayers(clean);
         if (!rebuilt.isEmpty()) {
             QByteArray patchedVps = addHvcEp(rebuilt);
-            qInfo() << "[HEVC-PATCH] VPS: REPLACED" << vpsLoc.nalLen << "→" << patchedVps.size() << "bytes"
+            qInfo() << "[HEVC-PATCH] VPS: REPLACED" << vpsLoc.nalLen << "→" << patchedVps.size()
+                    << "bytes"
                     << "patched[0..8]=" << hevcHexDump(patchedVps, 9);
             data.replace(vpsLoc.nalOffset, vpsLoc.nalLen, patchedVps);
             patched = true;
@@ -396,8 +395,7 @@ static bool patchHevcKeyframe(QByteArray& data)
         QByteArray spsNal = data.mid(spsLoc.nalOffset, spsLoc.nalLen);
         QByteArray clean = removeHvcEp(spsNal);
         qInfo() << "[HEVC-PATCH] SPS: original NAL size=" << spsLoc.nalLen
-                << "clean size=" << clean.size()
-                << "clean[0..8]=" << hevcHexDump(clean, 9);
+                << "clean size=" << clean.size() << "clean[0..8]=" << hevcHexDump(clean, 9);
         QByteArray rebuilt = rebuildSpsNoSubLayers(clean);
         if (!rebuilt.isEmpty()) {
             // general_level_idc at byte 14 (same offset as in the original)
@@ -416,7 +414,8 @@ static bool patchHevcKeyframe(QByteArray& data)
             }
 
             QByteArray patchedSps = addHvcEp(rebuilt);
-            qInfo() << "[HEVC-PATCH] SPS: REPLACED" << spsLoc.nalLen << "→" << patchedSps.size() << "bytes"
+            qInfo() << "[HEVC-PATCH] SPS: REPLACED" << spsLoc.nalLen << "→" << patchedSps.size()
+                    << "bytes"
                     << "patched[0..8]=" << hevcHexDump(patchedSps, 9);
             data.replace(spsLoc.nalOffset, spsLoc.nalLen, patchedSps);
             patched = true;
@@ -445,18 +444,15 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
     // Dedicated sender thread: fragmentation + dc->send() run off the main thread.
     m_Sender = std::make_unique<FrameSender>();
 
-    connect(m_Shim, &MoonlightShim::videoFrameReady,
-            this, &DataChannelRelay::onVideoFrame);
-    connect(m_Shim, &MoonlightShim::audioSampleReady,
-            this, &DataChannelRelay::onAudioSample);
-    connect(m_Shim, &MoonlightShim::connectionTerminated,
-            this, &DataChannelRelay::onShimConnectionTerminated);
+    connect(m_Shim, &MoonlightShim::videoFrameReady, this, &DataChannelRelay::onVideoFrame);
+    connect(m_Shim, &MoonlightShim::audioSampleReady, this, &DataChannelRelay::onAudioSample);
+    connect(m_Shim, &MoonlightShim::connectionTerminated, this,
+            &DataChannelRelay::onShimConnectionTerminated);
 
     // Forward host rumble requests to the browser over the input DC.
     // 'this' as context → runs on the relay thread (signal is emitted from the
     // moonlight worker thread).
-    connect(m_Shim, &MoonlightShim::rumble, this,
-            [this](int controller, int low, int high) {
+    connect(m_Shim, &MoonlightShim::rumble, this, [this](int controller, int low, int high) {
         if (m_Stopping.load() || !m_InputDc) return;
         QJsonObject m;
         m["type"] = "rumble";
@@ -555,7 +551,6 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
         // endpoint through the UPnP-opened router port.
         if (m_ForceHostPublic && !m_PublicIP.empty() && m_PublicPort > 0 &&
             candidate.type() == rtc::Candidate::Type::Host) {
-
             // Only rewrite IPv4 candidates — parsing the candidate string
             // to check the address field. IPv6 addresses contain ':' in the
             // address part; rewriting them with an IPv4 public IP produces
@@ -572,12 +567,10 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
                 try {
                     modCandidate.changeAddress(m_PublicIP, m_PublicPort);
                     qInfo() << "[DataChannelRelay] Rewrote host candidate:"
-                            << QString::fromStdString(candidate.candidate())
-                            << "->" << QString::fromStdString(m_PublicIP)
-                            << ":" << m_PublicPort;
+                            << QString::fromStdString(candidate.candidate()) << "->"
+                            << QString::fromStdString(m_PublicIP) << ":" << m_PublicPort;
                 } catch (const std::exception& e) {
-                    qWarning() << "[DataChannelRelay] Failed to rewrite candidate:"
-                               << e.what();
+                    qWarning() << "[DataChannelRelay] Failed to rewrite candidate:" << e.what();
                 }
             } else {
                 qInfo() << "[DataChannelRelay] Skipping IPv6 candidate (cannot rewrite to IPv4):"
@@ -592,17 +585,15 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
         if (m_SuppressIPv6) {
             std::string candStr = std::string(modCandidate.candidate());
             size_t space = candStr.find(' ');
-            if (space != std::string::npos &&
-                candStr.find(':', space + 1) != std::string::npos) {
+            if (space != std::string::npos && candStr.find(':', space + 1) != std::string::npos) {
                 qInfo() << "[DataChannelRelay] Suppressing IPv6 candidate (UPnP active):"
                         << QString::fromStdString(candStr).left(80);
-                return;  // Skip — don't emit this candidate
+                return; // Skip — don't emit this candidate
             }
         }
 
-        emit signalingIceCandidate(
-            std::string(modCandidate.candidate()),
-            std::string(modCandidate.mid()));
+        emit signalingIceCandidate(std::string(modCandidate.candidate()),
+                                   std::string(modCandidate.mid()));
     });
 
     // --- State change callback ---
@@ -615,19 +606,25 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
         qInfo() << "[DataChannelRelay] PC state changed to" << static_cast<int>(state);
         if (state == rtc::PeerConnection::State::Connected) {
             qInfo() << "[DataChannelRelay] PeerConnection connected — canceling ICE timeout";
-            QMetaObject::invokeMethod(this, [this]() {
-                if (m_IceCheckTimer) m_IceCheckTimer->stop();
-            }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                this,
+                [this]() {
+                    if (m_IceCheckTimer) m_IceCheckTimer->stop();
+                },
+                Qt::QueuedConnection);
         } else if (state == rtc::PeerConnection::State::Disconnected ||
                    state == rtc::PeerConnection::State::Failed ||
                    state == rtc::PeerConnection::State::Closed) {
             if (!m_Stopping.exchange(true)) {
                 m_Connected = false;
                 qInfo() << "[DataChannelRelay] PC disconnected/failed/closed";
-                QMetaObject::invokeMethod(this, [this]() {
-                    if (m_IceCheckTimer) m_IceCheckTimer->stop();
-                    emit sessionEnded();
-                }, Qt::QueuedConnection);
+                QMetaObject::invokeMethod(
+                    this,
+                    [this]() {
+                        if (m_IceCheckTimer) m_IceCheckTimer->stop();
+                        emit sessionEnded();
+                    },
+                    Qt::QueuedConnection);
             }
         }
     });
@@ -653,7 +650,7 @@ void DataChannelRelay::createDataChannels()
     // loss kills the whole frame and forces an IDR recovery cycle.
     rtc::DataChannelInit videoConfig;
     videoConfig.reliability.unordered = true;
-    videoConfig.reliability.maxRetransmits = 3;  // Must match frontend negotiated channel config
+    videoConfig.reliability.maxRetransmits = 3; // Must match frontend negotiated channel config
     videoConfig.negotiated = true;
     videoConfig.id = 0;
 
@@ -664,13 +661,10 @@ void DataChannelRelay::createDataChannels()
             // If a keyframe arrived before the DC was ready, send it now.
             // Must marshal to main thread because sendFragmented() may access
             // Qt objects owned by the main thread.
-            QMetaObject::invokeMethod(this, [this]() {
-                sendBufferedKeyframe();
-            }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                this, [this]() { sendBufferedKeyframe(); }, Qt::QueuedConnection);
         });
-        m_VideoDc->onClosed([this]() {
-            qInfo() << "[DataChannelRelay] Video DataChannel closed";
-        });
+        m_VideoDc->onClosed([this]() { qInfo() << "[DataChannelRelay] Video DataChannel closed"; });
     }
 
     // --- Audio DataChannel (server->browser, Opus packets) ---
@@ -687,12 +681,8 @@ void DataChannelRelay::createDataChannels()
 
     m_AudioDc = m_Pc->createDataChannel("audio", audioConfig);
     if (m_AudioDc) {
-        m_AudioDc->onOpen([this]() {
-            qInfo() << "[DataChannelRelay] Audio DataChannel open";
-        });
-        m_AudioDc->onClosed([this]() {
-            qInfo() << "[DataChannelRelay] Audio DataChannel closed";
-        });
+        m_AudioDc->onOpen([this]() { qInfo() << "[DataChannelRelay] Audio DataChannel open"; });
+        m_AudioDc->onClosed([this]() { qInfo() << "[DataChannelRelay] Audio DataChannel closed"; });
     }
 
     // --- Input DataChannel (bidirectional, JSON text) ---
@@ -713,25 +703,25 @@ void DataChannelRelay::createDataChannels()
             // Start periodic stats timer — marshal to the Qt main thread:
             // this callback runs on a libdatachannel thread and QTimer::start()
             // is thread-affine (silently fails otherwise).
-            QMetaObject::invokeMethod(this, [this]() {
-                if (m_StatsTimer && !m_Stopping.load()) {
-                    m_StatsTimer->start();
-                    qInfo() << "[DataChannelRelay] Stats timer started (2s interval)";
-                }
-            }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                this,
+                [this]() {
+                    if (m_StatsTimer && !m_Stopping.load()) {
+                        m_StatsTimer->start();
+                        qInfo() << "[DataChannelRelay] Stats timer started (2s interval)";
+                    }
+                },
+                Qt::QueuedConnection);
         });
-        m_InputDc->onClosed([this]() {
-            qInfo() << "[DataChannelRelay] Input DataChannel closed";
-        });
+        m_InputDc->onClosed([this]() { qInfo() << "[DataChannelRelay] Input DataChannel closed"; });
 
         // Input messages arrive from browser on this channel
         m_InputDc->onMessage([this](const std::variant<rtc::binary, rtc::string>& msg) {
             // Marshal to main thread for Qt signal safety
             if (std::holds_alternative<rtc::string>(msg)) {
                 std::string text = std::get<rtc::string>(msg);
-                QMetaObject::invokeMethod(this, [this, text]() {
-                    onInputMessage(text);
-                }, Qt::QueuedConnection);
+                QMetaObject::invokeMethod(
+                    this, [this, text]() { onInputMessage(text); }, Qt::QueuedConnection);
             }
         });
     }
@@ -782,7 +772,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
         if (isHevc) {
             patchHevcKeyframe(frameData);
         }
-        m_HevcPatched = true;  // Only the first keyframe is checked
+        m_HevcPatched = true; // Only the first keyframe is checked
     }
 
     // Buffer keyframes arriving before the Video DC is ready.
@@ -791,7 +781,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
         m_BufferedKeyframe = frameData;
         m_HaveBufferedKeyframe = true;
-        m_NewKeyframeArrived = false;  // Reset — we have the latest buffer
+        m_NewKeyframeArrived = false; // Reset — we have the latest buffer
         return;
     }
 
@@ -804,7 +794,8 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
         }
         static int noDcCount = 0;
         if (++noDcCount <= 5)
-            qInfo() << "[DataChannelRelay] onVideoFrame dropped — m_VideoDc is null (DCs not created yet?)";
+            qInfo() << "[DataChannelRelay] onVideoFrame dropped — m_VideoDc is null (DCs not "
+                       "created yet?)";
         return;
     }
     if (!m_VideoDc->isOpen()) {
@@ -812,12 +803,12 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
             m_AwaitingIdr = true;
             sendIdrRequestThrottled();
         }
-        return;  // DC exists but not yet open
+        return; // DC exists but not yet open
     }
 
     // Awaiting IDR: drop all deltas until a keyframe resets the decoder reference.
     if (m_AwaitingIdr && !isKeyframe) {
-        sendIdrRequestThrottled();  // Throttle absorbs bursts; keeps requesting until IDR arrives
+        sendIdrRequestThrottled(); // Throttle absorbs bursts; keeps requesting until IDR arrives
         return;
     }
 
@@ -861,8 +852,7 @@ void DataChannelRelay::sendBufferedKeyframe()
         return;
     }
 
-    qInfo() << "[DataChannelRelay] Sending buffered keyframe, size="
-            << m_BufferedKeyframe.size();
+    qInfo() << "[DataChannelRelay] Sending buffered keyframe, size=" << m_BufferedKeyframe.size();
     sendFragmented(m_BufferedKeyframe, true, m_VideoDc);
     m_BufferedKeyframe.clear();
     m_HaveBufferedKeyframe = false;
@@ -928,10 +918,10 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         int vk = msg["keyCode"].toInt(0);
         QString code = msg["code"].toString();
         char mods = 0;
-        if (msg["ctrlKey"].toBool(false))  mods |= 0x02;
+        if (msg["ctrlKey"].toBool(false)) mods |= 0x02;
         if (msg["shiftKey"].toBool(false)) mods |= 0x01;
-        if (msg["altKey"].toBool(false))   mods |= 0x04;
-        if (msg["metaKey"].toBool(false))  mods |= 0x08;
+        if (msg["altKey"].toBool(false)) mods |= 0x04;
+        if (msg["metaKey"].toBool(false)) mods |= 0x08;
 
         short keyCode;
         char flags = 0;
@@ -941,21 +931,20 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         // need raw scancode mode so Sunshine interprets them by physical
         // position instead of VK mapping.
         if (code == "IntlBackslash") {
-            keyCode = 0x56;  // Windows Set 1 scancode for IntlBackslash
+            keyCode = 0x56; // Windows Set 1 scancode for IntlBackslash
             flags = SS_KBE_FLAG_NON_NORMALIZED;
         } else if (code == "IntlRo") {
-            keyCode = 0x73;  // Windows Set 1 scancode for IntlRo
+            keyCode = 0x73; // Windows Set 1 scancode for IntlRo
             flags = SS_KBE_FLAG_NON_NORMALIZED;
         } else {
             keyCode = static_cast<short>(vk);
             flags = 0;
         }
         m_Shim->sendKeyEvent(keyCode, down, mods, flags);
-    }
-    else if (type == "mousemove") {
+    } else if (type == "mousemove") {
         // Absolute mouse position (non-gaming mode)
-        if (msg.contains("x") && msg.contains("y") &&
-            msg.contains("referenceWidth") && msg.contains("referenceHeight")) {
+        if (msg.contains("x") && msg.contains("y") && msg.contains("referenceWidth") &&
+            msg.contains("referenceHeight")) {
             short x = static_cast<short>(msg["x"].toInt(0));
             short y = static_cast<short>(msg["y"].toInt(0));
             short refW = static_cast<short>(msg["referenceWidth"].toInt(0));
@@ -967,26 +956,21 @@ void DataChannelRelay::onInputMessage(const std::string& message)
             short dy = static_cast<short>(msg["dy"].toInt(0));
             m_Shim->sendMouseMove(dx, dy);
         }
-    }
-    else if (type == "mousedown" || type == "mouseup") {
+    } else if (type == "mousedown" || type == "mouseup") {
         bool down = (type == "mousedown");
         int button = msg["button"].toInt(1);
         m_Shim->sendMouseButton(down, button);
-    }
-    else if (type == "mousewheel") {
+    } else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
-    }
-    else if (type == "textinput") {
+    } else if (type == "textinput") {
         // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
         m_Shim->sendUtf8Text(msg["text"].toString());
-    }
-    else if (type == "requestidr") {
+    } else if (type == "requestidr") {
         qInfo() << "[DataChannelRelay] Requesting IDR frame from Sunshine (browser request)";
         m_AwaitingIdr = true;
         sendIdrRequestThrottled();
-    }
-    else if (type == "ping") {
+    } else if (type == "ping") {
         // Respond with pong on the input DataChannel.
         // The ts field mirrors the browser's timestamp so it can compute RTT.
         int seq = msg["seq"].toInt(0);
@@ -1005,35 +989,24 @@ void DataChannelRelay::onInputMessage(const std::string& message)
                 }
             }
         }
-    }
-    else if (type == "gamepad") {
+    } else if (type == "gamepad") {
         // Full controller state snapshot from the browser Gamepad API.
         m_Shim->sendControllerState(
-            static_cast<short>(msg["index"].toInt(0)),
-            static_cast<short>(msg["mask"].toInt(0)),
-            msg["buttons"].toInt(0),
-            static_cast<unsigned char>(msg["lt"].toInt(0)),
-            static_cast<unsigned char>(msg["rt"].toInt(0)),
-            static_cast<short>(msg["lx"].toInt(0)),
-            static_cast<short>(msg["ly"].toInt(0)),
-            static_cast<short>(msg["rx"].toInt(0)),
+            static_cast<short>(msg["index"].toInt(0)), static_cast<short>(msg["mask"].toInt(0)),
+            msg["buttons"].toInt(0), static_cast<unsigned char>(msg["lt"].toInt(0)),
+            static_cast<unsigned char>(msg["rt"].toInt(0)), static_cast<short>(msg["lx"].toInt(0)),
+            static_cast<short>(msg["ly"].toInt(0)), static_cast<short>(msg["rx"].toInt(0)),
             static_cast<short>(msg["ry"].toInt(0)));
-    }
-    else if (type == "gamepadconnect") {
-        m_Shim->sendControllerArrival(
-            static_cast<uint8_t>(msg["index"].toInt(0)),
-            static_cast<uint16_t>(msg["mask"].toInt(0)),
-            static_cast<uint8_t>(msg["ctype"].toInt(0)),
-            msg["rumble"].toBool(false));
-    }
-    else if (type == "gamepaddisconnect") {
+    } else if (type == "gamepadconnect") {
+        m_Shim->sendControllerArrival(static_cast<uint8_t>(msg["index"].toInt(0)),
+                                      static_cast<uint16_t>(msg["mask"].toInt(0)),
+                                      static_cast<uint8_t>(msg["ctype"].toInt(0)),
+                                      msg["rumble"].toBool(false));
+    } else if (type == "gamepaddisconnect") {
         // Empty state with this controller's mask bit cleared = removal.
-        m_Shim->sendControllerState(
-            static_cast<short>(msg["index"].toInt(0)),
-            static_cast<short>(msg["mask"].toInt(0)),
-            0, 0, 0, 0, 0, 0, 0);
-    }
-    else {
+        m_Shim->sendControllerState(static_cast<short>(msg["index"].toInt(0)),
+                                    static_cast<short>(msg["mask"].toInt(0)), 0, 0, 0, 0, 0, 0, 0);
+    } else {
         qWarning() << "[DataChannelRelay] Unknown input type:" << type;
     }
 }
@@ -1058,7 +1031,8 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         int64_t submitTs = m_Shim->frameSubmitTimeUs();
         if (submitTs > 0) {
             int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
             int64_t latency = nowUs - submitTs;
             if (latency > 0 && latency < 1'000'000) { // Cap at 1s
                 m_LastDecodeLatencyUs = latency;
@@ -1083,8 +1057,7 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
 
             if (m_DeltaDroppedCount <= 3 || m_DeltaDroppedCount % 120 == 0) {
                 qInfo() << "[DataChannelRelay] Dropped delta frame (SCTP full)"
-                        << "bufferedAmount=" << bufAmt
-                        << "totalDropped=" << m_DeltaDroppedCount;
+                        << "bufferedAmount=" << bufAmt << "totalDropped=" << m_DeltaDroppedCount;
             }
             return;
         }
@@ -1104,7 +1077,6 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         m_AwaitingIdr = false;
         m_BackpressureDropCount = 0;
     }
-
 
     // Audio shares this path but uses its own id counter: at ~200 Opus pkt/s it
     // would otherwise punch permanent holes in the video frameId sequence and
@@ -1129,8 +1101,7 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     }
     // Fallback: use current wall time if steady_clock not yet initialized
     if (backendTs == 0) {
-        backendTs = static_cast<uint32_t>(
-            QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+        backendTs = static_cast<uint32_t>(QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
     }
 
     // Offload fragmentation + dc->send() to the dedicated sender thread so the
@@ -1169,8 +1140,7 @@ void DataChannelRelay::onStatsTimerTick()
     // steady time, then subtracts the frame's captureSteadyMs to get e2e latency.
     {
         using namespace std::chrono;
-        int64_t nowMs = duration_cast<milliseconds>(
-            steady_clock::now().time_since_epoch()).count();
+        int64_t nowMs = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
         stats["streamTimeMs"] = nowMs;
     }
 
@@ -1193,8 +1163,8 @@ void DataChannelRelay::notifyClientTakenOver()
     // so the browser can show a graceful "taken over" exit instead of a generic
     // disconnect. Reliable/ordered channel → flushed ahead of the close.
     if (!m_InputDc || m_Stopping.load()) return;
-    QByteArray json = QJsonDocument(QJsonObject{{"type", "takeover"}})
-                          .toJson(QJsonDocument::Compact);
+    QByteArray json =
+        QJsonDocument(QJsonObject{{"type", "takeover"}}).toJson(QJsonDocument::Compact);
     try {
         m_InputDc->send(std::string(json.constData(), json.size()));
     } catch (...) {}
@@ -1234,7 +1204,7 @@ void DataChannelRelay::stop()
     m_BackpressureDropCount = 0;
     m_LastDecodeLatencyUs.store(0, std::memory_order_release);
     m_AwaitingIdr = false;
-    m_IdrCooldownTimer.invalidate();  // Reset throttle state
+    m_IdrCooldownTimer.invalidate(); // Reset throttle state
 
     // Clear buffered keyframe (if any)
     m_BufferedKeyframe.clear();
@@ -1247,7 +1217,9 @@ void DataChannelRelay::stop()
     auto closeDc = [](std::shared_ptr<rtc::DataChannel>& dc, const char* name) {
         if (dc) {
             qInfo() << "[DataChannelRelay] Closing" << name << "DataChannel";
-            try { dc->close(); } catch (...) {}
+            try {
+                dc->close();
+            } catch (...) {}
             dc.reset();
         }
     };
@@ -1267,7 +1239,9 @@ void DataChannelRelay::stop()
     // Close PeerConnection
     if (m_Pc) {
         qInfo() << "[DataChannelRelay] Closing PeerConnection";
-        try { m_Pc->close(); } catch (...) {}
+        try {
+            m_Pc->close();
+        } catch (...) {}
         m_Pc.reset();
     }
 
@@ -1287,9 +1261,8 @@ void DataChannelRelay::sendIdrRequestThrottled()
 
     // Cooldown: absorb requests arriving within 300 ms of the last effective call.
     static constexpr qint64 kIdrCooldownMs = 300;
-    if (m_IdrCooldownTimer.isValid() &&
-        m_IdrCooldownTimer.elapsed() < kIdrCooldownMs) {
-        return;  // Absorbed — cooldown not elapsed yet
+    if (m_IdrCooldownTimer.isValid() && m_IdrCooldownTimer.elapsed() < kIdrCooldownMs) {
+        return; // Absorbed — cooldown not elapsed yet
     }
 
     m_IdrCooldownTimer.restart();
@@ -1321,6 +1294,6 @@ void DataChannelRelay::setPublicAddress(const std::string& publicIP, uint16_t pu
 {
     m_PublicIP = publicIP;
     m_PublicPort = publicPort;
-    qInfo() << "[DataChannelRelay] UPnP public address set:"
-            << QString::fromStdString(publicIP) << ":" << publicPort;
+    qInfo() << "[DataChannelRelay] UPnP public address set:" << QString::fromStdString(publicIP)
+            << ":" << publicPort;
 }

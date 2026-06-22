@@ -29,27 +29,24 @@ Logger* Logger::instance()
 Logger::Logger(QObject* parent)
     : QObject(parent)
     , m_FileOpen(false)
-{
-}
+{}
 
 void Logger::setLogFile(const QString& path)
 {
     QMutexLocker lock(&m_Mutex);
-    if (m_File.isOpen())
-        m_File.close();
+    if (m_File.isOpen()) m_File.close();
 
     m_File.setFileName(path);
     m_FileOpen = m_File.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
-    if (m_FileOpen)
-        m_Stream.setDevice(&m_File);
+    if (m_FileOpen) m_Stream.setDevice(&m_File);
 }
 
 void Logger::log(Level level, const QString& message)
 {
     QString line = QString("[%1] [%2] %3\n")
-        .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
-        .arg(levelString(level))
-        .arg(message);
+                       .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+                       .arg(levelString(level))
+                       .arg(message);
 
     QMutexLocker lock(&m_Mutex);
 
@@ -69,10 +66,10 @@ void Logger::log(Level level, const QString& message)
 QString Logger::levelString(Level level)
 {
     switch (level) {
-    case Debug:   return "DEBUG";
-    case Info:    return "INFO";
+    case Debug: return "DEBUG";
+    case Info: return "INFO";
     case Warning: return "WARN";
-    case Error:   return "ERROR";
+    case Error: return "ERROR";
     }
     return "???";
 }

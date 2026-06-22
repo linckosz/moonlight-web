@@ -47,10 +47,10 @@
 static const QString kDefaultDirectoryUrl =
     QStringLiteral("https://acme-v02.api.letsencrypt.org/directory");
 
-static constexpr int kHttpTimeoutMs  = 30000;
+static constexpr int kHttpTimeoutMs = 30000;
 static constexpr int kPollIntervalMs = 5000;
-static constexpr int kMaxPollRetries = 36;     // 36 x 5s = 3 min
-static constexpr int kChallengeTtl   = 60;     // TXT record TTL
+static constexpr int kMaxPollRetries = 36; // 36 x 5s = 3 min
+static constexpr int kChallengeTtl = 60;   // TXT record TTL
 // PowerDNS endpoint and zone come from PdnsClient (env-driven, single source).
 
 // ---------------------------------------------------------------------------
@@ -73,12 +73,30 @@ AcmeClient::~AcmeClient()
 // Public API
 // ---------------------------------------------------------------------------
 
-void AcmeClient::setAccountKeyPath(const QString& path)  { m_AccountKeyPath = path; }
-void AcmeClient::setDomainKeyPath(const QString& path)   { m_DomainKeyPath = path; }
-void AcmeClient::setCertOutputDir(const QString& dir)    { m_CertOutputDir = dir; }
-void AcmeClient::setHost(const QString& host)            { m_Host = host; }
-void AcmeClient::setBaseDomain(const QString& domain)    { m_BaseDomain = domain; }
-void AcmeClient::setPdnsToken(const QString& token)     { m_PdnsToken = token; }
+void AcmeClient::setAccountKeyPath(const QString& path)
+{
+    m_AccountKeyPath = path;
+}
+void AcmeClient::setDomainKeyPath(const QString& path)
+{
+    m_DomainKeyPath = path;
+}
+void AcmeClient::setCertOutputDir(const QString& dir)
+{
+    m_CertOutputDir = dir;
+}
+void AcmeClient::setHost(const QString& host)
+{
+    m_Host = host;
+}
+void AcmeClient::setBaseDomain(const QString& domain)
+{
+    m_BaseDomain = domain;
+}
+void AcmeClient::setPdnsToken(const QString& token)
+{
+    m_PdnsToken = token;
+}
 
 void AcmeClient::start()
 {
@@ -126,7 +144,7 @@ bool AcmeClient::generateRsaKey(const QString& path)
 {
     QDir().mkpath(QFileInfo(path).absolutePath());
 
-    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
     if (!ctx) {
         qWarning() << "[AcmeClient] Failed to create EVP_PKEY_CTX for keygen";
         return false;
@@ -144,7 +162,7 @@ bool AcmeClient::generateRsaKey(const QString& path)
         return false;
     }
 
-    EVP_PKEY *pkey = nullptr;
+    EVP_PKEY* pkey = nullptr;
     if (EVP_PKEY_keygen(ctx, &pkey) <= 0) {
         qWarning() << "[AcmeClient] EVP_PKEY_keygen failed";
         EVP_PKEY_CTX_free(ctx);
@@ -153,7 +171,7 @@ bool AcmeClient::generateRsaKey(const QString& path)
     EVP_PKEY_CTX_free(ctx);
 
     // Write PEM to file
-    BIO *bio = BIO_new(BIO_s_mem());
+    BIO* bio = BIO_new(BIO_s_mem());
     if (!PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr)) {
         qWarning() << "[AcmeClient] PEM_write_bio_PrivateKey failed";
         BIO_free(bio);
@@ -161,7 +179,7 @@ bool AcmeClient::generateRsaKey(const QString& path)
         return false;
     }
 
-    char *data = nullptr;
+    char* data = nullptr;
     long len = BIO_get_mem_data(bio, &data);
 
     QFile f(path);
@@ -186,19 +204,19 @@ bool AcmeClient::generateRsaKey(const QString& path)
 
 QByteArray AcmeClient::parseRsaModulus()
 {
-    BIO *bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
+    BIO* bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
     if (!bio) {
         qWarning() << "[AcmeClient] Cannot open account key:" << m_AccountKeyPath;
         return {};
     }
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
     if (!pkey) {
         qWarning() << "[AcmeClient] Failed to parse account key for modulus";
         return {};
     }
 
-    BIGNUM *n = nullptr;
+    BIGNUM* n = nullptr;
     if (!EVP_PKEY_get_bn_param(pkey, "n", &n) || !n) {
         qWarning() << "[AcmeClient] EVP_PKEY_get_bn_param(n) failed";
         EVP_PKEY_free(pkey);
@@ -215,19 +233,19 @@ QByteArray AcmeClient::parseRsaModulus()
 
 QByteArray AcmeClient::parseRsaExponent()
 {
-    BIO *bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
+    BIO* bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
     if (!bio) {
         qWarning() << "[AcmeClient] Cannot open account key:" << m_AccountKeyPath;
         return {};
     }
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
     if (!pkey) {
         qWarning() << "[AcmeClient] Failed to parse account key for exponent";
         return {};
     }
 
-    BIGNUM *e = nullptr;
+    BIGNUM* e = nullptr;
     if (!EVP_PKEY_get_bn_param(pkey, "e", &e) || !e) {
         qWarning() << "[AcmeClient] EVP_PKEY_get_bn_param(e) failed";
         EVP_PKEY_free(pkey);
@@ -250,8 +268,8 @@ QJsonObject AcmeClient::accountKeyJwk()
 {
     QJsonObject jwk;
     jwk[QStringLiteral("kty")] = QStringLiteral("RSA");
-    jwk[QStringLiteral("n")]   = QString::fromUtf8(b64urlEncode(parseRsaModulus()));
-    jwk[QStringLiteral("e")]   = QString::fromUtf8(b64urlEncode(parseRsaExponent()));
+    jwk[QStringLiteral("n")] = QString::fromUtf8(b64urlEncode(parseRsaModulus()));
+    jwk[QStringLiteral("e")] = QString::fromUtf8(b64urlEncode(parseRsaExponent()));
     return jwk;
 }
 
@@ -260,9 +278,9 @@ QByteArray AcmeClient::accountKeyThumbprint()
     QJsonObject jwk = accountKeyJwk();
     // Canonical JSON: keys sorted alphabetically → e, kty, n
     QJsonObject c;
-    c[QStringLiteral("e")]   = jwk.value(QStringLiteral("e"));
+    c[QStringLiteral("e")] = jwk.value(QStringLiteral("e"));
     c[QStringLiteral("kty")] = jwk.value(QStringLiteral("kty"));
-    c[QStringLiteral("n")]   = jwk.value(QStringLiteral("n"));
+    c[QStringLiteral("n")] = jwk.value(QStringLiteral("n"));
 
     QByteArray json = QJsonDocument(c).toJson(QJsonDocument::Compact);
     return b64urlEncode(QCryptographicHash::hash(json, QCryptographicHash::Sha256));
@@ -275,19 +293,19 @@ QByteArray AcmeClient::accountKeyThumbprint()
 QByteArray AcmeClient::signRsaSha256(const QByteArray& data)
 {
     // Load the account private key from PEM file
-    BIO *bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
+    BIO* bio = BIO_new_file(m_AccountKeyPath.toUtf8().constData(), "r");
     if (!bio) {
         qWarning() << "[AcmeClient] Cannot open account key for signing:" << m_AccountKeyPath;
         return {};
     }
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
     if (!pkey) {
         qWarning() << "[AcmeClient] Failed to parse account key for signing";
         return {};
     }
 
-    EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
     if (!mdctx) {
         EVP_PKEY_free(pkey);
         return {};
@@ -317,9 +335,8 @@ QByteArray AcmeClient::signRsaSha256(const QByteArray& data)
     }
 
     QByteArray signature(static_cast<int>(sigLen), Qt::Uninitialized);
-    if (EVP_DigestSignFinal(mdctx,
-                            reinterpret_cast<unsigned char*>(signature.data()),
-                            &sigLen) <= 0) {
+    if (EVP_DigestSignFinal(mdctx, reinterpret_cast<unsigned char*>(signature.data()), &sigLen) <=
+        0) {
         qWarning() << "[AcmeClient] EVP_DigestSignFinal failed";
         EVP_MD_CTX_free(mdctx);
         EVP_PKEY_free(pkey);
@@ -334,8 +351,7 @@ QByteArray AcmeClient::signRsaSha256(const QByteArray& data)
 
 QJsonObject AcmeClient::buildEabJws(const QString& newAccountUrl)
 {
-    if (m_EabKid.isEmpty() || m_EabHmacKey.isEmpty())
-        return {};
+    if (m_EabKid.isEmpty() || m_EabHmacKey.isEmpty()) return {};
 
     // Inner JWS protected header: HS256, the CA-issued kid, and the newAccount URL.
     // Note: no "nonce" — the EAB inner JWS is not nonce-protected (RFC 8555 §7.3.4).
@@ -345,20 +361,19 @@ QJsonObject AcmeClient::buildEabJws(const QString& newAccountUrl)
     header[QStringLiteral("url")] = newAccountUrl;
 
     // Payload is the account public key JWK (the key being bound to the account).
-    QByteArray protectedB64 = b64urlEncode(
-        QJsonDocument(header).toJson(QJsonDocument::Compact));
-    QByteArray payloadB64 = b64urlEncode(
-        QJsonDocument(accountKeyJwk()).toJson(QJsonDocument::Compact));
+    QByteArray protectedB64 = b64urlEncode(QJsonDocument(header).toJson(QJsonDocument::Compact));
+    QByteArray payloadB64 =
+        b64urlEncode(QJsonDocument(accountKeyJwk()).toJson(QJsonDocument::Compact));
     QByteArray signingInput = protectedB64 + '.' + payloadB64;
 
     // HMAC-SHA256 with the base64url-decoded EAB key.
     QByteArray hmacKey = b64urlDecode(m_EabHmacKey.toUtf8());
-    QByteArray sig = QMessageAuthenticationCode::hash(
-        signingInput, hmacKey, QCryptographicHash::Sha256);
+    QByteArray sig =
+        QMessageAuthenticationCode::hash(signingInput, hmacKey, QCryptographicHash::Sha256);
 
     QJsonObject eab;
     eab[QStringLiteral("protected")] = QString::fromUtf8(protectedB64);
-    eab[QStringLiteral("payload")]   = QString::fromUtf8(payloadB64);
+    eab[QStringLiteral("payload")] = QString::fromUtf8(payloadB64);
     eab[QStringLiteral("signature")] = QString::fromUtf8(b64urlEncode(sig));
     return eab;
 }
@@ -366,9 +381,9 @@ QJsonObject AcmeClient::buildEabJws(const QString& newAccountUrl)
 QByteArray AcmeClient::buildJws(const QByteArray& payload, const QString& url, bool useKid)
 {
     QJsonObject header;
-    header[QStringLiteral("alg")]   = QStringLiteral("RS256");
+    header[QStringLiteral("alg")] = QStringLiteral("RS256");
     header[QStringLiteral("nonce")] = QString::fromUtf8(m_Nonce);
-    header[QStringLiteral("url")]   = url;
+    header[QStringLiteral("url")] = url;
 
     if (useKid && !m_AccountUrl.isEmpty()) {
         header[QStringLiteral("kid")] = m_AccountUrl;
@@ -376,17 +391,16 @@ QByteArray AcmeClient::buildJws(const QByteArray& payload, const QString& url, b
         header[QStringLiteral("jwk")] = accountKeyJwk();
     }
 
-    QByteArray protectedB64 = b64urlEncode(
-        QJsonDocument(header).toJson(QJsonDocument::Compact));
-    QByteArray payloadB64  = b64urlEncode(payload);
+    QByteArray protectedB64 = b64urlEncode(QJsonDocument(header).toJson(QJsonDocument::Compact));
+    QByteArray payloadB64 = b64urlEncode(payload);
     QByteArray signingInput = protectedB64 + '.' + payloadB64;
 
-    QByteArray sig   = signRsaSha256(signingInput);
+    QByteArray sig = signRsaSha256(signingInput);
     QByteArray sigB64 = b64urlEncode(sig);
 
     QJsonObject jws;
     jws[QStringLiteral("protected")] = QString::fromUtf8(protectedB64);
-    jws[QStringLiteral("payload")]   = QString::fromUtf8(payloadB64);
+    jws[QStringLiteral("payload")] = QString::fromUtf8(payloadB64);
     jws[QStringLiteral("signature")] = QString::fromUtf8(sigB64);
 
     return QJsonDocument(jws).toJson(QJsonDocument::Compact);
@@ -409,7 +423,10 @@ void AcmeClient::fetchNonce(std::function<void(bool)> callback)
     QNetworkReply* reply = m_Nam->head(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
         reply->deleteLater();
-        if (m_Cancelled) { if (callback) callback(false); return; }
+        if (m_Cancelled) {
+            if (callback) callback(false);
+            return;
+        }
 
         QByteArray nonce = reply->rawHeader("Replay-Nonce");
         if (!nonce.isEmpty()) {
@@ -448,33 +465,31 @@ void AcmeClient::acmePost(const QString& url, const QByteArray& payload, bool us
     QByteArray jwsBody = buildJws(payload, url, useKid);
 
     QNetworkRequest req{QUrl(url)};
-    req.setHeader(QNetworkRequest::ContentTypeHeader,
-                  QStringLiteral("application/jose+json"));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/jose+json"));
 
     QNetworkReply* reply = m_Nam->post(req, jwsBody);
 
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, url, payload, useKid, callback, retriesLeft]() {
-        reply->deleteLater();
-        if (m_Cancelled) return;
+                reply->deleteLater();
+                if (m_Cancelled) return;
 
-        int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        QByteArray body = reply->readAll();
-        QString location = reply->rawHeader("Location");
-        QByteArray nonce = reply->rawHeader("Replay-Nonce");
-        if (!nonce.isEmpty())
-            m_Nonce = nonce;
+                int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                QByteArray body = reply->readAll();
+                QString location = reply->rawHeader("Location");
+                QByteArray nonce = reply->rawHeader("Replay-Nonce");
+                if (!nonce.isEmpty()) m_Nonce = nonce;
 
-        // Retry on badNonce
-        if (code == 400 && retriesLeft > 0 && body.contains("badNonce")) {
-            qInfo() << "[AcmeClient] badNonce, retries left:" << (retriesLeft - 1);
-            m_Nonce.clear();
-            acmePost(url, payload, useKid, callback, retriesLeft - 1);
-            return;
-        }
+                // Retry on badNonce
+                if (code == 400 && retriesLeft > 0 && body.contains("badNonce")) {
+                    qInfo() << "[AcmeClient] badNonce, retries left:" << (retriesLeft - 1);
+                    m_Nonce.clear();
+                    acmePost(url, payload, useKid, callback, retriesLeft - 1);
+                    return;
+                }
 
-        callback(code, body, location);
-    });
+                callback(code, body, location);
+            });
 }
 
 void AcmeClient::acmePostAsGet(const QString& url,
@@ -483,8 +498,8 @@ void AcmeClient::acmePostAsGet(const QString& url,
     // POST-as-GET: empty payload per RFC 8555 §6.3
     acmePost(url, QByteArray(), !m_AccountUrl.isEmpty(),
              [callback](int code, const QByteArray& body, const QString& /*loc*/) {
-        if (callback) callback(code, body);
-    });
+                 if (callback) callback(code, body);
+             });
 }
 
 // ---------------------------------------------------------------------------
@@ -494,19 +509,19 @@ void AcmeClient::acmePostAsGet(const QString& url,
 QByteArray AcmeClient::generateCsr()
 {
     // Load domain private key from PEM file
-    BIO *bio = BIO_new_file(m_DomainKeyPath.toUtf8().constData(), "r");
+    BIO* bio = BIO_new_file(m_DomainKeyPath.toUtf8().constData(), "r");
     if (!bio) {
         qWarning() << "[AcmeClient] Cannot open domain key for CSR:" << m_DomainKeyPath;
         return {};
     }
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
     if (!pkey) {
         qWarning() << "[AcmeClient] Failed to parse domain key for CSR";
         return {};
     }
 
-    X509_REQ *req = X509_REQ_new();
+    X509_REQ* req = X509_REQ_new();
     if (!req) {
         qWarning() << "[AcmeClient] X509_REQ_new failed";
         EVP_PKEY_free(pkey);
@@ -517,27 +532,26 @@ QByteArray AcmeClient::generateCsr()
     X509_REQ_set_pubkey(req, pkey);
 
     // Subject: CN = host
-    X509_NAME *name = X509_NAME_new();
+    X509_NAME* name = X509_NAME_new();
     QByteArray cn = m_Host.toUtf8();
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                               reinterpret_cast<const unsigned char*>(cn.constData()),
-                               -1, -1, 0);
+                               reinterpret_cast<const unsigned char*>(cn.constData()), -1, -1, 0);
     X509_REQ_set_subject_name(req, name);
-    X509_NAME_free(name);  // req holds its own copy
+    X509_NAME_free(name); // req holds its own copy
 
     // Extension: subjectAltName = DNS:host
-    GENERAL_NAMES *gens = sk_GENERAL_NAME_new_null();
+    GENERAL_NAMES* gens = sk_GENERAL_NAME_new_null();
     if (gens) {
-        GENERAL_NAME *gen = GENERAL_NAME_new();
+        GENERAL_NAME* gen = GENERAL_NAME_new();
         if (gen) {
-            ASN1_IA5STRING *ia5 = ASN1_IA5STRING_new();
+            ASN1_IA5STRING* ia5 = ASN1_IA5STRING_new();
             ASN1_STRING_set(ia5, cn.constData(), cn.size());
-            GENERAL_NAME_set0_value(gen, GEN_DNS, ia5);  // gen owns ia5
-            sk_GENERAL_NAME_push(gens, gen);               // gens owns gen
+            GENERAL_NAME_set0_value(gen, GEN_DNS, ia5); // gen owns ia5
+            sk_GENERAL_NAME_push(gens, gen);            // gens owns gen
 
-            X509_EXTENSION *ext = X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
+            X509_EXTENSION* ext = X509V3_EXT_i2d(NID_subject_alt_name, 0, gens);
             if (ext) {
-                STACK_OF(X509_EXTENSION) *exts = sk_X509_EXTENSION_new_null();
+                STACK_OF(X509_EXTENSION)* exts = sk_X509_EXTENSION_new_null();
                 sk_X509_EXTENSION_push(exts, ext);
                 X509_REQ_add_extensions(req, exts);
                 sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
@@ -550,10 +564,10 @@ QByteArray AcmeClient::generateCsr()
     X509_REQ_sign(req, pkey, EVP_sha256());
 
     // Write DER output
-    BIO *out = BIO_new(BIO_s_mem());
+    BIO* out = BIO_new(BIO_s_mem());
     i2d_X509_REQ_bio(out, req);
 
-    char *data = nullptr;
+    char* data = nullptr;
     long dataLen = BIO_get_mem_data(out, &data);
     QByteArray csrDer(data, static_cast<int>(dataLen));
 
@@ -582,11 +596,10 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
 
     QString label = m_Host;
     QString suffix = QStringLiteral(".") + m_BaseDomain;
-    if (label.endsWith(suffix))
-        label = label.left(label.length() - suffix.length());
+    if (label.endsWith(suffix)) label = label.left(label.length() - suffix.length());
 
-    m_TxtSubname = QStringLiteral("_acme-challenge.") + label
-                   + QStringLiteral(".") + m_BaseDomain + QStringLiteral(".");
+    m_TxtSubname = QStringLiteral("_acme-challenge.") + label + QStringLiteral(".") + m_BaseDomain +
+                   QStringLiteral(".");
 
     qInfo() << "[AcmeClient] Creating TXT record" << m_TxtSubname;
 
@@ -617,8 +630,7 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
     QNetworkRequest req{url};
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
-    req.setHeader(QNetworkRequest::ContentTypeHeader,
-                  QStringLiteral("application/json"));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
     QBuffer* buf = new QBuffer;
     buf->setData(payload);
@@ -636,7 +648,8 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
     loop.exec();
 
     if (!timer.isActive()) {
-        reply->abort(); reply->deleteLater();
+        reply->abort();
+        reply->deleteLater();
         qWarning() << "[AcmeClient] PowerDNS TXT creation timed out";
         return false;
     }
@@ -655,8 +668,7 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
 
 bool AcmeClient::deleteChallengeTxtRecord()
 {
-    if (m_TxtSubname.isEmpty())
-        return false;
+    if (m_TxtSubname.isEmpty()) return false;
 
     qInfo() << "[AcmeClient] Deleting TXT record" << m_TxtSubname;
 
@@ -679,8 +691,7 @@ bool AcmeClient::deleteChallengeTxtRecord()
     QNetworkRequest req{url};
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
-    req.setHeader(QNetworkRequest::ContentTypeHeader,
-                  QStringLiteral("application/json"));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
     QBuffer* buf2 = new QBuffer;
     buf2->setData(payload);
@@ -688,7 +699,8 @@ bool AcmeClient::deleteChallengeTxtRecord()
     QNetworkReply* reply = m_Nam->sendCustomRequest(req, "PATCH", buf2);
     buf2->setParent(reply);
 
-    QEventLoop loop; QTimer timer;
+    QEventLoop loop;
+    QTimer timer;
     timer.setSingleShot(true);
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
@@ -696,7 +708,8 @@ bool AcmeClient::deleteChallengeTxtRecord()
     loop.exec();
 
     if (!timer.isActive()) {
-        reply->abort(); reply->deleteLater();
+        reply->abort();
+        reply->deleteLater();
         return false;
     }
     timer.stop();
@@ -817,8 +830,7 @@ void AcmeClient::stepGetDirectory()
 
         int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (code != 200) {
-            emit errorOccurred(QStringLiteral("ACME directory request failed (HTTP %1)")
-                               .arg(code));
+            emit errorOccurred(QStringLiteral("ACME directory request failed (HTTP %1)").arg(code));
             emit finished(false);
             return;
         }
@@ -869,42 +881,42 @@ void AcmeClient::stepCreateAccount()
     QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
     // First request: useKid=false (embed JWK)
-    acmePost(url, body, false,
-             [this](int code, const QByteArray& respBody, const QString& location) {
-        if (m_Cancelled) return;
+    acmePost(
+        url, body, false, [this](int code, const QByteArray& respBody, const QString& location) {
+            if (m_Cancelled) return;
 
-        if (code == 201) {
-            emit progress(QStringLiteral("ACME account created"));
-            qInfo() << "[AcmeClient] ACME account created";
-        } else if (code == 200) {
-            emit progress(QStringLiteral("Using existing ACME account"));
-            qInfo() << "[AcmeClient] ACME account already exists";
-        } else {
-            QString err = QStringLiteral("ACME account creation failed (HTTP %1)")
-                          .arg(code);
-            if (!respBody.isEmpty())
-                err += QStringLiteral(": ") + QString::fromUtf8(respBody.left(200));
-            emit errorOccurred(err);
-            emit finished(false);
-            return;
-        }
-
-        // Store the account URL from the Location header (or response body)
-        if (!location.isEmpty()) {
-            m_AccountUrl = location;
-        } else {
-            // The ACME v2 account URL is only carried by the Location header,
-            // never in the response body, so a missing header is fatal here.
-            QJsonDocument d = QJsonDocument::fromJson(respBody);
-            if (d.isObject()) {
-                emit errorOccurred(QStringLiteral("Missing Location header in account response"));
+            if (code == 201) {
+                emit progress(QStringLiteral("ACME account created"));
+                qInfo() << "[AcmeClient] ACME account created";
+            } else if (code == 200) {
+                emit progress(QStringLiteral("Using existing ACME account"));
+                qInfo() << "[AcmeClient] ACME account already exists";
+            } else {
+                QString err = QStringLiteral("ACME account creation failed (HTTP %1)").arg(code);
+                if (!respBody.isEmpty())
+                    err += QStringLiteral(": ") + QString::fromUtf8(respBody.left(200));
+                emit errorOccurred(err);
                 emit finished(false);
                 return;
             }
-        }
 
-        stepCreateOrder();
-    });
+            // Store the account URL from the Location header (or response body)
+            if (!location.isEmpty()) {
+                m_AccountUrl = location;
+            } else {
+                // The ACME v2 account URL is only carried by the Location header,
+                // never in the response body, so a missing header is fatal here.
+                QJsonDocument d = QJsonDocument::fromJson(respBody);
+                if (d.isObject()) {
+                    emit errorOccurred(
+                        QStringLiteral("Missing Location header in account response"));
+                    emit finished(false);
+                    return;
+                }
+            }
+
+            stepCreateOrder();
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -925,7 +937,7 @@ void AcmeClient::stepCreateOrder()
     emit progress(QStringLiteral("Creating certificate order..."));
 
     QJsonObject ident;
-    ident[QStringLiteral("type")]  = QStringLiteral("dns");
+    ident[QStringLiteral("type")] = QStringLiteral("dns");
     ident[QStringLiteral("value")] = m_Host;
 
     QJsonArray idents;
@@ -936,13 +948,11 @@ void AcmeClient::stepCreateOrder()
 
     QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
-    acmePost(url, body, true,
-             [this](int code, const QByteArray& respBody, const QString& loc) {
+    acmePost(url, body, true, [this](int code, const QByteArray& respBody, const QString& loc) {
         if (m_Cancelled) return;
 
         if (code != 201) {
-            QString err = QStringLiteral("ACME order creation failed (HTTP %1)")
-                          .arg(code);
+            QString err = QStringLiteral("ACME order creation failed (HTTP %1)").arg(code);
             if (!respBody.isEmpty())
                 err += QStringLiteral(": ") + QString::fromUtf8(respBody.left(200));
             emit errorOccurred(err);
@@ -989,13 +999,11 @@ void AcmeClient::stepGetAuthorization()
 
     emit progress(QStringLiteral("Getting DNS authorization..."));
 
-    acmePostAsGet(m_AuthorizationUrl,
-                  [this](int code, const QByteArray& body) {
+    acmePostAsGet(m_AuthorizationUrl, [this](int code, const QByteArray& body) {
         if (m_Cancelled) return;
 
         if (code != 200) {
-            emit errorOccurred(QStringLiteral("ACME authorization failed (HTTP %1)")
-                               .arg(code));
+            emit errorOccurred(QStringLiteral("ACME authorization failed (HTTP %1)").arg(code));
             emit finished(false);
             return;
         }
@@ -1023,7 +1031,7 @@ void AcmeClient::stepGetAuthorization()
             QJsonObject ch = v.toObject();
             if (ch.value(QStringLiteral("type")).toString() == QStringLiteral("dns-01")) {
                 m_ChallengeToken = ch.value(QStringLiteral("token")).toString();
-                m_ChallengeUrl   = ch.value(QStringLiteral("url")).toString();
+                m_ChallengeUrl = ch.value(QStringLiteral("url")).toString();
                 break;
             }
         }
@@ -1051,12 +1059,12 @@ void AcmeClient::stepRespondChallenge()
     emit progress(QStringLiteral("Setting up DNS-01 challenge..."));
 
     // Compute key authorization: token + "." + thumbprint
-    QString keyAuth = m_ChallengeToken + QStringLiteral(".") +
-                      QString::fromUtf8(accountKeyThumbprint());
+    QString keyAuth =
+        m_ChallengeToken + QStringLiteral(".") + QString::fromUtf8(accountKeyThumbprint());
 
     // DNS-01 value = base64url(SHA256(keyAuthorization))
-    QByteArray dnsValue = b64urlEncode(
-        QCryptographicHash::hash(keyAuth.toUtf8(), QCryptographicHash::Sha256));
+    QByteArray dnsValue =
+        b64urlEncode(QCryptographicHash::hash(keyAuth.toUtf8(), QCryptographicHash::Sha256));
 
     qInfo() << "[AcmeClient] DNS-01 key authorization computed";
 
@@ -1078,21 +1086,21 @@ void AcmeClient::stepRespondChallenge()
         // Respond with empty payload JSON to start the challenge
         acmePost(m_ChallengeUrl, QByteArray("{}"), true,
                  [this](int code, const QByteArray& /*body*/, const QString& /*loc*/) {
-            if (m_Cancelled) return;
+                     if (m_Cancelled) return;
 
-            if (code != 200) {
-                emit errorOccurred(QStringLiteral("Challenge response failed (HTTP %1)")
-                                   .arg(code));
-                deleteChallengeTxtRecord();
-                emit finished(false);
-                return;
-            }
+                     if (code != 200) {
+                         emit errorOccurred(
+                             QStringLiteral("Challenge response failed (HTTP %1)").arg(code));
+                         deleteChallengeTxtRecord();
+                         emit finished(false);
+                         return;
+                     }
 
-            qInfo() << "[AcmeClient] Challenge posted, starting poll";
+                     qInfo() << "[AcmeClient] Challenge posted, starting poll";
 
-            m_PollRetries = 0;
-            stepPollAuthorization();
-        });
+                     m_PollRetries = 0;
+                     stepPollAuthorization();
+                 });
     });
 }
 
@@ -1112,18 +1120,17 @@ void AcmeClient::stepPollAuthorization()
     }
 
     emit progress(QStringLiteral("Waiting for DNS validation (attempt %1/%2)...")
-                  .arg(m_PollRetries + 1).arg(kMaxPollRetries));
+                      .arg(m_PollRetries + 1)
+                      .arg(kMaxPollRetries));
 
-    acmePostAsGet(m_AuthorizationUrl,
-                  [this](int code, const QByteArray& body) {
+    acmePostAsGet(m_AuthorizationUrl, [this](int code, const QByteArray& body) {
         if (m_Cancelled) {
             deleteChallengeTxtRecord();
             return;
         }
 
         if (code != 200) {
-            emit errorOccurred(QStringLiteral("Authorization poll failed (HTTP %1)")
-                               .arg(code));
+            emit errorOccurred(QStringLiteral("Authorization poll failed (HTTP %1)").arg(code));
             deleteChallengeTxtRecord();
             emit finished(false);
             return;
@@ -1154,8 +1161,7 @@ void AcmeClient::stepPollAuthorization()
             QString err = QStringLiteral("DNS validation failed (authorization invalid)");
             QJsonObject error = doc.object().value(QStringLiteral("error")).toObject();
             if (!error.isEmpty()) {
-                err += QStringLiteral(": ") +
-                       error.value(QStringLiteral("detail")).toString();
+                err += QStringLiteral(": ") + error.value(QStringLiteral("detail")).toString();
             }
             emit errorOccurred(err);
             deleteChallengeTxtRecord();
@@ -1198,66 +1204,66 @@ void AcmeClient::stepFinalize()
     payload[QStringLiteral("csr")] = QString::fromUtf8(b64urlEncode(csrDer));
     QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
-    acmePost(m_FinalizeUrl, body, true,
-             [this](int code, const QByteArray& respBody, const QString& /*loc*/) {
-        if (m_Cancelled) return;
-
-        if (code != 200) {
-            emit errorOccurred(QStringLiteral("Order finalization failed (HTTP %1)")
-                               .arg(code));
-            emit finished(false);
-            return;
-        }
-
-        QJsonDocument doc = QJsonDocument::fromJson(respBody);
-        if (!doc.isObject()) {
-            emit errorOccurred(QStringLiteral("Invalid finalize response JSON"));
-            emit finished(false);
-            return;
-        }
-
-        QString status = doc.object().value(QStringLiteral("status")).toString();
-        m_CertUrl = doc.object().value(QStringLiteral("certificate")).toString();
-
-        qInfo() << "[AcmeClient] Order finalized, status:" << status;
-
-        if (status == QStringLiteral("valid") && !m_CertUrl.isEmpty()) {
-            stepDownloadCert();
-            return;
-        }
-
-        if (status == QStringLiteral("valid") && m_CertUrl.isEmpty()) {
-            emit errorOccurred(QStringLiteral("Certificate URL missing in valid order response"));
-            emit finished(false);
-            return;
-        }
-
-        // Order still processing — poll the order URL captured from the
-        // newOrder Location header (the order body has no self "url" field).
-        QString orderUrl = m_OrderUrl;
-        if (orderUrl.isEmpty())
-            orderUrl = doc.object().value(QStringLiteral("url")).toString();
-        if (orderUrl.isEmpty()) {
-            emit errorOccurred(QStringLiteral("Order URL missing (no Location header from newOrder)"));
-            emit finished(false);
-            return;
-        }
-
-        qInfo() << "[AcmeClient] Order still processing (" << status << "), will poll";
-        emit progress(QStringLiteral("Waiting for order to be ready..."));
-
-        // Poll the order URL until valid.
-        // The recursive poll closure must outlive this callback's stack frame:
-        // it is re-scheduled from inside its own async response, long after
-        // stepFinalize() has returned. Hold it in a shared_ptr captured BY VALUE
-        // so each lambda keeps it alive (capturing &pollOrder by reference would
-        // dangle on the first re-schedule → use-after-free crash).
-        m_PollRetries = 0;
-        auto pollOrder = std::make_shared<std::function<void()>>();
-        *pollOrder = [this, orderUrl, pollOrder]() {
+    acmePost(
+        m_FinalizeUrl, body, true,
+        [this](int code, const QByteArray& respBody, const QString& /*loc*/) {
             if (m_Cancelled) return;
-            acmePostAsGet(orderUrl,
-                [this, pollOrder](int code, const QByteArray& body) {
+
+            if (code != 200) {
+                emit errorOccurred(QStringLiteral("Order finalization failed (HTTP %1)").arg(code));
+                emit finished(false);
+                return;
+            }
+
+            QJsonDocument doc = QJsonDocument::fromJson(respBody);
+            if (!doc.isObject()) {
+                emit errorOccurred(QStringLiteral("Invalid finalize response JSON"));
+                emit finished(false);
+                return;
+            }
+
+            QString status = doc.object().value(QStringLiteral("status")).toString();
+            m_CertUrl = doc.object().value(QStringLiteral("certificate")).toString();
+
+            qInfo() << "[AcmeClient] Order finalized, status:" << status;
+
+            if (status == QStringLiteral("valid") && !m_CertUrl.isEmpty()) {
+                stepDownloadCert();
+                return;
+            }
+
+            if (status == QStringLiteral("valid") && m_CertUrl.isEmpty()) {
+                emit errorOccurred(
+                    QStringLiteral("Certificate URL missing in valid order response"));
+                emit finished(false);
+                return;
+            }
+
+            // Order still processing — poll the order URL captured from the
+            // newOrder Location header (the order body has no self "url" field).
+            QString orderUrl = m_OrderUrl;
+            if (orderUrl.isEmpty()) orderUrl = doc.object().value(QStringLiteral("url")).toString();
+            if (orderUrl.isEmpty()) {
+                emit errorOccurred(
+                    QStringLiteral("Order URL missing (no Location header from newOrder)"));
+                emit finished(false);
+                return;
+            }
+
+            qInfo() << "[AcmeClient] Order still processing (" << status << "), will poll";
+            emit progress(QStringLiteral("Waiting for order to be ready..."));
+
+            // Poll the order URL until valid.
+            // The recursive poll closure must outlive this callback's stack frame:
+            // it is re-scheduled from inside its own async response, long after
+            // stepFinalize() has returned. Hold it in a shared_ptr captured BY VALUE
+            // so each lambda keeps it alive (capturing &pollOrder by reference would
+            // dangle on the first re-schedule → use-after-free crash).
+            m_PollRetries = 0;
+            auto pollOrder = std::make_shared<std::function<void()>>();
+            *pollOrder = [this, orderUrl, pollOrder]() {
+                if (m_Cancelled) return;
+                acmePostAsGet(orderUrl, [this, pollOrder](int code, const QByteArray& body) {
                     if (m_Cancelled) return;
                     if (code != 200) {
                         emit errorOccurred(QStringLiteral("Order poll failed (HTTP %1)").arg(code));
@@ -1294,10 +1300,10 @@ void AcmeClient::stepFinalize()
                         emit finished(false);
                     }
                 });
-        };
+            };
 
-        QTimer::singleShot(3000, this, *pollOrder);
-    });
+            QTimer::singleShot(3000, this, *pollOrder);
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -1316,13 +1322,11 @@ void AcmeClient::stepDownloadCert()
 
     emit progress(QStringLiteral("Downloading certificate..."));
 
-    acmePostAsGet(m_CertUrl,
-                  [this](int code, const QByteArray& body) {
+    acmePostAsGet(m_CertUrl, [this](int code, const QByteArray& body) {
         if (m_Cancelled) return;
 
         if (code != 200) {
-            emit errorOccurred(QStringLiteral("Certificate download failed (HTTP %1)")
-                               .arg(code));
+            emit errorOccurred(QStringLiteral("Certificate download failed (HTTP %1)").arg(code));
             emit finished(false);
             return;
         }
@@ -1336,7 +1340,7 @@ void AcmeClient::stepDownloadCert()
         }
 
         QString fullchainPath = m_CertOutputDir + QStringLiteral("/fullchain.pem");
-        QString keyPath       = m_CertOutputDir + QStringLiteral("/key.pem");
+        QString keyPath = m_CertOutputDir + QStringLiteral("/key.pem");
 
         emit progress(QStringLiteral("Certificate issued successfully"));
         emit certificateReady(fullchainPath, keyPath);

@@ -38,9 +38,7 @@ extern "C" {
 #include <QMap>
 #include <memory>
 
-SignalingServer::SignalingServer(RelayBase* relay,
-                                 quint16 wsPort,
-                                 const QString& serverHost,
+SignalingServer::SignalingServer(RelayBase* relay, quint16 wsPort, const QString& serverHost,
                                  QObject* parent)
     : QObject(parent)
     , m_Relay(relay)
@@ -52,10 +50,8 @@ SignalingServer::SignalingServer(RelayBase* relay,
 
     // Always NonSecure — TLS is terminated by the external tunnel or Cloudflare.
     // Local LAN clients connect via ws://localhost:<port> directly.
-    m_WsServer = new QWebSocketServer(
-        QString("Moonlight-Signaling"),
-        QWebSocketServer::NonSecureMode,
-        this);
+    m_WsServer =
+        new QWebSocketServer(QString("Moonlight-Signaling"), QWebSocketServer::NonSecureMode, this);
 
     qInfo() << "[SignalingServer] Constructor done";
 }
@@ -79,34 +75,31 @@ bool SignalingServer::start()
     while (!m_WsServer->listen(QHostAddress::Any, m_WsPort)) {
         if (++bindAttempts > 20) {
             qWarning() << "[SignalingServer] Failed to listen on port" << m_WsPort
-                       << "error:" << m_WsServer->errorString()
-                       << "after" << bindAttempts << "attempt(s)";
+                       << "error:" << m_WsServer->errorString() << "after" << bindAttempts
+                       << "attempt(s)";
             return false;
         }
         qInfo() << "[SignalingServer] Port" << m_WsPort << "busy:" << m_WsServer->errorString()
                 << "(take-over in progress?), retrying" << bindAttempts << "/20";
-        QThread::msleep(50);  // max ~1s; on the relay thread
+        QThread::msleep(50); // max ~1s; on the relay thread
     }
 
-    connect(m_WsServer, &QWebSocketServer::newConnection,
-            this, &SignalingServer::onNewWsConnection);
+    connect(m_WsServer, &QWebSocketServer::newConnection, this,
+            &SignalingServer::onNewWsConnection);
 
     // Connect relay signaling signals -> WS forwarding
-    connect(m_Relay, &RelayBase::signalingSdpReady,
-            this, &SignalingServer::onLocalSdp);
-    connect(m_Relay, &RelayBase::signalingIceCandidate,
-            this, &SignalingServer::onLocalIceCandidate);
+    connect(m_Relay, &RelayBase::signalingSdpReady, this, &SignalingServer::onLocalSdp);
+    connect(m_Relay, &RelayBase::signalingIceCandidate, this,
+            &SignalingServer::onLocalIceCandidate);
     // Track when DataChannels/Tracks are fully open
-    connect(m_Relay, &RelayBase::dataChannelsOpen,
-            this, &SignalingServer::onDataChannelsOpen);
+    connect(m_Relay, &RelayBase::dataChannelsOpen, this, &SignalingServer::onDataChannelsOpen);
 
     // ICE timeout → WebSocket fallback (when UDP is blocked)
     if (auto* dcRelay = qobject_cast<DataChannelRelay*>(m_Relay)) {
-        connect(dcRelay, &DataChannelRelay::iceTimedOut,
-                this, &SignalingServer::onRelayIceTimedOut);
+        connect(dcRelay, &DataChannelRelay::iceTimedOut, this,
+                &SignalingServer::onRelayIceTimedOut);
     } else if (auto* mtRelay = qobject_cast<MediaTrackRelay*>(m_Relay)) {
-        connect(mtRelay, &MediaTrackRelay::iceTimedOut,
-                this, &SignalingServer::onRelayIceTimedOut);
+        connect(mtRelay, &MediaTrackRelay::iceTimedOut, this, &SignalingServer::onRelayIceTimedOut);
     }
 
     qInfo() << "[SignalingServer] Listening OK";
@@ -116,9 +109,7 @@ bool SignalingServer::start()
     // The browser doesn't connect immediately (user still clicks "Launch"), so
     // UPnP has time to complete before the PeerConnection is created.
     if (m_UseUPnP && m_ServerHost != "localhost") {
-        QTimer::singleShot(0, this, [this]() {
-            setupUPnP();
-        });
+        QTimer::singleShot(0, this, [this]() { setupUPnP(); });
     }
 
     return true;
@@ -144,8 +135,8 @@ void SignalingServer::stop()
 
     if (m_WsClient) {
         qInfo() << "[SignalingServer] Closing WS client"
-                << "(state=" << m_WsClient->state()
-                << ", error=" << m_WsClient->errorString() << ")";
+                << "(state=" << m_WsClient->state() << ", error=" << m_WsClient->errorString()
+                << ")";
         m_WsClient->close();
         m_WsClient->deleteLater();
         m_WsClient = nullptr;
@@ -158,10 +149,10 @@ void SignalingServer::stop()
 
     // Disconnect WS fallback signal handlers (if any)
     if (m_ShimConnected && m_Shim) {
-        disconnect(m_Shim, &MoonlightShim::videoFrameReady,
-                   this, &SignalingServer::forwardVideoViaWs);
-        disconnect(m_Shim, &MoonlightShim::audioSampleReady,
-                   this, &SignalingServer::forwardAudioViaWs);
+        disconnect(m_Shim, &MoonlightShim::videoFrameReady, this,
+                   &SignalingServer::forwardVideoViaWs);
+        disconnect(m_Shim, &MoonlightShim::audioSampleReady, this,
+                   &SignalingServer::forwardAudioViaWs);
         m_ShimConnected = false;
     }
     m_WsFallbackActive = false;
@@ -179,11 +170,9 @@ QString SignalingServer::wsUrl() const
         // Override URL (e.g. from a public tunnel endpoint)
         QString url = m_OverrideWsUrl;
         // Replace https:// with wss:// for WebSocket protocol
-        if (url.startsWith("https://"))
-            url.replace(0, 8, "wss://");
+        if (url.startsWith("https://")) url.replace(0, 8, "wss://");
         // Ensure /ws path for the proxy on the unified port
-        if (!url.endsWith("/ws"))
-            url += "/ws";
+        if (!url.endsWith("/ws")) url += "/ws";
         return url;
     }
 
@@ -191,8 +180,7 @@ QString SignalingServer::wsUrl() const
     // The browser connects to wss://<host>[:<port>]/ws, which triggers a WebSocket
     // upgrade detection in HttpServer that proxies to the local signaling server.
     QString host = m_ServerHost;
-    if (m_HttpsPort != 443)
-        host += ":" + QString::number(m_HttpsPort);
+    if (m_HttpsPort != 443) host += ":" + QString::number(m_HttpsPort);
     return QString("wss://%1/ws").arg(host);
 }
 
@@ -248,18 +236,14 @@ void SignalingServer::onNewWsConnection()
         peerAddrStr = peerAddrStr.mid(7);
     bool isInternet = !isPrivateAddress(peerAddrStr);
     // Force LAN mode for loopback (more robust than classification alone)
-    if (peerAddrStr == "127.0.0.1" || peerAddrStr == "::1")
-        isInternet = false;
+    if (peerAddrStr == "127.0.0.1" || peerAddrStr == "::1") isInternet = false;
     qInfo() << "[SignalingServer] Client connected from" << peerAddrStr
             << "(isInternet=" << isInternet << ")";
 
-    connect(m_WsClient, &QWebSocket::textMessageReceived,
-            this, &SignalingServer::onWsTextMessage);
-    connect(m_WsClient, &QWebSocket::disconnected,
-            this, &SignalingServer::onWsDisconnected);
+    connect(m_WsClient, &QWebSocket::textMessageReceived, this, &SignalingServer::onWsTextMessage);
+    connect(m_WsClient, &QWebSocket::disconnected, this, &SignalingServer::onWsDisconnected);
 
-    connect(m_WsClient, &QWebSocket::errorOccurred,
-            [](QAbstractSocket::SocketError err) {
+    connect(m_WsClient, &QWebSocket::errorOccurred, [](QAbstractSocket::SocketError err) {
         qWarning() << "[SignalingServer] WS error:" << err;
     });
 
@@ -270,22 +254,21 @@ void SignalingServer::onNewWsConnection()
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
     // m_ForceIceTcp controls whether ICE-TCP candidates are generated
     // (true = UDP + TCP, false = UDP only).
-    rtc::Configuration config = buildIceConfig(isInternet, m_UpnpMappedPort, m_StunServerUrl, m_ForceIceTcp);
+    rtc::Configuration config =
+        buildIceConfig(isInternet, m_UpnpMappedPort, m_StunServerUrl, m_ForceIceTcp);
 
     // If UPnP is active, tell the relay to rewrite host candidates with the
     // public IP and mapped port so the browser sees a "host" candidate at
     // PUBLIC_IP:48010 instead of 192.168.x.x:48010.
     if (!m_UpnpPublicIP.isEmpty() && m_UpnpMappedPort > 0) {
-        m_Relay->setPublicAddress(
-            m_UpnpPublicIP.toStdString(),
-            m_UpnpMappedPort);
+        m_Relay->setPublicAddress(m_UpnpPublicIP.toStdString(), m_UpnpMappedPort);
         m_Relay->setForceHostCandidatePublic(true);
         // Suppress IPv6 candidates so ICE is forced to use the IPv4 UPnP path.
         // Residential IPv6 often has firewall rules that block unsolicited
         // inbound traffic, causing DTLS/SCTP to fail silently.
         m_Relay->setSuppressIPv6Candidates(true);
-        qInfo() << "[SignalingServer] UPnP: relaying host candidate as"
-                << m_UpnpPublicIP << ":" << m_UpnpMappedPort;
+        qInfo() << "[SignalingServer] UPnP: relaying host candidate as" << m_UpnpPublicIP << ":"
+                << m_UpnpMappedPort;
     }
 
     // Prepare the PeerConnection + DataChannels
@@ -333,17 +316,16 @@ void SignalingServer::onWsTextMessage(const QString& message)
             m_SignalingComplete = true;
             qInfo() << "[SignalingServer] SDP answer set successfully";
         }
-    }
-    else if (type == "ice") {
+    } else if (type == "ice") {
         QString candidate = msg["candidate"].toString();
         QString mid = msg["mid"].toString();
         qInfo() << "[SignalingServer] Received ICE candidate, mid=" << mid;
 
         m_Relay->addRemoteCandidate(candidate.toStdString(), mid.toStdString());
-    }
-    else if (type == "fallback-ws-request") {
+    } else if (type == "fallback-ws-request") {
         if (m_WsFallbackActive) {
-            qWarning() << "[SignalingServer] Fallback WS already active, ignoring duplicate request";
+            qWarning()
+                << "[SignalingServer] Fallback WS already active, ignoring duplicate request";
             return;
         }
         if (!m_AllowWsFallback) {
@@ -351,13 +333,13 @@ void SignalingServer::onWsTextMessage(const QString& message)
                        << "letting auto chain decide next transport";
             return;
         }
-        qWarning() << "[SignalingServer] Browser requested WS fallback (ICE disconnected/failed before connected)";
+        qWarning() << "[SignalingServer] Browser requested WS fallback (ICE disconnected/failed "
+                      "before connected)";
         // The browser detected ICE failure before ever reaching "connected"
         // (UDP blocked by corporate firewall). Transition to WS fallback
         // immediately — don't wait for the libdatachannel ICE timeout.
         startWsFallback();
-    }
-    else {
+    } else {
         qWarning() << "[SignalingServer] Unknown message type:" << type;
     }
 }
@@ -370,14 +352,12 @@ void SignalingServer::onWsDisconnected()
         closeCode = m_WsClient->closeCode();
         closeReasonStr = m_WsClient->closeReason();
         qInfo() << "[SignalingServer::onWsDisconnected] WS closed: code="
-                << static_cast<int>(closeCode)
-                << "reason=" << closeReasonStr
+                << static_cast<int>(closeCode) << "reason=" << closeReasonStr
                 << "error=" << m_WsClient->errorString();
     }
 
     qInfo() << "[SignalingServer::onWsDisconnected] ENTER, m_Running=" << m_Running
-            << "m_Stopping=" << m_Stopping
-            << "m_SignalingComplete=" << m_SignalingComplete
+            << "m_Stopping=" << m_Stopping << "m_SignalingComplete=" << m_SignalingComplete
             << "m_DataChannelsOpen=" << m_DataChannelsOpen;
 
     if (m_WsClient) {
@@ -400,10 +380,12 @@ void SignalingServer::onWsDisconnected()
     // session prematurely.
     bool dcReady = wasComplete || m_DataChannelsOpen;
     if (!dcReady) {
-        qInfo() << "[SignalingServer::onWsDisconnected] Signaling NOT complete & DCs NOT open — emitting sessionEnded";
+        qInfo() << "[SignalingServer::onWsDisconnected] Signaling NOT complete & DCs NOT open — "
+                   "emitting sessionEnded";
         emit sessionEnded();
     } else {
-        qInfo() << "[SignalingServer::onWsDisconnected] Signaling complete or DCs open — NOT emitting sessionEnded (expected WS close)";
+        qInfo() << "[SignalingServer::onWsDisconnected] Signaling complete or DCs open — NOT "
+                   "emitting sessionEnded (expected WS close)";
     }
 
     qInfo() << "[SignalingServer::onWsDisconnected] EXIT";
@@ -414,8 +396,8 @@ void SignalingServer::onWsDisconnected()
 void SignalingServer::onRelayIceTimedOut()
 {
     if (m_Stopping.load() || m_WsFallbackActive) {
-        qInfo() << "[SignalingServer] onRelayIceTimedOut ignored: stopping="
-                << m_Stopping.load() << "fallbackActive=" << m_WsFallbackActive;
+        qInfo() << "[SignalingServer] onRelayIceTimedOut ignored: stopping=" << m_Stopping.load()
+                << "fallbackActive=" << m_WsFallbackActive;
         return;
     }
 
@@ -424,7 +406,7 @@ void SignalingServer::onRelayIceTimedOut()
         // can try the next transport. sessionEnded() triggers relay tracking
         // which calls tryNext().
         qWarning() << "[SignalingServer] ICE timeout — WS fallback disabled (auto mode),"
-                    << "emitting sessionEnded for fallback chain";
+                   << "emitting sessionEnded for fallback chain";
         emit sessionEnded();
         return;
     }
@@ -437,8 +419,8 @@ void SignalingServer::startWsFallback()
 {
     if (!m_WsClient || !m_WsClient->isValid() || !m_Shim) {
         qWarning() << "[SignalingServer] Cannot start WS fallback:"
-                    << "WS client valid=" << (m_WsClient && m_WsClient->isValid())
-                    << "Shim set=" << (m_Shim != nullptr);
+                   << "WS client valid=" << (m_WsClient && m_WsClient->isValid())
+                   << "Shim set=" << (m_Shim != nullptr);
         // If we can't fallback, end the session
         emit sessionEnded();
         return;
@@ -470,10 +452,9 @@ void SignalingServer::startWsFallback()
     // Step 3: Connect MoonlightShim video/audio signals to WS forwarding slots.
     // These fire in ADDITION to DataChannelRelay's slots (which are no-ops now).
     if (!m_ShimConnected) {
-        connect(m_Shim, &MoonlightShim::videoFrameReady,
-                this, &SignalingServer::forwardVideoViaWs);
-        connect(m_Shim, &MoonlightShim::audioSampleReady,
-                this, &SignalingServer::forwardAudioViaWs);
+        connect(m_Shim, &MoonlightShim::videoFrameReady, this, &SignalingServer::forwardVideoViaWs);
+        connect(m_Shim, &MoonlightShim::audioSampleReady, this,
+                &SignalingServer::forwardAudioViaWs);
         m_ShimConnected = true;
     }
 
@@ -483,7 +464,7 @@ void SignalingServer::startWsFallback()
     // very first frame, even if the shim is currently in a delta-only window.
     if (!savedKeyframe.isEmpty()) {
         qInfo() << "[SignalingServer] Sending saved keyframe as first WS fallback frame";
-        forwardVideoViaWs(savedKeyframe, 1, 0);  // frameType=1 = keyframe
+        forwardVideoViaWs(savedKeyframe, 1, 0); // frameType=1 = keyframe
     }
 
     // Step 5: Send fallback notification to browser — tells the frontend to
@@ -525,8 +506,7 @@ static constexpr std::byte kChannelAudio{0x02};
 
 void SignalingServer::forwardVideoViaWs(const QByteArray& data, int frameType, int)
 {
-    if (m_Stopping.load() || !m_WsFallbackActive || !m_WsClient || !m_WsClient->isValid())
-        return;
+    if (m_Stopping.load() || !m_WsFallbackActive || !m_WsClient || !m_WsClient->isValid()) return;
     if (data.isEmpty()) return;
 
     static int fallbackFrameCount = 0;
@@ -534,8 +514,7 @@ void SignalingServer::forwardVideoViaWs(const QByteArray& data, int frameType, i
 
     int totalSize = data.size();
     int totalChunks = (totalSize + kFallbackMaxPayloadSize - 1) / kFallbackMaxPayloadSize;
-    uint32_t backendTs = static_cast<uint32_t>(
-        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+    uint32_t backendTs = static_cast<uint32_t>(QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
     // Generate a monotonic frame ID for this frame (same scheme as DataChannelRelay)
     // Use a static counter scoped to this function
@@ -587,8 +566,7 @@ void SignalingServer::forwardVideoViaWs(const QByteArray& data, int frameType, i
 
         // Payload
         if (payloadSize > 0) {
-            memcpy(msg.data() + 1 + kFallbackFragHeaderSize,
-                   data.constData() + offset,
+            memcpy(msg.data() + 1 + kFallbackFragHeaderSize, data.constData() + offset,
                    static_cast<size_t>(payloadSize));
         }
 
@@ -609,8 +587,7 @@ void SignalingServer::forwardVideoViaWs(const QByteArray& data, int frameType, i
 
 void SignalingServer::forwardAudioViaWs(const QByteArray& data)
 {
-    if (m_Stopping.load() || !m_WsFallbackActive || !m_WsClient || !m_WsClient->isValid())
-        return;
+    if (m_Stopping.load() || !m_WsFallbackActive || !m_WsClient || !m_WsClient->isValid()) return;
     if (data.isEmpty()) return;
 
     static int fallbackAudioCount = 0;
@@ -618,8 +595,7 @@ void SignalingServer::forwardAudioViaWs(const QByteArray& data)
 
     int totalSize = data.size();
     int totalChunks = (totalSize + kFallbackMaxPayloadSize - 1) / kFallbackMaxPayloadSize;
-    uint32_t backendTs = static_cast<uint32_t>(
-        QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
+    uint32_t backendTs = static_cast<uint32_t>(QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
     static uint32_t wsFrameId = 0;
     uint32_t frameId = wsFrameId++;
@@ -667,8 +643,7 @@ void SignalingServer::forwardAudioViaWs(const QByteArray& data)
 
         // Payload
         if (payloadSize > 0) {
-            memcpy(msg.data() + 1 + kFallbackFragHeaderSize,
-                   data.constData() + offset,
+            memcpy(msg.data() + 1 + kFallbackFragHeaderSize, data.constData() + offset,
                    static_cast<size_t>(payloadSize));
         }
 
@@ -705,10 +680,10 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
         int vk = msg["keyCode"].toInt(0);
         QString code = msg["code"].toString();
         char mods = 0;
-        if (msg["ctrlKey"].toBool(false))  mods |= 0x02;
+        if (msg["ctrlKey"].toBool(false)) mods |= 0x02;
         if (msg["shiftKey"].toBool(false)) mods |= 0x01;
-        if (msg["altKey"].toBool(false))   mods |= 0x04;
-        if (msg["metaKey"].toBool(false))  mods |= 0x08;
+        if (msg["altKey"].toBool(false)) mods |= 0x04;
+        if (msg["metaKey"].toBool(false)) mods |= 0x08;
 
         short keyCode;
         char flags = 0;
@@ -718,36 +693,31 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
         // need raw scancode mode so Sunshine interprets them by physical
         // position instead of VK mapping.
         if (code == "IntlBackslash") {
-            keyCode = 0x56;  // Windows Set 1 scancode for IntlBackslash
+            keyCode = 0x56; // Windows Set 1 scancode for IntlBackslash
             flags = SS_KBE_FLAG_NON_NORMALIZED;
         } else if (code == "IntlRo") {
-            keyCode = 0x73;  // Windows Set 1 scancode for IntlRo
+            keyCode = 0x73; // Windows Set 1 scancode for IntlRo
             flags = SS_KBE_FLAG_NON_NORMALIZED;
         } else {
             keyCode = static_cast<short>(vk);
             flags = 0;
         }
         m_Shim->sendKeyEvent(keyCode, down, mods, flags);
-    }
-    else if (type == "mousemove") {
+    } else if (type == "mousemove") {
         short dx = static_cast<short>(msg["dx"].toInt(0));
         short dy = static_cast<short>(msg["dy"].toInt(0));
         m_Shim->sendMouseMove(dx, dy);
-    }
-    else if (type == "mousedown" || type == "mouseup") {
+    } else if (type == "mousedown" || type == "mouseup") {
         bool down = (type == "mousedown");
         int button = msg["button"].toInt(1);
         m_Shim->sendMouseButton(down, button);
-    }
-    else if (type == "mousewheel") {
+    } else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
-    }
-    else if (type == "requestidr") {
+    } else if (type == "requestidr") {
         qInfo() << "[SignalingServer] Fallback input: requesting IDR frame";
         m_Shim->requestIdrFrame();
-    }
-    else {
+    } else {
         static int unknownInputCount = 0;
         if (++unknownInputCount <= 5) {
             qWarning() << "[SignalingServer] Fallback input: unknown type:" << type;
@@ -842,7 +812,8 @@ bool SignalingServer::isPrivateAddress(const QString& ip) const
 
 // ── UPnP NAT traversal ─────────────────────────────────────────────────────────
 
-rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort, const QString& stunServerUrl, bool forceIceTcp)
+rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
+                                                   const QString& stunServerUrl, bool forceIceTcp)
 {
     rtc::Configuration config;
     config.iceTransportPolicy = rtc::TransportPolicy::All;
@@ -887,8 +858,8 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
         config.iceServers.emplace_back(stunServerUrl.toStdString());
 
         if (upnpMappedPort > 0) {
-            qInfo() << "[SignalingServer] Internet ICE (UDP-only): UPnP port="
-                    << upnpMappedPort << " + STUN";
+            qInfo() << "[SignalingServer] Internet ICE (UDP-only): UPnP port=" << upnpMappedPort
+                    << " + STUN";
         } else {
             qInfo() << "[SignalingServer] Internet ICE (UDP-only): STUN only (no UPnP)";
         }
@@ -936,9 +907,7 @@ bool SignalingServer::setupUPnP()
     bool mappingOk = false;
     for (int attempt = 0; attempt < kUpnpMaxPortAttempts; attempt++) {
         uint16_t tryPort = port + static_cast<uint16_t>(attempt);
-        if (upnp->addPortMapping(tryPort, tryPort,
-                                 kUpnpLeaseDurationSec,
-                                 "Moonlight-Web WebRTC")) {
+        if (upnp->addPortMapping(tryPort, tryPort, kUpnpLeaseDurationSec, "Moonlight-Web WebRTC")) {
             m_UpnpMappedPort = tryPort;
             mappingOk = true;
             break;
@@ -960,10 +929,9 @@ bool SignalingServer::setupUPnP()
     m_UpnpRenewTimer = new QTimer(this);
     connect(m_UpnpRenewTimer, &QTimer::timeout, this, [this]() {
         if (m_Upnp && m_UpnpMappedPort > 0) {
-            qInfo() << "[UPNP] Renewing port mapping (every"
-                    << (kUpnpRenewIntervalMs / 60000) << "min)";
-            m_Upnp->addPortMapping(m_UpnpMappedPort, m_UpnpMappedPort,
-                                   kUpnpLeaseDurationSec,
+            qInfo() << "[UPNP] Renewing port mapping (every" << (kUpnpRenewIntervalMs / 60000)
+                    << "min)";
+            m_Upnp->addPortMapping(m_UpnpMappedPort, m_UpnpMappedPort, kUpnpLeaseDurationSec,
                                    "Moonlight-Web WebRTC");
         }
     });
