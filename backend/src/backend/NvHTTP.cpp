@@ -29,14 +29,15 @@
 #include <QUuid>
 
 NvHTTP::NvHTTP(QNetworkAccessManager* nam, QObject* parent)
-    : QObject(parent), m_Nam(nam)
+    : QObject(parent)
+    , m_Nam(nam)
 {
     // Disable system proxy for LAN connections (Sunshine is always local)
     m_Nam->setProxy(QNetworkProxy::NoProxy);
 }
 
-QUrl NvHTTP::buildUrl(const NvAddress& address, const QString& command,
-                       const QString& uniqueId, const QString& arguments) const
+QUrl NvHTTP::buildUrl(const NvAddress& address, const QString& command, const QString& uniqueId,
+                      const QString& arguments) const
 {
     QUrl url;
     url.setScheme("http");
@@ -45,10 +46,9 @@ QUrl NvHTTP::buildUrl(const NvAddress& address, const QString& command,
     url.setPort(address.port() > 0 ? address.port() : MW_HTTP_PORT);
     url.setPath("/" + command);
 
-    QString query = "uniqueid=" + uniqueId
-                    + "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
-    if (!arguments.isEmpty())
-        query += "&" + arguments;
+    QString query =
+        "uniqueid=" + uniqueId + "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (!arguments.isEmpty()) query += "&" + arguments;
     url.setQuery(query);
 
     return url;
@@ -69,15 +69,14 @@ QNetworkReply* NvHTTP::getServerInfoAsync(const NvAddress& address, const QStrin
 }
 
 QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const QString& uniqueId,
-                                                  const QByteArray& clientCertPem,
-                                                  const QByteArray& clientKeyPem)
+                                               const QByteArray& clientCertPem,
+                                               const QByteArray& clientKeyPem)
 {
     // Build URL as string to avoid any QUrl encoding quirks
     QString urlStr = QString("https://%1:%2/serverinfo?uniqueid=%3&uuid=%4")
                          .arg(address.address())
                          .arg(MW_HTTPS_PORT)
-                         .arg(uniqueId,
-                              QUuid::createUuid().toString(QUuid::WithoutBraces));
+                         .arg(uniqueId, QUuid::createUuid().toString(QUuid::WithoutBraces));
     QUrl url(urlStr);
 
     QNetworkRequest req(url);
@@ -106,18 +105,15 @@ void NvHTTP::verifyResponseStatus(const QString& xml)
     if (reader.readNextStartElement()) {
         int statusCode = reader.attributes().value("status_code").toInt();
 
-        if (statusCode == 200)
-            return;
+        if (statusCode == 200) return;
 
-        if (reader.attributes().value("status_message").toString() == "Invalid"
-            && statusCode == -1)
+        if (reader.attributes().value("status_message").toString() == "Invalid" && statusCode == -1)
             statusCode = 418;
 
-        throw std::runtime_error(
-            QString("HTTP %1: %2")
-                .arg(statusCode)
-                .arg(reader.attributes().value("status_message").toString())
-                .toStdString());
+        throw std::runtime_error(QString("HTTP %1: %2")
+                                     .arg(statusCode)
+                                     .arg(reader.attributes().value("status_message").toString())
+                                     .toStdString());
     }
 }
 
@@ -127,8 +123,7 @@ QString NvHTTP::getXmlString(const QString& xml, const QString& tagName)
 
     while (!reader.atEnd()) {
         if (reader.readNextStartElement()) {
-            if (reader.name().toString() == tagName)
-                return reader.readElementText();
+            if (reader.name().toString() == tagName) return reader.readElementText();
         }
     }
 
@@ -138,8 +133,7 @@ QString NvHTTP::getXmlString(const QString& xml, const QString& tagName)
 QByteArray NvHTTP::getXmlStringFromHex(const QString& xml, const QString& tagName)
 {
     QString hex = getXmlString(xml, tagName);
-    if (hex.isEmpty())
-        return QByteArray();
+    if (hex.isEmpty()) return QByteArray();
     return QByteArray::fromHex(hex.toUtf8());
 }
 
@@ -163,8 +157,7 @@ QVector<NvDisplayMode> NvHTTP::getDisplayModeList(const QString& serverInfo)
                             mode.refreshRate = reader.readElementText().toInt();
                     }
                 }
-                if (mode.width > 0)
-                    modes.append(mode);
+                if (mode.width > 0) modes.append(mode);
             }
         }
     }
@@ -188,8 +181,8 @@ int NvHTTP::getCurrentGame(const QString& serverInfo)
 }
 
 QNetworkReply* NvHTTP::getAppListAsync(const NvAddress& address, quint16 httpsPort,
-                                           const QByteArray& clientCertPem,
-                                           const QByteArray& clientKeyPem)
+                                       const QByteArray& clientCertPem,
+                                       const QByteArray& clientKeyPem)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QUrl url(QString("https://%1:%2/applist?uniqueid=%3&uuid=%4")
@@ -239,8 +232,7 @@ QVector<NvApp> NvHTTP::parseAppList(const QString& xml)
                     }
                 }
 
-                if (id != 0 && !name.isEmpty())
-                    apps.append(NvApp(id, name, hdrSupported));
+                if (id != 0 && !name.isEmpty()) apps.append(NvApp(id, name, hdrSupported));
             }
         }
     }
@@ -248,15 +240,13 @@ QVector<NvApp> NvHTTP::parseAppList(const QString& xml)
     return apps;
 }
 
-QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPort,
-                                               int appId, const QString& uniqueId,
-                                               const QByteArray& rikey, int rikeyid,
-                                               int width, int height, int fps, int bitrate,
-                                               const QByteArray& clientCertPem,
-                                               const QByteArray& clientKeyPem,
-                                               int hdrMode)
+QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPort, int appId,
+                                      const QString& uniqueId, const QByteArray& rikey, int rikeyid,
+                                      int width, int height, int fps, int bitrate,
+                                      const QByteArray& clientCertPem,
+                                      const QByteArray& clientKeyPem, int hdrMode)
 {
-    Q_UNUSED(bitrate)  // sent via RTSP ANNOUNCE, not /launch
+    Q_UNUSED(bitrate) // sent via RTSP ANNOUNCE, not /launch
     QString mode = QString("%1x%2x%3").arg(width).arg(height).arg(fps);
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString query = QString("appid=%1&uniqueid=%2&uuid=%3&mode=%4&rikey=%5&rikeyid=%6"
@@ -270,15 +260,12 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
                         .arg(rikeyid)
                         .arg(hdrMode);
 
-    QUrl url(QString("https://%1:%2/launch?%3")
-                 .arg(address.address())
-                 .arg(httpsPort)
-                 .arg(query));
+    QUrl url(QString("https://%1:%2/launch?%3").arg(address.address()).arg(httpsPort).arg(query));
 
     qDebug() << "[NvHTTP] launchApp URL:" << url.toString();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(120000);  // launch can take up to 120s per spec
+    req.setTransferTimeout(120000); // launch can take up to 120s per spec
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
@@ -295,10 +282,9 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 }
 
 QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPort,
-                                       const QString& uniqueId,
-                                       const QByteArray& rikey, int rikeyid,
-                                       const QByteArray& clientCertPem,
-                                       const QByteArray& clientKeyPem)
+                                      const QString& uniqueId, const QByteArray& rikey, int rikeyid,
+                                      const QByteArray& clientCertPem,
+                                      const QByteArray& clientKeyPem)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
@@ -310,15 +296,12 @@ QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPor
                         .arg(QString::fromLatin1(rikey.toHex()))
                         .arg(rikeyid);
 
-    QUrl url(QString("https://%1:%2/resume?%3")
-                 .arg(address.address())
-                 .arg(httpsPort)
-                 .arg(query));
+    QUrl url(QString("https://%1:%2/resume?%3").arg(address.address()).arg(httpsPort).arg(query));
 
     qDebug() << "[NvHTTP] resumeApp URL:" << url.toString();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(120000);  // resume can take a while like launch
+    req.setTransferTimeout(120000); // resume can take a while like launch
     req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
@@ -331,9 +314,8 @@ QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPor
 }
 
 QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
-                                     const QByteArray& clientCertPem,
-                                     const QByteArray& clientKeyPem,
-                                     const QString& uniqueId)
+                                    const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
+                                    const QString& uniqueId)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
@@ -369,8 +351,7 @@ QString NvHTTP::parseSessionUrl(const QString& launchXml)
 QVector<int> NvHTTP::parseQuad(const QString& quad)
 {
     QVector<int> ret;
-    if (quad.isEmpty())
-        return ret;
+    if (quad.isEmpty()) return ret;
 
     QStringList parts = quad.split('.');
     ret.reserve(parts.size());

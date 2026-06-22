@@ -29,21 +29,23 @@ typedef struct evp_pkey_st EVP_PKEY;
 class NvPairingManager
 {
 public:
-    enum PairState {
+    enum PairState
+    {
         PAIRED,
         PIN_WRONG,
         FAILED,
         ALREADY_IN_PROGRESS
     };
 
-    enum InitResult {
+    enum InitResult
+    {
         INIT_OK,
         INIT_FAILED,
         INIT_ALREADY_IN_PROGRESS
     };
 
-    NvPairingManager(const QString& appVersion,
-                     const QString& host, quint16 httpPort, quint16 httpsPort);
+    NvPairingManager(const QString& appVersion, const QString& host, quint16 httpPort,
+                     quint16 httpsPort);
     ~NvPairingManager();
 
     // Stage 1: send salt + client cert → server displays PIN
@@ -64,10 +66,10 @@ private:
     QByteArray signMessage(const QByteArray& message);
 
     // Synchronous HTTP request
-    QString openConnection(const QString& scheme, const QString& command,
-                           const QString& arguments, int timeoutMs);
+    QString openConnection(const QString& scheme, const QString& command, const QString& arguments,
+                           int timeoutMs);
 
-    QByteArray m_ServerVersion;       // "7.1.431" from serverinfo
+    QByteArray m_ServerVersion; // "7.1.431" from serverinfo
     QString m_Host;
     quint16 m_HttpPort;
     quint16 m_HttpsPort;
@@ -77,8 +79,8 @@ private:
     QNetworkAccessManager* m_Nam = nullptr;
 
     // State preserved between initiatePairing() and completePairing()
-    QByteArray m_Salt;                // 16 random bytes from stage 1
-    QByteArray m_ServerCertPem;       // server cert PEM received in stage 1
+    QByteArray m_Salt;          // 16 random bytes from stage 1
+    QByteArray m_ServerCertPem; // server cert PEM received in stage 1
     bool m_Stage1Done = false;
 
     int m_HashLength = 32;

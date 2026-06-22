@@ -30,18 +30,20 @@ class QTimer;
 /**
  * Session metadata stored server-side keyed by token.
  */
-struct SessionInfo {
-    QString token;  // stored value is the SHA-256 of the cookie token (opaque id),
-                    // never the raw token — a stolen sessions.json cannot be replayed
+struct SessionInfo
+{
+    QString token; // stored value is the SHA-256 of the cookie token (opaque id),
+                   // never the raw token — a stolen sessions.json cannot be replayed
     QString ip;
     QString machineName;
     QString city;
     QString country;
     qint64 createdAt;       // unix timestamp (secs)
     qint64 lastSeen = 0;    // unix secs; bumped on activity (sliding expiration)
-    bool streaming = false;  // runtime-only: true while this session has an active stream
+    bool streaming = false; // runtime-only: true while this session has an active stream
 
-    QJsonObject toJson() const {
+    QJsonObject toJson() const
+    {
         QJsonObject obj;
         obj["token"] = token;
         obj["ip"] = ip;
@@ -70,14 +72,20 @@ public:
     // ── PIN management ─────────────────────────────────────────────────────
     QString generatePin();
     QString currentPin() const { return m_currentPin; }
-    bool hasValidPin() const;  // true if a real PIN has been generated
-    void clearPin();           // reset PIN to "--------" (invalid)
-    void regeneratePin();  // generates new PIN + invalidates all sessions
+    bool hasValidPin() const; // true if a real PIN has been generated
+    void clearPin();          // reset PIN to "--------" (invalid)
+    void regeneratePin();     // generates new PIN + invalidates all sessions
 
     // ── Validation ─────────────────────────────────────────────────────────
-    enum Result { Valid, InvalidPin, RateLimited };
+    enum Result
+    {
+        Valid,
+        InvalidPin,
+        RateLimited
+    };
 
-    struct ValidateResult {
+    struct ValidateResult
+    {
         Result result = InvalidPin; // fail-closed default
         int remainingAttempts = 0;
         int lockoutSeconds = 0;
@@ -181,7 +189,8 @@ signals:
     void sessionsChanged();
 
 private:
-    struct RateLimitEntry {
+    struct RateLimitEntry
+    {
         int failures = 0;
         QDateTime lastFailure;
         long long lockoutUntilEpoch = 0;
@@ -212,5 +221,5 @@ private:
     // Sliding session lifetime: a session inactive for this long is purged and the
     // user must re-enter a PIN. Activity (any authenticated request that touches
     // the session) resets the clock, so active users are never prompted again.
-    static constexpr qint64 SESSION_TTL_SECS = 90LL * 24 * 3600;  // 90 days
+    static constexpr qint64 SESSION_TTL_SECS = 90LL * 24 * 3600; // 90 days
 };

@@ -35,7 +35,7 @@ class PeerConnection;
 class DataChannel;
 class Track;
 struct Configuration;
-}
+} // namespace rtc
 
 class MoonlightShim;
 
@@ -108,8 +108,7 @@ private:
     static constexpr int kMaxPayloadSize = 14000;
     static constexpr size_t kHighWatermark = 128 * 1024;
 
-    void sendAudioFragmented(const QByteArray& data,
-                              std::shared_ptr<rtc::DataChannel>& dc);
+    void sendAudioFragmented(const QByteArray& data, std::shared_ptr<rtc::DataChannel>& dc);
 
     // Send a previously buffered keyframe (arrived before Video Track was ready).
     void sendBufferedKeyframe();

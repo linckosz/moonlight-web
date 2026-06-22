@@ -26,7 +26,7 @@ static QByteArray packPacket(uint32_t magic, const QByteArray& payload)
 {
     // NV_INPUT_HEADER.size excludes the size field itself (matches moonlight-common-c).
     uint32_t headerSize = 4 + static_cast<uint32_t>(payload.size()); // magic + payload
-    uint32_t bufferSize = 4 + headerSize; // size field + magic + payload
+    uint32_t bufferSize = 4 + headerSize;                            // size field + magic + payload
 
     QByteArray pkt;
     pkt.resize(static_cast<int>(bufferSize));
@@ -38,8 +38,7 @@ static QByteArray packPacket(uint32_t magic, const QByteArray& payload)
     qToLittleEndian(magic, pkt.data() + 4);
 
     // Payload
-    if (!payload.isEmpty())
-        std::memcpy(pkt.data() + 8, payload.constData(), payload.size());
+    if (!payload.isEmpty()) std::memcpy(pkt.data() + 8, payload.constData(), payload.size());
 
     return pkt;
 }
@@ -50,18 +49,12 @@ QByteArray InputEncoder::encodeFromJson(const QJsonObject& msg)
 {
     QString type = msg["type"].toString();
 
-    if (type == "keydown")
-        return encodeKeyEvent(msg, true);
-    if (type == "keyup")
-        return encodeKeyEvent(msg, false);
-    if (type == "mousemove")
-        return encodeMouseMove(msg);
-    if (type == "mousedown")
-        return encodeMouseButton(msg, true);
-    if (type == "mouseup")
-        return encodeMouseButton(msg, false);
-    if (type == "mousewheel")
-        return encodeMouseScroll(msg);
+    if (type == "keydown") return encodeKeyEvent(msg, true);
+    if (type == "keyup") return encodeKeyEvent(msg, false);
+    if (type == "mousemove") return encodeMouseMove(msg);
+    if (type == "mousedown") return encodeMouseButton(msg, true);
+    if (type == "mouseup") return encodeMouseButton(msg, false);
+    if (type == "mousewheel") return encodeMouseScroll(msg);
 
     qWarning() << "[InputEncoder] Unknown event type:" << type;
     return {};
@@ -85,10 +78,10 @@ QByteArray InputEncoder::encodeKeyEvent(const QJsonObject& msg, bool down)
 
     // modifiers
     char mods = 0;
-    if (msg["ctrlKey"].toBool(false))  mods |= 0x02;
+    if (msg["ctrlKey"].toBool(false)) mods |= 0x02;
     if (msg["shiftKey"].toBool(false)) mods |= 0x01;
-    if (msg["altKey"].toBool(false))   mods |= 0x04;
-    if (msg["metaKey"].toBool(false))  mods |= 0x08;
+    if (msg["altKey"].toBool(false)) mods |= 0x04;
+    if (msg["metaKey"].toBool(false)) mods |= 0x08;
     payload[3] = mods;
 
     // zero2 (padding) — already '\0'
@@ -135,8 +128,8 @@ QByteArray InputEncoder::encodeMouseScroll(const QJsonObject& msg)
     QByteArray payload(6, '\0');
 
     short amount = static_cast<short>(msg["delta"].toInt(0));
-    qToBigEndian(amount, payload.data());          // scrollAmt1
-    qToBigEndian(amount, payload.data() + 2);      // scrollAmt2 (mirror)
+    qToBigEndian(amount, payload.data());     // scrollAmt1
+    qToBigEndian(amount, payload.data() + 2); // scrollAmt2 (mirror)
 
     return packPacket(0x0Au, payload);
 }

@@ -28,15 +28,14 @@
 #include <openssl/bio.h>
 
 #define SER_UNIQUEID "uniqueid"
-#define SER_CERT     "certificate"
-#define SER_KEY      "key"
+#define SER_CERT "certificate"
+#define SER_KEY "key"
 
 IdentityManager* IdentityManager::s_Instance = nullptr;
 
 IdentityManager* IdentityManager::get()
 {
-    if (!s_Instance)
-        s_Instance = new IdentityManager();
+    if (!s_Instance) s_Instance = new IdentityManager();
     return s_Instance;
 }
 
@@ -47,10 +46,8 @@ IdentityManager::IdentityManager()
 
 IdentityManager::~IdentityManager()
 {
-    if (m_Cert)
-        X509_free(m_Cert);
-    if (m_Key)
-        EVP_PKEY_free(m_Key);
+    if (m_Cert) X509_free(m_Cert);
+    if (m_Key) EVP_PKEY_free(m_Key);
 }
 
 void IdentityManager::loadOrGenerate()
@@ -105,8 +102,7 @@ void IdentityManager::createCredentials()
 {
     // Generate RSA 2048-bit keypair
     EVP_PKEY* pk = EVP_RSA_gen(2048);
-    if (!pk)
-        throw std::runtime_error("RSA key generation failed");
+    if (!pk) throw std::runtime_error("RSA key generation failed");
 
     // Create X.509 certificate
     X509* cert = X509_new();
@@ -123,10 +119,9 @@ void IdentityManager::createCredentials()
     X509_set_pubkey(cert, pk);
 
     X509_NAME* name = X509_NAME_new();
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                reinterpret_cast<unsigned char*>(
-                                    const_cast<char*>("NVIDIA GameStream Client")),
-                                -1, -1, 0);
+    X509_NAME_add_entry_by_txt(
+        name, "CN", MBSTRING_ASC,
+        reinterpret_cast<unsigned char*>(const_cast<char*>("NVIDIA GameStream Client")), -1, -1, 0);
     X509_set_subject_name(cert, name);
     X509_set_issuer_name(cert, name);
     X509_NAME_free(name);

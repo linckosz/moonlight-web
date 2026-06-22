@@ -73,7 +73,8 @@ public:
     /// Used by SignalingServer before stop() to preserve the keyframe for
     /// WebSocket fallback — without this, the fallback starts with delta
     /// frames and the browser's VideoDecoder can never configure.
-    QByteArray takeBufferedKeyframe() {
+    QByteArray takeBufferedKeyframe()
+    {
         QByteArray kf = m_BufferedKeyframe;
         m_BufferedKeyframe.clear();
         m_HaveBufferedKeyframe = false;
@@ -110,7 +111,8 @@ private:
     void handleMouseScroll(const std::string& body);
 
     // Fragmentation helpers — sends data in chunks over a DataChannel.
-    // Header: [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
+    // Header:
+    // [frame_id:4][chunk_index:2][total_chunks:2][is_keyframe:1][payload_size:4][backend_ts:4]
     // backend_ts: monotonic millisecond timestamp (mod 2^32) taken at send time,
     // used by the frontend to compute end-to-end latency.
     // Max payload per chunk: kMaxPayloadSize (stays under SCTP 16KB fragment limit).
@@ -157,15 +159,15 @@ private:
                                  // relies on contiguous video ids)
 
     // Backpressure counters (diagnostic logging)
-    int m_DeltaDroppedCount = 0;           // Delta frames dropped due to full SCTP buffer
+    int m_DeltaDroppedCount = 0;            // Delta frames dropped due to full SCTP buffer
     int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
-    int m_BackpressureDropCount = 0;       // Frames dropped in current backpressure episode
+    int m_BackpressureDropCount = 0;        // Frames dropped in current backpressure episode
     // Decode latency tracking (microseconds)
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
 
     // IDR coalescing: cooldown 300 ms between effective LiRequestIdrFrame calls.
     // All IDR sources (frontend requestidr, backpressure) converge here.
-    QElapsedTimer m_IdrCooldownTimer;  // Monotonic timer; invalid until first request
+    QElapsedTimer m_IdrCooldownTimer; // Monotonic timer; invalid until first request
 
     // Awaiting IDR: true when a delta was dropped (backpressure or DC not ready).
     // All delta frames are dropped and IDR requested until a keyframe is sent.
@@ -186,11 +188,11 @@ private:
     // without a keyframe, so we must still send the buffered one.
     QByteArray m_BufferedKeyframe;
     bool m_HaveBufferedKeyframe = false;
-    bool m_NewKeyframeArrived = false;  // True if a new keyframe was sent directly while buffer held
+    bool m_NewKeyframeArrived = false; // True if a new keyframe was sent directly while buffer held
 
     // ── UPnP NAT traversal ──────────────────────────────────────────────────
-    std::string m_PublicIP;      // Public IP discovered via UPnP (or empty)
-    uint16_t m_PublicPort = 0;   // Mapped port from UPnP (0 = not mapped)
+    std::string m_PublicIP;    // Public IP discovered via UPnP (or empty)
+    uint16_t m_PublicPort = 0; // Mapped port from UPnP (0 = not mapped)
     bool m_ForceHostPublic = false;
     bool m_SuppressIPv6 = false; // Suppress IPv6 candidates when UPnP active
 

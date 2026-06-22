@@ -57,7 +57,7 @@ AuthManager::AuthManager(AppSettings* settings, QObject* parent)
 
     // Periodically purge sessions that have been inactive past the TTL.
     m_purgeTimer = new QTimer(this);
-    m_purgeTimer->setInterval(60 * 60 * 1000);  // hourly
+    m_purgeTimer->setInterval(60 * 60 * 1000); // hourly
     connect(m_purgeTimer, &QTimer::timeout, this, &AuthManager::purgeExpiredSessions);
     m_purgeTimer->start();
 }
@@ -103,14 +103,12 @@ QString AuthManager::generatePinInternal()
 
 QByteArray AuthManager::generateHmac(const QString& data) const
 {
-    return QMessageAuthenticationCode::hash(
-        data.toUtf8(), m_hmacKey, QCryptographicHash::Sha256);
+    return QMessageAuthenticationCode::hash(data.toUtf8(), m_hmacKey, QCryptographicHash::Sha256);
 }
 
 void AuthManager::saveSessions()
 {
-    if (!m_settings)
-        return;
+    if (!m_settings) return;
 
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dir);
@@ -134,21 +132,18 @@ void AuthManager::saveSessions()
 
 void AuthManager::loadSessions()
 {
-    if (!m_settings)
-        return;
+    if (!m_settings) return;
 
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QString path = dir + QStringLiteral("/sessions.json");
 
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-        return; // No sessions file yet
+    if (!file.open(QIODevice::ReadOnly)) return; // No sessions file yet
 
     QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
     file.close();
 
-    if (!doc.isObject())
-        return;
+    if (!doc.isObject()) return;
 
     QJsonObject root = doc.object();
     QJsonArray arr = root["sessions"].toArray();
@@ -167,9 +162,8 @@ void AuthManager::loadSessions()
         info.city = obj["city"].toString();
         info.country = obj["country"].toString();
         info.createdAt = static_cast<qint64>(obj["created_at"].toDouble());
-        info.lastSeen = obj.contains("last_seen")
-            ? static_cast<qint64>(obj["last_seen"].toDouble())
-            : info.createdAt;
+        info.lastSeen = obj.contains("last_seen") ? static_cast<qint64>(obj["last_seen"].toDouble())
+                                                  : info.createdAt;
 
         // Drop sessions that are already expired by inactivity.
         const qint64 last = info.lastSeen > 0 ? info.lastSeen : info.createdAt;
@@ -182,14 +176,14 @@ void AuthManager::loadSessions()
         loaded++;
     }
 
-    Logger::info(QString("[AuthManager] Loaded %1 sessions (%2 expired, dropped)")
-        .arg(loaded).arg(skipped));
+    Logger::info(
+        QString("[AuthManager] Loaded %1 sessions (%2 expired, dropped)").arg(loaded).arg(skipped));
 }
 
 QString AuthManager::generatePin()
 {
     m_currentPin = generatePinInternal();
-    m_pinConsumed = false;  // fresh PIN, never used
+    m_pinConsumed = false; // fresh PIN, never used
     Logger::info("[Auth] New PIN generated");
     emit pinChanged(m_currentPin);
     return m_currentPin;
@@ -208,7 +202,7 @@ void AuthManager::autoRegeneratePin()
     // Generate a new PIN immediately after a successful validation.
     // Does NOT invalidate existing sessions — they remain active.
     m_currentPin = generatePinInternal();
-    m_pinConsumed = true;  // mark as consumed — admin must generate fresh PIN
+    m_pinConsumed = true; // mark as consumed — admin must generate fresh PIN
     Logger::info("[Auth] PIN auto-regenerated after successful validation");
     emit pinChanged(m_currentPin);
 }
@@ -238,8 +232,7 @@ QString AuthManager::generateCertificateToken()
     QString token = QString::fromLatin1(bytes.toBase64(QByteArray::OmitTrailingEquals));
 
     // Persist via AppSettings
-    if (m_settings)
-        m_settings->setCertificateToken(token);
+    if (m_settings) m_settings->setCertificateToken(token);
 
     Logger::info("[Auth] Certificate token generated (64 bytes)");
     return token;
@@ -247,16 +240,14 @@ QString AuthManager::generateCertificateToken()
 
 QString AuthManager::certificateToken() const
 {
-    if (!m_settings)
-        return {};
+    if (!m_settings) return {};
     return m_settings->certificateToken();
 }
 
 bool AuthManager::validateCertificate(const QString& uploadedContent) const
 {
     QString stored = certificateToken();
-    if (stored.isEmpty())
-        return false;
+    if (stored.isEmpty()) return false;
 
     // Trim whitespace from both sides before comparing (constant-time).
     return constantTimeEquals(uploadedContent.trimmed(), stored);
@@ -269,10 +260,9 @@ bool AuthManager::certAuthEnabled() const
 
 void AuthManager::setCertAuthEnabled(bool enabled)
 {
-    if (m_settings)
-        m_settings->setCertAuthEnabled(enabled);
-    Logger::info(QString("[Auth] Certificate authentication %1")
-        .arg(enabled ? "enabled" : "disabled"));
+    if (m_settings) m_settings->setCertAuthEnabled(enabled);
+    Logger::info(
+        QString("[Auth] Certificate authentication %1").arg(enabled ? "enabled" : "disabled"));
 }
 
 QString AuthManager::cleanClientAddress(const QString& ip)
@@ -288,15 +278,16 @@ QString AuthManager::isPrivateIP(const QString& ip)
 {
     QString clean = cleanClientAddress(ip);
     QHostAddress addr(clean);
-    if (addr.isLoopback())
-        return QStringLiteral("Local");
+    if (addr.isLoopback()) return QStringLiteral("Local");
 
     // Manual RFC 1918 check — QHostAddress has no isPrivate() in Qt 6
     QStringList parts = clean.split('.');
     if (parts.size() == 4) {
         bool ok;
-        int a = parts[0].toInt(&ok); if (!ok) return QStringLiteral("Remote");
-        int b = parts[1].toInt(&ok); if (!ok) return QStringLiteral("Remote");
+        int a = parts[0].toInt(&ok);
+        if (!ok) return QStringLiteral("Remote");
+        int b = parts[1].toInt(&ok);
+        if (!ok) return QStringLiteral("Remote");
         if (a == 10) return QStringLiteral("Local");
         if (a == 172 && b >= 16 && b <= 31) return QStringLiteral("Local");
         if (a == 192 && b == 168) return QStringLiteral("Local");
@@ -327,20 +318,18 @@ void AuthManager::cleanupExpired()
         RateLimitEntry& e = it.value();
 
         // If currently locked out, skip
-        if (e.lockoutUntilEpoch > now)
-            continue;
+        if (e.lockoutUntilEpoch > now) continue;
 
         // If last failure was more than 10 minutes ago, decrement
-        qint64 secsSinceFailure = e.lastFailure.isValid()
-            ? now - e.lastFailure.toSecsSinceEpoch() : 600;
+        qint64 secsSinceFailure =
+            e.lastFailure.isValid() ? now - e.lastFailure.toSecsSinceEpoch() : 600;
 
-        if (secsSinceFailure >= 600) {  // 10 minutes
+        if (secsSinceFailure >= 600) { // 10 minutes
             e.failures = qMax(0, e.failures - 1);
         }
 
         // Remove entries with no failures
-        if (e.failures <= 0)
-            it.remove();
+        if (e.failures <= 0) it.remove();
     }
 }
 
@@ -349,14 +338,14 @@ AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QS
     cleanupExpired();
 
     const QString key = rateLimitKey(ip);
-    auto& entry = m_rateLimits[key];  // Creates entry if not exists
+    auto& entry = m_rateLimits[key]; // Creates entry if not exists
 
     // Check if currently locked out
     qint64 now = QDateTime::currentSecsSinceEpoch();
     if (entry.lockoutUntilEpoch > now) {
         int remaining = static_cast<int>(entry.lockoutUntilEpoch - now);
         Logger::info(QString("[Auth] Rate limited for %1: %2s remaining").arg(ip).arg(remaining));
-        return { RateLimited, 0, remaining };
+        return {RateLimited, 0, remaining};
     }
 
     // Compare PIN (constant-time). Reject when no valid PIN has been generated,
@@ -366,7 +355,7 @@ AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QS
         entry.failures = 0;
         entry.lockoutUntilEpoch = 0;
         Logger::info(QString("[Auth] PIN validated successfully for %1").arg(ip));
-        return { Valid, 3, 0 };
+        return {Valid, 3, 0};
     }
 
     // Failed attempt
@@ -389,7 +378,7 @@ AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QS
 
     int remaining = remainingAttempts(ip);
     int lockoutSecs = lockoutSeconds(ip);
-    return { InvalidPin, remaining, lockoutSecs };
+    return {InvalidPin, remaining, lockoutSecs};
 }
 
 QString AuthManager::createSession(const QString& ip, const QString& machineName)
@@ -421,17 +410,16 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     emit sessionCreated(ip, machineName);
     emit sessionsChanged();
     Logger::info(QString("[Auth] Session created for %1 (machine='%2', total: %3)")
-        .arg(ip, machineName).arg(m_sessions.size()));
-    return token;  // raw token for the cookie
+                     .arg(ip, machineName)
+                     .arg(m_sessions.size()));
+    return token; // raw token for the cookie
 }
 
 bool AuthManager::validateSession(const QString& token) const
 {
-    if (token.isEmpty())
-        return false;
+    if (token.isEmpty()) return false;
     auto it = m_sessions.find(hashToken(token));
-    if (it == m_sessions.end())
-        return false;
+    if (it == m_sessions.end()) return false;
     // Sliding expiration: reject (but do not mutate, this is const) sessions
     // inactive past the TTL — the periodic purge removes them.
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -441,47 +429,40 @@ bool AuthManager::validateSession(const QString& token) const
 
 void AuthManager::touchSession(const QString& token)
 {
-    if (token.isEmpty())
-        return;
+    if (token.isEmpty()) return;
     auto it = m_sessions.find(hashToken(token));
-    if (it == m_sessions.end())
-        return;
+    if (it == m_sessions.end()) return;
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const qint64 prev = it->lastSeen;
     it->lastSeen = now;
     // Throttle disk writes: only persist when the clock advanced by >1h.
-    if (now - prev >= 3600)
-        saveSessions();
+    if (now - prev >= 3600) saveSessions();
 }
 
 void AuthManager::setSessionGeo(const QString& token, const QString& city, const QString& country)
 {
     auto it = m_sessions.find(hashToken(token));
-    if (it == m_sessions.end())
-        return;
+    if (it == m_sessions.end()) return;
 
     it->city = city;
     it->country = country;
     saveSessions();
     Logger::info(QString("[Auth] Geo data stored for session %1: %2, %3")
-        .arg(token.left(12), city, country));
+                     .arg(token.left(12), city, country));
 }
 
 bool AuthManager::updateSessionAddress(const QString& token, const QString& ip)
 {
     auto it = m_sessions.find(hashToken(token));
-    if (it == m_sessions.end())
-        return false;
+    if (it == m_sessions.end()) return false;
 
     // Any authenticated reconnection counts as activity (sliding expiration).
     it->lastSeen = QDateTime::currentSecsSinceEpoch();
 
     QString cleanIp = cleanClientAddress(ip);
-    if (cleanIp.isEmpty() || it->ip == cleanIp)
-        return false;
+    if (cleanIp.isEmpty() || it->ip == cleanIp) return false;
 
-    Logger::info(QString("[Auth] Session IP changed: %1 -> %2")
-        .arg(it->ip, cleanIp));
+    Logger::info(QString("[Auth] Session IP changed: %1 -> %2").arg(it->ip, cleanIp));
     it->ip = cleanIp;
     // Drop stale geolocation; the caller re-runs the lookup for the new IP.
     it->city.clear();
@@ -493,8 +474,7 @@ bool AuthManager::updateSessionAddress(const QString& token, const QString& ip)
 
 void AuthManager::setSessionStreaming(const QString& token, bool streaming)
 {
-    if (token.isEmpty())
-        return;  // localhost streams have no session row to flag
+    if (token.isEmpty()) return; // localhost streams have no session row to flag
 
     const QString id = hashToken(token);
     bool changed = false;
@@ -515,8 +495,7 @@ void AuthManager::setSessionStreaming(const QString& token, bool streaming)
         changed = true;
     }
 
-    if (changed)
-        emit sessionsChanged();
+    if (changed) emit sessionsChanged();
 }
 
 void AuthManager::destroySession(const QString& token)
@@ -528,10 +507,12 @@ void AuthManager::destroySession(const QString& token)
         emit sessionDestroyed(token);
         emit sessionsChanged();
         Logger::info(QString("[Auth] Session destroyed for %1 (machine='%2', remaining: %3)")
-            .arg(info.ip, info.machineName).arg(m_sessions.size()));
+                         .arg(info.ip, info.machineName)
+                         .arg(m_sessions.size()));
     } else {
         Logger::warning(QString("[Auth] destroySession: token not found — token='%1' (len=%2)")
-            .arg(token).arg(token.size()));
+                            .arg(token)
+                            .arg(token.size()));
     }
 }
 
@@ -569,8 +550,7 @@ void AuthManager::purgeExpiredSessions()
     QMutableHashIterator<QString, SessionInfo> it(m_sessions);
     while (it.hasNext()) {
         it.next();
-        const qint64 last = it.value().lastSeen > 0 ? it.value().lastSeen
-                                                    : it.value().createdAt;
+        const qint64 last = it.value().lastSeen > 0 ? it.value().lastSeen : it.value().createdAt;
         if (now - last > SESSION_TTL_SECS) {
             it.remove();
             removed++;
@@ -591,8 +571,7 @@ QList<SessionInfo> AuthManager::sessions() const
 int AuthManager::remainingAttempts(const QString& ip) const
 {
     auto it = m_rateLimits.find(rateLimitKey(ip));
-    if (it == m_rateLimits.end())
-        return 3;
+    if (it == m_rateLimits.end()) return 3;
 
     const RateLimitEntry& e = it.value();
     if (e.failures < 3)
@@ -607,13 +586,11 @@ int AuthManager::remainingAttempts(const QString& ip) const
 int AuthManager::lockoutSeconds(const QString& ip) const
 {
     auto it = m_rateLimits.find(rateLimitKey(ip));
-    if (it == m_rateLimits.end())
-        return 0;
+    if (it == m_rateLimits.end()) return 0;
 
     const RateLimitEntry& e = it.value();
     qint64 now = QDateTime::currentSecsSinceEpoch();
-    if (e.lockoutUntilEpoch > now)
-        return static_cast<int>(e.lockoutUntilEpoch - now);
+    if (e.lockoutUntilEpoch > now) return static_cast<int>(e.lockoutUntilEpoch - now);
     return 0;
 }
 
@@ -625,7 +602,6 @@ bool AuthManager::isRateLimited(const QString& ip) const
 int AuthManager::failedAttemptCount(const QString& ip) const
 {
     auto it = m_rateLimits.find(rateLimitKey(ip));
-    if (it == m_rateLimits.end())
-        return 0;
+    if (it == m_rateLimits.end()) return 0;
     return it.value().failures;
 }

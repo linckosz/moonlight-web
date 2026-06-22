@@ -26,25 +26,20 @@
 GeoIpService::GeoIpService(QObject* parent)
     : QObject(parent)
     , m_nam(new QNetworkAccessManager(this))
-{
-}
+{}
 
 void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
 {
     if (!callback) return;
 
     // Skip local/private IPs — no geolocation possible
-    if (ip.isEmpty() || ip == "127.0.0.1" || ip == "::1"
-        || ip.startsWith("192.168.") || ip.startsWith("10.")
-        || ip.startsWith("172.16.") || ip.startsWith("172.17.")
-        || ip.startsWith("172.18.") || ip.startsWith("172.19.")
-        || ip.startsWith("172.20.") || ip.startsWith("172.21.")
-        || ip.startsWith("172.22.") || ip.startsWith("172.23.")
-        || ip.startsWith("172.24.") || ip.startsWith("172.25.")
-        || ip.startsWith("172.26.") || ip.startsWith("172.27.")
-        || ip.startsWith("172.28.") || ip.startsWith("172.29.")
-        || ip.startsWith("172.30.") || ip.startsWith("172.31.")
-        || ip.startsWith("169.254.")) {
+    if (ip.isEmpty() || ip == "127.0.0.1" || ip == "::1" || ip.startsWith("192.168.") ||
+        ip.startsWith("10.") || ip.startsWith("172.16.") || ip.startsWith("172.17.") ||
+        ip.startsWith("172.18.") || ip.startsWith("172.19.") || ip.startsWith("172.20.") ||
+        ip.startsWith("172.21.") || ip.startsWith("172.22.") || ip.startsWith("172.23.") ||
+        ip.startsWith("172.24.") || ip.startsWith("172.25.") || ip.startsWith("172.26.") ||
+        ip.startsWith("172.27.") || ip.startsWith("172.28.") || ip.startsWith("172.29.") ||
+        ip.startsWith("172.30.") || ip.startsWith("172.31.") || ip.startsWith("169.254.")) {
         callback(QString(), QString());
         return;
     }
@@ -76,7 +71,7 @@ void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
 
     QNetworkRequest req(url);
     req.setRawHeader("User-Agent", "Moonlight-Web/1.0");
-    req.setTransferTimeout(5000);  // 5s timeout
+    req.setTransferTimeout(5000); // 5s timeout
 
     QNetworkReply* reply = m_nam->get(req);
 
@@ -97,8 +92,8 @@ void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
                 }
             }
         } else {
-            Logger::warning(QString("[GeoIp] Failed to lookup %1: %2")
-                .arg(ip, reply->errorString()));
+            Logger::warning(
+                QString("[GeoIp] Failed to lookup %1: %2").arg(ip, reply->errorString()));
         }
 
         // Cache result (even empty — avoids re-fetching unreachable IPs)
@@ -118,8 +113,7 @@ void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
 QPair<QString, QString> GeoIpService::cachedLocation(const QString& ip) const
 {
     auto it = m_cache.find(ip);
-    if (it != m_cache.end())
-        return *it;
+    if (it != m_cache.end()) return *it;
     return {};
 }
 

@@ -37,8 +37,8 @@ class EnetControlStream : public QObject
     Q_OBJECT
 
 public:
-    EnetControlStream(const QString& host, quint16 port,
-                      uint32_t connectData, QObject* parent = nullptr);
+    EnetControlStream(const QString& host, quint16 port, uint32_t connectData,
+                      QObject* parent = nullptr);
     ~EnetControlStream();
 
     bool start();
@@ -61,8 +61,7 @@ private:
     bool waitForConnect(int timeoutMs);
     bool sendMessage(const QByteArray& payload, uint16_t type, uint8_t channel,
                      uint32_t flags = ENET_PACKET_FLAG_RELIABLE);
-    bool sendAndWaitReply(const QByteArray& payload, uint16_t type,
-                          uint8_t channel, int timeoutMs);
+    bool sendAndWaitReply(const QByteArray& payload, uint16_t type, uint8_t channel, int timeoutMs);
 
     static bool s_EnetInitialized;
 

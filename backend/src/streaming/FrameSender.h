@@ -52,9 +52,8 @@ public:
     // The fragment header carries frameId/backendTs computed by the caller so
     // the worker stays purely mechanical. Keyframes are never dropped by the
     // queue cap; deltas are dropped (oldest first) if the worker falls behind.
-    void enqueue(std::shared_ptr<rtc::DataChannel> dc,
-                 const QByteArray& data, bool isKeyframe, bool isAudio,
-                 uint32_t frameId, uint32_t backendTs);
+    void enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data, bool isKeyframe,
+                 bool isAudio, uint32_t frameId, uint32_t backendTs);
 
     // Stop the worker thread and discard pending jobs. Idempotent; safe to call
     // from the relay's stop()/destructor.
@@ -64,7 +63,8 @@ public:
     uint64_t queueDropCount() const { return m_QueueDrops.load(std::memory_order_relaxed); }
 
 private:
-    struct Job {
+    struct Job
+    {
         std::shared_ptr<rtc::DataChannel> dc;
         QByteArray data;
         bool isKeyframe = false;

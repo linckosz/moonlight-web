@@ -24,17 +24,19 @@
 #include <QJsonDocument>
 #include <functional>
 
-struct HttpRequest {
+struct HttpRequest
+{
     QString method;
     QString path;
     QMap<QString, QString> headers;
     QMap<QString, QString> queryParams;
     QMap<QString, QString> pathParams;
     QByteArray body;
-    QString clientAddress;   // Populated by HttpServer from socket peer
+    QString clientAddress; // Populated by HttpServer from socket peer
 };
 
-struct HttpResponse {
+struct HttpResponse
+{
     int statusCode = 200;
     QString contentType;
     QMap<QString, QString> headers;

@@ -55,7 +55,7 @@ NvComputer::NvComputer(const QString& serverInfo, const NvAddress& activeAddr)
 
     // Codec support
     QString codecStr = NvHTTP::getXmlString(serverInfo, "ServerCodecModeSupport");
-    serverCodecModeSupport = codecStr.isEmpty() ? 1 : codecStr.toInt();  // default H.264
+    serverCodecModeSupport = codecStr.isEmpty() ? 1 : codecStr.toInt(); // default H.264
 
     QString hevcPixels = NvHTTP::getXmlString(serverInfo, "MaxLumaPixelsHEVC");
     maxLumaPixelsHEVC = hevcPixels.isEmpty() ? 0 : hevcPixels.toInt();
@@ -79,34 +79,29 @@ NvComputer::NvComputer(const QString& serverInfo, const NvAddress& activeAddr)
     // HTTPS port for pairing
     QString httpsPortStr = NvHTTP::getXmlString(serverInfo, "HttpsPort");
     activeHttpsPort = httpsPortStr.isEmpty() ? 0 : httpsPortStr.toUShort();
-    if (activeHttpsPort == 0)
-        activeHttpsPort = MW_HTTPS_PORT;  // Sunshine HTTPS port fallback
+    if (activeHttpsPort == 0) activeHttpsPort = MW_HTTPS_PORT; // Sunshine HTTPS port fallback
 }
 
 // --- Construction from QSettings --------------------------------------------
 
 NvComputer::NvComputer(QSettings& settings)
-    : state(CS_OFFLINE)  // persisted hosts start offline
+    : state(CS_OFFLINE) // persisted hosts start offline
 {
     name = settings.value("hostname").toString();
     uuid = settings.value("uuid").toString();
     macAddress = settings.value("mac").toByteArray();
 
-    localAddress = NvAddress(
-        settings.value("localaddress").toString(),
-        settings.value("localport", MW_HTTP_PORT).toUInt());
+    localAddress = NvAddress(settings.value("localaddress").toString(),
+                             settings.value("localport", MW_HTTP_PORT).toUInt());
 
-    remoteAddress = NvAddress(
-        settings.value("remoteaddress").toString(),
-        settings.value("remoteport", MW_HTTP_PORT).toUInt());
+    remoteAddress = NvAddress(settings.value("remoteaddress").toString(),
+                              settings.value("remoteport", MW_HTTP_PORT).toUInt());
 
-    manualAddress = NvAddress(
-        settings.value("manualaddress").toString(),
-        settings.value("manualport", MW_HTTP_PORT).toUInt());
+    manualAddress = NvAddress(settings.value("manualaddress").toString(),
+                              settings.value("manualport", MW_HTTP_PORT).toUInt());
 
     serverCertPem = settings.value("serverCert").toByteArray();
-    activeHttpsPort = static_cast<quint16>(
-        settings.value("httpsPort", MW_HTTPS_PORT).toUInt());
+    activeHttpsPort = static_cast<quint16>(settings.value("httpsPort", MW_HTTPS_PORT).toUInt());
 
     pairState = pairStateFromString(settings.value("pairState").toString());
 }
@@ -131,14 +126,10 @@ void NvComputer::serialize(QSettings& settings) const
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
 {
-    return name == that.name
-        && uuid == that.uuid
-        && macAddress == that.macAddress
-        && localAddress == that.localAddress
-        && remoteAddress == that.remoteAddress
-        && manualAddress == that.manualAddress
-        && serverCertPem == that.serverCertPem
-        && activeHttpsPort == that.activeHttpsPort;
+    return name == that.name && uuid == that.uuid && macAddress == that.macAddress &&
+           localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
+           manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
+           activeHttpsPort == that.activeHttpsPort;
 }
 
 // --- Merge polling data -----------------------------------------------------
@@ -146,13 +137,15 @@ bool NvComputer::isEqualSerialized(const NvComputer& that) const
 bool NvComputer::update(const NvComputer& that)
 {
     // UUID must match
-    if (this->uuid != that.uuid)
-        return false;
+    if (this->uuid != that.uuid) return false;
 
     bool changed = false;
 
-#define ASSIGN_IF_CHANGED(f) \
-    if (this->f != that.f) { this->f = that.f; changed = true; }
+#define ASSIGN_IF_CHANGED(f)                                                                       \
+    if (this->f != that.f) {                                                                       \
+        this->f = that.f;                                                                          \
+        changed = true;                                                                            \
+    }
 
     ASSIGN_IF_CHANGED(state)
     ASSIGN_IF_CHANGED(activeAddress)
@@ -164,8 +157,11 @@ bool NvComputer::update(const NvComputer& that)
 
 #undef ASSIGN_IF_CHANGED
 
-#define ASSIGN_IF_CHANGED_NONEMPTY(f) \
-    if (!that.f.isEmpty() && this->f != that.f) { this->f = that.f; changed = true; }
+#define ASSIGN_IF_CHANGED_NONEMPTY(f)                                                              \
+    if (!that.f.isEmpty() && this->f != that.f) {                                                  \
+        this->f = that.f;                                                                          \
+        changed = true;                                                                            \
+    }
 
     ASSIGN_IF_CHANGED_NONEMPTY(gfeVersion)
     ASSIGN_IF_CHANGED_NONEMPTY(appVersion)
@@ -211,14 +207,10 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
     // (updated in onPollReplyFinished from the URL used in the poll request).
     // It is more reliable than localAddress (from XML <LocalIP>) which may differ
     // from the mDNS-resolved address in multi-homed / Docker / VPN setups.
-    if (!activeAddress.isNull())
-        addrs.append(activeAddress);
-    if (!localAddress.isNull())
-        addrs.append(localAddress);
-    if (!manualAddress.isNull())
-        addrs.append(manualAddress);
-    if (!remoteAddress.isNull())
-        addrs.append(remoteAddress);
+    if (!activeAddress.isNull()) addrs.append(activeAddress);
+    if (!localAddress.isNull()) addrs.append(localAddress);
+    if (!manualAddress.isNull()) addrs.append(manualAddress);
+    if (!remoteAddress.isNull()) addrs.append(remoteAddress);
 
     return addrs;
 }
@@ -228,15 +220,15 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
 QJsonObject NvComputer::toJson() const
 {
     QJsonObject obj;
-    obj["uuid"]         = uuid;
-    obj["name"]         = name;
-    obj["state"]        = computerStateToString(state);
-    obj["pairState"]    = pairStateToString(pairState);
+    obj["uuid"] = uuid;
+    obj["name"] = name;
+    obj["state"] = computerStateToString(state);
+    obj["pairState"] = pairStateToString(pairState);
     obj["activeAddress"] = activeAddress.address();
-    obj["port"]         = static_cast<int>(activeAddress.port());
-    obj["gpuModel"]     = gpuModel;
-    obj["gfeVersion"]   = gfeVersion;
-    obj["appVersion"]   = appVersion;
+    obj["port"] = static_cast<int>(activeAddress.port());
+    obj["gpuModel"] = gpuModel;
+    obj["gfeVersion"] = gfeVersion;
+    obj["appVersion"] = appVersion;
     obj["currentGameId"] = currentGameId;
     obj["serverCodecModeSupport"] = serverCodecModeSupport;
     obj["maxLumaPixelsHEVC"] = maxLumaPixelsHEVC;
@@ -256,7 +248,7 @@ QJsonObject NvComputer::toJson() const
     obj["displayModes"] = modesArr;
 
     // Persisted addresses
-    obj["localAddress"]  = localAddress.toString();
+    obj["localAddress"] = localAddress.toString();
     obj["remoteAddress"] = remoteAddress.toString();
     obj["manualAddress"] = manualAddress.toString();
 
@@ -276,17 +268,17 @@ NvComputer::PairState NvComputer::pairStateFromString(const QString& s)
 QString NvComputer::pairStateToString(PairState ps)
 {
     switch (ps) {
-    case PS_PAIRED:     return "paired";
+    case PS_PAIRED: return "paired";
     case PS_NOT_PAIRED: return "not_paired";
-    default:            return "unknown";
+    default: return "unknown";
     }
 }
 
 QString NvComputer::computerStateToString(ComputerState cs)
 {
     switch (cs) {
-    case CS_ONLINE:  return "online";
+    case CS_ONLINE: return "online";
     case CS_OFFLINE: return "offline";
-    default:         return "unknown";
+    default: return "unknown";
     }
 }

@@ -47,7 +47,8 @@ public:
     bool hasRoute(const QString& method, const QString& path) const;
 
 private:
-    struct ParamRoute {
+    struct ParamRoute
+    {
         QString method;
         QStringList segments;
         AsyncRouteHandler handler;

@@ -40,8 +40,8 @@
 // Request hardening caps (anti-DoS): bound how much we buffer before a complete
 // request is available, so a client cannot grow our memory without limit by
 // sending headers/body that never complete.
-static constexpr int MAX_HEADER_BYTES = 32 * 1024;        // 32 KB of headers
-static constexpr int MAX_BODY_BYTES   = 8 * 1024 * 1024;  // 8 MB body
+static constexpr int MAX_HEADER_BYTES = 32 * 1024;     // 32 KB of headers
+static constexpr int MAX_BODY_BYTES = 8 * 1024 * 1024; // 8 MB body
 
 // --- SslServer: creates QSslSocket directly from native handle ----------------
 // Avoids descriptor-transfer hack (get descriptor → setSocketDescriptor(-1) →
@@ -56,10 +56,8 @@ class SslServer : public QTcpServer
 public:
     using SslReadyCallback = std::function<void(QSslSocket*)>;
 
-    SslServer(const QSslConfiguration& publicConfig,
-              const QSslConfiguration& localConfig,
-              SslReadyCallback onSslReady,
-              QObject* parent = nullptr)
+    SslServer(const QSslConfiguration& publicConfig, const QSslConfiguration& localConfig,
+              SslReadyCallback onSslReady, QObject* parent = nullptr)
         : QTcpServer(parent)
         , m_PublicSslConfig(publicConfig)
         , m_LocalSslConfig(localConfig)
@@ -131,25 +129,24 @@ private:
     static QString parseSniHostname(const QByteArray& data)
     {
         // Minimum size for a ClientHello with SNI: ~50 bytes
-        if (data.size() < 50)
-            return {};
+        if (data.size() < 50) return {};
 
         const uchar* d = reinterpret_cast<const uchar*>(data.constData());
         int pos = 0;
 
         // TLS Record: ContentType (1) + Version (2) + Length (2)
-        if (pos >= data.size() || d[pos++] != 0x16)   // Not a Handshake record
+        if (pos >= data.size() || d[pos++] != 0x16) // Not a Handshake record
             return {};
-        pos += 4;  // skip version + length
+        pos += 4; // skip version + length
         if (pos >= data.size()) return {};
 
         // Handshake: Type (1) + Length (3)
-        if (d[pos] != 0x01) return {};  // Not ClientHello
-        pos += 4;  // skip type + length
+        if (d[pos] != 0x01) return {}; // Not ClientHello
+        pos += 4;                      // skip type + length
         if (pos >= data.size()) return {};
 
         // ClientHello: Version (2) + Random (32) + SessionID (1 + var)
-        pos += 34;  // skip version + random
+        pos += 34; // skip version + random
         if (pos >= data.size()) return {};
         int sidLen = d[pos++];
         pos += sidLen;
@@ -182,7 +179,7 @@ private:
             int extDataEnd = pos + extLen;
             if (extDataEnd > extEnd) break;
 
-            if (extType == 0x0000) {  // SNI extension
+            if (extType == 0x0000) { // SNI extension
                 // ServerNameList: length (2) + ServerName entries
                 if (pos + 2 > extDataEnd) break;
                 int listLen = (d[pos] << 8) | d[pos + 1];
@@ -193,7 +190,7 @@ private:
                 // First entry: NameType (1) + NameLength (2) + Hostname
                 if (pos + 3 > sniEnd) break;
                 int nameType = d[pos++];
-                if (nameType != 0x00) break;  // Not host_name
+                if (nameType != 0x00) break; // Not host_name
                 int nameLen = (d[pos] << 8) | d[pos + 1];
                 pos += 2;
                 if (pos + nameLen > sniEnd) break;
@@ -215,11 +212,9 @@ private:
         QString h = host.toLower().trimmed();
 
         // Strip IPv6 brackets: "[fe80::1]" → "fe80::1"
-        if (h.startsWith('[') && h.endsWith(']'))
-            h = h.mid(1, h.length() - 2);
+        if (h.startsWith('[') && h.endsWith(']')) h = h.mid(1, h.length() - 2);
 
-        if (h == "localhost" || h == "127.0.0.1" || h == "::1")
-            return true;
+        if (h == "localhost" || h == "127.0.0.1" || h == "::1") return true;
 
         QHostAddress addr(h);
         if (addr.isNull()) return false;
@@ -227,13 +222,13 @@ private:
 
         if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
             quint32 ip = addr.toIPv4Address();
-            if ((ip & 0xFF000000) == 0x0A000000) return true;       // 10.0.0.0/8
-            if ((ip & 0xFFF00000) == 0xAC100000) return true;       // 172.16.0.0/12
-            if ((ip & 0xFFFF0000) == 0xC0A80000) return true;       // 192.168.0.0/16
+            if ((ip & 0xFF000000) == 0x0A000000) return true; // 10.0.0.0/8
+            if ((ip & 0xFFF00000) == 0xAC100000) return true; // 172.16.0.0/12
+            if ((ip & 0xFFFF0000) == 0xC0A80000) return true; // 192.168.0.0/16
         } else if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
             Q_IPV6ADDR ip6 = addr.toIPv6Address();
-            if (ip6[0] == 0xFE && (ip6[1] & 0xC0) == 0x80) return true;  // fe80::/10 link-local
-            if ((ip6[0] & 0xFE) == 0xFC) return true;                     // fc00::/7 ULA
+            if (ip6[0] == 0xFE && (ip6[1] & 0xC0) == 0x80) return true; // fe80::/10 link-local
+            if ((ip6[0] & 0xFE) == 0xFC) return true;                   // fc00::/7 ULA
         }
         return false;
     }
@@ -266,7 +261,8 @@ static QString findOpenssl()
             return path;
         }
     }
-    Logger::warning("[CERT] Native OpenSSL not found, falling back to PATH (MSYS2 may break -subj)");
+    Logger::warning(
+        "[CERT] Native OpenSSL not found, falling back to PATH (MSYS2 may break -subj)");
 #endif
     return "openssl";
 }
@@ -279,32 +275,27 @@ static QList<QHostAddress> getPrivateLanAddresses()
 {
     QList<QHostAddress> result;
     for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
-        if (!iface.flags().testFlag(QNetworkInterface::IsUp))
-            continue;
-        if (!iface.flags().testFlag(QNetworkInterface::IsRunning))
-            continue;
-        if (iface.flags().testFlag(QNetworkInterface::IsLoopBack))
-            continue;
+        if (!iface.flags().testFlag(QNetworkInterface::IsUp)) continue;
+        if (!iface.flags().testFlag(QNetworkInterface::IsRunning)) continue;
+        if (iface.flags().testFlag(QNetworkInterface::IsLoopBack)) continue;
 
         for (const QNetworkAddressEntry& entry : iface.addressEntries()) {
             QHostAddress addr = entry.ip();
-            if (addr.isLoopback())
-                continue;
+            if (addr.isLoopback()) continue;
 
             if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
                 quint32 ip = addr.toIPv4Address();
                 // RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                if ((ip & 0xFF000000) == 0x0A000000 ||
-                    (ip & 0xFFF00000) == 0xAC100000 ||
+                if ((ip & 0xFF000000) == 0x0A000000 || (ip & 0xFFF00000) == 0xAC100000 ||
                     (ip & 0xFFFF0000) == 0xC0A80000) {
                     result << addr;
                 }
             } else if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
                 // IPv6 link-local (fe80::/10) and unique local / ULA (fc00::/7)
                 Q_IPV6ADDR ip6 = addr.toIPv6Address();
-                if (ip6[0] == 0xFE && (ip6[1] & 0xC0) == 0x80)  // fe80::/10 link-local
+                if (ip6[0] == 0xFE && (ip6[1] & 0xC0) == 0x80) // fe80::/10 link-local
                     result << addr;
-                else if ((ip6[0] & 0xFE) == 0xFC)               // fc00::/7 ULA
+                else if ((ip6[0] & 0xFE) == 0xFC) // fc00::/7 ULA
                     result << addr;
             }
         }
@@ -351,15 +342,13 @@ QString HttpServer::findCertDir()
     if (!m_Domain.isEmpty()) {
         Logger::info("[CERT] Scanning for certificate matching domain: " + m_Domain);
         QString dir = findCertByDomain(m_Domain);
-        if (!dir.isEmpty())
-            return dir;
+        if (!dir.isEmpty()) return dir;
         Logger::warning("[CERT] No certificate found for domain: " + m_Domain);
     }
 
     // 3. Fallback: return first valid cert dir (scanned)
     for (const auto& d : candidates) {
-        if (!scanCertInDir(d).isEmpty() && !scanKeyInDir(d).isEmpty())
-            return d;
+        if (!scanCertInDir(d).isEmpty() && !scanKeyInDir(d).isEmpty()) return d;
     }
     return {};
 }
@@ -377,28 +366,26 @@ QString HttpServer::findCertByDomain(const QString& domain)
     };
 
     for (const auto& rootDir : candidates) {
-        if (!QDir(rootDir).exists())
-            continue;
+        if (!QDir(rootDir).exists()) continue;
 
         // Recursively scan for PEM files
-        QDirIterator it(rootDir, {"*.pem"},
-                        QDir::Files, QDirIterator::Subdirectories);
+        QDirIterator it(rootDir, {"*.pem"}, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             QString filePath = it.next();
             QString certCn = extractCertCN(filePath);
-            if (certCn.isEmpty())
-                continue;
+            if (certCn.isEmpty()) continue;
 
             if (certCn.compare(domain, Qt::CaseInsensitive) == 0) {
                 QDir certDir = QFileInfo(filePath).absoluteDir();
                 QString keyPath = scanKeyInDir(certDir.absolutePath());
                 if (!keyPath.isEmpty()) {
-                    Logger::info(QString("[CERT] Found matching certificate: CN=%1, file=%2, key=%3")
-                        .arg(certCn, filePath, keyPath));
+                    Logger::info(
+                        QString("[CERT] Found matching certificate: CN=%1, file=%2, key=%3")
+                            .arg(certCn, filePath, keyPath));
                     return certDir.absolutePath();
                 }
                 Logger::info(QString("[CERT] CN matches but no private key found in %1, skipping")
-                    .arg(certDir.absolutePath()));
+                                 .arg(certDir.absolutePath()));
             }
         }
     }
@@ -408,12 +395,10 @@ QString HttpServer::findCertByDomain(const QString& domain)
 QString HttpServer::extractCertCN(const QString& pemPath)
 {
     QFile f(pemPath);
-    if (!f.open(QIODevice::ReadOnly))
-        return {};
+    if (!f.open(QIODevice::ReadOnly)) return {};
     QList<QSslCertificate> certs = QSslCertificate::fromDevice(&f, QSsl::Pem);
     f.close();
-    if (certs.isEmpty())
-        return {};
+    if (certs.isEmpty()) return {};
     QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
     return cns.isEmpty() ? QString() : cns.first();
 }
@@ -425,29 +410,24 @@ QString HttpServer::scanKeyInDir(const QString& dir) const
         QString filePath = it.next();
 
         // Skip ACME account key — it's for ACME account auth, not TLS
-        if (filePath.endsWith("account_key.pem"))
-            continue;
+        if (filePath.endsWith("account_key.pem")) continue;
 
         QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly))
-            continue;
+        if (!file.open(QIODevice::ReadOnly)) continue;
 
         // Read content and check for private key marker before attempting QSslKey
         QByteArray content = file.readAll();
         file.close();
-        if (!content.contains("PRIVATE KEY"))
-            continue;
+        if (!content.contains("PRIVATE KEY")) continue;
 
         // Re-open to reset cursor, try RSA private key
-        if (!file.open(QIODevice::ReadOnly))
-            continue;
+        if (!file.open(QIODevice::ReadOnly)) continue;
         QSslKey key(&file, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
         file.close();
 
         if (key.isNull()) {
             // Try EC private key
-            if (!file.open(QIODevice::ReadOnly))
-                continue;
+            if (!file.open(QIODevice::ReadOnly)) continue;
             key = QSslKey(&file, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
             file.close();
         }
@@ -466,26 +446,22 @@ QString HttpServer::scanCertInDir(const QString& dir, const QString& domain) con
     while (it.hasNext()) {
         QString filePath = it.next();
         QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly))
-            continue;
+        if (!file.open(QIODevice::ReadOnly)) continue;
 
         QList<QSslCertificate> certs = QSslCertificate::fromDevice(&file, QSsl::Pem);
         file.close();
 
-        if (certs.isEmpty())
-            continue;
+        if (certs.isEmpty()) continue;
 
         // If domain is specified, verify CN match
         if (!domain.isEmpty()) {
             QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
-            if (cns.isEmpty() || cns.first().compare(domain, Qt::CaseInsensitive) != 0)
-                continue;
+            if (cns.isEmpty() || cns.first().compare(domain, Qt::CaseInsensitive) != 0) continue;
         }
 
         QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
         QString cn = cns.isEmpty() ? "(no CN)" : cns.first();
-        Logger::info(QString("[CERT] Found certificate: CN=%1, file=%2")
-            .arg(cn, filePath));
+        Logger::info(QString("[CERT] Found certificate: CN=%1, file=%2").arg(cn, filePath));
         return filePath;
     }
     return {};
@@ -498,34 +474,28 @@ QSslKey HttpServer::loadKeyFromEnv() const
 
     // 2. Build-time embedded key (from .env at project root, via DEFINE)
 #ifdef MW_CERT_KEY
-    if (data.isEmpty())
-        data = QByteArray(MW_CERT_KEY);
+    if (data.isEmpty()) data = QByteArray(MW_CERT_KEY);
 #endif
 
-    if (data.isEmpty())
-        return {};
+    if (data.isEmpty()) return {};
 
     // Try RSA first, then EC
     QSslKey key(data, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-    if (!key.isNull())
-        return key;
+    if (!key.isNull()) return key;
     return QSslKey(data, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
 }
 
 QByteArray HttpServer::resolvePemValue(const QString& value)
 {
-    if (value.isEmpty())
-        return {};
+    if (value.isEmpty()) return {};
 
     // 1. Try env var — value IS the env var name (e.g. "MW_CERT_PEM")
     QByteArray data = qgetenv(value.toUtf8());
-    if (!data.isEmpty())
-        return data;
+    if (!data.isEmpty()) return data;
 
     // 2. Try file path
     QFile f(value);
-    if (f.open(QIODevice::ReadOnly))
-        return f.readAll();
+    if (f.open(QIODevice::ReadOnly)) return f.readAll();
 
     return {};
 }
@@ -545,12 +515,10 @@ bool HttpServer::loadCertFiles(const QString& certDir)
         while (it.hasNext()) {
             QString path = it.next();
             QFile f(path);
-            if (!f.open(QIODevice::ReadOnly))
-                continue;
+            if (!f.open(QIODevice::ReadOnly)) continue;
             QList<QSslCertificate> certs = QSslCertificate::fromDevice(&f, QSsl::Pem);
             f.close();
-            if (certs.isEmpty())
-                continue;
+            if (certs.isEmpty()) continue;
 
             if (!domain.isEmpty()) {
                 QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
@@ -560,8 +528,7 @@ bool HttpServer::loadCertFiles(const QString& certDir)
 
             QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
             QString cn = cns.isEmpty() ? "(no CN)" : cns.first();
-            Logger::info(QString("[CERT] Found certificate: CN=%1, file=%2")
-                .arg(cn, path));
+            Logger::info(QString("[CERT] Found certificate: CN=%1, file=%2").arg(cn, path));
             return path;
         }
         return {};
@@ -571,16 +538,13 @@ bool HttpServer::loadCertFiles(const QString& certDir)
     QString certPath = findCert(certDir, false, m_Domain);
 
     // 2. Root dir, any cert
-    if (certPath.isEmpty())
-        certPath = findCert(certDir, false, QString());
+    if (certPath.isEmpty()) certPath = findCert(certDir, false, QString());
 
     // 3. Subdirectories, domain-filtered
-    if (certPath.isEmpty())
-        certPath = findCert(certDir, true, m_Domain);
+    if (certPath.isEmpty()) certPath = findCert(certDir, true, m_Domain);
 
     // 4. Subdirectories, any cert
-    if (certPath.isEmpty())
-        certPath = findCert(certDir, true, QString());
+    if (certPath.isEmpty()) certPath = findCert(certDir, true, QString());
 
     if (certPath.isEmpty()) {
         Logger::warning("No certificate found in " + certDir);
@@ -608,8 +572,7 @@ bool HttpServer::loadCertFiles(const QString& certDir)
                 key = QSslKey(&keyFile, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
                 keyFile.close();
             }
-            if (!key.isNull())
-                keySource = keyPath;
+            if (!key.isNull()) keySource = keyPath;
         }
     }
 
@@ -648,8 +611,8 @@ bool HttpServer::loadCertFiles(const QString& certDir)
         QStringList cns = chain.first().subjectInfo(QSslCertificate::CommonName);
         cn = cns.isEmpty() ? "(no CN)" : cns.first();
     }
-    Logger::info(QString("SSL certificate loaded: CN=%1, cert=%2, key=%3")
-        .arg(cn, certPath, keySource));
+    Logger::info(
+        QString("SSL certificate loaded: CN=%1, cert=%2, key=%3").arg(cn, certPath, keySource));
     return true;
 }
 
@@ -708,8 +671,8 @@ bool HttpServer::loadCertFilesExplicit(const QString& certFilePath)
         QStringList cns = chain.first().subjectInfo(QSslCertificate::CommonName);
         cn = cns.isEmpty() ? "(no CN)" : cns.first();
     }
-    Logger::info(QString("SSL certificate loaded: CN=%1, cert=%2, key=%3")
-        .arg(cn, certFilePath, keySource));
+    Logger::info(
+        QString("SSL certificate loaded: CN=%1, cert=%2, key=%3").arg(cn, certFilePath, keySource));
     return true;
 }
 
@@ -717,16 +680,14 @@ bool HttpServer::loadCert()
 {
     // Case 1: cert_pem / cert_key resolve to PEM data directly (env var or file)
     QByteArray certData = resolvePemValue(m_CertPem);
-    QByteArray keyData  = resolvePemValue(m_CertKey);
+    QByteArray keyData = resolvePemValue(m_CertKey);
 
     // Build-time embedded fallback (GitHub Actions / .env at qmake time)
 #ifdef MW_CERT_PEM
-    if (certData.isEmpty())
-        certData = QByteArray(MW_CERT_PEM);
+    if (certData.isEmpty()) certData = QByteArray(MW_CERT_PEM);
 #endif
 #ifdef MW_CERT_KEY
-    if (keyData.isEmpty())
-        keyData = QByteArray(MW_CERT_KEY);
+    if (keyData.isEmpty()) keyData = QByteArray(MW_CERT_KEY);
 #endif
 
     if (!certData.isEmpty() && !keyData.isEmpty()) {
@@ -738,8 +699,9 @@ bool HttpServer::loadCert()
         if (!m_Domain.isEmpty() && !chain.isEmpty()) {
             QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
             if (cn.compare(m_Domain, Qt::CaseInsensitive) != 0) {
-                Logger::warning(QString("[CERT] Embedded cert CN=%1 does not match domain=%2 — falling back to file scan")
-                    .arg(cn, m_Domain));
+                Logger::warning(QString("[CERT] Embedded cert CN=%1 does not match domain=%2 — "
+                                        "falling back to file scan")
+                                    .arg(cn, m_Domain));
                 certData.clear();
                 keyData.clear();
             }
@@ -749,8 +711,7 @@ bool HttpServer::loadCert()
     if (!certData.isEmpty() && !keyData.isEmpty()) {
         QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
         QSslKey key(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        if (key.isNull())
-            key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+        if (key.isNull()) key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
 
         if (!chain.isEmpty() && !key.isNull()) {
             m_SslConfig = QSslConfiguration::defaultConfiguration();
@@ -759,8 +720,9 @@ bool HttpServer::loadCert()
             m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
 
             QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0, "(no CN)");
-            Logger::info(QString("SSL certificate loaded from source: CN=%1, cert_pem=%2, cert_key=%3")
-                .arg(cn, m_CertPem, m_CertKey));
+            Logger::info(
+                QString("SSL certificate loaded from source: CN=%1, cert_pem=%2, cert_key=%3")
+                    .arg(cn, m_CertPem, m_CertKey));
             return true;
         }
         Logger::warning("Failed to load certificate from cert_pem/cert_key sources");
@@ -792,12 +754,12 @@ bool HttpServer::loadCert()
 
         if (expiry > renewThreshold) {
             Logger::info(QString("SSL certificate valid until %1, no renewal needed")
-                .arg(expiry.toString("yyyy-MM-dd")));
+                             .arg(expiry.toString("yyyy-MM-dd")));
             return true;
         }
 
         Logger::warning(QString("SSL certificate expires %1, attempting lego renewal...")
-            .arg(expiry.toString("yyyy-MM-dd")));
+                            .arg(expiry.toString("yyyy-MM-dd")));
 
         if (renewWithLego()) {
             Logger::info("Certificate renewed, reloading...");
@@ -834,8 +796,8 @@ bool HttpServer::renewWithLego()
 
     if (lego.exitCode() != 0) {
         Logger::warning(QString("lego renew failed (exit %1): %2")
-            .arg(lego.exitCode())
-            .arg(QString::fromUtf8(output).trimmed()));
+                            .arg(lego.exitCode())
+                            .arg(QString::fromUtf8(output).trimmed()));
         return false;
     }
 
@@ -847,16 +809,14 @@ bool HttpServer::reloadTls()
 {
     // Case 1: cert_pem / cert_key resolve to PEM data directly (env var or file)
     QByteArray certData = resolvePemValue(m_CertPem);
-    QByteArray keyData  = resolvePemValue(m_CertKey);
+    QByteArray keyData = resolvePemValue(m_CertKey);
 
     // Build-time embedded fallback (GitHub Actions / .env at qmake time)
 #ifdef MW_CERT_PEM
-    if (certData.isEmpty())
-        certData = QByteArray(MW_CERT_PEM);
+    if (certData.isEmpty()) certData = QByteArray(MW_CERT_PEM);
 #endif
 #ifdef MW_CERT_KEY
-    if (keyData.isEmpty())
-        keyData = QByteArray(MW_CERT_KEY);
+    if (keyData.isEmpty()) keyData = QByteArray(MW_CERT_KEY);
 #endif
 
     if (!certData.isEmpty() && !keyData.isEmpty()) {
@@ -865,8 +825,8 @@ bool HttpServer::reloadTls()
         if (!m_Domain.isEmpty() && !chain.isEmpty()) {
             QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
             if (cn.compare(m_Domain, Qt::CaseInsensitive) != 0) {
-                Logger::warning(QString("[CERT] Reload: embedded cert CN=%1 != domain=%2")
-                    .arg(cn, m_Domain));
+                Logger::warning(
+                    QString("[CERT] Reload: embedded cert CN=%1 != domain=%2").arg(cn, m_Domain));
                 certData.clear();
                 keyData.clear();
             }
@@ -876,8 +836,7 @@ bool HttpServer::reloadTls()
     if (!certData.isEmpty() && !keyData.isEmpty()) {
         QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
         QSslKey key(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        if (key.isNull())
-            key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+        if (key.isNull()) key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
 
         if (!chain.isEmpty() && !key.isNull()) {
             m_SslConfig.setLocalCertificateChain(chain);
@@ -894,8 +853,7 @@ bool HttpServer::reloadTls()
         Logger::warning("[TLS] No certificate directory found, cannot reload");
         return false;
     }
-    if (!loadCertFiles(certDir))
-        return false;
+    if (!loadCertFiles(certDir)) return false;
     applyPublicSslConfig();
     return true;
 }
@@ -905,8 +863,7 @@ bool HttpServer::reloadTls()
 // live server keeps serving the cert captured at construction time.
 void HttpServer::applyPublicSslConfig()
 {
-    if (m_HttpsServer)
-        static_cast<SslServer*>(m_HttpsServer)->setPublicSslConfig(m_SslConfig);
+    if (m_HttpsServer) static_cast<SslServer*>(m_HttpsServer)->setPublicSslConfig(m_SslConfig);
 }
 
 bool HttpServer::generateSelfSignedCert()
@@ -927,8 +884,7 @@ bool HttpServer::generateSelfSignedCert()
 
     for (const QHostAddress& addr : getPrivateLanAddresses()) {
         QHostAddress clean(addr);
-        if (addr.protocol() == QAbstractSocket::IPv6Protocol)
-            clean.setScopeId(QString());
+        if (addr.protocol() == QAbstractSocket::IPv6Protocol) clean.setScopeId(QString());
         sans << "IP:" + clean.toString();
     }
 
@@ -954,14 +910,12 @@ bool HttpServer::generateSelfSignedCert()
 
     QProcess gen;
     gen.setProcessChannelMode(QProcess::MergedChannels);
-    gen.start(findOpenssl(), QStringList()
-        << "req" << "-x509" << "-newkey" << "rsa:2048"
-        << "-keyout" << (certDir + "key.pem")
-        << "-out" << (certDir + "cert.pem")
-        << "-days" << "365" << "-nodes"
-        << "-subj" << "/CN=Moonlight-Web"
-        << "-config" << (certDir + "openssl-san.cnf")
-        << "-extensions" << "v3_req");
+    gen.start(findOpenssl(), QStringList() << "req" << "-x509" << "-newkey" << "rsa:2048"
+                                           << "-keyout" << (certDir + "key.pem") << "-out"
+                                           << (certDir + "cert.pem") << "-days" << "365" << "-nodes"
+                                           << "-subj" << "/CN=Moonlight-Web"
+                                           << "-config" << (certDir + "openssl-san.cnf")
+                                           << "-extensions" << "v3_req");
 
     if (!gen.waitForStarted(5000)) {
         Logger::error("openssl not found in PATH, cannot generate self-signed certificate");
@@ -980,18 +934,17 @@ bool HttpServer::generateSelfSignedCert()
     if (gen.exitCode() != 0) {
         // Try without config file (older OpenSSL < 1.1.1 fallback)
         Logger::warning(QString("openssl -config SAN failed (exit %1): %2")
-            .arg(gen.exitCode())
-            .arg(QString::fromUtf8(output).trimmed()));
+                            .arg(gen.exitCode())
+                            .arg(QString::fromUtf8(output).trimmed()));
 
         QFile::remove(certDir + "key.pem");
         QFile::remove(certDir + "cert.pem");
 
         gen.start(findOpenssl(), QStringList()
-            << "req" << "-x509" << "-newkey" << "rsa:2048"
-            << "-keyout" << (certDir + "key.pem")
-            << "-out" << (certDir + "cert.pem")
-            << "-days" << "365" << "-nodes"
-            << "-subj" << "/CN=Moonlight-Web");
+                                     << "req" << "-x509" << "-newkey" << "rsa:2048"
+                                     << "-keyout" << (certDir + "key.pem") << "-out"
+                                     << (certDir + "cert.pem") << "-days" << "365" << "-nodes"
+                                     << "-subj" << "/CN=Moonlight-Web");
 
         if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000)) {
             Logger::error("openssl fallback failed");
@@ -999,20 +952,20 @@ bool HttpServer::generateSelfSignedCert()
         }
         if (gen.exitCode() != 0) {
             Logger::error(QString("openssl fallback failed (exit %1): %2")
-                .arg(gen.exitCode())
-                .arg(QString::fromUtf8(gen.readAll()).trimmed()));
+                              .arg(gen.exitCode())
+                              .arg(QString::fromUtf8(gen.readAll()).trimmed()));
             return false;
         }
 
         Logger::info("Self-signed certificate generated WITHOUT SANs (OpenSSL too old)");
     } else {
         Logger::info(QString("Self-signed certificate generated with %1 SANs in %2")
-            .arg(sans.size()).arg(certDir));
+                         .arg(sans.size())
+                         .arg(certDir));
     }
 
     // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).
-    QFile::setPermissions(certDir + "key.pem",
-                          QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    QFile::setPermissions(certDir + "key.pem", QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     return loadCertFiles(certDir);
 }
 
@@ -1048,8 +1001,7 @@ void HttpServer::ensureLocalSslConfig()
         // Strip scope ID from IPv6 addresses (e.g. "%ethernet_32770")
         // — OpenSSL SAN entries only accept bare IPv6 addresses.
         QHostAddress clean(addr);
-        if (addr.protocol() == QAbstractSocket::IPv6Protocol)
-            clean.setScopeId(QString());
+        if (addr.protocol() == QAbstractSocket::IPv6Protocol) clean.setScopeId(QString());
         sans << "IP:" + clean.toString();
     }
 
@@ -1071,34 +1023,29 @@ void HttpServer::ensureLocalSslConfig()
 
     QProcess gen;
     gen.setProcessChannelMode(QProcess::MergedChannels);
-    gen.start(findOpenssl(), QStringList()
-        << "req" << "-x509" << "-newkey" << "rsa:2048"
-        << "-keyout" << keyPath
-        << "-out" << certPath
-        << "-days" << "365" << "-nodes"
-        << "-subj" << "/CN=Moonlight-Web"
-        << "-config" << configPath
-        << "-extensions" << "v3_req");
+    gen.start(findOpenssl(), QStringList() << "req" << "-x509" << "-newkey" << "rsa:2048"
+                                           << "-keyout" << keyPath << "-out" << certPath << "-days"
+                                           << "365" << "-nodes"
+                                           << "-subj" << "/CN=Moonlight-Web"
+                                           << "-config" << configPath << "-extensions" << "v3_req");
 
-    if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000)
-        || gen.exitCode() != 0) {
+    if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000) || gen.exitCode() != 0) {
         QByteArray errOut = gen.readAll().trimmed();
         Logger::warning(QString("[CERT] Local cert with SANs failed (exit=%1): %2")
-            .arg(gen.exitCode()).arg(QString::fromUtf8(errOut)));
+                            .arg(gen.exitCode())
+                            .arg(QString::fromUtf8(errOut)));
         Logger::warning("[CERT] Retrying without SANs...");
         QFile::remove(certPath);
         QFile::remove(keyPath);
-        gen.start(findOpenssl(), QStringList()
-            << "req" << "-x509" << "-newkey" << "rsa:2048"
-            << "-keyout" << keyPath
-            << "-out" << certPath
-            << "-days" << "365" << "-nodes"
-            << "-subj" << "/CN=Moonlight-Web");
-        if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000)
-            || gen.exitCode() != 0) {
+        gen.start(findOpenssl(), QStringList() << "req" << "-x509" << "-newkey" << "rsa:2048"
+                                               << "-keyout" << keyPath << "-out" << certPath
+                                               << "-days" << "365" << "-nodes"
+                                               << "-subj" << "/CN=Moonlight-Web");
+        if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000) || gen.exitCode() != 0) {
             QByteArray errOut2 = gen.readAll().trimmed();
             Logger::error(QString("[CERT] Cannot generate local self-signed cert (exit=%1): %2")
-                .arg(gen.exitCode()).arg(QString::fromUtf8(errOut2)));
+                              .arg(gen.exitCode())
+                              .arg(QString::fromUtf8(errOut2)));
             return;
         }
     }
@@ -1146,9 +1093,9 @@ void HttpServer::ensureLocalSslConfig()
 bool HttpServer::start(quint16 preferredHttpsPort)
 {
     Logger::info(QString("Qt SSL support=%1 build=%2 runtime=%3")
-        .arg(QSslSocket::supportsSsl() ? "yes" : "NO")
-        .arg(QSslSocket::sslLibraryBuildVersionString())
-        .arg(QSslSocket::sslLibraryVersionString()));
+                     .arg(QSslSocket::supportsSsl() ? "yes" : "NO")
+                     .arg(QSslSocket::sslLibraryBuildVersionString())
+                     .arg(QSslSocket::sslLibraryVersionString()));
 
     m_HttpsPort = preferredHttpsPort;
     bool hasHttps = loadCert();
@@ -1159,16 +1106,15 @@ bool HttpServer::start(quint16 preferredHttpsPort)
     // In the fallback case (no public cert, self-signed used as default),
     // ensureLocalSslConfig() regenerates the cert from scratch — the ~300ms
     // overhead is acceptable at startup and ensures SANs are always up-to-date.
-    if (hasHttps)
-        ensureLocalSslConfig();
+    if (hasHttps) ensureLocalSslConfig();
 
     // If the default SSL config is a self-signed cert (no public PositiveSSL/LE
     // cert was found), sync the local config into the default config.
     // ensureLocalSslConfig() already generated the freshest cert with SANs
     // for current LAN IPs, so this gives the default config the same SANs.
-    if (hasHttps && !m_SslConfig.localCertificate().isNull()
-        && m_SslConfig.localCertificate().isSelfSigned()
-        && !m_LocalSslConfig.localCertificate().isNull()) {
+    if (hasHttps && !m_SslConfig.localCertificate().isNull() &&
+        m_SslConfig.localCertificate().isSelfSigned() &&
+        !m_LocalSslConfig.localCertificate().isNull()) {
         m_SslConfig = m_LocalSslConfig;
         Logger::info("[CERT] Default config synced to local self-signed cert with SANs");
     }
@@ -1190,9 +1136,8 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         if (tryHttpPort(m_HttpPort)) {
             httpOk = true;
         } else {
-            Logger::warning("HTTP port " + QString::number(m_HttpPort)
-                            + " unavailable (" + m_HttpServer->errorString()
-                            + "), scanning fallback range...");
+            Logger::warning("HTTP port " + QString::number(m_HttpPort) + " unavailable (" +
+                            m_HttpServer->errorString() + "), scanning fallback range...");
         }
 
         // 2. Fallback: scan from 49080 upward
@@ -1206,8 +1151,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         }
 
         if (httpOk) {
-            connect(m_HttpServer, &QTcpServer::newConnection,
-                    this, &HttpServer::onHttpConnection);
+            connect(m_HttpServer, &QTcpServer::newConnection, this, &HttpServer::onHttpConnection);
             Logger::info("HTTP server on port " + QString::number(m_HttpPort));
         } else {
             Logger::error("HTTP server failed: no available port in any range");
@@ -1221,19 +1165,15 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         // Lambda to create and test an SslServer on a given port
         auto tryHttpsPort = [this](quint16 port) -> SslServer* {
             auto* ssl = new SslServer(
-                m_SslConfig,
-                m_LocalSslConfig,
+                m_SslConfig, m_LocalSslConfig,
                 [this](QSslSocket* socket) {
                     m_Buffers[socket] = QByteArray();
                     connect(socket, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
                     connect(socket, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
-                    if (socket->bytesAvailable() > 0)
-                        onReadyReadSocket(socket);
+                    if (socket->bytesAvailable() > 0) onReadyReadSocket(socket);
                 },
-                this
-            );
-            if (ssl->listen(QHostAddress::Any, port))
-                return ssl;
+                this);
+            if (ssl->listen(QHostAddress::Any, port)) return ssl;
             delete ssl;
             return nullptr;
         };
@@ -1241,8 +1181,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         // 1. Try the preferred port (default 443, or from settings.json)
         Logger::info("HTTPS attempting preferred port " + QString::number(preferredHttpsPort));
         m_HttpsServer = tryHttpsPort(preferredHttpsPort);
-        if (m_HttpsServer)
-            m_ActiveHttpsPort = m_HttpsServer->serverPort();
+        if (m_HttpsServer) m_ActiveHttpsPort = m_HttpsServer->serverPort();
 
         // 2. Fallback range 1: 49443 to 65443, step 1000
         if (!m_HttpsServer) {
@@ -1301,16 +1240,15 @@ void HttpServer::stop()
 bool HttpServer::changeHttpsPort(quint16 newPort)
 {
     quint16 oldPort = m_ActiveHttpsPort;
-    Logger::info(QString("Changing HTTPS port from %1 to %2...")
-        .arg(oldPort)
-        .arg(newPort));
+    Logger::info(QString("Changing HTTPS port from %1 to %2...").arg(oldPort).arg(newPort));
 
     m_HttpsPort = newPort;
     stop();
 
     if (!start(newPort)) {
         Logger::error(QString("Failed to bind new HTTPS port %1, falling back to %2")
-            .arg(newPort).arg(oldPort));
+                          .arg(newPort)
+                          .arg(oldPort));
         if (!start(oldPort)) {
             Logger::error("Could not restart HTTPS server on any port");
             return false;
@@ -1324,14 +1262,13 @@ bool HttpServer::changeHttpsPort(quint16 newPort)
 bool HttpServer::isLanHost(const QString& host) const
 {
     QString h = host.toLower().trimmed();
-    if (h.isEmpty()) return true;  // Missing Host header → assume LAN
+    if (h.isEmpty()) return true; // Missing Host header → assume LAN
 
     // Localhost
-    if (h == "localhost" || h == "127.0.0.1" || h == "::1")
-        return true;
+    if (h == "localhost" || h == "127.0.0.1" || h == "::1") return true;
 
     QHostAddress addr(h);
-    if (addr.isNull()) return false;  // Not an IP → public domain (e.g. tunnel endpoint)
+    if (addr.isNull()) return false; // Not an IP → public domain (e.g. tunnel endpoint)
 
     if (addr.isLoopback()) return true;
 
@@ -1352,21 +1289,17 @@ bool HttpServer::isLanHost(const QString& host) const
 bool HttpServer::isLocalRequest(const QString& addr)
 {
     if (addr.isEmpty()) return false;
-    return addr == "127.0.0.1"
-        || addr == "::1"
-        || addr == "::ffff:127.0.0.1"
-        || QHostAddress(addr).isLoopback();
+    return addr == "127.0.0.1" || addr == "::1" || addr == "::ffff:127.0.0.1" ||
+           QHostAddress(addr).isLoopback();
 }
 
 bool HttpServer::isAuthenticated(const HttpRequest& req) const
 {
-    if (!m_AuthManager)
-        return true; // No auth manager = auth disabled
+    if (!m_AuthManager) return true; // No auth manager = auth disabled
 
     // Parse Cookie header for mw_session token
     QString cookie = req.headers.value("cookie");
-    if (cookie.isEmpty())
-        return false;
+    if (cookie.isEmpty()) return false;
 
     // Cookies are separated by "; " or ";"
     QStringList cookies = cookie.split(";");
@@ -1374,8 +1307,7 @@ bool HttpServer::isAuthenticated(const HttpRequest& req) const
         QString trimmed = c.trimmed();
         if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
             QString token = trimmed.mid(QStringLiteral("mw_session=").length());
-            if (m_AuthManager->validateSession(token))
-                return true;
+            if (m_AuthManager->validateSession(token)) return true;
         }
     }
     return false;
@@ -1462,8 +1394,7 @@ void HttpServer::onDisconnected()
         m_PendingAsyncSockets.remove(socket);
         if (wasPending) {
             qWarning() << "[HttpServer] onDisconnected — socket had pending async request!"
-                       << "peer=" << socket->peerAddress().toString()
-                       << ":" << socket->peerPort()
+                       << "peer=" << socket->peerAddress().toString() << ":" << socket->peerPort()
                        << "bytesToWrite=" << socket->bytesToWrite();
         }
         socket->deleteLater();
@@ -1500,13 +1431,9 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         // client + public Host header = tunnel already handled TLS).
         if (!(isLocalClient && isPublicDomain)) {
             QString portPart;
-            if (m_ActiveHttpsPort != 443)
-                portPart = QString(":%1").arg(m_ActiveHttpsPort);
+            if (m_ActiveHttpsPort != 443) portPart = QString(":%1").arg(m_ActiveHttpsPort);
 
-            QString location = QString("https://%1%2%3")
-                .arg(hostname)
-                .arg(portPart)
-                .arg(req.path);
+            QString location = QString("https://%1%2%3").arg(hostname).arg(portPart).arg(req.path);
             HttpResponse resp;
             resp.statusCode = 307;
             resp.headers["Location"] = location;
@@ -1520,8 +1447,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         // SPA fallback: for any non-API path that doesn't match a real file,
         // serve index.html so the frontend can handle its own routing via
         // the History API (e.g. /admin, /settings).
-        if (resp.statusCode == 404)
-            resp = m_StaticFiles->serveFile("/");
+        if (resp.statusCode == 404) resp = m_StaticFiles->serveFile("/");
         sendResponse(socket, resp);
         return;
     }
@@ -1530,12 +1456,9 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // Exemptions: localhost, /api/auth/*, /api/health, /api/server/hostname.
     // Only /api/server/hostname is public (the login screen displays the PC name
     // before authentication); /api/server/status (ports) now requires a session.
-    if (m_AuthManager
-        && !HttpServer::isLocalRequest(req.clientAddress)
-        && req.path != "/api/health"
-        && req.path != "/api/server/hostname"
-        && !req.path.startsWith("/api/auth/")
-        && !isAuthenticated(req)) {
+    if (m_AuthManager && !HttpServer::isLocalRequest(req.clientAddress) &&
+        req.path != "/api/health" && req.path != "/api/server/hostname" &&
+        !req.path.startsWith("/api/auth/") && !isAuthenticated(req)) {
         QJsonObject obj;
         obj["error"] = "authentication_required";
         HttpResponse resp = HttpResponse::json(obj, 401);
@@ -1559,8 +1482,9 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             m_PendingAsyncSockets.remove(socket);
             sendResponse(socket, resp);
         } else {
-            qWarning() << "[HttpServer] Respond called but socket no longer pending — response discarded"
-                       << "socket=" << socket << "status=" << resp.statusCode;
+            qWarning()
+                << "[HttpServer] Respond called but socket no longer pending — response discarded"
+                << "socket=" << socket << "status=" << resp.statusCode;
         }
     });
 }
@@ -1617,10 +1541,8 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     // Disconnect HttpServer's handlers from this socket so they don't interfere
     // with the bidirectional proxy.
-    QObject::disconnect(clientSocket, &QTcpSocket::readyRead,
-                         this, &HttpServer::onReadyRead);
-    QObject::disconnect(clientSocket, &QTcpSocket::disconnected,
-                         this, &HttpServer::onDisconnected);
+    QObject::disconnect(clientSocket, &QTcpSocket::readyRead, this, &HttpServer::onReadyRead);
+    QObject::disconnect(clientSocket, &QTcpSocket::disconnected, this, &HttpServer::onDisconnected);
 
     // Target socket: connects to the local WebSocket server (signaling or stream relay).
     QTcpSocket* target = new QTcpSocket(this);
@@ -1634,8 +1556,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
         *guard = true;
         if (clientSocket->state() == QAbstractSocket::ConnectedState)
             clientSocket->disconnectFromHost();
-        if (target->state() == QAbstractSocket::ConnectedState)
-            target->disconnectFromHost();
+        if (target->state() == QAbstractSocket::ConnectedState) target->disconnectFromHost();
         target->deleteLater();
         clientSocket->deleteLater();
         delete guard;
@@ -1645,8 +1566,8 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // this handler ensures the target socket is not left dangling.
     QObject::connect(clientSocket, &QTcpSocket::disconnected, cleanup);
 
-    QObject::connect(target, &QTcpSocket::connected,
-        [clientSocket, target, upgradeRequest, guard]() {
+    QObject::connect(
+        target, &QTcpSocket::connected, [clientSocket, target, upgradeRequest, guard]() {
             // Late connection after cleanup: tear down and return.
             if (*guard) {
                 target->disconnectFromHost();
@@ -1659,27 +1580,22 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
             // Bidirectional forwarding: client <-> signaling server.
             QObject::connect(clientSocket, &QTcpSocket::readyRead,
-                [clientSocket, target]() {
-                    target->write(clientSocket->readAll());
-                });
+                             [clientSocket, target]() { target->write(clientSocket->readAll()); });
             QObject::connect(target, &QTcpSocket::readyRead,
-                [clientSocket, target]() {
-                    clientSocket->write(target->readAll());
-                });
+                             [clientSocket, target]() { clientSocket->write(target->readAll()); });
         });
 
     // Post-connect cleanup: when either side disconnects or errors out.
     QObject::connect(target, &QTcpSocket::disconnected, cleanup);
     QObject::connect(target, &QAbstractSocket::errorOccurred,
-        [target, cleanup](QAbstractSocket::SocketError) {
-            qWarning() << "[HttpServer] WebSocket proxy: connection error:"
-                       << target->errorString();
-            cleanup();
-        });
+                     [target, cleanup](QAbstractSocket::SocketError) {
+                         qWarning() << "[HttpServer] WebSocket proxy: connection error:"
+                                    << target->errorString();
+                         cleanup();
+                     });
 
     target->connectToHost(QHostAddress::LocalHost, targetPort);
 }
-
 
 HttpRequest HttpServer::parseRequest(const QByteArray& raw) const
 {
@@ -1724,8 +1640,7 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     // periodic /api/hosts polling.
     if (response.statusCode >= 400) {
         qInfo() << "[HttpServer] sendResponse, status=" << response.statusCode
-                << "bodySize=" << response.body.size()
-                << "socket=" << socket
+                << "bodySize=" << response.body.size() << "socket=" << socket
                 << "peer=" << (socket ? socket->peerAddress().toString() : "null")
                 << "state=" << (socket ? socket->state() : -1);
     }
@@ -1740,10 +1655,11 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     case 403: statusText = "Forbidden"; break;
     case 404: statusText = "Not Found"; break;
     case 500: statusText = "Internal Server Error"; break;
-    default:  statusText = "Unknown"; break;
+    default: statusText = "Unknown"; break;
     }
 
-    respData.append("HTTP/1.1 " + QByteArray::number(response.statusCode) + " " + statusText.toUtf8() + "\r\n");
+    respData.append("HTTP/1.1 " + QByteArray::number(response.statusCode) + " " +
+                    statusText.toUtf8() + "\r\n");
     respData.append("Content-Type: " + response.contentType.toUtf8() + "\r\n");
     respData.append("Content-Length: " + QByteArray::number(response.body.size()) + "\r\n");
     // No Access-Control-Allow-Origin: the frontend is served same-origin by this
@@ -1759,7 +1675,11 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     // required by the WASM Opus decoder fallback used on iOS/WebKit.
     // Google Fonts: stylesheet from fonts.googleapis.com, font files from
     // fonts.gstatic.com (graceful fallback to system fonts if offline).
-    respData.append("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' wss:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
+    respData.append(
+        "Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' "
+        "https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' wss:; "
+        "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
     respData.append("Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n");
 
     for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)

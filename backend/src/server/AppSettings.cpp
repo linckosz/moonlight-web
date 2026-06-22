@@ -62,8 +62,7 @@ quint16 AppSettings::httpPort(quint16 fallback) const
 {
     QJsonObject obj = readAll();
     auto it = obj.find("http_port");
-    if (it != obj.end())
-        return static_cast<quint16>(it->toInt());
+    if (it != obj.end()) return static_cast<quint16>(it->toInt());
     return fallback;
 }
 
@@ -103,7 +102,7 @@ QString AppSettings::videoCodecToString(VideoCodec codec)
     case VideoCodec::Auto: return "auto";
     case VideoCodec::H264: return "h264";
     case VideoCodec::HEVC: return "hevc";
-    case VideoCodec::AV1:  return "av1";
+    case VideoCodec::AV1: return "av1";
     }
     return "auto";
 }
@@ -113,16 +112,15 @@ VideoCodec AppSettings::videoCodecFromString(const QString& str)
     QString lower = str.trimmed().toLower();
     if (lower == "h264") return VideoCodec::H264;
     if (lower == "hevc") return VideoCodec::HEVC;
-    if (lower == "av1")  return VideoCodec::AV1;
-    return VideoCodec::Auto;  // default / fallback for "auto" or unknown
+    if (lower == "av1") return VideoCodec::AV1;
+    return VideoCodec::Auto; // default / fallback for "auto" or unknown
 }
 
 VideoCodec AppSettings::videoCodec() const
 {
     QJsonObject obj = readAll();
     auto it = obj.find("video_codec");
-    if (it == obj.end())
-        return VideoCodec::Auto;
+    if (it == obj.end()) return VideoCodec::Auto;
     return videoCodecFromString(it->toString());
 }
 
@@ -176,8 +174,7 @@ void AppSettings::setStreamHeight(int height)
     QJsonObject obj = readAll();
     // Valid values: 720, 1080, 1440, 2160
     QList<int> valid = {720, 1080, 1440, 2160};
-    if (!valid.contains(height))
-        height = 1080;
+    if (!valid.contains(height)) height = 1080;
     obj["stream_height"] = height;
     writeAll(obj);
 }
@@ -268,8 +265,7 @@ void AppSettings::setShowPerformanceStats(bool enabled)
 QString AppSettings::stunServer() const
 {
     QJsonObject obj = readAll();
-    return obj.value("stun_server").toString(
-        QStringLiteral("stun:stun.l.google.com:19302"));
+    return obj.value("stun_server").toString(QStringLiteral("stun:stun.l.google.com:19302"));
 }
 
 void AppSettings::setStunServer(const QString& url)
@@ -285,8 +281,7 @@ QByteArray AppSettings::hmacKey() const
 {
     QJsonObject obj = readAll();
     QString b64 = obj.value("hmac_key").toString();
-    if (b64.isEmpty())
-        return {};
+    if (b64.isEmpty()) return {};
     return QByteArray::fromBase64(b64.toUtf8());
 }
 
@@ -303,8 +298,7 @@ QString AppSettings::transport() const
 {
     QJsonObject obj = readAll();
     QString t = obj.value("transport").toString();
-    if (t.isEmpty())
-        return "webrtc";  // default
+    if (t.isEmpty()) return "webrtc"; // default
     return t;
 }
 
@@ -374,7 +368,8 @@ void AppSettings::setRegisteredUid(const QString& id)
 
 bool AppSettings::isValidFqdn(const QString& domain)
 {
-    static const QRegularExpression re(QStringLiteral("^[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9.-]*[a-zA-Z0-9]$"));
+    static const QRegularExpression re(
+        QStringLiteral("^[a-zA-Z0-9][a-zA-Z0-9.-]*\\.[a-zA-Z0-9.-]*[a-zA-Z0-9]$"));
     return re.match(domain).hasMatch();
 }
 
@@ -382,8 +377,7 @@ QString AppSettings::domain() const
 {
     // Compute the default domain from unique_id + base domain
     QString baseDomain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
-    if (baseDomain.isEmpty())
-        baseDomain = QStringLiteral("moonlightweb.top");
+    if (baseDomain.isEmpty()) baseDomain = QStringLiteral("moonlightweb.top");
 
     QString uid = uniqueId();
     QString computed = uid.isEmpty() ? baseDomain : (uid + QLatin1Char('.') + baseDomain);
@@ -391,8 +385,8 @@ QString AppSettings::domain() const
     // If stored domain is a real FQDN different from the default → custom domain
     QJsonObject obj = readAll();
     QString stored = obj.value("domain").toString();
-    if (!stored.isEmpty() && stored != QStringLiteral("MW_DOMAIN")
-        && isValidFqdn(stored) && stored != computed)
+    if (!stored.isEmpty() && stored != QStringLiteral("MW_DOMAIN") && isValidFqdn(stored) &&
+        stored != computed)
         return stored;
 
     return computed;
@@ -435,8 +429,7 @@ QString AppSettings::transportMode() const
 {
     QJsonObject obj = readAll();
     QString t = obj.value("transport_mode").toString();
-    if (t.isEmpty())
-        return "auto";
+    if (t.isEmpty()) return "auto";
     return t;
 }
 
@@ -472,7 +465,8 @@ QString AppSettings::videoEnhancementAlgo() const
 void AppSettings::setVideoEnhancementAlgo(const QString& algo)
 {
     QJsonObject obj = readAll();
-    obj["video_enhancement_algo"] = (algo == "sgsr" || algo == "fsr1" || algo == "force2d") ? algo : "auto";
+    obj["video_enhancement_algo"] =
+        (algo == "sgsr" || algo == "fsr1" || algo == "force2d") ? algo : "auto";
     writeAll(obj);
 }
 
@@ -557,4 +551,3 @@ void AppSettings::setCertAuthEnabled(bool enabled)
     obj["cert_auth_enabled"] = enabled;
     writeAll(obj);
 }
-

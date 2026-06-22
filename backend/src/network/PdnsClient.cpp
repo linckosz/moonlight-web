@@ -68,14 +68,12 @@ QNetworkReply* PdnsClient::sendGet(const QString& url, int timeoutMs)
     return reply;
 }
 
-QNetworkReply* PdnsClient::sendPatch(const QString& url, const QByteArray& body,
-                                     int timeoutMs)
+QNetworkReply* PdnsClient::sendPatch(const QString& url, const QByteArray& body, int timeoutMs)
 {
     QNetworkRequest request{QUrl(url)};
     request.setRawHeader("X-API-Key", m_Token.toUtf8());
     request.setRawHeader("Accept", "application/json");
-    request.setHeader(QNetworkRequest::ContentTypeHeader,
-                      QStringLiteral("application/json"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
     QBuffer* buf = new QBuffer;
     buf->setData(body);
@@ -119,10 +117,9 @@ QString PdnsClient::apiBaseUrl()
     // (it need not live under the application's domain), so it is configured
     // explicitly. Fallback derives "https://api.{MW_DOMAIN}/..." when unset.
     QString env = QString::fromUtf8(qgetenv("MW_PDNS_URL"));
-    if (!env.isEmpty())
-        return env;
-    return QStringLiteral("https://api.") + baseDomain()
-           + QStringLiteral("/api/v1/servers/localhost");
+    if (!env.isEmpty()) return env;
+    return QStringLiteral("https://api.") + baseDomain() +
+           QStringLiteral("/api/v1/servers/localhost");
 }
 
 QString PdnsClient::zoneName()
@@ -144,8 +141,7 @@ QString PdnsClient::fqdn(const QString& subname)
 // Check subdomain availability
 // ---------------------------------------------------------------------------
 
-bool PdnsClient::checkSubdomainAvailable(const QString& subname,
-                                          QString& errorMsg)
+bool PdnsClient::checkSubdomainAvailable(const QString& subname, QString& errorMsg)
 {
     // GET /zones/moonlightweb.top.?rrset_name={subname}.moonlightweb.top.&rrset_type=A
     QString zone = zoneName();
@@ -160,20 +156,19 @@ bool PdnsClient::checkSubdomainAvailable(const QString& subname,
     url.setQuery(query);
 
     QString urlStr = url.toString();
-    qInfo() << "[PdnsClient] Checking subdomain:" << subname
-            << "URL:" << urlStr;
+    qInfo() << "[PdnsClient] Checking subdomain:" << subname << "URL:" << urlStr;
 
     QNetworkReply* reply = sendGet(urlStr);
 
     if (!reply) {
-        errorMsg = QStringLiteral("PowerDNS request timed out (check network to %1)").arg(apiBaseUrl());
+        errorMsg =
+            QStringLiteral("PowerDNS request timed out (check network to %1)").arg(apiBaseUrl());
         qWarning() << "[PdnsClient]" << errorMsg;
         emit error(errorMsg);
         return false;
     }
 
-    int statusCode = reply->attribute(
-        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QByteArray responseData = reply->readAll();
     reply->deleteLater();
 
@@ -182,7 +177,7 @@ bool PdnsClient::checkSubdomainAvailable(const QString& subname,
 
     if (statusCode != 200) {
         errorMsg = QStringLiteral("PowerDNS check subdomain failed (HTTP %1): %2")
-                   .arg(QString::number(statusCode), QString::fromUtf8(responseData));
+                       .arg(QString::number(statusCode), QString::fromUtf8(responseData));
         qWarning() << "[PdnsClient]" << errorMsg;
         emit error(errorMsg);
         return false;
@@ -204,7 +199,7 @@ bool PdnsClient::checkSubdomainAvailable(const QString& subname,
             rr.value(QStringLiteral("type")).toString() == QStringLiteral("A")) {
             // Found an existing A record
             errorMsg = QStringLiteral("Subdomain %1 already has an A record")
-                       .arg(subname + QStringLiteral(".moonlightweb.top"));
+                           .arg(subname + QStringLiteral(".moonlightweb.top"));
             return false;
         }
     }
@@ -218,9 +213,8 @@ bool PdnsClient::checkSubdomainAvailable(const QString& subname,
 // Create or update A record (unified PATCH REPLACE)
 // ---------------------------------------------------------------------------
 
-bool PdnsClient::createOrUpdateSubdomain(const QString& subname,
-                                          const QString& ip, int ttl,
-                                          QString& errorMsg)
+bool PdnsClient::createOrUpdateSubdomain(const QString& subname, const QString& ip, int ttl,
+                                         QString& errorMsg)
 {
     QString zone = zoneName();
     QString rrsetName = fqdn(subname);
@@ -250,7 +244,8 @@ bool PdnsClient::createOrUpdateSubdomain(const QString& subname,
 
     QString url = apiBaseUrl() + QStringLiteral("/zones/") + zone;
 
-    qInfo() << "[PdnsClient] Creating/updating A record:" << subname << ".moonlightweb.top ->" << ip;
+    qInfo() << "[PdnsClient] Creating/updating A record:" << subname << ".moonlightweb.top ->"
+            << ip;
     QNetworkReply* reply = sendPatch(url, payload);
 
     if (!reply) {
@@ -260,19 +255,19 @@ bool PdnsClient::createOrUpdateSubdomain(const QString& subname,
         return false;
     }
 
-    int statusCode = reply->attribute(
-        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QByteArray responseData = reply->readAll();
     reply->deleteLater();
 
     qInfo() << "[PdnsClient] createOrUpdateSubdomain HTTP" << statusCode;
 
     if (statusCode == 204) {
-        qInfo() << "[PdnsClient] A record created/updated:" << subname << ".moonlightweb.top ->" << ip;
+        qInfo() << "[PdnsClient] A record created/updated:" << subname << ".moonlightweb.top ->"
+                << ip;
         return true;
     } else {
         errorMsg = QStringLiteral("PowerDNS create/update A record failed (HTTP %1): %2")
-                   .arg(QString::number(statusCode), QString::fromUtf8(responseData));
+                       .arg(QString::number(statusCode), QString::fromUtf8(responseData));
         qWarning() << "[PdnsClient]" << errorMsg;
         emit error(errorMsg);
         return false;
@@ -313,8 +308,7 @@ bool PdnsClient::deleteSubdomain(const QString& subname, QString& errorMsg)
         return false;
     }
 
-    int statusCode = reply->attribute(
-        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     reply->deleteLater();
 
     qInfo() << "[PdnsClient] deleteSubdomain HTTP" << statusCode;
@@ -323,12 +317,12 @@ bool PdnsClient::deleteSubdomain(const QString& subname, QString& errorMsg)
         qInfo() << "[PdnsClient] A record deleted:" << subname;
         return true;
     } else if (statusCode == 404 || statusCode == 422) {
-        qInfo() << "[PdnsClient] A record already deleted:" << subname
-                << "(HTTP" << statusCode << ")";
+        qInfo() << "[PdnsClient] A record already deleted:" << subname << "(HTTP" << statusCode
+                << ")";
         return true;
     } else {
         errorMsg = QStringLiteral("PowerDNS delete A record failed (HTTP %1)")
-                   .arg(QString::number(statusCode));
+                       .arg(QString::number(statusCode));
         qWarning() << "[PdnsClient]" << errorMsg;
         emit error(errorMsg);
         return false;
@@ -339,8 +333,8 @@ bool PdnsClient::deleteSubdomain(const QString& subname, QString& errorMsg)
 // TXT record management (ACME DNS-01 challenge)
 // ---------------------------------------------------------------------------
 
-bool PdnsClient::createTxtRecord(const QString& fqdnSubname, const QString& value,
-                                  int ttl, QString& errorMsg)
+bool PdnsClient::createTxtRecord(const QString& fqdnSubname, const QString& value, int ttl,
+                                 QString& errorMsg)
 {
     QString zone = zoneName();
     // fqdnSubname is passed as the full FQDN with trailing dot, e.g.
@@ -380,8 +374,7 @@ bool PdnsClient::createTxtRecord(const QString& fqdnSubname, const QString& valu
         return false;
     }
 
-    int statusCode = reply->attribute(
-        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     reply->deleteLater();
 
     qInfo() << "[PdnsClient] createTxtRecord HTTP" << statusCode;
@@ -391,15 +384,14 @@ bool PdnsClient::createTxtRecord(const QString& fqdnSubname, const QString& valu
         return true;
     } else {
         errorMsg = QStringLiteral("PowerDNS create TXT record failed (HTTP %1)")
-                   .arg(QString::number(statusCode));
+                       .arg(QString::number(statusCode));
         qWarning() << "[PdnsClient]" << errorMsg;
         emit error(errorMsg);
         return false;
     }
 }
 
-bool PdnsClient::getTxtRecord(const QString& fqdnSubname, QString& valueOut,
-                              QString& errorMsg)
+bool PdnsClient::getTxtRecord(const QString& fqdnSubname, QString& valueOut, QString& errorMsg)
 {
     valueOut.clear();
 
@@ -416,14 +408,12 @@ bool PdnsClient::getTxtRecord(const QString& fqdnSubname, QString& valueOut,
         return false;
     }
 
-    int statusCode = reply->attribute(
-        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QByteArray responseData = reply->readAll();
     reply->deleteLater();
 
     if (statusCode != 200) {
-        errorMsg = QStringLiteral("PowerDNS getTxtRecord failed (HTTP %1)")
-                   .arg(statusCode);
+        errorMsg = QStringLiteral("PowerDNS getTxtRecord failed (HTTP %1)").arg(statusCode);
         return false;
     }
 
@@ -440,8 +430,8 @@ bool PdnsClient::getTxtRecord(const QString& fqdnSubname, QString& valueOut,
             rr.value(QStringLiteral("type")).toString() == QStringLiteral("TXT")) {
             const QJsonArray records = rr.value(QStringLiteral("records")).toArray();
             if (!records.isEmpty()) {
-                QString content = records.first().toObject()
-                                  .value(QStringLiteral("content")).toString();
+                QString content =
+                    records.first().toObject().value(QStringLiteral("content")).toString();
                 // Strip the surrounding quotes PowerDNS stores for TXT content.
                 if (content.size() >= 2 && content.startsWith('"') && content.endsWith('"'))
                     content = content.mid(1, content.size() - 2);
@@ -450,7 +440,7 @@ bool PdnsClient::getTxtRecord(const QString& fqdnSubname, QString& valueOut,
             return true;
         }
     }
-    return true;  // query OK, record absent
+    return true; // query OK, record absent
 }
 
 bool PdnsClient::deleteTxtRecord(const QString& fqdnSubname, QString& errorMsg)
@@ -483,8 +473,7 @@ bool PdnsClient::deleteTxtRecord(const QString& fqdnSubname, QString& errorMsg)
         return false;
     }
 
-    int statusCode = reply->attribute(
-        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     reply->deleteLater();
 
     qInfo() << "[PdnsClient] deleteTxtRecord HTTP" << statusCode;
@@ -494,12 +483,12 @@ bool PdnsClient::deleteTxtRecord(const QString& fqdnSubname, QString& errorMsg)
         return true;
     } else if (statusCode == 404 || statusCode == 422) {
         // Already gone or no such RRset — not an error
-        qInfo() << "[PdnsClient] TXT record already deleted:" << fqdnSubname
-                << "(HTTP" << statusCode << ")";
+        qInfo() << "[PdnsClient] TXT record already deleted:" << fqdnSubname << "(HTTP"
+                << statusCode << ")";
         return true;
     } else {
         errorMsg = QStringLiteral("PowerDNS delete TXT record failed (HTTP %1)")
-                   .arg(QString::number(statusCode));
+                       .arg(QString::number(statusCode));
         qWarning() << "[PdnsClient]" << errorMsg;
         emit error(errorMsg);
         return false;

@@ -34,25 +34,21 @@ FrameSender::~FrameSender()
 
 void FrameSender::stop()
 {
-    if (m_Stop.exchange(true, std::memory_order_acq_rel))
-        return;
+    if (m_Stop.exchange(true, std::memory_order_acq_rel)) return;
 
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
-        m_Queue.clear();  // Discard pending jobs (releases DataChannel refs)
+        m_Queue.clear(); // Discard pending jobs (releases DataChannel refs)
     }
     m_Cv.notify_all();
 
-    if (m_Thread.joinable())
-        m_Thread.join();
+    if (m_Thread.joinable()) m_Thread.join();
 }
 
-void FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc,
-                          const QByteArray& data, bool isKeyframe, bool isAudio,
-                          uint32_t frameId, uint32_t backendTs)
+void FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data,
+                          bool isKeyframe, bool isAudio, uint32_t frameId, uint32_t backendTs)
 {
-    if (m_Stop.load(std::memory_order_acquire) || !dc)
-        return;
+    if (m_Stop.load(std::memory_order_acquire) || !dc) return;
 
     {
         std::lock_guard<std::mutex> lock(m_Mutex);
@@ -62,14 +58,12 @@ void FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc,
         while (m_Queue.size() >= kMaxQueued) {
             auto it = std::find_if(m_Queue.begin(), m_Queue.end(),
                                    [](const Job& j) { return !j.isKeyframe; });
-            if (it == m_Queue.end())
-                break;  // Only keyframes queued — let them through
+            if (it == m_Queue.end()) break; // Only keyframes queued — let them through
             m_Queue.erase(it);
             m_QueueDrops.fetch_add(1, std::memory_order_relaxed);
         }
 
-        m_Queue.push_back(Job{std::move(dc), data, isKeyframe, isAudio,
-                              frameId, backendTs});
+        m_Queue.push_back(Job{std::move(dc), data, isKeyframe, isAudio, frameId, backendTs});
     }
     m_Cv.notify_one();
 }
@@ -83,8 +77,7 @@ void FrameSender::run()
             m_Cv.wait(lock, [this]() {
                 return m_Stop.load(std::memory_order_acquire) || !m_Queue.empty();
             });
-            if (m_Stop.load(std::memory_order_acquire))
-                return;
+            if (m_Stop.load(std::memory_order_acquire)) return;
             job = std::move(m_Queue.front());
             m_Queue.pop_front();
         }
@@ -94,19 +87,16 @@ void FrameSender::run()
 
 void FrameSender::sendJob(const Job& job)
 {
-    if (m_Stop.load(std::memory_order_acquire))
-        return;
+    if (m_Stop.load(std::memory_order_acquire)) return;
 
     auto& dc = job.dc;
-    if (!dc || !dc->isOpen())
-        return;
+    if (!dc || !dc->isOpen()) return;
 
     const int totalSize = job.data.size();
     const int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
 
     for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-        if (m_Stop.load(std::memory_order_acquire))
-            return;
+        if (m_Stop.load(std::memory_order_acquire)) return;
 
         const int offset = chunkIdx * kMaxPayloadSize;
         const int payloadSize = std::min(kMaxPayloadSize, totalSize - offset);
