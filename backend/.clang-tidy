@@ -25,6 +25,9 @@ Checks: >
   -misc-no-recursion,
   -misc-non-private-member-variables-in-classes,
   -misc-include-cleaner,
+  -misc-const-correctness,
+  -misc-use-anonymous-namespace,
+  -performance-enum-size,
   -performance-no-int-to-ptr
 
 WarningsAsErrors: ''
