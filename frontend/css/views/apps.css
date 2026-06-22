@@ -91,8 +91,18 @@
     word-break: break-word;
 }
 
-/* ── Launching state — discreet label only, no card effect ──────────────── */
-.app-card--launching { cursor: progress; }
+/* ── Launching state ────────────────────────────────────────────────────── */
+/* Keep a yellow edge for the whole launch, even after the pointer leaves
+   (mouseleave/focusout) — otherwise the contour falls back to the cyan edge. */
+.app-card--launching,
+.app-card--launching:hover {
+    cursor: progress;
+    position: relative;
+    box-shadow: var(--edge-accent), var(--glass-highlight);
+    background:
+        linear-gradient(rgba(252, 238, 10, 0.16), rgba(252, 238, 10, 0.16)),
+        var(--surface-glass);
+}
 /* Status label: mono accent yellow, gently blinking to read as "loading". */
 .app-card--launching .app-card-name {
     color: var(--accent-1);
@@ -104,8 +114,41 @@
     0%, 100% { opacity: 1; }
     50%      { opacity: 0.35; }
 }
+
+/* Rotating gradient ring around the card — clockwise, slow, "loader" cue.
+   A conic gradient drawn into a border-thickness ring via mask compositing,
+   notched to follow the CP2077 bevelled corners. */
+@property --app-spin {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+}
+.app-card--launching::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 2px;              /* ring thickness */
+    border-radius: inherit;
+    clip-path: var(--notch-lg);
+    background: conic-gradient(from var(--app-spin),
+        transparent 0deg,
+        transparent 230deg,
+        rgba(252, 238, 10, 0.55) 320deg,
+        transparent 360deg);
+    /* Keep only the padding ring (exclude the inner content box). */
+    -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+    animation: app-spin-ring 3.2s linear infinite;
+}
+@keyframes app-spin-ring { to { --app-spin: 360deg; } }
+
 @media (prefers-reduced-motion: reduce) {
     .app-card--launching .app-card-name { animation: none; }
+    .app-card--launching::before { animation: none; }
 }
 
 @media (max-width: 600px) {

@@ -23,7 +23,7 @@ import { App } from '../models/App.js';
 import { t } from '../i18n/i18n.js';
 
 export class AppListView {
-    constructor(container, host) {
+    constructor(container, host, preloadedApps = null) {
         this.container = container;
         this.host = host;
         this.apps = [];
@@ -31,8 +31,16 @@ export class AppListView {
         this.error = null;
         this._loadInProgress = false;
         this._destroyed = false;
-        this.render();
-        this.load();
+        // When the list was prefetched (e.g. during the stream-exit animation),
+        // render the grid straight away — no loading flash, images already warm.
+        if (Array.isArray(preloadedApps)) {
+            this.apps = preloadedApps;
+            this.loading = false;
+            this.render();
+        } else {
+            this.render();
+            this.load();
+        }
     }
 
     async load() {
