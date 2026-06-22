@@ -1,0 +1,59 @@
+name: Quality
+
+# Fast, cross-platform PR gates that need no full build:
+#   - Frontend: Prettier + ESLint
+#   - C++: clang-format (formatting) + cppcheck (static analysis)
+# The heavy MSVC/Qt build + AddressSanitizer lives in build-asan.yml.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend (Prettier + ESLint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check
+
+  cpp-format:
+    name: C++ clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Pin to the same major.minor as the bundled LLVM (VS2022) to avoid
+      # formatting disagreements across clang-format versions.
+      - run: pip install "clang-format==19.1.7"
+      - name: Check formatting (house style in backend/.clang-format)
+        run: |
+          git ls-files -- 'backend/src/' | grep -E '\.(cpp|h)$' \
+            | xargs clang-format --dry-run --Werror
+
+  cppcheck:
+    name: C++ cppcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Run cppcheck
+        working-directory: backend
+        run: |
+          cppcheck --enable=warning --library=qt --std=c++17 --language=c++ \
+            --inline-suppr \
+            --suppress=missingInclude --suppress=missingIncludeSystem \
+            --suppress=unknownMacro \
+            --error-exitcode=1 -I src src

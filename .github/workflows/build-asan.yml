@@ -1,0 +1,57 @@
+name: Build + AddressSanitizer (Windows)
+
+# Heavy job: full MSVC/Qt backend build with AddressSanitizer (MW_ASAN=1).
+#
+# Manual trigger for now — this needs a first-run shakedown on a clean runner
+# (Qt modules, vendored-submodule prebuild order, the Vulkan SDK include path
+# referenced in backend.pro). Once the build is green, the remaining piece for
+# real value is exercising a stream under ASan so it actually reports (the
+# instrumented binary only flags issues while the code runs).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  asan:
+    name: Backend build (ASan)
+    runs-on: windows-latest
+    env:
+      MW_ASAN: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.11.0'
+          modules: qtwebsockets
+
+      - name: Setup MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Vendored submodules are built by dedicated scripts before qmake runs.
+      - name: Build libdatachannel
+        working-directory: backend
+        run: cmd /c build_libdatachannel.bat
+      - name: Build miniupnpc
+        working-directory: backend
+        run: cmd /c build_miniupnpc.bat
+
+      # TODO(first-run): Vulkan SDK is referenced in backend.pro INCPATH. Install
+      # it here (e.g. humbletim/install-vulkan-sdk) if the headers are required,
+      # or make that include path conditional in the .pro.
+
+      - name: Build backend with AddressSanitizer
+        working-directory: backend
+        run: cmd /c build_msvc.bat
+
+      - name: Upload ASan binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mw-server-asan
+          path: backend/mw-server.exe
+          if-no-files-found: error
