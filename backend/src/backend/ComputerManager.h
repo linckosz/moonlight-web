@@ -50,7 +50,7 @@ class ComputerManager : public QObject
 
 public:
     explicit ComputerManager(QObject* parent = nullptr);
-    ~ComputerManager();
+    ~ComputerManager() override;
 
     // Lifecycle
     void init();

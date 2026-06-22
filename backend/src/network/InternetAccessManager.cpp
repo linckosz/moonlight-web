@@ -894,7 +894,7 @@ bool InternetAccessManager::checkCertificate()
     }
 
     // Case 2: cert_pem is a file path (ACME managed)
-    QString certPath = certPem;
+    const QString& certPath = certPem;
     QString certExpiry = readCertExpiry(certPath);
 
     if (certExpiry.isEmpty()) {

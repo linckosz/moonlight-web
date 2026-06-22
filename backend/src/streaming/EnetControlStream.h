@@ -39,7 +39,7 @@ class EnetControlStream : public QObject
 public:
     EnetControlStream(const QString& host, quint16 port, uint32_t connectData,
                       QObject* parent = nullptr);
-    ~EnetControlStream();
+    ~EnetControlStream() override;
 
     bool start();
     void stop();

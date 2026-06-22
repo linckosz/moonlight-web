@@ -64,7 +64,7 @@ public:
     };
 
     explicit MoonlightShim(QObject* parent = nullptr);
-    ~MoonlightShim();
+    ~MoonlightShim() override;
 
     void startConnection(const InitParams& params);
     void stopConnection();

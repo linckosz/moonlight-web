@@ -52,7 +52,7 @@ class DataChannelRelay : public RelayBase
 
 public:
     explicit DataChannelRelay(MoonlightShim* shim, QObject* parent = nullptr);
-    ~DataChannelRelay();
+    ~DataChannelRelay() override;
 
     // PeerConnection access (not part of RelayBase interface)
     std::shared_ptr<rtc::PeerConnection> peerConnection() const { return m_Pc; }

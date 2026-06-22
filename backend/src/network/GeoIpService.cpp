@@ -28,7 +28,7 @@ GeoIpService::GeoIpService(QObject* parent)
     , m_nam(new QNetworkAccessManager(this))
 {}
 
-void GeoIpService::lookupIp(const QString& ip, GeoCallback callback)
+void GeoIpService::lookupIp(const QString& ip, const GeoCallback& callback)
 {
     if (!callback) return;
 

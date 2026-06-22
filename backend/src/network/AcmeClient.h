@@ -139,14 +139,15 @@ private:
     /// Automatically retries on badNonce (up to 3 times).
     /// @param callback receives (int statusCode, QByteArray body, QString location)
     void acmePost(const QString& url, const QByteArray& payload, bool useKid,
-                  std::function<void(int, const QByteArray&, const QString&)> callback,
+                  const std::function<void(int, const QByteArray&, const QString&)>& callback,
                   int retriesLeft = 3);
 
     /// POST-as-GET equivalent: JWS with empty payload.
-    void acmePostAsGet(const QString& url, std::function<void(int, const QByteArray&)> callback);
+    void acmePostAsGet(const QString& url,
+                       const std::function<void(int, const QByteArray&)>& callback);
 
     /// Get a fresh Replay-Nonce via HEAD to newNonce endpoint.
-    void fetchNonce(std::function<void(bool)> callback);
+    void fetchNonce(const std::function<void(bool)>& callback);
 
     // ── RSA helpers (native OpenSSL C API) ────────────────────────────────────
 

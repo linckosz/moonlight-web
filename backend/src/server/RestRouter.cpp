@@ -50,22 +50,20 @@ RestRouter::RestRouter(QObject* parent)
 void RestRouter::get(const QString& path, SyncRouteHandler handler)
 {
     // Wrap sync → async
-    getAsync(path, [h = std::move(handler)](const HttpRequest& req, ResponseCallback respond) {
-        respond(h(req));
-    });
+    getAsync(path, [h = std::move(handler)](const HttpRequest& req,
+                                            const ResponseCallback& respond) { respond(h(req)); });
 }
 
 void RestRouter::post(const QString& path, SyncRouteHandler handler)
 {
-    postAsync(path, [h = std::move(handler)](const HttpRequest& req, ResponseCallback respond) {
-        respond(h(req));
-    });
+    postAsync(path, [h = std::move(handler)](const HttpRequest& req,
+                                             const ResponseCallback& respond) { respond(h(req)); });
 }
 
 void RestRouter::del(const QString& path, SyncRouteHandler handler)
 {
     AsyncRouteHandler wrapped = [h = std::move(handler)](const HttpRequest& req,
-                                                         ResponseCallback respond) {
+                                                         const ResponseCallback& respond) {
         respond(h(req));
     };
 

@@ -55,7 +55,7 @@ class MediaTrackRelay : public RelayBase
 
 public:
     explicit MediaTrackRelay(MoonlightShim* shim, QObject* parent = nullptr);
-    ~MediaTrackRelay();
+    ~MediaTrackRelay() override;
 
     // PeerConnection access (not part of RelayBase interface)
     std::shared_ptr<rtc::PeerConnection> peerConnection() const { return m_Pc; }
