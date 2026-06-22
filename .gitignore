@@ -49,6 +49,9 @@ backend/certs/
 # Node tooling (frontend lint/format/typecheck)
 node_modules/
 
+# clang-tidy compilation database (generated, machine-absolute paths)
+backend/compile_commands.json
+
 # OS files
 .DS_Store
 Thumbs.db
