@@ -4500,6 +4500,10 @@ export class StreamView {
         this._manualQuitting = true;
         this.connected = false;
 
+        // Pre-build the apps view in the background during the ~1.8s exit
+        // animation, so its content is already there once the animation ends.
+        if (this.onQuitStart) { try { this.onQuitStart(); } catch (e) {} }
+
         // Full-screen glitch overlay (CP2077 style — see stream.css).
         const el = document.createElement('div');
         el.className = 'stream-takeover-overlay is-quit';

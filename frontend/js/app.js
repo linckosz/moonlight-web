@@ -49,6 +49,7 @@
  */
 import { HostListView } from './ui/HostListView.js';
 import { AppListView } from './ui/AppListView.js';
+import { App } from './models/App.js';
 import { StreamView } from './ui/StreamView.js';
 import { SettingsView } from './ui/SettingsView.js';
 import { AdminView } from './ui/AdminView.js';
@@ -257,7 +258,7 @@ const MoonlightApp = {
                 uuid: state.hostUuid,
                 displayName: state.hostDisplayName || 'Host'
             };
-            this.appListView = new AppListView(main, host);
+            this.appListView = new AppListView(main, host, this._takePrewarmedApps(host.uuid));
             this.appListView.onBack = () => {
                 // Pop the apps entry — reveals hosts below, popstate navigates there.
                 history.back();
@@ -301,7 +302,7 @@ const MoonlightApp = {
                 uuid: state.hostUuid,
                 displayName: state.hostDisplayName || 'Host'
             };
-            this.appListView = new AppListView(main, host);
+            this.appListView = new AppListView(main, host, this._takePrewarmedApps(host.uuid));
             this.appListView.onBack = () => {
                 // Pop the apps entry — reveals hosts below, popstate navigates there.
                 history.back();
@@ -764,6 +765,9 @@ const MoonlightApp = {
         // ── Callbacks ──────────────────────────────────────────────────────
         // onQuit: normal end (Stop button / mid-stream disconnect).
         this.streamView.onQuit = () => this._onStreamingQuit();
+        // onQuitStart: Stop pressed — prefetch the apps list while the exit
+        // animation plays so the view is ready the instant we land on it.
+        this.streamView.onQuitStart = () => this._prewarmAppList();
         // onConnectionFailed: transport never connected → try the next entry
         // in the priority chain (or give up if the chain is exhausted).
         this.streamView.onConnectionFailed = (reason) => this._onTransportFailed(reason);
@@ -981,6 +985,39 @@ const MoonlightApp = {
                 history.replaceState({ view: 'hosts' }, '', '/');
             }
         }
+    },
+
+    /**
+     * Prefetch the apps list (and warm box-art images) for the host we'll
+     * return to, so the apps view is fully built by the time the stream-exit
+     * animation finishes. Result is cached and consumed once on next render.
+     */
+    async _prewarmAppList() {
+        const state = this._nav.mainState;
+        if (!state || !state.hostUuid) return;
+        const hostUuid = state.hostUuid;
+        try {
+            const data = await BackendClient.getAppList(hostUuid);
+            if (!data || data.status !== 'ok') return;
+            const apps = (data.apps || []).map(a => new App(a, hostUuid));
+            this._appListCache = { hostUuid, apps };
+            // Warm box-art images so the grid paints instantly (no lazy pop-in).
+            apps.forEach(a => {
+                if (a.boxArtUrl) { const img = new Image(); img.src = a.boxArtUrl; }
+            });
+        } catch (e) {
+            // Prefetch is best-effort — AppListView falls back to normal load().
+        }
+    },
+
+    /** Pull the prefetched apps for `hostUuid` if any, consuming the cache. */
+    _takePrewarmedApps(hostUuid) {
+        const c = this._appListCache;
+        if (c && c.hostUuid === hostUuid) {
+            this._appListCache = null;
+            return c.apps;
+        }
+        return null;
     },
 
     // =========================================================================
