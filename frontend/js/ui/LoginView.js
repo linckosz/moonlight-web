@@ -42,8 +42,8 @@ export class LoginView {
         this._lockoutTimer = null;
         this._submitting = false;
         this._machineName = '';
-        this._certAuthAvailable = false;  // Server has cert auth enabled
-        this._certMode = false;           // User chose cert upload mode
+        this._certAuthAvailable = false; // Server has cert auth enabled
+        this._certMode = false; // User chose cert upload mode
         this._selectedFileName = '';
     }
 
@@ -126,27 +126,43 @@ export class LoginView {
                     <h1 class="login-title">Moonlight-Web</h1>
 
                     <div id="login-form-area">
-                        ${this._loading ? `
+                        ${
+                            this._loading
+                                ? `
                             <div class="login-loading">
                                 <div class="login-spinner"></div>
                                 <p>${t('login.connecting')}</p>
                             </div>
-                        ` : this._certMode ? this._renderCertForm() : this._renderPinForm()}
+                        `
+                                : this._certMode
+                                  ? this._renderCertForm()
+                                  : this._renderPinForm()
+                        }
                     </div>
 
-                    ${!this._loading && this._certAuthAvailable ? `
+                    ${
+                        !this._loading && this._certAuthAvailable
+                            ? `
                         <div id="login-method-toggle" class="u-mt-3 u-center">
                             <button id="btn-toggle-auth-method" class="btn btn-link">
-                                ${this._certMode
-                                    ? t('login.usePinInstead')
-                                    : t('login.useCertInstead')}
+                                ${
+                                    this._certMode
+                                        ? t('login.usePinInstead')
+                                        : t('login.useCertInstead')
+                                }
                             </button>
                         </div>
-                    ` : ''}
+                    `
+                            : ''
+                    }
 
-                    ${!this._loading && !this._certMode ? `
+                    ${
+                        !this._loading && !this._certMode
+                            ? `
                         <p class="login-hint">${t('login.pinHint')}</p>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
             </div>
         `;
@@ -181,11 +197,15 @@ export class LoginView {
 
                 ${this._error ? `<p id="login-error" class="login-error">${this.esc(this._error)}</p>` : '<p id="login-error" class="login-error"></p>'}
                 <p id="login-remaining" class="login-remaining">${this._remaining > 0 && this._remaining <= 3 ? this.esc(t('login.attemptsRemaining', { count: this._remaining })) : ''}</p>
-                ${this._lockoutRemaining > 0 ? `
+                ${
+                    this._lockoutRemaining > 0
+                        ? `
                     <div id="login-lockout" class="login-lockout">
                         ${t('login.lockout', { seconds: `<span id="login-lockout-countdown">${this._lockoutRemaining}</span>` })}
                     </div>
-                ` : '<div id="login-lockout" class="login-lockout" style="display:none;"></div>'}
+                `
+                        : '<div id="login-lockout" class="login-lockout" style="display:none;"></div>'
+                }
                 <button id="btn-login-unlock" class="btn btn-neutral login-submit"
                         disabled
                         ${this._lockoutRemaining > 0 || this._submitting ? 'disabled' : ''}>
@@ -218,11 +238,15 @@ export class LoginView {
                                accept=".txt,.cert,.pem,.key,text/plain"
                                ${this._submitting ? 'disabled' : ''} />
                     </div>
-                    ${this._selectedFileName ? `
+                    ${
+                        this._selectedFileName
+                            ? `
                         <p class="login-file-selected">
                             ${this.esc(t('login.selected', { name: this._selectedFileName }))}
                         </p>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
 
                 ${this._error ? `<p id="login-error" class="login-error">${this.esc(this._error)}</p>` : '<p id="login-error" class="login-error"></p>'}
@@ -276,9 +300,7 @@ export class LoginView {
             // Caret right after the last digit (start when none yet).
             const caret = digits.length + (digits.length > 3 ? 1 : 0);
             input.setSelectionRange(caret, caret);
-            btn.disabled = digits.length === 0
-                || this._lockoutRemaining > 0
-                || this._submitting;
+            btn.disabled = digits.length === 0 || this._lockoutRemaining > 0 || this._submitting;
         });
 
         // Show the "--- ---" template (centered) while focused, caret on the

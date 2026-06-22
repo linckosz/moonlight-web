@@ -20,10 +20,10 @@
  */
 export class App {
     constructor(data, hostUuid = null) {
-        this.id           = data.id || 0;
-        this.name         = data.name || 'Unknown App';
+        this.id = data.id || 0;
+        this.name = data.name || 'Unknown App';
         this.hdrSupported = data.hdrSupported || false;
-        this.hostUuid     = hostUuid;
+        this.hostUuid = hostUuid;
     }
 
     get displayName() {
@@ -31,8 +31,7 @@ export class App {
     }
 
     get boxArtUrl() {
-        if (!this.hostUuid || !this.id)
-            return null;
+        if (!this.hostUuid || !this.id) return null;
         return `/api/hosts/${encodeURIComponent(this.hostUuid)}/appasset?appid=${this.id}`;
     }
 }

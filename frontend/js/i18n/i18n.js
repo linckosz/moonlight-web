@@ -41,16 +41,16 @@ export const AVAILABLE_LANGUAGES = [
 
 const state = {
     lang: FALLBACK_LANG,
-    dict: {},        // active-language catalog
-    fallback: {},    // English catalog (always loaded)
+    dict: {}, // active-language catalog
+    fallback: {}, // English catalog (always loaded)
 };
 
 /** Pick the initial language: stored choice → browser language → English. */
 function detectLanguage() {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored && AVAILABLE_LANGUAGES.some(l => l.code === stored)) return stored;
+    if (stored && AVAILABLE_LANGUAGES.some((l) => l.code === stored)) return stored;
     const nav = (navigator.language || '').slice(0, 2).toLowerCase();
-    if (AVAILABLE_LANGUAGES.some(l => l.code === nav)) return nav;
+    if (AVAILABLE_LANGUAGES.some((l) => l.code === nav)) return nav;
     return FALLBACK_LANG;
 }
 
@@ -81,7 +81,8 @@ function resolve(catalog, key) {
 function interpolate(str, vars) {
     if (!vars) return str;
     return str.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, name) =>
-        name in vars ? String(vars[name]) : m);
+        name in vars ? String(vars[name]) : m,
+    );
 }
 
 /**
@@ -95,7 +96,9 @@ export function t(key, vars) {
     return interpolate(str, vars);
 }
 
-export function getLanguage() { return state.lang; }
+export function getLanguage() {
+    return state.lang;
+}
 
 /** Persist a new language and reload so every rendered view picks it up. */
 export function setLanguage(code) {
@@ -106,15 +109,17 @@ export function setLanguage(code) {
 
 /** Translate static markup inside `root` (defaults to document). */
 export function applyDOM(root = document) {
-    root.querySelectorAll('[data-i18n]').forEach(el => {
+    root.querySelectorAll('[data-i18n]').forEach((el) => {
         el.textContent = t(el.getAttribute('data-i18n'));
     });
     // [data-i18n-attr="title:foo.bar, placeholder:foo.baz"]
-    root.querySelectorAll('[data-i18n-attr]').forEach(el => {
-        el.getAttribute('data-i18n-attr').split(',').forEach(pair => {
-            const [attr, key] = pair.split(':').map(s => s.trim());
-            if (attr && key) el.setAttribute(attr, t(key));
-        });
+    root.querySelectorAll('[data-i18n-attr]').forEach((el) => {
+        el.getAttribute('data-i18n-attr')
+            .split(',')
+            .forEach((pair) => {
+                const [attr, key] = pair.split(':').map((s) => s.trim());
+                if (attr && key) el.setAttribute(attr, t(key));
+            });
     });
 }
 

@@ -81,10 +81,10 @@ export class AudioPipeline {
         this._planeScratch = null;
 
         // Diagnostics
-        this._writtenSamples = 0;   // Total stereo-frames decoded
-        this._queueDepth = 0;       // Estimated queue depth inside the worklet
-        this._underrunCount = 0;    // Total underrun frames (from worklet diag)
-        this._decodeErrors = 0;     // Opus decode errors
+        this._writtenSamples = 0; // Total stereo-frames decoded
+        this._queueDepth = 0; // Estimated queue depth inside the worklet
+        this._underrunCount = 0; // Total underrun frames (from worklet diag)
+        this._decodeErrors = 0; // Opus decode errors
 
         // Bound handlers
         this._onWorkletMessage = (evt) => this._handleWorkletMessage(evt);
@@ -109,8 +109,12 @@ export class AudioPipeline {
 
             // Check the actual sample rate (might differ)
             if (this.context.sampleRate !== this.sampleRate) {
-                console.warn('[AudioPipeline] Sample rate mismatch: requested=' +
-                    this.sampleRate + ', actual=' + this.context.sampleRate);
+                console.warn(
+                    '[AudioPipeline] Sample rate mismatch: requested=' +
+                        this.sampleRate +
+                        ', actual=' +
+                        this.context.sampleRate,
+                );
 
                 // TODO: implement resampling later (WSOLA or offline converter)
                 // For now the pitch may be slightly off if rates mismatch.
@@ -129,7 +133,7 @@ export class AudioPipeline {
             // the output may default to mono and the processor (which writes
             // out[0]/out[1]) would emit pure silence.
             this.node = new AudioWorkletNode(this.context, 'audio-processor', {
-                outputChannelCount: [2]
+                outputChannelCount: [2],
             });
             this.node.port.onmessage = this._onWorkletMessage;
             this.node.connect(this.context.destination);
@@ -157,9 +161,15 @@ export class AudioPipeline {
             };
 
             this.ready = true;
-            console.log('[AudioPipeline] Initialised: rate=' + this.context.sampleRate +
-                ', state=' + this.context.state +
-                ', baseLatency=' + (this.context.baseLatency || '?') + 's');
+            console.log(
+                '[AudioPipeline] Initialised: rate=' +
+                    this.context.sampleRate +
+                    ', state=' +
+                    this.context.state +
+                    ', baseLatency=' +
+                    (this.context.baseLatency || '?') +
+                    's',
+            );
 
             // Autoplay safety net: if the context starts suspended (init ran
             // outside the user-gesture stack), resume it on the first user
@@ -168,7 +178,6 @@ export class AudioPipeline {
                 this._armGestureResume();
             }
             return true;
-
         } catch (err) {
             console.error('[AudioPipeline] Initialisation failed:', err.message, err);
             this.cleanup();
@@ -188,22 +197,30 @@ export class AudioPipeline {
             try {
                 this.decoder = new AudioDecoder({
                     output: this._onDecodedAudio,
-                    error: this._onDecoderError
+                    error: this._onDecoderError,
                 });
                 // Plain Opus packets (no Ogg container) — no description needed for
                 // mono/stereo. Sunshine streams 48 kHz stereo by default.
                 this.decoder.configure({
                     codec: 'opus',
                     sampleRate: this.sampleRate,
-                    numberOfChannels: this.channels
+                    numberOfChannels: this.channels,
                 });
                 this._mode = 'webcodecs';
-                console.log('[AudioPipeline] Opus AudioDecoder (WebCodecs) configured: ' +
-                    this.sampleRate + 'Hz, ' + this.channels + 'ch');
+                console.log(
+                    '[AudioPipeline] Opus AudioDecoder (WebCodecs) configured: ' +
+                        this.sampleRate +
+                        'Hz, ' +
+                        this.channels +
+                        'ch',
+                );
                 return true;
             } catch (err) {
-                console.warn('[AudioPipeline] WebCodecs AudioDecoder unavailable (' +
-                    err.message + ') — trying WASM fallback');
+                console.warn(
+                    '[AudioPipeline] WebCodecs AudioDecoder unavailable (' +
+                        err.message +
+                        ') — trying WASM fallback',
+                );
                 this.decoder = null;
             }
         }
@@ -216,14 +233,22 @@ export class AudioPipeline {
 
             this._wasmDecoder = new OpusDecoder({
                 channels: this.channels,
-                sampleRate: this.sampleRate
+                sampleRate: this.sampleRate,
             });
             await this._wasmDecoder.ready;
-            if (this._closed) { this._freeWasmDecoder(); return false; }
+            if (this._closed) {
+                this._freeWasmDecoder();
+                return false;
+            }
 
             this._mode = 'wasm';
-            console.log('[AudioPipeline] Opus WASM decoder ready: ' +
-                this.sampleRate + 'Hz, ' + this.channels + 'ch');
+            console.log(
+                '[AudioPipeline] Opus WASM decoder ready: ' +
+                    this.sampleRate +
+                    'Hz, ' +
+                    this.channels +
+                    'ch',
+            );
             return true;
         } catch (err) {
             console.error('[AudioPipeline] WASM Opus decoder setup failed:', err.message, err);
@@ -235,7 +260,11 @@ export class AudioPipeline {
     /** Free the WASM decoder if present. */
     _freeWasmDecoder() {
         if (this._wasmDecoder) {
-            try { this._wasmDecoder.free(); } catch (e) { /* ignore */ }
+            try {
+                this._wasmDecoder.free();
+            } catch (e) {
+                /* ignore */
+            }
             this._wasmDecoder = null;
         }
     }
@@ -262,9 +291,9 @@ export class AudioPipeline {
         if (!this.decoder || this.decoder.state !== 'configured') return;
         try {
             const chunk = new EncodedAudioChunk({
-                type: 'key',                 // every Opus packet is independently decodable
+                type: 'key', // every Opus packet is independently decodable
                 timestamp: this._chunkTs,
-                data: sample.slice()         // standalone copy of just this packet
+                data: sample.slice(), // standalone copy of just this packet
             });
             // 5 ms nominal packet spacing (µs); exact value unused downstream.
             this._chunkTs += 5000;
@@ -294,9 +323,14 @@ export class AudioPipeline {
         if (!res || !res.channelData || res.samplesDecoded <= 0) return;
 
         if (!this._firstDecodeLogged) {
-            console.log('[AudioPipeline] First decoded (WASM): channels=' +
-                res.channelData.length + ' frames=' + res.samplesDecoded +
-                ' rate=' + res.sampleRate);
+            console.log(
+                '[AudioPipeline] First decoded (WASM): channels=' +
+                    res.channelData.length +
+                    ' frames=' +
+                    res.samplesDecoded +
+                    ' rate=' +
+                    res.sampleRate,
+            );
             this._firstDecodeLogged = true;
         }
         this._postPlanar(res.channelData, res.samplesDecoded);
@@ -340,12 +374,19 @@ export class AudioPipeline {
         try {
             const frames = audioData.numberOfFrames;
             const srcCh = audioData.numberOfChannels;
-            const outCh = this.channels;            // worklet expects 2 (stereo)
+            const outCh = this.channels; // worklet expects 2 (stereo)
 
             if (!this._firstDecodeLogged) {
-                console.log('[AudioPipeline] First decoded AudioData: format=' +
-                    audioData.format + ' channels=' + srcCh + ' frames=' + frames +
-                    ' rate=' + audioData.sampleRate);
+                console.log(
+                    '[AudioPipeline] First decoded AudioData: format=' +
+                        audioData.format +
+                        ' channels=' +
+                        srcCh +
+                        ' frames=' +
+                        frames +
+                        ' rate=' +
+                        audioData.sampleRate,
+                );
                 this._firstDecodeLogged = true;
             }
 
@@ -378,8 +419,7 @@ export class AudioPipeline {
 
             this._writtenSamples += frames;
             if (!this._firstPostLogged) {
-                console.log('[AudioPipeline] First PCM posted to worklet (' +
-                    frames + ' frames)');
+                console.log('[AudioPipeline] First PCM posted to worklet (' + frames + ' frames)');
                 this._firstPostLogged = true;
             }
             this.node.port.postMessage(interleaved.buffer, [interleaved.buffer]);
@@ -400,8 +440,9 @@ export class AudioPipeline {
     _handleDecoderError(err) {
         this._decodeErrors++;
         if (this._decodeErrors <= 5 || this._decodeErrors % 200 === 0) {
-            console.warn('[AudioPipeline] Opus decode error #' + this._decodeErrors +
-                ': ' + err.message);
+            console.warn(
+                '[AudioPipeline] Opus decode error #' + this._decodeErrors + ': ' + err.message,
+            );
         }
     }
 
@@ -438,10 +479,15 @@ export class AudioPipeline {
 
         const events = ['pointerdown', 'mousedown', 'keydown', 'touchstart', 'click'];
         const tryResume = async () => {
-            if (this._closed || !this.context) { cleanup(); return; }
+            if (this._closed || !this.context) {
+                cleanup();
+                return;
+            }
             try {
                 await this.context.resume();
-            } catch (e) { /* ignore — may need another gesture */ }
+            } catch (e) {
+                /* ignore — may need another gesture */
+            }
             if (this.context && this.context.state === 'running') {
                 console.log('[AudioPipeline] AudioContext resumed via user gesture');
                 cleanup();
@@ -475,23 +521,37 @@ export class AudioPipeline {
      */
     cleanup() {
         if (this._gestureResumeCleanup) {
-            try { this._gestureResumeCleanup(); } catch (e) { /* ignore */ }
+            try {
+                this._gestureResumeCleanup();
+            } catch (e) {
+                /* ignore */
+            }
         }
         if (this.decoder) {
             try {
                 if (this.decoder.state !== 'closed') this.decoder.close();
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+                /* ignore */
+            }
             this.decoder = null;
         }
         this._freeWasmDecoder();
         if (this.node) {
             this.node.port.onmessage = null;
-            try { this.node.disconnect(); } catch (e) { /* ignore */ }
+            try {
+                this.node.disconnect();
+            } catch (e) {
+                /* ignore */
+            }
             this.node = null;
         }
         if (this.context && this.context.state !== 'closed') {
             this.context.onstatechange = null;
-            try { this.context.close(); } catch (e) { /* ignore */ }
+            try {
+                this.context.close();
+            } catch (e) {
+                /* ignore */
+            }
         }
         this.context = null;
     }
@@ -505,9 +565,14 @@ export class AudioPipeline {
         if (!msg || !msg.type) return;
 
         if (msg.type === 'started') {
-            console.log('[AudioPipeline] Worklet playback started: outChannels=' +
-                msg.outChannels + ' queuedFrames=' + msg.queuedFrames +
-                ' ctxState=' + (this.context ? this.context.state : '?'));
+            console.log(
+                '[AudioPipeline] Worklet playback started: outChannels=' +
+                    msg.outChannels +
+                    ' queuedFrames=' +
+                    msg.queuedFrames +
+                    ' ctxState=' +
+                    (this.context ? this.context.state : '?'),
+            );
             return;
         }
 
@@ -516,9 +581,15 @@ export class AudioPipeline {
             this._bufferTargetMs = msg.targetMs || 0;
             if (msg.underrunEvents > 0) {
                 this._underrunCount += msg.underrunFrames || 0;
-                console.warn('[AudioPipeline] Audio underruns: ' + msg.underrunEvents +
-                    ' episode(s) in last ~1s, buffer target now ' + msg.targetMs +
-                    'ms (queue=' + msg.queuedFrames + ' frames)');
+                console.warn(
+                    '[AudioPipeline] Audio underruns: ' +
+                        msg.underrunEvents +
+                        ' episode(s) in last ~1s, buffer target now ' +
+                        msg.targetMs +
+                        'ms (queue=' +
+                        msg.queuedFrames +
+                        ' frames)',
+                );
             }
         }
     }
@@ -532,7 +603,7 @@ export class AudioPipeline {
             writtenSamples: this._writtenSamples,
             queueDepth: this._queueDepth,
             underrunCount: this._underrunCount,
-            ready: this.ready
+            ready: this.ready,
         };
     }
 }

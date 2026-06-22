@@ -35,7 +35,7 @@ export const VersionGuard = {
 
     async start() {
         this._boot = await this._fetch();
-        if (!this._boot) return;  // version.json missing — disable guard silently
+        if (!this._boot) return; // version.json missing — disable guard silently
 
         this._interval = setInterval(() => this._check(), 60_000);
         document.addEventListener('visibilitychange', () => {
@@ -59,7 +59,7 @@ export const VersionGuard = {
             if (!r.ok) return null;
             return (await r.json()).version || null;
         } catch (_) {
-            return null;  // offline / server down — keep running
+            return null; // offline / server down — keep running
         }
-    }
+    },
 };

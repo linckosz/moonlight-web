@@ -59,7 +59,7 @@ export class BackendClient {
         const resp = await fetch(path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
         });
         if (!resp.ok) return this._handleError(resp, path);
         return resp.json();
@@ -71,14 +71,30 @@ export class BackendClient {
         return resp.json();
     }
 
-    static async getHosts()       { return this.get('/api/hosts'); }
-    static async scanHosts()      { return this.post('/api/hosts/scan'); }
-    static async addManualHost(address) { return this.post('/api/hosts/manual', { address }); }
-    static async removeHost(uuid) { return this.del(`/api/hosts/${uuid}`); }
-    static async wakeHost(uuid)   { return this.post(`/api/hosts/${uuid}/wol`); }
-    static async getPairState(hostId)     { return this.get(`/api/hosts/${hostId}/pair`); }
-    static async confirmPairing(hostId)   { return this.post(`/api/hosts/${hostId}/pair`); }
-    static async getAppList(hostId)       { return this.get(`/api/hosts/${hostId}/apps`); }
+    static async getHosts() {
+        return this.get('/api/hosts');
+    }
+    static async scanHosts() {
+        return this.post('/api/hosts/scan');
+    }
+    static async addManualHost(address) {
+        return this.post('/api/hosts/manual', { address });
+    }
+    static async removeHost(uuid) {
+        return this.del(`/api/hosts/${uuid}`);
+    }
+    static async wakeHost(uuid) {
+        return this.post(`/api/hosts/${uuid}/wol`);
+    }
+    static async getPairState(hostId) {
+        return this.get(`/api/hosts/${hostId}/pair`);
+    }
+    static async confirmPairing(hostId) {
+        return this.post(`/api/hosts/${hostId}/pair`);
+    }
+    static async getAppList(hostId) {
+        return this.get(`/api/hosts/${hostId}/apps`);
+    }
     /**
      * Per-browser Sunshine client unique ID, persisted in localStorage.
      * Each browser gets its own 16-hex-char ID so Sunshine treats their
@@ -89,19 +105,23 @@ export class BackendClient {
         if (!id || !/^[0-9A-F]{16}$/.test(id)) {
             const bytes = new Uint8Array(8);
             crypto.getRandomValues(bytes);
-            id = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+            id = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'))
+                .join('')
+                .toUpperCase();
             localStorage.setItem('mw_client_uniqueid', id);
         }
         return id;
     }
 
     static async launchApp(hostId, appId, streamingSettings = {}) {
-        return this.post(`/api/hosts/${hostId}/start`,
-            { appId, client_uniqueid: this.clientUniqueId(), ...streamingSettings });
+        return this.post(`/api/hosts/${hostId}/start`, {
+            appId,
+            client_uniqueid: this.clientUniqueId(),
+            ...streamingSettings,
+        });
     }
     static async quitApp(hostId) {
-        return this.post(`/api/hosts/${hostId}/quit`,
-            { client_uniqueid: this.clientUniqueId() });
+        return this.post(`/api/hosts/${hostId}/quit`, { client_uniqueid: this.clientUniqueId() });
     }
 
     // ── Auth API ───────────────────────────────────────────────────────────
@@ -109,10 +129,18 @@ export class BackendClient {
     static async validatePin(pin, machineName) {
         return this.post('/api/auth/validate', { pin, machine_name: machineName });
     }
-    static async generatePin()                  { return this.post('/api/admin/pin/generate'); }
-    static async regeneratePin()                { return this.post('/api/auth/regenerate'); }
-    static async clearPin()                     { return this.post('/api/admin/pin/clear'); }
-    static async getAuthStatus()                { return this.get('/api/auth/status'); }
+    static async generatePin() {
+        return this.post('/api/admin/pin/generate');
+    }
+    static async regeneratePin() {
+        return this.post('/api/auth/regenerate');
+    }
+    static async clearPin() {
+        return this.post('/api/admin/pin/clear');
+    }
+    static async getAuthStatus() {
+        return this.get('/api/auth/status');
+    }
 
     // ── Certificate Authentication ─────────────────────────────────────────
 
@@ -127,38 +155,66 @@ export class BackendClient {
     static async validateCertificate(certificateContent, machineName) {
         return this.post('/api/auth/validate', {
             certificate: certificateContent,
-            machine_name: machineName
+            machine_name: machineName,
         });
     }
 
     /** Regenerate the certificate token (invalidates all existing certificates). */
-    static async regenerateCertificate()          { return this.post('/api/admin/certificate/regenerate'); }
+    static async regenerateCertificate() {
+        return this.post('/api/admin/certificate/regenerate');
+    }
 
     // ── Sessions API (admin, localhost only) ──────────────────────────────
 
-    static async getAuthSessions()              { return this.get('/api/auth/sessions'); }
-    static async revokeSession(token)           { return this.post('/api/auth/sessions/revoke', { token }); }
-    static async renameSession(token, name)     { return this.post('/api/auth/sessions/rename', { token, machine_name: name }); }
+    static async getAuthSessions() {
+        return this.get('/api/auth/sessions');
+    }
+    static async revokeSession(token) {
+        return this.post('/api/auth/sessions/revoke', { token });
+    }
+    static async renameSession(token, name) {
+        return this.post('/api/auth/sessions/rename', { token, machine_name: name });
+    }
 
     // ── Server Info ──────────────────────────────────────────────────────────
 
-    static async getServerHostname()            { return this.get('/api/server/hostname'); }
+    static async getServerHostname() {
+        return this.get('/api/server/hostname');
+    }
 
     // ── Admin Settings ───────────────────────────────────────────────────────────
 
-    static async getAdminSettings()               { return this.get('/api/admin/settings'); }
-    static async saveAdminSettings(settings)      { return this.post('/api/admin/settings', settings); }
+    static async getAdminSettings() {
+        return this.get('/api/admin/settings');
+    }
+    static async saveAdminSettings(settings) {
+        return this.post('/api/admin/settings', settings);
+    }
 
     // ── Streaming Settings ───────────────────────────────────────────────────────
 
-    static async getStreamingSettings()            { return this.get('/api/settings/streaming'); }
-    static async saveStreamingSettings(settings)   { return this.post('/api/settings/streaming', settings); }
+    static async getStreamingSettings() {
+        return this.get('/api/settings/streaming');
+    }
+    static async saveStreamingSettings(settings) {
+        return this.post('/api/settings/streaming', settings);
+    }
 
     // ── deSEC Internet Access ────────────────────────────────────────────────────────────
 
-    static async getInternetStatus()                { return this.get('/api/internet/status'); }
-    static async enableInternet(options)            { return this.post('/api/internet/enable', options); }
-    static async disableInternet()                  { return this.post('/api/internet/disable'); }
-    static async refreshInternet()                  { return this.post('/api/internet/refresh'); }
-    static async renewCert()                        { return this.post('/api/internet/renew-cert'); }
+    static async getInternetStatus() {
+        return this.get('/api/internet/status');
+    }
+    static async enableInternet(options) {
+        return this.post('/api/internet/enable', options);
+    }
+    static async disableInternet() {
+        return this.post('/api/internet/disable');
+    }
+    static async refreshInternet() {
+        return this.post('/api/internet/refresh');
+    }
+    static async renewCert() {
+        return this.post('/api/internet/renew-cert');
+    }
 }

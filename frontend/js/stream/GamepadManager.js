@@ -35,22 +35,40 @@
 
 // Limelight button flags (must match Limelight.h).
 const BTN = {
-    A: 0x1000, B: 0x2000, X: 0x4000, Y: 0x8000,
-    UP: 0x0001, DOWN: 0x0002, LEFT: 0x0004, RIGHT: 0x0008,
-    LB: 0x0100, RB: 0x0200,
-    PLAY: 0x0010, BACK: 0x0020,
-    LS_CLK: 0x0040, RS_CLK: 0x0080,
+    A: 0x1000,
+    B: 0x2000,
+    X: 0x4000,
+    Y: 0x8000,
+    UP: 0x0001,
+    DOWN: 0x0002,
+    LEFT: 0x0004,
+    RIGHT: 0x0008,
+    LB: 0x0100,
+    RB: 0x0200,
+    PLAY: 0x0010,
+    BACK: 0x0020,
+    LS_CLK: 0x0040,
+    RS_CLK: 0x0080,
     SPECIAL: 0x0400,
 };
 
 // W3C standard gamepad button index → Limelight flag.
 // Indices 6/7 (triggers) are analog and handled separately.
 const BUTTON_MAP = {
-    0: BTN.A, 1: BTN.B, 2: BTN.X, 3: BTN.Y,
-    4: BTN.LB, 5: BTN.RB,
-    8: BTN.BACK, 9: BTN.PLAY,
-    10: BTN.LS_CLK, 11: BTN.RS_CLK,
-    12: BTN.UP, 13: BTN.DOWN, 14: BTN.LEFT, 15: BTN.RIGHT,
+    0: BTN.A,
+    1: BTN.B,
+    2: BTN.X,
+    3: BTN.Y,
+    4: BTN.LB,
+    5: BTN.RB,
+    8: BTN.BACK,
+    9: BTN.PLAY,
+    10: BTN.LS_CLK,
+    11: BTN.RS_CLK,
+    12: BTN.UP,
+    13: BTN.DOWN,
+    14: BTN.LEFT,
+    15: BTN.RIGHT,
     16: BTN.SPECIAL,
 };
 
@@ -112,14 +130,14 @@ export class GamepadManager {
     /** Active controllers as a bitmask (one bit per index). */
     _mask() {
         let m = 0;
-        for (const index of this._pads.keys()) m |= (1 << index);
+        for (const index of this._pads.keys()) m |= 1 << index;
         return m;
     }
 
     _handleConnect(gp) {
         if (!gp || gp.mapping !== 'standard') return; // wheels/HOTAS: phase 2
         if (this._pads.has(gp.index)) return;
-        const hasRumble = !!(gp.vibrationActuator);
+        const hasRumble = !!gp.vibrationActuator;
         this._pads.set(gp.index, { last: null, hasRumble });
         this._send({
             type: 'gamepadconnect',
@@ -166,8 +184,16 @@ export class GamepadManager {
 
             const cur = { buttons, lt, rt, lx, ly, rx, ry };
             const p = entry.last;
-            if (p && p.buttons === buttons && p.lt === lt && p.rt === rt &&
-                p.lx === lx && p.ly === ly && p.rx === rx && p.ry === ry) {
+            if (
+                p &&
+                p.buttons === buttons &&
+                p.lt === lt &&
+                p.rt === rt &&
+                p.lx === lx &&
+                p.ly === ly &&
+                p.rx === rx &&
+                p.ry === ry
+            ) {
                 continue; // unchanged — don't flood the input channel
             }
             entry.last = cur;
@@ -189,6 +215,8 @@ export class GamepadManager {
                 strongMagnitude: strong,
                 weakMagnitude: weak,
             });
-        } catch (e) { /* unsupported actuator type */ }
+        } catch (e) {
+            /* unsupported actuator type */
+        }
     }
 }

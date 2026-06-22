@@ -132,7 +132,7 @@ const MoonlightApp = {
 
         // ── Auth check: show login if remote and not authenticated ─────────
         const authOk = await this._checkAuth();
-        if (!authOk) return;  // LoginView handles rendering, stop here
+        if (!authOk) return; // LoginView handles rendering, stop here
 
         this._initNavButtons();
         this._initRouter();
@@ -176,7 +176,7 @@ const MoonlightApp = {
                 if (state.hostUuid) {
                     this._setMainView('apps', {
                         hostUuid: state.hostUuid,
-                        hostDisplayName: state.hostDisplayName || 'Host'
+                        hostDisplayName: state.hostDisplayName || 'Host',
                     });
                 } else {
                     this._setMainView('hosts', {});
@@ -230,7 +230,7 @@ const MoonlightApp = {
         if (view === 'apps' && state && state.hostUuid) {
             this._setMainView('apps', {
                 hostUuid: state.hostUuid,
-                hostDisplayName: state.hostDisplayName || 'Host'
+                hostDisplayName: state.hostDisplayName || 'Host',
             });
         } else {
             this._setMainView('hosts', {});
@@ -256,7 +256,7 @@ const MoonlightApp = {
             this.transition('app_list');
             const host = {
                 uuid: state.hostUuid,
-                displayName: state.hostDisplayName || 'Host'
+                displayName: state.hostDisplayName || 'Host',
             };
             this.appListView = new AppListView(main, host, this._takePrewarmedApps(host.uuid));
             this.appListView.onBack = () => {
@@ -276,11 +276,15 @@ const MoonlightApp = {
         // Fix URL if an overlay left it at /admin or /settings.
         if (window.location.pathname === '/admin' || window.location.pathname === '/settings') {
             if (this._nav.mainView === 'apps' && this._nav.mainState.hostUuid) {
-                history.replaceState({
-                    view: 'apps',
-                    hostUuid: this._nav.mainState.hostUuid,
-                    hostDisplayName: this._nav.mainState.hostDisplayName
-                }, '', '/apps');
+                history.replaceState(
+                    {
+                        view: 'apps',
+                        hostUuid: this._nav.mainState.hostUuid,
+                        hostDisplayName: this._nav.mainState.hostDisplayName,
+                    },
+                    '',
+                    '/apps',
+                );
             } else {
                 history.replaceState({ view: 'hosts' }, '', '/');
             }
@@ -300,7 +304,7 @@ const MoonlightApp = {
             this.transition('app_list');
             const host = {
                 uuid: state.hostUuid,
-                displayName: state.hostDisplayName || 'Host'
+                displayName: state.hostDisplayName || 'Host',
             };
             this.appListView = new AppListView(main, host, this._takePrewarmedApps(host.uuid));
             this.appListView.onBack = () => {
@@ -337,8 +341,12 @@ const MoonlightApp = {
         // Never let admin/settings open on top of (or under) an active or
         // launching stream — it corrupts the overlay/history state and the
         // view would pop up when the stream ends.
-        if (this._nav.overlay === 'streaming' || this.streamView ||
-            this.state === 'launching' || this.state === 'streaming') {
+        if (
+            this._nav.overlay === 'streaming' ||
+            this.streamView ||
+            this.state === 'launching' ||
+            this.state === 'streaming'
+        ) {
             console.warn('[MW] Overlay "' + type + '" blocked: streaming in progress');
             return;
         }
@@ -366,7 +374,7 @@ const MoonlightApp = {
             view: this._GUARD_PREFIX + type,
             mainView: this._nav.mainView,
             hostUuid: this._nav.mainState.hostUuid,
-            hostDisplayName: this._nav.mainState.hostDisplayName
+            hostDisplayName: this._nav.mainState.hostDisplayName,
         };
 
         const url = '/' + type;
@@ -398,7 +406,9 @@ const MoonlightApp = {
         if (!this._nav.overlay) return;
 
         if (this._nav.overlay === 'streaming') {
-            console.warn('[MW] _closeOverlay called with streaming overlay — use popstate or Stop button');
+            console.warn(
+                '[MW] _closeOverlay called with streaming overlay — use popstate or Stop button',
+            );
             return;
         }
 
@@ -492,7 +502,6 @@ const MoonlightApp = {
         }
     },
 
-
     // =========================================================================
     // Nav Buttons
     // =========================================================================
@@ -503,10 +512,12 @@ const MoonlightApp = {
      * is revealed by _initNavButtons() once authenticated.
      */
     _hideNavButtonsConditionally() {
-        if (window.location.hostname === 'localhost' ||
+        if (
+            window.location.hostname === 'localhost' ||
             window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '[::1]') {
-            return;  // localhost: keep both visible
+            window.location.hostname === '[::1]'
+        ) {
+            return; // localhost: keep both visible
         }
         // Remote: hide admin always, settings until authenticated
         const btnAdmin = document.getElementById('btn-admin');
@@ -516,9 +527,10 @@ const MoonlightApp = {
     },
 
     _initNavButtons() {
-        const isLocal = window.location.hostname === 'localhost' ||
-                        window.location.hostname === '127.0.0.1' ||
-                        window.location.hostname === '[::1]';
+        const isLocal =
+            window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.hostname === '[::1]';
 
         const btnAdmin = document.getElementById('btn-admin');
         if (btnAdmin) {
@@ -582,7 +594,7 @@ const MoonlightApp = {
         const state = {
             view: 'apps',
             hostUuid: host.uuid,
-            hostDisplayName: host.displayName
+            hostDisplayName: host.displayName,
         };
         history.pushState(state, '', '/apps');
         this._setMainView('apps', state);
@@ -599,7 +611,8 @@ const MoonlightApp = {
     _isRemoteConnection() {
         const hostname = window.location.hostname;
         // Localhost / loopback
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return false;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]')
+            return false;
         // Private IP ranges (LAN)
         if (/^10\./.test(hostname)) return false;
         if (/^192\.168\./.test(hostname)) return false;
@@ -613,8 +626,10 @@ const MoonlightApp = {
     // =========================================================================
 
     async launchApp(host, app, codecOverride) {
-        console.log(`[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}` +
-            (codecOverride ? ` (forced codec: ${codecOverride})` : ''));
+        console.log(
+            `[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}` +
+                (codecOverride ? ` (forced codec: ${codecOverride})` : ''),
+        );
         this.transition('launching');
         Toast.info(t('launch.launching', { name: app.name }));
 
@@ -629,11 +644,6 @@ const MoonlightApp = {
         // Store host/app for HEVC fallback re-launch
         this._lastStreamHost = host;
         this._lastStreamApp = app;
-
-        // UPnP is enabled by default — the backend's upnpAvailable field
-        // in the launch response reports the actual availability to the UI.
-        const upnpEnabled = true;
-        const isRemote = this._isRemoteConnection();
 
         // Read per-browser streaming settings from localStorage
         // (defaults come from server on first visit via SettingsView)
@@ -672,7 +682,7 @@ const MoonlightApp = {
                 transport: result.transport,
                 transport_mode: result.transport_mode,
                 upnpAvailable: result.upnpAvailable,
-                signalingUrl: result.signalingUrl
+                signalingUrl: result.signalingUrl,
             });
 
             if (result.status === 'streaming') {
@@ -696,7 +706,7 @@ const MoonlightApp = {
                     view: this._GUARD_PREFIX + 'streaming',
                     mainView: this._nav.mainView,
                     hostUuid: this._nav.mainState.hostUuid,
-                    hostDisplayName: this._nav.mainState.hostDisplayName
+                    hostDisplayName: this._nav.mainState.hostDisplayName,
                 };
                 history.pushState(guardState, '');
 
@@ -725,8 +735,10 @@ const MoonlightApp = {
         // Respect the "show performance stats" setting (default: true)
         const showPerfStats = streamingSettings.show_performance_stats !== false;
         // Touch/trackpad sensitivity (default 2.2)
-        const touchSensitivity = typeof streamingSettings.touch_sensitivity === 'number'
-            ? streamingSettings.touch_sensitivity : 2.2;
+        const touchSensitivity =
+            typeof streamingSettings.touch_sensitivity === 'number'
+                ? streamingSettings.touch_sensitivity
+                : 2.2;
         // VSync (default on): when off, the canvas allows tearing (lower latency)
         const vsync = streamingSettings.vsync_enabled !== false;
         // Video worker mode: 'auto' (heuristic — desktop only), 'on' or 'off'.
@@ -740,7 +752,8 @@ const MoonlightApp = {
 
         // Track the fallback chain reported by the backend.
         this._transportChain = Array.isArray(result.transport_chain) ? result.transport_chain : [];
-        this._transportIndex = typeof result.transport_index === 'number' ? result.transport_index : 0;
+        this._transportIndex =
+            typeof result.transport_index === 'number' ? result.transport_index : 0;
 
         this.streamView = new StreamView(
             document.getElementById('app'),
@@ -759,7 +772,7 @@ const MoonlightApp = {
             videoWorker,
             videoEnhancement,
             videoEnhancementAlgo,
-            result.yuv444 === true
+            result.yuv444 === true,
         );
 
         // ── Callbacks ──────────────────────────────────────────────────────
@@ -776,11 +789,11 @@ const MoonlightApp = {
     /** Human-readable label for a transport mode (warning toasts / logs). */
     _transportLabel(mode) {
         const keys = {
-            'webrtc-dc-udp':    'transport.webrtcDcUdp',
-            'webrtc-dc-tcp':    'transport.webrtcDcTcp',
+            'webrtc-dc-udp': 'transport.webrtcDcUdp',
+            'webrtc-dc-tcp': 'transport.webrtcDcTcp',
             'webrtc-media-udp': 'transport.webrtcMediaUdp',
             'webrtc-media-tcp': 'transport.webrtcMediaTcp',
-            'wss':              'transport.wss'
+            wss: 'transport.wss',
         };
         return keys[mode] ? t(keys[mode]) : mode;
     },
@@ -810,13 +823,17 @@ const MoonlightApp = {
         const next = cur + 1;
         if (next < chain.length) {
             console.warn(`[MW] Transport ${chain[cur]} failed (${reason}) — trying ${chain[next]}`);
-            Toast.warning(t('transport.connectFailed', {
-                from: this._transportLabel(chain[cur]),
-                to: this._transportLabel(chain[next])
-            }));
+            Toast.warning(
+                t('transport.connectFailed', {
+                    from: this._transportLabel(chain[cur]),
+                    to: this._transportLabel(chain[next]),
+                }),
+            );
             this._relaunchTransport(next);
         } else {
-            console.error(`[MW] All transports failed (last: ${chain[cur] || '?'}, reason: ${reason})`);
+            console.error(
+                `[MW] All transports failed (last: ${chain[cur] || '?'}, reason: ${reason})`,
+            );
             Toast.error(t('transport.allFailed'));
             this._hideRelaunchLoader();
             // quit() fires onQuit → _onStreamingQuit, which handles navigation
@@ -834,7 +851,9 @@ const MoonlightApp = {
         el.id = 'stream-relaunch-loader';
         el.innerHTML =
             '<div class="startup-loader" aria-hidden="true"><div class="startup-loader-ring"></div></div>' +
-            '<div class="startup-step active"><span class="startup-step-label">' + t('stream.connecting') + '</span></div>';
+            '<div class="startup-step active"><span class="startup-step-label">' +
+            t('stream.connecting') +
+            '</span></div>';
         document.getElementById('app').appendChild(el);
     },
 
@@ -866,7 +885,11 @@ const MoonlightApp = {
         if (sv) {
             sv.onQuit = null;
             sv.onConnectionFailed = null;
-            try { await sv.quit({ silent: true }); } catch (e) { /* ignore */ }
+            try {
+                await sv.quit({ silent: true });
+            } catch (e) {
+                /* ignore */
+            }
         }
 
         this._transportIndex = nextIndex;
@@ -936,17 +959,28 @@ const MoonlightApp = {
                 } else {
                     this._renderMainView('apps', {
                         hostUuid: fallbackHost.uuid,
-                        hostDisplayName: fallbackHost.displayName
+                        hostDisplayName: fallbackHost.displayName,
                     });
-                    history.replaceState({ view: 'apps', hostUuid: fallbackHost.uuid,
-                        hostDisplayName: fallbackHost.displayName }, '', '/apps');
+                    history.replaceState(
+                        {
+                            view: 'apps',
+                            hostUuid: fallbackHost.uuid,
+                            hostDisplayName: fallbackHost.displayName,
+                        },
+                        '',
+                        '/apps',
+                    );
                 }
                 Toast.error(t('launch.hevcH264Unsupported'));
                 return;
             }
 
-            console.warn('[MW] HEVC not supported by browser, re-launching with H.264 ' +
-                '(attempt ' + this._fallbackAttemptCount + ')');
+            console.warn(
+                '[MW] HEVC not supported by browser, re-launching with H.264 ' +
+                    '(attempt ' +
+                    this._fallbackAttemptCount +
+                    ')',
+            );
 
             // Pop the streaming guard from history
             if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
@@ -975,11 +1009,15 @@ const MoonlightApp = {
             // Stop). Navigate directly to the saved main view.
             if (this._nav.mainView === 'apps' && this._nav.mainState.hostUuid) {
                 this._renderMainView('apps', this._nav.mainState);
-                history.replaceState({
-                    view: 'apps',
-                    hostUuid: this._nav.mainState.hostUuid,
-                    hostDisplayName: this._nav.mainState.hostDisplayName
-                }, '', '/apps');
+                history.replaceState(
+                    {
+                        view: 'apps',
+                        hostUuid: this._nav.mainState.hostUuid,
+                        hostDisplayName: this._nav.mainState.hostDisplayName,
+                    },
+                    '',
+                    '/apps',
+                );
             } else {
                 this._renderMainView('hosts', { view: 'hosts' });
                 history.replaceState({ view: 'hosts' }, '', '/');
@@ -999,11 +1037,14 @@ const MoonlightApp = {
         try {
             const data = await BackendClient.getAppList(hostUuid);
             if (!data || data.status !== 'ok') return;
-            const apps = (data.apps || []).map(a => new App(a, hostUuid));
+            const apps = (data.apps || []).map((a) => new App(a, hostUuid));
             this._appListCache = { hostUuid, apps };
             // Warm box-art images so the grid paints instantly (no lazy pop-in).
-            apps.forEach(a => {
-                if (a.boxArtUrl) { const img = new Image(); img.src = a.boxArtUrl; }
+            apps.forEach((a) => {
+                if (a.boxArtUrl) {
+                    const img = new Image();
+                    img.src = a.boxArtUrl;
+                }
             });
         } catch (e) {
             // Prefetch is best-effort — AppListView falls back to normal load().
@@ -1044,7 +1085,7 @@ const MoonlightApp = {
     transition(newState) {
         console.log(`[MW] State: ${this.state} -> ${newState}`);
         this.state = newState;
-    }
+    },
 };
 
 // Boot

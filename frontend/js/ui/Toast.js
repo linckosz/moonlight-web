@@ -60,10 +60,18 @@ export class Toast {
         setTimeout(remove, 4000);
     }
 
-    static success(message) { this.show(message, 'success'); }
-    static error(message)   { this.show(message, 'error'); }
-    static warning(message) { this.show(message, 'warning'); }
-    static info(message)    { this.show(message, 'info'); }
+    static success(message) {
+        this.show(message, 'success');
+    }
+    static error(message) {
+        this.show(message, 'error');
+    }
+    static warning(message) {
+        this.show(message, 'warning');
+    }
+    static info(message) {
+        this.show(message, 'info');
+    }
 
     /**
      * Dismiss all visible toasts with a 500ms fade-out animation.
@@ -79,9 +87,15 @@ export class Toast {
     static dismissAll() {
         return new Promise((resolve) => {
             const container = document.getElementById('toast-container');
-            if (!container) { resolve(); return; }
+            if (!container) {
+                resolve();
+                return;
+            }
             const toasts = container.querySelectorAll('.toast');
-            if (toasts.length === 0) { resolve(); return; }
+            if (toasts.length === 0) {
+                resolve();
+                return;
+            }
             for (const toast of toasts) {
                 if (toast.parentNode) {
                     toast.classList.add('toast-exit');

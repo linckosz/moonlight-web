@@ -48,12 +48,13 @@ export function detectCodec(buffer) {
         if (n.length < 1) continue;
         // H.264: 1-byte NAL header, type in lower 5 bits
         // HEVC: 2-byte NAL header, type in bits 1-6 of first byte
-        const h264Type = n[0] & 0x1F;
+        const h264Type = n[0] & 0x1f;
         if (h264Type === H264_SPS || h264Type === H264_PPS) return CODEC_H264;
 
         if (n.length >= 2) {
-            const hevcType = (n[0] >> 1) & 0x3F;
-            if (hevcType === HEVC_VPS || hevcType === HEVC_SPS || hevcType === HEVC_PPS) return CODEC_HEVC;
+            const hevcType = (n[0] >> 1) & 0x3f;
+            if (hevcType === HEVC_VPS || hevcType === HEVC_SPS || hevcType === HEVC_PPS)
+                return CODEC_HEVC;
         }
     }
     // Default to H.264 (most common fallback)
@@ -62,10 +63,10 @@ export function detectCodec(buffer) {
 
 export class NalParser {
     constructor() {
-        this.codec = null;   // CODEC_H264 or CODEC_HEVC
+        this.codec = null; // CODEC_H264 or CODEC_HEVC
         this.sps = null;
         this.pps = null;
-        this.vps = null;     // HEVC only
+        this.vps = null; // HEVC only
     }
 
     /**
@@ -81,21 +82,30 @@ export class NalParser {
         if (!this.codec) {
             for (const n of nals) {
                 if (n.length < 1) continue;
-                if ((n[0] & 0x1F) === H264_SPS) { this.codec = CODEC_H264; break; }
-                if (n.length >= 2 && ((n[0] >> 1) & 0x3F) === HEVC_VPS) { this.codec = CODEC_HEVC; break; }
-                if (n.length >= 2 && ((n[0] >> 1) & 0x3F) === HEVC_SPS) { this.codec = CODEC_HEVC; break; }
+                if ((n[0] & 0x1f) === H264_SPS) {
+                    this.codec = CODEC_H264;
+                    break;
+                }
+                if (n.length >= 2 && ((n[0] >> 1) & 0x3f) === HEVC_VPS) {
+                    this.codec = CODEC_HEVC;
+                    break;
+                }
+                if (n.length >= 2 && ((n[0] >> 1) & 0x3f) === HEVC_SPS) {
+                    this.codec = CODEC_HEVC;
+                    break;
+                }
             }
             if (!this.codec) this.codec = CODEC_H264; // fallback
         }
 
         for (const n of nals) {
             if (this.codec === CODEC_HEVC && n.length >= 2) {
-                const type = (n[0] >> 1) & 0x3F;
+                const type = (n[0] >> 1) & 0x3f;
                 if (type === HEVC_VPS) this.vps = n;
                 else if (type === HEVC_SPS) this.sps = n;
                 else if (type === HEVC_PPS) this.pps = n;
             } else if (n.length >= 1) {
-                const type = n[0] & 0x1F;
+                const type = n[0] & 0x1f;
                 if (type === H264_SPS) this.sps = n;
                 else if (type === H264_PPS) this.pps = n;
             }
@@ -130,7 +140,12 @@ export function removeEmulationPrevention(buffer) {
     const result = [];
     let i = 0;
     while (i < buffer.length) {
-        if (i + 2 < buffer.length && buffer[i] === 0 && buffer[i+1] === 0 && buffer[i+2] === 3) {
+        if (
+            i + 2 < buffer.length &&
+            buffer[i] === 0 &&
+            buffer[i + 1] === 0 &&
+            buffer[i + 2] === 3
+        ) {
             // Skip the emulation prevention byte (0x03), keep the two zeros
             result.push(0, 0);
             i += 3;
@@ -148,20 +163,24 @@ export function removeEmulationPrevention(buffer) {
  */
 export function splitNals(annexB) {
     const nals = [];
-    let i = 0, len = annexB.length;
+    let i = 0;
+    const len = annexB.length;
     while (i < len - 3) {
-        if (annexB[i] === 0 && annexB[i+1] === 0) {
+        if (annexB[i] === 0 && annexB[i + 1] === 0) {
             let sc = 0;
-            if (annexB[i+2] === 1) sc = 3;
-            else if (i+3 < len && annexB[i+2] === 0 && annexB[i+3] === 1) sc = 4;
+            if (annexB[i + 2] === 1) sc = 3;
+            else if (i + 3 < len && annexB[i + 2] === 0 && annexB[i + 3] === 1) sc = 4;
             if (sc) {
                 const start = i + sc;
                 let end = len;
                 for (let j = start; j < len - 3; j++) {
-                    if (annexB[j] === 0 && annexB[j+1] === 0) {
-                        if (annexB[j+2] === 1 ||
-                            (j+3 < len && annexB[j+2] === 0 && annexB[j+3] === 1)) {
-                            end = j; break;
+                    if (annexB[j] === 0 && annexB[j + 1] === 0) {
+                        if (
+                            annexB[j + 2] === 1 ||
+                            (j + 3 < len && annexB[j + 2] === 0 && annexB[j + 3] === 1)
+                        ) {
+                            end = j;
+                            break;
                         }
                     }
                 }
@@ -186,22 +205,22 @@ export function buildAvccDescription(sps, pps) {
     const buf = new Uint8Array(len);
     let off = 0;
 
-    buf[off++] = 0x01;            // configurationVersion
-    buf[off++] = sps[1];          // AVCProfileIndication
-    buf[off++] = sps[2];          // profile_compatibility
-    buf[off++] = sps[3];          // AVCLevelIndication
-    buf[off++] = 0xFF;            // lengthSizeMinusOne = 3 (4-byte length prefixes)
-    buf[off++] = 0xE1;            // numOfSequenceParameterSets = 1
+    buf[off++] = 0x01; // configurationVersion
+    buf[off++] = sps[1]; // AVCProfileIndication
+    buf[off++] = sps[2]; // profile_compatibility
+    buf[off++] = sps[3]; // AVCLevelIndication
+    buf[off++] = 0xff; // lengthSizeMinusOne = 3 (4-byte length prefixes)
+    buf[off++] = 0xe1; // numOfSequenceParameterSets = 1
 
-    buf[off++] = (sps.length >> 8) & 0xFF;
-    buf[off++] = sps.length & 0xFF;
+    buf[off++] = (sps.length >> 8) & 0xff;
+    buf[off++] = sps.length & 0xff;
     buf.set(sps, off);
     off += sps.length;
 
-    buf[off++] = 0x01;            // numOfPictureParameterSets = 1
+    buf[off++] = 0x01; // numOfPictureParameterSets = 1
 
-    buf[off++] = (pps.length >> 8) & 0xFF;
-    buf[off++] = pps.length & 0xFF;
+    buf[off++] = (pps.length >> 8) & 0xff;
+    buf[off++] = pps.length & 0xff;
     buf.set(pps, off);
 
     return buf;
@@ -280,51 +299,59 @@ export function buildHvcCDescription(vps, sps, pps) {
     // profile_tier_level general fields — extract from de-emulated SPS.
     // Emulation prevention bytes (00 00 03) in the SPS would corrupt the
     // fixed-field offsets, so we clean them first.
-    buf.set(cleanSps.slice(3, 15), off); off += 12;
+    buf.set(cleanSps.slice(3, 15), off);
+    off += 12;
 
     // min_spatial_segmentation_idc: reserved(4) + 0
-    buf[off++] = 0xF0; buf[off++] = 0x00;
+    buf[off++] = 0xf0;
+    buf[off++] = 0x00;
 
     // parallelismType: reserved(6) + 0
-    buf[off++] = 0xFC;
+    buf[off++] = 0xfc;
 
     // chromaFormat: reserved(6) + chroma_format_idc (1 = 4:2:0)
-    buf[off++] = 0xFC | 0x01;
+    buf[off++] = 0xfc | 0x01;
 
     // bitDepthLumaMinus8: reserved(5) + 0
-    buf[off++] = 0xF8;
+    buf[off++] = 0xf8;
 
     // bitDepthChromaMinus8: reserved(5) + 0
-    buf[off++] = 0xF8;
+    buf[off++] = 0xf8;
 
     // avgFrameRate (0 = unspecified)
-    buf[off++] = 0x00; buf[off++] = 0x00;
+    buf[off++] = 0x00;
+    buf[off++] = 0x00;
 
     // constantFrameRate(2)=0 | numTemporalLayers(3)=1 | temporalIdNested(1)=1 | lengthSizeMinusOne(2)=3
-    buf[off++] = 0x0F;
+    buf[off++] = 0x0f;
 
     // numOfArrays = 3 (VPS, SPS, PPS)
     buf[off++] = 0x03;
 
     // VPS array (de-emulated)
     buf[off++] = 0x00 | HEVC_VPS;
-    buf[off++] = 0x00; buf[off++] = 0x01;
-    buf[off++] = (cleanVps.length >> 8) & 0xFF;
-    buf[off++] = cleanVps.length & 0xFF;
-    buf.set(cleanVps, off); off += cleanVps.length;
+    buf[off++] = 0x00;
+    buf[off++] = 0x01;
+    buf[off++] = (cleanVps.length >> 8) & 0xff;
+    buf[off++] = cleanVps.length & 0xff;
+    buf.set(cleanVps, off);
+    off += cleanVps.length;
 
     // SPS array (de-emulated)
     buf[off++] = 0x00 | HEVC_SPS;
-    buf[off++] = 0x00; buf[off++] = 0x01;
-    buf[off++] = (cleanSps.length >> 8) & 0xFF;
-    buf[off++] = cleanSps.length & 0xFF;
-    buf.set(cleanSps, off); off += cleanSps.length;
+    buf[off++] = 0x00;
+    buf[off++] = 0x01;
+    buf[off++] = (cleanSps.length >> 8) & 0xff;
+    buf[off++] = cleanSps.length & 0xff;
+    buf.set(cleanSps, off);
+    off += cleanSps.length;
 
     // PPS array (de-emulated)
     buf[off++] = 0x00 | HEVC_PPS;
-    buf[off++] = 0x00; buf[off++] = 0x01;
-    buf[off++] = (cleanPps.length >> 8) & 0xFF;
-    buf[off++] = cleanPps.length & 0xFF;
+    buf[off++] = 0x00;
+    buf[off++] = 0x01;
+    buf[off++] = (cleanPps.length >> 8) & 0xff;
+    buf[off++] = cleanPps.length & 0xff;
     buf.set(cleanPps, off);
 
     return buf;
@@ -350,7 +377,7 @@ export function getHevcCodecString(sps) {
     // rbsp[6..11]: general_constraint_indicator_flags (6 bytes)
     // rbsp[12]: general_level_idc
 
-    const profileIdc = rbsp.length > 1 ? (rbsp[1] & 0x1F) : 1;
+    const profileIdc = rbsp.length > 1 ? rbsp[1] & 0x1f : 1;
 
     // First constraint/feature byte: rbsp[6] = first constraint indicator byte
     const constraintByte = rbsp.length > 6 ? rbsp[6] : 0x60;
@@ -401,29 +428,29 @@ export function buildDescription(parser) {
  * Listed in order of preference (most common for 1080p60 first).
  */
 export const H264_FALLBACK_CODEC_STRINGS = [
-    'avc1.64002A',  // High 4.2
-    'avc1.640028',  // High 4.0
-    'avc1.64001F',  // High 3.1
-    'avc1.64001E',  // High 3.0
-    'avc1.4D002A',  // Main 4.2
-    'avc1.4D0028',  // Main 4.0
-    'avc1.42002A',  // Baseline 4.2
-    'avc1.42001E',  // Baseline 3.0
+    'avc1.64002A', // High 4.2
+    'avc1.640028', // High 4.0
+    'avc1.64001F', // High 3.1
+    'avc1.64001E', // High 3.0
+    'avc1.4D002A', // Main 4.2
+    'avc1.4D0028', // Main 4.0
+    'avc1.42002A', // Baseline 4.2
+    'avc1.42001E', // Baseline 3.0
 ];
 
 /**
  * Common HEVC codec strings for fallback (hvc1 — AVCC format with description).
  */
 export const HEVC_FALLBACK_CODEC_STRINGS = [
-    'hvc1.2.4.L153.B0',  // Main10 (HDR), High tier, Level 5.1
-    'hvc1.2.4.L150.B0',  // Main10 (HDR), High tier, Level 5.0
-    'hvc1.1.6.L153.B0',  // Main, High tier, Level 5.1 (most common for 1080p60)
-    'hvc1.1.6.L150.B0',  // Main, High tier, Level 5.0
-    'hvc1.1.6.L123.B0',  // Main, High tier, Level 4.1
-    'hvc1.1.6.L120.B0',  // Main, High tier, Level 4.0
-    'hvc1.1.6.L93.B0',   // Main, High tier, Level 3.1
-    'hvc1.1.2.L153.B0',  // Main, Main tier, Level 5.1
-    'hvc1.1.2.L150.B0',  // Main, Main tier, Level 5.0
+    'hvc1.2.4.L153.B0', // Main10 (HDR), High tier, Level 5.1
+    'hvc1.2.4.L150.B0', // Main10 (HDR), High tier, Level 5.0
+    'hvc1.1.6.L153.B0', // Main, High tier, Level 5.1 (most common for 1080p60)
+    'hvc1.1.6.L150.B0', // Main, High tier, Level 5.0
+    'hvc1.1.6.L123.B0', // Main, High tier, Level 4.1
+    'hvc1.1.6.L120.B0', // Main, High tier, Level 4.0
+    'hvc1.1.6.L93.B0', // Main, High tier, Level 3.1
+    'hvc1.1.2.L153.B0', // Main, Main tier, Level 5.1
+    'hvc1.1.2.L150.B0', // Main, Main tier, Level 5.0
 ];
 
 /**
@@ -432,8 +459,8 @@ export const HEVC_FALLBACK_CODEC_STRINGS = [
  * keyframe validator (AnalyzeAnnexB) requires.
  */
 export const HEVC_ANNEXB_CODEC_STRINGS = [
-    'hev1.2.4.L153.B0',  // Main10 (HDR), High tier, Level 5.1
-    'hev1.2.4.L150.B0',  // Main10 (HDR), High tier, Level 5.0
+    'hev1.2.4.L153.B0', // Main10 (HDR), High tier, Level 5.1
+    'hev1.2.4.L150.B0', // Main10 (HDR), High tier, Level 5.0
     'hev1.1.6.L153.B0',
     'hev1.1.6.L150.B0',
     'hev1.1.6.L123.B0',
@@ -473,9 +500,10 @@ export function toAvcc(annexB, stripParams = false, codec = null, useAnnexB = fa
         // the format and AnalyzeAnnexB can parse start codes directly.
         if (stripParams && !useAnnexB) {
             if (codec === CODEC_HEVC && n.length >= 2) {
-                const hevcType = (n[0] >> 1) & 0x3F;
+                const hevcType = (n[0] >> 1) & 0x3f;
                 // Strip VPS/SPS/PPS (always safe — they're in the description)
-                if (hevcType === HEVC_VPS || hevcType === HEVC_SPS || hevcType === HEVC_PPS) continue;
+                if (hevcType === HEVC_VPS || hevcType === HEVC_SPS || hevcType === HEVC_PPS)
+                    continue;
                 // Strip non-IRAP NALs before the first IRAP (types 16-21).
                 // Chrome/Edge check the first NAL in AVCC data: if it's not
                 // an IRAP, decode() synchronously rejects the chunk.
@@ -486,7 +514,7 @@ export function toAvcc(annexB, stripParams = false, codec = null, useAnnexB = fa
                 }
             }
             if (codec === CODEC_H264 || (!codec && n.length < 2)) {
-                const type = n[0] & 0x1F;
+                const type = n[0] & 0x1f;
                 if (type === H264_SPS || type === H264_PPS) continue;
             }
         }
@@ -497,14 +525,23 @@ export function toAvcc(annexB, stripParams = false, codec = null, useAnnexB = fa
             parts.push(0, 0, 0, 1);
         } else {
             // AVCC: 4-byte big-endian length prefix
-            parts.push((l>>24)&0xFF, (l>>16)&0xFF, (l>>8)&0xFF, l&0xFF);
+            parts.push((l >> 24) & 0xff, (l >> 16) & 0xff, (l >> 8) & 0xff, l & 0xff);
         }
         for (let i = 0; i < l; i++) parts.push(n[i]);
     }
 
     if (parts.length === 0 && nals.length > 0) {
-        console.warn('[toAvcc] PARTS IS EMPTY after stripping ' + nals.length + ' NALs, ' +
-            'stripParams=' + stripParams + ' codec=' + codec + ' useAnnexB=' + useAnnexB);
+        console.warn(
+            '[toAvcc] PARTS IS EMPTY after stripping ' +
+                nals.length +
+                ' NALs, ' +
+                'stripParams=' +
+                stripParams +
+                ' codec=' +
+                codec +
+                ' useAnnexB=' +
+                useAnnexB,
+        );
     }
 
     return new Uint8Array(parts);

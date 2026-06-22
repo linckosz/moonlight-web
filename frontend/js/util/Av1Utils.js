@@ -50,18 +50,18 @@ const OBU_PADDING = 15;
  * when the exact string cannot be derived from the Sequence Header OBU.
  */
 export const AV1_FALLBACK_CODEC_STRINGS = [
-    'av01.0.08M.08',   // Profile 0 (Main), Level 4.0,  8-bit — most common 1080p60
-    'av01.0.09M.08',   // Profile 0 (Main), Level 4.1,  8-bit
-    'av01.0.10M.08',   // Profile 0 (Main), Level 5.0,  8-bit (4K-safe)
-    'av01.0.12M.08',   // Profile 0 (Main), Level 5.1,  8-bit
-    'av01.0.08M.10',   // Profile 0 (Main), Level 4.0, 10-bit (HDR)
-    'av01.0.09M.10',   // Profile 0 (Main), Level 4.1, 10-bit (HDR)
-    'av01.0.10M.10',   // Profile 0 (Main), Level 5.0, 10-bit (HDR)
+    'av01.0.08M.08', // Profile 0 (Main), Level 4.0,  8-bit — most common 1080p60
+    'av01.0.09M.08', // Profile 0 (Main), Level 4.1,  8-bit
+    'av01.0.10M.08', // Profile 0 (Main), Level 5.0,  8-bit (4K-safe)
+    'av01.0.12M.08', // Profile 0 (Main), Level 5.1,  8-bit
+    'av01.0.08M.10', // Profile 0 (Main), Level 4.0, 10-bit (HDR)
+    'av01.0.09M.10', // Profile 0 (Main), Level 4.1, 10-bit (HDR)
+    'av01.0.10M.10', // Profile 0 (Main), Level 5.0, 10-bit (HDR)
 ];
 
 /** Extract the OBU type from the first byte of an OBU header (bits 6-3). */
 export function getObuType(firstByte) {
-    return (firstByte >> 3) & 0x0F;
+    return (firstByte >> 3) & 0x0f;
 }
 
 /**
@@ -75,7 +75,7 @@ export function isAv1Buffer(data) {
 
     // Annex B start codes indicate H.264/HEVC
     if (data[0] === 0x00 && data[1] === 0x00) {
-        if (data[2] === 0x01) return false;          // 3-byte start code
+        if (data[2] === 0x01) return false; // 3-byte start code
         if (data[2] === 0x00 && data[3] === 0x01) return false; // 4-byte start code
     }
 
@@ -96,7 +96,7 @@ export function findSequenceHeader(data) {
     let offset = 0;
     while (offset < data.length - 1) {
         const obuHeader = data[offset];
-        const obuType = (obuHeader >> 3) & 0x0F;
+        const obuType = (obuHeader >> 3) & 0x0f;
         const hasExtension = (obuHeader >> 2) & 0x01;
         const hasSizeField = (obuHeader >> 1) & 0x01;
 
@@ -118,10 +118,13 @@ export function findSequenceHeader(data) {
         let sizeComplete = false;
         while (pos < data.length && sizeLen < 8) {
             const lebByte = data[pos];
-            obuSize |= (lebByte & 0x7F) << (sizeLen * 7);
+            obuSize |= (lebByte & 0x7f) << (sizeLen * 7);
             sizeLen++;
             pos++;
-            if (!(lebByte & 0x80)) { sizeComplete = true; break; }
+            if (!(lebByte & 0x80)) {
+                sizeComplete = true;
+                break;
+            }
         }
         if (!sizeComplete) break;
 
@@ -152,12 +155,12 @@ export function stripNonEssentialObus(data) {
     if (!data || data.length < 1) return data;
 
     let offset = 0;
-    const kept = [];      // [start, end] ranges of OBUs to keep
+    const kept = []; // [start, end] ranges of OBUs to keep
     let removed = false;
 
     while (offset < data.length) {
         const obuHeader = data[offset];
-        const obuType = (obuHeader >> 3) & 0x0F;
+        const obuType = (obuHeader >> 3) & 0x0f;
         const hasExtension = (obuHeader >> 2) & 0x01;
         const hasSizeField = (obuHeader >> 1) & 0x01;
 
@@ -171,10 +174,13 @@ export function stripNonEssentialObus(data) {
         let sizeComplete = false;
         while (pos < data.length && sizeLen < 8) {
             const lebByte = data[pos];
-            obuSize |= (lebByte & 0x7F) << (sizeLen * 7);
+            obuSize |= (lebByte & 0x7f) << (sizeLen * 7);
             sizeLen++;
             pos++;
-            if (!(lebByte & 0x80)) { sizeComplete = true; break; }
+            if (!(lebByte & 0x80)) {
+                sizeComplete = true;
+                break;
+            }
         }
         if (!sizeComplete) return data;
 
@@ -184,7 +190,7 @@ export function stripNonEssentialObus(data) {
         if (obuType === OBU_TEMPORAL_DELIMITER || obuType === OBU_PADDING) {
             removed = true;
         } else if (kept.length > 0 && kept[kept.length - 1][1] === offset) {
-            kept[kept.length - 1][1] = offset + totalObuLen;  // extend contiguous range
+            kept[kept.length - 1][1] = offset + totalObuLen; // extend contiguous range
         } else {
             kept.push([offset, offset + totalObuLen]);
         }
@@ -219,7 +225,7 @@ class BitReader {
             const byteIdx = this.bitPos >> 3;
             if (byteIdx >= this.bytes.length) throw new Error('BitReader overrun');
             const bit = (this.bytes[byteIdx] >> (7 - (this.bitPos & 7))) & 1;
-            v = (v * 2) + bit;
+            v = v * 2 + bit;
             this.bitPos++;
         }
         return v;
@@ -271,8 +277,8 @@ export function parseSequenceHeader(obu) {
                 if (decoderModelInfo) {
                     bufferDelayLen = br.f(5) + 1;
                     br.f(32); // num_units_in_decoding_tick
-                    br.f(5);  // buffer_removal_time_length_minus_1
-                    br.f(5);  // frame_presentation_time_length_minus_1
+                    br.f(5); // buffer_removal_time_length_minus_1
+                    br.f(5); // frame_presentation_time_length_minus_1
                 }
             }
             const initialDisplayDelay = br.f(1);
@@ -280,12 +286,15 @@ export function parseSequenceHeader(obu) {
             for (let i = 0; i < opCount; i++) {
                 br.f(12); // operating_point_idc
                 const lvl = br.f(5);
-                const tr = (lvl > 7) ? br.f(1) : 0;
-                if (i === 0) { level = lvl; tier = tr; }
+                const tr = lvl > 7 ? br.f(1) : 0;
+                if (i === 0) {
+                    level = lvl;
+                    tier = tr;
+                }
                 if (decoderModelInfo && br.f(1)) {
                     br.f(bufferDelayLen); // decoder_buffer_delay
                     br.f(bufferDelayLen); // encoder_buffer_delay
-                    br.f(1);              // low_delay_mode_flag
+                    br.f(1); // low_delay_mode_flag
                 }
                 if (initialDisplayDelay && br.f(1)) {
                     br.f(4); // initial_display_delay_minus_1
@@ -298,7 +307,8 @@ export function parseSequenceHeader(obu) {
         const maxWidth = br.f(widthBits) + 1;
         const maxHeight = br.f(heightBits) + 1;
 
-        if (!reduced && br.f(1)) { // frame_id_numbers_present_flag
+        if (!reduced && br.f(1)) {
+            // frame_id_numbers_present_flag
             br.f(4); // delta_frame_id_length_minus_2
             br.f(3); // additional_frame_id_length_minus_1
         }
@@ -371,10 +381,22 @@ export function buildAv1DecoderConfigs(seqHeaderObu = null) {
             codecs.push(codecStringFromSeqInfo(info));
             width = info.maxWidth;
             height = info.maxHeight;
-            console.log('[Av1Utils] Seq header parsed: profile=' + info.profile +
-                ' level=' + info.level + ' tier=' + info.tier +
-                ' bitDepth=' + info.bitDepth + ' ' + width + 'x' + height +
-                ' -> ' + codecs[0]);
+            console.log(
+                '[Av1Utils] Seq header parsed: profile=' +
+                    info.profile +
+                    ' level=' +
+                    info.level +
+                    ' tier=' +
+                    info.tier +
+                    ' bitDepth=' +
+                    info.bitDepth +
+                    ' ' +
+                    width +
+                    'x' +
+                    height +
+                    ' -> ' +
+                    codecs[0],
+            );
         } else {
             console.warn('[Av1Utils] Sequence Header parse failed, using fallback codec list');
         }
@@ -384,7 +406,7 @@ export function buildAv1DecoderConfigs(seqHeaderObu = null) {
         if (!codecs.includes(c)) codecs.push(c);
     }
 
-    return codecs.map(codecStr => ({
+    return codecs.map((codecStr) => ({
         codec: codecStr,
         codedWidth: width,
         codedHeight: height,

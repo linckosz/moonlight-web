@@ -31,15 +31,14 @@ export class HostListView {
         this.hosts = [];
         this.pollTimer = null;
         this.eventsBound = false;
-        this.onLaunch = null;  // called with host when user clicks Launch
+        this.onLaunch = null; // called with host when user clicks Launch
         this._active = false;
         this._destroyed = false;
         this.renderShell();
 
         // Auto-scan when page gains focus
         this._visibilityHandler = () => {
-            if (!document.hidden && !this._destroyed)
-                this._autoScan();
+            if (!document.hidden && !this._destroyed) this._autoScan();
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
 
@@ -50,12 +49,12 @@ export class HostListView {
             const pairBtn = e.target.closest('.btn-pair');
             if (pairBtn) {
                 const uuid = pairBtn.dataset.uuid;
-                const host = this.hosts.find(h => h.uuid === uuid);
+                const host = this.hosts.find((h) => h.uuid === uuid);
                 if (host) {
                     this.stop();
                     const dialog = new PairDialog(host);
                     dialog.onComplete = () => {
-                        this.start();  // start() already calls refresh()
+                        this.start(); // start() already calls refresh()
                     };
                     dialog.onCancel = () => this.start();
                     dialog.show();
@@ -66,7 +65,7 @@ export class HostListView {
             const launchBtn = e.target.closest('.btn-open');
             if (launchBtn) {
                 const uuid = launchBtn.dataset.uuid;
-                const host = this.hosts.find(h => h.uuid === uuid);
+                const host = this.hosts.find((h) => h.uuid === uuid);
                 if (host && host.isAvailable && this.onLaunch) {
                     this.stop();
                     this.onLaunch(host);
@@ -77,17 +76,22 @@ export class HostListView {
             const wolBtn = e.target.closest('.btn-wol');
             if (wolBtn) {
                 const uuid = wolBtn.dataset.uuid;
-                const host = this.hosts.find(h => h.uuid === uuid);
+                const host = this.hosts.find((h) => h.uuid === uuid);
                 wolBtn.disabled = true;
                 BackendClient.wakeHost(uuid)
                     .then(() => {
-                        Toast.show(t('hosts.wolSent', { name: host ? host.displayName : uuid }), 'success');
+                        Toast.show(
+                            t('hosts.wolSent', { name: host ? host.displayName : uuid }),
+                            'success',
+                        );
                     })
-                    .catch(err => {
+                    .catch((err) => {
                         console.error('[MW] Wake-on-LAN failed:', err);
                         Toast.show(err.message, 'error');
                     })
-                    .finally(() => { wolBtn.disabled = false; });
+                    .finally(() => {
+                        wolBtn.disabled = false;
+                    });
                 return;
             }
 
@@ -98,10 +102,10 @@ export class HostListView {
                 const uuid = removeBtn.dataset.uuid;
                 BackendClient.removeHost(uuid)
                     .then(() => {
-                        this.hosts = this.hosts.filter(h => h.uuid !== uuid);
+                        this.hosts = this.hosts.filter((h) => h.uuid !== uuid);
                         this.renderList();
                     })
-                    .catch(err => {
+                    .catch((err) => {
                         console.error('[MW] Remove host failed:', err);
                         this.refresh();
                     });
@@ -155,8 +159,7 @@ export class HostListView {
             if (!this._active || this._destroyed) return;
             await this.refresh();
             // Don't re-schedule if stop() was called during refresh
-            if (this._active && !this._destroyed)
-                this.scheduleNextPoll();
+            if (this._active && !this._destroyed) this.scheduleNextPoll();
         }, delay);
     }
 
@@ -173,38 +176,46 @@ export class HostListView {
             // Merge — add/update, never remove
             for (const h of serverHosts) {
                 const host = new Host(h);
-                const idx = this.hosts.findIndex(ex => ex.uuid === host.uuid);
-                if (idx >= 0)
-                    this.hosts[idx] = host;
-                else
-                    this.hosts.push(host);
+                const idx = this.hosts.findIndex((ex) => ex.uuid === host.uuid);
+                if (idx >= 0) this.hosts[idx] = host;
+                else this.hosts.push(host);
             }
             const after = this._fingerprint();
-            if (before !== after)
-                this.renderList();
+            if (before !== after) this.renderList();
         } catch (err) {
             console.error('[MW] Failed to refresh hosts:', err);
             // Show error only on first load; keep existing data on refresh
-            if (this.hosts.length === 0)
-                this.renderError(err.message);
+            if (this.hosts.length === 0) this.renderError(err.message);
         }
     }
 
     // Stable fingerprint of host list — skips re-render when nothing changed
     _fingerprint() {
-        return JSON.stringify(this.hosts.map(h => [
-            h.uuid, h.state, h.pairState, h.name,
-            h.activeAddress, h.port, h.gpuModel,
-            h.displayModes
-        ]));
+        return JSON.stringify(
+            this.hosts.map((h) => [
+                h.uuid,
+                h.state,
+                h.pairState,
+                h.name,
+                h.activeAddress,
+                h.port,
+                h.gpuModel,
+                h.displayModes,
+            ]),
+        );
     }
 
     _cardFingerprint(host) {
         return [
-            host.uuid, host.state, host.pairState, host.name,
-            host.activeAddress, host.port, host.gpuModel,
+            host.uuid,
+            host.state,
+            host.pairState,
+            host.name,
+            host.activeAddress,
+            host.port,
+            host.gpuModel,
             host.macAddress,
-            JSON.stringify(host.displayModes)
+            JSON.stringify(host.displayModes),
         ].join('|');
     }
 
@@ -246,13 +257,12 @@ export class HostListView {
         const empty = list.querySelector('.hosts-empty');
         if (empty) empty.remove();
 
-        const currentUuids = new Set(this.hosts.map(h => h.uuid));
+        const currentUuids = new Set(this.hosts.map((h) => h.uuid));
 
         // Remove cards for hosts no longer in the list
         const existingCards = list.querySelectorAll('.host-card');
         for (const card of existingCards) {
-            if (!currentUuids.has(card.dataset.uuid))
-                card.remove();
+            if (!currentUuids.has(card.dataset.uuid)) card.remove();
         }
 
         // Insert or update cards in order
@@ -295,31 +305,37 @@ export class HostListView {
                 <div class="host-card-info">
                     <div class="host-name">${this.esc(host.displayName)}</div>
                     <div class="host-address">${this.esc(host.displayAddress)}</div>
-                    ${host.displayGpu
-                        ? `<div class="host-gpu">${this.esc(host.displayGpu)}</div>`
-                        : ''}
-                    ${host.resolutionText
-                        ? `<div class="host-resolution">${this.esc(host.resolutionText)}</div>`
-                        : ''}
+                    ${
+                        host.displayGpu
+                            ? `<div class="host-gpu">${this.esc(host.displayGpu)}</div>`
+                            : ''
+                    }
+                    ${
+                        host.resolutionText
+                            ? `<div class="host-resolution">${this.esc(host.resolutionText)}</div>`
+                            : ''
+                    }
                 </div>
                 <div class="host-card-status">
                     <span class="status-badge ${cls}">${host.statusLabel}</span>
                 </div>
                 <div class="host-card-actions">
-                    ${host.isAvailable
-                        ? `<button class="btn btn-open" data-uuid="${host.uuid}">${t('common.open')}</button>`
-                        : host.isLocked
-                            ? `<button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>`
-                            : host.canWake
+                    ${
+                        host.isAvailable
+                            ? `<button class="btn btn-open" data-uuid="${host.uuid}">${t('common.open')}</button>`
+                            : host.isLocked
+                              ? `<button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>`
+                              : host.canWake
                                 ? `<button class="btn btn-secondary btn-small btn-wol" data-uuid="${host.uuid}" title="${t('hosts.wakeTitle')}">${Icons.power}${t('hosts.wakeBtn')}</button>`
                                 : ''
                     }
                 </div>
-                ${!host.isAvailable && !host.isLocked
-                    ? `<div class="host-card-remove">
+                ${
+                    !host.isAvailable && !host.isLocked
+                        ? `<div class="host-card-remove">
                          <button class="btn btn-secondary btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
                        </div>`
-                    : ''
+                        : ''
                 }
             </div>
         `;
@@ -354,15 +370,21 @@ export class HostListView {
                     const data = await BackendClient.addManualHost(addr.trim());
                     if (data.hosts && data.hosts.length > 0) {
                         const newHost = new Host(data.hosts[0]);
-                        const idx = this.hosts.findIndex(h => h.uuid === newHost.uuid);
+                        const idx = this.hosts.findIndex((h) => h.uuid === newHost.uuid);
                         if (idx >= 0) {
                             this.hosts[idx] = newHost;
                             this.renderList();
-                            Toast.show(t('hosts.alreadyInList', { name: newHost.displayName }), 'warning');
+                            Toast.show(
+                                t('hosts.alreadyInList', { name: newHost.displayName }),
+                                'warning',
+                            );
                         } else {
                             this.hosts.push(newHost);
                             this.renderList();
-                            Toast.show(t('hosts.addedSuccess', { name: newHost.displayName }), 'success');
+                            Toast.show(
+                                t('hosts.addedSuccess', { name: newHost.displayName }),
+                                'success',
+                            );
                         }
                     } else {
                         Toast.show(t('hosts.noHostReturned'), 'error');
