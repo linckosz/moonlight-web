@@ -544,9 +544,9 @@ body.streaming-active .app-footer {
     transform: scale(0.95);
 }
 .btn-stream-kbd.active {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
+    background: var(--kbd-on);
+    color: var(--kbd-on-edge);
+    border-color: var(--kbd-on-edge);
 }
 
 /* Hidden capture element: focusable (opens the soft keyboard) but invisible.
@@ -620,10 +620,10 @@ body.streaming-active .app-footer {
     color: rgba(255, 255, 255, 0.8);
 }
 .stream-kbd-key.active {
-    /* Latched modifier */
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
+    /* Latched modifier — neon cyan, matching the Stop button border */
+    background: var(--kbd-on);
+    border-color: var(--kbd-on-edge);
+    color: var(--kbd-on-edge);
 }
 
 /* ── Native fullscreen: hide the header so the stream fills the screen ──── */
