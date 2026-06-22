@@ -38,7 +38,7 @@ struct SessionInfo
     QString machineName;
     QString city;
     QString country;
-    qint64 createdAt;       // unix timestamp (secs)
+    qint64 createdAt = 0;   // unix timestamp (secs)
     qint64 lastSeen = 0;    // unix secs; bumped on activity (sliding expiration)
     bool streaming = false; // runtime-only: true while this session has an active stream
 

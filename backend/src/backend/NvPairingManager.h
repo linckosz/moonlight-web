@@ -48,6 +48,11 @@ public:
                      quint16 httpsPort);
     ~NvPairingManager();
 
+    // Owns raw OpenSSL handles (X509*/EVP_PKEY*) and a QNetworkAccessManager*
+    // freed in the destructor — non-copyable to avoid double-free.
+    NvPairingManager(const NvPairingManager&) = delete;
+    NvPairingManager& operator=(const NvPairingManager&) = delete;
+
     // Stage 1: send salt + client cert → server displays PIN
     InitResult initiatePairing();
 
