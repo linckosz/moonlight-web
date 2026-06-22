@@ -410,7 +410,7 @@ QByteArray AcmeClient::buildJws(const QByteArray& payload, const QString& url, b
 // Fetch a fresh Replay-Nonce
 // ---------------------------------------------------------------------------
 
-void AcmeClient::fetchNonce(std::function<void(bool)> callback)
+void AcmeClient::fetchNonce(const std::function<void(bool)>& callback)
 {
     QString url = m_Directory.value(QStringLiteral("newNonce")).toString();
     if (url.isEmpty()) {
@@ -443,9 +443,9 @@ void AcmeClient::fetchNonce(std::function<void(bool)> callback)
 // ACME POST (async, with badNonce retry)
 // ---------------------------------------------------------------------------
 
-void AcmeClient::acmePost(const QString& url, const QByteArray& payload, bool useKid,
-                          std::function<void(int, const QByteArray&, const QString&)> callback,
-                          int retriesLeft)
+void AcmeClient::acmePost(
+    const QString& url, const QByteArray& payload, bool useKid,
+    const std::function<void(int, const QByteArray&, const QString&)>& callback, int retriesLeft)
 {
     if (m_Cancelled) return;
 
@@ -493,7 +493,7 @@ void AcmeClient::acmePost(const QString& url, const QByteArray& payload, bool us
 }
 
 void AcmeClient::acmePostAsGet(const QString& url,
-                               std::function<void(int, const QByteArray&)> callback)
+                               const std::function<void(int, const QByteArray&)>& callback)
 {
     // POST-as-GET: empty payload per RFC 8555 §6.3
     acmePost(url, QByteArray(), !m_AccountUrl.isEmpty(),

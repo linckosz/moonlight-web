@@ -73,13 +73,13 @@ static QByteArray addHvcEp(const QByteArray& rbsp)
     QByteArray result;
     result.reserve(rbsp.size() + 16);
     int zeroRun = 0;
-    for (int i = 0; i < rbsp.size(); i++) {
-        unsigned char b = static_cast<unsigned char>(rbsp[i]);
+    for (char i : rbsp) {
+        unsigned char b = static_cast<unsigned char>(i);
         if (zeroRun >= 2 && b <= 0x03) {
             result.append('\x03');
             zeroRun = 0;
         }
-        result.append(rbsp[i]);
+        result.append(i);
         if (b == 0x00)
             zeroRun++;
         else

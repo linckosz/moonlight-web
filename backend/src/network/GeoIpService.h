@@ -46,7 +46,7 @@ public:
      * Calls the callback with (city, country) — both empty on failure/error.
      * Results are cached per IP for 24 hours.
      */
-    void lookupIp(const QString& ip, GeoCallback callback);
+    void lookupIp(const QString& ip, const GeoCallback& callback);
 
     /** Synchronous cache access — returns (city, country) or ("","") if not cached. */
     QPair<QString, QString> cachedLocation(const QString& ip) const;

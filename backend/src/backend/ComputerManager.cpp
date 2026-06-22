@@ -94,7 +94,7 @@ public:
         resolve();
     }
 
-    ~MdnsPendingComputer() { delete m_Resolver; }
+    ~MdnsPendingComputer() override { delete m_Resolver; }
 
     QString hostname() const { return m_Hostname; }
     quint16 port() const { return m_Port; }
@@ -289,7 +289,7 @@ void ComputerManager::onPollTick()
         if (addrs.isEmpty()) continue;
 
         // Use first address for polling
-        NvAddress addr = addrs.first();
+        const NvAddress& addr = addrs.first();
 
         // [NETWORK] diagnostic: trace every outbound serverinfo poll.
         Logger::info(
@@ -330,7 +330,7 @@ void ComputerManager::onBackupPollTick()
         QVector<NvAddress> addrs = host->uniqueAddresses();
         if (addrs.isEmpty()) continue;
 
-        NvAddress addr = addrs.first();
+        const NvAddress& addr = addrs.first();
 
         // [NETWORK] diagnostic: trace backup serverinfo poll (every 60s).
         Logger::info(QString("[NETWORK] backup poll serverinfo HTTP -> %1 (%2)")
@@ -892,7 +892,7 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
         return {400, err};
     }
 
-    NvAddress addr = addrs.first();
+    const NvAddress& addr = addrs.first();
 
     // Generate PIN — returned immediately, no network call
     QString pin = generatePairingPin();
@@ -1155,7 +1155,7 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
     }
 
     quint16 httpsPort = host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
-    NvAddress addr = addrs.first();
+    const NvAddress& addr = addrs.first();
 
     IdentityManager* im = IdentityManager::get();
     QByteArray cert = im->getCertificate();
@@ -1281,7 +1281,7 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
     QByteArray clientCertPem = im->getCertificate();
     QByteArray clientKeyPem = im->getPrivateKey();
     quint16 httpsPort = host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
-    NvAddress addr = addrs.first();
+    const NvAddress& addr = addrs.first();
 
     QNetworkReply* reply = m_Http->getAppListAsync(addr, httpsPort, clientCertPem, clientKeyPem);
 
@@ -1289,7 +1289,7 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
     auto safeRespond = [responded, respond = std::move(respond)](HttpResponse resp) {
         if (!*responded) {
             *responded = true;
-            respond(resp);
+            respond(std::move(resp));
         }
     };
 

@@ -1039,7 +1039,7 @@ int main(int argc, char* argv[])
             // Per-browser uniqueid so an unexpected-end auto-quit cancels only THIS
             // browser's Sunshine session (keyed like /launch), never a co-located
             // iOS/Qt client's session. Empty → shared id (legacy fallback).
-            QString quitUid = reqClientUniqueId;
+            const QString& quitUid = reqClientUniqueId;
 
             // WSS mode: StreamRelay tracking
             QObject::connect(
@@ -1260,7 +1260,7 @@ int main(int argc, char* argv[])
         "/api/hosts/:id/quit",
         [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
          &g_ActiveSession,
-         &g_ActiveClientUniqueId](const HttpRequest& req, ResponseCallback respond) {
+         &g_ActiveClientUniqueId](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                     << "relay valid=" << (!g_ActiveRelay.isNull());

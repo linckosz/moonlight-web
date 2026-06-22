@@ -48,7 +48,7 @@ class SignalingServer : public QObject
 public:
     SignalingServer(RelayBase* relay, quint16 wsPort, const QString& serverHost = "localhost",
                     QObject* parent = nullptr);
-    ~SignalingServer();
+    ~SignalingServer() override;
 
     bool start();
     void stop();

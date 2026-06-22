@@ -37,7 +37,7 @@ class HttpServer : public QObject
 
 public:
     explicit HttpServer(quint16 httpPort = 80, quint16 httpsPort = 443, QObject* parent = nullptr);
-    ~HttpServer();
+    ~HttpServer() override;
 
     /// Start servers. preferredHttpsPort is tried first, then fallback ranges.
     bool start(quint16 preferredHttpsPort = 443);

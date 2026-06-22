@@ -33,7 +33,7 @@ class StreamRelay : public QObject
 public:
     StreamRelay(MoonlightShim* shim, quint16 wsPort, const QSslConfiguration& sslConfig = {},
                 QObject* parent = nullptr);
-    ~StreamRelay();
+    ~StreamRelay() override;
 
     bool start();
     void stop();

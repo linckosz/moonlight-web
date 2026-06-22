@@ -1477,7 +1477,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         }
     });
 
-    m_Router->dispatchAsync(req, [this, socket](HttpResponse resp) {
+    m_Router->dispatchAsync(req, [this, socket](const HttpResponse& resp) {
         if (m_PendingAsyncSockets.contains(socket)) {
             m_PendingAsyncSockets.remove(socket);
             sendResponse(socket, resp);
@@ -1533,7 +1533,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     // Copy the upgrade request BEFORE removing from m_Buffers.  requestData is a
     // const reference to the QByteArray inside m_Buffers — remove() destroys it.
-    QByteArray upgradeRequest = requestData;
+    const QByteArray& upgradeRequest = requestData;
 
     // Remove from our tracking — HttpServer should no longer manage this socket.
     m_Buffers.remove(clientSocket);
