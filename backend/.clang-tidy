@@ -1,0 +1,32 @@
+# clang-tidy configuration for the Moonlight-Web backend.
+#
+# Requires a compile_commands.json (qmake+MSVC does not emit one natively —
+# see scripts/gen_compile_commands for generation). Scoped to our own code:
+# third_party/ is excluded at invocation time.
+#
+# Conservative starter set: real-bug and performance checks, low false-positive
+# rate. Tighten over time. Qt's macro-heavy code makes some checks noisy, hence
+# the targeted disables.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  misc-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-equals-default,
+  modernize-loop-convert,
+  readability-redundant-member-init,
+  readability-redundant-string-cstr,
+  readability-container-size-empty,
+  readability-misleading-indentation,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  -performance-no-int-to-ptr
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*/src/.*'
+FormatStyle: file

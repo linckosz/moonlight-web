@@ -1,0 +1,50 @@
+# Tuned to the existing hand-written house style (NOT a stock preset):
+#   - Allman braces for class/struct/function definitions
+#   - attached braces for control flow (if/for/while/else/catch)
+#   - compact single-line guards (`if (x) return;`) and switch cases
+#   - 4-space indent, left-aligned pointers/refs, leading-comma init lists
+# Goal: act as a guardrail that accepts existing code, not rewrite it.
+Language: Cpp
+Standard: c++17
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+PointerAlignment: Left
+ReferenceAlignment: Left
+AccessModifierOffset: -4
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+  BeforeLambdaBody: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+
+BreakConstructorInitializers: BeforeComma
+ConstructorInitializerIndentWidth: 4
+NamespaceIndentation: None
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortBlocksOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortLoopsOnASingleLine: false
+AllowShortEnumsOnASingleLine: true
+
+AlignTrailingComments: true
+AlignAfterOpenBracket: Align
+SpaceBeforeParens: ControlStatements
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+# Preserve the deliberate include grouping (local -> Qt -> std); reordering can
+# break compilation when headers have implicit ordering dependencies.
+SortIncludes: false
