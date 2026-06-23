@@ -633,6 +633,14 @@ export class WebGpuRenderer extends VideoRenderer {
         canvas.width = 1920;
         canvas.height = 1080;
         r._ready = true;
+        console.log(
+            '[WebGpuRenderer] created algo=' +
+                r._algo +
+                ' hdr=' +
+                r._hdr +
+                ' hdrTonemap=' +
+                r._hdrTonemap,
+        );
         return r;
     }
 
@@ -1148,6 +1156,10 @@ export class WebGpuRenderer extends VideoRenderer {
                 useYuv = await this._uploadP010(frame, inW, inH);
             } catch (e) {
                 useYuv = false;
+                if (!this._uploadWarned) {
+                    this._uploadWarned = true;
+                    console.warn('[WebGpuRenderer] HDR upload threw: ' + e.message);
+                }
             }
         }
 
