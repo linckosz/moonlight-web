@@ -3045,10 +3045,17 @@ export class StreamView {
         }
     }
 
+    /** True when the visible surface is the <video> element: webrtc-media
+     *  (native RTP) or the HDR sink (MediaStreamTrackGenerator). In both cases
+     *  the <canvas> is hidden, so coordinate mapping must use the <video>. */
+    _videoIsDisplay() {
+        return this._transport === 'webrtc-media' || this._useVideoSink;
+    }
+
     /** Active display element used for absolute-coordinate mapping:
-     *  the <video> in webrtc-media mode, the <canvas> otherwise. */
+     *  the <video> when it is the visible surface, the <canvas> otherwise. */
     _displayEl() {
-        return this._transport === 'webrtc-media' ? this.videoEl : this.canvas;
+        return this._videoIsDisplay() ? this.videoEl : this.canvas;
     }
 
     /** Displayed media rectangle in client coordinates, accounting for
@@ -3059,9 +3066,8 @@ export class StreamView {
      *  coordinates map to the real picture, not the surrounding black bars. */
     _mediaRect() {
         const r = this._displayEl().getBoundingClientRect();
-        const iw = this._transport === 'webrtc-media' ? this.videoEl.videoWidth : this.canvas.width;
-        const ih =
-            this._transport === 'webrtc-media' ? this.videoEl.videoHeight : this.canvas.height;
+        const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
+        const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
         if (!iw || !ih) return r;
         const scale = Math.min(r.width / iw, r.height / ih);
         const w = iw * scale,
@@ -4365,7 +4371,7 @@ export class StreamView {
             const el = this._displayEl();
             let iw = 0,
                 ih = 0;
-            if (this._transport === 'webrtc-media') {
+            if (this._videoIsDisplay()) {
                 iw = el.videoWidth;
                 ih = el.videoHeight;
             } else if (this.canvas) {
@@ -4956,7 +4962,7 @@ export class StreamView {
         const disp = this._displayEl();
         let iw = 0,
             ih = 0;
-        if (this._transport === 'webrtc-media' && disp) {
+        if (this._videoIsDisplay() && disp) {
             iw = disp.videoWidth;
             ih = disp.videoHeight;
         } else if (this.canvas) {
