@@ -74,6 +74,81 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 }
 `;
 
+// HDR tone-map (Pass 0 replacement). Reads the decoded 10/12-bit YUV planes
+// (frame.copyTo readback) instead of importExternalTexture — the only way to get
+// the *raw* PQ pixels, since importExternalTexture tone-maps HDR away on import.
+// Pipeline: BT.2020 limited Y'CbCr → R'G'B'(PQ) → PQ EOTF (linear, 1.0=10000 nits)
+// → normalize to SDR diffuse white → BT.2020→Rec.709 gamut → ACES filmic → sRGB.
+// Output is ordinary SDR perceptual RGB (rgba8unorm), so the downstream FSR1/SGSR
+// passes run unchanged on a normal SDR canvas.
+const HDR_TONEMAP_WGSL =
+    FULLSCREEN_VS +
+    /* wgsl */ `
+@group(0) @binding(0) var texY : texture_2d<u32>;
+@group(0) @binding(1) var texU : texture_2d<u32>;
+@group(0) @binding(2) var texV : texture_2d<u32>;
+@group(0) @binding(3) var<uniform> dims : vec4f;   // (yW, yH, cW, cH)
+@group(0) @binding(4) var<uniform> params : vec4f; // (refWhite nits, codeScale, _, _)
+
+// SMPTE ST 2084 (PQ) constants.
+const M1 : f32 = 0.1593017578125;
+const M2 : f32 = 78.84375;
+const C1 : f32 = 0.8359375;
+const C2 : f32 = 18.8515625;
+const C3 : f32 = 18.6875;
+
+fn pqEotf(e : vec3f) -> vec3f {
+    let ep = pow(max(e, vec3f(0.0)), vec3f(1.0 / M2));
+    let num = max(ep - vec3f(C1), vec3f(0.0));
+    let den = vec3f(C2) - C3 * ep;
+    return pow(num / den, vec3f(1.0 / M1)); // [0,1], 1.0 = 10000 nits
+}
+
+// ACES filmic tone curve (Narkowicz approximation). Linear in, linear out.
+fn aces(x : vec3f) -> vec3f {
+    let a = 2.51; let b = 0.03; let c = 2.43; let d = 0.59; let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3f(0.0), vec3f(1.0));
+}
+
+fn linToSrgb(c : vec3f) -> vec3f {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3f(0.0031308));
+}
+
+@fragment
+fn fs(in : VSOut) -> @location(0) vec4f {
+    let yDim = vec2<i32>(i32(dims.x), i32(dims.y));
+    let cDim = vec2<i32>(i32(dims.z), i32(dims.w));
+    let yc = clamp(vec2<i32>(floor(in.uv * dims.xy)), vec2<i32>(0), yDim - vec2<i32>(1));
+    let cc = clamp(vec2<i32>(floor(in.uv * dims.zw)), vec2<i32>(0), cDim - vec2<i32>(1));
+    let s = params.y;
+    let cy = f32(textureLoad(texY, yc, 0).r) * s;
+    let cu = f32(textureLoad(texU, cc, 0).r) * s;
+    let cv = f32(textureLoad(texV, cc, 0).r) * s;
+    // BT.2020 limited-range 10-bit Y'CbCr → R'G'B' (PQ-encoded, [0,1]).
+    let yL = (cy - 64.0) / 876.0;
+    let cb = (cu - 512.0) / 896.0;
+    let cr = (cv - 512.0) / 896.0;
+    var rgbPq : vec3f;
+    rgbPq.r = yL + 1.4746 * cr;
+    rgbPq.g = yL - 0.16455 * cb - 0.57135 * cr;
+    rgbPq.b = yL + 1.8814 * cb;
+    rgbPq = clamp(rgbPq, vec3f(0.0), vec3f(1.0));
+    let linear2020 = pqEotf(rgbPq);
+    // SDR diffuse white (refWhite nits) maps to 1.0 before tone mapping.
+    let scaled = linear2020 * (10000.0 / params.x);
+    // BT.2020 → Rec.709 gamut (linear), column-major.
+    let M = mat3x3f(
+        1.6605, -0.1246, -0.0182,
+       -0.5876,  1.1329, -0.1006,
+       -0.0728, -0.0083,  1.1187);
+    let rgb709 = max(M * scaled, vec3f(0.0));
+    let tm = aces(rgb709);
+    return vec4f(linToSrgb(tm), 1.0);
+}
+`;
+
 // SGSRv1 (mode 1, green luma). Ported from sgsr1.h, SGSR_MOBILE variant.
 const SGSR_WGSL =
     FULLSCREEN_VS +
@@ -520,6 +595,28 @@ export class WebGpuRenderer extends VideoRenderer {
         // map to the display's HDR headroom). Gated on opts.hdr; _configure()
         // self-downgrades to SDR if the browser rejects the HDR canvas config.
         r._hdr = !!opts.hdr;
+        // HDR→SDR tone-map path: decode HDR (PQ/BT.2020), tone-map to SDR with ACES
+        // via manual P010 readback, then run the enhancer on a normal SDR canvas.
+        // Mutually exclusive with _hdr (the rgba16float extended canvas).
+        r._hdrTonemap = !!opts.hdrTonemap;
+        r._refWhite = 203; // SDR diffuse white reference (nits) → maps to 1.0
+        r._codeScale = 1.0; // 10-bit sample alignment (1.0 = low-aligned 0..1023)
+        try {
+            const rw = parseFloat(localStorage.getItem('mw_hdr_refwhite'));
+            if (rw > 0) r._refWhite = rw;
+            const cs = parseFloat(localStorage.getItem('mw_hdr_codescale'));
+            if (cs > 0) r._codeScale = cs;
+        } catch (e) {}
+        r._copyBuf = null;
+        r._texY = null;
+        r._texU = null;
+        r._texV = null;
+        r._yuvW = 0;
+        r._yuvH = 0;
+        r._yuvCW = 0;
+        r._yuvCH = 0;
+        r._yuvFormatLogged = false;
+        r._copyWarned = false;
         r._adapter = adapter;
         r._device = device;
         r._ready = false;
@@ -623,6 +720,8 @@ export class WebGpuRenderer extends VideoRenderer {
             },
             primitive: { topology: 'triangle-list' },
         });
+
+        if (this._hdrTonemap) this._buildHdrTonemapResources();
 
         if (this._algo === 'fsr1') {
             this._buildFsr1Resources();
@@ -730,6 +829,180 @@ export class WebGpuRenderer extends VideoRenderer {
             },
             primitive: { topology: 'triangle-list' },
         });
+    }
+
+    // HDR tone-map Pass 0: 3 uint planes (Y/U/V) + dims/params uniforms → SDR.
+    _buildHdrTonemapResources() {
+        const device = this._device;
+        this._yuvDims = device.createBuffer({
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        this._yuvParams = device.createBuffer({
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        this._yuvLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'uint' },
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'uint' },
+                },
+                {
+                    binding: 2,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'uint' },
+                },
+                { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+                { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+            ],
+        });
+        const mod = device.createShaderModule({ code: HDR_TONEMAP_WGSL });
+        this._yuvPipeline = device.createRenderPipeline({
+            layout: device.createPipelineLayout({ bindGroupLayouts: [this._yuvLayout] }),
+            vertex: { module: mod, entryPoint: 'vs' },
+            fragment: { module: mod, entryPoint: 'fs', targets: [{ format: this._interFormat }] },
+            primitive: { topology: 'triangle-list' },
+        });
+        // Force texture (re)creation on the next upload (device recovery rebuilds this).
+        this._texY = null;
+        this._yuvW = 0;
+    }
+
+    // (Re)create the r16uint Y/U/V plane textures + bind group when sizes change.
+    _ensureYuvTextures(yW, yH, cW, cH) {
+        if (
+            this._texY &&
+            this._yuvW === yW &&
+            this._yuvH === yH &&
+            this._yuvCW === cW &&
+            this._yuvCH === cH
+        )
+            return;
+        for (const t of [this._texY, this._texU, this._texV]) {
+            try {
+                if (t) t.destroy();
+            } catch (e) {}
+        }
+        const mk = (w, h) =>
+            this._device.createTexture({
+                size: { width: w, height: h },
+                format: 'r16uint',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+            });
+        this._texY = mk(yW, yH);
+        this._texU = mk(cW, cH);
+        this._texV = mk(cW, cH);
+        this._yuvW = yW;
+        this._yuvH = yH;
+        this._yuvCW = cW;
+        this._yuvCH = cH;
+        this._yuvBindGroup = this._device.createBindGroup({
+            layout: this._yuvLayout,
+            entries: [
+                { binding: 0, resource: this._texY.createView() },
+                { binding: 1, resource: this._texU.createView() },
+                { binding: 2, resource: this._texV.createView() },
+                { binding: 3, resource: { buffer: this._yuvDims } },
+                { binding: 4, resource: { buffer: this._yuvParams } },
+            ],
+        });
+        this._device.queue.writeBuffer(this._yuvDims, 0, new Float32Array([yW, yH, cW, cH]));
+    }
+
+    // GPU→CPU readback of the decoded 10/12-bit YUV planes, uploaded to GPU uint
+    // textures for the tone-map pass. Returns true on success; false (with a
+    // one-time warning) when copyTo is unsupported → caller blits via importExternalTexture.
+    async _uploadP010(frame, inW, inH) {
+        const fmt = frame.format; // often null (opaque) for hardware HDR frames
+        let copyFmt = 'I420P10';
+        let cwDen = 2,
+            chDen = 2; // 4:2:0 default
+        let codeScale = 1.0; // 10-bit low-aligned (0..1023)
+        if (fmt === 'I444' || fmt === 'I444P10' || fmt === 'I444P12') {
+            copyFmt = 'I444P10';
+            cwDen = 1;
+            chDen = 1;
+        } else if (fmt === 'I422' || fmt === 'I422P10' || fmt === 'I422P12') {
+            copyFmt = 'I422P10';
+            cwDen = 2;
+            chDen = 1;
+        } else if (fmt === 'I420P12') {
+            copyFmt = 'I420P12';
+            codeScale = 1023.0 / 4095.0; // map 12-bit codes into the 10-bit math
+        }
+        const yW = inW,
+            yH = inH;
+        const cW = Math.ceil(inW / cwDen),
+            cH = Math.ceil(inH / chDen);
+        let layouts;
+        try {
+            const size = frame.allocationSize({ format: copyFmt });
+            if (!this._copyBuf || this._copyBuf.byteLength < size) {
+                this._copyBuf = new ArrayBuffer(size);
+            }
+            layouts = await frame.copyTo(this._copyBuf, { format: copyFmt });
+        } catch (e) {
+            if (!this._copyWarned) {
+                this._copyWarned = true;
+                console.warn(
+                    '[WebGpuRenderer] HDR copyTo(' +
+                        copyFmt +
+                        ') failed (frame.format=' +
+                        fmt +
+                        '): ' +
+                        e.message +
+                        ' → importExternalTexture fallback',
+                );
+            }
+            return false;
+        }
+        if (!layouts || layouts.length < 3) return false;
+        this._ensureYuvTextures(yW, yH, cW, cH);
+        // params = (refWhite, codeScale·userScale). Written each frame (cheap).
+        this._device.queue.writeBuffer(
+            this._yuvParams,
+            0,
+            new Float32Array([this._refWhite, codeScale * this._codeScale, 0, 0]),
+        );
+        const buf = new Uint8Array(this._copyBuf);
+        const writePlane = (tex, lo, w, h) => {
+            this._device.queue.writeTexture(
+                { texture: tex },
+                buf,
+                { offset: lo.offset, bytesPerRow: lo.stride, rowsPerImage: h },
+                { width: w, height: h },
+            );
+        };
+        writePlane(this._texY, layouts[0], yW, yH);
+        writePlane(this._texU, layouts[1], cW, cH);
+        writePlane(this._texV, layouts[2], cW, cH);
+        if (!this._yuvFormatLogged) {
+            this._yuvFormatLogged = true;
+            console.log(
+                '[WebGpuRenderer] HDR P010 ingest: frame.format=' +
+                    fmt +
+                    ' copyFmt=' +
+                    copyFmt +
+                    ' y=' +
+                    yW +
+                    'x' +
+                    yH +
+                    ' c=' +
+                    cW +
+                    'x' +
+                    cH +
+                    ' planes=' +
+                    layouts.length,
+            );
+        }
+        return true;
     }
 
     // inputTex = frame resolution (Pass 0 target / enhancer source).
@@ -867,19 +1140,34 @@ export class WebGpuRenderer extends VideoRenderer {
             this.canvas.height = ch;
         }
 
+        // HDR tone-map path: read back the raw 10-bit YUV (importExternalTexture
+        // would tone-map the HDR away). On failure, fall back to the blit below.
+        let useYuv = false;
+        if (this._hdrTonemap) {
+            try {
+                useYuv = await this._uploadP010(frame, inW, inH);
+            } catch (e) {
+                useYuv = false;
+            }
+        }
+
         try {
             // External texture + its blit bind group are per-frame (texture expires).
-            const externalTex = this._device.importExternalTexture({
-                source: frame,
-                colorSpace: this._importColorSpace || 'srgb',
-            });
-            const blitBindGroup = this._device.createBindGroup({
-                layout: this._blitLayout,
-                entries: [
-                    { binding: 0, resource: this._sampler },
-                    { binding: 1, resource: externalTex },
-                ],
-            });
+            // Skipped when the YUV tone-map pass supplies Pass 0 instead.
+            let blitBindGroup = null;
+            if (!useYuv) {
+                const externalTex = this._device.importExternalTexture({
+                    source: frame,
+                    colorSpace: this._importColorSpace || 'srgb',
+                });
+                blitBindGroup = this._device.createBindGroup({
+                    layout: this._blitLayout,
+                    entries: [
+                        { binding: 0, resource: this._sampler },
+                        { binding: 1, resource: externalTex },
+                    ],
+                });
+            }
 
             const encoder = this._device.createCommandEncoder();
 
@@ -923,8 +1211,14 @@ export class WebGpuRenderer extends VideoRenderer {
                     },
                 ],
             });
-            p0.setPipeline(this._blitPipeline);
-            p0.setBindGroup(0, blitBindGroup);
+            if (useYuv) {
+                // HDR YUV → SDR (ACES) tone-map into inputTex.
+                p0.setPipeline(this._yuvPipeline);
+                p0.setBindGroup(0, this._yuvBindGroup);
+            } else {
+                p0.setPipeline(this._blitPipeline);
+                p0.setBindGroup(0, blitBindGroup);
+            }
             p0.draw(3);
             p0.end();
 
@@ -1022,11 +1316,20 @@ export class WebGpuRenderer extends VideoRenderer {
         try {
             if (this._intermTex) this._intermTex.destroy();
         } catch (e) {}
+        for (const t of [this._texY, this._texU, this._texV]) {
+            try {
+                if (t) t.destroy();
+            } catch (e) {}
+        }
         try {
             if (this._device) this._device.destroy();
         } catch (e) {}
         this._inputTex = null;
         this._intermTex = null;
+        this._texY = null;
+        this._texU = null;
+        this._texV = null;
+        this._copyBuf = null;
         this._device = null;
         this.ctx = null;
         this.canvas = null;
