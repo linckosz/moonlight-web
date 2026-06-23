@@ -254,12 +254,19 @@ export class StreamView {
         } catch (e) {}
 
         // HDR routing (DataChannel/WSS only; decided after algo/wantWebGpu):
-        //  - Enhancer ON  → tone-map HDR→SDR (ACES) on the WebGPU canvas so FSR1/SGSR
-        //    can run (the <video> sink bypasses the shader pipeline).
-        //  - Enhancer OFF → true HDR via the <video> sink (MediaStreamTrackGenerator);
-        //    the canvas paths tone-map HDR away, so <video> presents it natively.
-        // Both decode HDR (Main10) on the main thread → worker is disabled when HDR.
+        //  - true HDR via the <video> sink (MediaStreamTrackGenerator): the canvas
+        //    paths tone-map HDR away, so <video> presents it natively. The Enhancer
+        //    is effectively OFF when HDR (it can't run on the <video> sink).
+        //  - Experimental HDR→SDR (ACES) tone-map path feeding FSR1/SGSR on a normal
+        //    SDR canvas, gated behind the dev flag `mw_hdr_tonemap=1` (OFF by default
+        //    because it needs software decode — see the HDR memory). Kept for future
+        //    experimentation. Decodes on the main thread → worker disabled when HDR.
+        let hdrTonemapDev = false;
+        try {
+            hdrTonemapDev = localStorage.getItem('mw_hdr_tonemap') === '1';
+        } catch (e) {}
         this._hdrTonemap =
+            hdrTonemapDev &&
             this._hdrEnabled &&
             transport !== 'webrtc-media' &&
             this._wantWebGpu &&
