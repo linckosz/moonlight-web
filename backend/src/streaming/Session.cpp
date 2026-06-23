@@ -63,7 +63,8 @@ StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, Response
                              quint16 wsPort, const QString& serverHost, VideoCodec videoCodec,
                              bool gamingMode, bool upnpEnabled, const QString& transport,
                              const QString& stunServer, int streamHeight, int streamWidth,
-                             int streamFps, int streamBitrateKbps, bool yuv444, QObject* parent)
+                             int streamFps, int streamBitrateKbps, bool yuv444, bool hdrEnabled,
+                             QObject* parent)
     : QObject(parent)
     , m_Host(host)
     , m_AppId(appId)
@@ -89,6 +90,9 @@ StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, Response
     m_Config.chroma = yuv444 ? ChromaSampling::C444 : ChromaSampling::C420;
     qInfo() << "[Session] Chroma 4:4:4" << (yuv444 ? "enabled" : "disabled");
 
+    // HDR: enables HDR10 color space (BT.2020+PQ) and 10-bit codec profiles.
+    m_Config.hdrEnabled = hdrEnabled;
+
     // Width: explicit when provided (ultrawide 21:9 / 32:9), otherwise derived
     // from height using a 16:9 aspect ratio.
     // If height is 0 (Native Host resolution), pass 0 for both width and height
@@ -99,7 +103,8 @@ StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, Response
     qInfo() << "[Session] Stream settings:" << m_StreamWidth << "x" << m_StreamHeight << "@"
             << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps,"
             << "gaming:" << (m_GamingMode ? "on" : "off")
-            << "codec:" << static_cast<int>(videoCodec);
+            << "codec:" << static_cast<int>(videoCodec)
+            << "hdr:" << hdrEnabled;
 }
 
 StreamSession::~StreamSession()
@@ -173,14 +178,15 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert, const QByteArray& 
     qDebug() << "[Session]   address:" << m_Host->activeAddress.address()
              << "port:" << m_Host->activeHttpsPort;
     qDebug() << "[Session]   stream:" << m_StreamWidth << "x" << m_StreamHeight << "@"
-             << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps";
+             << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps,"
+             << "hdr:" << m_Config.hdrEnabled;
 
     m_LaunchAttempted = true;
     m_LaunchReply = m_Http->launchAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort, m_AppId,
                                            effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
                                            m_StreamWidth, m_StreamHeight, m_StreamFps,
                                            m_StreamBitrateKbps, clientCert, clientKey,
-                                           0); // hdrMode: SDR
+                                           m_Config.hdrEnabled ? 1 : 0); // hdrMode: 1=HDR, 0=SDR
 
     connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
 }

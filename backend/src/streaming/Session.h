@@ -47,7 +47,7 @@ public:
                   int streamHeight = 1080,
                   int streamWidth = 0, // 0 = derive from height (16:9); >0 = explicit (ultrawide)
                   int streamFps = 60, int streamBitrateKbps = 20000, bool yuv444 = false,
-                  QObject* parent = nullptr);
+                  bool hdrEnabled = false, QObject* parent = nullptr);
     ~StreamSession() override;
 
     void start();

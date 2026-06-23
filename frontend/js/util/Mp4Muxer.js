@@ -287,6 +287,9 @@ export function buildHvcCDescription(vps, sps, pps) {
     const cleanSps = removeEmulationPrevention(sps);
     const cleanPps = removeEmulationPrevention(pps);
 
+    // Extract HDR info from clean SPS: chroma_format_idc and bit depth.
+    const spsInfo = parseHevcSpsInfo(cleanSps);
+
     // Fixed header: 1 (version) + 12 (PTL) + 2 + 1 + 1 + 1 + 1 + 2 + 1 + 1 = 23
     // Each NAL array entry: 5 (1 type + 2 count + 2 length) + NAL data
     const hvcCLen = 23 + 5 + cleanVps.length + 5 + cleanSps.length + 5 + cleanPps.length;
@@ -309,14 +312,14 @@ export function buildHvcCDescription(vps, sps, pps) {
     // parallelismType: reserved(6) + 0
     buf[off++] = 0xfc;
 
-    // chromaFormat: reserved(6) + chroma_format_idc (1 = 4:2:0)
-    buf[off++] = 0xfc | 0x01;
+    // chromaFormat: reserved(6) + chroma_format_idc (0=monochrome, 1=4:2:0, 2=4:2:2, 3=4:4:4)
+    buf[off++] = 0xfc | (spsInfo.chromaFormat & 0x03);
 
-    // bitDepthLumaMinus8: reserved(5) + 0
-    buf[off++] = 0xf8;
+    // bitDepthLumaMinus8: reserved(5) + bitDepthLumaMinus8
+    buf[off++] = 0xf8 | (spsInfo.bitDepthLumaMinus8 & 0x07);
 
-    // bitDepthChromaMinus8: reserved(5) + 0
-    buf[off++] = 0xf8;
+    // bitDepthChromaMinus8: reserved(5) + bitDepthChromaMinus8
+    buf[off++] = 0xf8 | (spsInfo.bitDepthChromaMinus8 & 0x07);
 
     // avgFrameRate (0 = unspecified)
     buf[off++] = 0x00;
@@ -355,6 +358,111 @@ export function buildHvcCDescription(vps, sps, pps) {
     buf.set(cleanPps, off);
 
     return buf;
+}
+
+/** MSB-first bit reader with Exp-Golomb support (HEVC/H.264 RBSP). */
+class SpsBitReader {
+    constructor(bytes) {
+        this.bytes = bytes;
+        this.bitPos = 0;
+    }
+    u(n) {
+        let v = 0;
+        for (let i = 0; i < n; i++) {
+            const byteIdx = this.bitPos >> 3;
+            if (byteIdx >= this.bytes.length) throw new Error('SpsBitReader overrun');
+            const bit = (this.bytes[byteIdx] >> (7 - (this.bitPos & 7))) & 1;
+            v = (v << 1) | bit;
+            this.bitPos++;
+        }
+        return v;
+    }
+    ue() {
+        let zeros = 0;
+        while (this.u(1) === 0) {
+            zeros++;
+            if (zeros > 31) throw new Error('ue overrun');
+        }
+        if (zeros === 0) return 0;
+        return (1 << zeros) - 1 + this.u(zeros);
+    }
+}
+
+/**
+ * Parse chroma_format_idc and bit depths from a de-emulated HEVC SPS NAL unit
+ * (full NAL including the 2-byte header). Returns SDR 4:2:0 8-bit defaults on
+ * any parse error.
+ *
+ * Walks the SPS up to bit_depth_*_minus8 per ITU-T H.265 §7.3.2.2.1, handling
+ * the variable-length profile_tier_level and sub-layer ordering loops.
+ */
+function parseHevcSpsInfo(spsNal) {
+    const result = { chromaFormat: 1, bitDepthLumaMinus8: 0, bitDepthChromaMinus8: 0 };
+    if (!spsNal || spsNal.length < 16) return result;
+
+    try {
+        // Skip the 2-byte HEVC NAL header.
+        const br = new SpsBitReader(spsNal.subarray(2));
+
+        br.u(4); // sps_video_parameter_set_id
+        const maxSubLayersMinus1 = br.u(3); // sps_max_sub_layers_minus1
+        br.u(1); // sps_temporal_id_nesting_flag
+
+        // profile_tier_level(1, maxSubLayersMinus1)
+        // general profile/tier/level (88 bits) + general_level_idc (8 bits)
+        br.u(2); // general_profile_space
+        br.u(1); // general_tier_flag
+        br.u(5); // general_profile_idc
+        br.u(32); // general_profile_compatibility_flag[32]
+        // 48 bits of general constraint/source flags
+        br.u(24);
+        br.u(24);
+        br.u(8); // general_level_idc
+
+        // sub_layer_profile_present_flag / sub_layer_level_present_flag
+        const subProfile = [];
+        const subLevel = [];
+        for (let i = 0; i < maxSubLayersMinus1; i++) {
+            subProfile.push(br.u(1));
+            subLevel.push(br.u(1));
+        }
+        if (maxSubLayersMinus1 > 0) {
+            for (let i = maxSubLayersMinus1; i < 8; i++) br.u(2); // reserved_zero_2bits
+        }
+        for (let i = 0; i < maxSubLayersMinus1; i++) {
+            if (subProfile[i]) {
+                br.u(2);
+                br.u(1);
+                br.u(5);
+                br.u(32);
+                br.u(24);
+                br.u(24);
+            }
+            if (subLevel[i]) br.u(8);
+        }
+
+        br.ue(); // sps_seq_parameter_set_id
+        const chromaFormatIdc = br.ue();
+        result.chromaFormat = chromaFormatIdc;
+        if (chromaFormatIdc === 3) br.u(1); // separate_colour_plane_flag
+
+        br.ue(); // pic_width_in_luma_samples
+        br.ue(); // pic_height_in_luma_samples
+        if (br.u(1)) {
+            // conformance_window_flag
+            br.ue(); // conf_win_left_offset
+            br.ue(); // conf_win_right_offset
+            br.ue(); // conf_win_top_offset
+            br.ue(); // conf_win_bottom_offset
+        }
+
+        result.bitDepthLumaMinus8 = br.ue();
+        result.bitDepthChromaMinus8 = br.ue();
+    } catch (e) {
+        // Parse failure: keep SDR 4:2:0 8-bit defaults.
+    }
+
+    return result;
 }
 
 /**
@@ -424,6 +532,16 @@ export function buildDescription(parser) {
 }
 
 /**
+ * Returns true if the HEVC codec string indicates a 10-bit (HDR-capable) profile.
+ * Profile IDC 2 = Main10, 4 = Main10 Still Picture, etc.
+ */
+export function isHevcHdrProfile(codecString) {
+    if (!codecString) return false;
+    // hvc1.2.x, hvc1.4.x, hev1.2.x, hev1.4.x → Main10
+    return /^hvc1\.[24]\./.test(codecString) || /^hev1\.[24]\./.test(codecString);
+}
+
+/**
  * Common H.264 codec strings for fallback.
  * Listed in order of preference (most common for 1080p60 first).
  */
@@ -440,6 +558,8 @@ export const H264_FALLBACK_CODEC_STRINGS = [
 
 /**
  * Common HEVC codec strings for fallback (hvc1 — AVCC format with description).
+ * HDR Main10 profiles are listed first (hvc1.2.x, hev1.2.x) so that the
+ * primary codec string is HDR when negotiated.
  */
 export const HEVC_FALLBACK_CODEC_STRINGS = [
     'hvc1.2.4.L153.B0', // Main10 (HDR), High tier, Level 5.1
@@ -448,7 +568,7 @@ export const HEVC_FALLBACK_CODEC_STRINGS = [
     'hvc1.1.6.L150.B0', // Main, High tier, Level 5.0
     'hvc1.1.6.L123.B0', // Main, High tier, Level 4.1
     'hvc1.1.6.L120.B0', // Main, High tier, Level 4.0
-    'hvc1.1.6.L93.B0', // Main, High tier, Level 3.1
+    'hvc1.1.6.L93.B0',  // Main, High tier, Level 3.1
     'hvc1.1.2.L153.B0', // Main, Main tier, Level 5.1
     'hvc1.1.2.L150.B0', // Main, Main tier, Level 5.0
 ];
@@ -479,7 +599,7 @@ export const HEVC_ANNEXB_CODEC_STRINGS = [
  *      Used when no codec description is provided — the decoder
  *      auto-detects the format.  Also required by Chromium's keyframe
  *      validator (AnalyzeAnnexB) which only handles Annex B.
- *   AVCC (useAnnexB=false):    4-byte length prefixes per NAL unit.
+ *   AVCC (useAnnexB=false):    4-byte big-endian length prefix per NAL unit.
  *      Used when a codec description (avcC/hvcC) is provided.
  *
  * When stripParams is true AND useAnnexB is false, SPS/PPS (H.264) or

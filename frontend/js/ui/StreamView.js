@@ -40,11 +40,13 @@ import {
     HEVC_ANNEXB_CODEC_STRINGS,
     CODEC_H264,
     CODEC_HEVC,
+    isHevcHdrProfile,
 } from '../util/Mp4Muxer.js';
 import {
     findSequenceHeader,
     buildAv1DecoderConfigs,
     stripNonEssentialObus,
+    isAv1HdrProfile,
     CODEC_AV1,
 } from '../util/Av1Utils.js';
 
@@ -153,11 +155,17 @@ export class StreamView {
         videoEnhancement = 'off',
         videoEnhancementAlgo = 'auto',
         yuv444 = false,
+        hdrEnabled = false,
     ) {
         this.container = container;
         // YUV 4:4:4 chroma negotiated by the backend (vs default 4:2:0). Used
         // only to annotate the codec in the stats overlay.
         this._yuv444 = yuv444 === true;
+        // HDR mode requested by the user. Actual HDR depends on both the
+        // user's preference and Sunshine's negotiated format (HEVC Main10 /
+        // AV1 10-bit). _hdrNegotiated is set after codec detection.
+        this._hdrEnabled = hdrEnabled === true;
+        this._hdrNegotiated = false;
         // VSync: when false, the canvas 2D context is created with
         // desynchronized=true to allow tearing (lower latency) on transports
         // that render through the canvas (DataChannel / WSS).
@@ -1039,6 +1047,7 @@ export class StreamView {
                     vsync: this._vsync,
                     webgpu: this._wantWebGpu,
                     algo: this._videoEnhancementAlgo,
+                    hdr: this._hdrEnabled,
                 },
                 [offscreen],
             );
@@ -1057,6 +1066,7 @@ export class StreamView {
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 webgpu: this._wantWebGpu,
                 algo: this._videoEnhancementAlgo,
+                hdr: this._hdrEnabled,
             }).then((r) => {
                 this._renderer = r;
                 this._activeRendererKind = r.kind;
@@ -1320,10 +1330,16 @@ export class StreamView {
             return;
         }
 
+        // Detect HDR: true if the codec string indicates a 10-bit profile.
+        // HEVC: hvc1.2.x = Main10 (HDR), AV1: av01.x.x.10 = 10-bit (HDR).
+        const isHdr = isHevcHdrProfile(codec) || isAv1HdrProfile(codec);
+        this._hdrNegotiated = isHdr;
+
         console.log(
-            '[StreamView] Configuring VideoDecoder: codec=' + codec,
-            'descLen=' + desc.length,
-            'codecType=' + this.nalParser.codec,
+            '[StreamView] Configuring VideoDecoder: codec=' + codec +
+            ' descLen=' + desc.length +
+            ' codecType=' + this.nalParser.codec +
+            ' hdr=' + isHdr,
         );
 
         if (!VideoDecoder.isConfigSupported) {
@@ -1439,15 +1455,27 @@ export class StreamView {
             optimizeForLatency: true,
         };
 
-        // Decoder color space: BT.709 SDR.
-        const vColor = {
-            colorSpace: {
-                primaries: 'bt709',
-                transfer: 'bt709',
-                matrix: 'bt709',
-                fullRange: false,
-            },
-        };
+        // Decoder color space: HDR (BT.2020 + PQ) or SDR (BT.709).
+        // HDR is detected from the codec string (HEVC Main10 / AV1 10-bit).
+        // HDR content uses ST 2084 (PQ) transfer, BT.2020 color primaries,
+        // and either YCbCr (matrix: 'bt2020ncl') or RGB (full range).
+        const vColor = isHdr
+            ? {
+                  colorSpace: {
+                      primaries: 'bt2020',
+                      transfer: 'pq',
+                      matrix: 'bt2020ncl',
+                      fullRange: false,
+                  },
+              }
+            : {
+                  colorSpace: {
+                      primaries: 'bt709',
+                      transfer: 'bt709',
+                      matrix: 'bt709',
+                      fullRange: false,
+                  },
+              };
 
         // Build configs: for HEVC, try Annex B (no description) first.
         // Chromium's keyframe validator (AnalyzeAnnexB) only parses start-code
@@ -2127,6 +2155,7 @@ export class StreamView {
                         isChromeWindowsHevc: this._isChromeWindowsHevc,
                         webgpu: this._wantWebGpu,
                         algo: this._videoEnhancementAlgo,
+                        hdr: this._hdrEnabled,
                     }).then((r) => {
                         this._renderer = r;
                         this._activeRendererKind = r.kind;

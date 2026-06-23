@@ -861,6 +861,9 @@ int main(int argc, char* argv[])
         bool reqYuv444 = body.contains("chroma_444_enabled") ? body["chroma_444_enabled"].toBool()
                                                              : appSettings.chroma444Enabled();
 
+        bool reqHdr = body.contains("hdr_enabled") ? body["hdr_enabled"].toBool()
+                                                   : appSettings.hdrEnabled();
+
         // Video enhancement (WebGPU): the browser renders via canvas, so when it
         // is on the transport negotiation must avoid webrtc-media (<video>).
         bool reqVideoEnhancement = body.contains("video_enhancement")
@@ -880,7 +883,7 @@ int main(int argc, char* argv[])
         qInfo() << "[Session] Per-request streaming settings:"
                 << "codec=" << AppSettings::videoCodecToString(reqCodec)
                 << "gaming=" << reqGamingMode << "bitrate=" << reqBitrate << "height=" << reqHeight
-                << "fps=" << reqFps << "yuv444=" << reqYuv444
+                << "fps=" << reqFps << "yuv444=" << reqYuv444 << "hdr=" << reqHdr
                 << "videoEnhancement=" << reqVideoEnhancement;
 
         // Determine signaling host from the browser's Host header.
@@ -1184,7 +1187,7 @@ int main(int argc, char* argv[])
                 host, appId, computerManager.http(), std::move(rsp), signalingPort, serverHost,
                 (codecOverride != VideoCodec::Auto) ? codecOverride : reqCodec, reqGamingMode,
                 effectiveUpnpEnabled, internal, stunServer, reqHeight, reqWidth, reqFps, reqBitrate,
-                reqYuv444);
+                reqYuv444, reqHdr);
             s->setHttpsPort(server.activeHttpsPort());
             s->setStreamRelayPort(signalingPort + 1);
             s->setTransportMode(transportMode); // Full mode for response
