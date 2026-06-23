@@ -27,8 +27,22 @@
  */
 import { Canvas2DRenderer } from './Canvas2DRenderer.js';
 import { WebGpuRenderer } from './WebGpuRenderer.js';
+import { VideoElementRenderer } from './VideoElementRenderer.js';
 
 export async function createVideoRenderer(canvas, opts) {
+    // HDR: route decoded frames to a <video> element via MediaStreamTrackGenerator.
+    // The canvas paths (WebGPU/Canvas2D) tone-map HDR away (importExternalTexture /
+    // drawImage only output SDR color spaces) — <video> presents HDR natively. Needs
+    // a DOM <video> (opts.videoEl), so it is main-thread only (not the worker path).
+    if (opts.hdr && opts.videoEl && typeof MediaStreamTrackGenerator !== 'undefined') {
+        try {
+            return await VideoElementRenderer.create(canvas, opts);
+        } catch (e) {
+            console.warn(
+                '[Renderer] VideoElement (HDR) init failed, falling back to canvas: ' + e.message,
+            );
+        }
+    }
     if (opts.webgpu && navigator.gpu) {
         try {
             return await WebGpuRenderer.create(canvas, opts);
