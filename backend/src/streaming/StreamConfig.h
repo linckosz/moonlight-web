@@ -55,6 +55,7 @@ struct StreamConfig
     // Codec preferences — will be user-selectable later
     VideoCodec codec = VideoCodec::Auto;
     ChromaSampling chroma = ChromaSampling::C420;
+    bool hdrEnabled = false;
 
     // Audio: stereo Opus, 5ms packets
     static constexpr int kAudioChannels = 2;

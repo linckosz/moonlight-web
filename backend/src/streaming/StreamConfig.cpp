@@ -49,10 +49,6 @@ int StreamConfig::computeVideoFormats() const
     }
 
     // Chroma 4:4:4: add the YUV444 profile ONLY for the selected codec.
-    // Offering every codec's 444 profile drags the negotiation into AV1 (which
-    // moonlight-common-c tests first) and, when the host lacks AV1 444, silently
-    // falls back to AV1 4:2:0 — switching codec for nothing. Restricting to the
-    // chosen codec keeps the preference and lets the host pick its 444 variant.
     if (chroma == ChromaSampling::C444) {
         switch (codec) {
         case VideoCodec::H264: fmt |= VIDEO_FORMAT_H264_HIGH8_444; break;
@@ -62,10 +58,28 @@ int StreamConfig::computeVideoFormats() const
         }
     }
 
+    // HDR profiles: add 10-bit and 4:4:4 10-bit variants for the chosen codec.
+    if (hdrEnabled) {
+        switch (codec) {
+        case VideoCodec::H264:
+            // H.264 10-bit is not standard GameStream; ignore
+            break;
+        case VideoCodec::AV1:
+            fmt |= VIDEO_FORMAT_AV1_MAIN10;
+            if (chroma == ChromaSampling::C444) fmt |= VIDEO_FORMAT_AV1_HIGH10_444;
+            break;
+        case VideoCodec::Auto:
+        case VideoCodec::HEVC:
+            fmt |= VIDEO_FORMAT_H265_MAIN10;
+            if (chroma == ChromaSampling::C444) fmt |= VIDEO_FORMAT_H265_REXT10_444;
+            break;
+        }
+    }
+
     return fmt;
 }
 
 int StreamConfig::computeColorSpace() const
 {
-    return 1; // BT.709 SDR
+    return hdrEnabled ? 6 : 1; // 6=BT.2020+PQ(HDR10), 1=BT.709(SDR)
 }

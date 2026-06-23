@@ -641,10 +641,9 @@ export class SettingsView {
                         </select>
                     </div>
 
-                    <!-- HDR hidden: not offered while the PQ→SDR rendering bug is
-                         unresolved. Input kept in the DOM (read elsewhere) but the
-                         field is not shown. -->
-                    <div class="settings-field${hdrLocked}" style="display:none">
+                    <!-- HDR: requires HEVC (or AV1 HDR profile) and a WebGPU-capable browser.
+                         Shown when the app supports HDR; otherwise grayed out with the noWebgpu message. -->
+                    <div class="settings-field${hdrLocked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-hdr"
                                 ${hdrChecked}${hdrDisabled} />

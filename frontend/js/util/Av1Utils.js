@@ -30,6 +30,22 @@
  *     DD = bit depth (08, 10, 12)
  */
 
+/**
+ * Returns true if the AV1 codec string indicates a 10-bit (HDR-capable) profile.
+ * av01.P.LLT.DD where DD = 10 or 12.
+ */
+export function isAv1HdrProfile(codecString) {
+    if (!codecString) return false;
+    // av01.P.LLT.DD — DD is 2 chars at the end: '08'=8-bit, '10'=10-bit, '12'=12-bit
+    const dd = codecString.slice(-2);
+    return dd === '10' || dd === '12';
+}
+
+/** Returns true if the parsed AV1 sequence header indicates HDR (bit depth >= 10). */
+export function isAv1HdrFromSeq(seqInfo) {
+    return seqInfo && seqInfo.bitDepth >= 10;
+}
+
 export const CODEC_AV1 = 'av1';
 
 /**

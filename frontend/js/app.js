@@ -749,6 +749,9 @@ const MoonlightApp = {
         let videoEnhancement = streamingSettings.video_enhancement === 'on' ? 'on' : 'off';
         if (internalTransport === 'webrtc-media') videoEnhancement = 'off';
         const videoEnhancementAlgo = streamingSettings.video_enhancement_algo || 'auto';
+        // HDR: requires a WebGPU-capable browser and Sunshine negotiating HEVC
+        // Main10 / AV1 10-bit. The decoder colorSpace is set accordingly.
+        const hdrEnabled = streamingSettings.hdr_enabled === true;
 
         // Track the fallback chain reported by the backend.
         this._transportChain = Array.isArray(result.transport_chain) ? result.transport_chain : [];
@@ -773,6 +776,7 @@ const MoonlightApp = {
             videoEnhancement,
             videoEnhancementAlgo,
             result.yuv444 === true,
+            hdrEnabled,
         );
 
         // ── Callbacks ──────────────────────────────────────────────────────

@@ -44,11 +44,13 @@ import {
     HEVC_FALLBACK_CODEC_STRINGS,
     HEVC_ANNEXB_CODEC_STRINGS,
     CODEC_HEVC,
+    isHevcHdrProfile,
 } from '../util/Mp4Muxer.js';
 import {
     findSequenceHeader,
     buildAv1DecoderConfigs,
     stripNonEssentialObus,
+    isAv1HdrProfile,
     CODEC_AV1,
 } from '../util/Av1Utils.js';
 import { createVideoRenderer } from './renderers/createRenderer.js';
@@ -304,10 +306,23 @@ function configureDecoder() {
             .catch(() => tryCodecs(configs, index + 1, onExhausted));
     };
 
+    // Detect HDR from the codec string (HEVC Main10 / AV1 10-bit).
+    const isHdr = isHevcHdrProfile(codec) || isAv1HdrProfile(codec);
+
     const shared = { codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true };
-    const vColor = {
-        colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false },
-    };
+    // Decoder color space: HDR (BT.2020 + PQ) or SDR (BT.709).
+    const vColor = isHdr
+        ? {
+              colorSpace: {
+                  primaries: 'bt2020',
+                  transfer: 'pq',
+                  matrix: 'bt2020ncl',
+                  fullRange: false,
+              },
+          }
+        : {
+              colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false },
+          };
 
     const fallbacks =
         codecType === CODEC_HEVC ? HEVC_FALLBACK_CODEC_STRINGS : H264_FALLBACK_CODEC_STRINGS;
@@ -709,6 +724,7 @@ self.onmessage = (e) => {
                 isChromeWindowsHevc: S.isChromeWindowsHevc,
                 webgpu: !!m.webgpu,
                 algo: m.algo,
+                hdr: !!m.hdr,
             }).then((r) => {
                 S.renderer = r;
                 // Apply an output size that may have arrived before the renderer.
