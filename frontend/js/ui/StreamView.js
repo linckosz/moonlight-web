@@ -210,18 +210,11 @@ export class StreamView {
             const cores = navigator.hardwareConcurrency || 4;
             workerWanted = cores > 4;
         }
-        // HDR sink: route decoded frames to the <video> element via a
-        // MediaStreamTrackGenerator (true HDR; the canvas paths tone-map it away).
-        // Needs a DOM <video>, so it forces the main-thread decode path (no worker).
-        this._useVideoSink =
-            this._hdrEnabled &&
-            transport !== 'webrtc-media' &&
-            typeof MediaStreamTrackGenerator !== 'undefined';
         this._useWorker = false;
         try {
             this._useWorker =
                 workerWanted &&
-                !this._useVideoSink &&
+                !this._hdrEnabled &&
                 transport !== 'webrtc-media' &&
                 typeof Worker !== 'undefined' &&
                 typeof OffscreenCanvas !== 'undefined' &&
@@ -259,6 +252,24 @@ export class StreamView {
         try {
             if (localStorage.getItem('mw_force_2d') === '1') this._wantWebGpu = false;
         } catch (e) {}
+
+        // HDR routing (DataChannel/WSS only; decided after algo/wantWebGpu):
+        //  - Enhancer ON  → tone-map HDR→SDR (ACES) on the WebGPU canvas so FSR1/SGSR
+        //    can run (the <video> sink bypasses the shader pipeline).
+        //  - Enhancer OFF → true HDR via the <video> sink (MediaStreamTrackGenerator);
+        //    the canvas paths tone-map HDR away, so <video> presents it natively.
+        // Both decode HDR (Main10) on the main thread → worker is disabled when HDR.
+        this._hdrTonemap =
+            this._hdrEnabled &&
+            transport !== 'webrtc-media' &&
+            this._wantWebGpu &&
+            this._videoEnhancementAlgo !== 'off' &&
+            !!navigator.gpu;
+        this._useVideoSink =
+            this._hdrEnabled &&
+            !this._hdrTonemap &&
+            transport !== 'webrtc-media' &&
+            typeof MediaStreamTrackGenerator !== 'undefined';
         this._workerLastDecoded = 0;
 
         // Backend timestamp tracking for stale frame detection.
@@ -1075,7 +1086,8 @@ export class StreamView {
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 webgpu: this._wantWebGpu,
                 algo: this._videoEnhancementAlgo,
-                hdr: this._hdrEnabled,
+                hdr: this._hdrEnabled && !this._hdrTonemap,
+                hdrTonemap: this._hdrTonemap,
                 videoEl: this._useVideoSink ? this.videoEl : null,
             }).then((r) => {
                 this._renderer = r;
@@ -1349,10 +1361,14 @@ export class StreamView {
         this._hdrNegotiated = isHdr;
 
         console.log(
-            '[StreamView] Configuring VideoDecoder: codec=' + codec +
-            ' descLen=' + desc.length +
-            ' codecType=' + this.nalParser.codec +
-            ' hdr=' + isHdr,
+            '[StreamView] Configuring VideoDecoder: codec=' +
+                codec +
+                ' descLen=' +
+                desc.length +
+                ' codecType=' +
+                this.nalParser.codec +
+                ' hdr=' +
+                isHdr,
         );
 
         if (!VideoDecoder.isConfigSupported) {
@@ -2508,7 +2524,10 @@ export class StreamView {
         // decode is HDR but the canvas fell back to SDR.
         let codecLabel = codec.toUpperCase() + (this._yuv444 ? ' 4:4:4' : '');
         if (this._hdrEnabled) {
-            codecLabel += this._rendererHdrActive ? ' HDR*' : ' HDR';
+            // HDR→SDR when ACES tone-mapping feeds the enhancer; HDR*/HDR for the
+            // <video> sink (true HDR) vs SDR-fallback canvas.
+            if (this._hdrTonemap) codecLabel += ' HDR→SDR';
+            else codecLabel += this._rendererHdrActive ? ' HDR*' : ' HDR';
         }
         html +=
             '<div class="stats-row">' +
@@ -2533,7 +2552,10 @@ export class StreamView {
                       : 'SGSR';
         } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
             enhancerName = 'OFF (not available on MediaTrack)';
-        } else if (this._activeRendererKind === 'video-element' && this._videoEnhancementRequested) {
+        } else if (
+            this._activeRendererKind === 'video-element' &&
+            this._videoEnhancementRequested
+        ) {
             enhancerName = 'OFF (HDR via <video>)';
         }
         if (enhancerName !== null) {
