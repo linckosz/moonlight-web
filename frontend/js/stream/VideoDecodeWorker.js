@@ -316,7 +316,7 @@ function configureDecoder() {
               colorSpace: {
                   primaries: 'bt2020',
                   transfer: 'pq',
-                  matrix: 'bt2020ncl',
+                  matrix: 'bt2020-ncl',
                   fullRange: false,
               },
           }
