@@ -320,6 +320,7 @@ export class StreamView {
         this._immediateRender = false; // VSync off: draw is driven by decoder output, not rAF
         this._renderer = null; // VideoRenderer (Canvas2D / WebGPU); owns the context
         this._activeRendererKind = null; // 'canvas2d' | 'webgpu' (for the overlay)
+        this._rendererHdrActive = false; // true once a renderer reports an HDR canvas
         this._resizeObserver = null; // tracks the DOM output size (device px)
         this._outW = 0;
         this._outH = 0;
@@ -1070,6 +1071,7 @@ export class StreamView {
             }).then((r) => {
                 this._renderer = r;
                 this._activeRendererKind = r.kind;
+                this._rendererHdrActive = !!r.hdrActive;
                 this._applyOutputSize();
                 this.setupDecoder();
                 this.startRenderLoop();
@@ -1088,6 +1090,7 @@ export class StreamView {
             case 'rendererinfo':
                 // Worker reports which renderer it created (for the stats overlay).
                 this._activeRendererKind = m.kind;
+                this._rendererHdrActive = !!m.hdr;
                 break;
             case 'codecfallback':
                 // HEVC unsupported in this browser → re-launch with H.264.
@@ -2159,6 +2162,7 @@ export class StreamView {
                     }).then((r) => {
                         this._renderer = r;
                         this._activeRendererKind = r.kind;
+                        this._rendererHdrActive = !!r.hdrActive;
                         this._applyOutputSize();
                     });
                     this.setupDecoder();
@@ -2470,8 +2474,14 @@ export class StreamView {
             ' Mbps</span>' +
             '</div>';
 
-        // Codec (annotated with 4:4:4 when full-chroma was negotiated)
-        const codecLabel = codec.toUpperCase() + (this._yuv444 ? ' 4:4:4' : '');
+        // Codec (annotated with 4:4:4 when full-chroma was negotiated, and HDR
+        // when a 10-bit profile was requested). A '*' marks that the canvas
+        // actually presents in HDR (rgba16float accepted); no '*' means the
+        // decode is HDR but the canvas fell back to SDR.
+        let codecLabel = codec.toUpperCase() + (this._yuv444 ? ' 4:4:4' : '');
+        if (this._hdrEnabled) {
+            codecLabel += this._rendererHdrActive ? ' HDR*' : ' HDR';
+        }
         html +=
             '<div class="stats-row">' +
             '<span class="stats-label">' +

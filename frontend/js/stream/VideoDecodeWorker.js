@@ -732,7 +732,7 @@ self.onmessage = (e) => {
                 console.log(
                     '[VideoWorker] renderer=' + r.kind + ' (webgpu requested=' + !!m.webgpu + ')',
                 );
-                post({ type: 'rendererinfo', kind: r.kind });
+                post({ type: 'rendererinfo', kind: r.kind, hdr: !!r.hdrActive });
             });
             S.nalParser = new NalParser();
             setupDecoder();

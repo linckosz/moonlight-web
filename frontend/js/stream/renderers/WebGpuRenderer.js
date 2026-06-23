@@ -516,6 +516,10 @@ export class WebGpuRenderer extends VideoRenderer {
         r.videoCodec = opts.videoCodec;
         // 'off' = WebGPU pass-through (blit only, no upscaler); sgsr is the safe default.
         r._algo = opts.algo === 'fsr1' || opts.algo === 'off' ? opts.algo : 'sgsr';
+        // HDR: rgba16float canvas in extended tone-mapping mode (values > 1.0
+        // map to the display's HDR headroom). Gated on opts.hdr; _configure()
+        // self-downgrades to SDR if the browser rejects the HDR canvas config.
+        r._hdr = !!opts.hdr;
         r._adapter = adapter;
         r._device = device;
         r._ready = false;
@@ -550,10 +554,40 @@ export class WebGpuRenderer extends VideoRenderer {
         return 'SGSR';
     }
 
+    /** True HDR is active (rgba16float canvas accepted). Read by the overlay. */
+    get hdrActive() {
+        return !!this._hdr;
+    }
+
     _configure() {
-        // Standard sRGB canvas.
+        if (this._hdr) {
+            // HDR canvas: float16 backbuffer + 'extended' tone mapping so values
+            // above 1.0 reach the display's HDR headroom; wide-gamut display-p3.
+            // Intermediate textures must also be float16 to keep 10-bit precision.
+            this._format = 'rgba16float';
+            this._interFormat = 'rgba16float';
+            this._importColorSpace = 'display-p3';
+            try {
+                this.ctx.configure({
+                    device: this._device,
+                    format: this._format,
+                    alphaMode: 'opaque',
+                    colorSpace: 'display-p3',
+                    toneMapping: { mode: 'extended' },
+                });
+                return;
+            } catch (e) {
+                console.warn(
+                    '[WebGpuRenderer] HDR canvas config rejected, falling back to SDR: ' +
+                        e.message,
+                );
+                this._hdr = false;
+            }
+        }
+        // Standard 8-bit sRGB canvas (SDR).
         this._format = navigator.gpu.getPreferredCanvasFormat();
         this._interFormat = 'rgba8unorm';
+        this._importColorSpace = 'srgb';
         this.ctx.configure({
             device: this._device,
             format: this._format,
@@ -837,7 +871,7 @@ export class WebGpuRenderer extends VideoRenderer {
             // External texture + its blit bind group are per-frame (texture expires).
             const externalTex = this._device.importExternalTexture({
                 source: frame,
-                colorSpace: 'srgb',
+                colorSpace: this._importColorSpace || 'srgb',
             });
             const blitBindGroup = this._device.createBindGroup({
                 layout: this._blitLayout,
