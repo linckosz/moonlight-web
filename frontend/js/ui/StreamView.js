@@ -210,10 +210,18 @@ export class StreamView {
             const cores = navigator.hardwareConcurrency || 4;
             workerWanted = cores > 4;
         }
+        // HDR sink: route decoded frames to the <video> element via a
+        // MediaStreamTrackGenerator (true HDR; the canvas paths tone-map it away).
+        // Needs a DOM <video>, so it forces the main-thread decode path (no worker).
+        this._useVideoSink =
+            this._hdrEnabled &&
+            transport !== 'webrtc-media' &&
+            typeof MediaStreamTrackGenerator !== 'undefined';
         this._useWorker = false;
         try {
             this._useWorker =
                 workerWanted &&
+                !this._useVideoSink &&
                 transport !== 'webrtc-media' &&
                 typeof Worker !== 'undefined' &&
                 typeof OffscreenCanvas !== 'undefined' &&
@@ -1068,10 +1076,12 @@ export class StreamView {
                 webgpu: this._wantWebGpu,
                 algo: this._videoEnhancementAlgo,
                 hdr: this._hdrEnabled,
+                videoEl: this._useVideoSink ? this.videoEl : null,
             }).then((r) => {
                 this._renderer = r;
                 this._activeRendererKind = r.kind;
                 this._rendererHdrActive = !!r.hdrActive;
+                this._applyRendererSink(r);
                 this._applyOutputSize();
                 this.setupDecoder();
                 this.startRenderLoop();
@@ -1914,6 +1924,22 @@ export class StreamView {
         }
     }
 
+    // Swap the visible surface to match the active renderer: the VideoElement
+    // (HDR) renderer presents on <video>, every canvas renderer on <canvas>.
+    // Decode + the rAF render loop still run on the main thread (draw() writes
+    // each frame to the renderer's sink), so this only toggles visibility.
+    _applyRendererSink(r) {
+        if (!r) return;
+        if (r.kind === 'video-element') {
+            if (this.canvas) this.canvas.style.display = 'none';
+            if (this.videoEl) this.videoEl.style.display = 'block';
+        } else {
+            if (this.videoEl && this._transport !== 'webrtc-media')
+                this.videoEl.style.display = 'none';
+            if (this.canvas) this.canvas.style.display = '';
+        }
+    }
+
     startRenderLoop() {
         if (this.renderRunning) return;
         // Media track mode: video is rendered natively via <video>, no canvas loop needed.
@@ -2159,10 +2185,12 @@ export class StreamView {
                         webgpu: this._wantWebGpu,
                         algo: this._videoEnhancementAlgo,
                         hdr: this._hdrEnabled,
+                        videoEl: this._useVideoSink ? this.videoEl : null,
                     }).then((r) => {
                         this._renderer = r;
                         this._activeRendererKind = r.kind;
                         this._rendererHdrActive = !!r.hdrActive;
+                        this._applyRendererSink(r);
                         this._applyOutputSize();
                     });
                     this.setupDecoder();
@@ -2505,6 +2533,8 @@ export class StreamView {
                       : 'SGSR';
         } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
             enhancerName = 'OFF (not available on MediaTrack)';
+        } else if (this._activeRendererKind === 'video-element' && this._videoEnhancementRequested) {
+            enhancerName = 'OFF (HDR via <video>)';
         }
         if (enhancerName !== null) {
             html +=
