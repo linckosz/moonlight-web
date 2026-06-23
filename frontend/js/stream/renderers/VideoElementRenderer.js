@@ -50,25 +50,50 @@ export class VideoElementRenderer extends VideoRenderer {
         const r = new VideoElementRenderer();
         r.videoEl = videoEl;
         r._disposed = false;
+        r._wrote = 0;
 
         // MediaStreamTrackGenerator is a writable sink of VideoFrames that also
         // behaves as a MediaStreamTrack — drive a <video> from it.
         r._generator = new MediaStreamTrackGenerator({ kind: 'video' });
+        if (!r._generator.writable) throw new Error('generator.writable is undefined');
         r._writer = r._generator.writable.getWriter();
         r._stream = new MediaStream([r._generator]);
         videoEl.srcObject = r._stream;
+        // Make the <video> visible BEFORE play() — a display:none element can keep
+        // play() pending. Caller's _applyRendererSink also sets this, but do it here
+        // too to avoid any ordering gap.
+        videoEl.style.display = 'block';
         // Minimize playout delay for real-time streaming when supported.
         if ('playoutDelayHint' in videoEl) videoEl.playoutDelayHint = 0;
-        try {
-            await videoEl.play();
-        } catch (e) {
-            // Autoplay may defer; the stream still renders once frames arrive.
-        }
+        // play() MUST NOT be awaited: it stays pending until the first frame is
+        // written, but frames are only written after create() returns (the render
+        // loop needs this._renderer). Awaiting it here deadlocks. Fire-and-forget;
+        // re-armed on the first successful write.
+        r._playRequested = false;
+        r._tryPlay();
+        console.log(
+            '[VideoElementRenderer] created; track.readyState=' + r._generator.readyState,
+        );
         return r;
     }
 
     get kind() {
         return 'video-element';
+    }
+
+    // Fire-and-forget play(): never awaited (would deadlock against the first
+    // frame write). Logs the outcome once for diagnostics.
+    _tryPlay() {
+        if (!this.videoEl) return;
+        this.videoEl
+            .play()
+            .then(() => {
+                if (!this._playRequested) {
+                    this._playRequested = true;
+                    console.log('[VideoElementRenderer] videoEl.play() OK');
+                }
+            })
+            .catch((e) => console.warn('[VideoElementRenderer] play() rejected: ' + e.message));
     }
 
     /** <video> presents the decoded HDR frames natively. */
@@ -94,7 +119,24 @@ export class VideoElementRenderer extends VideoRenderer {
             }
             // The generator's writable takes ownership of the frame and closes it.
             await this._writer.write(frame);
+            if (this._wrote < 3) {
+                this._wrote++;
+                // Re-arm play() now that a frame is available (some browsers keep
+                // play() pending until the MediaStream produces its first frame).
+                if (this.videoEl && this.videoEl.paused) this._tryPlay();
+                console.log(
+                    '[VideoElementRenderer] wrote frame #' +
+                        this._wrote +
+                        ' ' +
+                        (this.videoEl
+                            ? this.videoEl.videoWidth + 'x' + this.videoEl.videoHeight
+                            : '?') +
+                        ' track=' +
+                        (this._generator ? this._generator.readyState : '?'),
+                );
+            }
         } catch (e) {
+            console.warn('[VideoElementRenderer] write failed: ' + e.message);
             try {
                 frame.close();
             } catch (e2) {}
