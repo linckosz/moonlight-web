@@ -37,6 +37,9 @@ backend/build_msvc.bat
 # Certificates (generated at runtime)
 backend/certs/
 
+# Build cache
+backend/.cache/
+
 # Agent session results
 .claude/results/
 
