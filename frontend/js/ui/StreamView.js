@@ -2200,12 +2200,25 @@ export class StreamView {
                         isChromeWindowsHevc: this._isChromeWindowsHevc,
                         webgpu: this._wantWebGpu,
                         algo: this._videoEnhancementAlgo,
-                        hdr: this._hdrEnabled,
+                        hdr: this._hdrEnabled && !this._hdrTonemap,
+                        hdrTonemap: this._hdrTonemap,
                         videoEl: this._useVideoSink ? this.videoEl : null,
                     }).then((r) => {
                         this._renderer = r;
                         this._activeRendererKind = r.kind;
                         this._rendererHdrActive = !!r.hdrActive;
+                        console.log(
+                            '[StreamView] renderer=' +
+                                r.kind +
+                                ' hdr=' +
+                                this._hdrEnabled +
+                                ' tonemap=' +
+                                this._hdrTonemap +
+                                ' videoSink=' +
+                                this._useVideoSink +
+                                ' algo=' +
+                                this._videoEnhancementAlgo,
+                        );
                         this._applyRendererSink(r);
                         this._applyOutputSize();
                     });
