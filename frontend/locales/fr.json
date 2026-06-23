@@ -116,6 +116,7 @@
     "unavailableSuffix": " (indisponible)",
     "videoEnhancementDesc": "Mise à l'échelle et accentuation GPU de la vidéo (WebGPU). Appliqué au démarrage du flux ; force le transport DataChannel/WSS.",
     "webgpuUnavailable": "WebGPU n'est pas disponible dans ce navigateur — l'amélioration vidéo est désactivée.",
+    "videoEnhancementHdrLock": "Désactivée tant que le HDR est actif — le HDR utilise une sortie &lt;video&gt; native qui contourne l'amélioration WebGPU.",
     "videoCodec": "Codec vidéo",
     "videoCodecDesc": "HEVC pour le meilleur équilibre entre qualité et compatibilité",
     "codecUnavailable": "{{codec}} (indisponible)",

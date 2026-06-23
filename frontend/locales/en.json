@@ -116,6 +116,7 @@
     "unavailableSuffix": " (unavailable)",
     "videoEnhancementDesc": "GPU upscaling & sharpening of the video (WebGPU). Applied at stream start; forces the DataChannel/WSS transport.",
     "webgpuUnavailable": "WebGPU is not available in this browser — video enhancement is disabled.",
+    "videoEnhancementHdrLock": "Disabled while HDR is on — HDR uses a native &lt;video&gt; sink that bypasses the WebGPU enhancer.",
     "videoCodec": "Video Codec",
     "videoCodecDesc": "HEVC for best balance of quality and compatibility",
     "codecUnavailable": "{{codec}} (unavailable)",

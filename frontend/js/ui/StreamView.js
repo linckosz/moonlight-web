@@ -2585,7 +2585,9 @@ export class StreamView {
             this._activeRendererKind === 'video-element' &&
             this._videoEnhancementRequested
         ) {
-            enhancerName = 'OFF (HDR via <video>)';
+            // Escape angle brackets: this string is injected via innerHTML, a raw
+            // <video> would spawn a real video element (huge empty box in the overlay).
+            enhancerName = 'OFF (HDR via &lt;video&gt;)';
         }
         if (enhancerName !== null) {
             html +=

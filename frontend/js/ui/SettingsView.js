@@ -592,7 +592,6 @@ export class SettingsView {
         // Video Enhancement (WebGPU upscale/sharpen) — grayed out if WebGPU is
         // unavailable, like the per-codec graying.
         const webgpuUnavailable = !this._webgpuUsable;
-        const veDisabledAttr = webgpuUnavailable ? ' disabled' : '';
         const veAlgos = [
             { value: 'auto', label: t('settings.algoAuto'), disabled: false },
             { value: 'fsr1', label: t('settings.algoFsr1'), disabled: false },
@@ -607,6 +606,18 @@ export class SettingsView {
             .join('');
         const veNote = webgpuUnavailable
             ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
+            : '';
+
+        // HDR forces the Video Enhancer off: the true-HDR path renders to a native
+        // <video> sink that bypasses WebGPU, so the enhancer can't run. Lock the
+        // control (unchecked + disabled + dimmed) while HDR is on.
+        const veHdrLocked = this._hdrEnabled;
+        const veLockedClass = this._powerSave || veHdrLocked ? ' settings-field-locked' : '';
+        const veCheckboxDisabled =
+            webgpuUnavailable || this._powerSave || veHdrLocked ? ' disabled' : '';
+        const veChecked = this._videoEnhancement === 'on' && !veHdrLocked ? 'checked' : '';
+        const veHdrNote = veHdrLocked
+            ? `<div class="settings-note">${t('settings.videoEnhancementHdrLock')}</div>`
             : '';
 
         this.container.innerHTML = `
@@ -685,10 +696,10 @@ export class SettingsView {
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('settings.advanced')}</h3>
 
-                    <div class="settings-field${psLocked}">
+                    <div class="settings-field${veLockedClass}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-video-enhancement"
-                                ${this._videoEnhancement === 'on' ? 'checked' : ''}${veDisabledAttr}${psDisabled} />
+                                ${veChecked}${veCheckboxDisabled} />
                             <span class="settings-checkbox-text">
                                 <strong>${t('settings.videoEnhancement')}${webgpuUnavailable ? t('settings.unavailableSuffix') : ''}</strong>
                             </span>
@@ -696,11 +707,12 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.videoEnhancementDesc')}</span>
                         ${
                             this._debugBuild
-                                ? `<select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veDisabledAttr}>
+                                ? `<select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veCheckboxDisabled}>
                             ${veAlgoOptions}
                         </select>`
                                 : ''
                         }
+                        ${veHdrNote}
                         ${veNote}
                     </div>
 
@@ -886,7 +898,13 @@ export class SettingsView {
         const hdrCheck = this.container.querySelector('#settings-hdr');
         if (hdrCheck)
             hdrCheck.addEventListener('change', () => {
+                this._hdrEnabled = hdrCheck.checked;
+                // HDR uses a native <video> sink that bypasses WebGPU: force the
+                // enhancer off and re-render so its control locks/unlocks.
+                if (this._hdrEnabled) this._videoEnhancement = 'off';
                 this._applyAutoBitrate();
+                this.render();
+                this.bindEvents();
                 this._autoSave();
             });
 
