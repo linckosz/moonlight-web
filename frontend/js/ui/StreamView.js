@@ -1381,9 +1381,18 @@ export class StreamView {
         const applyConfig = (cfg, noDescription = false) => {
             // Try hardware-accelerated decoder first (GPU decoding on Android)
             const _doConfigure = (config, hwAccel) => {
-                const cfgToUse = hwAccel
-                    ? { ...config, hardwareAcceleration: 'prefer-hardware' }
-                    : config;
+                let cfgToUse;
+                if (this._hdrTonemap) {
+                    // HDR→SDR tone-map + FSR1 needs CPU-readable frames: hardware
+                    // decoders output opaque frames (format=null) on which
+                    // VideoFrame.copyTo/allocationSize are unsupported. Force a
+                    // software decoder so the YUV planes can be read back.
+                    cfgToUse = { ...config, hardwareAcceleration: 'prefer-software' };
+                } else if (hwAccel) {
+                    cfgToUse = { ...config, hardwareAcceleration: 'prefer-hardware' };
+                } else {
+                    cfgToUse = config;
+                }
                 try {
                     this.decoder.configure(cfgToUse);
                     this.decoderConfigured = true;
