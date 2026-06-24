@@ -156,8 +156,12 @@ export class StreamView {
         videoEnhancementAlgo = 'auto',
         yuv444 = false,
         hdrEnabled = false,
+        touchScreen = false,
     ) {
         this.container = container;
+        // Mobile only: direct touch-screen input (absolute finger position) in
+        // place of the relative trackpad model. Off by default.
+        this._touchScreen = touchScreen === true;
         // YUV 4:4:4 chroma negotiated by the backend (vs default 4:2:0). Used
         // only to annotate the codec in the stats overlay.
         this._yuv444 = yuv444 === true;
@@ -1527,8 +1531,19 @@ export class StreamView {
         // format — without Annex B, HEVC keyframes are falsely rejected on
         // Chrome/Edge.  Non-Chromium browsers fall back to AVCC + description.
         const configsToTry = [];
-        const fallbacks =
+        let fallbacks =
             codecType === CODEC_HEVC ? HEVC_FALLBACK_CODEC_STRINGS : H264_FALLBACK_CODEC_STRINGS;
+        // HDR (10-bit) stream: never fall back to an 8-bit Main profile codec
+        // string. An 8-bit decoder configures fine for a 10-bit bitstream but then
+        // throws "Decoding error" on every frame (observed on Android Chrome, which
+        // has no HEVC Main10 WebCodecs support) → infinite recovery spiral. Keep only
+        // Main10 profiles; if none are supported, the chain exhausts and degrades
+        // gracefully to an H.264 re-launch via _handleHevcFallback().
+        let annexbStrings = HEVC_ANNEXB_CODEC_STRINGS;
+        if (isHdr && codecType === CODEC_HEVC) {
+            fallbacks = fallbacks.filter((c) => isHevcHdrProfile(c));
+            annexbStrings = annexbStrings.filter((c) => isHevcHdrProfile(c));
+        }
         // Chrome WebCodecs has historically rejected HEVC configs that include
         // an explicit colorSpace. We attempt it as the primary config for HEVC
         // too; if Chrome rejects it, the fallback chain skips to the next
@@ -1548,7 +1563,7 @@ export class StreamView {
             const hev1Primary = codec.replace(/^hvc1/, 'hev1');
             annexBCfgs.push({ codec: hev1Primary, ...shared, ...vColor, _noDescription: true });
             annexBCfgs.push({ codec: hev1Primary, ...shared, _noDescription: true });
-            for (const fb of HEVC_ANNEXB_CODEC_STRINGS) {
+            for (const fb of annexbStrings) {
                 if (fb === hev1Primary) continue;
                 annexBCfgs.push({ codec: fb, ...shared, ...vColor, _noDescription: true });
                 annexBCfgs.push({ codec: fb, ...shared, _noDescription: true });
@@ -4118,6 +4133,12 @@ export class StreamView {
     /** Build the special-keys bar (hidden until the soft keyboard opens). */
     _buildKbToolbar() {
         this._heldMods = { ctrl: false, shift: false, alt: false, meta: false };
+        // Locked modifiers stay held across keys (fast double-tap) until tapped
+        // off, unlike the one-shot latch which auto-releases after the next key.
+        this._lockedMods = { ctrl: false, shift: false, alt: false, meta: false };
+        // Timestamp of the latch tap, to tell a fast double-tap (lock) from a
+        // slow second tap (just turn it off).
+        this._modLastTap = { ctrl: 0, shift: 0, alt: 0, meta: 0 };
         this._modBtns = {}; // id → button, to clear the latch highlight on release
 
         const bar = document.createElement('div');
@@ -4161,22 +4182,21 @@ export class StreamView {
         this._kbToolbar = bar;
     }
 
-    /** Latch / unlatch a modifier, sending a real key down/up so a bare press
-     *  works (e.g. Win alone opens the Start menu) and the flag carries over. */
+    /** Cycle a modifier through off → one-shot latch → locked → off.
+     *  - tap 1: latch (held, auto-released after the next key) — cyan.
+     *  - tap 2 within 300ms (fast double-tap): lock (stays held until tapped
+     *    off) — solid blue. A slow second tap just turns it off.
+     *  - tap while locked: off.
+     *  A real key down/up is sent so a bare press works (e.g. Win alone opens
+     *  the Start menu) and the flag carries over to subsequent keys. */
     _toggleMod(name, btn) {
         const vk = StreamView.MOD_VK[name];
-        if (this._heldMods[name]) {
-            this._heldMods[name] = false;
-            this.webrtc.send({
-                type: 'keyup',
-                keyCode: vk,
-                code: '',
-                key: '',
-                ...this._modFlags(),
-            });
-            btn.classList.remove('active');
-        } else {
+        const now = performance.now();
+        if (!this._heldMods[name]) {
+            // off → latched (one-shot)
             this._heldMods[name] = true;
+            this._lockedMods[name] = false;
+            this._modLastTap[name] = now;
             // Flags reflect already-held mods (this one now included).
             this.webrtc.send({
                 type: 'keydown',
@@ -4186,6 +4206,23 @@ export class StreamView {
                 ...this._modFlags(),
             });
             btn.classList.add('active');
+            btn.classList.remove('locked');
+        } else if (!this._lockedMods[name] && now - (this._modLastTap[name] || 0) <= 300) {
+            // latched → locked (fast double-tap): already held, just mark sticky.
+            this._lockedMods[name] = true;
+            btn.classList.add('locked');
+        } else {
+            // locked → off, or a slow second tap on a latched mod → off.
+            this._heldMods[name] = false;
+            this._lockedMods[name] = false;
+            this.webrtc.send({
+                type: 'keyup',
+                keyCode: vk,
+                code: '',
+                key: '',
+                ...this._modFlags(),
+            });
+            btn.classList.remove('active', 'locked');
         }
     }
 
@@ -4207,6 +4244,8 @@ export class StreamView {
         if (!m) return;
         for (const name of ['ctrl', 'shift', 'alt', 'meta']) {
             if (!m[name]) continue;
+            // Locked modifiers stay held across keys until explicitly tapped off.
+            if (this._lockedMods && this._lockedMods[name]) continue;
             m[name] = false; // clear before flags so this one reads as released
             this.webrtc.send({
                 type: 'keyup',
@@ -4298,6 +4337,7 @@ export class StreamView {
             for (const name of Object.keys(this._heldMods)) {
                 if (!this._heldMods[name]) continue;
                 this._heldMods[name] = false;
+                if (this._lockedMods) this._lockedMods[name] = false;
                 this.webrtc.send({
                     type: 'keyup',
                     keyCode: StreamView.MOD_VK[name],
@@ -4310,8 +4350,8 @@ export class StreamView {
                 });
             }
             this._kbToolbar
-                .querySelectorAll('.stream-kbd-key.active')
-                .forEach((b) => b.classList.remove('active'));
+                .querySelectorAll('.stream-kbd-key.active, .stream-kbd-key.locked')
+                .forEach((b) => b.classList.remove('active', 'locked'));
         }
     }
 
@@ -4375,9 +4415,12 @@ export class StreamView {
                     this._touchActive &&
                     !this._touchMoved &&
                     this._touchFingerCount === 1 &&
+                    this._touchMaxFingers === 1 &&
                     !this._touchDragging
                 ) {
                     this._touchDragging = true;
+                    // Touch-screen mode: grab the button right under the finger.
+                    if (this._touchScreen) this._sendAbsTouch(this._touchStartX, this._touchStartY);
                     this.webrtc.send({ type: 'mousedown', button: 1 });
                 }
             }, this._touchLongPressMs);
@@ -4408,6 +4451,22 @@ export class StreamView {
         }
         this._pinchPrevCx = cx / n;
         this._pinchPrevCy = cy / n;
+    }
+
+    /** Touch-screen mode: map a finger's client position to the host's absolute
+     *  cursor position (over the real picture, letterbox-aware) and send it. */
+    _sendAbsTouch(clientX, clientY) {
+        const rect = this._mediaRect();
+        if (!rect || !rect.width || !rect.height) return;
+        const x = Math.round(Math.max(0, Math.min(clientX - rect.left, rect.width)));
+        const y = Math.round(Math.max(0, Math.min(clientY - rect.top, rect.height)));
+        this.webrtc.send({
+            type: 'mousemove',
+            x,
+            y,
+            referenceWidth: Math.round(rect.width),
+            referenceHeight: Math.round(rect.height),
+        });
     }
 
     /**
@@ -4505,14 +4564,23 @@ export class StreamView {
                 if (!this._touchDragging) this._clearLongPress();
             }
 
-            const dx = (touch.clientX - this._touchLastX) * this._touchSensitivity;
-            const dy = (touch.clientY - this._touchLastY) * this._touchSensitivity;
-            if (dx !== 0 || dy !== 0) {
-                this.webrtc.send({
-                    type: 'mousemove',
-                    dx: Math.round(dx),
-                    dy: Math.round(dy),
-                });
+            if (this._touchScreen) {
+                // Absolute: the cursor follows the finger 1:1 over the picture,
+                // but ONLY for a genuine single-finger gesture — a 2/3-finger
+                // gesture (or its leftover finger) must never move the cursor.
+                if (this._touchMaxFingers === 1) {
+                    this._sendAbsTouch(touch.clientX, touch.clientY);
+                }
+            } else {
+                const dx = (touch.clientX - this._touchLastX) * this._touchSensitivity;
+                const dy = (touch.clientY - this._touchLastY) * this._touchSensitivity;
+                if (dx !== 0 || dy !== 0) {
+                    this.webrtc.send({
+                        type: 'mousemove',
+                        dx: Math.round(dx),
+                        dy: Math.round(dy),
+                    });
+                }
             }
 
             this._touchLastX = touch.clientX;
@@ -4635,8 +4703,35 @@ export class StreamView {
                 this.webrtc.send({ type: 'mousedown', button: 3 });
                 this.webrtc.send({ type: 'mouseup', button: 3 }); // 2-finger tap → right click
             } else {
+                // 1-finger tap → left click. Touch-screen mode positions the
+                // cursor first; a fast double-tap at the same spot lands a second
+                // click at the SAME coordinate, so the host registers a true
+                // double-click and selects the word under it.
+                const now = performance.now();
+                const near =
+                    Math.hypot(
+                        this._touchStartX - (this._lastTapX || 0),
+                        this._touchStartY - (this._lastTapY || 0),
+                    ) < 28;
+                const isDouble =
+                    this._touchScreen &&
+                    this._lastTapTime &&
+                    now - this._lastTapTime <= 300 &&
+                    near;
+                if (this._touchScreen) {
+                    const px = isDouble ? this._lastTapX : this._touchStartX;
+                    const py = isDouble ? this._lastTapY : this._touchStartY;
+                    this._sendAbsTouch(px, py);
+                }
                 this.webrtc.send({ type: 'mousedown', button: 1 });
-                this.webrtc.send({ type: 'mouseup', button: 1 }); // 1-finger tap → left click
+                this.webrtc.send({ type: 'mouseup', button: 1 });
+                if (isDouble) {
+                    this._lastTapTime = 0; // consumed — avoid chaining into a triple
+                } else {
+                    this._lastTapTime = now;
+                    this._lastTapX = this._touchStartX;
+                    this._lastTapY = this._touchStartY;
+                }
             }
         }
 
@@ -4864,18 +4959,32 @@ export class StreamView {
      * cursor, taps for clicks, multi-finger drags for scroll/zoom/pan.
      */
     _buildTouchHelpContent() {
-        const rows = [
-            [t('stream.tcMoveCursor'), t('stream.tcMoveCursorVal')],
-            [t('stream.tcLeftClick'), t('stream.tcLeftClickVal')],
-            [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
-            [t('stream.tcDrag'), t('stream.tcDragVal')],
-            [t('stream.tcScroll'), t('stream.tcScrollVal')],
-            [t('stream.tcZoom'), t('stream.tcZoomVal')],
-            [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
-            [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
-        ];
+        // Touch-screen mode changes the 1-finger meaning from a relative
+        // trackpad move to a direct, absolute touch — reflect it in the help.
+        const rows = this._touchScreen
+            ? [
+                  [t('stream.tcMoveCursor'), t('stream.tsMoveCursorVal')],
+                  [t('stream.tcLeftClick'), t('stream.tsLeftClickVal')],
+                  [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
+                  [t('stream.tcDrag'), t('stream.tsDragVal')],
+                  [t('stream.tcScroll'), t('stream.tcScrollVal')],
+                  [t('stream.tcZoom'), t('stream.tcZoomVal')],
+                  [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
+                  [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
+              ]
+            : [
+                  [t('stream.tcMoveCursor'), t('stream.tcMoveCursorVal')],
+                  [t('stream.tcLeftClick'), t('stream.tcLeftClickVal')],
+                  [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
+                  [t('stream.tcDrag'), t('stream.tcDragVal')],
+                  [t('stream.tcScroll'), t('stream.tcScrollVal')],
+                  [t('stream.tcZoom'), t('stream.tcZoomVal')],
+                  [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
+                  [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
+              ];
 
-        let html = '<div class="shortcuts-slide-title">' + t('stream.touchTitle') + '</div>';
+        const title = this._touchScreen ? t('stream.touchScreenTitle') : t('stream.touchTitle');
+        let html = '<div class="shortcuts-slide-title">' + title + '</div>';
         html += '<div class="shortcuts-slide-grid">';
         for (const [action, gesture] of rows) {
             html += '<div class="shortcut-row">';
