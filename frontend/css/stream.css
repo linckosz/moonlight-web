@@ -598,6 +598,10 @@ body.streaming-active .app-footer {
     min-width: 0;
     height: 38px;
     padding: 0 1px;
+    /* Disable double-tap-to-zoom: otherwise a fast double tap on a modifier is
+       eaten as a zoom gesture, the second toggle never fires and the modifier
+       stays latched/stuck. */
+    touch-action: manipulation;
     background: rgba(255, 255, 255, 0.10);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 7px;
@@ -620,10 +624,20 @@ body.streaming-active .app-footer {
     color: rgba(255, 255, 255, 0.8);
 }
 .stream-kbd-key.active {
-    /* Latched modifier — neon cyan, matching the Stop button border */
+    /* Latched modifier (one-shot) — neon cyan, matching the Stop button border */
     background: var(--kbd-on);
     border-color: var(--kbd-on-edge);
     color: var(--kbd-on-edge);
+}
+.stream-kbd-key.locked {
+    /* Locked modifier (double-tap) — solid, pronounced blue + glow: stays
+       pressed until tapped off. Distinct from the soft cyan one-shot latch. */
+    background: #1f6feb;
+    border-color: #79c0ff;
+    color: #fff;
+    box-shadow:
+        0 0 10px rgba(56, 139, 253, 0.9),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.25);
 }
 
 /* ── Native fullscreen: hide the header so the stream fills the screen ──── */

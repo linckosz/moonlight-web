@@ -49,6 +49,13 @@
     cursor: pointer;
     transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
 }
+/* Desktop: a touch more breathing room left/right than the base space-4. */
+@media (min-width: 601px) {
+    .app-card {
+        padding-left: var(--space-5);
+        padding-right: var(--space-5);
+    }
+}
 .app-card:hover {
     box-shadow: var(--edge-accent), var(--glass-highlight);
     filter: var(--glow-accent);

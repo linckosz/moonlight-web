@@ -52,6 +52,9 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._touchSensitivity = 2.2;
+        // Mobile only: direct touch-screen input (absolute) instead of the
+        // relative trackpad model. Off by default.
+        this._touchScreen = false;
         this._vsync = true;
         // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
         this._videoWorker = 'auto';
@@ -137,6 +140,7 @@ export class SettingsView {
             typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
                 ? data.touch_sensitivity
                 : 2.2;
+        this._touchScreen = data.touch_screen === true;
         this._vsync = data.vsync_enabled !== false;
         // Back-compat: older saves stored a boolean; map it onto the tri-state.
         const vw = data.video_worker;
@@ -219,6 +223,7 @@ export class SettingsView {
             hdr_enabled: this._hdrEnabled,
             chroma_444_enabled: this._chroma444,
             touch_sensitivity: this._touchSensitivity,
+            touch_screen: this._touchScreen,
             vsync_enabled: this._vsync,
             video_worker: this._videoWorker,
             video_enhancement: this._videoEnhancement,
@@ -381,6 +386,9 @@ export class SettingsView {
                 this.container.querySelector('#settings-sensitivity')?.value,
             );
             const sensitivity = isNaN(sensRaw) ? this._touchSensitivity : sensRaw;
+            const touchScreen =
+                this.container.querySelector('#settings-touch-screen')?.checked ??
+                this._touchScreen;
             const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
             const videoWorker =
                 this.container.querySelector('#settings-video-worker')?.value ?? this._videoWorker;
@@ -405,6 +413,7 @@ export class SettingsView {
             this._hdrEnabled = hdr;
             this._chroma444 = chroma444;
             this._touchSensitivity = sensitivity;
+            this._touchScreen = touchScreen;
             this._vsync = vsync;
             this._videoWorker = videoWorker;
             this._videoEnhancement = videoEnhancement;
@@ -420,7 +429,8 @@ export class SettingsView {
     /** Reset all streaming preferences to their default values. */
     async _resetDefaults() {
         this._videoCodec = 'hevc';
-        this._gamingMode = true;
+        // Default preset leaves mouse gaming mode OFF (opt-in per user request).
+        this._gamingMode = false;
         this._showPerformanceStats = false;
         this._streamHeight = 1080;
         this._streamAspect = 'auto';
@@ -428,6 +438,7 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._touchSensitivity = 2.2;
+        this._touchScreen = false;
         this._vsync = true;
         this._videoWorker = 'auto';
         this._videoEnhancement = 'off';
@@ -738,17 +749,6 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.chroma444Desc')}</span>
                     </div>
 
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-show-perf-stats"
-                                ${this._showPerformanceStats ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">
-                                <strong>${t('settings.showPerfStats')}</strong>
-                            </span>
-                        </label>
-                        <span class="setting-desc">${t('settings.showPerfStatsDesc')}</span>
-                    </div>
-
                     ${
                         IS_TOUCH_DEVICE
                             ? ''
@@ -777,6 +777,22 @@ export class SettingsView {
                         <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> enables it above 4 logical cores. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
                     </div>
 
+                    ${
+                        IS_TOUCH_DEVICE
+                            ? `
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-touch-screen"
+                                ${this._touchScreen ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.touchScreen')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.touchScreenDesc')}</span>
+                    </div>`
+                            : ''
+                    }
+
                     <div class="settings-field">
                         <label class="settings-label" for="settings-sensitivity">
                             ${t('settings.pointerSensitivity')} <strong id="settings-sensitivity-value">${this._touchSensitivity.toFixed(1)}</strong>×
@@ -790,6 +806,17 @@ export class SettingsView {
                             <span>0.5×</span>
                             <span>5×</span>
                         </div>
+                    </div>
+
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-show-perf-stats"
+                                ${this._showPerformanceStats ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.showPerfStats')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.showPerfStatsDesc')}</span>
                     </div>
                 </div>
 
@@ -921,6 +948,9 @@ export class SettingsView {
 
         const gamingCheck = this.container.querySelector('#settings-gaming-mode');
         if (gamingCheck) gamingCheck.addEventListener('change', () => this._autoSave());
+
+        const touchScreenCheck = this.container.querySelector('#settings-touch-screen');
+        if (touchScreenCheck) touchScreenCheck.addEventListener('change', () => this._autoSave());
 
         const perfCheck = this.container.querySelector('#settings-show-perf-stats');
         if (perfCheck) perfCheck.addEventListener('change', () => this._autoSave());

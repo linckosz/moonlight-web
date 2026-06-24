@@ -130,6 +130,8 @@
     "showPerfStatsDesc": "Superpose les stats de FPS, débit, pertes d'images et latence pendant le streaming",
     "gamingMode": "Mode souris jeu",
     "gamingModeDesc": "Verrouille le pointeur pour un contrôle de caméra fluide dans les jeux",
+    "touchScreen": "Mode écran tactile",
+    "touchScreenDesc": "Touchez directement l'endroit voulu sur l'image (absolu) au lieu du modèle trackpad relatif",
     "pointerSensitivity": "Sensibilité du pointeur :",
     "pointerSensitivityDesc": "Vitesse du curseur trackpad/tactile (plus élevé = déplacement plus rapide)",
     "resetDefaults": "Réinitialiser les paramètres",
@@ -298,7 +300,11 @@
     "tcPanZoom": "Déplacer le zoom",
     "tcPanZoomVal": "Glisser à 3 doigts",
     "tcKeyboard": "Clavier",
-    "tcKeyboardVal": "Tap à 3 doigts"
+    "tcKeyboardVal": "Tap à 3 doigts",
+    "touchScreenTitle": "Écran tactile",
+    "tsMoveCursorVal": "Toucher l'image",
+    "tsLeftClickVal": "Tap à l'endroit voulu",
+    "tsDragVal": "Appui long, puis glisser"
   },
   "transport": {
     "webrtcDcUdp": "WebRTC DataChannel (UDP)",
