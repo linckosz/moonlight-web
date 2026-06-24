@@ -660,6 +660,16 @@ const MoonlightApp = {
         // Override codec if provided (HEVC fallback to H.264)
         if (codecOverride) {
             streamingSettings.video_codec = codecOverride;
+            // The H.264 fallback exists because the browser couldn't decode the
+            // negotiated stream (e.g. HEVC Main10 HDR, unsupported on Android
+            // Chrome). Drop HDR and 4:4:4 too: H.264 HDR is carried as High 4:4:4
+            // Predictive 10-bit (profile 244, avc1.f4002a), which is even less
+            // widely decodable and re-triggers the decode-error spiral. Fall all
+            // the way back to plain 8-bit 4:2:0 H.264 for maximum compatibility.
+            if (codecOverride === 'h264') {
+                streamingSettings.hdr_enabled = false;
+                streamingSettings.chroma_444_enabled = false;
+            }
         }
 
         // Power Saving (mobile): force the native video transport, UDP first.
@@ -739,6 +749,8 @@ const MoonlightApp = {
             typeof streamingSettings.touch_sensitivity === 'number'
                 ? streamingSettings.touch_sensitivity
                 : 2.2;
+        // Mobile only: direct touch-screen input (absolute) instead of trackpad.
+        const touchScreen = streamingSettings.touch_screen === true;
         // VSync (default on): when off, the canvas allows tearing (lower latency)
         const vsync = streamingSettings.vsync_enabled !== false;
         // Video worker mode: 'auto' (heuristic — desktop only), 'on' or 'off'.
@@ -777,6 +789,7 @@ const MoonlightApp = {
             videoEnhancementAlgo,
             result.yuv444 === true,
             hdrEnabled,
+            touchScreen,
         );
 
         // ── Callbacks ──────────────────────────────────────────────────────
