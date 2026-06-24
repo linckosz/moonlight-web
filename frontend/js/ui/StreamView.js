@@ -4451,6 +4451,23 @@ export class StreamView {
         }
         this._pinchPrevCx = cx / n;
         this._pinchPrevCy = cy / n;
+        // Anchor for "did this multi-finger gesture actually move?" — small
+        // jitter while holding 2/3 fingers must NOT disqualify a tap.
+        this._multiOriginCx = cx / n;
+        this._multiOriginCy = cy / n;
+        this._multiOriginDist = this._pinchPrevDist;
+    }
+
+    /** True once a multi-finger gesture has clearly moved (centroid travel or,
+     *  for 2 fingers, a real pinch) beyond the given tap-jitter tolerance (px).
+     *  Pass dist=null for 3-finger gestures (spacing irrelevant). */
+    _multiMovedBeyondTol(cx, cy, dist, tol) {
+        const movedC = Math.hypot(cx - (this._multiOriginCx ?? cx), cy - (this._multiOriginCy ?? cy));
+        const movedD =
+            dist != null && this._multiOriginDist != null
+                ? Math.abs(dist - this._multiOriginDist)
+                : 0;
+        return movedC > tol || movedD > tol;
     }
 
     /** Touch-screen mode: map a finger's client position to the host's absolute
@@ -4589,13 +4606,16 @@ export class StreamView {
             // Two fingers: pinch → zoom (focal recenter); otherwise → scroll
             // wheel to the host. Pan is reserved for 3 fingers, so scrolling
             // works whether or not the display is zoomed in.
-            this._touchMoved = true;
             this._clearLongPress();
             const t1 = e.touches[0];
             const t2 = e.touches[1];
             const cx = (t1.clientX + t2.clientX) / 2;
             const cy = (t1.clientY + t2.clientY) / 2;
             const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+            // Only count as "moved" past a tolerance, so a slightly imperfect
+            // 2-finger tap still registers. Tighter than 3-finger (12px) — a
+            // compromise between the old zero-tolerance and the looser pass.
+            if (this._multiMovedBeyondTol(cx, cy, dist, 12)) this._touchMoved = true;
 
             const dDist = this._pinchPrevDist > 0 ? dist - this._pinchPrevDist : 0;
             const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
@@ -4645,7 +4665,6 @@ export class StreamView {
             this._pinchPrevCy = cy;
         } else if (count >= 3) {
             // Three fingers: pan the zoomed display (no effect at base zoom).
-            this._touchMoved = true;
             this._clearLongPress();
             let cx = 0,
                 cy = 0;
@@ -4655,6 +4674,8 @@ export class StreamView {
             }
             cx /= count;
             cy /= count;
+            // Tolerate jitter so a slightly imperfect 3-finger tap still fires.
+            if (this._multiMovedBeyondTol(cx, cy, null, 24)) this._touchMoved = true;
             const dCx = this._pinchPrevCx != null ? cx - this._pinchPrevCx : 0;
             const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
             if (this._zoom > 1.01) {
@@ -4687,11 +4708,20 @@ export class StreamView {
         const dist = tch
             ? Math.hypot(tch.clientX - this._touchStartX, tch.clientY - this._touchStartY)
             : 0;
+        // Multi-finger taps (right-click / keyboard) are harder to land cleanly:
+        // fingers touch down staggered and the first one drifts. 3-finger stays
+        // the most forgiving; 2-finger sits midway between that and a precise
+        // 1-finger tap.
+        const distTol =
+            this._touchMaxFingers >= 3 ? 45 : this._touchMaxFingers === 2 ? 28 : this._touchTapThreshold;
+        const timeTol =
+            this._touchMaxFingers >= 3
+                ? 600
+                : this._touchMaxFingers === 2
+                  ? 450
+                  : this._touchTapTimeThreshold;
         const isTap =
-            !this._touchMoved &&
-            dist < this._touchTapThreshold &&
-            elapsed < this._touchTapTimeThreshold &&
-            this._touchStartTime > 0;
+            !this._touchMoved && dist < distTol && elapsed < timeTol && this._touchStartTime > 0;
 
         if (this._touchDragging) {
             // End the long-press drag — release the held left button.

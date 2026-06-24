@@ -130,6 +130,8 @@
     "showPerfStatsDesc": "Overlays FPS, bitrate, frame loss and latency stats during streaming",
     "gamingMode": "Mouse Gaming Mode",
     "gamingModeDesc": "Locks mouse pointer for seamless camera control in games",
+    "touchScreen": "Touch Screen Mode",
+    "touchScreenDesc": "Tap directly where you want on the picture (absolute) instead of the relative trackpad model",
     "pointerSensitivity": "Pointer Sensitivity:",
     "pointerSensitivityDesc": "Trackpad/touch cursor speed (higher = faster pointer movement)",
     "resetDefaults": "Reset Default Parameters",
@@ -298,7 +300,11 @@
     "tcPanZoom": "Pan zoom",
     "tcPanZoomVal": "3-finger drag",
     "tcKeyboard": "Keyboard",
-    "tcKeyboardVal": "3-finger tap"
+    "tcKeyboardVal": "3-finger tap",
+    "touchScreenTitle": "Touch screen",
+    "tsMoveCursorVal": "Touch the picture",
+    "tsLeftClickVal": "Tap where you want",
+    "tsDragVal": "Long press, then move"
   },
   "transport": {
     "webrtcDcUdp": "WebRTC DataChannel (UDP)",
