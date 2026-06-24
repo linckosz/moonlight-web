@@ -35,17 +35,23 @@ int StreamConfig::computeVideoFormats() const
 {
     int fmt = 0;
 
+    // Base H.264 profile: High (0x0001) only — NOT VIDEO_FORMAT_MASK_H264 (0x000F),
+    // which also covers H264_HIGH8_444 (0x0004). Advertising the full mask lets
+    // Sunshine negotiate H.264 High 4:4:4 (profile_idc 244, avc1.f4002a) even when
+    // 4:4:4 was not requested — undecodable by WebCodecs on Chrome (Win/Android/macOS;
+    // only iOS VideoToolbox accepts it). The 4:4:4 profile is added back below only
+    // when chroma == C444.
     switch (codec) {
     case VideoCodec::AV1:
-        // Base: AV1 Main8 + HEVC Main + H.264 (higher profiles added conditionally below)
-        fmt |= VIDEO_FORMAT_AV1_MAIN8 | VIDEO_FORMAT_H265 | VIDEO_FORMAT_MASK_H264;
+        // Base: AV1 Main8 + HEVC Main + H.264 High (higher profiles added conditionally below)
+        fmt |= VIDEO_FORMAT_AV1_MAIN8 | VIDEO_FORMAT_H265 | VIDEO_FORMAT_H264;
         break;
     case VideoCodec::Auto:
     case VideoCodec::HEVC:
-        // Base: HEVC Main + H.264 (higher profiles added conditionally below)
-        fmt |= VIDEO_FORMAT_H265 | VIDEO_FORMAT_MASK_H264;
+        // Base: HEVC Main + H.264 High (higher profiles added conditionally below)
+        fmt |= VIDEO_FORMAT_H265 | VIDEO_FORMAT_H264;
         break;
-    case VideoCodec::H264: fmt |= VIDEO_FORMAT_MASK_H264; break;
+    case VideoCodec::H264: fmt |= VIDEO_FORMAT_H264; break;
     }
 
     // Chroma 4:4:4: add the YUV444 profile ONLY for the selected codec.
