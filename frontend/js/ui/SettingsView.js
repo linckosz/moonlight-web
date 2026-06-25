@@ -174,7 +174,7 @@ export class SettingsView {
         return 16 / 9;
     }
 
-    _computeAutoBitrate(height, fps, aspect, chroma444) {
+    _computeAutoBitrate(height, fps, aspect, chroma444, hdr) {
         const REF_BITRATE = 20; // Mbps at 1920×1080 / 60fps / SDR
         const h = height > 0 ? height : 1080;
         // Pixel count = (h × aspectRatio) × h, normalised to the 1920×1080 ref.
@@ -182,8 +182,9 @@ export class SettingsView {
         const aspRatio = this._aspectToNumber(aspect);
         const pixelRatio = (h * h * aspRatio) / (1080 * 1080 * (16 / 9));
         const fpsRatio = (fps > 0 ? fps : 60) / 60;
-        // 4:4:4 (4× chroma samples) justifies ~1.5× bitrate.
-        const richRatio = chroma444 ? 1.5 : 1.0;
+        // HDR (10-bit) and 4:4:4 (4× chroma samples) each justify ~1.5× bitrate;
+        // not cumulative — a single 1.5× when either is enabled.
+        const richRatio = chroma444 || hdr ? 1.5 : 1.0;
         const mbps = Math.round(REF_BITRATE * pixelRatio * fpsRatio * richRatio);
         return Math.max(1, Math.min(150, mbps));
     }
@@ -195,11 +196,13 @@ export class SettingsView {
         const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked === true;
         const aspect =
             this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
+        const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
         const mbps = this._computeAutoBitrate(
             isNaN(height) ? this._streamHeight : height,
             isNaN(fps) ? this._streamFps : fps,
             aspect,
             chroma444,
+            hdr,
         );
 
         const slider = this.container.querySelector('#settings-stream-bitrate');
