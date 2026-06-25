@@ -1,0 +1,7 @@
+# Caddy — TLS reverse proxy in front of the PowerDNS REST API.
+# Same role as the reference VM: shield the API and provide automatic HTTPS.
+# {$MW_DOMAIN} is read from the environment (set in docker-compose.yml).
+
+api.{$MW_DOMAIN} {
+	reverse_proxy pdns:8081
+}
