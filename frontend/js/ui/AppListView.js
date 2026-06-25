@@ -213,6 +213,21 @@ export class AppListView {
         }
     }
 
+    // Revert any card stuck in the "launching" state (e.g. backend crash/timeout)
+    // back to its idle appearance and restore the original app name.
+    clearLaunching() {
+        if (!this.container) return;
+        this.container.querySelectorAll('.app-card--launching').forEach((card) => {
+            card.classList.remove('app-card--launching');
+            card.removeAttribute('aria-busy');
+            const nameEl = card.querySelector('.app-card-name');
+            if (nameEl && nameEl.dataset.label) {
+                nameEl.textContent = nameEl.dataset.label;
+                delete nameEl.dataset.label;
+            }
+        });
+    }
+
     bindBackButton() {
         const backBtn = this.container.querySelector('#btn-back-hosts');
         if (backBtn) {

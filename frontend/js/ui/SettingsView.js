@@ -334,8 +334,20 @@ export class SettingsView {
      */
     _getEffectiveCodec() {
         if (this._mediaTrackOnlyH264) return 'h264';
-        if (!this._codecSupport) return this._videoCodec;
-        if (this._codecSupport[this._videoCodec]) return this._videoCodec;
+        // HDR has no H.264 path (H.264 HDR isn't decodable in practice): when HDR
+        // is on, H.264 is excluded from selection / fallback entirely.
+        const hdr = this._hdrEnabled;
+        if (!this._codecSupport) {
+            return hdr && this._videoCodec === 'h264' ? 'hevc' : this._videoCodec;
+        }
+        if (this._codecSupport[this._videoCodec] && !(hdr && this._videoCodec === 'h264')) {
+            return this._videoCodec;
+        }
+        if (hdr) {
+            if (this._codecSupport.hevc) return 'hevc';
+            if (this._codecSupport.av1) return 'av1';
+            return 'hevc';
+        }
         if (this._codecSupport.h264) return 'h264';
         if (this._codecSupport.hevc) return 'hevc';
         if (this._codecSupport.av1) return 'av1';
@@ -536,11 +548,15 @@ export class SettingsView {
                 const browserDisabled = this._codecSupport && !this._codecSupport[c.value];
                 const mediaTrackDisabled =
                     this._mediaTrackOnlyH264 && (c.value === 'hevc' || c.value === 'av1');
-                const disabled = browserDisabled || mediaTrackDisabled;
+                // H.264 has no usable HDR path: disable it while HDR is enabled.
+                const hdrDisabledCodec = this._hdrEnabled && c.value === 'h264';
+                const disabled = browserDisabled || mediaTrackDisabled || hdrDisabledCodec;
                 const selected = c.value === effectiveCodec ? ' selected' : '';
 
                 let label = c.label;
-                if (browserDisabled || mediaTrackDisabled) {
+                if (hdrDisabledCodec) {
+                    label = t('settings.codecHdrUnavailable', { codec: c.value.toUpperCase() });
+                } else if (browserDisabled || mediaTrackDisabled) {
                     label = t('settings.codecUnavailable', { codec: c.value.toUpperCase() });
                 }
 

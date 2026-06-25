@@ -123,6 +123,13 @@ const MoonlightApp = {
     async init() {
         console.log('[MW] Initializing Moonlight-Web...');
 
+        // Mark iOS in CSS (UA sniff) — used to restore tick visibility on
+        // the settings checkbox, where Safari's native tick is invisible.
+        if (/iPhone|iPod|iPad/i.test(navigator.userAgent) ||
+            (['MacIntel', 'Mac68K'].indexOf(navigator.platform) !== -1 && 'ontouchend' in document)) {
+            document.body.classList.add('ios');
+        }
+
         // Reload the app if a newer build is deployed while it stays open.
         VersionGuard.start();
 
@@ -512,18 +519,20 @@ const MoonlightApp = {
      * is revealed by _initNavButtons() once authenticated.
      */
     _hideNavButtonsConditionally() {
-        if (
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '[::1]'
-        ) {
-            return; // localhost: keep both visible
-        }
-        // Remote: hide admin always, settings until authenticated
+        // Always hide the Admin button upfront, regardless of whether we're on
+        // localhost — the button will be shown later by _initNavButtons() only
+        // when authenticated (and on localhost).
         const btnAdmin = document.getElementById('btn-admin');
         if (btnAdmin) btnAdmin.style.display = 'none';
+        const isLocal =
+            window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.hostname === '[::1]';
         const btnSettings = document.getElementById('btn-settings');
-        if (btnSettings) btnSettings.style.display = 'none';
+        if (btnSettings) {
+            if (!isLocal) btnSettings.style.display = 'none';
+        }
+        return isLocal;
     },
 
     _initNavButtons() {
@@ -625,10 +634,11 @@ const MoonlightApp = {
     // Streaming (fullscreen overlay)
     // =========================================================================
 
-    async launchApp(host, app, codecOverride) {
+    async launchApp(host, app, codecOverride, hdrOverride) {
         console.log(
             `[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}` +
-                (codecOverride ? ` (forced codec: ${codecOverride})` : ''),
+                (codecOverride ? ` (forced codec: ${codecOverride})` : '') +
+                (hdrOverride !== undefined ? ` (forced HDR: ${hdrOverride})` : ''),
         );
         this.transition('launching');
         Toast.info(t('launch.launching', { name: app.name }));
@@ -657,7 +667,7 @@ const MoonlightApp = {
             }
         }
 
-        // Override codec if provided (HEVC fallback to H.264)
+        // Override codec if provided (codec fallback chain)
         if (codecOverride) {
             streamingSettings.video_codec = codecOverride;
             // The H.264 fallback exists because the browser couldn't decode the
@@ -670,6 +680,11 @@ const MoonlightApp = {
                 streamingSettings.hdr_enabled = false;
                 streamingSettings.chroma_444_enabled = false;
             }
+        }
+        // Explicit HDR override from the fallback chain (e.g. AV1 HDR → HEVC SDR
+        // drops HDR). undefined means "leave the stored preference untouched".
+        if (hdrOverride !== undefined) {
+            streamingSettings.hdr_enabled = hdrOverride === true;
         }
 
         // Power Saving (mobile): force the native video transport, UDP first.
@@ -724,10 +739,22 @@ const MoonlightApp = {
                 // the next entry in the priority chain (see _onTransportFailed).
                 this._lastStreamingSettings = streamingSettings;
                 this._startStreamView(result, host, streamingSettings);
+                // New StreamView rendered on top — drop any bridging loader left
+                // by a codec/HDR fallback re-launch.
+                this._hideRelaunchLoader();
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
-            Toast.error(err.message || t('launch.failed'));
+            this._hideRelaunchLoader();
+            // Revert the app card stuck on "Launching..." back to its idle state.
+            if (this.appListView) this.appListView.clearLaunching();
+            // Distinguish a client-side timeout (backend hung/crashed) from a
+            // regular failure so the user gets a clear, actionable message.
+            const msg =
+                err && (err.aborted || err.message === 'server_timeout')
+                    ? t('launch.timeout')
+                    : err.message || t('launch.failed');
+            Toast.error(msg);
             this.transition('app_list');
         }
     },
@@ -879,6 +906,19 @@ const MoonlightApp = {
         if (el) el.remove();
     },
 
+    /** Persist hdr_enabled=false in localStorage so the Settings HDR checkbox
+     *  reflects an automatic HDR fallback. Best-effort (ignores parse errors). */
+    _persistHdrDisabled() {
+        try {
+            const stored = localStorage.getItem('mw-streaming-settings');
+            const settings = stored ? JSON.parse(stored) : {};
+            settings.hdr_enabled = false;
+            localStorage.setItem('mw-streaming-settings', JSON.stringify(settings));
+        } catch (e) {
+            console.warn('[MW] Failed to persist HDR fallback to localStorage:', e);
+        }
+    },
+
     /**
      * Tear down the current StreamView and relaunch the same app with the next
      * transport index. The backend recomputes the (identical) chain and attempts
@@ -956,20 +996,24 @@ const MoonlightApp = {
 
         // Capture fallback state BEFORE nulling streamView
         const fallbackRequested = this.streamView && this.streamView._codecFallbackRequested;
+        const fallbackTarget = this.streamView && this.streamView._codecFallback;
         const fallbackHost = this._lastStreamHost;
         const fallbackApp = this._lastStreamApp;
 
         this._nav.overlay = null;
         this.streamView = null;
 
-        // ── HEVC → H.264 fallback ─────────────────────────────────────────
-        // When the browser cannot decode HEVC (Windows Chrome), the stream
-        // quits with _codecFallbackRequested=true. Re-launch with H.264 forced.
-        if (fallbackRequested && fallbackHost && fallbackApp) {
+        // ── Codec fallback chain ──────────────────────────────────────────
+        // When the browser cannot decode the negotiated config, the stream quits
+        // with _codecFallbackRequested=true and a _codecFallback {codec, hdr}
+        // target. Chain: HEVC HDR → AV1 HDR → HEVC SDR → H.264 SDR. Re-launch
+        // with the next step (loader stays up so Apps is never revealed).
+        if (fallbackRequested && fallbackTarget && fallbackHost && fallbackApp) {
             this._fallbackAttemptCount++;
-            if (this._fallbackAttemptCount > 1) {
-                // H.264 fallback failed too — give up to prevent infinite loop
-                console.error('[MW] HEVC→H.264 fallback also failed, giving up');
+            // The chain has at most 3 hops; allow up to 4 attempts as a safety net.
+            if (this._fallbackAttemptCount > 4) {
+                console.error('[MW] Codec fallback chain exhausted, giving up');
+                this._hideRelaunchLoader();
                 this.transition('app_list');
                 if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
                     history.back();
@@ -993,21 +1037,29 @@ const MoonlightApp = {
             }
 
             console.warn(
-                '[MW] HEVC not supported by browser, re-launching with H.264 ' +
-                    '(attempt ' +
-                    this._fallbackAttemptCount +
-                    ')',
+                `[MW] Codec fallback → ${fallbackTarget.codec}` +
+                    `${fallbackTarget.hdr ? ' HDR' : ' SDR'} (attempt ${this._fallbackAttemptCount})`,
             );
 
-            // Pop the streaming guard from history
+            // When the fallback drops HDR, persist the unchecked preference so the
+            // Settings HDR checkbox reflects reality, and inform the user.
+            if (fallbackTarget.hdr === false) {
+                this._persistHdrDisabled();
+                Toast.warning(t('launch.hdrFallback', { to: fallbackTarget.codec.toUpperCase() }));
+            }
+
+            // Keep the full-screen loader up across teardown + relaunch so the
+            // Apps view is never flashed between attempts.
+            this._showRelaunchLoader();
+
+            // Pop the streaming guard from history (without revealing Apps: the
+            // loader covers it).
             if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
                 history.back();
             }
 
-            // Re-launch with H.264 forced. This pushes a new streaming guard
-            // on top of the revealed main view.
             this.transition('app_list'); // Reset state for re-launch
-            this.launchApp(fallbackHost, fallbackApp, 'h264');
+            this.launchApp(fallbackHost, fallbackApp, fallbackTarget.codec, fallbackTarget.hdr);
             return;
         }
 

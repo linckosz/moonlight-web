@@ -34,8 +34,38 @@ export class Toast {
      * @param {string} message
      * @param {'success'|'error'|'info'} type
      */
+    /** Max simultaneously visible toasts (mobile vs desktop). */
+    static _maxVisible() {
+        const isMobile =
+            window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+        return isMobile ? 3 : 5;
+    }
+
+    /**
+     * Remove the oldest toasts so that no more than `max` remain after a new
+     * one is appended. The oldest (top-most) toasts slide out first.
+     */
+    static _enforceLimit(container) {
+        const max = this._maxVisible();
+        // Only count toasts that are not already exiting.
+        const toasts = container.querySelectorAll('.toast:not(.toast-exit)');
+        const excess = toasts.length - (max - 1);
+        for (let i = 0; i < excess; i++) {
+            const toast = toasts[i];
+            if (toast && toast.parentNode) {
+                toast.classList.add('toast-exit');
+                setTimeout(() => {
+                    if (toast.parentNode) toast.remove();
+                }, 300);
+            }
+        }
+    }
+
     static show(message, type = 'info') {
         const container = this._ensureContainer();
+
+        // Trim oldest toasts before adding the new one (max 5 PC / 3 mobile).
+        this._enforceLimit(container);
 
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;

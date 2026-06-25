@@ -495,7 +495,10 @@ void AuthManager::setSessionStreaming(const QString& token, bool streaming)
         changed = true;
     }
 
-    if (changed) emit sessionsChanged();
+    if (changed) {
+        saveSessions();
+        emit sessionsChanged();
+    }
 }
 
 void AuthManager::destroySession(const QString& token)
