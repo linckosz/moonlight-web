@@ -1,0 +1,3 @@
+# Place your own TLS cert/key here when using MW_TLS_CERT / MW_TLS_KEY.
+# This directory is bind-mounted read-only to /certs inside the container.
+# Files dropped here are gitignored (see .gitignore) — never commit private keys.

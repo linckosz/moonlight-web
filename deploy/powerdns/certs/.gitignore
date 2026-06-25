@@ -1,0 +1,4 @@
+# Ignore everything in this dir except the placeholder — never commit certs/keys.
+*
+!.gitkeep
+!.gitignore

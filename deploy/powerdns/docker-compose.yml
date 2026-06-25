@@ -1,55 +1,86 @@
-# Moonlight-Web — self-hosted PowerDNS stack (Docker, Alpine).
+# Moonlight-Web — self-hosted DNS stack (3 dedicated containers).
 #
-# Two services:
-#   pdns   authoritative DNS (SQLite + DNSSEC) + REST API on :8081 (internal)
-#   caddy  TLS reverse proxy exposing the API as https://api.${MW_DOMAIN}
-#          (Caddy gets its own cert via HTTP-01, shielding the API from DDoS)
+#   dnsdist  public DNS entry point :53  → pdns:5300  (anti-amplification, rate-limit)
+#   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)
+#   caddy    public :80/:443 → pdns:8081               (HTTPS API, rate-limit, auto-TLS)
 #
 # Quick start:
 #   cd deploy/powerdns
-#   cp .env.sample .env      # then edit MW_DOMAIN / MW_PUBLIC_IP / MW_PDNS_API_KEY
+#   cp .env.sample .env      # edit MW_DOMAIN / MW_PUBLIC_IP / MW_PDNS_API_KEY
 #   docker compose up -d --build
 #
-# Point your domain registrar's glue/NS records at MW_PUBLIC_IP (see README.md).
+# Point your registrar's glue/NS records at MW_PUBLIC_IP (see README.md).
 
 services:
+  # ── PowerDNS authoritative server (internal only) ──────────────────────────
   pdns:
-    build: .
-    image: moonlight-pdns:alpine
+    image: powerdns/pdns-auth-49:latest
     container_name: moonlight-pdns
     restart: unless-stopped
+    # tini for clean signals; init.sh bootstraps the zone then execs the
+    # official startup wrapper. Runs as the image's non-root pdns user.
+    entrypoint: ["/usr/bin/tini", "--", "sh", "/mw/init.sh"]
     environment:
       MW_DOMAIN: ${MW_DOMAIN}
       MW_PUBLIC_IP: ${MW_PUBLIC_IP}
-      MW_PDNS_API_KEY: ${MW_PDNS_API_KEY}
-    ports:
-      # Public authoritative DNS — MUST be reachable from the Internet.
-      - "53:53/udp"
-      - "53:53/tcp"
+      # User-facing key from .env, mapped to the var the official wrapper reads.
+      PDNS_AUTH_API_KEY: ${MW_PDNS_API_KEY}
     volumes:
-      # Zone DB persists across restarts/rebuilds.
-      - pdns_data:/var/lib/powerdns
-    networks:
-      - mwdns
+      - pdns_data:/var/lib/powerdns                 # zone DB persists
+      - ./pdns/zz-mw.conf:/etc/powerdns/pdns.d/zz-mw.conf:ro
+      - ./pdns/init.sh:/mw/init.sh:ro
+    networks: [mwnet]
+    # No published ports: only dnsdist (DNS) and caddy (API) reach it internally.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]                               # high ports → no caps needed
+    pids_limit: 200
+    mem_limit: 512m
 
+  # ── dnsdist: public DNS front (DoS / amplification protection) ─────────────
+  dnsdist:
+    image: powerdns/dnsdist-19:latest
+    container_name: moonlight-dnsdist
+    restart: unless-stopped
+    depends_on: [pdns]
+    volumes:
+      - ./dnsdist/dnsdist.conf:/etc/dnsdist/dnsdist.conf:ro
+    ports:
+      - "53:53/udp"      # public authoritative DNS (primary path)
+      - "53:53/tcp"      # public DNS (truncated answers, DNSSEC)
+    networks: [mwnet]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]                   # bind :53
+    pids_limit: 200
+    mem_limit: 256m
+
+  # ── Caddy: HTTPS reverse proxy in front of the PowerDNS API ────────────────
   caddy:
-    image: caddy:2-alpine
+    build: ./caddy
+    image: moonlight-caddy:latest
     container_name: moonlight-caddy
     restart: unless-stopped
-    depends_on:
-      - pdns
+    depends_on: [pdns]
     environment:
       MW_DOMAIN: ${MW_DOMAIN}
+      # Optional user-supplied TLS cert (takes priority over Let's Encrypt).
+      # Paths must resolve INSIDE the container — see the ./certs mount below.
+      MW_TLS_CERT: ${MW_TLS_CERT:-}
+      MW_TLS_KEY: ${MW_TLS_KEY:-}
+      MW_TLS_EMAIL: ${MW_TLS_EMAIL:-}
     ports:
-      # Caddy obtains its cert via HTTP-01, so 80 + 443 must be public.
-      - "80:80"
-      - "443:443"
+      - "80:80/tcp"      # Let's Encrypt HTTP-01 challenge
+      - "443:443/tcp"    # PowerDNS REST API over HTTPS (api.${MW_DOMAIN})
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
+      - caddy_data:/data             # cert storage (Let's Encrypt)
       - caddy_config:/config
-    networks:
-      - mwdns
+      - ./certs:/certs:ro            # your own certs when using MW_TLS_CERT/KEY
+    networks: [mwnet]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]                   # bind :80 / :443
+    pids_limit: 200
+    mem_limit: 256m
 
 volumes:
   pdns_data:
@@ -57,5 +88,5 @@ volumes:
   caddy_config:
 
 networks:
-  mwdns:
+  mwnet:
     driver: bridge
