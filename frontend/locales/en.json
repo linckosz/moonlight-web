@@ -120,6 +120,7 @@
     "videoCodec": "Video Codec",
     "videoCodecDesc": "HEVC for best balance of quality and compatibility",
     "codecUnavailable": "{{codec}} (unavailable)",
+    "codecHdrUnavailable": "{{codec}} (no HDR support)",
     "codecFallback": "{{selected}} was selected but is not supported by this browser. Falling back to {{effective}}.",
     "noCodecSupportedTitle": "No codec supported.",
     "noCodecSupportedBody": "This browser does not support H.264, HEVC, or AV1 decoding. Streaming is not possible.",
@@ -319,6 +320,8 @@
     "launching": "Launching {{name}}...",
     "started": "{{name}} started",
     "failed": "Launch failed",
-    "hevcH264Unsupported": "HEVC and H.264 both unsupported by browser"
+    "timeout": "Server not responding — launch cancelled",
+    "hevcH264Unsupported": "HEVC and H.264 both unsupported by browser",
+    "hdrFallback": "HDR unavailable — switched to {{to}} without HDR"
   }
 }

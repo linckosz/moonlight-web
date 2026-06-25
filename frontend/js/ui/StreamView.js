@@ -55,6 +55,7 @@ import {
     IS_MOBILE_OR_TABLET,
     IS_IOS,
     IS_STANDALONE,
+    isIphone,
 } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { t } from '../i18n/i18n.js';
@@ -241,8 +242,9 @@ export class StreamView {
             if (sel === 'force2d') {
                 wantWebGpu = false; // debug: force the Canvas2D renderer
             } else if (sel === 'auto') {
-                // 'auto' picks by platform (mobile→SGSR, desktop→FSR1).
-                algo = IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
+                // 'auto' picks by platform: iPhone → FSR1 (beefy GPU),
+                // other mobile → sgsr (lighter for battery/CPU), desktop → fsr1.
+                algo = isIphone() ? 'fsr1' : IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
             } else {
                 algo = sel === 'sgsr' || sel === 'fsr1' ? sel : 'sgsr';
             }
@@ -575,6 +577,10 @@ export class StreamView {
         // (e.g. Windows Chrome). The onQuit callback should detect this and re-launch
         // with H.264 forced via MoonlightApp.launchApp(host, app, 'h264').
         this._codecFallbackRequested = false;
+        // Target {codec, hdr} for the next launch attempt, set by
+        // _requestCodecFallback() following the HEVC HDR → AV1 HDR → HEVC SDR →
+        // H.264 SDR chain. Read by MoonlightApp._onStreamingQuit().
+        this._codecFallback = null;
 
         // Platform flag: Chrome Windows — gates the HEVC NV12 RGBA copyTo path
         // (green-tint workaround). Set by _logPlatformInfo() before first frame.
@@ -1239,9 +1245,30 @@ export class StreamView {
         // Guard: limit total recovery attempts to avoid infinite loops on
         // a fundamentally broken connection
         this._recoveryAttempts++;
+
+        // Decode capability failure: the config passed isConfigSupported() but the
+        // browser cannot actually decode it (e.g. Android Chrome with HEVC Main10
+        // HDR — hardware advertises support but decoding errors every frame). If no
+        // frame ever decoded after a few attempts and a fallback step exists, switch
+        // codec/HDR instead of looping recovery until exhaustion. Checked BEFORE the
+        // AV1 dead-end below so AV1 HDR can still fall back to HEVC SDR.
+        if (this.stats.decoded === 0 && this._recoveryAttempts >= 3) {
+            const target = this._computeCodecFallbackTarget();
+            if (target) {
+                console.warn(
+                    '[StreamView] Decoder never produced a frame after ' +
+                        this._recoveryAttempts +
+                        ' attempts — triggering codec fallback',
+                );
+                this._requestCodecFallback();
+                return;
+            }
+        }
+
         // AV1 decoder that NEVER produced a frame: the browser's AV1 decode is
         // broken despite isConfigSupported=true (WebKit bug in early Safari 18).
         // Retrying forever just spams IDR requests — fail with a clear message.
+        // Reached only when no fallback step remains (e.g. AV1 SDR last resort).
         if (this.videoCodec === 'av1' && this.stats.decoded === 0 && this._recoveryAttempts >= 3) {
             console.error(
                 '[StreamView] AV1 decoder never produced a frame after ' +
@@ -1265,6 +1292,7 @@ export class StreamView {
             );
             return;
         }
+
         if (this._recoveryAttempts > this.MAX_RECOVERY_ATTEMPTS) {
             console.error(
                 '[StreamView] Max recovery attempts (' +
@@ -1730,19 +1758,53 @@ export class StreamView {
      *      and automatically re-launch with H.264.
      */
     _handleHevcFallback() {
+        this._requestCodecFallback();
+    }
+
+    /**
+     * Request the next codec/HDR step when the current decode config is
+     * unsupported by the browser. Fallback chain:
+     *
+     *   HEVC HDR → AV1 HDR → HEVC SDR → H.264 SDR → (give up)
+     *
+     * The chosen target is stored in this._codecFallback; MoonlightApp's
+     * _onStreamingQuit() reads it and re-launches with the forced codec/HDR.
+     * When no step remains (already H.264 SDR), the stream errors out normally.
+     */
+    _requestCodecFallback() {
+        // Guard: only request the fallback once (decoder errors fire repeatedly).
+        if (this._codecFallbackRequested || this._quitting) return;
         this.decoderConfiguring = false;
+
+        const target = this._computeCodecFallbackTarget();
+
+        if (!target) {
+            // Already H.264 SDR — nothing left to try.
+            this._codecFallback = null;
+            this._codecFallbackRequested = false;
+            console.error('[StreamView] Codec fallback exhausted (H.264 SDR unsupported)');
+            this.setStatus('error', 'Codec not supported by browser');
+            this.quit();
+            return;
+        }
+
+        const cur = (this.videoCodec === 'auto' ? 'hevc' : this.videoCodec).toLowerCase();
+        this._codecFallback = target;
         this._codecFallbackRequested = true;
 
-        console.warn('[StreamView] HEVC fallback triggered — requesting H.264 re-launch');
+        console.warn(
+            `[StreamView] Codec fallback: ${cur}${this._hdrEnabled ? ' HDR' : ''} → ` +
+                `${target.codec}${target.hdr ? ' HDR' : ' SDR'}`,
+        );
 
-        // Send a diagnostic message via the DataChannel for backend logging.
-        // This is best-effort; the backend does not need to act on it.
+        // Best-effort diagnostic for backend logging (stream is about to stop).
         try {
             if (this.webrtc && typeof this.webrtc.send === 'function') {
                 this.webrtc.send({
                     type: 'codec_fallback',
-                    from: 'hevc',
-                    to: 'h264',
+                    from: cur,
+                    to: target.codec,
+                    hdr: target.hdr,
                 });
             }
         } catch (e) {
@@ -1750,8 +1812,29 @@ export class StreamView {
         }
 
         // Quit the stream. MoonlightApp._onStreamingQuit() will detect
-        // _codecFallbackRequested and re-launch with H.264.
+        // _codecFallback and re-launch with the next codec/HDR step.
         this.quit();
+    }
+
+    /**
+     * Compute the next {codec, hdr} step in the fallback chain from the current
+     * codec + HDR state, or null when nothing remains (already H.264 SDR).
+     *
+     *   HEVC HDR → AV1 HDR → HEVC SDR → H.264 SDR → null
+     */
+    _computeCodecFallbackTarget() {
+        // Negotiated codec ('auto' implies an HDR-capable codec → treat as HEVC).
+        const cur = (this.videoCodec === 'auto' ? 'hevc' : this.videoCodec).toLowerCase();
+        const hdr = this._hdrEnabled;
+
+        if (hdr) {
+            // HEVC HDR → AV1 HDR ; any other HDR codec (AV1 HDR, …) → HEVC SDR.
+            return cur === 'hevc' ? { codec: 'av1', hdr: true } : { codec: 'hevc', hdr: false };
+        }
+        if (cur === 'hevc' || cur === 'av1') {
+            return { codec: 'h264', hdr: false };
+        }
+        return null;
     }
 
     flushPendingFrames() {
@@ -2453,10 +2536,14 @@ export class StreamView {
             el.style.left = Math.min(maxLeft, Math.max(0, startLeft + dx)) + 'px';
             el.style.top = Math.min(maxTop, Math.max(0, startTop + dy)) + 'px';
             el.style.right = 'auto';
+            // On touch devices, block move handling of the main stream — touch moves
+            // on the stats card must not feed into the game's mouse tracking.
+            if (e.pointerType === 'touch') e.stopPropagation();
             e.preventDefault();
         };
         const onUp = (e) => {
             if (!dragging) return;
+            if (e.pointerType === 'touch') e.stopPropagation();
             dragging = false;
             el.classList.remove('dragging');
             try {
@@ -2464,6 +2551,7 @@ export class StreamView {
             } catch (_) {}
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
+            e.preventDefault();
         };
         el.addEventListener('pointerdown', (e) => {
             if (e.button !== 0 && e.pointerType === 'mouse') return;
@@ -2477,6 +2565,9 @@ export class StreamView {
             try {
                 el.setPointerCapture(e.pointerId);
             } catch (_) {}
+            // Prevent the pointer from locking onto the view content behind it,
+            // and block menu interaction on touch devices.
+            if (e.pointerType === 'touch') e.stopPropagation();
             window.addEventListener('pointermove', onMove);
             window.addEventListener('pointerup', onUp);
             e.preventDefault();
@@ -2983,8 +3074,9 @@ export class StreamView {
         const tryCodecs = (index) => {
             if (index >= configs.length) {
                 console.error('[StreamView] All AV1 codec configs rejected');
-                this.decoderConfiguring = false;
-                this.setStatus('error', 'AV1 codec not supported by browser');
+                // Trigger the codec fallback chain (e.g. AV1 HDR → HEVC SDR)
+                // instead of dead-ending on an error screen.
+                this._requestCodecFallback();
                 return;
             }
 
@@ -4462,7 +4554,10 @@ export class StreamView {
      *  for 2 fingers, a real pinch) beyond the given tap-jitter tolerance (px).
      *  Pass dist=null for 3-finger gestures (spacing irrelevant). */
     _multiMovedBeyondTol(cx, cy, dist, tol) {
-        const movedC = Math.hypot(cx - (this._multiOriginCx ?? cx), cy - (this._multiOriginCy ?? cy));
+        const movedC = Math.hypot(
+            cx - (this._multiOriginCx ?? cx),
+            cy - (this._multiOriginCy ?? cy),
+        );
         const movedD =
             dist != null && this._multiOriginDist != null
                 ? Math.abs(dist - this._multiOriginDist)
@@ -4713,7 +4808,11 @@ export class StreamView {
         // the most forgiving; 2-finger sits midway between that and a precise
         // 1-finger tap.
         const distTol =
-            this._touchMaxFingers >= 3 ? 45 : this._touchMaxFingers === 2 ? 28 : this._touchTapThreshold;
+            this._touchMaxFingers >= 3
+                ? 45
+                : this._touchMaxFingers === 2
+                  ? 28
+                  : this._touchTapThreshold;
         const timeTol =
             this._touchMaxFingers >= 3
                 ? 600

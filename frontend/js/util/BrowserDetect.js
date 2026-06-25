@@ -90,6 +90,11 @@ export const IS_TABLET = platform.type === 'tablet';
 /** True when the user agent is a mobile phone or tablet. */
 export const IS_MOBILE_OR_TABLET = platform.type === 'mobile' || platform.type === 'tablet';
 
+/** True for iPhone / iPod — used to tune video-enhancement defaults. */
+export function isIphone() {
+    return /iPhone|iPod/i.test(navigator.userAgent);
+}
+
 /** True when the browser supports touch events (any touch-capable device). */
 export const IS_TOUCH_DEVICE = platform.isTouchDevice;
 
