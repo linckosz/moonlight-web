@@ -1,0 +1,4 @@
+# Mounted/COPYied shell scripts and configs must use LF endings, otherwise the
+# container shell (Linux) fails on CRLF. Forces LF regardless of host platform.
+*.sh   text eol=lf
+*.conf text eol=lf

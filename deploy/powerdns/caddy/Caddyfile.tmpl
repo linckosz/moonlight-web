@@ -1,0 +1,25 @@
+# Caddy — HTTPS reverse proxy in front of the PowerDNS REST API.
+# Rendered at boot by the caddy entrypoint:
+#   @MW_DOMAIN@  → parent domain (API served at api.{MW_DOMAIN})
+#   @TLS_LINE@   → empty for automatic Let's Encrypt, or a "tls ..." directive
+#                  when the user supplies cert files / an ACME email.
+#
+# rate_limit comes from the caddy-ratelimit plugin (built into this image via
+# xcaddy) and throttles API brute-force / abuse per client IP.
+
+{
+	order rate_limit before reverse_proxy
+}
+
+api.@MW_DOMAIN@ {
+	@TLS_LINE@
+	rate_limit {
+		zone mw_api {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
+	# pdns = the PowerDNS service on the compose network (API on :8081).
+	reverse_proxy pdns:8081
+}
