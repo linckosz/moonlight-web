@@ -55,14 +55,36 @@ export class BackendClient {
         return resp.json();
     }
 
-    static async post(path, body = {}) {
-        const resp = await fetch(path, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        if (!resp.ok) return this._handleError(resp, path);
-        return resp.json();
+    static async post(path, body = {}, { timeoutMs = 0 } = {}) {
+        // Optional client-side timeout: when the backend hangs (crashed/stuck)
+        // without closing the socket, abort early so the UI gets fast feedback
+        // instead of waiting for the browser/proxy timeout (~30s → 504).
+        let controller = null;
+        let timer = null;
+        if (timeoutMs > 0 && typeof AbortController !== 'undefined') {
+            controller = new AbortController();
+            timer = setTimeout(() => controller.abort(), timeoutMs);
+        }
+        try {
+            const resp = await fetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: controller ? controller.signal : undefined,
+            });
+            if (!resp.ok) return this._handleError(resp, path);
+            return resp.json();
+        } catch (err) {
+            if (err && err.name === 'AbortError') {
+                const e = new Error('server_timeout');
+                e.statusCode = 0;
+                e.aborted = true;
+                throw e;
+            }
+            throw err;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     }
 
     static async del(path) {
@@ -114,14 +136,23 @@ export class BackendClient {
     }
 
     static async launchApp(hostId, appId, streamingSettings = {}) {
-        return this.post(`/api/hosts/${hostId}/start`, {
-            appId,
-            client_uniqueid: this.clientUniqueId(),
-            ...streamingSettings,
-        });
+        return this.post(
+            `/api/hosts/${hostId}/start`,
+            {
+                appId,
+                client_uniqueid: this.clientUniqueId(),
+                ...streamingSettings,
+            },
+            // Fail fast if the backend hangs/crashes instead of waiting for the
+            // browser/proxy ~30s gateway timeout.
+            { timeoutMs: 15000 },
+        );
     }
     static async quitApp(hostId) {
-        return this.post(`/api/hosts/${hostId}/quit`, { client_uniqueid: this.clientUniqueId() });
+        // Fail fast if the backend is dead — don't wait 30s for a /quit that'll
+        // never arrive while the UI is stuck in the quit animation.
+        return this.post(`/api/hosts/${hostId}/quit`, { client_uniqueid: this.clientUniqueId() },
+            { timeoutMs: 5000 });
     }
 
     // ── Auth API ───────────────────────────────────────────────────────────

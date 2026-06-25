@@ -145,6 +145,9 @@ export class AdminView {
             this._sessions = sessions;
         } catch (err) {
             console.warn('[Admin] Failed to load sessions:', err);
+            // Server is dead — no streaming sessions can be alive. Clear the
+            // flag on all known sessions so the UI doesn't show stale badges.
+            this._sessions.forEach((s) => (s.streaming = false));
         }
     }
 
