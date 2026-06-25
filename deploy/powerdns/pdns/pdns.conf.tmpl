@@ -1,0 +1,33 @@
+# PowerDNS authoritative config — Moonlight-Web self-hosted DNS (Docker).
+# Rendered at boot by entrypoint.sh (@MW_PDNS_API_KEY@ is substituted).
+# Mirrors the settings tuned on the reference VM.
+
+# ── Backend: SQLite + DNSSEC ─────────────────────────────────────────────────
+launch=gsqlite3
+gsqlite3-database=/var/lib/powerdns/pdns.sqlite3
+gsqlite3-dnssec=yes
+
+# ── Listening ────────────────────────────────────────────────────────────────
+local-address=0.0.0.0, ::
+local-port=53
+
+# ── REST API + monitoring webserver ──────────────────────────────────────────
+# Caddy terminates TLS in front of this; the API stays on the internal network.
+api=yes
+api-key=@MW_PDNS_API_KEY@
+webserver=yes
+webserver-address=0.0.0.0
+# Allow the docker bridge + the MW backend to reach the API. Tighten if needed.
+webserver-allow-from=127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8
+webserver-port=8081
+
+# ── Hardening / behaviour (from the reference VM) ────────────────────────────
+disable-axfr=yes
+allow-axfr-ips=127.0.0.1
+any-to-tcp=yes
+edns-subnet-processing=no
+version-string=anonymous
+security-poll-suffix=
+max-tcp-connections=20
+receiver-threads=2
+overload-queue-length=2000

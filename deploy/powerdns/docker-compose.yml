@@ -1,0 +1,61 @@
+# Moonlight-Web — self-hosted PowerDNS stack (Docker, Alpine).
+#
+# Two services:
+#   pdns   authoritative DNS (SQLite + DNSSEC) + REST API on :8081 (internal)
+#   caddy  TLS reverse proxy exposing the API as https://api.${MW_DOMAIN}
+#          (Caddy gets its own cert via HTTP-01, shielding the API from DDoS)
+#
+# Quick start:
+#   cd deploy/powerdns
+#   cp .env.sample .env      # then edit MW_DOMAIN / MW_PUBLIC_IP / MW_PDNS_API_KEY
+#   docker compose up -d --build
+#
+# Point your domain registrar's glue/NS records at MW_PUBLIC_IP (see README.md).
+
+services:
+  pdns:
+    build: .
+    image: moonlight-pdns:alpine
+    container_name: moonlight-pdns
+    restart: unless-stopped
+    environment:
+      MW_DOMAIN: ${MW_DOMAIN}
+      MW_PUBLIC_IP: ${MW_PUBLIC_IP}
+      MW_PDNS_API_KEY: ${MW_PDNS_API_KEY}
+    ports:
+      # Public authoritative DNS — MUST be reachable from the Internet.
+      - "53:53/udp"
+      - "53:53/tcp"
+    volumes:
+      # Zone DB persists across restarts/rebuilds.
+      - pdns_data:/var/lib/powerdns
+    networks:
+      - mwdns
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: moonlight-caddy
+    restart: unless-stopped
+    depends_on:
+      - pdns
+    environment:
+      MW_DOMAIN: ${MW_DOMAIN}
+    ports:
+      # Caddy obtains its cert via HTTP-01, so 80 + 443 must be public.
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - mwdns
+
+volumes:
+  pdns_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  mwdns:
+    driver: bridge
