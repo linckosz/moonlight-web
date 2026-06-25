@@ -26,10 +26,16 @@
  * Anti-crackle design:
  *   - Adaptive jitter buffer: playback waits until `_target` frames are queued.
  *     The target starts small (~60 ms) and GROWS on every underrun (up to
- *     ~240 ms), so a laggy network self-tunes to a larger cushion; it decays
- *     back toward the base during sustained stable playback.
+ *     ~400 ms), so a laggy network self-tunes to a larger cushion; it decays
+ *     slowly back toward the base during sustained stable playback. The base
+ *     (steady-state) target is NOT changed, so a healthy network keeps the same
+ *     latency as before — the extra cushion only appears when underruns occur.
  *   - De-click: short linear fade-out into silence on underrun and fade-in on
  *     resume, turning sharp clicks into inaudible transitions.
+ *   - Soft underrun recovery: on underrun we KEEP whatever just arrived and
+ *     resume as soon as a small fraction of the target is buffered, instead of
+ *     flushing everything and waiting for the full target to refill. This turns
+ *     a ~240 ms silent re-buffer into a gap of a few ms.
  *   - Overrun: drop the OLDEST chunk(s) to keep latency bounded.
  *
  * `sampleRate` is a global in AudioWorkletGlobalScope (context rate).
@@ -50,12 +56,20 @@ class AudioProcessor extends AudioWorkletProcessor {
         this._playing = false; // true once buffer filled and draining
 
         // Adaptive jitter-buffer targets (stereo-frames at context sample rate).
+        // Base (steady-state) target is unchanged: a healthy network keeps the
+        // same latency. Only the ceiling / growth / decay are tuned so a laggy
+        // network builds a larger cushion and holds it longer.
         this._baseTarget = Math.round(sampleRate * 0.06); // 60 ms steady state
-        this._maxTarget = Math.round(sampleRate * 0.24); // 240 ms ceiling
+        this._maxTarget = Math.round(sampleRate * 0.4); // 400 ms ceiling
         this._target = this._baseTarget;
-        this.GROW_FRAMES = Math.round(sampleRate * 0.03); // +30 ms per underrun
-        this.MAX_BUFFER_FRAMES = Math.round(sampleRate * 0.5); // 500 ms hard cap
-        this.DECAY_INTERVAL = Math.round(sampleRate * 5); // shrink after 5 s stable
+        this.GROW_FRAMES = Math.round(sampleRate * 0.04); // +40 ms per underrun
+        this.MAX_BUFFER_FRAMES = Math.round(sampleRate * 0.6); // 600 ms hard cap
+        this.DECAY_INTERVAL = Math.round(sampleRate * 8); // shrink after 8 s stable
+        this.DECAY_FRAMES = Math.round(sampleRate * 0.02); // -20 ms per decay step
+
+        // Soft underrun recovery: resume playback once this fraction of the
+        // current target is re-buffered, instead of waiting for the full target.
+        this._resumeFraction = 0.5;
 
         // De-click fade length (samples). ~1.3 ms at 48 kHz.
         this.FADE_SAMPLES = 64;
@@ -99,9 +113,16 @@ class AudioProcessor extends AudioWorkletProcessor {
         const numFrames = left.length; // usually 128
 
         // Gate playback until the buffer reaches the (adaptive) target.
+        // After an underrun we only wait for a fraction of the target to refill
+        // (soft recovery), so the silent gap is a few ms instead of the full
+        // re-buffer. The first start still waits for the full target.
         if (!this._playing) {
-            if (this._queuedFrames >= this._target) {
+            const gate = this._underrunRecovery
+                ? Math.max(1, Math.round(this._target * this._resumeFraction))
+                : this._target;
+            if (this._queuedFrames >= gate) {
                 this._playing = true;
+                this._underrunRecovery = false;
                 this._fadeInRemaining = this.FADE_SAMPLES; // fade in on resume
                 this.port.postMessage({
                     type: 'started',
@@ -171,13 +192,14 @@ class AudioProcessor extends AudioWorkletProcessor {
                 right[outIdx + i] = this._lastR * g;
             }
 
-            // Adapt: grow the target so the rebuilt buffer rides out the next lag,
-            // and re-arm buffering (queue is already empty here).
+            // Adapt: grow the target so the rebuilt buffer rides out the next
+            // lag, and re-arm buffering in soft-recovery mode. The queue is
+            // already drained here (we ran out mid-quantum); whatever arrives
+            // next is kept and we resume at a fraction of the target rather than
+            // flushing and waiting for a full refill.
             this._target = Math.min(this._maxTarget, this._target + this.GROW_FRAMES);
             this._playing = false;
-            this._readOffset = 0;
-            this._queue.length = 0;
-            this._queuedFrames = 0;
+            this._underrunRecovery = true;
             this._lastL = 0;
             this._lastR = 0;
             this._framesSinceUnderrun = 0;
@@ -188,7 +210,7 @@ class AudioProcessor extends AudioWorkletProcessor {
                 this._framesSinceUnderrun > this.DECAY_INTERVAL &&
                 this._target > this._baseTarget
             ) {
-                this._target = Math.max(this._baseTarget, this._target - this.GROW_FRAMES);
+                this._target = Math.max(this._baseTarget, this._target - this.DECAY_FRAMES);
                 this._framesSinceUnderrun = 0;
             }
         }
