@@ -259,9 +259,6 @@
     line-height: 1.45;
     margin-bottom: var(--space-2);
 }
-.settings-checkbox-label + .setting-desc {
-    padding-left: 30px;
-}
 
 .settings-input,
 .login-input,
