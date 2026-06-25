@@ -4252,21 +4252,62 @@ export class StreamView {
             ['→', 'key', 0x27],
         ];
 
+        // Arrow VKs use a press-and-hold model (see below).
+        const ARROW_VKS = new Set([0x25, 0x26, 0x27, 0x28]);
+
         for (const [label, kind, id] of items) {
             const btn = document.createElement('button');
             btn.className = 'stream-kbd-key' + (kind === 'mod' ? ' is-mod' : '');
             btn.textContent = label;
             btn.tabIndex = -1;
-            // pointerdown + preventDefault: act immediately and keep the hidden
-            // capture focused so the soft keyboard does not dismiss.
-            btn.addEventListener('pointerdown', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (kind === 'mod') this._toggleMod(id, btn);
-                else this._sendToolbarKey(id);
-                this._refocusCapture();
-            });
-            if (kind === 'mod') this._modBtns[id] = btn;
+
+            if (kind === 'mod') {
+                // pointerdown + preventDefault: act immediately and keep the
+                // hidden capture focused so the soft keyboard does not dismiss.
+                btn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._toggleMod(id, btn);
+                    this._refocusCapture();
+                });
+                this._modBtns[id] = btn;
+            } else if (ARROW_VKS.has(id)) {
+                // Press-and-hold: keydown while pressed, keyup on release. We send
+                // a single keydown and let the GUEST OS generate typematic repeat
+                // (one step, then continuous after ~1s) — exactly like a physical
+                // arrow key. Sending down+up on tap would only ever move one step.
+                const flags = () => ({ keyCode: id, code: '', key: '', ...this._modFlags() });
+                const release = (e) => {
+                    if (e) e.preventDefault();
+                    if (!btn._held) return;
+                    btn._held = false;
+                    this.webrtc.send({ type: 'keyup', ...flags() });
+                    this._releaseLatchedMods();
+                    this._refocusCapture();
+                };
+                btn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (btn._held) return;
+                    btn._held = true;
+                    this.webrtc.send({ type: 'keydown', ...flags() });
+                    // Capture so we still get the release if the finger slides off.
+                    try {
+                        btn.setPointerCapture(e.pointerId);
+                    } catch (_) {}
+                    this._refocusCapture();
+                });
+                btn.addEventListener('pointerup', release);
+                btn.addEventListener('pointercancel', release);
+                btn.addEventListener('lostpointercapture', release);
+            } else {
+                btn.addEventListener('pointerdown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._sendToolbarKey(id);
+                    this._refocusCapture();
+                });
+            }
             bar.appendChild(btn);
         }
 
@@ -4468,8 +4509,11 @@ export class StreamView {
         ) {
             this._hideShortcutsSlide();
         }
-        // Let UI buttons (Stop, Fullscreen, Keyboard) receive their native taps
-        if (e.target.closest('button')) return;
+        // Let UI buttons (Stop, Fullscreen, Keyboard) receive their native taps.
+        // Touches on the draggable stats card are handled by its own pointer
+        // listeners — never feed them into the game's trackpad tracking, or the
+        // cursor moves while dragging the card and jumps on the next real touch.
+        if (e.target.closest('button') || e.target.closest('#stream-stats-overlay')) return;
         e.preventDefault();
         const newCount = e.touches.length;
 
@@ -4640,7 +4684,7 @@ export class StreamView {
      * 3 fingers → pan the zoomed display (no scroll/zoom side effects).
      */
     handleTouchMove(e) {
-        if (e.target.closest('button')) return;
+        if (e.target.closest('button') || e.target.closest('#stream-stats-overlay')) return;
         e.preventDefault();
         if (!this._touchActive) return;
 
@@ -4789,7 +4833,7 @@ export class StreamView {
      * 1→0 finger transition with minimal movement → left click (tap).
      */
     handleTouchEnd(e) {
-        if (e.target.closest('button')) return;
+        if (e.target.closest('button') || e.target.closest('#stream-stats-overlay')) return;
         e.preventDefault();
         this._touchFingerCount = e.touches.length;
 
