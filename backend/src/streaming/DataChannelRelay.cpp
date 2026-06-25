@@ -1062,16 +1062,29 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
             return;
         }
     } else {
-        // Log a warning if a keyframe arrives while the buffer is above the
-        // watermark — it may cause a brief main-thread stall.
+        // Keyframe backpressure ceiling. Keyframes used to bypass backpressure
+        // entirely, but on a slow link the IDR-recovery loop (deltas dropped →
+        // IDR requested → keyframe → always sent) stacks keyframes faster than
+        // the link drains them, growing the SCTP buffer to MBs and adding many
+        // seconds of latency (the "keyframe slideshow 10s behind" symptom).
+        //
+        // If the buffer is still above the watermark, a previous keyframe/frames
+        // have not drained yet: drop this keyframe too and keep awaiting IDR.
+        // m_AwaitingIdr stays sticky and the throttled IDR request keeps firing,
+        // so the moment the buffer drains below the watermark the NEXT keyframe
+        // goes through fresh. This caps the buffer at ~watermark + one keyframe,
+        // bounding latency to well under a second instead of letting it run away.
         size_t bufAmt = dc->bufferedAmount();
         if (bufAmt > kHighWatermark) {
             m_KeyframeBackpressureWarnings++;
             if (m_KeyframeBackpressureWarnings <= 5) {
-                qInfo() << "[DataChannelRelay] Keyframe with full SCTP buffer"
+                qInfo() << "[DataChannelRelay] Dropped keyframe (SCTP buffer not drained)"
                         << "bufferedAmount=" << bufAmt
                         << "warnCount=" << m_KeyframeBackpressureWarnings;
             }
+            m_AwaitingIdr = true;
+            sendIdrRequestThrottled();
+            return;
         }
         // Keyframe sent successfully: clear sticky state and backpressure counters.
         m_AwaitingIdr = false;
