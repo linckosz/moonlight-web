@@ -1,1 +1,0 @@
-dir D:\Code\moonlight-qt\app\*.pro /B

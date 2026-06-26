@@ -1,1 +1,0 @@
-build_now.cmd

@@ -1,1 +1,0 @@
-@cd /d D:\Code\moonlight-qt\app\streaming\input && dir /B

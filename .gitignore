@@ -60,11 +60,34 @@ backend/compile_commands.json
 Thumbs.db
 desktop.ini
 
-# Claude Code
+# Claude Code / AI agent files (kept on disk, never pushed)
 .claude/
-!.claude/config.json
-!.claude/agents/
-!.claude/skills/
+CLAUDE.md
 
 # Graphify
 graphify-out/
+
+# ── Local debug / scratch helpers (kept on disk, never pushed) ──
+# Root-level build & debug scripts + scratch output (none belong in the repo)
+/*.bat
+/*.cmd
+/*.ps1
+/*.sh
+/*.txt
+/_explore.js
+/list-files-output.md
+
+# Backend debug/build scratch — keep only the dependency build scripts
+backend/*.bat
+backend/*.cmd
+backend/*.ps1
+backend/*.sh
+!backend/build_libdatachannel.bat
+!backend/build_miniupnpc.bat
+!backend/patch_makefile.ps1
+backend/scripts/*.ps1
+backend/build_output.txt
+backend/tmp_build_test.txt
+backend/src/server/file_list.txt
+backend/src/tmp_list.txt
+backend/src/streaming/list_files.sh

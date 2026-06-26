@@ -1,1 +1,0 @@
-ls -la /d/Code/moonlight-qt/app/streaming/video/

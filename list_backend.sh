@@ -1,1 +1,0 @@
-find "d:/Code/moonlight-web-deepseek/backend/src" -name "*.h" -o -name "*.cpp" | sort

@@ -1,7 +1,0 @@
-ls -la "d:/Code/moonlight-web-deepseek/backend/src/"
-echo "---"
-ls -la "d:/Code/moonlight-web-deepseek/frontend/js/"
-echo "---"
-ls -la "d:/Code/moonlight-web-deepseek/frontend/js/ui/"
-echo "---"
-ls -la "d:/Code/moonlight-web-deepseek/frontend/"
