@@ -10,13 +10,19 @@
     "format": "prettier --check \"js/**/*.js\" \"scripts/**/*.{js,cjs}\"",
     "format:fix": "prettier --write \"js/**/*.js\" \"scripts/**/*.{js,cjs}\"",
     "typecheck": "tsc --noEmit",
-    "check": "npm run format && npm run lint"
+    "check": "npm run format && npm run lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@vitest/coverage-v8": "^2.1.8",
     "eslint": "^9.17.0",
     "globals": "^15.14.0",
+    "jsdom": "^25.0.1",
     "prettier": "^3.4.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

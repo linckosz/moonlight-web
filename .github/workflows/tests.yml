@@ -1,0 +1,67 @@
+# Moonlight-Web — TNR (non-regression) gate for pull requests.
+#
+# Frontend runs everywhere (fast). Backend runs on Windows with MSVC + Qt and
+# enforces line coverage via OpenCppCoverage. Both jobs are required to pass.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  frontend:
+    name: Frontend (Vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Run tests with coverage (70% gate)
+        run: npm run coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage
+          path: frontend/coverage
+          if-no-files-found: ignore
+
+  backend:
+    name: Backend (Qt Test + OpenCppCoverage)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive # moonlight-common-c provides Limelight.h
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          arch: win64_msvc2022_64
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install OpenCppCoverage
+        run: choco install opencppcoverage -y
+      - name: Add OpenCppCoverage to PATH
+        shell: pwsh
+        run: echo "C:\Program Files\OpenCppCoverage" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Run backend TNR + coverage (70% gate)
+        shell: cmd
+        # QTDIR is exported by install-qt-action; the runner script uses it (and
+        # the MSVC env from msvc-dev-cmd) to qmake/nmake then gate coverage.
+        run: backend\tests\run_coverage.bat
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: backend/tests/build/covhtml
+          if-no-files-found: ignore
