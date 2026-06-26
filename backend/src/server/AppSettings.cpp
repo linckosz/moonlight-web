@@ -151,17 +151,17 @@ void AppSettings::setGamingMode(bool enabled)
 bool AppSettings::audioTimeStretch() const
 {
     QJsonObject obj = readAll();
-    return obj.value("audio_time_stretch").toBool(false);
+    return obj.value("audio_time_stretch").toBool(true);
 }
 
 void AppSettings::seedDocumentedDefaults()
 {
     QJsonObject obj = readAll();
     bool changed = false;
-    // Seed the key (default false) so it is discoverable/editable in the file.
+    // Seed the key (default true) so it is discoverable/editable in the file.
     // Documentation lives in the README, not in the JSON (no comment keys).
     if (!obj.contains("audio_time_stretch")) {
-        obj["audio_time_stretch"] = false;
+        obj["audio_time_stretch"] = true;
         changed = true;
     }
     if (changed) writeAll(obj);

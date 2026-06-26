@@ -138,7 +138,7 @@ public:
     // ── Audio time-stretch (WSOLA) ─────────────────────────────────────────────
     //
     // Pitch-preserving accelerate/expand in the AudioWorklet. File-only setting
-    // (no UI): stored as JSON bool "audio_time_stretch", DEFAULT false. When true,
+    // (no UI): stored as JSON bool "audio_time_stretch", DEFAULT true. When true,
     // smooths clock drift and jitter without added latency at a small CPU cost.
     // Documented in the README (the JSON holds no comment keys).
 
