@@ -15,6 +15,9 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { IS_IOS } from '../util/BrowserDetect.js';
+import * as iosAudioUnlock from './iosAudioUnlock.js';
+
 /**
  * AudioPipeline — manages AudioContext + AudioWorkletNode for streaming audio.
  *
@@ -112,8 +115,12 @@ export class AudioPipeline {
         if (this._closed) return false;
 
         try {
-            // Create AudioContext at the target sample rate
-            this.context = new AudioContext({ sampleRate: this.sampleRate });
+            // iOS: adopt the AudioContext created + unlocked inside the launch
+            // gesture (see iosAudioUnlock.prepareForLaunch). A context created
+            // here, outside any gesture, never acquires the loudspeaker route on
+            // iOS. Off iOS (or if none prepared) create our own as before.
+            const adopted = iosAudioUnlock.adoptContext();
+            this.context = adopted || new AudioContext({ sampleRate: this.sampleRate });
 
             // Check the actual sample rate (might differ)
             if (this.context.sampleRate !== this.sampleRate) {
@@ -197,7 +204,10 @@ export class AudioPipeline {
             // Autoplay safety net: if the context starts suspended (init ran
             // outside the user-gesture stack), resume it on the first user
             // interaction with the page — which a stream session always has.
-            if (this.context.state === 'suspended') {
+            // On iOS we arm it unconditionally so the unmute element is started
+            // by a gesture even when the context is already running (else it
+            // would never play and audio stays on the "ambient" session).
+            if (this.context.state === 'suspended' || IS_IOS) {
                 this._armGestureResume();
             }
             return true;
@@ -559,6 +569,11 @@ export class AudioPipeline {
             }
         }
 
+        // Promote the iOS audio session on this same user activation (no-op off
+        // iOS). The launch click already unlocks it; this is a belt-and-braces
+        // retry whenever resume() runs in-gesture.
+        iosAudioUnlock.unlock();
+
         return this.context.state === 'running';
     }
 
@@ -581,7 +596,13 @@ export class AudioPipeline {
             } catch (e) {
                 /* ignore — may need another gesture */
             }
-            if (this.context && this.context.state === 'running') {
+            // Promote the iOS audio session on the same gesture.
+            iosAudioUnlock.unlock();
+            // Stay armed until the context runs AND (on iOS) the unlock element
+            // is actually playing — a first .play() may be rejected and need
+            // another gesture.
+            const unmuteOk = !IS_IOS || iosAudioUnlock.isActive();
+            if (this.context && this.context.state === 'running' && unmuteOk) {
                 console.log('[AudioPipeline] AudioContext resumed via user gesture');
                 cleanup();
             }
@@ -620,6 +641,12 @@ export class AudioPipeline {
                 /* ignore */
             }
         }
+        // NOTE: the iOS playback-session hold (iosAudioUnlock) is intentionally
+        // NOT released here. cleanup() also runs on a transport/codec fallback
+        // relaunch teardown, which re-launches WITHOUT a user gesture — releasing
+        // would drop the session back to "ambient" with no way to re-unlock until
+        // the user taps. The hold is released on the real streaming exit, in
+        // MoonlightApp._onStreamingQuit().
         if (this._worker) {
             try {
                 this._worker.postMessage({ type: 'close' });
