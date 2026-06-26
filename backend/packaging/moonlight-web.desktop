@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Moonlight-Web
+Comment=Sunshine streaming client for the browser
+Exec=mw-server
+Icon=moonlight-web
+Categories=Network;Game;
+Terminal=true

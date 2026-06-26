@@ -1,0 +1,179 @@
+# Moonlight-Web — multi-platform release packaging.
+#
+# On a v* tag, builds self-contained bundles for Windows x64/ARM64, Linux x64
+# (AppImage) and macOS arm64 (.dmg), then attaches them to the GitHub Release.
+# Each bundle ships the executable, the Qt runtime (via the native deploy tool),
+# OpenSSL and the frontend/ served as static files.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Windows (x64 + ARM64) ────────────────────────────────────────────────
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            qt_arch: win64_msvc2022_64
+            cmake_arch: x64
+          - arch: arm64
+            runner: windows-11-arm
+            qt_arch: win64_msvc2022_arm64
+            cmake_arch: ARM64
+    name: Package Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install OpenSSL (vcpkg, arm64 only)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: vcpkg install openssl:arm64-windows
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          arch: ${{ matrix.qt_arch }}
+          modules: qtwebsockets
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $args = @("-S","backend","-B","build","-G","Visual Studio 17 2022","-A","${{ matrix.cmake_arch }}")
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            $args += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+            $args += "-DVCPKG_TARGET_TRIPLET=arm64-windows"
+          }
+          cmake @args
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Stage bundle
+        run: cmake --install build --prefix dist --config Release
+
+      - name: Deploy Qt runtime
+        run: windeployqt --release dist/mw-server.exe
+
+      - name: Bundle OpenSSL (arm64)
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/arm64-windows/bin/*.dll" dist/ -ErrorAction SilentlyContinue
+
+      - name: Archive
+        shell: pwsh
+        run: Compress-Archive -Path dist/* -DestinationPath "moonlight-web-windows-${{ matrix.arch }}.zip"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: moonlight-web-windows-${{ matrix.arch }}.zip
+
+  # ── Linux x64 (AppImage) ─────────────────────────────────────────────────
+  linux:
+    name: Package Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libssl-dev libfuse2 wget
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          modules: qtwebsockets
+
+      - name: Build
+        run: |
+          cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Assemble AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp build/mw-server AppDir/usr/bin/
+          cp -r frontend AppDir/usr/bin/frontend
+          cp frontend/assets/icon-512.png AppDir/moonlight-web.png
+
+      - name: Build AppImage
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+            -e build/mw-server \
+            -d backend/packaging/moonlight-web.desktop \
+            -i AppDir/moonlight-web.png \
+            --plugin qt --output appimage
+          mv Moonlight-Web*.AppImage moonlight-web-linux-x64.AppImage
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: moonlight-web-linux-x64.AppImage
+
+  # ── macOS arm64 (.dmg) ───────────────────────────────────────────────────
+  macos:
+    name: Package macOS arm64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: brew install cmake ninja openssl@3 pkg-config
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          host: mac
+          arch: clang_arm64
+          modules: qtwebsockets
+
+      - name: Build
+        run: |
+          cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Assemble .app bundle
+        run: |
+          APP=MoonlightWeb.app
+          mkdir -p "$APP/Contents/MacOS"
+          cp build/mw-server "$APP/Contents/MacOS/mw-server"
+          cp -r frontend "$APP/Contents/MacOS/frontend"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key><string>mw-server</string>
+            <key>CFBundleIdentifier</key><string>com.moonlightweb.server</string>
+            <key>CFBundleName</key><string>Moonlight-Web</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>1.0.0</string>
+          </dict></plist>
+          PLIST
+
+      - name: Deploy Qt + create DMG
+        run: |
+          macdeployqt MoonlightWeb.app -dmg
+          mv MoonlightWeb.dmg moonlight-web-macos-arm64.dmg
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: moonlight-web-macos-arm64.dmg
