@@ -1,1 +1,0 @@
-ls -R d:/Code/moonlight-web-deepseek/backend/src/

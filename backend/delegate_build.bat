@@ -1,1 +1,0 @@
-cmd //c "d:\Code\moonlight-web-deepseek\build_check.bat"

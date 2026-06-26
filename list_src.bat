@@ -1,1 +1,0 @@
-@cd /d D:\Code\moonlight-web-deepseek\backend\src && dir /B /S *.cpp *.h > D:\Code\moonlight-web-deepseek\src_files.txt
