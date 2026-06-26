@@ -90,7 +90,7 @@ export const IS_TABLET = platform.type === 'tablet';
 /** True when the user agent is a mobile phone or tablet. */
 export const IS_MOBILE_OR_TABLET = platform.type === 'mobile' || platform.type === 'tablet';
 
-/** True for iPhone / iPod — used to tune video-enhancement defaults. */
+/** True for iPhone / iPod. */
 export function isIphone() {
     return /iPhone|iPod/i.test(navigator.userAgent);
 }
@@ -113,6 +113,44 @@ export const IS_IOS = (() => {
         (/mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1)
     );
 })();
+
+/** True when the user agent is Android (phone or tablet). */
+export const IS_ANDROID = /android/i.test(navigator.userAgent || '');
+
+/**
+ * Physical screen resolution in device pixels, orientation-independent.
+ * screen.{width,height} are CSS pixels; multiplying by devicePixelRatio yields
+ * physical pixels. We return both edges so callers can reason about the panel
+ * class (e.g. the short edge is the panel's "p" rating: 1080 short edge = 1080p).
+ * @returns {{ short: number, long: number }}
+ */
+export function physicalScreenSize() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = (screen.width || 0) * dpr;
+    const h = (screen.height || 0) * dpr;
+    return { short: Math.round(Math.min(w, h)), long: Math.round(Math.max(w, h)) };
+}
+
+/**
+ * Pick the auto Video-Enhancement upscaler for this device: 'fsr1' (sharper,
+ * heavier) or 'sgsr' (lighter). WebGPU availability is handled separately by the
+ * renderer, which falls back to Canvas2D (no enhancement) when absent.
+ *
+ *  - FSR1: all desktops (Win/Linux/macOS), all iOS (Metal-backed WebGPU), and
+ *    Android phones/tablets that are beefy enough (≥6 logical cores AND a
+ *    physical screen of at least 1080p, i.e. short edge ≥ 1080).
+ *  - SGSR: everything else.
+ * @returns {'fsr1'|'sgsr'}
+ */
+export function pickAutoEnhancer() {
+    if (PLATFORM_TYPE === 'desktop' || IS_IOS) return 'fsr1';
+    if (IS_ANDROID) {
+        const cores = navigator.hardwareConcurrency || 0;
+        const { short } = physicalScreenSize();
+        if (cores >= 6 && short >= 1080) return 'fsr1';
+    }
+    return 'sgsr';
+}
 
 /** True when the app runs as an installed PWA (no browser chrome). */
 export const IS_STANDALONE =
