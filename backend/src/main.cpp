@@ -1611,6 +1611,13 @@ int main(int argc, char* argv[])
         obj["chroma_444_enabled"] = appSettings.chroma444Enabled();
         obj["video_enhancement"] = appSettings.videoEnhancement();
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
+        // Audio time-stretch (WSOLA) kill switch — env MW_AUDIO_TIME_STRETCH,
+        // on by default. Set 0/false/no/off in .env to disable.
+        {
+            QByteArray ts = qgetenv("MW_AUDIO_TIME_STRETCH").trimmed().toLower();
+            obj["audio_time_stretch"] =
+                !(ts == "0" || ts == "false" || ts == "no" || ts == "off");
+        }
         // Debug build flag: the UI exposes the enhancement algo selector only in
         // debug builds (Qt Creator); production forces 'auto'.
 #ifdef QT_DEBUG
