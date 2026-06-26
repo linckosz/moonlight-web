@@ -619,12 +619,19 @@ export class WebRtcDataChannel {
 
         // --- Native RTP audio track (Opus, browser-decoded) ---
         // The backend offers a send-only Opus track; the browser handles jitter
-        // buffer + FEC + PLC. playStream routes it through a Web Audio GainNode
-        // (volume boost, lossless) and handles mobile autoplay unlock.
+        // buffer + FEC + PLC. On mobile playStream routes it through the
+        // gesture-blessed element (autoplay unlock); on desktop it returns false
+        // and we play it on our own <audio> element.
         this.pc.ontrack = (evt) => {
             if (evt.track.kind !== 'audio') return;
-            console.log('[WebRTC] Audio track received — routing through gain stage');
-            iosAudioUnlock.playStream(new MediaStream([evt.track]));
+            console.log('[WebRTC] Audio track received');
+            const stream = new MediaStream([evt.track]);
+            if (!iosAudioUnlock.playStream(stream) && this.audioElement) {
+                this.audioElement.srcObject = stream;
+                const p = this.audioElement.play();
+                if (p && p.catch)
+                    p.catch((e) => console.warn('[WebRTC] audio play() failed:', e.message));
+            }
         };
 
         // --- ICE candidate handler (filter TURN, prioritize UDP) ---

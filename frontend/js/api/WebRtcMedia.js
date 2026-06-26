@@ -487,10 +487,19 @@ export class WebRtcMedia {
                 }
             } else if (event.track.kind === 'audio') {
                 // Native RTP Opus audio: the browser decodes it (jitter buffer +
-                // FEC + PLC); playStream routes it through a Web Audio GainNode
-                // (volume boost, lossless) and handles mobile autoplay unlock.
-                console.log('[WebRtcMedia] Audio track received — routing through gain stage');
-                iosAudioUnlock.playStream(new MediaStream([event.track]));
+                // FEC + PLC). On mobile playStream routes it through the
+                // gesture-blessed element (autoplay unlock); on desktop it returns
+                // false and we play it on our own <audio> element.
+                console.log('[WebRtcMedia] Audio track received');
+                const stream = new MediaStream([event.track]);
+                if (!iosAudioUnlock.playStream(stream) && this.audioElement) {
+                    this.audioElement.srcObject = stream;
+                    const p = this.audioElement.play();
+                    if (p && p.catch)
+                        p.catch((e) =>
+                            console.warn('[WebRtcMedia] audio play() failed:', e.message),
+                        );
+                }
             }
         };
 

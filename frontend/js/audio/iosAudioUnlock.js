@@ -16,60 +16,44 @@
  */
 
 /**
- * iOS/mobile audio unlock + native-RTP-audio output (singleton).
+ * Mobile audio unlock + native-RTP-audio output (singleton).
  *
- * Two responsibilities:
+ * Mobile blocks <audio>.play() outside a user gesture, so the native RTP Opus
+ * track (pc.ontrack) cannot start by itself. We bless a single persistent
+ * <audio> element inside the launch CLICK gesture (the only live gesture, fired
+ * before the audio element exists) and later swap its srcObject to the WebRTC
+ * stream — the blessing carries over, so it plays without a tap.
  *
- * 1. iOS session unlock (Silent switch / loudspeaker). Getting Web Audio out the
- *    BUILT-IN SPEAKER past the hardware Silent switch requires, inside a user
- *    gesture: (a) an AudioContext created + resumed with a tiny silent buffer,
- *    and (b) a real looping unmuted HTMLMediaElement playing, which promotes the
- *    AVAudioSession from "ambient" to "playback". The only live gesture is the
- *    launch CLICK (before AudioPipeline exists), so we do both here in
- *    prepareForLaunch; AudioPipeline later adopts the context (adoptContext).
+ * On iOS that same element also handles the Silent switch: an unmuted element
+ * playing real audio promotes the AVAudioSession from "ambient" (silenced by the
+ * switch, ringer volume) to "playback" (loudspeaker, media volume). For the WSS
+ * path (no RTP track) the element stays a silent loop and an AudioContext,
+ * created + unlocked in the same gesture, is adopted by AudioPipeline.
  *
- * 2. Native RTP audio output with a volume boost (playStream). The browser
- *    decodes the incoming Opus track, but an <audio> element caps at volume 1.0.
- *    To go louder WITHOUT quality loss we route the MediaStream through a Web
- *    Audio GainNode (AudioContext -> MediaStreamSource -> GainNode -> output).
- *    A muted <audio> element keeps the remote decoder pumping (some engines
- *    yield silence from createMediaStreamSource on a remote stream unless it is
- *    also attached to a media element) and is the audible fallback.
+ * No Web Audio gain stage: routing the remote stream through
+ * createMediaStreamSource overloads WebKit's single thread and freezes the
+ * WebCodecs video decode on iOS. Volume is the element's native 1.0.
  *
- * Off mobile, the unlock functions are no-ops; playStream still applies the gain
- * (desktop has no autoplay-after-gesture issue here — the launch click counts).
+ * Off mobile every function is a no-op (playStream returns false → the caller
+ * plays the stream on its own <audio> element); adoptContext returns null.
  */
 
 import { IS_IOS, IS_ANDROID } from '../util/BrowserDetect.js';
 
+// Element blessing (gesture-unlock for scripted playback) is needed on ALL
+// mobile — Android blocks <audio>.play() outside a gesture too.
 const IS_MOBILE = IS_IOS || IS_ANDROID;
 
-// Output gain for the native RTP audio (Web Audio GainNode). >1.0 lifts the
-// volume above the <audio> element's 1.0 ceiling; lossless (sample multiply).
-// Kept modest to avoid clipping on already-hot game audio.
-const AUDIO_GAIN = 1.5;
-
-// ── iOS session-holder element (silent unmuted loop) ───────────────────────
-/** @type {HTMLAudioElement|null} */
+/** @type {HTMLAudioElement|null} The blessed element: silent loop, then the stream. */
 let el = null;
 /** @type {string|null} object URL for the silent WAV. */
 let url = null;
-/** @type {AudioContext|null} Context created in the launch gesture, awaiting adoption by AudioPipeline (WSS). */
+/** @type {AudioContext|null} Context created in the launch gesture, adopted by AudioPipeline (iOS/WSS). */
 let ctx = null;
-/** True while we want the silent element to keep playing (between launch and release). */
+/** True while we want the element to keep playing (between launch and release). */
 let holding = false;
 /** True once prime() has run. */
 let primed = false;
-
-// ── Native RTP audio gain stage ────────────────────────────────────────────
-/** @type {AudioContext|null} Drives the gain stage (unlocked in-gesture on mobile). */
-let outCtx = null;
-/** @type {MediaStreamAudioSourceNode|null} */
-let srcNode = null;
-/** @type {GainNode|null} */
-let gainNode = null;
-/** @type {HTMLAudioElement|null} Muted element pumping the remote decoder + fallback. */
-let sinkEl = null;
 
 /**
  * Build a short looping silent 16-bit PCM WAV and return an object URL.
@@ -102,16 +86,16 @@ function makeSilentWavUrl() {
     return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
 }
 
-/** Lazily create the hidden looping silent <audio> element (iOS only). */
+/** Lazily create the hidden looping silent <audio> element (mobile only). */
 function ensureEl() {
-    if (el || !IS_IOS) return;
+    if (el || !IS_MOBILE) return;
     try {
         url = makeSilentWavUrl();
         const node = document.createElement('audio');
         node.loop = true;
         node.preload = 'auto';
-        node.muted = false; // must NOT be muted, or the session stays "ambient"
-        node.volume = 1.0; // content is pure silence — volume is irrelevant
+        node.muted = false; // must NOT be muted, or the iOS session stays "ambient"
+        node.volume = 1.0;
         node.setAttribute('playsinline', '');
         node.setAttribute('webkit-playsinline', '');
         node.src = url;
@@ -124,7 +108,7 @@ function ensureEl() {
     }
 }
 
-/** Play the silent element (promotes the iOS session to "playback"). */
+/** Play the element (blesses it / promotes the iOS session to "playback"). */
 function playEl() {
     if (!el) return;
     holding = true;
@@ -136,24 +120,7 @@ function playEl() {
     }
 }
 
-/** Lazily create the hidden MUTED element that pumps the remote decoder. */
-function ensureSinkEl() {
-    if (sinkEl) return;
-    try {
-        const node = document.createElement('audio');
-        node.muted = true; // audible output goes through the GainNode, not here
-        node.autoplay = true;
-        node.setAttribute('playsinline', '');
-        node.setAttribute('webkit-playsinline', '');
-        node.style.display = 'none';
-        if (document.body) document.body.appendChild(node);
-        sinkEl = node;
-    } catch (e) {
-        sinkEl = null;
-    }
-}
-
-/** Create + unlock an AudioContext inside a gesture (silent-buffer trick). */
+/** Create + unlock an AudioContext inside a gesture (silent-buffer trick). iOS/WSS. */
 function makeUnlockedCtx(sampleRate) {
     try {
         const Ctor = window.AudioContext || window.webkitAudioContext;
@@ -173,11 +140,11 @@ function makeUnlockedCtx(sampleRate) {
 }
 
 /**
- * Pre-buffer the iOS unlock element and authorize it on the first user
- * interaction anywhere in the app. Call once at startup. iOS only.
+ * Pre-buffer the unlock element and authorize it for scripted playback on the
+ * first user interaction anywhere in the app. Call once at startup (mobile).
  */
 export function prime() {
-    if (!IS_IOS || primed) return;
+    if (!IS_MOBILE || primed) return;
     primed = true;
     ensureEl();
     if (!el) return;
@@ -204,20 +171,16 @@ export function prime() {
 }
 
 /**
- * Inside the launch-click gesture: hold the iOS session and unlock the audio
- * contexts so playback (native gain stage / WSS AudioPipeline) can start later
- * without a tap. iOS does both; Android only unlocks the gain-stage context.
+ * Inside the launch-click gesture: bless the element (so a later srcObject swap
+ * plays without a tap) and, on iOS, unlock the AudioContext that AudioPipeline
+ * (WSS path) adopts. No-op off mobile.
  * @param {number} [sampleRate=48000]
  */
 export function prepareForLaunch(sampleRate = 48000) {
     if (!IS_MOBILE) return;
-    if (IS_IOS) {
-        ensureEl();
-        playEl(); // silent unmuted loop -> "playback" session
-        if (!ctx) ctx = makeUnlockedCtx(sampleRate); // adopted by AudioPipeline (WSS)
-    }
-    // All mobile: unlock the context that drives the native RTP gain stage.
-    if (!outCtx) outCtx = makeUnlockedCtx(sampleRate);
+    ensureEl();
+    playEl();
+    if (IS_IOS && !ctx) ctx = makeUnlockedCtx(sampleRate); // adopted by AudioPipeline (WSS)
 }
 
 /**
@@ -231,98 +194,44 @@ export function adoptContext() {
     return c;
 }
 
-/** One-time gesture retry of the native audio output (autoplay rejected). */
+/** One-time gesture retry of the element if mobile autoplay rejected it. */
 function armOutputRetry() {
     const events = ['pointerdown', 'touchend', 'mousedown', 'click'];
     const onGesture = () => {
         for (const ev of events) window.removeEventListener(ev, onGesture, true);
-        try {
-            if (outCtx) {
-                const r = outCtx.resume();
-                if (r && r.catch) r.catch(() => {});
-            }
-        } catch (e) {
-            /* ignore */
-        }
-        try {
-            if (sinkEl) {
-                const p = sinkEl.play();
-                if (p && p.catch) p.catch(() => {});
-            }
-        } catch (e) {
-            /* ignore */
-        }
-        if (IS_IOS) playEl();
+        playEl();
     };
     for (const ev of events) window.addEventListener(ev, onGesture, true);
 }
 
 /**
- * Output a WebRTC (native RTP Opus) MediaStream with a volume boost. Routes the
- * stream through a Web Audio GainNode (>1.0, lossless) and pumps the remote
- * decoder with a muted element. Falls back to the unmuted element at 1.0 if the
- * gain stage cannot be built.
+ * Play a native-RTP-audio MediaStream through the gesture-blessed element at
+ * native volume (1.0). Mobile only; desktop returns false so the caller plays
+ * the stream on its own <audio> element (no autoplay restriction there).
  * @param {MediaStream} stream
- * @param {number} [gain=AUDIO_GAIN]
- * @returns {boolean} always true (the stream is routed somewhere).
+ * @returns {boolean} true if routed (mobile + element ready); false otherwise.
  */
-export function playStream(stream, gain = AUDIO_GAIN) {
-    ensureSinkEl();
-
-    // Web Audio gain stage — lets us exceed the element's 1.0 volume ceiling.
-    let boosted = false;
+export function playStream(stream) {
+    if (!IS_MOBILE) return false;
+    ensureEl();
+    if (!el) return false;
+    holding = true;
     try {
-        const Ctor = window.AudioContext || window.webkitAudioContext;
-        if (Ctor) {
-            if (!outCtx) outCtx = new Ctor(); // desktop: no in-gesture unlock needed
-            if (srcNode) {
-                try {
-                    srcNode.disconnect();
-                } catch (e) {
-                    /* ignore */
-                }
-            }
-            if (gainNode) {
-                try {
-                    gainNode.disconnect();
-                } catch (e) {
-                    /* ignore */
-                }
-            }
-            srcNode = outCtx.createMediaStreamSource(stream);
-            gainNode = outCtx.createGain();
-            gainNode.gain.value = gain;
-            srcNode.connect(gainNode);
-            gainNode.connect(outCtx.destination);
-            const r = outCtx.resume();
-            if (r && r.catch) r.catch(() => armOutputRetry());
-            boosted = true;
-        }
-    } catch (e) {
-        boosted = false;
-    }
-
-    try {
-        sinkEl.srcObject = stream;
-        sinkEl.muted = boosted; // gain path is audible -> keep the element silent
-        sinkEl.volume = 1.0;
-        const p = sinkEl.play();
+        el.loop = false;
+        el.muted = false;
+        el.volume = 1.0;
+        el.srcObject = stream;
+        const p = el.play();
         if (p && p.catch) p.catch(() => armOutputRetry());
     } catch (e) {
-        /* ignore */
-    }
-
-    // iOS: keep the silent unmuted loop holding the "playback" session.
-    if (IS_IOS) {
-        ensureEl();
-        playEl();
+        return false;
     }
     return true;
 }
 
 /**
- * Promote the iOS audio session on an in-stream gesture (replays the silent
- * element). Used by the WSS AudioPipeline path. No-op off iOS.
+ * Promote the iOS audio session on an in-stream gesture (replays the element).
+ * Used by the WSS AudioPipeline path. No-op off iOS.
  */
 export function unlock() {
     if (!IS_IOS) return;
@@ -330,54 +239,31 @@ export function unlock() {
     playEl();
 }
 
-/** True once the silent element is actually playing (iOS). */
+/** True once the element is actually playing (mobile). */
 export function isActive() {
     return !!(el && !el.paused);
 }
 
-/** Stop holding the session + tear down the native gain stage (stream teardown). */
+/** Stop holding the session / playback (stream teardown). Keeps the element. */
 export function release() {
     holding = false;
     if (el) {
         try {
             el.pause();
+            // If el carried the WebRTC stream, restore the silent looping source
+            // so the next launch can re-bless this same element.
+            if (el.srcObject) {
+                el.srcObject = null;
+                if (url) {
+                    el.src = url;
+                    el.loop = true;
+                    el.load();
+                }
+            }
             el.currentTime = 0;
         } catch (e) {
             /* ignore */
         }
-    }
-    // Native RTP gain stage teardown.
-    if (srcNode) {
-        try {
-            srcNode.disconnect();
-        } catch (e) {
-            /* ignore */
-        }
-        srcNode = null;
-    }
-    if (gainNode) {
-        try {
-            gainNode.disconnect();
-        } catch (e) {
-            /* ignore */
-        }
-        gainNode = null;
-    }
-    if (sinkEl) {
-        try {
-            sinkEl.pause();
-            sinkEl.srcObject = null;
-        } catch (e) {
-            /* ignore */
-        }
-    }
-    if (outCtx) {
-        try {
-            outCtx.close();
-        } catch (e) {
-            /* ignore */
-        }
-        outCtx = null;
     }
     // Close a context that was prepared but never adopted (e.g. launch failed).
     if (ctx) {
