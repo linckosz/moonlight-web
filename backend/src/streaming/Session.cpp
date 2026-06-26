@@ -24,6 +24,7 @@
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
 #include "../backend/IdentityManager.h"
+#include "../server/AppSettings.h"
 
 extern "C" {
 #include "Limelight.h"
@@ -388,6 +389,9 @@ void StreamSession::onLaunchReplyFinished()
     // Audio: stereo Opus matching StreamConfig
     params.audioConfiguration =
         MAKE_AUDIO_CONFIGURATION(StreamConfig::kAudioChannels, StreamConfig::kAudioChannelMask);
+    // Mobile clients request 10ms Opus frames (half the packet rate) to ease
+    // transmission on constrained networks.
+    params.slowOpus = m_LowAudio;
 
     // Stream settings from user preferences
     params.width = m_StreamWidth;
@@ -653,11 +657,11 @@ void StreamSession::onShimConnectionStarted()
     // 4:2:0), so the frontend can surface it in the stats overlay.
     result["yuv444"] = (m_NegotiatedVideoFormat & VIDEO_FORMAT_MASK_YUV444) != 0;
 
-    // Audio time-stretch (WSOLA) kill switch — env MW_AUDIO_TIME_STRETCH, on by
-    // default. Set 0/false/no/off to disable from .env. Read fresh per session.
+    // Audio time-stretch (WSOLA) — file-only setting (settings.json), default
+    // false. Read fresh per session so a file edit applies on the next launch.
     {
-        QByteArray ts = qgetenv("MW_AUDIO_TIME_STRETCH").trimmed().toLower();
-        result["audio_time_stretch"] = !(ts == "0" || ts == "false" || ts == "no" || ts == "off");
+        AppSettings settings;
+        result["audio_time_stretch"] = settings.audioTimeStretch();
     }
 
     // If the codec was overridden (e.g. HEVC → H.264 for MediaTrack),

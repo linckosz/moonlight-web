@@ -135,6 +135,19 @@ public:
     QString videoEnhancementAlgo() const;
     void setVideoEnhancementAlgo(const QString& algo);
 
+    // ── Audio time-stretch (WSOLA) ─────────────────────────────────────────────
+    //
+    // Pitch-preserving accelerate/expand in the AudioWorklet. File-only setting
+    // (no UI): stored as JSON bool "audio_time_stretch", DEFAULT false. When true,
+    // smooths clock drift and jitter without added latency at a small CPU cost.
+    // Documented in the README (the JSON holds no comment keys).
+
+    bool audioTimeStretch() const;
+
+    // Seed documented file-only default keys into settings.json if absent, so they
+    // are discoverable/editable in the file. Idempotent.
+    void seedDocumentedDefaults();
+
     // ── UPnP NAT traversal ────────────────────────────────────────────────────
 
     /// Whether UPnP port mapping is enabled for WebRTC NAT traversal.

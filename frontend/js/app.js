@@ -57,6 +57,7 @@ import { LoginView } from './ui/LoginView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
+import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
@@ -685,6 +686,13 @@ const MoonlightApp = {
         // drops HDR). undefined means "leave the stored preference untouched".
         if (hdrOverride !== undefined) {
             streamingSettings.hdr_enabled = hdrOverride === true;
+        }
+
+        // Mobile: request lower-bandwidth audio (10ms Opus frames, half the
+        // packet rate) to ease transmission on constrained networks. Negligible
+        // quality loss on phone speakers.
+        if (IS_MOBILE_OR_TABLET) {
+            streamingSettings.low_audio = true;
         }
 
         // Power Saving (mobile): force the native video transport, UDP first.

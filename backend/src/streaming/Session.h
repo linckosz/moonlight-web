@@ -63,6 +63,9 @@ public:
     /// Set before start() to control whether TCP fallback candidates are generated.
     void setEnableIceTcp(bool enable) { m_EnableIceTcp = enable; }
 
+    /// Request lower-bandwidth audio (10ms Opus frames) for mobile clients.
+    void setLowAudio(bool enable) { m_LowAudio = enable; }
+
     /// Enable auto-mode behavior: WS fallback is disabled so that ICE timeout
     /// emits sessionEnded() instead of starting the internal WS fallback.
     /// This allows the auto fallback chain in main.cpp to try the next transport.
@@ -153,6 +156,7 @@ private:
     int m_TransportIndex = 0;
     /// Enable ICE-TCP candidates (true for *-tcp modes, false for *-udp modes).
     bool m_EnableIceTcp = false;
+    bool m_LowAudio = false;
     /// True when session is part of the auto fallback chain (main.cpp auto mode).
     /// Disables internal WS fallback so ICE timeout → sessionEnded → tryNext().
     bool m_AutoMode = false;

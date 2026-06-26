@@ -52,8 +52,13 @@ export class AudioPipeline {
         this.channels = options.channels || 2;
         this.workletUrl = options.workletUrl || '/js/audio/audio-processor.js';
         // Pitch-preserving time-stretch (WSOLA) in the worklet. On by default;
-        // disabled via the server kill switch (env MW_AUDIO_TIME_STRETCH).
+        // disabled via the server kill switch (settings.json audio_time_stretch).
         this.timeStretch = options.timeStretch !== false;
+
+        /** @type {Worker|null} Dedicated Opus decode worker (off the main thread). */
+        this._worker = null;
+        /** @type {boolean} True when audio is decoded in the worker. */
+        this._useWorker = false;
 
         /** @type {AudioContext|null} */
         this.context = null;
@@ -150,11 +155,23 @@ export class AudioPipeline {
                 return false;
             }
 
-            // Create the Opus decoder (WebCodecs, or WASM fallback on iOS)
-            if (!(await this._setupDecoder())) {
-                console.error('[AudioPipeline] No Opus decoder available — audio will be silent');
+            // Prefer decoding in a dedicated worker: keeps audio decode + delivery
+            // independent from main-thread video jank, so sound keeps flowing while
+            // the video stutters. Fall back to main-thread decode if unavailable.
+            this._useWorker = await this._setupWorker();
+            if (this._closed) {
                 this.cleanup();
                 return false;
+            }
+            if (!this._useWorker) {
+                console.warn('[AudioPipeline] Decode worker unavailable — main-thread decode');
+                if (!(await this._setupDecoder())) {
+                    console.error(
+                        '[AudioPipeline] No Opus decoder available — audio will be silent',
+                    );
+                    this.cleanup();
+                    return false;
+                }
             }
 
             // Handle context state changes
@@ -189,6 +206,68 @@ export class AudioPipeline {
             this.cleanup();
             return false;
         }
+    }
+
+    /**
+     * Create the dedicated Opus decode worker and wire a direct PCM channel
+     * worker → AudioWorklet (bypassing the main thread). Waits for the worker to
+     * confirm a usable decoder.
+     * @returns {Promise<boolean>} true if the worker path is active.
+     */
+    async _setupWorker() {
+        if (typeof Worker === 'undefined' || typeof MessageChannel === 'undefined') return false;
+        let worker;
+        try {
+            worker = new Worker(new URL('./audio-decode-worker.js', import.meta.url), {
+                type: 'module',
+            });
+        } catch (err) {
+            console.warn('[AudioPipeline] Decode worker construction failed:', err.message);
+            return false;
+        }
+
+        // Direct PCM channel: worker → worklet (never touches the main thread).
+        const channel = new MessageChannel();
+        this.node.port.postMessage({ type: 'pcm-port', port: channel.port1 }, [channel.port1]);
+        worker.postMessage({ type: 'pcm-port', port: channel.port2 }, [channel.port2]);
+
+        // Wait for the worker to confirm a working decoder (or fail / time out).
+        const ready = new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), 3000);
+            worker.onmessage = (e) => {
+                const m = e.data;
+                if (!m) return;
+                if (m.type === 'ready') {
+                    clearTimeout(timer);
+                    console.log('[AudioPipeline] Decode worker ready (' + m.mode + ')');
+                    resolve(true);
+                } else if (m.type === 'fail') {
+                    clearTimeout(timer);
+                    resolve(false);
+                } else if (m.type === 'stat') {
+                    // Diagnostics for the stats overlay.
+                    this._writtenSamples = m.writtenSamples || this._writtenSamples;
+                    this._decodeErrors = m.decodeErrors || this._decodeErrors;
+                }
+            };
+            worker.onerror = (err) => {
+                clearTimeout(timer);
+                console.warn('[AudioPipeline] Decode worker error:', err.message || err);
+                resolve(false);
+            };
+        });
+        worker.postMessage({ type: 'init', sampleRate: this.sampleRate, channels: this.channels });
+
+        if (!(await ready)) {
+            try {
+                worker.terminate();
+            } catch (e) {
+                /* ignore */
+            }
+            return false;
+        }
+        this._worker = worker;
+        return true;
     }
 
     /**
@@ -287,6 +366,14 @@ export class AudioPipeline {
     write(sample) {
         if (!this.ready || this._closed) return;
         if (!sample || sample.byteLength === 0) return;
+
+        // Worker path: transfer a standalone copy of just this packet. Decode
+        // happens off the main thread; PCM goes straight to the worklet.
+        if (this._useWorker) {
+            const buf = sample.slice().buffer;
+            this._worker.postMessage({ type: 'opus', data: buf }, [buf]);
+            return;
+        }
 
         if (this._mode === 'wasm') {
             this._writeWasm(sample);
@@ -533,6 +620,20 @@ export class AudioPipeline {
                 /* ignore */
             }
         }
+        if (this._worker) {
+            try {
+                this._worker.postMessage({ type: 'close' });
+            } catch (e) {
+                /* ignore */
+            }
+            try {
+                this._worker.terminate();
+            } catch (e) {
+                /* ignore */
+            }
+            this._worker = null;
+        }
+        this._useWorker = false;
         if (this.decoder) {
             try {
                 if (this.decoder.state !== 'closed') this.decoder.close();
