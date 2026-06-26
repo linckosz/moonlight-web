@@ -51,6 +51,9 @@ export class AudioPipeline {
         this.sampleRate = options.sampleRate || 48000;
         this.channels = options.channels || 2;
         this.workletUrl = options.workletUrl || '/js/audio/audio-processor.js';
+        // Pitch-preserving time-stretch (WSOLA) in the worklet. On by default;
+        // disabled via the server kill switch (env MW_AUDIO_TIME_STRETCH).
+        this.timeStretch = options.timeStretch !== false;
 
         /** @type {AudioContext|null} */
         this.context = null;
@@ -137,6 +140,9 @@ export class AudioPipeline {
             });
             this.node.port.onmessage = this._onWorkletMessage;
             this.node.connect(this.context.destination);
+
+            // Push runtime config to the worklet (time-stretch kill switch).
+            this.node.port.postMessage({ type: 'config', timeStretch: this.timeStretch });
 
             // Guard: if close() was called during node setup, abort
             if (this._closed) {

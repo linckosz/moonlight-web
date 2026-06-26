@@ -791,6 +791,9 @@ const MoonlightApp = {
         // HDR: requires a WebGPU-capable browser and Sunshine negotiating HEVC
         // Main10 / AV1 10-bit. The decoder colorSpace is set accordingly.
         const hdrEnabled = streamingSettings.hdr_enabled === true;
+        // Audio time-stretch (WSOLA) — server kill switch (env MW_AUDIO_TIME_STRETCH).
+        // Read fresh from the launch result; defaults to on when unspecified.
+        const audioTimeStretch = result.audio_time_stretch !== false;
 
         // Track the fallback chain reported by the backend.
         this._transportChain = Array.isArray(result.transport_chain) ? result.transport_chain : [];
@@ -817,6 +820,7 @@ const MoonlightApp = {
             result.yuv444 === true,
             hdrEnabled,
             touchScreen,
+            audioTimeStretch,
         );
 
         // ── Callbacks ──────────────────────────────────────────────────────

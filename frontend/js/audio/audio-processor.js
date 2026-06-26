@@ -34,9 +34,14 @@
  *     resume, turning sharp clicks into inaudible transitions.
  *   - Soft underrun recovery: on underrun we KEEP whatever just arrived and
  *     resume as soon as a small fraction of the target is buffered, instead of
- *     flushing everything and waiting for the full target to refill. This turns
- *     a ~240 ms silent re-buffer into a gap of a few ms.
- *   - Overrun: drop the OLDEST chunk(s) to keep latency bounded.
+ *     flushing everything and waiting for the full target to refill.
+ *   - Time-stretch (WSOLA, optional — `config.timeStretch`): when the buffer
+ *     drifts away from the target (clock drift, mild jitter), pitch-preserving
+ *     accelerate/expand corrections are applied IN PLACE on the queue head via
+ *     correlated overlap-add. This smoothly drains/fills the buffer instead of
+ *     dropping chunks (a click) or underrunning (a gap), and adds NO steady
+ *     latency: corrections only fire outside a dead-band around the target.
+ *     Off → byte-identical to the plain adaptive-buffer behaviour.
  *
  * `sampleRate` is a global in AudioWorkletGlobalScope (context rate).
  *
@@ -70,6 +75,7 @@ class AudioProcessor extends AudioWorkletProcessor {
         // Soft underrun recovery: resume playback once this fraction of the
         // current target is re-buffered, instead of waiting for the full target.
         this._resumeFraction = 0.5;
+        this._underrunRecovery = false;
 
         // De-click fade length (samples). ~1.3 ms at 48 kHz.
         this.FADE_SAMPLES = 64;
@@ -78,30 +84,207 @@ class AudioProcessor extends AudioWorkletProcessor {
         this._lastR = 0;
         this._framesSinceUnderrun = 0;
 
+        // ── Time-stretch (WSOLA accelerate/expand) ──────────────────────────
+        // Off by default; the main thread enables it via a 'config' message.
+        this._timeStretch = false;
+        this.TS_PMIN = Math.round(sampleRate / 400); // shortest pitch period (400 Hz)
+        this.TS_PMAX = Math.round(sampleRate / 100); // longest pitch period (100 Hz)
+        this.TS_DEADBAND = Math.round(sampleRate * 0.02); // ±20 ms around target: no correction
+        this.TS_MIN_SPACING = Math.round(sampleRate * 0.03); // ≥30 ms between corrections
+        this.TS_MIN_CORR = 0.3; // skip if best correlation is too weak (avoids artefacts)
+        this._tsSinceCorrection = this.TS_MIN_SPACING;
+        this._tsLastScore = 0;
+
         this.port.onmessage = (evt) => {
-            // Allow the main thread to override the base latency target.
-            if (evt.data && evt.data.type === 'config') {
-                if (typeof evt.data.baseLatencyMs === 'number') {
-                    this._baseTarget = Math.round((sampleRate * evt.data.baseLatencyMs) / 1000);
+            const data = evt.data;
+            // Config messages from the main thread (plain objects, not buffers).
+            if (data && data.type === 'config') {
+                if (typeof data.baseLatencyMs === 'number') {
+                    this._baseTarget = Math.round((sampleRate * data.baseLatencyMs) / 1000);
                     this._target = Math.max(this._target, this._baseTarget);
+                }
+                if (typeof data.timeStretch === 'boolean') {
+                    this._timeStretch = data.timeStretch;
                 }
                 return;
             }
 
             // Float32 interleaved stereo PCM (transferred ArrayBuffer).
-            const chunk = new Float32Array(evt.data);
+            const chunk = new Float32Array(data);
             if (chunk.length === 0) return;
 
             this._queue.push(chunk);
             this._queuedFrames += chunk.length >> 1; // /2 channels
 
-            // Overrun protection: drop oldest chunks until under the cap.
+            // Overrun protection: drop oldest chunks until under the cap. With
+            // time-stretch on this is only a last-resort safety net (accelerate
+            // normally drains the buffer smoothly well before this triggers).
             while (this._queuedFrames > this.MAX_BUFFER_FRAMES && this._queue.length > 1) {
                 const dropped = this._queue.shift();
                 this._queuedFrames -= (dropped.length - this._readOffset) >> 1;
                 this._readOffset = 0;
             }
         };
+    }
+
+    // ── Queue helpers (used by the time-stretch corrections) ────────────────
+
+    /**
+     * Pop exactly `frames` stereo-frames from the FRONT of the queue into a
+     * fresh interleaved buffer, spanning chunk boundaries. Caller must ensure
+     * `this._queuedFrames >= frames`.
+     * @param {number} frames
+     * @returns {Float32Array} interleaved stereo, length frames*2.
+     */
+    _popFrames(frames) {
+        const out = new Float32Array(frames << 1);
+        let got = 0;
+        while (got < frames && this._queue.length > 0) {
+            const chunk = this._queue[0];
+            const avail = (chunk.length - this._readOffset) >> 1;
+            const take = Math.min(avail, frames - got);
+            out.set(chunk.subarray(this._readOffset, this._readOffset + (take << 1)), got << 1);
+            got += take;
+            this._readOffset += take << 1;
+            this._queuedFrames -= take;
+            if (this._readOffset >= chunk.length) {
+                this._queue.shift();
+                this._readOffset = 0;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Reset the read offset by replacing the head chunk with its unread tail,
+     * so the head always starts at offset 0. Needed before unshifting.
+     */
+    _normalizeHead() {
+        if (this._readOffset > 0 && this._queue.length > 0) {
+            this._queue[0] = this._queue[0].subarray(this._readOffset);
+            this._readOffset = 0;
+        }
+    }
+
+    /** Push an interleaved buffer back to the FRONT of the queue. */
+    _unshiftFrames(buf) {
+        this._normalizeHead();
+        this._queue.unshift(buf);
+        this._queuedFrames += buf.length >> 1;
+    }
+
+    /**
+     * Estimate the pitch period (stereo-frames) of `seg` by maximising the
+     * normalised cross-correlation of the L channel between [0,P) and [P,2P).
+     * Stores the best score in `_tsLastScore`. Caller guarantees seg holds at
+     * least 2*TS_PMAX frames.
+     * @param {Float32Array} seg interleaved stereo
+     * @param {number} frames number of stereo-frames in seg
+     * @returns {number} best period P
+     */
+    _findPeriod(seg, frames) {
+        const maxP = Math.min(this.TS_PMAX, frames >> 1);
+        let bestP = this.TS_PMIN;
+        let bestScore = -Infinity;
+        for (let P = this.TS_PMIN; P <= maxP; P++) {
+            let cc = 0;
+            let e0 = 0;
+            let e1 = 0;
+            // Subsample by 2 (L channel only) to bound CPU on the audio thread.
+            for (let i = 0; i < P; i += 2) {
+                const a = seg[i << 1];
+                const b = seg[(i + P) << 1];
+                cc += a * b;
+                e0 += a * a;
+                e1 += b * b;
+            }
+            const score = cc / (Math.sqrt(e0 * e1) + 1e-9);
+            if (score > bestScore) {
+                bestScore = score;
+                bestP = P;
+            }
+        }
+        this._tsLastScore = bestScore;
+        return bestP;
+    }
+
+    /**
+     * Accelerate: remove ~one pitch period from the queue head via overlap-add,
+     * draining the buffer by P frames without a click or pitch change.
+     * @returns {boolean} true if a correction was applied.
+     */
+    _accelerate() {
+        const need = this.TS_PMAX << 1; // 2*PMAX frames
+        const seg = this._popFrames(need);
+        const P = this._findPeriod(seg, need);
+        if (this._tsLastScore < this.TS_MIN_CORR) {
+            this._unshiftFrames(seg); // too noisy to merge cleanly — put it back
+            return false;
+        }
+        // out = crossfade(seg[0,P), seg[P,2P)) ++ seg[2P, need)  → length need-P
+        const out = new Float32Array((need - P) << 1);
+        for (let i = 0; i < P; i++) {
+            const w = i / P;
+            const oi = i << 1;
+            const ai = i << 1;
+            const bi = (P + i) << 1;
+            out[oi] = seg[ai] * (1 - w) + seg[bi] * w;
+            out[oi + 1] = seg[ai + 1] * (1 - w) + seg[bi + 1] * w;
+        }
+        out.set(seg.subarray((P << 1) << 1), P << 1); // tail seg[2P..need)
+        this._unshiftFrames(out);
+        return true;
+    }
+
+    /**
+     * Expand: insert ~one pitch period into the queue head via overlap-add,
+     * filling the buffer by P frames to ride out a dip without an underrun.
+     * @returns {boolean} true if a correction was applied.
+     */
+    _expand() {
+        const need = this.TS_PMAX << 1; // 2*PMAX frames
+        const seg = this._popFrames(need);
+        const P = this._findPeriod(seg, need);
+        if (this._tsLastScore < this.TS_MIN_CORR) {
+            this._unshiftFrames(seg);
+            return false;
+        }
+        // out = seg[0,P) ++ crossfade(seg[P,2P), seg[0,P)) ++ seg[P,need)
+        //       → length need+P
+        const out = new Float32Array((need + P) << 1);
+        out.set(seg.subarray(0, P << 1), 0);
+        for (let i = 0; i < P; i++) {
+            const w = i / P;
+            const oi = (P + i) << 1;
+            const ai = (P + i) << 1; // seg[P+i]
+            const bi = i << 1; // seg[i]
+            out[oi] = seg[ai] * (1 - w) + seg[bi] * w;
+            out[oi + 1] = seg[ai + 1] * (1 - w) + seg[bi + 1] * w;
+        }
+        out.set(seg.subarray(P << 1, need << 1), (P << 1) << 1); // seg[P..need)
+        this._unshiftFrames(out);
+        return true;
+    }
+
+    /**
+     * Nudge the buffer toward the target with one pitch-preserving correction
+     * per call, only when it has drifted beyond the dead-band. No-op near the
+     * target, so a healthy stream is untouched (zero added latency).
+     */
+    _maintainTimeStretch(numFrames) {
+        this._tsSinceCorrection += numFrames;
+        if (
+            this._tsSinceCorrection < this.TS_MIN_SPACING ||
+            this._queuedFrames < this.TS_PMAX << 1
+        ) {
+            return;
+        }
+        const err = this._queuedFrames - this._target;
+        if (err > this.TS_DEADBAND) {
+            if (this._accelerate()) this._tsSinceCorrection = 0;
+        } else if (err < -this.TS_DEADBAND) {
+            if (this._expand()) this._tsSinceCorrection = 0;
+        }
     }
 
     process(inputs, outputs) {
@@ -135,6 +318,11 @@ class AudioProcessor extends AudioWorkletProcessor {
                 right.fill(0);
                 return true;
             }
+        }
+
+        // Pitch-preserving buffer maintenance (drift/jitter) before draining.
+        if (this._timeStretch) {
+            this._maintainTimeStretch(numFrames);
         }
 
         let outIdx = 0;

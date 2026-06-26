@@ -158,8 +158,11 @@ export class StreamView {
         yuv444 = false,
         hdrEnabled = false,
         touchScreen = false,
+        audioTimeStretch = true,
     ) {
         this.container = container;
+        // Audio time-stretch (WSOLA) — server-controlled kill switch.
+        this._audioTimeStretch = audioTimeStretch !== false;
         // Mobile only: direct touch-screen input (absolute finger position) in
         // place of the relative trackpad model. Off by default.
         this._touchScreen = touchScreen === true;
@@ -335,8 +338,8 @@ export class StreamView {
          *  Set to true on first click, reset when pointer lock is lost. */
         this._mouseFocused = false;
 
-        // Audio pipeline (PCM16 -> AudioWorklet -> speakers)
-        this.audioPipeline = new AudioPipeline();
+        // Audio pipeline (Opus -> AudioWorklet -> speakers)
+        this.audioPipeline = new AudioPipeline({ timeStretch: this._audioTimeStretch });
         this._audioLogged = false;
 
         // WebCodecs
