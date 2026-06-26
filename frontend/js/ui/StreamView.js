@@ -339,8 +339,15 @@ export class StreamView {
          *  Set to true on first click, reset when pointer lock is lost. */
         this._mouseFocused = false;
 
-        // Audio pipeline (Opus -> AudioWorklet -> speakers)
-        this.audioPipeline = new AudioPipeline({ timeStretch: this._audioTimeStretch });
+        // Audio transport: on WebRTC transports (webrtc / webrtc-media) audio is a
+        // native RTP Opus track decoded by the browser (jitter buffer + in-band
+        // FEC + PLC) and played through an <audio> element — no AudioPipeline.
+        // Only WSS (no PeerConnection, so no RTP track) keeps the AudioPipeline
+        // (WASM/WebCodecs Opus decode + worklet jitter buffer).
+        this._nativeAudio = this._transport === 'webrtc' || this._transport === 'webrtc-media';
+        this.audioPipeline = this._nativeAudio
+            ? null
+            : new AudioPipeline({ timeStretch: this._audioTimeStretch });
         this._audioLogged = false;
 
         // WebCodecs
@@ -619,7 +626,9 @@ export class StreamView {
         this.setupWebRtc();
         this.bindEvents();
         this.startRenderLoop();
-        this.initAudioAsync();
+        // Native-audio transports decode via the browser <audio> element; only
+        // WSS needs the AudioPipeline.
+        if (!this._nativeAudio) this.initAudioAsync();
     }
 
     // --- Connectivity pre-flight (non-blocking diagnostic) ------------------
@@ -806,6 +815,7 @@ export class StreamView {
             <div class="stream-canvas-area">
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
                 <video id="stream-video" class="stream-video" autoplay muted playsinline></video>
+                <audio id="stream-audio" autoplay playsinline></audio>
                 <div id="stream-input-layer" class="stream-input-layer"></div>
                 <div class="stream-click-hint" id="stream-hint">
                     ${t('stream.clickToCapture')}
@@ -862,6 +872,16 @@ export class StreamView {
             if (this.webrtc && typeof this.webrtc.setVideoElement === 'function') {
                 this.webrtc.setVideoElement(this.videoEl);
             }
+        }
+
+        // Native RTP Opus audio track target (webrtc / webrtc-media). The browser
+        // decodes Opus (jitter buffer + FEC + PLC) and plays it through this
+        // <audio> element. Wired before setupWebRtc() → connect() so ontrack finds
+        // it. Unused on WSS (which decodes via the AudioPipeline).
+        this.audioEl = document.getElementById('stream-audio');
+        if (this.audioEl) {
+            this.audioEl.style.display = 'none';
+            if (this._nativeAudio && this.webrtc) this.webrtc.audioElement = this.audioEl;
         }
 
         // Transparent input-capture layer covering the whole canvas/video area.
@@ -2394,8 +2414,12 @@ export class StreamView {
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
             };
         }
-        // Audio samples (PCM16 stereo interleaved) -> AudioPipeline
-        this.webrtc.onAudio = (sample) => this.handleAudioSample(sample);
+        // Audio: WSS feeds Opus packets to the AudioPipeline. WebRTC transports
+        // use a native RTP Opus track (rendered via the <audio> element), so no
+        // onAudio callback is wired there.
+        if (!this._nativeAudio) {
+            this.webrtc.onAudio = (sample) => this.handleAudioSample(sample);
+        }
         this.webrtc.connect();
     }
 

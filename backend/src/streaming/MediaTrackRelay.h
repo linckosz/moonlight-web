@@ -103,13 +103,6 @@ private:
     void createTracksAndChannels();
     void onInputMessage(const std::string& message);
 
-    // Audio fragmentation helpers — PCM16 via DataChannel (same format as DataChannelRelay)
-    static constexpr int kFragHeaderSize = 17;
-    static constexpr int kMaxPayloadSize = 14000;
-    static constexpr size_t kHighWatermark = 128 * 1024;
-
-    void sendAudioFragmented(const QByteArray& data, std::shared_ptr<rtc::DataChannel>& dc);
-
     // Send a previously buffered keyframe (arrived before Video Track was ready).
     void sendBufferedKeyframe();
 
@@ -118,11 +111,15 @@ private:
     // Main-thread only (called from onVideoFrame / sendBufferedKeyframe).
     uint32_t computeRtpTimestamp();
 
+
     MoonlightShim* m_Shim;
 
     std::shared_ptr<rtc::PeerConnection> m_Pc;
     std::shared_ptr<rtc::Track> m_VideoTrack;
-    std::shared_ptr<rtc::DataChannel> m_AudioDc;
+    // Audio is a native RTP Opus track (browser-decoded: jitter buffer + in-band
+    // FEC + PLC), NOT a DataChannel — a lost packet no longer head-of-line-blocks
+    // the audio stream, eliminating the periodic micro-dropouts.
+    std::shared_ptr<rtc::Track> m_AudioTrack;
     std::shared_ptr<rtc::DataChannel> m_InputDc;
 
     std::atomic<bool> m_Connected{false};
@@ -141,6 +138,11 @@ private:
     // timestamps are derived from elapsed wall-clock time (see computeRtpTimestamp).
     std::chrono::steady_clock::time_point m_FirstFrameTime;
     bool m_HaveFirstFrameTime = false;
+
+    // Audio RTP timestamp (48 kHz Opus clock), advanced by samplesPerFrame per
+    // packet for a smooth, jitter-free clock; serialized with track teardown.
+    std::mutex m_AudioMutex;
+    uint32_t m_AudioRtpTs = 0;
 
     // Buffered keyframe: if the first IDR arrives before the Video Track is open
     QByteArray m_BufferedKeyframe;

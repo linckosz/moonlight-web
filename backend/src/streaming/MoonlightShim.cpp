@@ -440,8 +440,15 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
 
 // --- Audio callbacks ---
 
-int MoonlightShim::arInit(int, const POPUS_MULTISTREAM_CONFIGURATION, void*, int)
+int MoonlightShim::arInit(int, const POPUS_MULTISTREAM_CONFIGURATION opusConfig, void*, int)
 {
+    // Capture the Opus frame size so the relay can pace the RTP audio timestamp
+    // by a clean per-packet increment (avoids robotic audio from a jittery clock).
+    MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
+    if (instance && opusConfig && opusConfig->samplesPerFrame > 0) {
+        instance->m_AudioSamplesPerFrame.store(opusConfig->samplesPerFrame,
+                                               std::memory_order_release);
+    }
     return 0;
 }
 

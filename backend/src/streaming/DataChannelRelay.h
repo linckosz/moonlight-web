@@ -29,9 +29,12 @@
 #include <functional>
 #include <cstdint>
 #include <cstddef>
+#include <mutex>
+#include <chrono>
 
 namespace rtc {
 class DataChannel;
+class Track;
 }
 
 class MoonlightShim;
@@ -147,8 +150,16 @@ private:
 
     std::shared_ptr<rtc::PeerConnection> m_Pc;
     std::shared_ptr<rtc::DataChannel> m_VideoDc;
-    std::shared_ptr<rtc::DataChannel> m_AudioDc;
+    // Audio is a native RTP Opus track (browser-decoded: jitter buffer + in-band
+    // FEC + PLC) on the same PeerConnection as the video DataChannel — a lost
+    // packet no longer head-of-line-blocks the audio (the periodic dropouts).
+    std::shared_ptr<rtc::Track> m_AudioTrack;
     std::shared_ptr<rtc::DataChannel> m_InputDc;
+
+    // Audio RTP timestamp (48 kHz Opus clock), advanced by samplesPerFrame per
+    // packet for a smooth, jitter-free clock; serialized with track teardown.
+    std::mutex m_AudioMutex;
+    uint32_t m_AudioRtpTs = 0;
 
     std::atomic<bool> m_Connected{false};
     std::atomic<bool> m_Stopping{false};
