@@ -474,6 +474,7 @@ export class StreamView {
         this._pinchPrevDist = 0; // previous finger spacing during a multi-finger gesture
         this._pinchPrevCx = null; // previous centroid (of all touches)
         this._pinchPrevCy = null;
+        this._twoFingerMode = null; // locked gesture for the current 2-finger sequence: 'zoom' | 'scroll'
         this._lastMoveFingerCount = 0; // finger count of the last touchmove (reseed trackers on change)
         // Two-finger scroll: amplification + inertial (momentum) glide after release.
         this._scrollScale = 4; // finger px → wheel delta units (faster scroll)
@@ -4667,6 +4668,8 @@ export class StreamView {
         this._multiOriginCx = cx / n;
         this._multiOriginCy = cy / n;
         this._multiOriginDist = this._pinchPrevDist;
+        // New 2-finger sequence: gesture mode is decided on the first clear frame.
+        this._twoFingerMode = null;
     }
 
     /** True once a multi-finger gesture has clearly moved (centroid travel or,
@@ -4803,8 +4806,12 @@ export class StreamView {
                     this._sendAbsTouch(touch.clientX, touch.clientY);
                 }
             } else {
-                const dx = (touch.clientX - this._touchLastX) * this._touchSensitivity;
-                const dy = (touch.clientY - this._touchLastY) * this._touchSensitivity;
+                // Slow the cursor proportionally to zoom (linear: -0.1 per step,
+                // x2→0.9, x3→0.8, x4→0.7…) for finer aim when zoomed in.
+                const zoomSlow = Math.max(0.1, 1 - 0.1 * (this._zoom - 1));
+                const sens = this._touchSensitivity * zoomSlow;
+                const dx = (touch.clientX - this._touchLastX) * sens;
+                const dy = (touch.clientY - this._touchLastY) * sens;
                 if (dx !== 0 || dy !== 0) {
                     this.webrtc.send({
                         type: 'mousemove',
@@ -4834,9 +4841,22 @@ export class StreamView {
             const dDist = this._pinchPrevDist > 0 ? dist - this._pinchPrevDist : 0;
             const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
 
-            // Classify the frame: a clear change in finger spacing → pinch/zoom;
-            // otherwise a parallel drag → scroll.
-            if (Math.abs(dDist) > 2 && Math.abs(dDist) >= Math.abs(dCy)) {
+            // Lock the gesture to zoom OR scroll for the whole 2-finger sequence,
+            // so a scroll never zooms (and vice versa). The mode is decided on the
+            // first frame with clear intent: a change in finger spacing → zoom,
+            // a parallel drag → scroll. Ambiguous tiny frames wait until it's clear.
+            // Bias toward scroll: zoom only locks when the finger-spacing change
+            // clearly dominates the vertical drag (1.6x), so a slightly uneven
+            // two-finger swipe scrolls instead of zooming by accident.
+            if (this._twoFingerMode == null) {
+                if (Math.abs(dDist) > 3 && Math.abs(dDist) >= Math.abs(dCy) * 1.6) {
+                    this._twoFingerMode = 'zoom';
+                } else if (Math.abs(dCy) > 1.5) {
+                    this._twoFingerMode = 'scroll';
+                }
+            }
+
+            if (this._twoFingerMode === 'zoom') {
                 const newZoom = Math.min(8, Math.max(1, this._zoom * (dist / this._pinchPrevDist)));
                 const f = newZoom / this._zoom;
                 if (f !== 1 && this.canvasArea) {
@@ -4855,7 +4875,7 @@ export class StreamView {
                 // Re-render the enhancer backing at the new zoom step (crisp pinch-zoom).
                 if (this._outputZoomScale() !== this._lastOutputZoomScale) this._applyOutputSize();
                 this._scrollSamples.length = 0; // pinching cancels pending inertia
-            } else if (Math.abs(dCy) > 0.1) {
+            } else if (this._twoFingerMode === 'scroll' && Math.abs(dCy) > 0.1) {
                 // Parallel two-finger drag → vertical scroll wheel, amplified and
                 // with fractional carry so slow drags still register. Record
                 // centroid samples to derive the flick velocity at release.
@@ -5002,6 +5022,7 @@ export class StreamView {
         this._pinchPrevDist = 0;
         this._pinchPrevCx = null;
         this._pinchPrevCy = null;
+        this._twoFingerMode = null;
         this._lastMoveFingerCount = 0;
     }
 
