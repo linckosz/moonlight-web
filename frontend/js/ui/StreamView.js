@@ -55,7 +55,7 @@ import {
     IS_MOBILE_OR_TABLET,
     IS_IOS,
     IS_STANDALONE,
-    isIphone,
+    pickAutoEnhancer,
 } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { t } from '../i18n/i18n.js';
@@ -245,9 +245,10 @@ export class StreamView {
             if (sel === 'force2d') {
                 wantWebGpu = false; // debug: force the Canvas2D renderer
             } else if (sel === 'auto') {
-                // 'auto' picks by platform: iPhone → FSR1 (beefy GPU),
-                // other mobile → sgsr (lighter for battery/CPU), desktop → fsr1.
-                algo = isIphone() ? 'fsr1' : IS_MOBILE_OR_TABLET ? 'sgsr' : 'fsr1';
+                // 'auto' picks by platform (see pickAutoEnhancer): desktops + iOS
+                // → FSR1; beefy 1080p+ Android → FSR1; everything else → SGSR.
+                // WebGPU absence is handled downstream (Canvas2D, no enhancement).
+                algo = pickAutoEnhancer();
             } else {
                 algo = sel === 'sgsr' || sel === 'fsr1' ? sel : 'sgsr';
             }
