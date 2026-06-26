@@ -52,6 +52,11 @@ backend/.cache/
 # Node tooling (frontend lint/format/typecheck)
 node_modules/
 
+# Test coverage reports (generated)
+frontend/coverage/
+backend/tests/cov.xml
+backend/tests/covhtml/
+
 # clang-tidy compilation database (generated, machine-absolute paths)
 backend/compile_commands.json
 
