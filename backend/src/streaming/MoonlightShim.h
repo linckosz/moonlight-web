@@ -131,6 +131,15 @@ public:
         return m_NegotiatedVideoFormat.load(std::memory_order_acquire);
     }
 
+    // Opus frame size (samples per channel @ 48 kHz) negotiated in arInit. Used
+    // to pace the RTP audio timestamp by a clean per-packet increment (a jittery
+    // arrival-time clock makes the browser's NetEq time-stretch → robotic audio).
+    // Default 240 (5 ms) until arInit runs.
+    int audioSamplesPerFrame() const
+    {
+        return m_AudioSamplesPerFrame.load(std::memory_order_acquire);
+    }
+
     // Called by the relay at the head of onVideoFrame() to balance the
     // worker→main pending frame counter (incremented before each emit).
     void videoFrameDelivered() { m_PendingVideoFrames.fetch_sub(1, std::memory_order_acq_rel); }
@@ -174,6 +183,9 @@ private:
     // Negotiated video format (set by drSetup during LiStartConnection).
     // 0 = unknown, 0x0001 = H.264, 0x0100 = HEVC, 0x0200 = AV1.
     std::atomic<int> m_NegotiatedVideoFormat{0};
+
+    // Opus samples-per-frame negotiated in arInit (48 kHz). Default 240 (5 ms).
+    std::atomic<int> m_AudioSamplesPerFrame{240};
 
     // Worker→main queue bound: frames emitted via videoFrameReady but not yet
     // processed by the relay. Deltas are dropped worker-side when it saturates.

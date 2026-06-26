@@ -15,6 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
+
 /**
  * Describe a WebSocket close code for diagnostic logging.
  * Returns a human-readable English string suitable for console output.
@@ -84,7 +86,7 @@ export class WebRtcMedia {
         this.signalingUrl = signalingUrl;
         this.signalingWs = null;
         this.pc = null;
-        this.dataChannels = { audio: null, input: null };
+        this.dataChannels = { input: null };
         this.connected = false;
 
         // ICE config — populated dynamically by backend ice-config message.
@@ -99,6 +101,8 @@ export class WebRtcMedia {
 
         // Video element for native decoding of RTP media track
         this.videoElement = options.videoElement || null;
+        // Audio element for native decoding of the RTP Opus track. Set by StreamView.
+        this.audioElement = options.audioElement || null;
 
         // Callbacks — set by the caller
         this.onOpen = null; // All channels/tracks open
@@ -429,31 +433,25 @@ export class WebRtcMedia {
                 '[WebRtcMedia] Track received: kind=' + event.track.kind + ' id=' + event.track.id,
             );
 
-            // Disable jitter buffer entirely for minimum latency.
-            // jitterBufferTarget=0 tells Chrome's WebRTC engine to deliver
-            // frames as soon as they arrive, accepting occasional packet
-            // reordering artifacts in exchange for the lowest possible delay.
-            try {
-                for (const receiver of this.pc.getReceivers()) {
-                    if (receiver.jitterBufferTarget !== undefined) {
-                        receiver.jitterBufferTarget = 0;
-                    }
-                    // Standard API: also set minimum jitter buffer delay to 0
-                    if (typeof receiver.setJitterBufferMinimumDelay === 'function') {
-                        receiver.setJitterBufferMinimumDelay(0);
-                    }
-                    // playoutDelayHint lives on the RTCRtpReceiver (NOT the <video>
-                    // element). 0 engages Chrome's low-delay rendering path —
-                    // distinct lever from the jitter buffer above.
-                    if ('playoutDelayHint' in receiver) {
-                        receiver.playoutDelayHint = 0;
-                    }
-                }
-            } catch (e) {
-                console.warn('[WebRtcMedia] Failed to set jitter buffer target:', e.message);
-            }
-
             if (event.track.kind === 'video') {
+                // Disable the jitter buffer for VIDEO only (minimum latency):
+                // deliver frames as soon as they arrive. NOT applied to audio —
+                // the audio jitter buffer is what masks packet loss (with Opus
+                // in-band FEC + PLC), so zeroing it would reintroduce dropouts.
+                try {
+                    const r = event.receiver;
+                    if (r.jitterBufferTarget !== undefined) r.jitterBufferTarget = 0;
+                    if (typeof r.setJitterBufferMinimumDelay === 'function') {
+                        r.setJitterBufferMinimumDelay(0);
+                    }
+                    if ('playoutDelayHint' in r) r.playoutDelayHint = 0;
+                } catch (e) {
+                    console.warn(
+                        '[WebRtcMedia] Failed to set video jitter buffer target:',
+                        e.message,
+                    );
+                }
+
                 console.log('[WebRtcMedia] Video track received, attaching to <video> element');
                 if (this.videoElement) {
                     const stream = new MediaStream([event.track]);
@@ -487,6 +485,12 @@ export class WebRtcMedia {
                         }, 250);
                     };
                 }
+            } else if (event.track.kind === 'audio') {
+                // Native RTP Opus audio: the browser decodes it (jitter buffer +
+                // FEC + PLC); playStream routes it through a Web Audio GainNode
+                // (volume boost, lossless) and handles mobile autoplay unlock.
+                console.log('[WebRtcMedia] Audio track received — routing through gain stage');
+                iosAudioUnlock.playStream(new MediaStream([event.track]));
             }
         };
 
@@ -497,15 +501,7 @@ export class WebRtcMedia {
     }
 
     _createDataChannels() {
-        // Audio DataChannel (ID=0, ordered=true, reliable)
-        // PCM16 fragmented, same format as WebRtcDataChannel audio
-        const audioInit = {
-            negotiated: true,
-            id: 0,
-            ordered: true,
-        };
-        this.dataChannels.audio = this.pc.createDataChannel(this.DC_AUDIO_LABEL, audioInit);
-        this._setupDataChannel(this.DC_AUDIO_LABEL, this.dataChannels.audio);
+        // NOTE: no audio DataChannel — audio is a native RTP Opus track now.
 
         // Input DataChannel (ID=1, ordered=true, reliable)
         const inputInit = {
@@ -516,7 +512,7 @@ export class WebRtcMedia {
         this.dataChannels.input = this.pc.createDataChannel(this.DC_INPUT_LABEL, inputInit);
         this._setupDataChannel(this.DC_INPUT_LABEL, this.dataChannels.input);
 
-        console.log('[WebRtcMedia] DataChannels created (audio=0, input=1)');
+        console.log('[WebRtcMedia] DataChannels created (input=1; audio is an RTP track)');
     }
 
     _setupDataChannel(label, dc) {
@@ -569,12 +565,9 @@ export class WebRtcMedia {
     }
 
     _allDcOpen() {
-        return (
-            this.dataChannels.audio &&
-            this.dataChannels.audio.readyState === 'open' &&
-            this.dataChannels.input &&
-            this.dataChannels.input.readyState === 'open'
-        );
+        // Audio is an RTP track now (not a DataChannel) — only the input channel
+        // gates the "connected" state here.
+        return this.dataChannels.input && this.dataChannels.input.readyState === 'open';
     }
 
     // =========================================================================

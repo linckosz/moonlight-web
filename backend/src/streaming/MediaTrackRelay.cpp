@@ -249,18 +249,35 @@ void MediaTrackRelay::createTracksAndChannels()
         }
     }
 
-    // ── Audio DataChannel (server->browser, PCM16) ─────────────────────────
-    // Reliable, ordered — audio quality degrades with packet loss.
+    // ── Audio track (Opus, server->browser, RTP) ───────────────────────────
+    // Native RTP Opus track instead of a DataChannel: the browser decodes Opus
+    // with its own jitter buffer + in-band FEC + packet loss concealment, so a
+    // lost UDP packet is masked instead of head-of-line-blocking the whole audio
+    // stream (the periodic ~0.5s dropouts). useinbandfec=1 signals the decoder to
+    // use the FEC carried in the next Opus packet to reconstruct a lost one.
     {
-        rtc::DataChannelInit audioConfig;
-        audioConfig.negotiated = true;
-        audioConfig.id = 0;
+        auto audioDesc = rtc::Description::Audio("audio", rtc::Description::Direction::SendOnly);
+        audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1");
 
-        m_AudioDc = m_Pc->createDataChannel("audio", audioConfig);
-        if (m_AudioDc) {
-            m_AudioDc->onOpen([this]() { qInfo() << "[MediaTrackRelay] Audio DataChannel open"; });
-            m_AudioDc->onClosed(
-                [this]() { qInfo() << "[MediaTrackRelay] Audio DataChannel closed"; });
+        m_AudioTrack = m_Pc->addTrack(audioDesc);
+        if (m_AudioTrack) {
+            std::random_device rd;
+            uint32_t ssrc = static_cast<uint32_t>(rd());
+
+            auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+                ssrc, "audio", 111, rtc::OpusRtpPacketizer::DefaultClockRate);
+            auto packetizer = std::make_shared<rtc::OpusRtpPacketizer>(rtpConfig);
+            // NACK responder lets the browser request retransmission of a lost
+            // RTP packet (complements Opus FEC/PLC) with a small history buffer.
+            packetizer->addToChain(std::make_shared<rtc::RtcpNackResponder>(64));
+            m_AudioTrack->setMediaHandler(packetizer);
+
+            m_AudioTrack->onOpen([this]() { qInfo() << "[MediaTrackRelay] Audio Track open"; });
+            m_AudioTrack->onClosed([this]() { qInfo() << "[MediaTrackRelay] Audio Track closed"; });
+
+            qInfo() << "[MediaTrackRelay] Audio track created (Opus, PT=111)";
+        } else {
+            qWarning() << "[MediaTrackRelay] Failed to create audio track";
         }
     }
 
@@ -413,30 +430,36 @@ void MediaTrackRelay::sendBufferedKeyframe()
     m_HaveBufferedKeyframe = false;
 }
 
-// ── Audio forwarding (via DataChannel, same as DataChannelRelay) ────────────────
+// ── Audio forwarding (native RTP Opus track) ───────────────────────────────────
 
 void MediaTrackRelay::onAudioSample(const QByteArray& data)
 {
-    if (m_Stopping.load()) {
-        static int dropCount = 0;
-        if (++dropCount <= 3)
-            qInfo() << "[MediaTrackRelay] onAudioSample dropped — m_Stopping=true";
-        return;
-    }
-    if (!m_AudioDc) {
-        static int noDcCount = 0;
-        if (++noDcCount <= 3)
-            qInfo() << "[MediaTrackRelay] onAudioSample dropped — m_AudioDc is null";
-        return;
-    }
-    if (!m_AudioDc->isOpen()) {
-        static int notOpenCount = 0;
-        if (++notOpenCount <= 3)
-            qInfo() << "[MediaTrackRelay] onAudioSample dropped — Audio DC not yet open";
+    if (m_Stopping.load()) return;
+
+    // Serialize against track teardown in stop().
+    std::lock_guard<std::mutex> lk(m_AudioMutex);
+    if (m_Stopping.load() || !m_AudioTrack || !m_AudioTrack->isOpen()) {
+        static int notReady = 0;
+        if (++notReady <= 3)
+            qInfo() << "[MediaTrackRelay] onAudioSample dropped — audio track not ready";
         return;
     }
 
-    sendAudioFragmented(data, m_AudioDc);
+    auto frameInfo = std::make_shared<rtc::FrameInfo>(m_AudioRtpTs);
+    // Advance by the negotiated Opus frame size (48 kHz clock): one clean tick per
+    // packet. A jittery arrival-time clock makes NetEq time-stretch → robotic audio.
+    m_AudioRtpTs += static_cast<uint32_t>(m_Shim ? m_Shim->audioSamplesPerFrame() : 240);
+
+    rtc::binary bin(static_cast<size_t>(data.size()));
+    if (data.size() > 0)
+        std::memcpy(bin.data(), data.constData(), static_cast<size_t>(data.size()));
+
+    try {
+        m_AudioTrack->sendFrame(std::move(bin), *frameInfo);
+    } catch (const std::exception& e) {
+        if (!m_Stopping.load())
+            qWarning() << "[MediaTrackRelay] audio sendFrame error:" << e.what();
+    }
 }
 
 void MediaTrackRelay::onShimConnectionTerminated(int errorCode)
@@ -545,73 +568,6 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     }
 }
 
-// ── Audio fragmented send (same format as DataChannelRelay) ─────────────────────
-
-void MediaTrackRelay::sendAudioFragmented(const QByteArray& data,
-                                          std::shared_ptr<rtc::DataChannel>& dc)
-{
-    if (m_Stopping.load() || !dc || !dc->isOpen()) return;
-    if (data.isEmpty()) return;
-
-    int totalSize = data.size();
-    int totalChunks = (totalSize + kMaxPayloadSize - 1) / kMaxPayloadSize;
-    // Audio uses a separate frame ID space (starts high to avoid collision with DataChannelRelay)
-    // Since this class doesn't use video DCs, we use frameId=0 for audio consistently.
-    const uint32_t frameId = 0;
-
-    for (int chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-        int offset = chunkIdx * kMaxPayloadSize;
-        int payloadSize = std::min(kMaxPayloadSize, totalSize - offset);
-
-        rtc::binary bin(kFragHeaderSize + payloadSize);
-
-        // Frame ID (4 bytes, big endian) — constant 0 for audio
-        bin[0] = static_cast<std::byte>((frameId >> 24) & 0xFF);
-        bin[1] = static_cast<std::byte>((frameId >> 16) & 0xFF);
-        bin[2] = static_cast<std::byte>((frameId >> 8) & 0xFF);
-        bin[3] = static_cast<std::byte>(frameId & 0xFF);
-
-        // Chunk index (2 bytes, big endian)
-        uint16_t chunkIdx16 = static_cast<uint16_t>(chunkIdx);
-        bin[4] = static_cast<std::byte>((chunkIdx16 >> 8) & 0xFF);
-        bin[5] = static_cast<std::byte>(chunkIdx16 & 0xFF);
-
-        // Total chunks (2 bytes, big endian)
-        uint16_t totalChunks16 = static_cast<uint16_t>(totalChunks);
-        bin[6] = static_cast<std::byte>((totalChunks16 >> 8) & 0xFF);
-        bin[7] = static_cast<std::byte>(totalChunks16 & 0xFF);
-
-        // Is keyframe (1 byte) — always 0 for audio
-        bin[8] = static_cast<std::byte>(0x00);
-
-        // Payload size (4 bytes, big endian)
-        uint32_t payloadSize32 = static_cast<uint32_t>(payloadSize);
-        bin[9] = static_cast<std::byte>((payloadSize32 >> 24) & 0xFF);
-        bin[10] = static_cast<std::byte>((payloadSize32 >> 16) & 0xFF);
-        bin[11] = static_cast<std::byte>((payloadSize32 >> 8) & 0xFF);
-        bin[12] = static_cast<std::byte>(payloadSize32 & 0xFF);
-
-        // Backend timestamp (4 bytes, big endian) — 0 for non-video
-        bin[13] = static_cast<std::byte>(0);
-        bin[14] = static_cast<std::byte>(0);
-        bin[15] = static_cast<std::byte>(0);
-        bin[16] = static_cast<std::byte>(0);
-
-        // Payload
-        std::memcpy(bin.data() + kFragHeaderSize, data.constData() + offset,
-                    static_cast<size_t>(payloadSize));
-
-        try {
-            dc->send(bin);
-        } catch (const std::exception& e) {
-            if (!m_Stopping.load()) {
-                qWarning() << "[MediaTrackRelay] Audio fragmented send error:" << e.what();
-            }
-            return;
-        }
-    }
-}
-
 // ── Stats timer (2s interval) ───────────────────────────────────────────────────
 
 void MediaTrackRelay::onStatsTimerTick()
@@ -716,8 +672,20 @@ void MediaTrackRelay::stop()
         }
     };
 
-    closeDc(m_AudioDc, "audio");
     closeDc(m_InputDc, "input");
+
+    // Close the audio track under the audio send lock, so an in-flight audio
+    // sendFrame finishes before the track is destroyed.
+    {
+        std::lock_guard<std::mutex> lk(m_AudioMutex);
+        if (m_AudioTrack) {
+            qInfo() << "[MediaTrackRelay] Closing audio track";
+            try {
+                m_AudioTrack->close();
+            } catch (...) {}
+            m_AudioTrack.reset();
+        }
+    }
 
     // Close Video Track under the send lock, so an in-flight sendFrame on the
     // capture thread finishes before the track is destroyed.

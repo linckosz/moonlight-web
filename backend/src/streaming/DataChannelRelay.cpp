@@ -33,6 +33,7 @@ extern "C" {
 #include <QVector>
 #include <mutex>
 #include <chrono>
+#include <random>
 #include <cstring>
 
 // ============================================================================
@@ -667,22 +668,34 @@ void DataChannelRelay::createDataChannels()
         m_VideoDc->onClosed([this]() { qInfo() << "[DataChannelRelay] Video DataChannel closed"; });
     }
 
-    // --- Audio DataChannel (server->browser, Opus packets) ---
-    // Ordered + 250ms lifetime (must match browser): the client's WebCodecs Opus
-    // decoder is sequential, so out-of-order packets would glitch. Ordered
-    // delivery preserves Opus continuity. The 250ms PR-SCTP window lets briefly
-    // delayed packets still arrive in time for the client's adaptive jitter
-    // buffer (which grows up to ~240ms under lag), reducing dropouts.
-    rtc::DataChannelInit audioConfig;
-    audioConfig.reliability.unordered = false;
-    audioConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(250);
-    audioConfig.negotiated = true;
-    audioConfig.id = 1;
+    // --- Audio track (server->browser, Opus over RTP) ---
+    // Native RTP Opus track on the SAME PeerConnection as the video DataChannel.
+    // The browser decodes Opus with its own jitter buffer + in-band FEC + PLC, so
+    // a lost UDP packet is concealed instead of head-of-line-blocking the audio
+    // (the old ordered DataChannel caused periodic ~0.5s dropouts on packet loss).
+    // useinbandfec=1 tells the decoder to use the FEC carried in the next packet.
+    {
+        auto audioDesc = rtc::Description::Audio("audio", rtc::Description::Direction::SendOnly);
+        audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1");
 
-    m_AudioDc = m_Pc->createDataChannel("audio", audioConfig);
-    if (m_AudioDc) {
-        m_AudioDc->onOpen([this]() { qInfo() << "[DataChannelRelay] Audio DataChannel open"; });
-        m_AudioDc->onClosed([this]() { qInfo() << "[DataChannelRelay] Audio DataChannel closed"; });
+        m_AudioTrack = m_Pc->addTrack(audioDesc);
+        if (m_AudioTrack) {
+            std::random_device rd;
+            uint32_t ssrc = static_cast<uint32_t>(rd());
+
+            auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+                ssrc, "audio", 111, rtc::OpusRtpPacketizer::DefaultClockRate);
+            auto packetizer = std::make_shared<rtc::OpusRtpPacketizer>(rtpConfig);
+            packetizer->addToChain(std::make_shared<rtc::RtcpNackResponder>(64));
+            m_AudioTrack->setMediaHandler(packetizer);
+
+            m_AudioTrack->onOpen([this]() { qInfo() << "[DataChannelRelay] Audio Track open"; });
+            m_AudioTrack->onClosed(
+                [this]() { qInfo() << "[DataChannelRelay] Audio Track closed"; });
+            qInfo() << "[DataChannelRelay] Audio track created (Opus, PT=111)";
+        } else {
+            qWarning() << "[DataChannelRelay] Failed to create audio track";
+        }
     }
 
     // --- Input DataChannel (bidirectional, JSON text) ---
@@ -863,30 +876,33 @@ void DataChannelRelay::sendBufferedKeyframe()
 
 void DataChannelRelay::onAudioSample(const QByteArray& data)
 {
-    if (m_Stopping.load()) {
-        static int dropCount = 0;
-        if (++dropCount <= 3)
-            qInfo() << "[DataChannelRelay] onAudioSample dropped — m_Stopping=true";
-        return;
-    }
-    if (!m_AudioDc) {
-        static int noDcCount = 0;
-        if (++noDcCount <= 3)
-            qInfo() << "[DataChannelRelay] onAudioSample dropped — m_AudioDc is null";
-        return;
-    }
-    if (!m_AudioDc->isOpen()) {
-        static int notOpenCount = 0;
-        if (++notOpenCount <= 3)
-            qInfo() << "[DataChannelRelay] onAudioSample dropped — Audio DC not yet open";
+    if (m_Stopping.load()) return;
+
+    // Serialize against track teardown in stop().
+    std::lock_guard<std::mutex> lk(m_AudioMutex);
+    if (m_Stopping.load() || !m_AudioTrack || !m_AudioTrack->isOpen()) {
+        static int notReady = 0;
+        if (++notReady <= 3)
+            qInfo() << "[DataChannelRelay] onAudioSample dropped — audio track not ready";
         return;
     }
 
-    // Audio uses the same fragmented format as video (isKeyframe=false).
-    // Most audio packets are small (~KB), but PCM samples can also be large
-    // (e.g., a full 16ms frame at 48kHz stereo = 3072 bytes). The header
-    // is consistent and the receiver can demux by channel.
-    sendFragmented(data, false, m_AudioDc);
+    // Send the Opus packet as one RTP frame; the OpusRtpPacketizer wraps it.
+    auto frameInfo = std::make_shared<rtc::FrameInfo>(m_AudioRtpTs);
+    // Advance by the negotiated Opus frame size (48 kHz clock): one clean tick per
+    // packet. A jittery arrival-time clock makes NetEq time-stretch → robotic audio.
+    m_AudioRtpTs += static_cast<uint32_t>(m_Shim ? m_Shim->audioSamplesPerFrame() : 240);
+
+    rtc::binary bin(static_cast<size_t>(data.size()));
+    if (data.size() > 0)
+        std::memcpy(bin.data(), data.constData(), static_cast<size_t>(data.size()));
+
+    try {
+        m_AudioTrack->sendFrame(std::move(bin), *frameInfo);
+    } catch (const std::exception& e) {
+        if (!m_Stopping.load())
+            qWarning() << "[DataChannelRelay] audio sendFrame error:" << e.what();
+    }
 }
 
 void DataChannelRelay::onShimConnectionTerminated(int errorCode)
@@ -1091,11 +1107,9 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
         m_BackpressureDropCount = 0;
     }
 
-    // Audio shares this path but uses its own id counter: at ~200 Opus pkt/s it
-    // would otherwise punch permanent holes in the video frameId sequence and
-    // trip the frontend gap detection on nearly every video frame (IDR loop).
-    const bool isAudio = (dc == m_AudioDc);
-    uint32_t frameId = isAudio ? m_AudioFrameId++ : m_FrameId++;
+    // Video-only path now (audio is a native RTP Opus track, not fragmented over
+    // a DataChannel), so this always uses the video frameId sequence.
+    uint32_t frameId = m_FrameId++;
 
     // ── End-to-end latency timestamp ───────────────────────────────────────
     // Send the frame's capture time in steady_clock domain (monotonic ms).
@@ -1121,12 +1135,9 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // Qt main thread (HTTP/REST/signaling) is never spent building chunks or
     // blocking on a full SCTP buffer. The job holds a shared_ptr copy of the DC,
     // so an in-flight send cannot outlive the channel during stop().
-    m_Sender->enqueue(dc, data, isKeyframe, isAudio, frameId, backendTs);
+    m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs);
 
-    // Video-only counter: audio packets are not "frames" for diagnostics.
-    if (!isAudio) {
-        m_FrameCount++;
-    }
+    m_FrameCount++;
 }
 
 // --- Stats timer (2s interval) ---
@@ -1238,8 +1249,20 @@ void DataChannelRelay::stop()
     };
 
     closeDc(m_VideoDc, "video");
-    closeDc(m_AudioDc, "audio");
     closeDc(m_InputDc, "input");
+
+    // Close the audio track under the audio send lock, so an in-flight audio
+    // sendFrame finishes before the track is destroyed.
+    {
+        std::lock_guard<std::mutex> lk(m_AudioMutex);
+        if (m_AudioTrack) {
+            qInfo() << "[DataChannelRelay] Closing audio track";
+            try {
+                m_AudioTrack->close();
+            } catch (...) {}
+            m_AudioTrack.reset();
+        }
+    }
 
     // Stop the sender thread AFTER closing the DataChannels: a send that is
     // blocked on a full SCTP buffer errors out promptly once the channel closes,

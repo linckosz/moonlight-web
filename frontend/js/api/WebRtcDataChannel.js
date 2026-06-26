@@ -15,6 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
+
 /**
  * Describe a WebSocket close code for diagnostic logging.
  * Returns a human-readable English string suitable for console output.
@@ -87,8 +89,14 @@ export class WebRtcDataChannel {
         this.signalingUrl = signalingUrl;
         this.signalingWs = null;
         this.pc = null;
-        this.dataChannels = { video: null, audio: null, input: null };
+        this.dataChannels = { video: null, input: null };
         this.connected = false;
+
+        // Native RTP Opus audio track playback target. Audio is no longer a
+        // DataChannel — the backend sends Opus over an RTP track on this same
+        // PeerConnection; the browser decodes it (jitter buffer + FEC + PLC) and
+        // we render it through this <audio> element. Set by StreamView.
+        this.audioElement = null;
 
         // WSS mode: legacy StreamRelay WebSocket passthrough.
         // When true, this class acts as a simple WS client that receives
@@ -609,6 +617,16 @@ export class WebRtcDataChannel {
 
         this.pc = new RTCPeerConnection(config);
 
+        // --- Native RTP audio track (Opus, browser-decoded) ---
+        // The backend offers a send-only Opus track; the browser handles jitter
+        // buffer + FEC + PLC. playStream routes it through a Web Audio GainNode
+        // (volume boost, lossless) and handles mobile autoplay unlock.
+        this.pc.ontrack = (evt) => {
+            if (evt.track.kind !== 'audio') return;
+            console.log('[WebRTC] Audio track received — routing through gain stage');
+            iosAudioUnlock.playStream(new MediaStream([evt.track]));
+        };
+
         // --- ICE candidate handler (filter TURN, prioritize UDP) ---
         this.pc.onicecandidate = (evt) => {
             if (
@@ -694,18 +712,9 @@ export class WebRtcDataChannel {
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);
         this._setupDataChannel('video', this.dataChannels.video);
 
-        // Audio DataChannel (ID=1, ordered, 250ms lifetime — must match backend).
-        // Opus is decoded sequentially by WebCodecs: ordered delivery prevents
-        // reorder glitches; the 250ms PR-SCTP window lets delayed packets arrive
-        // in time for the client's adaptive jitter buffer.
-        const audioInit = {
-            negotiated: true,
-            id: 1,
-            ordered: true,
-            maxPacketLifeTime: 250,
-        };
-        this.dataChannels.audio = this.pc.createDataChannel('audio', audioInit);
-        this._setupDataChannel('audio', this.dataChannels.audio);
+        // NOTE: no audio DataChannel — audio is a native RTP Opus track now (id=1
+        // is intentionally left unused so the input channel keeps its id=2,
+        // matching the backend).
 
         // Input DataChannel (ID=2, ordered=true, reliable)
         const inputInit = {
@@ -785,11 +794,11 @@ export class WebRtcDataChannel {
     }
 
     _allDcOpen() {
+        // Audio is an RTP track now (not a DataChannel) — only video + input gate
+        // the "connected" state. The audio track flows over the same transport.
         return (
             this.dataChannels.video &&
             this.dataChannels.video.readyState === 'open' &&
-            this.dataChannels.audio &&
-            this.dataChannels.audio.readyState === 'open' &&
             this.dataChannels.input &&
             this.dataChannels.input.readyState === 'open'
         );
