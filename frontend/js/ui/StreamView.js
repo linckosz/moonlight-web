@@ -817,6 +817,10 @@ export class StreamView {
         // so zoom/pan or the iOS keyboard can never reveal it behind the stream.
         document.body.classList.add('streaming-active');
 
+        // Keep the device awake while streaming (prevents iPhone screen lock /
+        // PC sleep after the idle timeout). Re-acquired on visibility change.
+        this._acquireWakeLock();
+
         // Whole-surface input element: touch events are captured on the full
         // overlay (trackpad model), not just the canvas/video rectangle.
         this.streamEl = el;
@@ -3826,6 +3830,49 @@ export class StreamView {
     }
 
     /**
+     * Acquire a Screen Wake Lock so the device screen stays on while streaming
+     * (prevents iPhone auto-lock and PC display sleep). The lock is auto-released
+     * by the browser when the page is hidden, so we re-acquire it on visibility
+     * change. No-op when the API is unavailable.
+     */
+    async _acquireWakeLock() {
+        if (!('wakeLock' in navigator)) return;
+
+        try {
+            this._wakeLock = await navigator.wakeLock.request('screen');
+            // The lock can be dropped by the system (e.g. tab hidden). Clear our
+            // reference so the visibility handler knows to re-request it.
+            this._wakeLock.addEventListener('release', () => {
+                this._wakeLock = null;
+            });
+        } catch (err) {
+            console.warn('[StreamView] Wake Lock request failed:', err.message);
+        }
+
+        // Re-acquire when the page becomes visible again (lock is released on hide).
+        if (!this._onWakeLockVisibility) {
+            this._onWakeLockVisibility = () => {
+                if (document.visibilityState === 'visible' && !this._wakeLock) {
+                    this._acquireWakeLock();
+                }
+            };
+            document.addEventListener('visibilitychange', this._onWakeLockVisibility);
+        }
+    }
+
+    /** Release the wake lock and drop the visibility handler. */
+    _releaseWakeLock() {
+        if (this._onWakeLockVisibility) {
+            document.removeEventListener('visibilitychange', this._onWakeLockVisibility);
+            this._onWakeLockVisibility = null;
+        }
+        if (this._wakeLock) {
+            this._wakeLock.release().catch(() => {});
+            this._wakeLock = null;
+        }
+    }
+
+    /**
      * Request fullscreen for any transport mode, with CSS fallback on failure.
      *
      * IMPORTANT: never use webkitEnterFullscreen() (iOS native video player).
@@ -5697,6 +5744,7 @@ export class StreamView {
 
     destroy() {
         this._exitCssFallbackFullscreen();
+        this._releaseWakeLock();
         this.stopRenderLoop();
         this.unbindEvents();
         this.webrtc.close();
