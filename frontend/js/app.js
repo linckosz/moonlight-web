@@ -58,6 +58,7 @@ import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
 import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
+import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
@@ -130,6 +131,11 @@ const MoonlightApp = {
             (['MacIntel', 'Mac68K'].indexOf(navigator.platform) !== -1 && 'ontouchend' in document)) {
             document.body.classList.add('ios');
         }
+
+        // iOS: pre-buffer the audio-session unlock element and authorize it on
+        // the first user interaction, so the launch-click unlock reliably starts
+        // it (a freshly-created <audio> can have its first .play() rejected).
+        iosAudioUnlock.prime();
 
         // Reload the app if a newer build is deployed while it stays open.
         VersionGuard.start();
@@ -636,6 +642,15 @@ const MoonlightApp = {
     // =========================================================================
 
     async launchApp(host, app, codecOverride, hdrOverride) {
+        // iOS: create + unlock the AudioContext and start the silent element NOW,
+        // while we still hold the launch-click user activation. The audio pipeline
+        // is created only after the network round-trip below, by which point no
+        // gesture is left — a context created then never acquires the loudspeaker
+        // route and the session stays "ambient" (Silent-switch / ringer volume)
+        // until the user taps the stream. AudioPipeline adopts this context.
+        // No-op off iOS.
+        iosAudioUnlock.prepareForLaunch(48000);
+
         console.log(
             `[MW] Launching: ${app.name} (id=${app.id}) on ${host.displayName}` +
                 (codecOverride ? ` (forced codec: ${codecOverride})` : '') +
@@ -753,6 +768,9 @@ const MoonlightApp = {
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
+            // Launch failed before the audio pipeline could take over the iOS
+            // session hold — release it so we don't keep a silent element looping.
+            iosAudioUnlock.release();
             this._hideRelaunchLoader();
             // Revert the app card stuck on "Launching..." back to its idle state.
             if (this.appListView) this.appListView.clearLaunching();
@@ -1003,6 +1021,7 @@ const MoonlightApp = {
         // Without this guard, both popstate and onQuit would navigate.
         if (this._nav.overlay !== 'streaming') {
             this.streamView = null;
+            iosAudioUnlock.release(); // real teardown — drop the iOS session hold
             return;
         }
 
@@ -1025,6 +1044,7 @@ const MoonlightApp = {
             // The chain has at most 3 hops; allow up to 4 attempts as a safety net.
             if (this._fallbackAttemptCount > 4) {
                 console.error('[MW] Codec fallback chain exhausted, giving up');
+                iosAudioUnlock.release(); // giving up — drop the iOS session hold
                 this._hideRelaunchLoader();
                 this.transition('app_list');
                 if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
@@ -1077,6 +1097,9 @@ const MoonlightApp = {
 
         // Reset fallback counter on successful non-fallback quit
         this._fallbackAttemptCount = 0;
+
+        // Real streaming exit — release the iOS playback-session hold.
+        iosAudioUnlock.release();
 
         this.transition('app_list');
 
