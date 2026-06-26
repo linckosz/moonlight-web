@@ -25,11 +25,12 @@
  *
  * Anti-crackle design:
  *   - Adaptive jitter buffer: playback waits until `_target` frames are queued.
- *     The target starts small (~60 ms) and GROWS on every underrun (up to
- *     ~400 ms), so a laggy network self-tunes to a larger cushion; it decays
- *     slowly back toward the base during sustained stable playback. The base
- *     (steady-state) target is NOT changed, so a healthy network keeps the same
- *     latency as before — the extra cushion only appears when underruns occur.
+ *     The target starts small (~60 ms) and GROWS up to ~160 ms when the stream
+ *     is unstable — on a real underrun AND proactively when the buffer dips near
+ *     empty (a near-underrun) — so a laggy network self-tunes to a larger
+ *     cushion; it decays slowly back toward the base during sustained stable
+ *     playback. The base (steady-state) target is NOT changed, so a healthy
+ *     network keeps the same latency — the cushion only grows under instability.
  *   - De-click: short linear fade-out into silence on underrun and fade-in on
  *     resume, turning sharp clicks into inaudible transitions.
  *   - Soft underrun recovery: on underrun we KEEP whatever just arrived and
@@ -65,12 +66,12 @@ class AudioProcessor extends AudioWorkletProcessor {
         // same latency. Only the ceiling / growth / decay are tuned so a laggy
         // network builds a larger cushion and holds it longer.
         this._baseTarget = Math.round(sampleRate * 0.06); // 60 ms steady state
-        this._maxTarget = Math.round(sampleRate * 0.4); // 400 ms ceiling
+        this._maxTarget = Math.round(sampleRate * 0.16); // 160 ms ceiling
         this._target = this._baseTarget;
-        this.GROW_FRAMES = Math.round(sampleRate * 0.04); // +40 ms per underrun
-        this.MAX_BUFFER_FRAMES = Math.round(sampleRate * 0.6); // 600 ms hard cap
+        this.GROW_FRAMES = Math.round(sampleRate * 0.02); // +20 ms per instability event
+        this.MAX_BUFFER_FRAMES = Math.round(sampleRate * 0.4); // 400 ms hard cap
         this.DECAY_INTERVAL = Math.round(sampleRate * 8); // shrink after 8 s stable
-        this.DECAY_FRAMES = Math.round(sampleRate * 0.02); // -20 ms per decay step
+        this.DECAY_FRAMES = Math.round(sampleRate * 0.01); // -10 ms per decay step
 
         // Soft underrun recovery: resume playback once this fraction of the
         // current target is re-buffered, instead of waiting for the full target.
@@ -95,6 +96,12 @@ class AudioProcessor extends AudioWorkletProcessor {
         this._tsSinceCorrection = this.TS_MIN_SPACING;
         this._tsLastScore = 0;
 
+        // PCM input port: when audio is decoded in a dedicated Worker, PCM is
+        // posted straight here over a transferred MessagePort (worker → worklet),
+        // bypassing the main thread entirely. In the no-worker fallback, PCM
+        // arrives on this.port instead.
+        this._pcmPort = null;
+
         this.port.onmessage = (evt) => {
             const data = evt.data;
             // Config messages from the main thread (plain objects, not buffers).
@@ -108,23 +115,33 @@ class AudioProcessor extends AudioWorkletProcessor {
                 }
                 return;
             }
-
-            // Float32 interleaved stereo PCM (transferred ArrayBuffer).
-            const chunk = new Float32Array(data);
-            if (chunk.length === 0) return;
-
-            this._queue.push(chunk);
-            this._queuedFrames += chunk.length >> 1; // /2 channels
-
-            // Overrun protection: drop oldest chunks until under the cap. With
-            // time-stretch on this is only a last-resort safety net (accelerate
-            // normally drains the buffer smoothly well before this triggers).
-            while (this._queuedFrames > this.MAX_BUFFER_FRAMES && this._queue.length > 1) {
-                const dropped = this._queue.shift();
-                this._queuedFrames -= (dropped.length - this._readOffset) >> 1;
-                this._readOffset = 0;
+            // Direct PCM channel from the decode worker.
+            if (data && data.type === 'pcm-port') {
+                this._pcmPort = data.port;
+                this._pcmPort.onmessage = (e) => this._enqueue(e.data);
+                return;
             }
+            // Fallback (no worker): PCM (transferred ArrayBuffer) on the node port.
+            this._enqueue(data);
         };
+    }
+
+    /** Queue one interleaved-stereo Float32 PCM buffer for playback. */
+    _enqueue(buffer) {
+        const chunk = new Float32Array(buffer);
+        if (chunk.length === 0) return;
+
+        this._queue.push(chunk);
+        this._queuedFrames += chunk.length >> 1; // /2 channels
+
+        // Overrun protection: drop oldest chunks until under the cap. With
+        // time-stretch on this is only a last-resort safety net (accelerate
+        // normally drains the buffer smoothly well before this triggers).
+        while (this._queuedFrames > this.MAX_BUFFER_FRAMES && this._queue.length > 1) {
+            const dropped = this._queue.shift();
+            this._queuedFrames -= (dropped.length - this._readOffset) >> 1;
+            this._readOffset = 0;
+        }
     }
 
     // ── Queue helpers (used by the time-stretch corrections) ────────────────
@@ -392,12 +409,20 @@ class AudioProcessor extends AudioWorkletProcessor {
             this._lastR = 0;
             this._framesSinceUnderrun = 0;
         } else {
-            // Stable playback — slowly decay the target back toward the base.
+            // Stable playback.
             this._framesSinceUnderrun += numFrames;
-            if (
+            // Instability detection: if the buffer dipped near empty without a
+            // full underrun (jitter), grow the target proactively before it
+            // becomes an audible gap. Fast up / slow down (AIMD), 160 ms ceiling.
+            const lowWatermark = Math.max(numFrames * 2, this._target >> 2); // ~25% of target
+            if (this._queuedFrames < lowWatermark && this._target < this._maxTarget) {
+                this._target = Math.min(this._maxTarget, this._target + this.GROW_FRAMES);
+                this._framesSinceUnderrun = 0;
+            } else if (
                 this._framesSinceUnderrun > this.DECAY_INTERVAL &&
                 this._target > this._baseTarget
             ) {
+                // Slowly decay the target back toward the base when sustained-stable.
                 this._target = Math.max(this._baseTarget, this._target - this.DECAY_FRAMES);
                 this._framesSinceUnderrun = 0;
             }

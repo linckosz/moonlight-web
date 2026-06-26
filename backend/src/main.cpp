@@ -158,6 +158,7 @@ int main(int argc, char* argv[])
     // Read HTTP/HTTPS port preferences from persisted settings.
     // CLI --port overrides the persisted HTTP port when explicitly provided.
     AppSettings appSettings;
+    appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
     quint16 httpPort = appSettings.httpPort(80);
     if (parser.isSet("port")) httpPort = parser.value("port").toUShort();
 
@@ -864,6 +865,9 @@ int main(int argc, char* argv[])
         bool reqHdr = body.contains("hdr_enabled") ? body["hdr_enabled"].toBool()
                                                    : appSettings.hdrEnabled();
 
+        // Mobile clients request lower-bandwidth audio (10ms Opus frames).
+        bool reqLowAudio = body.contains("low_audio") && body["low_audio"].toBool();
+
         // Video enhancement (WebGPU): the browser renders via canvas, so when it
         // is on the transport negotiation must avoid webrtc-media (<video>).
         bool reqVideoEnhancement = body.contains("video_enhancement")
@@ -1192,6 +1196,7 @@ int main(int argc, char* argv[])
             s->setStreamRelayPort(signalingPort + 1);
             s->setTransportMode(transportMode); // Full mode for response
             s->setEnableIceTcp(iceTcp);
+            s->setLowAudio(reqLowAudio);
             s->setClientUniqueId(reqClientUniqueId);
             attachRelayTracking(s);
             // Track the active session so a later take-over can quit() it (stops
@@ -1611,13 +1616,8 @@ int main(int argc, char* argv[])
         obj["chroma_444_enabled"] = appSettings.chroma444Enabled();
         obj["video_enhancement"] = appSettings.videoEnhancement();
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
-        // Audio time-stretch (WSOLA) kill switch — env MW_AUDIO_TIME_STRETCH,
-        // on by default. Set 0/false/no/off in .env to disable.
-        {
-            QByteArray ts = qgetenv("MW_AUDIO_TIME_STRETCH").trimmed().toLower();
-            obj["audio_time_stretch"] =
-                !(ts == "0" || ts == "false" || ts == "no" || ts == "off");
-        }
+        // Audio time-stretch (WSOLA) — file-only setting, default false.
+        obj["audio_time_stretch"] = appSettings.audioTimeStretch();
         // Debug build flag: the UI exposes the enhancement algo selector only in
         // debug builds (Qt Creator); production forces 'auto'.
 #ifdef QT_DEBUG

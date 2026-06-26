@@ -115,6 +115,10 @@ void MoonlightShim::startConnection(const InitParams& params)
         arCallbacks.cleanup = arCleanup;
         arCallbacks.decodeAndPlaySample = arDecodeAndPlaySample;
         arCallbacks.capabilities = CAPABILITY_DIRECT_SUBMIT;
+        // Mobile: advertise a "slow" decoder so moonlight-common-c requests 10ms
+        // Opus frames instead of 5ms — halves the packet rate (less RTP/FEC/crypto
+        // overhead on constrained networks) with negligible quality loss.
+        if (params.slowOpus) arCallbacks.capabilities |= CAPABILITY_SLOW_OPUS_DECODER;
 
         CONNECTION_LISTENER_CALLBACKS clCallbacks;
         LiInitializeConnectionCallbacks(&clCallbacks);

@@ -58,6 +58,7 @@ public:
         int colorSpace = 1;                 // 0=BT.601 1=BT.709 SDR, 6=BT.2020+P(Q(HDR10)
         int colorRange = 0;                 // 0=Limited(TV), 1=Full(PC)
         int audioConfiguration = 0;
+        bool slowOpus = false; // request 10ms Opus frames (half the packet rate) for mobile
 
         QByteArray aesKey; // 16 bytes
         int rikeyid = 0;
