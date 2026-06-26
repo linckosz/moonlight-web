@@ -25,6 +25,7 @@ parent zone, the nameserver glue and the `api.{MW_DOMAIN}` host.
 
 ```
 deploy/powerdns/
+├── install.sh               # one-shot installer (Docker, security, firewall, up)
 ├── docker-compose.yml       # dnsdist + pdns + caddy
 ├── pdns/
 │   ├── init.sh              # zone bootstrap, then the official pdns wrapper
@@ -45,7 +46,43 @@ bootstrap script (`pdns/init.sh`). `MW_PDNS_API_KEY` from `.env` is mapped to
 `PDNS_AUTH_API_KEY` in the compose file, so the API key reaches the official
 mechanism unchanged.
 
-## Quick start
+## Quick start — automated installer (recommended)
+
+On a fresh Linux VM (any distro: Debian/Ubuntu, RHEL/Fedora, Arch, openSUSE,
+Alpine), clone the repo and run the installer. It does **everything**: installs
+Docker + compose, host security tools (fail2ban, auto-updates), the host
+firewall, frees port 53, adds swap on low-RAM hosts, asks for your settings,
+then builds and starts the stack.
+
+```bash
+git clone <this-repo>
+cd <repo>/deploy/powerdns
+sudo ./install.sh
+```
+
+The installer prompts for:
+
+- **Required** — `MW_DOMAIN` (the domain you own) and `MW_PUBLIC_IP` (this VM's
+  public IPv4, auto-detected as a default). An API key is generated for you.
+- **Optional** — a Let's Encrypt notification email, and your own TLS cert/key
+  files. Leave the cert fields blank to let Caddy issue and renew a Let's
+  Encrypt certificate automatically.
+
+When it finishes, the VM is fully operational. The console (and a saved
+`NEXT-STEPS.txt`) shows a **to-do list** for the parts only you can do: opening
+the cloud firewall/NSG ports, registering `ns1`/`ns2` at your registrar, and
+submitting the DNSSEC DS record. Re-run `sudo ./install.sh` any time — it is
+idempotent and keeps an existing `.env`.
+
+On the Moonlight-Web server, set in its own `.env`:
+
+```
+MW_DOMAIN=example.top
+MW_PDNS_URL=https://api.example.top/api/v1/servers/localhost
+MW_PDNS_TOKEN=<same value as MW_PDNS_API_KEY in deploy/powerdns/.env>
+```
+
+### Manual install (without the script)
 
 ```bash
 cd deploy/powerdns
@@ -55,13 +92,8 @@ docker compose up -d --build
 docker compose logs -f pdns   # note the DS record printed on first boot
 ```
 
-On the Moonlight-Web server, set in its own `.env`:
-
-```
-MW_DOMAIN=example.top
-MW_PDNS_URL=https://api.example.top/api/v1/servers/localhost
-MW_PDNS_TOKEN=<same value as MW_PDNS_API_KEY here>
-```
+You then handle Docker, the firewall and port 53 yourself (see the Azure
+section below for the individual commands).
 
 ## Deploy on Azure (Ubuntu 24.04)
 
@@ -108,47 +140,22 @@ az network nsg rule create -g $RG --nsg-name $NSG -n Allow-SSH --priority 130 \
   --source-address-prefixes <your.public.ip>/32
 ```
 
-### 5. Free port 53 (Ubuntu's systemd-resolved)
+### 5. Run the installer
 
-Ubuntu's `systemd-resolved` holds port 53, which blocks the dnsdist container.
-Disable its stub listener but keep host name resolution working:
-
-```bash
-sudo sed -i 's/^#\?DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf
-sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-sudo systemctl restart systemd-resolved
-sudo ss -lunp | grep ':53' || echo "port 53 is free"   # should print nothing but the echo
-```
-
-### 6. Install Docker
-
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker "$USER" && newgrp docker
-```
-
-### 7. Add swap (important on 1 GiB RAM)
-
-The Caddy image is compiled with xcaddy (Go) at build time, which can exhaust
-1 GiB and get OOM-killed. A small swap file prevents this and cushions runtime:
-
-```bash
-sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
-sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-
-### 8. Deploy
+SSH into the VM, then let the installer handle the rest — it frees port 53
+(Ubuntu's `systemd-resolved` holds it), installs Docker, fail2ban and the host
+firewall, adds swap (the xcaddy Go build can OOM on 1 GiB RAM), and starts the
+stack:
 
 ```bash
 git clone <this-repo> && cd <repo>/deploy/powerdns
-cp .env.sample .env && nano .env   # MW_DOMAIN, MW_PUBLIC_IP=<the static IP>, MW_PDNS_API_KEY
-docker compose up -d --build
-docker compose logs -f pdns        # note the DS record printed on first boot
+sudo ./install.sh
 ```
 
-Then register `MW_PUBLIC_IP` at your registrar (see *Register the nameserver at
-your domain provider* below).
+Use the **static public IP** from step 2 as `MW_PUBLIC_IP` when prompted (it is
+also auto-detected as the default). When the installer finishes it prints — and
+saves to `NEXT-STEPS.txt` — the remaining manual steps, including the DNSSEC DS
+record to give your registrar (see *Register the nameserver* below).
 
 ## TLS — automatic Let's Encrypt or your own files
 

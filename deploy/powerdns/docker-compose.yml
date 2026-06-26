@@ -29,7 +29,11 @@ services:
       - pdns_data:/var/lib/powerdns                 # zone DB persists
       - ./pdns/zz-mw.conf:/etc/powerdns/pdns.d/zz-mw.conf:ro
       - ./pdns/init.sh:/mw/init.sh:ro
-    networks: [mwnet]
+    networks:
+      mwnet:
+        # Fixed IP: dnsdist's newServer needs a literal address (it does not
+        # resolve container names). Must match dnsdist/dnsdist.conf.
+        ipv4_address: 172.28.0.10
     # No published ports: only dnsdist (DNS) and caddy (API) reach it internally.
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]                               # high ports → no caps needed
@@ -51,6 +55,10 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     cap_add: ["NET_BIND_SERVICE"]                   # bind :53
+    # dnsdist pre-allocates many sockets (per-IP QPS tracking); raise the FD
+    # limit above its ~10k need, otherwise it warns at startup.
+    ulimits:
+      nofile: { soft: 16384, hard: 16384 }
     pids_limit: 200
     mem_limit: 256m
 
@@ -90,3 +98,7 @@ volumes:
 networks:
   mwnet:
     driver: bridge
+    # Fixed subnet so pdns can keep a stable IP for dnsdist's backend address.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
