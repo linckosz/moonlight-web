@@ -1,0 +1,44 @@
+# Moonlight-Web — Windows x64 build validation (CMake).
+#
+# Validates the cross-platform CMake toolchain on Windows/MSVC (replacement path
+# for the legacy qmake .pro). OpenSSL x64 is committed under backend/libs/windows.
+name: build-windows
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  windows-x64:
+    name: Backend (Windows x64, CMake/MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          arch: win64_msvc2022_64
+          modules: qtwebsockets
+
+      - name: Configure
+        run: >
+          cmake -S backend -B backend/build/win
+          -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build backend/build/win --config Release -j
+
+      - name: Deploy Qt runtime
+        run: windeployqt --release backend/build/win/Release/mw-server.exe
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mw-server-windows-x64
+          path: backend/build/win/Release
+          if-no-files-found: warn
