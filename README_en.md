@@ -22,6 +22,6 @@ Most options are set from the in-app Settings/Admin UI and stored server-side in
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `audio_time_stretch` | bool | `false` | Pitch-preserving audio time-stretch (WSOLA) in the browser. Set to `true` to improve audio smoothness on an unstable network: it absorbs clock drift and jitter by slightly stretching/compressing the sound without changing its pitch — at the cost of a small amount of time-domain distortion and slightly higher CPU usage (the corrections run on the audio thread and only fire during instability, so the energy impact on mobile is minor). `false` keeps the plain adaptive jitter buffer. |
+| `audio_time_stretch` | bool | `true` | Pitch-preserving audio time-stretch (WSOLA) in the browser. When `true` it improves audio smoothness on an unstable network: it absorbs clock drift and jitter by slightly stretching/compressing the sound without changing its pitch — at the cost of a small amount of time-domain distortion and slightly higher CPU usage (the corrections run on the audio thread and only fire during instability, so the energy impact on mobile is minor). Set to `false` to keep the plain adaptive jitter buffer. |
 
 Restart the server (or relaunch the stream) after editing the file.
