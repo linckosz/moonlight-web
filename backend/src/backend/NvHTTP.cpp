@@ -244,20 +244,23 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
                                       const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                       int width, int height, int fps, int bitrate,
                                       const QByteArray& clientCertPem,
-                                      const QByteArray& clientKeyPem, int hdrMode)
+                                      const QByteArray& clientKeyPem, int hdrMode,
+                                      int localAudioPlayMode)
 {
     Q_UNUSED(bitrate) // sent via RTSP ANNOUNCE, not /launch
     QString mode = QString("%1x%2x%3").arg(width).arg(height).arg(fps);
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    // localAudioPlayMode: 0 = mute host speakers (audio only streamed), 1 = play on host too.
     QString query = QString("appid=%1&uniqueid=%2&uuid=%3&mode=%4&rikey=%5&rikeyid=%6"
-                            "&localAudioPlayMode=0&sops=1&surroundAudioInfo=196610"
-                            "&gcmap=0&hdrMode=%7&corever=1")
+                            "&localAudioPlayMode=%7&sops=1&surroundAudioInfo=196610"
+                            "&gcmap=0&hdrMode=%8&corever=1")
                         .arg(appId)
                         .arg(uniqueId)
                         .arg(uuid)
                         .arg(mode)
                         .arg(QString::fromLatin1(rikey.toHex()))
                         .arg(rikeyid)
+                        .arg(localAudioPlayMode)
                         .arg(hdrMode);
 
     QUrl url(QString("https://%1:%2/launch?%3").arg(address.address()).arg(httpsPort).arg(query));
@@ -284,17 +287,19 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPort,
                                       const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                       const QByteArray& clientCertPem,
-                                      const QByteArray& clientKeyPem)
+                                      const QByteArray& clientKeyPem, int localAudioPlayMode)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
     // No appid/mode: resume reconnects to the app already running for this client.
+    // localAudioPlayMode: 0 = mute host speakers, 1 = play on host too.
     QString query = QString("uniqueid=%1&uuid=%2&rikey=%3&rikeyid=%4"
-                            "&surroundAudioInfo=196610&localAudioPlayMode=0&corever=1")
+                            "&surroundAudioInfo=196610&localAudioPlayMode=%5&corever=1")
                         .arg(uid)
                         .arg(uuid)
                         .arg(QString::fromLatin1(rikey.toHex()))
-                        .arg(rikeyid);
+                        .arg(rikeyid)
+                        .arg(localAudioPlayMode);
 
     QUrl url(QString("https://%1:%2/resume?%3").arg(address.address()).arg(httpsPort).arg(query));
 

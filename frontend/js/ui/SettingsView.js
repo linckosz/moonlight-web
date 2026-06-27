@@ -51,6 +51,7 @@ export class SettingsView {
         this._streamFps = 60;
         this._hdrEnabled = false;
         this._chroma444 = false;
+        this._muteHostAudio = true;
         this._touchSensitivity = 2.2;
         // Mobile only: direct touch-screen input (absolute) instead of the
         // relative trackpad model. Off by default.
@@ -136,6 +137,7 @@ export class SettingsView {
         this._streamFps = data.stream_fps || 60;
         this._hdrEnabled = data.hdr_enabled === true;
         this._chroma444 = data.chroma_444_enabled === true;
+        this._muteHostAudio = data.mute_host_audio !== false;
         this._touchSensitivity =
             typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
                 ? data.touch_sensitivity
@@ -225,6 +227,7 @@ export class SettingsView {
             stream_fps: this._streamFps,
             hdr_enabled: this._hdrEnabled,
             chroma_444_enabled: this._chroma444,
+            mute_host_audio: this._muteHostAudio,
             touch_sensitivity: this._touchSensitivity,
             touch_screen: this._touchScreen,
             vsync_enabled: this._vsync,
@@ -452,6 +455,7 @@ export class SettingsView {
         this._streamFps = 60;
         this._hdrEnabled = false;
         this._chroma444 = false;
+        this._muteHostAudio = true;
         this._touchSensitivity = 2.2;
         this._touchScreen = false;
         this._vsync = true;
@@ -757,6 +761,17 @@ export class SettingsView {
                         ${codecHintHtml}
                     </div>
 
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-mute-host"
+                                ${this._muteHostAudio ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.muteHost')}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.muteHostDesc')}</span>
+                    </div>
+
                     <div class="settings-field${psLocked}">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-chroma-444"
@@ -959,6 +974,13 @@ export class SettingsView {
         if (chroma444Check)
             chroma444Check.addEventListener('change', () => {
                 this._applyAutoBitrate();
+                this._autoSave();
+            });
+
+        const muteHostCheck = this.container.querySelector('#settings-mute-host');
+        if (muteHostCheck)
+            muteHostCheck.addEventListener('change', () => {
+                this._muteHostAudio = muteHostCheck.checked;
                 this._autoSave();
             });
 

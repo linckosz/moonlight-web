@@ -3655,6 +3655,16 @@ export class StreamView {
         // listeners (beforeinput/keydown) — don't double-process here.
         if (e.target === this._kbdCapture) return;
 
+        // Ignore OS auto-repeat (e.repeat): a held key fires a burst of keydown
+        // events. Forwarding them floods the host — and on a bad network the user
+        // holds the key longer waiting for a frozen frame, so the queued repeats
+        // all land at once (e.g. "améliiiiiorer"). Send a single keydown and let
+        // the GUEST OS generate typematic repeat while the key stays down.
+        if (e.repeat) {
+            e.preventDefault();
+            return;
+        }
+
         // Sync lock keys to the host once, on the first real keyboard event.
         if (!this._locksSynced) this._syncLockState(e);
 
@@ -3863,13 +3873,20 @@ export class StreamView {
      */
     async _acquireWakeLock() {
         if (!('wakeLock' in navigator)) return;
+        // Cleared by _releaseWakeLock() so an intentional release doesn't loop.
+        this._wakeReleased = false;
 
         try {
             this._wakeLock = await navigator.wakeLock.request('screen');
-            // The lock can be dropped by the system (e.g. tab hidden). Clear our
-            // reference so the visibility handler knows to re-request it.
+            // The lock can be dropped by the system without a visibility change
+            // (notably iOS Safari auto-releases after a while). Clear our reference
+            // and immediately re-request while still streaming and visible, so the
+            // screen never sleeps mid-session.
             this._wakeLock.addEventListener('release', () => {
                 this._wakeLock = null;
+                if (!this._wakeReleased && document.visibilityState === 'visible') {
+                    this._acquireWakeLock();
+                }
             });
         } catch (err) {
             console.warn('[StreamView] Wake Lock request failed:', err.message);
@@ -3888,6 +3905,8 @@ export class StreamView {
 
     /** Release the wake lock and drop the visibility handler. */
     _releaseWakeLock() {
+        // Mark intentional so the release handler doesn't re-acquire.
+        this._wakeReleased = true;
         if (this._onWakeLockVisibility) {
             document.removeEventListener('visibilitychange', this._onWakeLockVisibility);
             this._onWakeLockVisibility = null;

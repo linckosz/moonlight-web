@@ -111,6 +111,14 @@ public:
     bool hdrEnabled() const;
     void setHdrEnabled(bool enabled);
 
+    // ── Mute host audio ───────────────────────────────────────────────────────
+    //
+    // Whether the host PC speakers are muted while streaming. Stored as JSON bool
+    // "mute_host_audio", default true (GameStream localAudioPlayMode=0).
+
+    bool muteHostAudio() const;
+    void setMuteHostAudio(bool enabled);
+
     // ── Chroma 4:4:4 ───────────────────────────────────────────────────────────
     //
     // Whether full-resolution YUV 4:4:4 chroma is requested (vs the default

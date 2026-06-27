@@ -868,6 +868,10 @@ int main(int argc, char* argv[])
         // Mobile clients request lower-bandwidth audio (10ms Opus frames).
         bool reqLowAudio = body.contains("low_audio") && body["low_audio"].toBool();
 
+        // Mute host PC speakers while streaming (localAudioPlayMode). Default true.
+        bool reqMuteHost = body.contains("mute_host_audio") ? body["mute_host_audio"].toBool()
+                                                            : appSettings.muteHostAudio();
+
         // Video enhancement (WebGPU): the browser renders via canvas, so when it
         // is on the transport negotiation must avoid webrtc-media (<video>).
         bool reqVideoEnhancement = body.contains("video_enhancement")
@@ -1197,6 +1201,7 @@ int main(int argc, char* argv[])
             s->setTransportMode(transportMode); // Full mode for response
             s->setEnableIceTcp(iceTcp);
             s->setLowAudio(reqLowAudio);
+            s->setMuteHostAudio(reqMuteHost);
             s->setClientUniqueId(reqClientUniqueId);
             attachRelayTracking(s);
             // Track the active session so a later take-over can quit() it (stops
@@ -1613,6 +1618,7 @@ int main(int argc, char* argv[])
         obj["stream_aspect"] = appSettings.streamAspect();
         obj["stream_fps"] = appSettings.streamFps();
         obj["hdr_enabled"] = appSettings.hdrEnabled();
+        obj["mute_host_audio"] = appSettings.muteHostAudio();
         obj["chroma_444_enabled"] = appSettings.chroma444Enabled();
         obj["video_enhancement"] = appSettings.videoEnhancement();
         obj["video_enhancement_algo"] = appSettings.videoEnhancementAlgo();
@@ -1707,6 +1713,14 @@ int main(int argc, char* argv[])
             bool enabled = body["chroma_444_enabled"].toBool();
             appSettings.setChroma444Enabled(enabled);
             obj["chroma_444_enabled"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        if (body.contains("mute_host_audio")) {
+            bool enabled = body["mute_host_audio"].toBool();
+            appSettings.setMuteHostAudio(enabled);
+            obj["mute_host_audio"] = enabled;
             obj["status"] = "saved";
             hadChange = true;
         }
