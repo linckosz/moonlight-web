@@ -281,6 +281,7 @@
     "exitFullscreenHint": "Appuyez sur {{combo}} pour quitter le plein écran",
     "immersiveExitTitle": "Quitter le mode immersif",
     "immersiveExitDesc": "rend la souris & quitte le plein écran",
+    "closeOverlay": "Masquer",
     "mouseMode": "Mode souris : {{mode}}",
     "mouseModeGaming": "Immersif",
     "mouseModeDesktop": "Bureau",

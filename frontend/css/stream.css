@@ -338,7 +338,8 @@ body.streaming-active .app-footer {
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 8px;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.30);
-    padding: 5px 11px;
+    /* Extra right padding reserves room for the absolute × close button. */
+    padding: 5px 24px 5px 11px;
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     font-size: 10.5px;
     white-space: nowrap;
@@ -377,6 +378,31 @@ body.streaming-active .app-footer {
     font-size: 10px;
     line-height: 1.4;
     color: rgba(255, 255, 255, 0.80);
+}
+
+/* ── Overlay × close button (stats + immersive cards) ──────────────────────── */
+.overlay-close-btn {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.40);
+    font-size: 14px;
+    line-height: 16px;
+    text-align: center;
+    cursor: pointer;
+    border-radius: 4px;
+    pointer-events: auto;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+.overlay-close-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
 }
 
 .stats-waiting {

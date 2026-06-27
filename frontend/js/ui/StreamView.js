@@ -338,6 +338,14 @@ export class StreamView {
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
         this._mouseFocused = false;
+        // Virtual Y cursor tracked from pointer-lock deltas (seeded mid-screen
+        // on capture). Pushing it to the very top of the screen releases the
+        // lock so the client cursor can reach the overlays. Immersive mode only.
+        this._virtY = 0;
+        // Per-session "closed" flags: the user can dismiss the stats and the
+        // immersive exit overlay with their × button; they stay hidden after.
+        this._statsClosed = false;
+        this._immersiveClosed = false;
 
         // Audio transport: on WebRTC transports (webrtc / webrtc-media) audio is a
         // native RTP Opus track decoded by the browser (jitter buffer + in-band
@@ -914,6 +922,14 @@ export class StreamView {
         // way. Position is intentionally not persisted so it resets to the
         // top-left default on every new streaming session.
         this._makeStatsDraggable(this._overlayEl);
+        // × hides the stats card for the rest of the session.
+        this._overlayEl.addEventListener('click', (e) => {
+            if (!e.target.closest('.overlay-close-btn')) return;
+            e.stopPropagation();
+            e.preventDefault();
+            this._statsClosed = true;
+            this._overlayEl.style.display = 'none';
+        });
 
         // ── Immersive-mode exit reminder (top-center, draggable) ───────────
         // Discreet card that only appears once immersive mode has captured the
@@ -927,6 +943,14 @@ export class StreamView {
             this._buildImmersiveOverlayContent();
             document.getElementById('stream-view').appendChild(this._immersiveOverlay);
             this._makeStatsDraggable(this._immersiveOverlay);
+            // × hides the reminder for the rest of the session.
+            this._immersiveOverlay.addEventListener('click', (e) => {
+                if (!e.target.closest('.overlay-close-btn')) return;
+                e.stopPropagation();
+                e.preventDefault();
+                this._immersiveClosed = true;
+                this._updateImmersiveOverlay();
+            });
         }
 
         // ── Cyberpunk "signal acquired" reveal ─────────────────────────────
@@ -2609,6 +2633,8 @@ export class StreamView {
         };
         el.addEventListener('pointerdown', (e) => {
             if (e.button !== 0 && e.pointerType === 'mouse') return;
+            // The close (×) button handles its own pointer events — never drag.
+            if (e.target.closest && e.target.closest('.overlay-close-btn')) return;
             const rect = el.getBoundingClientRect();
             startX = e.clientX;
             startY = e.clientY;
@@ -2626,6 +2652,20 @@ export class StreamView {
             window.addEventListener('pointerup', onUp);
             e.preventDefault();
         });
+    }
+
+    // ── Overlay close (×) button ─────────────────────────────────────────
+
+    /** Markup for the small × button that dismisses a draggable overlay. */
+    _overlayCloseBtnHtml() {
+        const label = t('stream.closeOverlay');
+        return (
+            '<button type="button" class="overlay-close-btn" aria-label="' +
+            label +
+            '" title="' +
+            label +
+            '">×</button>'
+        );
     }
 
     // ── Immersive-mode exit reminder ─────────────────────────────────────
@@ -2649,15 +2689,10 @@ export class StreamView {
             html += '<kbd>' + keys[i] + '</kbd>';
         }
         html += '</span>';
-        html +=
-            '<span class="imm-text">' +
-            t('stream.immersiveExitTitle') +
-            ' · ' +
-            t('stream.immersiveExitDesc') +
-            '</span>';
+        html += '<span class="imm-text">' + t('stream.immersiveExitTitle') + '</span>';
+        html += this._overlayCloseBtnHtml();
         this._immersiveOverlay.innerHTML = html;
-        this._immersiveOverlay.title =
-            t('stream.immersiveExitTitle') + ' — ' + t('stream.immersiveExitDesc');
+        this._immersiveOverlay.title = t('stream.immersiveExitTitle');
     }
 
     /**
@@ -2669,7 +2704,7 @@ export class StreamView {
         // Visible whenever immersive mode is on (after the first frame), NOT only
         // while the mouse is captured: a captured (pointer-locked) cursor cannot
         // be moved onto the card to drag it, so it must be reachable pre-capture.
-        const show = this._gamingMode && this._firstFrameRendered;
+        const show = this._gamingMode && this._firstFrameRendered && !this._immersiveClosed;
         this._immersiveOverlay.classList.toggle('visible', show);
         if (show) this._positionImmersiveOverlay();
     }
@@ -2705,6 +2740,12 @@ export class StreamView {
 
         if (!this._overlayEl) return;
 
+        // Dismissed by the user via its × button — stays hidden for the session.
+        if (this._statsClosed) {
+            this._overlayEl.style.display = 'none';
+            return;
+        }
+
         // Hide entire overlay when performance stats are disabled in settings
         if (!this._showPerfStats) {
             this._overlayEl.style.display = 'none';
@@ -2714,7 +2755,10 @@ export class StreamView {
         // Before first frame: show minimal waiting state
         if (!this._firstFrameRendered) {
             this._overlayEl.innerHTML =
-                '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
+                '<div class="stats-waiting">' +
+                t('stream.connecting') +
+                '</div>' +
+                this._overlayCloseBtnHtml();
             this._overlayEl.style.display = '';
             return;
         }
@@ -2886,6 +2930,7 @@ export class StreamView {
             '</div>';
 
         html += '</div>';
+        html += this._overlayCloseBtnHtml();
 
         this._overlayEl.innerHTML = html;
     }
@@ -3376,6 +3421,16 @@ export class StreamView {
         // relative movement via pointer lock deltas when focused.
         this._onGamingMouseMove = (e) => {
             if (this._mouseFocused) {
+                // Top-edge release zone: track a virtual Y from the lock deltas
+                // (seeded mid-screen on capture). Pushing it to the very top of
+                // the screen frees the pointer so the client cursor can reach the
+                // overlays (stats / exit reminder) to move or close them. Click
+                // the game afterwards to re-capture.
+                this._virtY = Math.max(0, Math.min(window.innerHeight, this._virtY + e.movementY));
+                if (this._virtY <= 0 && e.movementY < 0) {
+                    document.exitPointerLock();
+                    return;
+                }
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
                 const rect = this._mediaRect();
@@ -5219,6 +5274,9 @@ export class StreamView {
     handlePointerLockChange() {
         this.pointerLocked = document.pointerLockElement === this.inputEl;
         this._mouseFocused = this.pointerLocked;
+        // Reset the virtual Y tracker to mid-screen on capture so the user must
+        // deliberately travel up to the top edge to release the pointer.
+        if (this.pointerLocked) this._virtY = window.innerHeight / 2;
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }
