@@ -45,8 +45,8 @@ body.streaming-active .app-footer {
     /* Honor the safe-area insets so the header never sits under the iOS
        status bar / notch in "Add to Home Screen" standalone mode (env() is
        0 on devices without insets, so this is harmless on desktop). */
-    padding: max(12px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
-             12px max(24px, env(safe-area-inset-left));
+    padding: max(12px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 12px
+        max(24px, env(safe-area-inset-left));
     background: #111;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     flex-shrink: 0;
@@ -82,8 +82,13 @@ body.streaming-active .app-footer {
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.3;
+    }
 }
 
 .stream-codec-badge {
@@ -109,7 +114,11 @@ body.streaming-active .app-footer {
     border: none;
     box-shadow: var(--edge-cyan);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, filter 0.2s, transform 0.08s;
+    transition:
+        background 0.15s,
+        color 0.15s,
+        filter 0.2s,
+        transform 0.08s;
 }
 
 .stream-quit-btn:hover {
@@ -192,8 +201,14 @@ body.streaming-active .app-footer {
 }
 
 @keyframes shortcuts-fade-in {
-    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
 }
 
 /* Fast fade-out on dismiss (click/tap or auto-hide). */
@@ -203,8 +218,14 @@ body.streaming-active .app-footer {
 }
 
 @keyframes shortcuts-fade-out {
-    from { opacity: 1; transform: translateX(-50%) translateY(0); }
-    to   { opacity: 0; transform: translateX(-50%) translateY(8px); }
+    from {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(-50%) translateY(8px);
+    }
 }
 
 .shortcuts-slide-title {
@@ -301,12 +322,12 @@ body.streaming-active .app-footer {
     -webkit-backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 10px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.30);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
     padding: 8px 12px;
     min-width: 168px;
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     line-height: 1.45;
-    color: rgba(255, 255, 255, 0.70);
+    color: rgba(255, 255, 255, 0.7);
     transition: opacity 0.3s ease;
 }
 
@@ -332,12 +353,12 @@ body.streaming-active .app-footer {
     display: none; /* revealed via .visible when captured */
     align-items: center;
     gap: 8px;
-    background: rgba(8, 8, 14, 0.40);
+    background: rgba(8, 8, 14, 0.4);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 8px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.30);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
     /* Extra right padding reserves room for the absolute × close button. */
     padding: 5px 24px 5px 11px;
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
@@ -364,7 +385,7 @@ body.streaming-active .app-footer {
     gap: 3px;
 }
 .stream-immersive-overlay .imm-plus {
-    color: rgba(255, 255, 255, 0.30);
+    color: rgba(255, 255, 255, 0.3);
 }
 .stream-immersive-overlay .imm-text {
     color: rgba(255, 255, 255, 0.45);
@@ -377,7 +398,7 @@ body.streaming-active .app-footer {
     border: 1px solid rgba(255, 255, 255, 0.12);
     font-size: 10px;
     line-height: 1.4;
-    color: rgba(255, 255, 255, 0.80);
+    color: rgba(255, 255, 255, 0.8);
 }
 
 /* ── Overlay × close button (stats + immersive cards) ──────────────────────── */
@@ -391,23 +412,53 @@ body.streaming-active .app-footer {
     margin: 0;
     border: none;
     background: transparent;
-    color: rgba(255, 255, 255, 0.40);
+    color: rgba(255, 255, 255, 0.4);
     font-size: 14px;
     line-height: 16px;
     text-align: center;
     cursor: pointer;
     border-radius: 4px;
     pointer-events: auto;
-    transition: color 0.15s ease, background 0.15s ease;
+    transition:
+        color 0.15s ease,
+        background 0.15s ease;
 }
 .overlay-close-btn:hover {
     color: #fff;
     background: rgba(255, 255, 255, 0.12);
 }
 
+/* ── Virtual cursor (overlay-navigation mode in immersive) ─────────────────── */
+.stream-virtual-cursor {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 16px;
+    height: 16px;
+    /* Center the dot on (left, top). */
+    margin: -8px 0 0 -8px;
+    z-index: 10001;
+    pointer-events: none;
+    display: none;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
+    transition:
+        border-color 0.12s ease,
+        background 0.12s ease;
+}
+.stream-virtual-cursor.visible {
+    display: block;
+}
+.stream-virtual-cursor.on-target {
+    border-color: var(--accent-1, #fcee0a);
+    background: rgba(252, 238, 10, 0.25);
+}
+
 .stats-waiting {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.40);
+    color: rgba(255, 255, 255, 0.4);
     text-align: center;
     white-space: nowrap;
 }
@@ -428,7 +479,7 @@ body.streaming-active .app-footer {
     justify-content: space-between;
     gap: 14px;
     font-size: 10.5px;
-    color: rgba(255, 255, 255, 0.50);
+    color: rgba(255, 255, 255, 0.5);
     white-space: nowrap;
 }
 
@@ -515,8 +566,10 @@ body.streaming-active .app-footer {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.20);
-    transition: background 0.4s ease, box-shadow 0.4s ease;
+    background: rgba(255, 255, 255, 0.2);
+    transition:
+        background 0.4s ease,
+        box-shadow 0.4s ease;
     flex-shrink: 0;
 }
 
@@ -556,17 +609,25 @@ body.streaming-active .app-footer {
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    background: conic-gradient(from 0deg,
+    background: conic-gradient(
+        from 0deg,
         rgba(240, 192, 64, 0) 0deg,
         rgba(240, 192, 64, 0) 90deg,
-        #f0c040 360deg);
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
-            mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+        #f0c040 360deg
+    );
+    -webkit-mask: radial-gradient(
+        farthest-side,
+        transparent calc(100% - 3px),
+        #000 calc(100% - 3px)
+    );
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
     animation: startup-spin 0.9s linear infinite;
 }
 
 @keyframes startup-spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* ── Fullscreen button — centered in the header bar ────────────────────── */
@@ -592,7 +653,10 @@ body.streaming-active .app-footer {
     white-space: nowrap;
     user-select: none;
     -webkit-user-select: none;
-    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    transition:
+        background 0.2s,
+        color 0.2s,
+        border-color 0.2s;
 }
 .btn-stream-fs:hover {
     background: rgba(255, 255, 255, 0.12);
@@ -668,7 +732,7 @@ body.streaming-active .app-footer {
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;                 /* JS parks it just above the soft keyboard */
+    bottom: 0; /* JS parks it just above the soft keyboard */
     display: none;
     align-items: stretch;
     gap: 3px;
@@ -692,7 +756,7 @@ body.streaming-active .app-footer {
        eaten as a zoom gesture, the second toggle never fires and the modifier
        stays latched/stuck. */
     touch-action: manipulation;
-    background: rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 7px;
     color: #fff;
@@ -800,27 +864,45 @@ body.streaming-active .app-footer {
     overflow: hidden;
     display: none;
 }
-.stream-reveal.playing { display: block; }
+.stream-reveal.playing {
+    display: block;
+}
 
 /* Dark tech-grid cover that dissolves as the screen "materializes". */
 .reveal-grid {
     position: absolute;
     inset: 0;
     background:
-        repeating-linear-gradient(to bottom,
-            rgba(0, 229, 255, 0.07) 0, rgba(0, 229, 255, 0.07) 1px,
-            transparent 1px, transparent 3px),
-        repeating-linear-gradient(to right,
-            rgba(0, 229, 255, 0.05) 0, rgba(0, 229, 255, 0.05) 1px,
-            transparent 1px, transparent 46px),
+        repeating-linear-gradient(
+            to bottom,
+            rgba(0, 229, 255, 0.07) 0,
+            rgba(0, 229, 255, 0.07) 1px,
+            transparent 1px,
+            transparent 3px
+        ),
+        repeating-linear-gradient(
+            to right,
+            rgba(0, 229, 255, 0.05) 0,
+            rgba(0, 229, 255, 0.05) 1px,
+            transparent 1px,
+            transparent 46px
+        ),
         linear-gradient(0deg, rgba(5, 8, 11, 0.92), rgba(5, 8, 11, 0.65));
     opacity: 0;
 }
-.playing .reveal-grid { animation: reveal-grid-out 0.9s ease forwards; }
+.playing .reveal-grid {
+    animation: reveal-grid-out 0.9s ease forwards;
+}
 @keyframes reveal-grid-out {
-    0%   { opacity: 1; }
-    55%  { opacity: 0.55; }
-    100% { opacity: 0; }
+    0% {
+        opacity: 1;
+    }
+    55% {
+        opacity: 0.55;
+    }
+    100% {
+        opacity: 0;
+    }
 }
 
 /* Bright cyan scan beam sweeping top → bottom once. */
@@ -831,21 +913,35 @@ body.streaming-active .app-footer {
     top: 0;
     height: 14%;
     opacity: 0;
-    background: linear-gradient(to bottom,
+    background: linear-gradient(
+        to bottom,
         transparent 0%,
         rgba(0, 229, 255, 0.18) 42%,
         var(--neon-cyan) 50%,
         rgba(0, 229, 255, 0.18) 58%,
-        transparent 100%);
+        transparent 100%
+    );
     box-shadow: 0 0 48px 10px rgba(0, 229, 255, 0.45);
     mix-blend-mode: screen;
 }
-.playing .reveal-beam { animation: reveal-beam 0.72s cubic-bezier(0.4, 0, 0.1, 1) forwards; }
+.playing .reveal-beam {
+    animation: reveal-beam 0.72s cubic-bezier(0.4, 0, 0.1, 1) forwards;
+}
 @keyframes reveal-beam {
-    0%   { transform: translateY(-30%); opacity: 0; }
-    10%  { opacity: 1; }
-    88%  { opacity: 1; }
-    100% { transform: translateY(720%); opacity: 0; }
+    0% {
+        transform: translateY(-30%);
+        opacity: 0;
+    }
+    10% {
+        opacity: 1;
+    }
+    88% {
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(720%);
+        opacity: 0;
+    }
 }
 
 /* Quick RGB-split glitch that settles. */
@@ -855,17 +951,36 @@ body.streaming-active .app-footer {
     opacity: 0;
     mix-blend-mode: screen;
     background:
-        linear-gradient(90deg, rgba(255, 42, 109, 0.0), rgba(255, 42, 109, 0.16)),
-        linear-gradient(270deg, rgba(0, 229, 255, 0.0), rgba(0, 229, 255, 0.14));
+        linear-gradient(90deg, rgba(255, 42, 109, 0), rgba(255, 42, 109, 0.16)),
+        linear-gradient(270deg, rgba(0, 229, 255, 0), rgba(0, 229, 255, 0.14));
 }
-.playing .reveal-glitch { animation: reveal-glitch 0.5s steps(1) forwards; }
+.playing .reveal-glitch {
+    animation: reveal-glitch 0.5s steps(1) forwards;
+}
 @keyframes reveal-glitch {
-    0%   { opacity: 0;   transform: translateX(0); }
-    8%   { opacity: 0.8; transform: translateX(-7px); }
-    13%  { opacity: 0.15; transform: translateX(5px); }
-    21%  { opacity: 0.7; transform: translateX(3px); }
-    27%  { opacity: 0;   transform: translateX(0); }
-    100% { opacity: 0; }
+    0% {
+        opacity: 0;
+        transform: translateX(0);
+    }
+    8% {
+        opacity: 0.8;
+        transform: translateX(-7px);
+    }
+    13% {
+        opacity: 0.15;
+        transform: translateX(5px);
+    }
+    21% {
+        opacity: 0.7;
+        transform: translateX(3px);
+    }
+    27% {
+        opacity: 0;
+        transform: translateX(0);
+    }
+    100% {
+        opacity: 0;
+    }
 }
 
 /* HUD corner brackets that converge inward then fade (neon yellow). */
@@ -874,12 +989,25 @@ body.streaming-active .app-footer {
     inset: 0;
     opacity: 0;
 }
-.playing .reveal-brackets { animation: reveal-brackets 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+.playing .reveal-brackets {
+    animation: reveal-brackets 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
 @keyframes reveal-brackets {
-    0%   { opacity: 0; transform: scale(1.16); }
-    22%  { opacity: 1; }
-    70%  { opacity: 1; transform: scale(1); }
-    100% { opacity: 0; transform: scale(1); }
+    0% {
+        opacity: 0;
+        transform: scale(1.16);
+    }
+    22% {
+        opacity: 1;
+    }
+    70% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    100% {
+        opacity: 0;
+        transform: scale(1);
+    }
 }
 .reveal-brackets .rb {
     position: absolute;
@@ -888,10 +1016,30 @@ body.streaming-active .app-footer {
     border: 2px solid var(--accent-1);
     box-shadow: 0 0 12px var(--accent-ring);
 }
-.reveal-brackets .rb.tl { top: 6%;    left: 6%;    border-right: none; border-bottom: none; }
-.reveal-brackets .rb.tr { top: 6%;    right: 6%;   border-left: none;  border-bottom: none; }
-.reveal-brackets .rb.bl { bottom: 6%; left: 6%;    border-right: none; border-top: none; }
-.reveal-brackets .rb.br { bottom: 6%; right: 6%;   border-left: none;  border-top: none; }
+.reveal-brackets .rb.tl {
+    top: 6%;
+    left: 6%;
+    border-right: none;
+    border-bottom: none;
+}
+.reveal-brackets .rb.tr {
+    top: 6%;
+    right: 6%;
+    border-left: none;
+    border-bottom: none;
+}
+.reveal-brackets .rb.bl {
+    bottom: 6%;
+    left: 6%;
+    border-right: none;
+    border-top: none;
+}
+.reveal-brackets .rb.br {
+    bottom: 6%;
+    right: 6%;
+    border-left: none;
+    border-top: none;
+}
 
 /* Flickering HUD line. */
 .reveal-text {
@@ -908,16 +1056,29 @@ body.streaming-active .app-footer {
     text-shadow: 0 0 14px var(--accent-ring);
     opacity: 0;
 }
-.playing .reveal-text { animation: reveal-text 0.9s steps(1) forwards; }
-@keyframes reveal-text {
-    0%   { opacity: 0; }
-    12%  { opacity: 1; }
-    16%  { opacity: 0.2; }
-    22%  { opacity: 1; }
-    70%  { opacity: 1; }
-    100% { opacity: 0; }
+.playing .reveal-text {
+    animation: reveal-text 0.9s steps(1) forwards;
 }
-
+@keyframes reveal-text {
+    0% {
+        opacity: 0;
+    }
+    12% {
+        opacity: 1;
+    }
+    16% {
+        opacity: 0.2;
+    }
+    22% {
+        opacity: 1;
+    }
+    70% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+    }
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    Take-over overlay — session interrupted by another device (CP2077 exit)
@@ -929,21 +1090,25 @@ body.streaming-active .app-footer {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: radial-gradient(900px 600px at 50% 50%,
-                rgba(255, 42, 109, 0.10) 0%, transparent 60%),
-                rgba(3, 5, 8, 0.0);
+    background:
+        radial-gradient(900px 600px at 50% 50%, rgba(255, 42, 109, 0.1) 0%, transparent 60%),
+        rgba(3, 5, 8, 0);
     opacity: 0;
-    transition: opacity 0.35s ease, background 0.35s ease;
+    transition:
+        opacity 0.35s ease,
+        background 0.35s ease;
     pointer-events: none;
 }
 .stream-takeover-overlay.is-active {
     opacity: 1;
-    background: radial-gradient(900px 600px at 50% 50%,
-                rgba(255, 42, 109, 0.16) 0%, transparent 60%),
-                rgba(3, 5, 8, 0.86);
+    background:
+        radial-gradient(900px 600px at 50% 50%, rgba(255, 42, 109, 0.16) 0%, transparent 60%),
+        rgba(3, 5, 8, 0.86);
     pointer-events: all;
 }
-.stream-takeover-overlay.is-closing { opacity: 0; }
+.stream-takeover-overlay.is-closing {
+    opacity: 0;
+}
 
 /* Moving scanlines wash */
 .takeover-scanlines {
@@ -954,14 +1119,19 @@ body.streaming-active .app-footer {
         rgba(0, 229, 255, 0.05) 0px,
         rgba(0, 229, 255, 0.05) 1px,
         transparent 2px,
-        transparent 4px);
+        transparent 4px
+    );
     mix-blend-mode: screen;
     animation: takeover-scan 7s linear infinite;
     opacity: 0.55;
 }
 @keyframes takeover-scan {
-    0%   { background-position-y: 0; }
-    100% { background-position-y: 64px; }
+    0% {
+        background-position-y: 0;
+    }
+    100% {
+        background-position-y: 64px;
+    }
 }
 
 /* Notched neon box */
@@ -973,7 +1143,9 @@ body.streaming-active .app-footer {
     background: var(--surface-glass);
     backdrop-filter: blur(8px);
     clip-path: var(--notch-lg);
-    box-shadow: var(--edge-cyan), 0 0 34px rgba(255, 42, 109, 0.28);
+    box-shadow:
+        var(--edge-cyan),
+        0 0 34px rgba(255, 42, 109, 0.28);
     transform: translateY(14px) scale(0.96);
     transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -1012,16 +1184,34 @@ body.streaming-active .app-footer {
     mix-blend-mode: screen;
 }
 @keyframes takeover-glitch-x {
-    0%, 100% { transform: translate(0, 0); }
-    20%      { transform: translate(-2px, 1px); }
-    40%      { transform: translate(2px, -1px); }
-    60%      { transform: translate(-1px, 0); }
+    0%,
+    100% {
+        transform: translate(0, 0);
+    }
+    20% {
+        transform: translate(-2px, 1px);
+    }
+    40% {
+        transform: translate(2px, -1px);
+    }
+    60% {
+        transform: translate(-1px, 0);
+    }
 }
 @keyframes takeover-glitch-y {
-    0%, 100% { transform: translate(0, 0); }
-    25%      { transform: translate(1px, -1px); }
-    55%      { transform: translate(-2px, 1px); }
-    80%      { transform: translate(1px, 1px); }
+    0%,
+    100% {
+        transform: translate(0, 0);
+    }
+    25% {
+        transform: translate(1px, -1px);
+    }
+    55% {
+        transform: translate(-2px, 1px);
+    }
+    80% {
+        transform: translate(1px, 1px);
+    }
 }
 
 .takeover-sub {
@@ -1052,24 +1242,30 @@ body.streaming-active .app-footer {
     animation: takeover-deplete 2s linear forwards;
 }
 @keyframes takeover-deplete {
-    from { transform: scaleX(1); }
-    to   { transform: scaleX(0); }
+    from {
+        transform: scaleX(1);
+    }
+    to {
+        transform: scaleX(0);
+    }
 }
 
 /* Clean-exit variant — user pressed Stop. Signature yellow/cyan instead of
    the hostile magenta/red take-over wash, and a faster 1.2s deplete. */
 .stream-takeover-overlay.is-quit {
-    background: radial-gradient(900px 600px at 50% 50%,
-                rgba(252, 238, 10, 0.08) 0%, transparent 60%),
-                rgba(3, 5, 8, 0.0);
+    background:
+        radial-gradient(900px 600px at 50% 50%, rgba(252, 238, 10, 0.08) 0%, transparent 60%),
+        rgba(3, 5, 8, 0);
 }
 .stream-takeover-overlay.is-quit.is-active {
-    background: radial-gradient(900px 600px at 50% 50%,
-                rgba(252, 238, 10, 0.14) 0%, transparent 60%),
-                rgba(3, 5, 8, 0.86);
+    background:
+        radial-gradient(900px 600px at 50% 50%, rgba(252, 238, 10, 0.14) 0%, transparent 60%),
+        rgba(3, 5, 8, 0.86);
 }
 .stream-takeover-overlay.is-quit .takeover-box {
-    box-shadow: var(--edge-cyan), 0 0 34px rgba(252, 238, 10, 0.26);
+    box-shadow:
+        var(--edge-cyan),
+        0 0 34px rgba(252, 238, 10, 0.26);
 }
 .stream-takeover-overlay.is-quit .takeover-bar > span {
     background: linear-gradient(90deg, var(--neon-cyan), var(--accent-1));
@@ -1082,9 +1278,10 @@ body.streaming-active .app-footer {
     .takeover-scanlines,
     .takeover-title::before,
     .takeover-title::after,
-    .takeover-bar > span { animation: none; }
+    .takeover-bar > span {
+        animation: none;
+    }
 }
-
 
 /* ════════════════════════════════════════════════════════════════════════
    CRT power-off — plays after the disconnect/take-over transition. The whole
@@ -1101,27 +1298,36 @@ body.streaming-active .app-footer {
     z-index: 9999; /* above canvas/video, within the frame area */
     pointer-events: none;
     mix-blend-mode: screen;
-    background:
-        linear-gradient(
-            0deg,
-            transparent 0%,
-            transparent 44%,
-            rgba(0, 229, 255, 0.45) 47%,
-            rgba(178, 255, 214, 0.95) 49.5%,
-            #eafff6 50%,
-            rgba(178, 255, 214, 0.95) 50.5%,
-            rgba(252, 238, 10, 0.50) 53%,
-            transparent 56%,
-            transparent 100%);
+    background: linear-gradient(
+        0deg,
+        transparent 0%,
+        transparent 44%,
+        rgba(0, 229, 255, 0.45) 47%,
+        rgba(178, 255, 214, 0.95) 49.5%,
+        #eafff6 50%,
+        rgba(178, 255, 214, 0.95) 50.5%,
+        rgba(252, 238, 10, 0.5) 53%,
+        transparent 56%,
+        transparent 100%
+    );
     opacity: 0;
 }
 .crt-poweroff.is-active {
     animation: crt-flash 0.6s cubic-bezier(0.5, 0, 0.7, 0.2) forwards;
 }
 @keyframes crt-flash {
-    0%   { opacity: 0; filter: brightness(1); }
-    55%  { opacity: 1; filter: brightness(2.2); }
-    100% { opacity: 1; filter: brightness(6); }
+    0% {
+        opacity: 0;
+        filter: brightness(1);
+    }
+    55% {
+        opacity: 1;
+        filter: brightness(2.2);
+    }
+    100% {
+        opacity: 1;
+        filter: brightness(6);
+    }
 }
 
 /* The actual streamed frame (canvas + video) implodes into the line: squash
@@ -1152,6 +1358,10 @@ body.streaming-active .app-footer {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .crt-poweroff { display: none; }
-    .stream-canvas-area.crt-collapsing { animation: none; }
+    .crt-poweroff {
+        display: none;
+    }
+    .stream-canvas-area.crt-collapsing {
+        animation: none;
+    }
 }
