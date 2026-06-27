@@ -2,449 +2,261 @@
 
 # 🌙 Moonlight‑Web
 
-**Streamez vos jeux PC depuis n'importe quel navigateur.**
-Un client [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream 100 % web — aucune installation côté client, juste une URL.
+**Stream your PC games from any browser.**
+A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream client — nothing to install on the client, just a URL.
 
-[![Licence: GPL v3](https://img.shields.io/badge/Licence-GPLv3-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Qt](https://img.shields.io/badge/Qt-6.11-41CD52?logo=qt&logoColor=white)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
 ![WebRTC](https://img.shields.io/badge/Transport-WebRTC-333?logo=webrtc)
-![Plateformes](https://img.shields.io/badge/Serveur-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-success)
+![Platforms](https://img.shields.io/badge/Server-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-success)
 
 </div>
 
 ---
 
-## ❤️ Soutenir le projet
+## ✨ What it does
 
-Moonlight‑Web est **gratuit et open‑source**. Mais l'accès Internet repose sur un
-**serveur DNS dédié que je maintiens 24/7 à mes frais** (VM, IP statique, bande
-passante) pour que vous puissiez obtenir un sous‑domaine et un certificat TLS
-automatiquement. Si l'outil vous est utile, un café aide à garder ce serveur en
-ligne 🙏
+Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, phone, TV)
+into a streaming client for your Sunshine‑powered gaming PC — **with nothing to install**.
 
-<div align="center">
-
-<a href="https://buymeacoffee.com/brunoocto">
-  <img src="https://img.buymeacoffee.com/button-api/?text=Offrez-moi un café&emoji=☕&slug=brunoocto&button_colour=FFDD00&font_colour=000000&font_family=Cookie&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me A Coffee" height="48">
-</a>
-
-</div>
-
----
-
-## ✨ Ce que fait l'application
-
-Moonlight‑Web transforme **n'importe quel appareil avec un navigateur moderne**
-(PC, Mac, tablette, téléphone, TV) en client de streaming pour votre PC de jeu
-équipé de Sunshine — **sans rien installer**.
-
-- 🎮 **Streaming basse latence** jusqu'en 4K HDR, 120+ FPS, codecs **H.264 / HEVC / AV1**.
-- 🌐 **Transport WebRTC** (DataChannels + pistes média RTP) avec repli automatique WSS.
-- 🔊 **Audio Opus** décodé dans le navigateur (jitter buffer adaptatif, surround).
-- ⌨️🖱️🎮 **Entrées complètes** : clavier, souris (pointer‑lock), tactile en mode trackpad,
-  et **manettes Xbox/PS** avec vibration.
-- 🔎 **Découverte automatique** des hôtes Sunshine sur le réseau local (mDNS) + ajout manuel par IP.
-- 🔐 **Pairing** sécurisé, multi‑hôtes, sessions persistantes.
-- 🌍 **Accès depuis Internet** en un clic : sous‑domaine + certificat TLS obtenus automatiquement.
-- 🪄 **Video Enhancement** (bonus) : upscaling & sharpening GPU dans le navigateur.
+- 🎮 **Low‑latency streaming** up to 4K HDR, 120+ FPS, **H.264 / HEVC / AV1** codecs.
+- 🌐 **WebRTC transport** (DataChannels + RTP media tracks), automatic WSS fallback.
+- 🔊 **Opus audio** decoded in the browser (adaptive jitter buffer, surround).
+- ⌨️🖱️🎮 **Full input**: keyboard, mouse (pointer‑lock), touch trackpad, **Xbox/PS gamepads** with rumble.
+- 🔎 **Auto‑discovery** of Sunshine hosts on the LAN (mDNS) + manual IP add.
+- 🔐 Secure **pairing**, multi‑host, persistent sessions.
+- 🌍 **Internet access** in one click: auto sub‑domain + TLS certificate.
+- 🪄 **Video Enhancement** (bonus): GPU upscaling & sharpening in the browser.
 
 <div align="center">
 
-![Accueil — liste des hôtes Sunshine](docs/screenshots/home.png)
+![Home — Sunshine host list](docs/screenshots/home.png)
 
-*Découverte multi‑hôtes, thème Cyberpunk — une simple page web.*
-
-| 🖥️ Sur ordinateur | 📱 Sur mobile |
+| 🖥️ Desktop | 📱 Mobile |
 |:---:|:---:|
-| ![Streaming bureau dans le navigateur](docs/screenshots/desktop.png) | ![Streaming sur iPhone avec clavier virtuel](docs/screenshots/mobile.png) |
-| *Le bureau distant streamé dans un onglet, overlay de stats.* | *Même expérience sur téléphone : trackpad tactile + clavier virtuel.* |
+| ![Desktop streaming in the browser](docs/screenshots/desktop.png) | ![iPhone streaming with virtual keyboard](docs/screenshots/mobile.png) |
 
 </div>
 
 ---
 
-## 🚀 Comment ça marche (tour d'horizon)
+## 🚀 How it works
 
-1. **Lancez le serveur** Moonlight‑Web sur la machine où tourne Sunshine.
-2. **Ouvrez le navigateur** sur `https://localhost` (ou l'IP locale du PC, ou votre
-   domaine si l'accès Internet est activé).
-3. Le serveur **découvre vos hôtes Sunshine** (mDNS) — sinon ajoutez l'IP à la main.
-4. **Pairez** l'hôte (saisie d'un PIN), choisissez une application, **streamez**.
+1. **Run the server** on the machine where Sunshine runs.
+2. **Open a browser** at `https://localhost` (or the PC's LAN IP, or your domain if Internet access is on).
+3. The server **discovers your Sunshine hosts** (mDNS) — or add an IP manually.
+4. **Pair** the host (PIN), pick an app, **stream**.
 
-Le backend C++/Qt intègre directement `moonlight-common-c` : il parle le protocole
-GameStream (RTSP/RTP/ENet) côté Sunshine, et relaie la vidéo/audio/entrées vers le
-navigateur via WebRTC. Le décodage vidéo se fait en **WebCodecs + WebGPU/canvas**,
-l'audio en **AudioWorklet**.
+The C++/Qt backend embeds `moonlight-common-c`: it speaks GameStream (RTSP/RTP/ENet)
+to Sunshine and relays video/audio/input to the browser over WebRTC, with a WSS fallback.
+Video decodes in **WebCodecs + WebGPU/canvas**, audio in **AudioWorklet**.
 
-### ⚙️ La page Settings (réglages de stream)
+### ⚙️ Stream settings
 
-Accessible depuis l'overlay de l'application, elle contrôle la **qualité du flux** :
-
-| Réglage | Valeurs |
-|---|---|
-| **Bitrate** | 5 – 150 Mbps (ou auto) |
-| **Résolution** | 720p / 1080p / 1440p / 2160p |
-| **FPS** | 30 → 240 |
-| **Codec** | Auto / H.264 / HEVC / AV1 *(les options non supportées par le navigateur sont grisées)* |
-| **HDR** | activable si l'hôte et l'affichage le supportent |
-| **Chroma 4:4:4** | texte plus net (opt‑in, selon codec) |
-| **Mode Gaming** | capture souris en pointer‑lock, raccourcis clavier |
-| **VSync**, **stats de perf**, **ratio d'image** (16:9 / 21:9 / 32:9) | — |
+From the in‑app overlay: **bitrate** (5–150 Mbps or auto), **resolution** (720p–2160p),
+**FPS** (30–240), **codec** (auto / H.264 / HEVC / AV1, unsupported options greyed out),
+**HDR**, **4:4:4 chroma**, **Gaming mode** (pointer‑lock), **VSync**, perf stats and aspect ratio.
 
 <div align="center">
 
-| Réglages vidéo | Options avancées |
+| Video settings | Advanced options |
 |:---:|:---:|
-| ![Réglages de stream](docs/screenshots/settings.png) | ![Options avancées (mobile)](docs/screenshots/advanced.png) |
-| *Résolution, FPS, HDR, VSync, bitrate.* | *Video Enhancement, codec, mute, 4:4:4, mode tactile.* |
+| ![Stream settings](docs/screenshots/settings.png) | ![Advanced options (mobile)](docs/screenshots/advanced.png) |
 
 </div>
 
 ### 🪄 Video Enhancement (bonus)
 
-Une fonctionnalité **bonus** d'amélioration d'image **côté navigateur**, exécutée
-sur le GPU via WebGPU. Elle combine **upscaling (SGSRv1 + FSR1)** et **sharpening**
-pour gagner en netteté lorsque la résolution de stream est inférieure à celle de
-l'écran. Activable dans les réglages (`auto`, ou forçage `sgsr` / `fsr1`).
-*(Voir aussi mes contributions Video Super Resolution aux clients Moonlight natifs,
-plus bas.)*
+Browser‑side image enhancement on the GPU (WebGPU): **upscaling (SGSRv1 + FSR1)** +
+**sharpening**, to gain sharpness when the stream resolution is below the screen's.
+Stream at 720p (low bandwidth), display crisp at 1440p.
 
 <div align="center">
 
-![Video Enhancement — 720p upscalé en 1440p](docs/screenshots/video_enhancement.png)
-
-*Streamez en 720p (peu de bande passante) et affichez en 1440p net, côté GPU navigateur.*
+![Video Enhancement — 720p upscaled to 1440p](docs/screenshots/video_enhancement.png)
 
 </div>
 
 ---
 
-## 📦 Installation
+## 📦 Install
 
-> ✅ **Recommandé : installez Moonlight‑Web sur la même machine que Sunshine.**
-> La latence est minimale (localhost), la découverte mDNS est immédiate, et la
-> redirection de ports pour l'accès Internet est simplifiée.
+> ✅ **Recommended: install Moonlight‑Web on the same machine as Sunshine** — minimal
+> latency (localhost), instant mDNS discovery, simpler port forwarding.
 
-1. **Pré‑requis** : un PC avec **Sunshine** installé et fonctionnel.
-2. **Récupérez** la dernière release (binaire) **ou** compilez depuis les sources
-   (voir [Forker & compiler](#-forker--compiler)).
-3. **Lancez** `mw-server` (Windows : `mw-server.exe`). Une **icône apparaît dans la
-   barre système**.
-4. Ouvrez **`https://localhost`** dans Chrome / Edge / Safari récent.
-   - Le serveur écoute par défaut sur **HTTP :80** (redirigé) et **HTTPS :443**.
-   - Au premier lancement, le certificat est **auto‑signé** : votre navigateur
-     affichera un avertissement à accepter (normal en LAN).
-5. **Pairez** votre hôte, et c'est parti.
-
-> 💡 Vous pouvez aussi y accéder depuis un autre appareil du réseau via
-> `https://<IP-locale-du-PC>` (ex. `https://192.168.1.20`).
+1. **Prerequisite**: a PC with **Sunshine** installed and working.
+2. **Grab** the latest release binary, **or** build from source (see [Fork & build](#-fork--build)).
+3. **Run** `mw-server` (Windows: `mw-server.exe`). A **tray icon** appears.
+4. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
+   - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
+   - First launch uses a **self‑signed** cert — accept the browser warning (normal on LAN).
+5. **Pair** your host and stream. From another LAN device: `https://<PC-LAN-IP>`.
 
 ---
 
-## 🛠️ Page Admin
+## 🛠️ Admin page
 
-La page **Admin** configure le serveur lui‑même (et non un stream). Pour des
-raisons de sécurité, elle n'est accessible **que depuis la machine locale**.
+The **Admin** page configures the server itself and is reachable **only from the local machine**
+(`https://localhost/admin`, or tray icon → *Server Settings*). All `/api/admin/*` routes return
+**403** for non‑localhost requests.
 
-### Comment y accéder
+It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transport** (WebRTC/WSS),
+**Internet access**, and the **certificate token**.
 
-- **URL directe** : **`https://localhost/admin`**
-- **Via l'icône de la barre système** : clic droit → **« Server Settings »**
-  (l'entrée **« Open »** ouvre l'app normale, **« Restart »** redémarre le serveur,
-  **« Quit »** l'arrête).
+### 🌍 Internet access
 
-> 🔒 Toutes les routes `/api/admin/*` renvoient **403** si la requête ne vient pas
-> de `localhost`. Impossible de modifier la config du serveur à distance.
+Enabling **Internet Access** makes the server automatically:
 
-### Ce qu'on y règle
-
-- **Code PIN admin** : générer / régénérer / effacer le PIN protégeant l'accès distant.
-- **Sessions** : lister et révoquer les sessions actives.
-- **Ports** HTTP / HTTPS du serveur.
-- **Transport** (WebRTC / WSS) et mode (auto / manuel).
-- **Accès Internet** (voir ci‑dessous).
-- **Jeton de certificat** (authentification par certificat).
-
-### 🌍 Rendre l'application accessible depuis Internet
-
-Activez **Internet Access** dans l'Admin. Le serveur va alors automatiquement :
-
-1. **Détecter votre IP publique** (STUN, repli HTTPS).
-2. **Créer un sous‑domaine** `「identifiant」.votredomaine` via l'API PowerDNS,
-   pointant un enregistrement `A` vers votre IP publique (avec un jeton de
-   propriété TXT pour éviter les collisions entre instances).
-3. **Obtenir un certificat TLS** valide automatiquement (ACME DNS‑01).
-4. **Ouvrir les ports** sur votre box via **UPnP** (TCP 80/443 + UDP 47999).
+1. **Detect your public IP** (STUN, HTTPS fallback).
+2. **Create a sub‑domain** `「id」.yourdomain` via the PowerDNS API (A record + TXT ownership token).
+3. **Obtain a TLS certificate** automatically (ACME DNS‑01).
+4. **Open ports** via **UPnP** (TCP 80/443 + UDP 47999).
 
 <div align="center">
 
-![Page Admin — accès Internet & config serveur](docs/screenshots/admin.png)
-
-*L'Admin (localhost) : accès Internet, URL publique générée, accès local, transport.*
+![Admin page — Internet access & server config](docs/screenshots/admin.png)
 
 </div>
 
-#### ⚠️ Limitations possibles
-
-- **UPnP indisponible / désactivé sur le routeur** → les ports ne sont pas ouverts
-  automatiquement. Vous devrez **rediriger manuellement** dans votre box :
-  **TCP 80, TCP 443, UDP 47999** vers l'IP locale du PC.
-- **CGNAT / double‑NAT** (fréquent en 4G/5G/fibre opérateur) : votre « IP publique »
-  est partagée et non routable. Le serveur le **détecte et vous prévient** — la
-  redirection de ports ne fonctionnera pas, contactez votre FAI ou utilisez un relais.
-- **Port déjà mappé** à un autre appareil sur le routeur → conflit signalé dans l'Admin.
-- **Réseaux d'entreprise restrictifs** : certains filtrent l'autorité de
-  certification par défaut. Voir la section [SSL](#-ssl--votre-domaine-et-votre-certificat).
+**Possible limitations:** UPnP disabled (forward TCP 80/443 + UDP 47999 manually), CGNAT/double‑NAT
+(detected and reported — port forwarding won't work), port already mapped, or restrictive corporate
+networks (see [SSL](#-ssl--your-own-domain--certificate)).
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-   NAVIGATEUR (n'importe quel appareil)        SERVEUR Moonlight-Web (C++/Qt)              HÔTE Sunshine
- ┌───────────────────────────────────┐      ┌──────────────────────────────────┐      ┌──────────────────┐
- │  Web App (Vanilla JS, ES6)        │      │  HTTP :80 ─redirect→ HTTPS :443   │      │                  │
- │  • Liste hôtes / apps / pairing   │ REST │  • Fichiers statiques + API REST  │HTTPS │  API GameStream  │
- │  • UI / Settings / Admin          │◄────►│  • Proxy vers Sunshine           │◄────►│  /serverinfo     │
- │                                   │      │                                  │      │  /applist /launch│
- │  Vidéo : WebCodecs + WebGPU       │      │  ┌────────────────────────────┐  │      │  /pair           │
- │  Audio : Opus / AudioWorklet      │WebRTC│  │   moonlight-common-c       │  │ RTSP │                  │
- │  Entrées : clavier/souris/manette │◄════►│  │   (RTSP/RTP/ENet embarqué) │  │ RTP  │  Encodeur GPU    │
- │  Video Enhancement (WebGPU)       │ (WSS │  │   MoonlightShim → Relay    │  │◄════►│  (NVENC/AMF/QSV) │
- │                                   │ repli)│  └────────────────────────────┘  │ UDP  │                  │
- └───────────────────────────────────┘      └──────────────────────────────────┘      └──────────────────┘
-        ▲                                                                                       
-        │ DNS (sous-domaine) + TLS                                                              
- ┌──────┴───────────────────────────────────────────────────┐                                  
- │  Stack DNS auto-hébergée (Docker, machine séparée)        │   ← maintenue par l'auteur,      
- │  dnsdist :53  ·  PowerDNS (API)  ·  Caddy :80/:443        │     ou hébergez la vôtre         
- └──────────────────────────────────────────────────────────┘                                  
+   BROWSER (any device)                  Moonlight-Web SERVER (C++/Qt)            Sunshine HOST
+ ┌──────────────────────────┐      ┌──────────────────────────────┐      ┌──────────────────┐
+ │  Web App (Vanilla JS)    │ REST │  HTTP :80 → HTTPS :443        │HTTPS │  GameStream API  │
+ │  Hosts / apps / pairing  │◄────►│  Static files + REST API     │◄────►│  /serverinfo     │
+ │  Video : WebCodecs+WebGPU │      │  Proxy to Sunshine           │      │  /applist/launch │
+ │  Audio : Opus/AudioWorklet│WebRTC│  ┌────────────────────────┐  │ RTSP │  /pair           │
+ │  Input : kbd/mouse/gamepad│◄════►│  │  moonlight-common-c    │  │ RTP  │  GPU encoder     │
+ │  Video Enhancement (GPU) │ (WSS │  │  RTSP/RTP/ENet → Relay  │  │◄════►│  (NVENC/AMF/QSV)  │
+ └──────────────────────────┘ fall) └──────────────────────────────┘ UDP  └──────────────────┘
+        ▲ DNS (sub-domain) + TLS
+ ┌──────┴───────────────────────────────────────────┐
+ │  Self-hosted DNS stack (Docker, separate machine) │  ← maintained by the author,
+ │  dnsdist :53 · PowerDNS (API) · Caddy :80/:443    │    or host your own
+ └───────────────────────────────────────────────────┘
 ```
 
-**Principe** : le serveur est à la fois un **serveur web** (sert le frontend +
-API REST), un **proxy** vers l'API de Sunshine, et un **pont de streaming** qui
-embarque `moonlight-common-c`. La vidéo H.264/HEVC/AV1 et l'audio Opus sont relayés
-au navigateur via **WebRTC** (DataChannels + pistes RTP), avec repli **WSS** si
-WebRTC échoue. Les entrées remontent du navigateur, sont chiffrées (AES‑128‑GCM)
-et envoyées à Sunshine via le canal de contrôle **ENet**.
-
-### 🌐 Le réseau quand l'accès Internet est ouvert
-
-1. Le serveur publie un enregistrement **`A`** `「id」.votredomaine → IP publique`
-   sur **votre serveur DNS** (PowerDNS), via son API REST sécurisée.
-2. Il obtient un **certificat TLS** pour ce FQDN via **ACME (challenge DNS‑01)** —
-   aucune ouverture de port n'est nécessaire pour la validation.
-3. **UPnP** mappe les ports sur la box (ou redirection manuelle).
-4. Le client distant ouvre `https://「id」.votredomaine` → arrive sur votre serveur,
-   établit la session **WebRTC** (ICE host candidates réécrits + STUN pour le
-   NAT‑traversal). Si la connexion directe échoue, repli **WSS** sur HTTPS :443.
-
-Le **DNS et l'app sont découplés** : l'API PowerDNS peut vivre sur une machine
-dédiée (le « DNS box »). C'est ce serveur que vos dons aident à maintenir — mais
-vous pouvez **héberger le vôtre** (voir [Forker & compiler](#-forker--compiler)).
+The server is a **web server** (frontend + REST API), a **proxy** to Sunshine's API, and a
+**streaming bridge** embedding `moonlight-common-c`. Video (H.264/HEVC/AV1) and Opus audio are
+relayed over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback. Input is encrypted
+(AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled**
+and can run on a dedicated machine — that's the server your donations help keep alive, but you can
+host your own (see [Fork & build](#-fork--build)).
 
 ---
 
-## 🔧 Configuration avancée — `settings.json`
+## 🔧 Advanced config — `settings.json`
 
-La plupart des réglages se font via l'UI (Settings/Admin) et sont stockés
-**côté serveur** dans `settings.json`, dans le dossier de données applicatives de
-l'OS :
+Most settings live in the UI and are stored **server‑side** in `settings.json`:
 
-| OS | Chemin |
+| OS | Path |
 |---|---|
-| **Windows** | `%APPDATA%\Moonlight-Web\Moonlight-Web\settings.json`<br>(`C:\Users\<vous>\AppData\Roaming\Moonlight-Web\Moonlight-Web\`) |
+| **Windows** | `%APPDATA%\Moonlight-Web\Moonlight-Web\settings.json` |
 | **macOS** | `~/Library/Application Support/Moonlight-Web/Moonlight-Web/settings.json` |
 | **Linux** | `~/.local/share/Moonlight-Web/Moonlight-Web/settings.json` |
 
-> Redémarrez le serveur (ou relancez le stream) après une édition manuelle.
+Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert,
+path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`.
+Restart the server after a manual edit.
 
-Vous pouvez y modifier des clés non exposées dans l'UI, notamment :
+### 🔐 SSL — your own domain & certificate
 
-| Clé | Rôle |
-|---|---|
-| `domain` | **Votre propre FQDN** (domaine personnalisé) au lieu du sous‑domaine auto. |
-| `cert_pem` / `cert_key` | Chemins (ou noms de variables d'env) vers **votre certificat** et sa clé. |
-| `audio_time_stretch` | Lissage audio WSOLA (préserve la hauteur) sur réseau instable — `true` par défaut. |
-| `http_port` / `https_port` | Ports du serveur. |
-| `stun_server` | Serveur STUN personnalisé pour le NAT‑traversal. |
-
-### 🔐 SSL — votre domaine et votre certificat
-
-Par défaut, Moonlight‑Web obtient un certificat **automatiquement et gratuitement
-via ZeroSSL** (ou Let's Encrypt), avec renouvellement automatique. Pratique, mais
-**certains réseaux d'entreprise très restrictifs** bloquent ou n'ont pas confiance
-dans certaines autorités de certification, ce qui peut empêcher la connexion.
-
-**Solution : utilisez votre propre domaine et votre propre certificat.** Dans
-`settings.json`, ne touchez à rien dans `.env` et renseignez :
+By default Moonlight‑Web obtains a free cert automatically via **ZeroSSL** (or Let's Encrypt), with
+auto‑renewal. Some restrictive corporate networks distrust certain CAs — in that case, use your own
+domain and certificate in `settings.json`:
 
 ```json
 {
-  "domain":   "stream.mondomaine.com",
-  "cert_pem": "C:/chemin/vers/fullchain.pem",
-  "cert_key": "C:/chemin/vers/privkey.pem"
+  "domain":   "stream.mydomain.com",
+  "cert_pem": "C:/path/to/fullchain.pem",
+  "cert_key": "C:/path/to/privkey.pem"
 }
 ```
 
-- `cert_pem` / `cert_key` acceptent un **chemin de fichier** ou un **nom de
-  variable d'environnement**.
-- Le **CN du certificat doit correspondre** à `domain`.
-- Un cert géré ainsi n'est **pas** touché par le renouvellement automatique : son
-  cycle de vie est à vous. Faites pointer votre DNS (`A`/`CNAME`) vers votre IP.
-
-Cela vous permet d'utiliser un certificat d'une AC reconnue partout, ou un
-certificat interne d'entreprise déjà approuvé sur le réseau cible.
+The cert's **CN must match** `domain`. A cert managed this way is **not** auto‑renewed — its lifecycle
+is yours. Point your DNS (`A`/`CNAME`) to your IP.
 
 ---
 
-## 🍴 Forker & compiler
+## 🍴 Fork & build
 
-### 1. Installer Qt Creator
-
-Téléchargez le **Qt Online Installer** (compte Qt gratuit) et installez :
-
-- **Qt 6.11** (ou 6.x récent) avec :
-  - le module **Qt Core**, **Qt Network**, **Qt WebSockets** ;
-  - sur Windows, le **kit MSVC 2022 64‑bit** (pas MinGW) ;
-  - **Qt Creator** (IDE) et les **debugging tools**.
-- **OpenSSL 3.x** (headers + libs ; sous Windows ils sont fournis dans
-  `backend/libs/windows/`).
-
-Puis :
+**Requirements:** Qt 6.11 (Core, Network, WebSockets; MSVC 2022 64‑bit kit on Windows) and OpenSSL 3.x
+(bundled in `backend/libs/windows/`).
 
 ```bash
-git clone <ce-repo>
+git clone <this-repo>
 cd moonlight-web-deepseek
 git submodule update --init --recursive   # moonlight-common-c, qmdnsengine, libdatachannel...
-```
 
-**Compilation**
-
-```bash
-# Windows (MSVC) — via le script :
+# Windows (MSVC):
 cmd //c backend/build_msvc.bat
-#   ou ouvrez backend/backend.pro dans Qt Creator (kit MSVC2022 64-bit) → Ctrl+B
+# Linux / macOS (CMake):
+cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
 
-# Linux / macOS — via CMake :
-cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release
-cmake --build backend/build -j
+cd backend/build/release && ./mw-server   # Windows: mw-server.exe → open https://localhost
 ```
 
-**Lancement**
+Cross‑platform (Windows x64/ARM64, Linux, macOS) via CMake; the qmake `.pro` stays valid for Qt Creator.
 
-```bash
-cd backend/build/release && ./mw-server     # Windows : mw-server.exe
-# Ouvrez https://localhost
-```
-
-> Le projet est **multi‑plateforme** (Windows x64/ARM64, Linux, macOS) via CMake ;
-> le `.pro` qmake reste valide pour le flux Qt Creator/MSVC.
-
-### 2. L'image Docker (stack DNS) — à quoi elle sert
-
-Pour offrir l'**accès Internet** (sous‑domaine + TLS auto), il faut un **serveur
-DNS faisant autorité** sur un domaine que vous possédez. Le dossier
-[`deploy/powerdns/`](deploy/powerdns/) fournit une stack Docker clé en main
-(3 conteneurs) :
-
-| Conteneur | Rôle |
-|---|---|
-| **dnsdist** | Frontal DNS public `:53` (anti‑amplification, rate‑limit) → PowerDNS |
-| **pdns** (PowerDNS) | Serveur DNS faisant autorité + API REST (interne uniquement) |
-| **caddy** | Reverse‑proxy HTTPS exposant l'API DNS en `api.votredomaine` (`:80`/`:443`, TLS auto) |
-
-**Installation** (sur une petite VM Linux dédiée, ex. Azure B2ats v2) :
-
-```bash
-cd deploy/powerdns
-sudo ./install.sh     # installe Docker, sécurise, ouvre le firewall, démarre la stack
-```
-
-**Ports / protocoles à ouvrir publiquement** sur la VM (firewall + groupe de
-sécurité cloud) :
-
-| Port | Protocole | Pourquoi |
-|---|---|---|
-| **53** | **UDP** | Requêtes DNS (chemin principal) |
-| **53** | **TCP** | Réponses tronquées, DNSSEC |
-| **80** | **TCP** | Challenge HTTP‑01 Let's Encrypt (API) |
-| **443** | **TCP** | API PowerDNS exposée en `api.votredomaine` |
-
-> Les ports internes de PowerDNS (`5300` DNS, `8081` API) **ne sont jamais publiés**.
-
-**Enregistrer le serveur de noms (ns1) chez votre registrar** — étape manuelle
-indispensable pour que le domaine soit autoritatif sur Internet :
-
-1. **Glue records** : `ns1.votredomaine` → **IP publique de la VM**
-   (et `ns2.votredomaine` → même IP, ou une 2ᵉ VM pour la redondance).
-2. **Délégation (NS)** : les serveurs de noms du domaine pointent vers
-   `ns1.votredomaine` / `ns2.votredomaine`.
-3. **DNSSEC** (recommandé) : soumettez le **DS record** affiché au premier
-   démarrage (`docker compose logs pdns`) à la section DNSSEC de votre registrar.
-
-Côté serveur Moonlight‑Web, renseignez dans son `.env` :
-
-```bash
-MW_DOMAIN=votredomaine.top
-MW_PDNS_URL=https://api.votredomaine.top/api/v1/servers/localhost
-MW_PDNS_TOKEN=<même valeur que MW_PDNS_API_KEY de la stack DNS>
-# Optionnel — pour émettre via ZeroSSL (réseaux restrictifs) :
-# MW_ZEROSSL_EAB_KID=...
-# MW_ZEROSSL_EAB_HMAC=...
-```
-
-Voir le [README détaillé de la stack DNS](deploy/powerdns/README.md) pour Azure,
-le durcissement sécurité et la vérification.
+**DNS stack (Internet access).** To offer auto sub‑domain + TLS you need an authoritative DNS server
+on a domain you own. [`deploy/powerdns/`](deploy/powerdns/) ships a turnkey Docker stack (dnsdist +
+PowerDNS + Caddy). Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP),
+80 and 443, register your nameservers at your registrar, then set `MW_DOMAIN` / `MW_PDNS_URL` /
+`MW_PDNS_TOKEN` in the server's `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).
 
 ---
 
 ## 👤 About the author
 
-I'm an experienced web developer with **15+ years** in the industry. I'm also a
-long‑time contributor to the **Moonlight** game‑streaming ecosystem: I built and
-upstreamed **Video Super Resolution** (real‑time GPU upscaling) across *every*
-major Moonlight client — Windows, Linux, macOS, Windows ARM, Android, iOS, tvOS
-and Xbox (see the pull requests below).
+I'm an experienced web developer with **15+ years** in the industry, and a long‑time contributor to
+the **Moonlight** ecosystem: I built and upstreamed **Video Super Resolution** (real‑time GPU upscaling)
+across *every* major Moonlight client. Moonlight‑Web is the natural next step — that same low‑latency,
+high‑quality streaming on *any* device with a browser, no native app, just a URL.
 
-**Moonlight‑Web is the natural next step**: bringing that same low‑latency,
-high‑quality streaming experience to *any* device with a browser — no native app,
-no install, just a URL — with WebRTC transport, WebCodecs/WebGPU video and a
-browser‑side Video Enhancement pipeline. It's where my web background and my
-Moonlight work meet.
-
-## 🔭 Mes autres projets Moonlight (Video Super Resolution)
-
-J'ai contribué la **Video Super Resolution** (upscaling GPU temps réel) aux clients
-Moonlight officiels — la version native de la fonctionnalité « Video Enhancement »
-bonus de ce projet :
-
-| Plateforme | Contribution |
+| Platform | Contribution |
 |---|---|
-| 🪟🐧🍎 **Windows (x64 AMD/Intel/NVIDIA), Windows ARM (Snapdragon), Linux, macOS** | [moonlight‑qt #1557](https://github.com/moonlight-stream/moonlight-qt/pull/1557) |
+| 🪟🐧🍎 **Windows (x64 / ARM), Linux, macOS** | [moonlight‑qt #1557](https://github.com/moonlight-stream/moonlight-qt/pull/1557) |
 | 🤖 **Android** | [moonlight‑android #1567](https://github.com/moonlight-stream/moonlight-android/pull/1567) |
 | 🍏 **iOS & tvOS** | [moonlight‑ios #704](https://github.com/moonlight-stream/moonlight-ios/pull/704) |
 | 🎮 **Xbox** | [moonlight‑xbox #267](https://github.com/TheElixZammuto/moonlight-xbox/pull/267) |
 
 ---
 
-## 📜 Licence
+## ❤️ Support
 
-Moonlight‑Web est un logiciel libre sous **GNU General Public License v3.0**
-(GPL‑3.0). Vous êtes libre de l'utiliser, l'étudier, le modifier, le forker et le
-redistribuer, à condition de le garder open‑source sous la même licence et de
-**conserver la notice de copyright et créditer l'auteur original**.
+If Moonlight‑Web is useful to you, a coffee helps keep the shared DNS server online 🙏
+
+<div align="center">
+
+<a href="https://buymeacoffee.com/brunoocto">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48">
+</a>
+
+</div>
+
+---
+
+## 📜 License
+
+GNU **GPL‑3.0**. Free to use, study, modify, fork and redistribute, provided it stays open‑source under
+the same license and **keeps the copyright notice and credits the original author**.
 
 > Copyright © 2026 Bruno Martin &lt;brunoocto@gmail.com&gt;
 
-Voir [LICENSE](LICENSE) pour le texte complet et [COPYRIGHT](COPYRIGHT) pour les
-licences des composants tiers.
+See [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT) for third‑party component licenses.
 
 ---
 
 <div align="center">
 
-**Ce projet vous plaît ?** Mettez une ⭐ et [offrez un café au serveur DNS](#-soutenir-le-projet) ☕
+**Like this project?** Leave a ⭐ and [buy the DNS server a coffee](#-support) ☕
 
 </div>
