@@ -49,10 +49,18 @@ Moonlight‑Web transforme **n'importe quel appareil avec un navigateur moderne*
 - 🌍 **Accès depuis Internet** en un clic : sous‑domaine + certificat TLS obtenus automatiquement.
 - 🪄 **Video Enhancement** (bonus) : upscaling & sharpening GPU dans le navigateur.
 
-> 📸 *Aperçu*
->
-> ![Accueil — liste des hôtes](docs/screenshots/home.png)
-> ![En streaming](docs/screenshots/streaming.png)
+<div align="center">
+
+![Accueil — liste des hôtes Sunshine](docs/screenshots/home.png)
+
+*Découverte multi‑hôtes, thème Cyberpunk — une simple page web.*
+
+| 🖥️ Sur ordinateur | 📱 Sur mobile |
+|:---:|:---:|
+| ![Streaming bureau dans le navigateur](docs/screenshots/desktop.png) | ![Streaming sur iPhone avec clavier virtuel](docs/screenshots/mobile.png) |
+| *Le bureau distant streamé dans un onglet, overlay de stats.* | *Même expérience sur téléphone : trackpad tactile + clavier virtuel.* |
+
+</div>
 
 ---
 
@@ -84,6 +92,15 @@ Accessible depuis l'overlay de l'application, elle contrôle la **qualité du fl
 | **Mode Gaming** | capture souris en pointer‑lock, raccourcis clavier |
 | **VSync**, **stats de perf**, **ratio d'image** (16:9 / 21:9 / 32:9) | — |
 
+<div align="center">
+
+| Réglages vidéo | Options avancées |
+|:---:|:---:|
+| ![Réglages de stream](docs/screenshots/settings.png) | ![Options avancées (mobile)](docs/screenshots/advanced.png) |
+| *Résolution, FPS, HDR, VSync, bitrate.* | *Video Enhancement, codec, mute, 4:4:4, mode tactile.* |
+
+</div>
+
 ### 🪄 Video Enhancement (bonus)
 
 Une fonctionnalité **bonus** d'amélioration d'image **côté navigateur**, exécutée
@@ -92,6 +109,14 @@ pour gagner en netteté lorsque la résolution de stream est inférieure à cell
 l'écran. Activable dans les réglages (`auto`, ou forçage `sgsr` / `fsr1`).
 *(Voir aussi mes contributions Video Super Resolution aux clients Moonlight natifs,
 plus bas.)*
+
+<div align="center">
+
+![Video Enhancement — 720p upscalé en 1440p](docs/screenshots/video_enhancement.png)
+
+*Streamez en 720p (peu de bande passante) et affichez en 1440p net, côté GPU navigateur.*
+
+</div>
 
 ---
 
@@ -151,6 +176,14 @@ Activez **Internet Access** dans l'Admin. Le serveur va alors automatiquement :
    propriété TXT pour éviter les collisions entre instances).
 3. **Obtenir un certificat TLS** valide automatiquement (ACME DNS‑01).
 4. **Ouvrir les ports** sur votre box via **UPnP** (TCP 80/443 + UDP 47999).
+
+<div align="center">
+
+![Page Admin — accès Internet & config serveur](docs/screenshots/admin.png)
+
+*L'Admin (localhost) : accès Internet, URL publique générée, accès local, transport.*
+
+</div>
 
 #### ⚠️ Limitations possibles
 
@@ -364,11 +397,6 @@ MW_PDNS_TOKEN=<même valeur que MW_PDNS_API_KEY de la stack DNS>
 
 Voir le [README détaillé de la stack DNS](deploy/powerdns/README.md) pour Azure,
 le durcissement sécurité et la vérification.
-
-> 📸 *Page Admin & accès Internet*
->
-> ![Page Admin](docs/screenshots/admin.png)
-> ![Réglages de stream](docs/screenshots/settings.png)
 
 ---
 
