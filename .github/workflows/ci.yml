@@ -1,0 +1,310 @@
+# Moonlight-Web — unified CI pipeline.
+#
+# Single gated pipeline, each stage blocks the next:
+#   1. quality + frontend tests — frontend job (Prettier+ESLint then Vitest, one
+#      npm install) plus C++ quality (clang-format + cppcheck).
+#   2. backend tests — Qt Test + OpenCppCoverage (70% gate), after C++ quality.
+#   3. build — Windows x64, Windows ARM64, Linux x64, macOS arm64 (CMake), only
+#      once the frontend job and backend tests are green.
+#
+# Builds never run on a broken commit, so the (expensive) multi-platform matrix
+# is only spent on validated code.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least-privilege token: this pipeline only reads the repo and writes artifacts.
+permissions:
+  contents: read
+
+# Cancel superseded PR runs to save CI minutes, but never cancel a push on main
+# (those feed releases and must run to completion).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ──────────────────── 1. QUALITY + FRONTEND TESTS ────────────────────
+  # Frontend quality and tests share one job: they're sequential anyway (tests
+  # gate on quality) and a single npm install/Node setup serves both.
+  frontend:
+    name: Frontend (Prettier + ESLint + Vitest, 70% gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Prettier + ESLint
+        id: quality
+        run: npm run check
+      - name: Report quality
+        if: failure()
+        run: |
+          {
+            echo "### ❌ Frontend quality failed"
+            echo ""
+            echo "Run locally and commit the fixes:"
+            echo '```bash'
+            echo "cd frontend"
+            echo "npm run format:fix   # auto-format with Prettier"
+            echo "npm run lint:fix     # auto-fix ESLint issues"
+            echo '```'
+            echo "Remaining ESLint errors must be fixed by hand — see the log above."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Run tests with coverage
+        run: npm run coverage
+      - name: Report tests
+        # Only when quality passed but tests/coverage failed, so the report points
+        # at the right failure.
+        if: failure() && steps.quality.outcome == 'success'
+        run: |
+          {
+            echo "### ❌ Frontend tests / coverage gate failed"
+            echo ""
+            echo "Reproduce locally: \`cd frontend && npm run coverage\`."
+            echo "Either a test regressed or coverage dropped below the 70% gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage
+          path: frontend/coverage
+          if-no-files-found: ignore
+
+  quality-cpp-format:
+    name: Quality · C++ clang-format
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Pin to the same major.minor as the bundled LLVM (VS2022) to avoid
+      # formatting disagreements across clang-format versions.
+      - run: pip install "clang-format==19.1.7"
+      - name: Check formatting (house style in backend/.clang-format)
+        run: |
+          git ls-files -- 'backend/src/' | grep -E '\.(cpp|h)$' \
+            | xargs clang-format --dry-run --Werror
+      - name: Report
+        if: failure()
+        run: |
+          {
+            echo "### ❌ C++ formatting failed"
+            echo ""
+            echo "Apply the house style (backend/.clang-format) and commit:"
+            echo '```bash'
+            echo "git ls-files -- 'backend/src/' | grep -E '\\.(cpp|h)\$' | xargs clang-format -i"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  quality-cppcheck:
+    name: Quality · C++ cppcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Run cppcheck
+        working-directory: backend
+        run: |
+          cppcheck --enable=warning --library=qt --std=c++17 --language=c++ \
+            --inline-suppr \
+            --suppress=missingInclude --suppress=missingIncludeSystem \
+            --suppress=unknownMacro \
+            --error-exitcode=1 -I src src
+      - name: Report
+        if: failure()
+        run: |
+          {
+            echo "### ❌ cppcheck found static-analysis issues"
+            echo ""
+            echo "See the annotated warnings above (null derefs, leaks, uninit vars…)."
+            echo "Fix them, or add an inline \`// cppcheck-suppress <id>\` with justification."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ────────────────────────── 2. BACKEND TESTS ──────────────────────────
+  test-backend:
+    name: Tests · Backend (Qt Test + OpenCppCoverage, 70% gate)
+    needs: [quality-cpp-format, quality-cppcheck]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive # moonlight-common-c provides Limelight.h
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          arch: win64_msvc2022_64
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install OpenCppCoverage
+        run: choco install opencppcoverage -y
+      - name: Add OpenCppCoverage to PATH
+        shell: pwsh
+        run: echo "C:\Program Files\OpenCppCoverage" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Run backend TNR + coverage
+        shell: cmd
+        run: backend\tests\run_coverage.bat
+      - name: Report
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### ❌ Backend tests / coverage gate failed"
+            echo ""
+            echo "Reproduce on Windows: \`backend\\tests\\run_coverage.bat\`."
+            echo "Either a Qt Test regressed or line coverage dropped below the 70% gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: backend/tests/build/covhtml
+          if-no-files-found: ignore
+
+  # ────────────────────────────── 3. BUILD ──────────────────────────────
+  build-windows-x64:
+    name: Build · Windows x64 (CMake/MSVC)
+    needs: [frontend, test-backend]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          arch: win64_msvc2022_64
+          modules: qtwebsockets
+      - name: Configure
+        run: cmake -S backend -B backend/build/win -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build backend/build/win --config Release -j
+      - name: Deploy Qt runtime
+        run: windeployqt --release backend/build/win/Release/mw-server.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mw-server-windows-x64
+          path: backend/build/win/Release
+          if-no-files-found: warn
+
+  build-windows-arm64:
+    name: Build · Windows ARM64 (CMake/MSVC)
+    needs: [frontend, test-backend]
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install OpenSSL (vcpkg, arm64)
+        shell: pwsh
+        run: vcpkg install openssl:arm64-windows
+      - name: Install Qt 6.11 (arm64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          arch: win64_msvc2022_arm64
+          modules: qtwebsockets
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S backend -B backend/build/win-arm64
+          -G "Visual Studio 17 2022" -A ARM64
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=arm64-windows
+      - name: Build
+        run: cmake --build backend/build/win-arm64 --config Release -j
+      - name: Deploy Qt runtime
+        run: windeployqt --release backend/build/win-arm64/Release/mw-server.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mw-server-windows-arm64
+          path: backend/build/win-arm64/Release
+          if-no-files-found: warn
+
+  build-linux-x64:
+    name: Build · Linux x64 (CMake)
+    needs: [frontend, test-backend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config \
+            libssl-dev
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          modules: qtwebsockets
+      - name: Configure
+        run: cmake -S backend -B backend/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build backend/build/linux -j
+      - name: Security TNR (ctest)
+        run: ctest --test-dir backend/build/linux --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mw-server-linux-x64
+          path: backend/build/linux/mw-server
+          if-no-files-found: warn
+
+  build-macos-arm64:
+    name: Build · macOS arm64 (CMake)
+    needs: [frontend, test-backend]
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build dependencies
+        run: brew install cmake ninja openssl@3 pkg-config
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.0
+          host: mac
+          arch: clang_arm64
+          modules: qtwebsockets
+      - name: Configure
+        run: cmake -S backend -B backend/build/mac -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build backend/build/mac -j
+      - name: Security TNR (ctest)
+        run: ctest --test-dir backend/build/mac --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mw-server-macos-arm64
+          path: backend/build/mac/mw-server
+          if-no-files-found: warn
