@@ -382,6 +382,8 @@ export class StreamView {
         // Overlay stats
         this._overlayEl = null;
         this._overlayInterval = null;
+        // Immersive-mode exit reminder (discreet, draggable, top-center).
+        this._immersiveOverlay = null;
         this._resolution = ''; // "1920x1080" — set once on first frame
         this._codec = this.videoCodec; // Same as videoCodec
         this._transport = transport; // "webrtc" or "wss"
@@ -912,6 +914,20 @@ export class StreamView {
         // way. Position is intentionally not persisted so it resets to the
         // top-left default on every new streaming session.
         this._makeStatsDraggable(this._overlayEl);
+
+        // ── Immersive-mode exit reminder (top-center, draggable) ───────────
+        // Discreet card that only appears once immersive mode has captured the
+        // mouse. It reminds the single combo that frees the cursor, releases
+        // the full keyboard lock and leaves fullscreen. Touch devices never
+        // use immersive mode, so it is never built there.
+        if (!IS_TOUCH_DEVICE) {
+            this._immersiveOverlay = document.createElement('div');
+            this._immersiveOverlay.id = 'stream-immersive-overlay';
+            this._immersiveOverlay.className = 'stream-immersive-overlay';
+            this._buildImmersiveOverlayContent();
+            document.getElementById('stream-view').appendChild(this._immersiveOverlay);
+            this._makeStatsDraggable(this._immersiveOverlay);
+        }
 
         // ── Cyberpunk "signal acquired" reveal ─────────────────────────────
         // Full-screen one-shot boot animation played the instant the first
@@ -2569,6 +2585,9 @@ export class StreamView {
             el.style.left = Math.min(maxLeft, Math.max(0, startLeft + dx)) + 'px';
             el.style.top = Math.min(maxTop, Math.max(0, startTop + dy)) + 'px';
             el.style.right = 'auto';
+            // Drop any CSS centering transform (immersive overlay) so the px
+            // left/top above is the real visual position, not offset by -50%.
+            el.style.transform = 'none';
             // On touch devices, block move handling of the main stream — touch moves
             // on the stats card must not feed into the game's mouse tracking.
             if (e.pointerType === 'touch') e.stopPropagation();
@@ -2605,6 +2624,48 @@ export class StreamView {
             window.addEventListener('pointerup', onUp);
             e.preventDefault();
         });
+    }
+
+    // ── Immersive-mode exit reminder ─────────────────────────────────────
+
+    /**
+     * Build the immersive overlay content: the platform-correct exit combo
+     * plus a one-line reminder of what it does (free the mouse + leave
+     * fullscreen). Built once — the combo never changes during a session.
+     */
+    _buildImmersiveOverlayContent() {
+        if (!this._immersiveOverlay) return;
+        const isMac = /Mac/.test(navigator.platform);
+        const modA = isMac ? 'Cmd' : 'Ctrl';
+        const modB = isMac ? 'Option' : 'Alt';
+        const modC = isMac ? 'Ctrl' : 'Shift';
+        // Win order: Shift + Ctrl + Alt + Z — Mac: Ctrl + Option + Cmd + Z
+        const keys = isMac ? [modC, modB, modA, 'Z'] : [modC, modA, modB, 'Z'];
+        let html = '<span class="imm-keys">';
+        for (let i = 0; i < keys.length; i++) {
+            if (i > 0) html += '<span class="imm-plus">+</span>';
+            html += '<kbd>' + keys[i] + '</kbd>';
+        }
+        html += '</span>';
+        html +=
+            '<span class="imm-text">' +
+            t('stream.immersiveExitTitle') +
+            ' · ' +
+            t('stream.immersiveExitDesc') +
+            '</span>';
+        this._immersiveOverlay.innerHTML = html;
+        this._immersiveOverlay.title =
+            t('stream.immersiveExitTitle') + ' — ' + t('stream.immersiveExitDesc');
+    }
+
+    /**
+     * Show the immersive overlay only while immersive mode actually holds the
+     * mouse (pointer locked). Hidden otherwise so it never clutters the view.
+     */
+    _updateImmersiveOverlay() {
+        if (!this._immersiveOverlay) return;
+        const show = this._gamingMode && this._mouseFocused;
+        this._immersiveOverlay.classList.toggle('visible', show);
     }
 
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
@@ -3730,13 +3791,12 @@ export class StreamView {
                 this.toggleFullscreen();
                 return;
             }
-            // Unfocus: Ctrl+Alt+Shift+Z (Win) / Cmd+Option+Ctrl+Z (Mac)
-            // Releases the mouse cursor back to the OS (gaming mode only).
+            // Exit immersive: Ctrl+Alt+Shift+Z (Win) / Cmd+Option+Ctrl+Z (Mac)
+            // Frees the mouse, releases the full keyboard lock and leaves
+            // fullscreen — the single combo advertised by the overlay.
             if (chk('z', 'KeyZ')) {
                 e.preventDefault();
-                if (document.pointerLockElement === this.inputEl) {
-                    document.exitPointerLock();
-                }
+                this._exitImmersive();
                 return;
             }
             // Mouse mode toggle: Ctrl+Alt+Shift+M (Win) / Cmd+Option+Ctrl+M (Mac)
@@ -4010,7 +4070,15 @@ export class StreamView {
     _syncKeyboardLock() {
         const kb = navigator.keyboard;
         if (!kb || typeof kb.lock !== 'function') return;
-        if (document.fullscreenElement) {
+        if (this._gamingMode && this._mouseFocused) {
+            // Immersive mode with the mouse captured: grab EVERY system key
+            // (Meta/Windows, Alt+Tab, Escape…) so they reach the host. Only the
+            // exit combo stays client-side. Effective in fullscreen (browser
+            // limitation); a no-op call otherwise. lock() with no args = all keys.
+            kb.lock().catch(() => {});
+            this._keyboardLocked = true;
+        } else if (document.fullscreenElement) {
+            // Plain fullscreen (non-immersive): only keep Escape inside the host.
             kb.lock(['Escape']).catch(() => {});
             this._keyboardLocked = true;
         } else if (this._keyboardLocked) {
@@ -4018,6 +4086,29 @@ export class StreamView {
                 kb.unlock();
             } catch (e) {}
             this._keyboardLocked = false;
+        }
+    }
+
+    /**
+     * Single "give me back control" action bound to the immersive exit combo.
+     * Releases the mouse pointer lock, drops the full keyboard lock and leaves
+     * fullscreen (standard or CSS fallback) — whichever are currently active.
+     */
+    _exitImmersive() {
+        if (document.pointerLockElement === this.inputEl) {
+            document.exitPointerLock();
+        }
+        const kb = navigator.keyboard;
+        if (this._keyboardLocked && kb && typeof kb.unlock === 'function') {
+            try {
+                kb.unlock();
+            } catch (e) {}
+            this._keyboardLocked = false;
+        }
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        } else if (this._cssFullscreen) {
+            this._exitCssFallbackFullscreen();
         }
     }
 
@@ -5100,6 +5191,10 @@ export class StreamView {
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }
+        // Capturing/releasing the mouse drives both the full keyboard lock and
+        // the immersive exit-reminder overlay.
+        this._syncKeyboardLock();
+        this._updateImmersiveOverlay();
     }
 
     // =========================================================================
@@ -5173,9 +5268,14 @@ export class StreamView {
             if (this.hintEl) this.hintEl.style.display = 'none';
         }
 
+        // Leaving immersive mode hides the exit reminder and drops the full
+        // keyboard lock; entering it keeps the overlay hidden until capture.
+        this._updateImmersiveOverlay();
+        this._syncKeyboardLock();
+
         console.log(
             '[StreamView] Mouse mode toggled: ' +
-                (this._gamingMode ? 'gaming (relative+lock)' : 'desktop (absolute)'),
+                (this._gamingMode ? 'immersive (relative+lock)' : 'desktop (absolute)'),
         );
 
         Toast.info(
