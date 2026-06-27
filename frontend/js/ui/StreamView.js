@@ -2588,6 +2588,8 @@ export class StreamView {
             // Drop any CSS centering transform (immersive overlay) so the px
             // left/top above is the real visual position, not offset by -50%.
             el.style.transform = 'none';
+            // Mark as manually placed: auto-positioning must not override it.
+            el.classList.add('user-moved');
             // On touch devices, block move handling of the main stream — touch moves
             // on the stats card must not feed into the game's mouse tracking.
             if (e.pointerType === 'touch') e.stopPropagation();
@@ -2664,13 +2666,43 @@ export class StreamView {
      */
     _updateImmersiveOverlay() {
         if (!this._immersiveOverlay) return;
-        const show = this._gamingMode && this._mouseFocused;
+        // Visible whenever immersive mode is on (after the first frame), NOT only
+        // while the mouse is captured: a captured (pointer-locked) cursor cannot
+        // be moved onto the card to drag it, so it must be reachable pre-capture.
+        const show = this._gamingMode && this._firstFrameRendered;
         this._immersiveOverlay.classList.toggle('visible', show);
+        if (show) this._positionImmersiveOverlay();
+    }
+
+    /**
+     * Keep the immersive overlay from overlapping the header Fullscreen button
+     * (both are horizontally centered): when that button is on screen, drop the
+     * overlay just below the header; otherwise restore the CSS default top.
+     * No-op once the user has dragged the card (manual position wins).
+     */
+    _positionImmersiveOverlay() {
+        const el = this._immersiveOverlay;
+        if (!el || el.classList.contains('user-moved')) return;
+        const fsVisible =
+            this._mobileFsBtn &&
+            this._mobileFsBtn.isConnected &&
+            this._mobileFsBtn.style.display !== 'none';
+        if (fsVisible) {
+            const header = document.querySelector('.stream-header');
+            const bottom = header ? header.getBoundingClientRect().bottom : 0;
+            el.style.top = bottom + 8 + 'px';
+        } else {
+            el.style.top = ''; // back to CSS default (safe-area top)
+        }
     }
 
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────
 
     _updateOverlay() {
+        // Refresh the immersive exit reminder on the same 500ms tick so it
+        // appears once streaming starts, independent of the perf-stats setting.
+        this._updateImmersiveOverlay();
+
         if (!this._overlayEl) return;
 
         // Hide entire overlay when performance stats are disabled in settings
@@ -4207,18 +4239,17 @@ export class StreamView {
             this._cssFullscreen;
         if (inFullscreen) {
             this._mobileFsBtn.style.display = 'none';
-            return;
-        }
-
-        if (!IS_MOBILE_OR_TABLET) {
+        } else if (!IS_MOBILE_OR_TABLET) {
             // Desktop: always available
             this._mobileFsBtn.style.display = '';
-            return;
+        } else {
+            const isLandscape =
+                window.matchMedia && window.matchMedia('(orientation: landscape)').matches;
+            this._mobileFsBtn.style.display = isLandscape ? '' : 'none';
         }
 
-        const isLandscape =
-            window.matchMedia && window.matchMedia('(orientation: landscape)').matches;
-        this._mobileFsBtn.style.display = isLandscape ? '' : 'none';
+        // Keep the immersive overlay clear of the (centered) Fullscreen button.
+        this._positionImmersiveOverlay();
     }
 
     // =========================================================================
