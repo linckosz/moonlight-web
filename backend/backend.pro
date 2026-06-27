@@ -52,6 +52,7 @@ SOURCES += \
     src/main.cpp \
     src/server/AuthManager.cpp \
     src/server/AppSettings.cpp \
+    src/server/ConnectionGuard.cpp \
     src/server/HttpServer.cpp \
     src/server/StaticFileHandler.cpp \
     src/server/RestRouter.cpp \
@@ -114,6 +115,7 @@ SOURCES += \
 HEADERS += \
     src/server/AuthManager.h \
     src/server/AppSettings.h \
+    src/server/ConnectionGuard.h \
     src/server/HttpServer.h \
     src/server/StaticFileHandler.h \
     src/server/RestRouter.h \

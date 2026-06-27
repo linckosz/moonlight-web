@@ -26,10 +26,12 @@
 #include <QList>
 #include <functional>
 #include "common/Types.h"
+#include "server/ConnectionGuard.h"
 
 class RestRouter;
 class StaticFileHandler;
 class AuthManager;
+class QTimer;
 
 class HttpServer : public QObject
 {
@@ -182,6 +184,15 @@ private:
 
     /// PIN-based authentication manager (nullable — auth disabled when null).
     AuthManager* m_AuthManager = nullptr;
+
+    /// Per-IP abuse mitigation (connection-flood + auth-failure ban). Checked at
+    /// accept() time for both HTTP and HTTPS listeners.
+    ConnectionGuard m_ConnGuard;
+    QTimer* m_GuardPurgeTimer = nullptr;
+
+    /// Reject a freshly accepted socket when its peer IP is banned or floods.
+    /// Returns true when the connection was rejected (socket scheduled to close).
+    bool rejectIfAbusive(QTcpSocket* socket);
 
     /// Resolve a cert_pem/cert_key value to PEM data.
     /// Tries qgetenv(value) first, then QFile(value).

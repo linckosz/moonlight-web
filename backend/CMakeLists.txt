@@ -101,6 +101,7 @@ add_executable(mw-server
     src/main.cpp
     src/server/AuthManager.cpp
     src/server/AppSettings.cpp
+    src/server/ConnectionGuard.cpp
     src/server/HttpServer.cpp
     src/server/StaticFileHandler.cpp
     src/server/RestRouter.cpp
