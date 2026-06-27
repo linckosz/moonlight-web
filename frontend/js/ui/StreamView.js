@@ -338,10 +338,16 @@ export class StreamView {
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
         this._mouseFocused = false;
-        // Virtual Y cursor tracked from pointer-lock deltas (seeded mid-screen
-        // on capture). Pushing it to the very top of the screen releases the
-        // lock so the client cursor can reach the overlays. Immersive mode only.
-        this._virtY = 0;
+        // Overlay-navigation mode (immersive + captured): pushing the pointer to
+        // the top edge of the screen spawns a virtual cursor over the overlays so
+        // the user can hover / drag / close them WITHOUT releasing the lock (which
+        // would jump the OS cursor back to mid-screen). Click the game to return.
+        this._overlayNav = false;
+        this._virtX = 0; // virtual cursor position (viewport coords)
+        this._virtY = 0; // also used as the top-edge trigger accumulator
+        this._virtCursorEl = null; // the on-screen virtual cursor dot
+        this._virtDragEl = null; // overlay being dragged via the virtual cursor
+        this._virtDragOff = { x: 0, y: 0 };
         // Per-session "closed" flags: the user can dismiss the stats and the
         // immersive exit overlay with their × button; they stay hidden after.
         this._statsClosed = false;
@@ -927,8 +933,7 @@ export class StreamView {
             if (!e.target.closest('.overlay-close-btn')) return;
             e.stopPropagation();
             e.preventDefault();
-            this._statsClosed = true;
-            this._overlayEl.style.display = 'none';
+            this._closeOverlayEl(this._overlayEl);
         });
 
         // ── Immersive-mode exit reminder (top-center, draggable) ───────────
@@ -948,9 +953,14 @@ export class StreamView {
                 if (!e.target.closest('.overlay-close-btn')) return;
                 e.stopPropagation();
                 e.preventDefault();
-                this._immersiveClosed = true;
-                this._updateImmersiveOverlay();
+                this._closeOverlayEl(this._immersiveOverlay);
             });
+
+            // Virtual cursor dot used by overlay-navigation mode (see above).
+            this._virtCursorEl = document.createElement('div');
+            this._virtCursorEl.className = 'stream-virtual-cursor';
+            this._virtCursorEl.setAttribute('aria-hidden', 'true');
+            document.getElementById('stream-view').appendChild(this._virtCursorEl);
         }
 
         // ── Cyberpunk "signal acquired" reveal ─────────────────────────────
@@ -2668,6 +2678,124 @@ export class StreamView {
         );
     }
 
+    /** Dismiss a draggable overlay (× button or virtual-cursor close). */
+    _closeOverlayEl(el) {
+        if (el === this._overlayEl) {
+            this._statsClosed = true;
+            if (this._overlayEl) this._overlayEl.style.display = 'none';
+        } else if (el === this._immersiveOverlay) {
+            this._immersiveClosed = true;
+            this._updateImmersiveOverlay();
+        }
+        // If the closed card was the nav hover target, drop it.
+        if (this._virtDragEl === el) this._virtDragEl = null;
+    }
+
+    // ── Overlay navigation (virtual cursor, immersive + captured) ─────────
+
+    /** Visible draggable overlays the virtual cursor can interact with. */
+    _navOverlays() {
+        const list = [];
+        if (this._immersiveOverlay && this._immersiveOverlay.classList.contains('visible'))
+            list.push(this._immersiveOverlay);
+        if (this._overlayEl && this._overlayEl.style.display !== 'none' && !this._statsClosed)
+            list.push(this._overlayEl);
+        return list;
+    }
+
+    /** Topmost visible overlay whose rect contains the virtual cursor, or null. */
+    _overlayAtVirtual(x, y) {
+        for (const el of this._navOverlays()) {
+            const r = el.getBoundingClientRect();
+            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return el;
+        }
+        return null;
+    }
+
+    /** Enter overlay-navigation mode: spawn the virtual cursor over the overlays. */
+    _enterOverlayNav() {
+        if (!this._virtCursorEl) return;
+        this._overlayNav = true;
+        this._virtDragEl = null;
+        // Place the virtual cursor at top-center, where the overlays live.
+        this._virtX = window.innerWidth / 2;
+        this._virtY = 28;
+        this._virtCursorEl.classList.add('visible');
+        this._positionVirtCursor();
+    }
+
+    /** Leave overlay-navigation mode and hand control back to the host. */
+    _exitOverlayNav() {
+        this._overlayNav = false;
+        this._virtDragEl = null;
+        if (this._virtCursorEl) this._virtCursorEl.classList.remove('visible', 'on-target');
+        // Re-seed mid-screen so the next top push is a deliberate gesture again.
+        this._virtY = window.innerHeight / 2;
+    }
+
+    _positionVirtCursor() {
+        if (!this._virtCursorEl) return;
+        this._virtCursorEl.style.left = this._virtX + 'px';
+        this._virtCursorEl.style.top = this._virtY + 'px';
+    }
+
+    _navMouseMove(e) {
+        this._virtX = Math.max(0, Math.min(window.innerWidth, this._virtX + e.movementX));
+        this._virtY = Math.max(0, Math.min(window.innerHeight, this._virtY + e.movementY));
+        this._positionVirtCursor();
+
+        // Dragging an overlay: move it with the virtual cursor (same clamp as
+        // the real pointer drag), marking it user-placed so auto-layout backs off.
+        if (this._virtDragEl) {
+            const el = this._virtDragEl;
+            const maxLeft = Math.max(0, window.innerWidth - el.offsetWidth);
+            const maxTop = Math.max(0, window.innerHeight - el.offsetHeight);
+            el.style.left =
+                Math.min(maxLeft, Math.max(0, this._virtX - this._virtDragOff.x)) + 'px';
+            el.style.top = Math.min(maxTop, Math.max(0, this._virtY - this._virtDragOff.y)) + 'px';
+            el.style.right = 'auto';
+            el.style.transform = 'none';
+            el.classList.add('user-moved');
+            return;
+        }
+
+        // Hover feedback: highlight the dot when over an interactable overlay.
+        const el = this._overlayAtVirtual(this._virtX, this._virtY);
+        this._virtCursorEl.classList.toggle('on-target', !!el);
+    }
+
+    _navMouseDown(e) {
+        if (e.button !== 0) return; // left button only
+        const el = this._overlayAtVirtual(this._virtX, this._virtY);
+        // Click on empty space → leave overlay nav, back to the game.
+        if (!el) {
+            this._exitOverlayNav();
+            return;
+        }
+        // Over the × button → close the overlay.
+        const closeBtn = el.querySelector('.overlay-close-btn');
+        if (closeBtn) {
+            const r = closeBtn.getBoundingClientRect();
+            if (
+                this._virtX >= r.left &&
+                this._virtX <= r.right &&
+                this._virtY >= r.top &&
+                this._virtY <= r.bottom
+            ) {
+                this._closeOverlayEl(el);
+                return;
+            }
+        }
+        // Otherwise start dragging the overlay from the grab offset.
+        const r = el.getBoundingClientRect();
+        this._virtDragEl = el;
+        this._virtDragOff = { x: this._virtX - r.left, y: this._virtY - r.top };
+    }
+
+    _navMouseUp() {
+        this._virtDragEl = null;
+    }
+
     // ── Immersive-mode exit reminder ─────────────────────────────────────
 
     /**
@@ -3421,14 +3549,18 @@ export class StreamView {
         // relative movement via pointer lock deltas when focused.
         this._onGamingMouseMove = (e) => {
             if (this._mouseFocused) {
-                // Top-edge release zone: track a virtual Y from the lock deltas
-                // (seeded mid-screen on capture). Pushing it to the very top of
-                // the screen frees the pointer so the client cursor can reach the
-                // overlays (stats / exit reminder) to move or close them. Click
-                // the game afterwards to re-capture.
+                // Already navigating the overlays with the virtual cursor.
+                if (this._overlayNav) {
+                    this._navMouseMove(e);
+                    return;
+                }
+                // Top-edge trigger: track a virtual Y from the lock deltas (seeded
+                // mid-screen on capture). Pushing it to the very top of the screen
+                // spawns the virtual cursor over the overlays (no lock release, so
+                // no OS-cursor jump). All other movement drives the host.
                 this._virtY = Math.max(0, Math.min(window.innerHeight, this._virtY + e.movementY));
                 if (this._virtY <= 0 && e.movementY < 0) {
-                    document.exitPointerLock();
+                    this._enterOverlayNav();
                     return;
                 }
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
@@ -3477,10 +3609,24 @@ export class StreamView {
 
         // Mouse button events: only send when focused (pre-focus click only captures)
         this._onGamingMouseDown = (e) => {
-            if (this._mouseFocused) this.handleMouseDown(e);
+            if (!this._mouseFocused) return;
+            // In overlay-navigation mode, clicks act on the virtual cursor
+            // (drag/close an overlay, or click empty to return to the game).
+            if (this._overlayNav) {
+                e.preventDefault();
+                this._navMouseDown(e);
+                return;
+            }
+            this.handleMouseDown(e);
         };
         this._onGamingMouseUp = (e) => {
-            if (this._mouseFocused) this.handleMouseUp(e);
+            if (!this._mouseFocused) return;
+            if (this._overlayNav) {
+                e.preventDefault();
+                this._navMouseUp(e);
+                return;
+            }
+            this.handleMouseUp(e);
         };
         this.inputEl.addEventListener('mousedown', this._onGamingMouseDown);
         this.inputEl.addEventListener('mouseup', this._onGamingMouseUp);
@@ -5274,9 +5420,14 @@ export class StreamView {
     handlePointerLockChange() {
         this.pointerLocked = document.pointerLockElement === this.inputEl;
         this._mouseFocused = this.pointerLocked;
-        // Reset the virtual Y tracker to mid-screen on capture so the user must
-        // deliberately travel up to the top edge to release the pointer.
-        if (this.pointerLocked) this._virtY = window.innerHeight / 2;
+        if (this.pointerLocked) {
+            // Reset the virtual Y tracker to mid-screen on capture so the user
+            // must deliberately travel up to the top edge to reach the overlays.
+            this._virtY = window.innerHeight / 2;
+        } else {
+            // Lock lost (Esc, exit combo…) — leave overlay-nav if it was active.
+            this._exitOverlayNav();
+        }
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }
@@ -5359,6 +5510,7 @@ export class StreamView {
 
         // Leaving immersive mode hides the exit reminder and drops the full
         // keyboard lock; entering it keeps the overlay hidden until capture.
+        this._exitOverlayNav();
         this._updateImmersiveOverlay();
         this._syncKeyboardLock();
 
