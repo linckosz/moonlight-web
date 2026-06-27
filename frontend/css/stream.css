@@ -328,12 +328,20 @@ body.streaming-active .app-footer {
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     line-height: 1.45;
     color: rgba(255, 255, 255, 0.7);
-    transition: opacity 0.3s ease;
+    transition: opacity 0.2s ease;
 }
 
 .stream-stats-overlay.dragging {
     cursor: grabbing;
     transition: none;
+}
+
+/* In immersive mode, an overlay fades to near-transparent while the client
+   cursor passes over it (not while actively dragging) so it never hides the
+   game underneath. */
+#stream-view.immersive-active .stream-stats-overlay:hover:not(.dragging),
+#stream-view.immersive-active .stream-immersive-overlay:hover:not(.dragging) {
+    opacity: 0.15;
 }
 
 /* ── Immersive-mode exit reminder (discreet, draggable, top-center) ──────────
@@ -366,13 +374,10 @@ body.streaming-active .app-footer {
     white-space: nowrap;
     color: rgba(255, 255, 255, 0.55);
     opacity: 0.5;
-    transition: opacity 0.25s ease;
+    transition: opacity 0.2s ease;
 }
 .stream-immersive-overlay.visible {
     display: flex;
-}
-.stream-immersive-overlay:hover {
-    opacity: 0.92;
 }
 .stream-immersive-overlay.dragging {
     cursor: grabbing;
