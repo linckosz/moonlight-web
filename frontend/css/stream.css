@@ -428,34 +428,6 @@ body.streaming-active .app-footer {
     background: rgba(255, 255, 255, 0.12);
 }
 
-/* ── Virtual cursor (overlay-navigation mode in immersive) ─────────────────── */
-.stream-virtual-cursor {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 16px;
-    height: 16px;
-    /* Center the dot on (left, top). */
-    margin: -8px 0 0 -8px;
-    z-index: 10001;
-    pointer-events: none;
-    display: none;
-    border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.9);
-    background: rgba(0, 0, 0, 0.35);
-    box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
-    transition:
-        border-color 0.12s ease,
-        background 0.12s ease;
-}
-.stream-virtual-cursor.visible {
-    display: block;
-}
-.stream-virtual-cursor.on-target {
-    border-color: var(--accent-1, #fcee0a);
-    background: rgba(252, 238, 10, 0.25);
-}
-
 .stats-waiting {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.4);
