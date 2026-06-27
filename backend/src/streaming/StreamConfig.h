@@ -56,6 +56,9 @@ struct StreamConfig
     VideoCodec codec = VideoCodec::Auto;
     ChromaSampling chroma = ChromaSampling::C420;
     bool hdrEnabled = false;
+    // Mute the host PC speakers while streaming (GameStream localAudioPlayMode).
+    // true → localAudioPlayMode=0 (host muted, default), false → 1 (play on host).
+    bool muteHostAudio = true;
 
     // Audio: stereo Opus, 5ms packets
     static constexpr int kAudioChannels = 2;

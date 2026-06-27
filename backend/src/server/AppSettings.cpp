@@ -251,6 +251,21 @@ void AppSettings::setHdrEnabled(bool enabled)
     writeAll(obj);
 }
 
+// ── Mute host audio ────────────────────────────────────────────────────────────
+
+bool AppSettings::muteHostAudio() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("mute_host_audio").toBool(true);
+}
+
+void AppSettings::setMuteHostAudio(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["mute_host_audio"] = enabled;
+    writeAll(obj);
+}
+
 // ── Chroma 4:4:4 ───────────────────────────────────────────────────────────────
 
 bool AppSettings::chroma444Enabled() const

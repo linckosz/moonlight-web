@@ -109,6 +109,8 @@
     "chroma444Desc": "Full-resolution color (4:4:4) instead of 4:2:0. Requires both the host AND client GPU to support 4:4:4 for the chosen codec. Needs significantly higher bandwidth.",
     "vsync": "VSync",
     "vsyncDesc": "Synchronizes frames to the display refresh. Uncheck to allow tearing for lower latency.",
+    "muteHost": "Mute host audio",
+    "muteHostDesc": "Mute the host PC speakers while streaming. Audio is still sent to this device.",
     "bitrate": "Bitrate:",
     "bitrateUnit": "Mbps",
     "bitrateDesc": "Auto-adjusted from resolution, frame rate and HDR.",

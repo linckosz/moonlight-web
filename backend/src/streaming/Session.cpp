@@ -168,7 +168,8 @@ void StreamSession::doResumeApp(const QByteArray& clientCert, const QByteArray& 
     m_ResumeAttempted = true;
     m_LaunchReply =
         m_Http->resumeAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort, effectiveUniqueId(),
-                               m_Config.rikey, m_Config.rikeyid, clientCert, clientKey);
+                               m_Config.rikey, m_Config.rikeyid, clientCert, clientKey,
+                               m_Config.muteHostAudio ? 0 : 1);
 
     connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
 }
@@ -187,7 +188,8 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert, const QByteArray& 
                                            effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
                                            m_StreamWidth, m_StreamHeight, m_StreamFps,
                                            m_StreamBitrateKbps, clientCert, clientKey,
-                                           m_Config.hdrEnabled ? 1 : 0); // hdrMode: 1=HDR, 0=SDR
+                                           m_Config.hdrEnabled ? 1 : 0, // hdrMode: 1=HDR, 0=SDR
+                                           m_Config.muteHostAudio ? 0 : 1); // localAudioPlayMode
 
     connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
 }

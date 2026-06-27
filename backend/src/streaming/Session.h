@@ -66,6 +66,10 @@ public:
     /// Request lower-bandwidth audio (10ms Opus frames) for mobile clients.
     void setLowAudio(bool enable) { m_LowAudio = enable; }
 
+    /// Mute the host PC speakers while streaming (GameStream localAudioPlayMode).
+    /// true (default) → host muted; false → audio also plays on the host.
+    void setMuteHostAudio(bool mute) { m_Config.muteHostAudio = mute; }
+
     /// Enable auto-mode behavior: WS fallback is disabled so that ICE timeout
     /// emits sessionEnded() instead of starting the internal WS fallback.
     /// This allows the auto fallback chain in main.cpp to try the next transport.
