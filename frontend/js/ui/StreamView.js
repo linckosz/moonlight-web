@@ -4752,8 +4752,12 @@ export class StreamView {
             }
             const maxX = Math.max(0, (imgW * this._zoom - rect.width) / 2);
             const maxY = Math.max(0, (imgH * this._zoom - rect.height) / 2);
+            // Allow pushing the image up beyond the standard clamp so its bottom
+            // edge can travel up to the middle of the visible area (black bar up
+            // to half the height). Other edges keep the strict no-black clamp.
+            const extraDown = rect.height / 2;
             this._panX = Math.max(-maxX, Math.min(maxX, this._panX));
-            this._panY = Math.max(-maxY, Math.min(maxY, this._panY));
+            this._panY = Math.max(-(maxY + extraDown), Math.min(maxY, this._panY));
         }
         const transform =
             this._zoom > 1.001
