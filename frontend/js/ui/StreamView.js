@@ -338,6 +338,11 @@ export class StreamView {
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
         this._mouseFocused = false;
+        // Virtual client-mouse position tracked from capture deltas (pointer
+        // locked = no real hover). Used only to fade an overlay out when the
+        // captured cursor passes behind it. Seeded mid-screen on capture.
+        this._dimVx = 0;
+        this._dimVy = 0;
         // Per-session "closed" flags: the user can dismiss the stats and the
         // immersive exit overlay with their × button; they stay hidden after.
         this._statsClosed = false;
@@ -2662,6 +2667,45 @@ export class StreamView {
         );
     }
 
+    // ── Overlay fade-out under the captured cursor ───────────────────────
+
+    /** Advance the virtual client-mouse by the capture deltas, then re-evaluate. */
+    _updateOverlayDim(dx, dy) {
+        this._dimVx = Math.max(0, Math.min(window.innerWidth, this._dimVx + dx));
+        this._dimVy = Math.max(0, Math.min(window.innerHeight, this._dimVy + dy));
+        this._applyOverlayDim();
+    }
+
+    /** Fade an overlay to 15% while the captured cursor sits behind it. */
+    _applyOverlayDim() {
+        const under = (el) => {
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            return (
+                this._dimVx >= r.left &&
+                this._dimVx <= r.right &&
+                this._dimVy >= r.top &&
+                this._dimVy <= r.bottom
+            );
+        };
+        if (this._overlayEl)
+            this._overlayEl.classList.toggle(
+                'dimmed',
+                this._mouseFocused && under(this._overlayEl),
+            );
+        if (this._immersiveOverlay)
+            this._immersiveOverlay.classList.toggle(
+                'dimmed',
+                this._mouseFocused && under(this._immersiveOverlay),
+            );
+    }
+
+    /** Remove the fade from every overlay (cursor released). */
+    _clearOverlayDim() {
+        if (this._overlayEl) this._overlayEl.classList.remove('dimmed');
+        if (this._immersiveOverlay) this._immersiveOverlay.classList.remove('dimmed');
+    }
+
     /** Dismiss a draggable overlay (× button). */
     _closeOverlayEl(el) {
         if (el === this._overlayEl) {
@@ -2712,10 +2756,6 @@ export class StreamView {
         const show = this._gamingMode && this._firstFrameRendered && !this._immersiveClosed;
         this._immersiveOverlay.classList.toggle('visible', show);
         if (show) this._positionImmersiveOverlay();
-        // In immersive mode, the overlays fade to near-transparent when the
-        // client cursor passes over them (CSS :hover) so they never hide the game.
-        const streamView = document.getElementById('stream-view');
-        if (streamView) streamView.classList.toggle('immersive-active', !!this._gamingMode);
     }
 
     /**
@@ -3431,6 +3471,9 @@ export class StreamView {
         this._onGamingMouseMove = (e) => {
             if (this._mouseFocused) {
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
+                // Fade an overlay out when the captured client mouse passes
+                // behind it (so it never hides the game underneath).
+                this._updateOverlayDim(e.movementX, e.movementY);
             } else {
                 const rect = this._mediaRect();
                 const rawX = e.clientX - rect.left;
@@ -5273,6 +5316,14 @@ export class StreamView {
     handlePointerLockChange() {
         this.pointerLocked = document.pointerLockElement === this.inputEl;
         this._mouseFocused = this.pointerLocked;
+        if (this.pointerLocked) {
+            // Seed the virtual client-mouse mid-screen on capture.
+            this._dimVx = window.innerWidth / 2;
+            this._dimVy = window.innerHeight / 2;
+        } else {
+            // Released: the cursor is free again, never fade the overlays.
+            this._clearOverlayDim();
+        }
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }

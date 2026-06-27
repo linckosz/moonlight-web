@@ -336,11 +336,11 @@ body.streaming-active .app-footer {
     transition: none;
 }
 
-/* In immersive mode, an overlay fades to near-transparent while the client
-   cursor passes over it (not while actively dragging) so it never hides the
-   game underneath. */
-#stream-view.immersive-active .stream-stats-overlay:hover:not(.dragging),
-#stream-view.immersive-active .stream-immersive-overlay:hover:not(.dragging) {
+/* While the mouse is captured (immersive focus), an overlay fades to 15% when
+   the client cursor passes behind it, so it never hides the game underneath.
+   Toggled from JS (the pointer is locked, so there is no real :hover). */
+.stream-stats-overlay.dimmed,
+.stream-immersive-overlay.dimmed {
     opacity: 0.15;
 }
 
