@@ -315,6 +315,70 @@ body.streaming-active .app-footer {
     transition: none;
 }
 
+/* ── Immersive-mode exit reminder (discreet, draggable, top-center) ──────────
+   Shown only while immersive mode has the mouse captured. Reminds the single
+   combo that releases the mouse, the full keyboard lock and fullscreen. */
+.stream-immersive-overlay {
+    position: fixed;
+    top: max(10px, env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    display: none; /* revealed via .visible when captured */
+    align-items: center;
+    gap: 8px;
+    background: rgba(8, 8, 14, 0.40);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.30);
+    padding: 5px 11px;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10.5px;
+    white-space: nowrap;
+    color: rgba(255, 255, 255, 0.55);
+    opacity: 0.5;
+    transition: opacity 0.25s ease;
+}
+.stream-immersive-overlay.visible {
+    display: flex;
+}
+.stream-immersive-overlay:hover {
+    opacity: 0.92;
+}
+.stream-immersive-overlay.dragging {
+    cursor: grabbing;
+    transition: none;
+    opacity: 0.92;
+}
+.stream-immersive-overlay .imm-keys {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+.stream-immersive-overlay .imm-plus {
+    color: rgba(255, 255, 255, 0.30);
+}
+.stream-immersive-overlay .imm-text {
+    color: rgba(255, 255, 255, 0.45);
+}
+.stream-immersive-overlay kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 10px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.80);
+}
+
 .stats-waiting {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.40);
