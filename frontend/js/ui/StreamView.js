@@ -2712,6 +2712,10 @@ export class StreamView {
         const show = this._gamingMode && this._firstFrameRendered && !this._immersiveClosed;
         this._immersiveOverlay.classList.toggle('visible', show);
         if (show) this._positionImmersiveOverlay();
+        // In immersive mode, the overlays fade to near-transparent when the
+        // client cursor passes over them (CSS :hover) so they never hide the game.
+        const streamView = document.getElementById('stream-view');
+        if (streamView) streamView.classList.toggle('immersive-active', !!this._gamingMode);
     }
 
     /**
