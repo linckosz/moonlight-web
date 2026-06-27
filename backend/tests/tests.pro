@@ -32,7 +32,8 @@ SOURCES += \
     test_input_crypto.cpp \
     test_rest_router.cpp \
     test_app_settings.cpp \
-    test_auth_manager.cpp
+    test_auth_manager.cpp \
+    test_connection_guard.cpp
 
 # ── In-scope production units (+ their real deps) ────────────────────────────
 SOURCES += \
@@ -42,6 +43,7 @@ SOURCES += \
     ../src/server/RestRouter.cpp \
     ../src/server/AppSettings.cpp \
     ../src/server/AuthManager.cpp \
+    ../src/server/ConnectionGuard.cpp \
     ../src/common/Logger.cpp
 
 # Q_OBJECT classes — listed so qmake runs moc on them.

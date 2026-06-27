@@ -57,11 +57,12 @@ public:
     using SslReadyCallback = std::function<void(QSslSocket*)>;
 
     SslServer(const QSslConfiguration& publicConfig, const QSslConfiguration& localConfig,
-              SslReadyCallback onSslReady, QObject* parent = nullptr)
+              SslReadyCallback onSslReady, ConnectionGuard* guard, QObject* parent = nullptr)
         : QTcpServer(parent)
         , m_PublicSslConfig(publicConfig)
         , m_LocalSslConfig(localConfig)
         , m_OnSslReady(std::move(onSslReady))
+        , m_Guard(guard)
     {}
 
     // Update the public (SNI default) config on a running server. Needed after
@@ -76,6 +77,14 @@ protected:
         if (!ssl->setSocketDescriptor(handle)) {
             Logger::warning("[HTTPS] SslServer: failed to set socket descriptor");
             delete ssl;
+            return;
+        }
+
+        // Drop banned / flooding peers before spending anything on the TLS
+        // handshake. Exempt (loopback/LAN) addresses always pass.
+        if (m_Guard && !m_Guard->allowConnection(ssl->peerAddress().toString())) {
+            ssl->abort();
+            ssl->deleteLater();
             return;
         }
 
@@ -235,6 +244,7 @@ private:
     QSslConfiguration m_PublicSslConfig;
     QSslConfiguration m_LocalSslConfig;
     SslReadyCallback m_OnSslReady;
+    ConnectionGuard* m_Guard = nullptr;
 };
 
 // --- Helpers -------------------------------------------------------------------
@@ -1171,7 +1181,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
                     connect(socket, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
                     if (socket->bytesAvailable() > 0) onReadyReadSocket(socket);
                 },
-                this);
+                &m_ConnGuard, this);
             if (ssl->listen(QHostAddress::Any, port)) return ssl;
             delete ssl;
             return nullptr;
@@ -1211,6 +1221,14 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         } else {
             Logger::error("HTTPS server failed: no available port in any fallback range");
         }
+    }
+
+    // Periodically purge idle ConnectionGuard entries so the per-IP table does
+    // not grow unbounded under a churn of unique source addresses.
+    if (!m_GuardPurgeTimer) {
+        m_GuardPurgeTimer = new QTimer(this);
+        connect(m_GuardPurgeTimer, &QTimer::timeout, this, [this]() { m_ConnGuard.purge(); });
+        m_GuardPurgeTimer->start(60'000);
     }
 
     emit started(m_ActiveHttpsPort);
@@ -1312,12 +1330,25 @@ bool HttpServer::isAuthenticated(const HttpRequest& req) const
     return false;
 }
 
+// --- Abuse mitigation -------------------------------------------------------
+
+bool HttpServer::rejectIfAbusive(QTcpSocket* socket)
+{
+    if (m_ConnGuard.allowConnection(socket->peerAddress().toString()))
+        return false;
+    socket->abort();
+    socket->deleteLater();
+    return true;
+}
+
 // --- HTTP redirect ----------------------------------------------------------
 
 void HttpServer::onHttpConnection()
 {
     if (!m_HttpServer) return;
     while (QTcpSocket* socket = m_HttpServer->nextPendingConnection()) {
+        // Drop banned / flooding peers immediately (cheap close, no parsing).
+        if (rejectIfAbusive(socket)) continue;
         // Non-encrypted HTTP server: process requests directly (no redirect to HTTPS).
         // This allows external tunnels (cloudflared etc.) to connect via HTTP
         // (they use http://localhost:<port> as the origin).
@@ -1458,6 +1489,9 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     if (m_AuthManager && !HttpServer::isLocalRequest(req.clientAddress) &&
         req.path != "/api/health" && req.path != "/api/server/hostname" &&
         !req.path.startsWith("/api/auth/") && !isAuthenticated(req)) {
+        // Unauthenticated remote API hit = credential scanning; feed the guard
+        // so repeated failures ban the source IP.
+        m_ConnGuard.reportAuthFailure(req.clientAddress);
         QJsonObject obj;
         obj["error"] = "authentication_required";
         HttpResponse resp = HttpResponse::json(obj, 401);
@@ -1512,6 +1546,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
             if (authenticated) break;
         }
         if (!authenticated) {
+            m_ConnGuard.reportAuthFailure(clientSocket->peerAddress().toString());
             QJsonObject obj;
             obj["error"] = "authentication_required";
             HttpResponse resp = HttpResponse::json(obj, 401);
