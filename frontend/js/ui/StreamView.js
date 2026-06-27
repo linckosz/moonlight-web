@@ -2669,24 +2669,31 @@ export class StreamView {
 
     // ── Overlay fade-out under the captured cursor ───────────────────────
 
-    /** Advance the virtual client-mouse by the capture deltas, then re-evaluate. */
+    /** Advance the virtual cursor (host-image pixels) by the deltas, re-evaluate. */
     _updateOverlayDim(dx, dy) {
-        this._dimVx = Math.max(0, Math.min(window.innerWidth, this._dimVx + dx));
-        this._dimVy = Math.max(0, Math.min(window.innerHeight, this._dimVy + dy));
+        const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
+        const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
+        // Capture deltas are host-image pixels; clamp to the streamed resolution.
+        this._dimVx = Math.max(0, Math.min(iw || window.innerWidth, this._dimVx + dx));
+        this._dimVy = Math.max(0, Math.min(ih || window.innerHeight, this._dimVy + dy));
         this._applyOverlayDim();
     }
 
     /** Fade an overlay to 15% while the captured cursor sits behind it. */
     _applyOverlayDim() {
+        // Project the host-image-pixel virtual cursor to client screen coords
+        // through the displayed media rect (object-fit: contain → scale +
+        // letterbox), so the dim reacts where the host cursor actually appears
+        // even when the stream is shown smaller than its native resolution.
+        const rect = this._mediaRect();
+        const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
+        const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
+        const sx = iw ? rect.left + (this._dimVx * rect.width) / iw : this._dimVx;
+        const sy = ih ? rect.top + (this._dimVy * rect.height) / ih : this._dimVy;
         const under = (el) => {
             if (!el) return false;
             const r = el.getBoundingClientRect();
-            return (
-                this._dimVx >= r.left &&
-                this._dimVx <= r.right &&
-                this._dimVy >= r.top &&
-                this._dimVy <= r.bottom
-            );
+            return sx >= r.left && sx <= r.right && sy >= r.top && sy <= r.bottom;
         };
         if (this._overlayEl)
             this._overlayEl.classList.toggle(
@@ -3513,6 +3520,12 @@ export class StreamView {
                 referenceWidth: refW,
                 referenceHeight: refH,
             });
+            // Seed the dim tracker at the click, in host-image pixels, so the
+            // virtual cursor starts aligned with the host cursor.
+            const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
+            const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
+            this._dimVx = iw ? (x / Math.max(1, refW)) * iw : x;
+            this._dimVy = ih ? (y / Math.max(1, refH)) * ih : y;
             this.inputEl.requestPointerLock();
         };
         this.inputEl.addEventListener('click', this._onGamingClick);
@@ -5316,14 +5329,9 @@ export class StreamView {
     handlePointerLockChange() {
         this.pointerLocked = document.pointerLockElement === this.inputEl;
         this._mouseFocused = this.pointerLocked;
-        if (this.pointerLocked) {
-            // Seed the virtual client-mouse mid-screen on capture.
-            this._dimVx = window.innerWidth / 2;
-            this._dimVy = window.innerHeight / 2;
-        } else {
-            // Released: the cursor is free again, never fade the overlays.
-            this._clearOverlayDim();
-        }
+        // The dim tracker is seeded at the capturing click (host-image pixels);
+        // on release the cursor is free again so clear any fade.
+        if (!this.pointerLocked) this._clearOverlayDim();
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }
