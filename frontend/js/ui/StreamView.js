@@ -2690,10 +2690,14 @@ export class StreamView {
         const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
         const sx = iw ? rect.left + (this._dimVx * rect.width) / iw : this._dimVx;
         const sy = ih ? rect.top + (this._dimVy * rect.height) / ih : this._dimVy;
+        // Tolerance: relative-mouse tracking can't be pixel-exact (host pointer
+        // acceleration + possible desktop≠stream resolution), so widen the hit
+        // zone a little to keep the fade engaging near the overlay.
+        const M = 24;
         const under = (el) => {
             if (!el) return false;
             const r = el.getBoundingClientRect();
-            return sx >= r.left && sx <= r.right && sy >= r.top && sy <= r.bottom;
+            return sx >= r.left - M && sx <= r.right + M && sy >= r.top - M && sy <= r.bottom + M;
         };
         if (this._overlayEl)
             this._overlayEl.classList.toggle(
