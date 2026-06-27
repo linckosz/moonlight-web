@@ -2681,6 +2681,14 @@ export class StreamView {
 
     /** Fade an overlay to 15% while the captured cursor sits behind it. */
     _applyOverlayDim() {
+        // Only in fullscreen: there the overlays sit over the image. Out of
+        // fullscreen the reminder lives in the header (off the image), so the
+        // fade is never needed — and the relative-tracking offset is avoided.
+        const inFs = !!document.fullscreenElement || this._cssFullscreen;
+        if (!inFs) {
+            this._clearOverlayDim();
+            return;
+        }
         // Project the host-image-pixel virtual cursor to client screen coords
         // through the displayed media rect (object-fit: contain → scale +
         // letterbox), so the dim reacts where the host cursor actually appears
@@ -2770,24 +2778,28 @@ export class StreamView {
     }
 
     /**
-     * Keep the immersive overlay from overlapping the header Fullscreen button
-     * (both are horizontally centered): when that button is on screen, drop the
-     * overlay just below the header; otherwise restore the CSS default top.
+     * Place the immersive reminder.
+     *  - Non-fullscreen (Fullscreen button visible): dock it in the header just
+     *    right of the centered Fullscreen button — outside the streamed image,
+     *    so it never covers the game (and the fade effect stays off there).
+     *  - Fullscreen (button hidden): back to the CSS default (top-center).
      * No-op once the user has dragged the card (manual position wins).
      */
     _positionImmersiveOverlay() {
         const el = this._immersiveOverlay;
         if (!el || el.classList.contains('user-moved')) return;
-        const fsVisible =
-            this._mobileFsBtn &&
-            this._mobileFsBtn.isConnected &&
-            this._mobileFsBtn.style.display !== 'none';
+        const fsBtn = this._mobileFsBtn;
+        const fsVisible = fsBtn && fsBtn.isConnected && fsBtn.style.display !== 'none';
         if (fsVisible) {
-            const header = document.querySelector('.stream-header');
-            const bottom = header ? header.getBoundingClientRect().bottom : 0;
-            el.style.top = bottom + 8 + 'px';
+            const r = fsBtn.getBoundingClientRect();
+            el.style.left = Math.round(r.right + 12) + 'px';
+            el.style.top = Math.round(r.top + r.height / 2) + 'px';
+            el.style.transform = 'translateY(-50%)';
         } else {
-            el.style.top = ''; // back to CSS default (safe-area top)
+            // Restore the CSS default (left:50% + translateX(-50%), safe-area top).
+            el.style.left = '';
+            el.style.top = '';
+            el.style.transform = '';
         }
     }
 
@@ -4362,8 +4374,10 @@ export class StreamView {
             this._mobileFsBtn.style.display = isLandscape ? '' : 'none';
         }
 
-        // Keep the immersive overlay clear of the (centered) Fullscreen button.
+        // Reposition the reminder (header vs top-center) and, when leaving
+        // fullscreen, drop any fade immediately rather than on the next move.
         this._positionImmersiveOverlay();
+        if (!inFullscreen) this._clearOverlayDim();
     }
 
     // =========================================================================
