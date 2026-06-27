@@ -197,6 +197,25 @@ if(MW_ASAN)
     endif()
 endif()
 
+# ── Cross-platform security tests (ctest) ──────────────────────────────────
+# Lightweight runner over the pure-logic security units (ConnectionGuard:
+# per-IP anti-DDoS / abuse ban). Depends on Qt Core/Network only — no OpenSSL,
+# no Windows APIs — so the SAME security logic is verified on Linux, macOS and
+# Windows, enforcing parity across platforms. The full Windows-only TNR suite
+# (OpenCppCoverage, OpenSSL-dependent units) still lives in tests/tests.pro.
+option(MW_BUILD_TESTS "Build cross-platform unit tests" ON)
+if(MW_BUILD_TESTS)
+    enable_testing()
+    add_executable(mw-security-tests
+        tests/security_main.cpp
+        tests/test_connection_guard.cpp
+        src/server/ConnectionGuard.cpp
+    )
+    target_include_directories(mw-security-tests PRIVATE src tests)
+    target_link_libraries(mw-security-tests PRIVATE Qt6::Core Qt6::Network)
+    add_test(NAME security-tnr COMMAND mw-security-tests)
+endif()
+
 # ── Install / packaging ────────────────────────────────────────────────────
 # Lays out a relocatable bundle: the executable, the frontend served as static
 # files (HttpServer falls back to <exedir>/frontend at runtime), and the OpenSSL
