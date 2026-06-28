@@ -440,9 +440,17 @@ export class StreamView {
         // Session taken over by another device → graceful cyberpunk exit.
         this.webrtc.onTakeover = () => this._handleTakeover();
 
+        // Physical keys currently held down (e.code → keyup payload). Used to
+        // release everything when the window loses focus: the OS can steal focus
+        // mid-press (e.g. the Windows key opens the local Start menu), so the
+        // keyup never reaches us and the host keeps the key — turning a later
+        // "e" into Win+E, etc. We synthesize the missing keyups on blur/hidden.
+        this._heldPhysKeys = new Map();
+
         // Bound handlers
         this._onKeyDown = (e) => this.handleKeyDown(e);
         this._onKeyUp = (e) => this.handleKeyUp(e);
+        this._onWindowBlur = () => this._releaseAllPhysKeys();
         this._onMouseMove = (e) => this.handleMouseMove(e);
         this._onMouseDown = (e) => this.handleMouseDown(e);
         this._onMouseUp = (e) => this.handleMouseUp(e);
@@ -519,6 +527,9 @@ export class StreamView {
         // cache a corrupt layer (green tint from NV12→RGB bug in Canvas2D).
         // Invalidation via will-change toggle forces a fresh composite.
         this._onVisibilityChange = () => {
+            // Going to background can swallow keyups — release everything so no
+            // modifier stays stuck on the host.
+            if (document.visibilityState === 'hidden') this._releaseAllPhysKeys();
             if (document.visibilityState === 'visible' && !this._quitting) {
                 const header = document.querySelector('.stream-header');
                 if (header) {
@@ -3421,6 +3432,7 @@ export class StreamView {
         this.streamEl.addEventListener('touchend', this._onTouchEnd, { passive: false });
         this.streamEl.addEventListener('touchcancel', this._onTouchEnd, { passive: false });
         window.addEventListener('beforeunload', this._onBeforeUnload);
+        window.addEventListener('blur', this._onWindowBlur);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
         // All platforms: keep Escape inside the host while in fullscreen.
         document.addEventListener('fullscreenchange', this._onFsChangeLock);
@@ -3611,6 +3623,7 @@ export class StreamView {
         document.removeEventListener('keyup', this._onKeyUp);
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
+        window.removeEventListener('blur', this._onWindowBlur);
         document.removeEventListener('visibilitychange', this._onVisibilityChange);
         document.removeEventListener('fullscreenchange', this._onFsChangeLock);
         // Release the keyboard lock if still held (e.g. quit while fullscreen).
@@ -3987,6 +4000,14 @@ export class StreamView {
         // AZERTY instead of VK_Q), which breaks Sunshine's layout correction.
         // Fall back to e.keyCode only for unmapped codes.
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
+        // Remember the matching keyup so we can release the key if focus is lost
+        // before the real keyup fires. Modifier flags are cleared on release.
+        this._heldPhysKeys.set(e.code || vkCode, {
+            type: 'keyup',
+            keyCode: vkCode,
+            code: e.code,
+            key: e.key,
+        });
         this.webrtc.send({
             type: 'keydown',
             keyCode: vkCode,
@@ -4004,6 +4025,7 @@ export class StreamView {
         if (e.target === this._kbdCapture) return;
         e.preventDefault();
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
+        this._heldPhysKeys.delete(e.code || vkCode);
         this.webrtc.send({
             type: 'keyup',
             keyCode: vkCode,
@@ -4014,6 +4036,23 @@ export class StreamView {
             altKey: e.altKey,
             metaKey: e.metaKey,
         });
+    }
+
+    // Release every physically-held key on the host. Called when the window
+    // loses focus or goes hidden: the OS may eat the keyup (Win key → Start
+    // menu, Alt+Tab), which would otherwise leave a modifier stuck on the host.
+    _releaseAllPhysKeys() {
+        if (!this._heldPhysKeys || this._heldPhysKeys.size === 0) return;
+        for (const payload of this._heldPhysKeys.values()) {
+            this.webrtc.send({
+                ...payload,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+            });
+        }
+        this._heldPhysKeys.clear();
     }
 
     handleMouseMove(e) {
