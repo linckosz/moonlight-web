@@ -323,7 +323,9 @@ body.streaming-active .app-footer {
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 10px;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
-    padding: 8px 12px;
+    /* Extra right padding reserves room for the absolute × close button so it
+       never overlaps the resolution line (top-right of the stats). */
+    padding: 8px 24px 8px 12px;
     min-width: 168px;
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     line-height: 1.45;
@@ -334,14 +336,6 @@ body.streaming-active .app-footer {
 .stream-stats-overlay.dragging {
     cursor: grabbing;
     transition: none;
-}
-
-/* While the mouse is captured (immersive focus), an overlay fades to 15% when
-   the client cursor passes behind it, so it never hides the game underneath.
-   Toggled from JS (the pointer is locked, so there is no real :hover). */
-.stream-stats-overlay.dimmed,
-.stream-immersive-overlay.dimmed {
-    opacity: 0.15;
 }
 
 /* ── Immersive-mode exit reminder (discreet, draggable, top-center) ──────────
@@ -361,20 +355,32 @@ body.streaming-active .app-footer {
     display: none; /* revealed via .visible when captured */
     align-items: center;
     gap: 8px;
-    background: rgba(8, 8, 14, 0.4);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 8px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
     /* Extra right padding reserves room for the absolute × close button. */
     padding: 5px 24px 5px 11px;
     font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     font-size: 10.5px;
     white-space: nowrap;
+    transition: opacity 0.2s ease;
+    /* Non-fullscreen: the card sits in the header next to the Fullscreen button,
+       so it adopts the same surface/text colors for a consistent header look. */
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.65);
+    opacity: 1;
+}
+/* Fullscreen (no header): the card floats over the image, so keep the original
+   discreet dark-glass look that never competes with the game. */
+:fullscreen .stream-immersive-overlay,
+:-webkit-full-screen .stream-immersive-overlay,
+.stream-css-fs .stream-immersive-overlay {
+    background: rgba(8, 8, 14, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
     color: rgba(255, 255, 255, 0.55);
     opacity: 0.5;
-    transition: opacity 0.2s ease;
 }
 .stream-immersive-overlay.visible {
     display: flex;
@@ -642,6 +648,30 @@ body.streaming-active .app-footer {
 }
 .btn-stream-fs:active {
     transform: translate(-50%, -50%) scale(0.95);
+}
+/* Immersive mode: the fullscreen-toggle combo (…+X) shown on the button. */
+.btn-stream-fs .fs-combo {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 4px;
+    padding-left: 8px;
+    border-left: 1px solid rgba(255, 255, 255, 0.15);
+}
+.btn-stream-fs .fs-plus {
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 10px;
+}
+.btn-stream-fs kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.85);
 }
 
 /* ── On-screen keyboard toggle (touch devices) ─────────────────────────── */
