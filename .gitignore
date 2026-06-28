@@ -5,6 +5,9 @@ build-*/
 *.obj
 *.exe
 *.dll
+# Exception: prebuilt OpenSSL runtime DLLs are a committed dependency (shipped
+# next to mw-server.exe; required by CI artifacts which checkout clean).
+!backend/libs/windows/lib/**/*.dll
 *.so
 *.dylib
 moc_*.cpp
