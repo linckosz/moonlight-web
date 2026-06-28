@@ -111,7 +111,6 @@ private:
     // Main-thread only (called from onVideoFrame / sendBufferedKeyframe).
     uint32_t computeRtpTimestamp();
 
-
     MoonlightShim* m_Shim;
 
     std::shared_ptr<rtc::PeerConnection> m_Pc;

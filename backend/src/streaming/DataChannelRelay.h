@@ -35,7 +35,7 @@
 namespace rtc {
 class DataChannel;
 class Track;
-}
+} // namespace rtc
 
 class MoonlightShim;
 

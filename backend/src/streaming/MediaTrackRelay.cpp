@@ -72,7 +72,8 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
 MediaTrackRelay::~MediaTrackRelay()
 {
     qInfo() << "[MediaTrackRelay] Destructor";
-    stop();
+    // Static call: dynamic dispatch is meaningless in a destructor.
+    MediaTrackRelay::stop();
 }
 
 bool MediaTrackRelay::prepare(const rtc::Configuration& config, bool)

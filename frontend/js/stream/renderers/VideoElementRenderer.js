@@ -71,9 +71,7 @@ export class VideoElementRenderer extends VideoRenderer {
         // re-armed on the first successful write.
         r._playRequested = false;
         r._tryPlay();
-        console.log(
-            '[VideoElementRenderer] created; track.readyState=' + r._generator.readyState,
-        );
+        console.log('[VideoElementRenderer] created; track.readyState=' + r._generator.readyState);
         return r;
     }
 

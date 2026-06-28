@@ -483,7 +483,8 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
 DataChannelRelay::~DataChannelRelay()
 {
     qInfo() << "[DataChannelRelay] Destructor";
-    stop();
+    // Static call: dynamic dispatch is meaningless in a destructor.
+    DataChannelRelay::stop();
 }
 
 bool DataChannelRelay::prepare(const rtc::Configuration& config, bool)

@@ -862,8 +862,8 @@ int main(int argc, char* argv[])
         bool reqYuv444 = body.contains("chroma_444_enabled") ? body["chroma_444_enabled"].toBool()
                                                              : appSettings.chroma444Enabled();
 
-        bool reqHdr = body.contains("hdr_enabled") ? body["hdr_enabled"].toBool()
-                                                   : appSettings.hdrEnabled();
+        bool reqHdr =
+            body.contains("hdr_enabled") ? body["hdr_enabled"].toBool() : appSettings.hdrEnabled();
 
         // Mobile clients request lower-bandwidth audio (10ms Opus frames).
         bool reqLowAudio = body.contains("low_audio") && body["low_audio"].toBool();

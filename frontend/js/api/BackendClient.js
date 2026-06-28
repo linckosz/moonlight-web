@@ -151,8 +151,11 @@ export class BackendClient {
     static async quitApp(hostId) {
         // Fail fast if the backend is dead — don't wait 30s for a /quit that'll
         // never arrive while the UI is stuck in the quit animation.
-        return this.post(`/api/hosts/${hostId}/quit`, { client_uniqueid: this.clientUniqueId() },
-            { timeoutMs: 5000 });
+        return this.post(
+            `/api/hosts/${hostId}/quit`,
+            { client_uniqueid: this.clientUniqueId() },
+            { timeoutMs: 5000 },
+        );
     }
 
     // ── Auth API ───────────────────────────────────────────────────────────

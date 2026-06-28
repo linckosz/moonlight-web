@@ -3424,6 +3424,10 @@ export class StreamView {
         // started with e.g. NumLock on. Re-sync once per session on the first
         // real keyboard event (getModifierState requires a KeyboardEvent).
         this._locksSynced = false;
+        // Load the physical-key → printed-label map so control combos match the
+        // user's layout (AZERTY: KeyA → 'q') instead of the QWERTY position.
+        // Chromium-only; Safari/Firefox fall back to e.key/e.code detection.
+        this._loadKeyboardLayoutMap();
         // Common events (both modes)
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
@@ -3843,6 +3847,31 @@ export class StreamView {
         return map[code] !== undefined ? map[code] : 0;
     }
 
+    // Cache navigator.keyboard.getLayoutMap() to resolve a physical key code
+    // (e.code) to its printed label for the active layout. Used by combo
+    // detection so Cmd+Option+Ctrl+{Q,X,Z,M} matches the labelled key on
+    // AZERTY/other layouts rather than the QWERTY physical position. Refreshes
+    // on layoutchange. No-op where the API is unavailable.
+    async _loadKeyboardLayoutMap() {
+        this._layoutMap = null;
+        const kb = navigator.keyboard;
+        if (!kb || typeof kb.getLayoutMap !== 'function') return;
+        try {
+            this._layoutMap = await kb.getLayoutMap();
+            if (typeof kb.addEventListener === 'function') {
+                kb.addEventListener('layoutchange', async () => {
+                    try {
+                        this._layoutMap = await kb.getLayoutMap();
+                    } catch {
+                        /* keep previous map */
+                    }
+                });
+            }
+        } catch {
+            this._layoutMap = null;
+        }
+    }
+
     // Align the host's toggle-lock state with the client's. The Moonlight
     // protocol has no lock-state field, so the host can't know the client
     // booted with NumLock on. We assume the host starts with locks off (the
@@ -3931,11 +3960,18 @@ export class StreamView {
         //            This prevents false positives on AZERTY where pressing A
         //            at the physical KeyQ position would otherwise trigger Q.
         if (modCtrl && e.altKey && modThird) {
-            const k = e.key.toLowerCase();
+            // Resolve the printed label of the physical key. On macOS, holding
+            // Option mangles e.key into a special char (Option+q → 'œ'), which
+            // would force the e.code (QWERTY position) fallback and break AZERTY.
+            // The layout map gives the real label (AZERTY: KeyA → 'q').
+            const layoutLabel = this._layoutMap?.get(e.code);
+            const k = (layoutLabel || e.key).toLowerCase();
             const c = e.code;
-            // e.code fallback only if AltGr altered e.key to a non-letter
+            // e.code fallback only when no layout map is available AND AltGr
+            // altered e.key to a non-letter. With a layout map, k is reliable.
             const isLetter = /^[a-z]$/.test(k);
-            const chk = (letter, code) => k === letter || (!isLetter && c === code);
+            const chk = (letter, code) =>
+                k === letter || (!this._layoutMap && !isLetter && c === code);
 
             // Quit: Ctrl+Alt+Shift+Q (Win) / Cmd+Option+Ctrl+Q (Mac)
             if (chk('q', 'KeyQ')) {

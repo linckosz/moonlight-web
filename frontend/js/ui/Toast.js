@@ -36,8 +36,7 @@ export class Toast {
      */
     /** Max simultaneously visible toasts (mobile vs desktop). */
     static _maxVisible() {
-        const isMobile =
-            window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+        const isMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
         return isMobile ? 3 : 5;
     }
 
