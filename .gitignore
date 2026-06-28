@@ -17,6 +17,8 @@ Makefile
 Makefile.Debug
 Makefile.Release
 *.pro.user
+*.user
+.qtcreator/
 *.autosave
 .qmake.stash
 

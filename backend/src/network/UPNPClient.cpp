@@ -15,8 +15,11 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Must be defined before any miniupnpc header to prevent dllimport on Windows
+// Must be defined before any miniupnpc header to prevent dllimport on Windows.
+// May already be set on the command line (CMake), so guard against redefinition.
+#ifndef MINIUPNP_STATICLIB
 #define MINIUPNP_STATICLIB
+#endif
 
 #include "UPNPClient.h"
 
@@ -207,7 +210,7 @@ bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
     // on multi-interface machines, causing the router to forward UDP to
     // the wrong host and breaking ICE.
     char intAddr[64] = {};
-    strncpy(intAddr, m_LanAddr, sizeof(intAddr) - 1);
+    snprintf(intAddr, sizeof(intAddr), "%s", m_LanAddr);
 
     qInfo() << "[UPNP] Adding port mapping:" << externalPort << protocol.c_str() << "->" << intAddr
             << ":" << internalPort << "(lease=" << leaseDurationSec << "s, desc=" << desc.c_str()
@@ -346,12 +349,16 @@ bool UPNPClient::getLocalIP(char* buf, size_t bufsize)
         }
     }
 
-    // Fallback: gethostname + gethostbyname
+    // Fallback: gethostname + getaddrinfo (gethostbyname is deprecated)
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) == 0) {
-        struct hostent* he = gethostbyname(hostname);
-        if (he && he->h_addr_list[0]) {
-            inet_ntop(AF_INET, he->h_addr_list[0], buf, bufsize);
+        struct addrinfo hints = {};
+        hints.ai_family = AF_INET;
+        struct addrinfo* res = nullptr;
+        if (getaddrinfo(hostname, nullptr, &hints, &res) == 0 && res) {
+            sockaddr_in* sa = reinterpret_cast<sockaddr_in*>(res->ai_addr);
+            inet_ntop(AF_INET, &sa->sin_addr, buf, static_cast<DWORD>(bufsize));
+            freeaddrinfo(res);
             return true;
         }
     }
