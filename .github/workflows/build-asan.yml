@@ -31,6 +31,7 @@ jobs:
           # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
           py7zrversion: ==1.1.0
+          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
 
       - name: Setup MSVC (x64)
         uses: ilammy/msvc-dev-cmd@v1

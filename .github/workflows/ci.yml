@@ -156,6 +156,7 @@ jobs:
           # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
           py7zrversion: ==1.1.0
+          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -206,6 +207,7 @@ jobs:
           # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
           py7zrversion: ==1.1.0
+          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
       - name: Configure
         run: cmake -S backend -B backend/build/win -G "Visual Studio 17 2022" -A x64
       - name: Build
@@ -242,6 +244,7 @@ jobs:
           # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
           py7zrversion: ==1.1.0
+          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
       - name: Configure
         shell: pwsh
         run: >
@@ -285,6 +288,7 @@ jobs:
           # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
           py7zrversion: ==1.1.0
+          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
       - name: Configure
         run: cmake -S backend -B backend/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -321,6 +325,7 @@ jobs:
           # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
           aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
           py7zrversion: ==1.1.0
+          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
       - name: Configure
         run: cmake -S backend -B backend/build/mac -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
