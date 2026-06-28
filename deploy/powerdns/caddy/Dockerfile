@@ -9,6 +9,8 @@ COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 COPY Caddyfile.tmpl /etc/caddy/Caddyfile.tmpl
 COPY entrypoint.sh  /usr/local/bin/mw-caddy-entrypoint.sh
 RUN chmod +x /usr/local/bin/mw-caddy-entrypoint.sh
+# The presentation website (repo-root ./website) is bind-mounted at /srv/site
+# by docker-compose — see the caddy service volumes.
 
 EXPOSE 80/tcp 443/tcp
 ENTRYPOINT ["/usr/local/bin/mw-caddy-entrypoint.sh"]

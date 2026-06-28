@@ -690,13 +690,13 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
 
         // International keys without standard US VK equivalents:
         // IntlBackslash (ISO key next to left Shift) and IntlRo (JIS \ key)
-        // need raw scancode mode so Sunshine interprets them by physical
-        // position instead of VK mapping.
+        // need NON_NORMALIZED mode: Sunshine injects the keyCode as a raw VK
+        // (not a US-layout scancode), so the host's active layout resolves it.
         if (code == "IntlBackslash") {
-            keyCode = 0x56; // Windows Set 1 scancode for IntlBackslash
+            keyCode = 0xE2; // VK_OEM_102 — Sunshine injects NON_NORMALIZED as a VK
             flags = SS_KBE_FLAG_NON_NORMALIZED;
         } else if (code == "IntlRo") {
-            keyCode = 0x73; // Windows Set 1 scancode for IntlRo
+            keyCode = 0xC1; // VK_ABNT_C1 (JIS Ro) — injected as a VK
             flags = SS_KBE_FLAG_NON_NORMALIZED;
         } else {
             keyCode = static_cast<short>(vk);

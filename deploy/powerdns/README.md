@@ -14,12 +14,31 @@ Internet ─:80/:443─> [caddy]   ──> pdns:8081       HTTPS API, API rate-l
   internal port `5300`, REST API on `8081`. Never published to the host.
 - **caddy** — official Caddy + the `caddy-ratelimit` plugin (built via xcaddy).
   Exposes the API as `https://api.{MW_DOMAIN}` with automatic TLS and request
-  rate limiting.
+  rate limiting, **and serves the static presentation website** at
+  `https://{MW_DOMAIN}` / `https://www.{MW_DOMAIN}` (repo-root `website/`,
+  bind-mounted into the container).
 
 The Moonlight-Web server itself is **not** in this stack. It talks to this DNS
 box over the REST API (`MW_PDNS_URL` + `MW_PDNS_TOKEN`) and creates per-instance
 subdomains `{uniqueId}.{MW_DOMAIN}` at runtime. This stack only bootstraps the
-parent zone, the nameserver glue and the `api.{MW_DOMAIN}` host.
+parent zone, the nameserver glue, the `api.{MW_DOMAIN}` host and the `www`
+record for the presentation site.
+
+## Presentation website
+
+Caddy also serves a static marketing/landing page for the project at the apex
+domain and `www`:
+
+- `https://{MW_DOMAIN}` — the canonical landing page (`website/index.html` at the
+  repo root).
+- `https://www.{MW_DOMAIN}` — permanently redirected to the apex.
+
+Both get their own automatic Let's Encrypt certificate (independent of any
+api-only cert you may supply via `MW_TLS_CERT`). The site is plain HTML/CSS with
+the project screenshots under `website/assets/`. It is **bind-mounted** into the
+Caddy container (`../../website → /srv/site`), so edit it freely then
+`docker compose restart caddy` — no rebuild needed. The zone bootstrap adds the
+`www` A record automatically; the apex `@` A record already existed.
 
 ## Contents
 
@@ -34,7 +53,7 @@ deploy/powerdns/
 ├── caddy/
 │   ├── Dockerfile           # Caddy + caddy-ratelimit (xcaddy)
 │   ├── entrypoint.sh        # renders the Caddyfile from env, runs Caddy
-│   └── Caddyfile.tmpl       # TLS reverse proxy → pdns:8081
+│   └── Caddyfile.tmpl       # api → pdns:8081  +  apex/www → static site
 ├── certs/                   # drop your own cert/key here (gitignored)
 └── .env.sample              # copy to .env and fill in
 ```
@@ -206,8 +225,8 @@ this machine. DNS needs both UDP and TCP.
 |------|----------|-----------|-----------------------|
 | 53   | UDP      | dnsdist   | Resolvers query your zone — primary path |
 | 53   | TCP      | dnsdist   | Fallback for truncated responses, DNSSEC |
-| 80   | TCP      | caddy     | Let's Encrypt HTTP-01 challenge |
-| 443  | TCP      | caddy     | PowerDNS REST API exposed as `api.{MW_DOMAIN}` |
+| 80   | TCP      | caddy     | Let's Encrypt HTTP-01 challenge + HTTP→HTTPS redirect |
+| 443  | TCP      | caddy     | `api.{MW_DOMAIN}` REST API + presentation site (`{MW_DOMAIN}`/`www`) |
 
 PowerDNS' own ports (`5300` DNS, `8081` API) stay on the internal compose
 network — never published.

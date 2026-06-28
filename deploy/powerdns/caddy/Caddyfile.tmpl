@@ -1,8 +1,13 @@
-# Caddy — HTTPS reverse proxy in front of the PowerDNS REST API.
+# Caddy — HTTPS for the public-facing parts of the DNS stack:
+#   - api.{MW_DOMAIN}        reverse proxy to the PowerDNS REST API
+#   - {MW_DOMAIN} + www.*    static presentation website (./site)
+#
 # Rendered at boot by the caddy entrypoint:
-#   @MW_DOMAIN@  → parent domain (API served at api.{MW_DOMAIN})
-#   @TLS_LINE@   → empty for automatic Let's Encrypt, or a "tls ..." directive
-#                  when the user supplies cert files / an ACME email.
+#   @MW_DOMAIN@       → parent domain
+#   @TLS_LINE@        → empty for automatic Let's Encrypt, or a "tls ..."
+#                       directive when the user supplies cert files / ACME email.
+#   @SITE_TLS_LINE@   → same, but never the api-only cert: just an ACME email
+#                       (or empty) so the apex/www always get their own cert.
 #
 # rate_limit comes from the caddy-ratelimit plugin (built into this image via
 # xcaddy) and throttles API brute-force / abuse per client IP.
@@ -22,4 +27,15 @@ api.@MW_DOMAIN@ {
 	}
 	# pdns = the PowerDNS service on the compose network (API on :8081).
 	reverse_proxy pdns:8081
+}
+
+# Presentation website — apex + www both serve the static ./site folder.
+@MW_DOMAIN@, www.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	# Redirect bare/www visitors to the canonical apex (drop the www).
+	@www host www.@MW_DOMAIN@
+	redir @www https://@MW_DOMAIN@{uri} permanent
+	encode zstd gzip
+	root * /srv/site
+	file_server
 }
