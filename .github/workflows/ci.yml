@@ -151,7 +151,9 @@ jobs:
         with:
           version: 6.11.0
           arch: win64_msvc2022_64
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -197,7 +199,9 @@ jobs:
           version: 6.11.0
           arch: win64_msvc2022_64
           modules: qtwebsockets
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
       - name: Configure
         run: cmake -S backend -B backend/build/win -G "Visual Studio 17 2022" -A x64
       - name: Build
@@ -229,7 +233,9 @@ jobs:
           version: 6.11.0
           arch: win64_msvc2022_arm64
           modules: qtwebsockets
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
       - name: Configure
         shell: pwsh
         run: >
@@ -268,7 +274,9 @@ jobs:
         with:
           version: 6.11.0
           modules: qtwebsockets
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
       - name: Configure
         run: cmake -S backend -B backend/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
@@ -300,7 +308,9 @@ jobs:
           host: mac
           arch: clang_arm64
           modules: qtwebsockets
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
       - name: Configure
         run: cmake -S backend -B backend/build/mac -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
