@@ -699,16 +699,11 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.hdrDesc')}</span>
                     </div>
 
-                    <div class="settings-field${psLocked}">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-vsync"
-                                ${this._vsync ? 'checked' : ''}${psDisabled} />
-                            <span class="settings-checkbox-text">
-                                <strong>${t('settings.vsync')}</strong>
-                            </span>
-                        </label>
-                        <span class="setting-desc">${t('settings.vsyncDesc')}</span>
-                    </div>
+                    <!-- VSync: no UI control. VSync stays on by default (the
+                         desynchronized/present-on-decode path causes judder on some
+                         platforms for only a marginal latency gain). It remains a
+                         power-user override via settings.json (vsync_enabled:false),
+                         which round-trips through this._vsync unchanged. -->
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-stream-bitrate">

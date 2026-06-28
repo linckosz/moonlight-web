@@ -2,8 +2,9 @@
 
 # 🌙 Moonlight‑Web
 
-**Stream your PC games from any browser.**
-A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream client — nothing to install on the client, just a URL.
+**Stream your PC games from any browser.**\
+A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream client\
+Nothing to install on the client, just a URL.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Qt](https://img.shields.io/badge/Qt-6.11-41CD52?logo=qt&logoColor=white)
@@ -15,10 +16,23 @@ A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream clien
 
 ---
 
+## ❤️ Support
+
+If Moonlight-Web is useful to you, a coffee helps keep the shared DNS domain server online and the domain running 🙏
+
+<div align="center">
+
+<a href="https://buymeacoffee.com/brunoocto">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48">
+</a>
+
+</div>
+
+---
+
 ## ✨ What it does
 
-Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, phone, TV)
-into a streaming client for your Sunshine‑powered gaming PC — **with nothing to install**.
+Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, phone, TV) into a streaming client for your Sunshine‑powered gaming PC — **with nothing to install**.
 
 - 🎮 **Low‑latency streaming** up to 4K HDR, 120+ FPS, **H.264 / HEVC / AV1** codecs.
 - 🌐 **WebRTC transport** (DataChannels + RTP media tracks), automatic WSS fallback.
@@ -48,15 +62,14 @@ into a streaming client for your Sunshine‑powered gaming PC — **with nothing
 3. The server **discovers your Sunshine hosts** (mDNS) — or add an IP manually.
 4. **Pair** the host (PIN), pick an app, **stream**.
 
-The C++/Qt backend embeds `moonlight-common-c`: it speaks GameStream (RTSP/RTP/ENet)
-to Sunshine and relays video/audio/input to the browser over WebRTC, with a WSS fallback.
+The C++/Qt backend embeds `moonlight-common-c`: it speaks GameStream (RTSP/RTP/ENet) to Sunshine and relays video/audio/input to the browser over WebRTC, with a WSS fallback.\
 Video decodes in **WebCodecs + WebGPU/canvas**, audio in **AudioWorklet**.
 
 ### ⚙️ Stream settings
 
-From the in‑app overlay: **bitrate** (5–150 Mbps or auto), **resolution** (720p–2160p),
-**FPS** (30–240), **codec** (auto / H.264 / HEVC / AV1, unsupported options greyed out),
-**HDR**, **4:4:4 chroma**, **Gaming mode** (pointer‑lock), **VSync**, perf stats and aspect ratio.
+From the in‑app overlay: **bitrate** (5–150 Mbps or auto), **resolution** (720p–2160p),\
+**FPS** (30–240), **codec** (auto / H.264 / HEVC / AV1, unsupported options greyed out),\
+**HDR**, **4:4:4 chroma**, **Gaming mode** (pointer‑lock), perf stats and aspect ratio.
 
 <div align="center">
 
@@ -68,8 +81,7 @@ From the in‑app overlay: **bitrate** (5–150 Mbps or auto), **resolution** (7
 
 ### 🪄 Video Enhancement (bonus)
 
-Browser‑side image enhancement on the GPU (WebGPU): **upscaling (SGSRv1 + FSR1)** +
-**sharpening**, to gain sharpness when the stream resolution is below the screen's.
+Browser‑side image enhancement on the GPU (WebGPU): **upscaling (SGSRv1 + FSR1)** + **sharpening**, to gain sharpness when the stream resolution is below the screen's.\
 Stream at 720p (low bandwidth), display crisp at 1440p.
 
 <div align="center">
@@ -97,12 +109,10 @@ Stream at 720p (low bandwidth), display crisp at 1440p.
 
 ## 🛠️ Admin page
 
-The **Admin** page configures the server itself and is reachable **only from the local machine**
-(`https://localhost/admin`, or tray icon → *Server Settings*). All `/api/admin/*` routes return
-**403** for non‑localhost requests.
+The **Admin** page configures the server itself and is reachable **only from the local machine** (`https://localhost/admin`, or tray icon → *Server Settings*).\
+All `/api/admin/*` routes return **403** for non‑localhost requests.
 
-It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transport** (WebRTC/WSS),
-**Internet access**, and the **certificate token**.
+It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transport** (WebRTC/WSS), **Internet access**, and the **certificate token**.
 
 ### 🌍 Internet access
 
@@ -119,9 +129,7 @@ Enabling **Internet Access** makes the server automatically:
 
 </div>
 
-**Possible limitations:** UPnP disabled (forward TCP 80/443 + UDP 47999 manually), CGNAT/double‑NAT
-(detected and reported — port forwarding won't work), port already mapped, or restrictive corporate
-networks (see [SSL](#-ssl--your-own-domain--certificate)).
+**Possible limitations:** UPnP disabled (forward TCP 80/443 + UDP 47999 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), port already mapped, or restrictive corporate networks (see [SSL](#-ssl--your-own-domain--certificate)).
 
 ---
 
@@ -144,12 +152,8 @@ networks (see [SSL](#-ssl--your-own-domain--certificate)).
  └───────────────────────────────────────────────────┘
 ```
 
-The server is a **web server** (frontend + REST API), a **proxy** to Sunshine's API, and a
-**streaming bridge** embedding `moonlight-common-c`. Video (H.264/HEVC/AV1) and Opus audio are
-relayed over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback. Input is encrypted
-(AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled**
-and can run on a dedicated machine — that's the server your donations help keep alive, but you can
-host your own (see [Fork & build](#-fork--build)).
+The server is a **web server** (frontend + REST API), a **proxy** to Sunshine's API, and a **streaming bridge** embedding `moonlight-common-c`. Video (H.264/HEVC/AV1) and Opus audio are relayed over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback.\
+Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled** and can run on a dedicated machine — that's the server your donations help keep alive, but you can host your own (see [Fork & build](#-fork--build)).
 
 ---
 
@@ -163,15 +167,12 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 | **macOS** | `~/Library/Application Support/Moonlight-Web/Moonlight-Web/settings.json` |
 | **Linux** | `~/.local/share/Moonlight-Web/Moonlight-Web/settings.json` |
 
-Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert,
-path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`.
+Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`.\
 Restart the server after a manual edit.
 
 ### 🔐 SSL — your own domain & certificate
 
-By default Moonlight‑Web obtains a free cert automatically via **ZeroSSL** (or Let's Encrypt), with
-auto‑renewal. Some restrictive corporate networks distrust certain CAs — in that case, use your own
-domain and certificate in `settings.json`:
+By default Moonlight‑Web obtains a free cert automatically via **ZeroSSL** (or Let's Encrypt), with auto‑renewal. Some restrictive corporate networks distrust certain CAs — in that case, use your own domain and certificate in `settings.json`:
 
 ```json
 {
@@ -181,15 +182,14 @@ domain and certificate in `settings.json`:
 }
 ```
 
-The cert's **CN must match** `domain`. A cert managed this way is **not** auto‑renewed — its lifecycle
-is yours. Point your DNS (`A`/`CNAME`) to your IP.
+The cert's **CN must match** `domain`. A cert managed this way is **not** auto‑renewed — its lifecycle is yours.\
+Point your DNS (`A`/`CNAME`) to your IP.
 
 ---
 
 ## 🍴 Fork & build
 
-**Requirements:** Qt 6.11 (Core, Network, WebSockets; MSVC 2022 64‑bit kit on Windows) and OpenSSL 3.x
-(bundled in `backend/libs/windows/`).
+**Requirements:** Qt 6.11 (Core, Network, WebSockets; MSVC 2022 64‑bit kit on Windows) and OpenSSL 3.x (bundled in `backend/libs/windows/`).
 
 ```bash
 git clone <this-repo>
@@ -206,19 +206,14 @@ cd backend/build/release && ./mw-server   # Windows: mw-server.exe → open http
 
 Cross‑platform (Windows x64/ARM64, Linux, macOS) via CMake; the qmake `.pro` stays valid for Qt Creator.
 
-**DNS stack (Internet access).** To offer auto sub‑domain + TLS you need an authoritative DNS server
-on a domain you own. [`deploy/powerdns/`](deploy/powerdns/) ships a turnkey Docker stack (dnsdist +
-PowerDNS + Caddy). Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP),
-80 and 443, register your nameservers at your registrar, then set `MW_DOMAIN` / `MW_PDNS_URL` /
-`MW_PDNS_TOKEN` in the server's `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).
+**DNS stack (Internet access).** To offer auto sub‑domain + TLS you need an authoritative DNS server on a domain you own. [`deploy/powerdns/`](deploy/powerdns/) ships a turnkey Docker stack (dnsdist + PowerDNS + Caddy).\
+Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then set `MW_DOMAIN` / `MW_PDNS_URL` / `MW_PDNS_TOKEN` in the server's `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).
 
 ---
 
 ## 👤 About the author
 
-I'm an experienced web developer with **15+ years** in the industry, and a long‑time contributor to
-the **Moonlight** ecosystem: I built and upstreamed **Video Super Resolution** (real‑time GPU upscaling)
-across *every* major Moonlight client. Moonlight‑Web is the natural next step — that same low‑latency,
+I'm an experienced web developer with **15+ years** in the industry, and a long‑time contributor to the **Moonlight** ecosystem: I built and upstreamed **Video Super Resolution** (real‑time GPU upscaling) across *every* major Moonlight client. Moonlight‑Web is the natural next step — that same low‑latency,
 high‑quality streaming on *any* device with a browser, no native app, just a URL.
 
 | Platform | Contribution |
@@ -230,24 +225,9 @@ high‑quality streaming on *any* device with a browser, no native app, just a U
 
 ---
 
-## ❤️ Support
-
-If Moonlight‑Web is useful to you, a coffee helps keep the shared DNS server online 🙏
-
-<div align="center">
-
-<a href="https://buymeacoffee.com/brunoocto">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48">
-</a>
-
-</div>
-
----
-
 ## 📜 License
 
-GNU **GPL‑3.0**. Free to use, study, modify, fork and redistribute, provided it stays open‑source under
-the same license and **keeps the copyright notice and credits the original author**.
+GNU **GPL‑3.0**. Free to use, study, modify, fork and redistribute, provided it stays open‑source under the same license and **keeps the copyright notice and credits the original author**.
 
 > Copyright © 2026 Bruno Martin &lt;brunoocto@gmail.com&gt;
 

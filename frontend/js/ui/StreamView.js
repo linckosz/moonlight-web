@@ -338,11 +338,6 @@ export class StreamView {
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
         this._mouseFocused = false;
-        // Virtual client-mouse position tracked from capture deltas (pointer
-        // locked = no real hover). Used only to fade an overlay out when the
-        // captured cursor passes behind it. Seeded mid-screen on capture.
-        this._dimVx = 0;
-        this._dimVy = 0;
         // Per-session "closed" flags: the user can dismiss the stats and the
         // immersive exit overlay with their × button; they stay hidden after.
         this._statsClosed = false;
@@ -1027,7 +1022,15 @@ export class StreamView {
         this._mobileFsBtn = document.createElement('button');
         this._mobileFsBtn.id = 'btn-stream-fs';
         this._mobileFsBtn.className = 'btn-stream-fs';
-        this._mobileFsBtn.innerHTML = Icons.fullscreen + t('stream.fullscreen');
+        // In immersive (gaming) mode, advertise the fullscreen toggle combo right
+        // on the button — mirrors the immersive exit reminder (Z combo). The
+        // button is only ever shown out of fullscreen, where the header is visible.
+        this._mobileFsBtn.innerHTML =
+            Icons.fullscreen +
+            '<span class="fs-label">' +
+            t('stream.fullscreen') +
+            '</span>' +
+            (this._gamingMode ? this._fsComboKeysHtml() : '');
         this._mobileFsBtn.title = t('stream.enterFullscreen');
         this._mobileFsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2667,64 +2670,6 @@ export class StreamView {
         );
     }
 
-    // ── Overlay fade-out under the captured cursor ───────────────────────
-
-    /** Advance the virtual cursor (host-image pixels) by the deltas, re-evaluate. */
-    _updateOverlayDim(dx, dy) {
-        const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
-        const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
-        // Capture deltas are host-image pixels; clamp to the streamed resolution.
-        this._dimVx = Math.max(0, Math.min(iw || window.innerWidth, this._dimVx + dx));
-        this._dimVy = Math.max(0, Math.min(ih || window.innerHeight, this._dimVy + dy));
-        this._applyOverlayDim();
-    }
-
-    /** Fade an overlay to 15% while the captured cursor sits behind it. */
-    _applyOverlayDim() {
-        // Only in fullscreen: there the overlays sit over the image. Out of
-        // fullscreen the reminder lives in the header (off the image), so the
-        // fade is never needed — and the relative-tracking offset is avoided.
-        const inFs = !!document.fullscreenElement || this._cssFullscreen;
-        if (!inFs) {
-            this._clearOverlayDim();
-            return;
-        }
-        // Project the host-image-pixel virtual cursor to client screen coords
-        // through the displayed media rect (object-fit: contain → scale +
-        // letterbox), so the dim reacts where the host cursor actually appears
-        // even when the stream is shown smaller than its native resolution.
-        const rect = this._mediaRect();
-        const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
-        const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
-        const sx = iw ? rect.left + (this._dimVx * rect.width) / iw : this._dimVx;
-        const sy = ih ? rect.top + (this._dimVy * rect.height) / ih : this._dimVy;
-        // Tolerance: relative-mouse tracking can't be pixel-exact (host pointer
-        // acceleration + possible desktop≠stream resolution), so widen the hit
-        // zone a little to keep the fade engaging near the overlay.
-        const M = 24;
-        const under = (el) => {
-            if (!el) return false;
-            const r = el.getBoundingClientRect();
-            return sx >= r.left - M && sx <= r.right + M && sy >= r.top - M && sy <= r.bottom + M;
-        };
-        if (this._overlayEl)
-            this._overlayEl.classList.toggle(
-                'dimmed',
-                this._mouseFocused && under(this._overlayEl),
-            );
-        if (this._immersiveOverlay)
-            this._immersiveOverlay.classList.toggle(
-                'dimmed',
-                this._mouseFocused && under(this._immersiveOverlay),
-            );
-    }
-
-    /** Remove the fade from every overlay (cursor released). */
-    _clearOverlayDim() {
-        if (this._overlayEl) this._overlayEl.classList.remove('dimmed');
-        if (this._immersiveOverlay) this._immersiveOverlay.classList.remove('dimmed');
-    }
-
     /** Dismiss a draggable overlay (× button). */
     _closeOverlayEl(el) {
         if (el === this._overlayEl) {
@@ -2737,6 +2682,26 @@ export class StreamView {
     }
 
     // ── Immersive-mode exit reminder ─────────────────────────────────────
+
+    /**
+     * Platform-correct fullscreen-toggle combo (…+X) as <kbd> chips, shown on
+     * the header Fullscreen button in immersive mode. Same modifiers as the
+     * exit reminder, ending in X (toggle fullscreen) instead of Z (release).
+     */
+    _fsComboKeysHtml() {
+        const isMac = /Mac/.test(navigator.platform);
+        const modA = isMac ? 'Cmd' : 'Ctrl';
+        const modB = isMac ? 'Option' : 'Alt';
+        const modC = isMac ? 'Ctrl' : 'Shift';
+        const keys = isMac ? [modC, modB, modA, 'X'] : [modC, modA, modB, 'X'];
+        let html = '<span class="fs-combo">';
+        for (let i = 0; i < keys.length; i++) {
+            if (i > 0) html += '<span class="fs-plus">+</span>';
+            html += '<kbd>' + keys[i] + '</kbd>';
+        }
+        html += '</span>';
+        return html;
+    }
 
     /**
      * Build the immersive overlay content: the platform-correct exit combo
@@ -2787,13 +2752,29 @@ export class StreamView {
      */
     _positionImmersiveOverlay() {
         const el = this._immersiveOverlay;
-        if (!el || el.classList.contains('user-moved')) return;
+        if (!el) return;
         const fsBtn = this._mobileFsBtn;
-        const fsVisible = fsBtn && fsBtn.isConnected && fsBtn.style.display !== 'none';
-        if (fsVisible) {
-            const r = fsBtn.getBoundingClientRect();
-            el.style.left = Math.round(r.right + 12) + 'px';
-            el.style.top = Math.round(r.top + r.height / 2) + 'px';
+        // Default: button back to its CSS-centered position (cleared each pass so
+        // the pair-centering offset below is never left stale).
+        if (fsBtn) fsBtn.style.transform = '';
+        if (el.classList.contains('user-moved')) return;
+        // Require a REAL on-screen rect: in native fullscreen the header (and its
+        // button) is hidden via CSS, so style.display stays '' while the rect
+        // collapses to 0. Docking off a 0-rect would slam the card to top-left
+        // over the stats card. Only dock when the button is actually laid out.
+        const r = fsBtn && fsBtn.isConnected ? fsBtn.getBoundingClientRect() : null;
+        const fsVisible = r && r.width > 0 && r.height > 0 && fsBtn.style.display !== 'none';
+        if (fsVisible && el.classList.contains('visible')) {
+            // Center the PAIR (Fullscreen button + reminder) as a group: shift the
+            // button left by half the reminder's footprint, then dock the reminder
+            // to its right. The midpoint of the pair lands on the viewport center.
+            const gap = 12;
+            const overlayW = el.getBoundingClientRect().width;
+            const shift = (overlayW + gap) / 2;
+            fsBtn.style.transform = `translate(calc(-50% - ${shift}px), -50%)`;
+            const rb = fsBtn.getBoundingClientRect();
+            el.style.left = Math.round(rb.right + gap) + 'px';
+            el.style.top = Math.round(rb.top + rb.height / 2) + 'px';
             el.style.transform = 'translateY(-50%)';
         } else {
             // Restore the CSS default (left:50% + translateX(-50%), safe-area top).
@@ -3498,9 +3479,6 @@ export class StreamView {
         this._onGamingMouseMove = (e) => {
             if (this._mouseFocused) {
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
-                // Fade an overlay out when the captured client mouse passes
-                // behind it (so it never hides the game underneath).
-                this._updateOverlayDim(e.movementX, e.movementY);
             } else {
                 const rect = this._mediaRect();
                 const rawX = e.clientX - rect.left;
@@ -3540,12 +3518,6 @@ export class StreamView {
                 referenceWidth: refW,
                 referenceHeight: refH,
             });
-            // Seed the dim tracker at the click, in host-image pixels, so the
-            // virtual cursor starts aligned with the host cursor.
-            const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
-            const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
-            this._dimVx = iw ? (x / Math.max(1, refW)) * iw : x;
-            this._dimVy = ih ? (y / Math.max(1, refH)) * ih : y;
             this.inputEl.requestPointerLock();
         };
         this.inputEl.addEventListener('click', this._onGamingClick);
@@ -4410,10 +4382,8 @@ export class StreamView {
             this._mobileFsBtn.style.display = isLandscape ? '' : 'none';
         }
 
-        // Reposition the reminder (header vs top-center) and, when leaving
-        // fullscreen, drop any fade immediately rather than on the next move.
+        // Reposition the reminder (header vs top-center).
         this._positionImmersiveOverlay();
-        if (!inFullscreen) this._clearOverlayDim();
     }
 
     // =========================================================================
@@ -5383,9 +5353,6 @@ export class StreamView {
     handlePointerLockChange() {
         this.pointerLocked = document.pointerLockElement === this.inputEl;
         this._mouseFocused = this.pointerLocked;
-        // The dim tracker is seeded at the capturing click (host-image pixels);
-        // on release the cursor is free again so clear any fade.
-        if (!this.pointerLocked) this._clearOverlayDim();
         if (this.hintEl) {
             this.hintEl.style.display = this.pointerLocked ? 'none' : 'flex';
         }

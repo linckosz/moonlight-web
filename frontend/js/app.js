@@ -925,10 +925,22 @@ const MoonlightApp = {
         if (document.getElementById('stream-relaunch-loader')) return;
         const el = document.createElement('div');
         el.id = 'stream-relaunch-loader';
+        // Mirror the StreamView startup overlay (3 steps, step 1 active) so a
+        // transport retry never flickers from 3 steps down to a single line and
+        // back — common on macOS where the first ICE attempt often retries once.
         el.innerHTML =
             '<div class="startup-loader" aria-hidden="true"><div class="startup-loader-ring"></div></div>' +
-            '<div class="startup-step active"><span class="startup-step-label">' +
+            '<div class="startup-step active" data-step="1"><span class="startup-step-dot"></span>' +
+            '<span class="startup-step-label">' +
             t('stream.connecting') +
+            '</span></div>' +
+            '<div class="startup-step" data-step="2"><span class="startup-step-dot"></span>' +
+            '<span class="startup-step-label">' +
+            t('stream.startingVideo') +
+            '</span></div>' +
+            '<div class="startup-step" data-step="3"><span class="startup-step-dot"></span>' +
+            '<span class="startup-step-label">' +
+            t('stream.streamReady') +
             '</span></div>';
         document.getElementById('app').appendChild(el);
     },
