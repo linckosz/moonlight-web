@@ -114,6 +114,12 @@ All `/api/admin/*` routes return **403** for non‑localhost requests.
 
 It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transport** (WebRTC/WSS), **Internet access**, and the **certificate token**.
 
+<div align="center">
+
+![Open the Admin page from the tray icon → Server Settings](docs/screenshots/localhost.png)
+
+</div>
+
 ### 🌍 Internet access
 
 Enabling **Internet Access** makes the server automatically:
