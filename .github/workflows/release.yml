@@ -46,6 +46,7 @@ jobs:
           version: 6.11.0
           arch: ${{ matrix.qt_arch }}
           modules: qtwebsockets
+          extra: --base https://download.qt.io # force official server (flaky mirrors)
 
       - name: Configure
         shell: pwsh
@@ -98,6 +99,7 @@ jobs:
         with:
           version: 6.11.0
           modules: qtwebsockets
+          extra: --base https://download.qt.io # force official server (flaky mirrors)
 
       - name: Build
         run: |
@@ -145,6 +147,7 @@ jobs:
           host: mac
           arch: clang_arm64
           modules: qtwebsockets
+          extra: --base https://download.qt.io # force official server (flaky mirrors)
 
       - name: Build
         run: |

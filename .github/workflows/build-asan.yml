@@ -26,6 +26,7 @@ jobs:
         with:
           version: '6.11.0'
           modules: qtwebsockets
+          extra: --base https://download.qt.io # force official server (flaky mirrors)
 
       - name: Setup MSVC (x64)
         uses: ilammy/msvc-dev-cmd@v1
