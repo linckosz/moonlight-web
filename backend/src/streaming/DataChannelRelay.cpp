@@ -1158,7 +1158,7 @@ void DataChannelRelay::onStatsTimerTick()
     QJsonObject stats;
     stats["type"] = "stats";
     stats["hostRttMs"] = hostRttMs;
-    stats["decodeLatencyUs"] = decodeLatUs;
+    stats["decodeLatencyUs"] = static_cast<qint64>(decodeLatUs);
 
     // Send steady_clock reference for end-to-end latency calculation.
     // The frontend uses this + performance.now() delta to estimate current
@@ -1166,7 +1166,7 @@ void DataChannelRelay::onStatsTimerTick()
     {
         using namespace std::chrono;
         int64_t nowMs = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-        stats["streamTimeMs"] = nowMs;
+        stats["streamTimeMs"] = static_cast<qint64>(nowMs);
     }
 
     QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);

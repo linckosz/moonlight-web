@@ -21,6 +21,7 @@
 #include <QWebSocketServer>
 #include <QWebSocket>
 #include <QSslConfiguration>
+#include <QTimer>
 #include <memory>
 #include <atomic>
 
