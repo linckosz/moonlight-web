@@ -88,11 +88,22 @@ set(UPNPC_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
 set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/miniupnp/miniupnpc miniupnpc-build)
 
-# qmdnsengine (mDNS discovery). Static, no tests/examples.
-set(BUILD_DOC      OFF CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-add_subdirectory(third_party/qmdnsengine/qmdnsengine qmdnsengine-build)
+# qmdnsengine (mDNS discovery). The vendored CMakeLists hardcodes Qt5, so build
+# it ourselves as a static Qt6 library instead of add_subdirectory.
+set(QMDNS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qmdnsengine/qmdnsengine/src)
+configure_file(
+    ${QMDNS_DIR}/qmdnsengine_export.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/qmdnsengine_gen/qmdnsengine_export.h
+)
+file(GLOB QMDNS_SOURCES ${QMDNS_DIR}/src/*.cpp)
+file(GLOB QMDNS_HEADERS ${QMDNS_DIR}/include/qmdnsengine/*.h)
+add_library(qmdnsengine STATIC ${QMDNS_SOURCES} ${QMDNS_HEADERS})
+set_target_properties(qmdnsengine PROPERTIES AUTOMOC ON)
+target_include_directories(qmdnsengine PUBLIC
+    ${QMDNS_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/qmdnsengine_gen
+)
+target_link_libraries(qmdnsengine PUBLIC Qt6::Network)
 
 # ── mw-server target ───────────────────────────────────────────────────────
 # Explicit source list (mirrors backend.pro; excludes unused EnetControlStream/
