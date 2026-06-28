@@ -1,0 +1,40 @@
+# Moonlight-Web — Linux systemd unit (auto-restart on crash).
+#
+# Install (system-wide, runs headless without a tray):
+#   sudo cp moonlight-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now moonlight-web
+#
+# A clean user-requested quit returns exit code 0 → treated as success, no
+# restart. A crash (non-zero exit or a signal such as SIGSEGV) → restart.
+# `systemctl stop` is an operator-initiated stop → no restart either.
+
+[Unit]
+Description=Moonlight-Web — browser-based Sunshine streaming server
+After=network-online.target
+Wants=network-online.target
+# Crash-loop guard: if it dies more than 5 times within 60 s, give up.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Adjust the install path to where you deployed the binary + web assets.
+ExecStart=/opt/moonlight-web/moonlight-web
+WorkingDirectory=/opt/moonlight-web
+
+# Restart ONLY on failure (non-zero exit code or terminating signal),
+# never on a clean exit 0.
+Restart=on-failure
+RestartSec=2
+# Belt-and-braces: exit code 0 is explicitly a success (no restart).
+SuccessExitStatus=0
+
+# Bind to :80 / :443 without running as full root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# Optional: run under a dedicated unprivileged user instead of root.
+# User=moonlight-web
+# Group=moonlight-web
+
+[Install]
+WantedBy=multi-user.target

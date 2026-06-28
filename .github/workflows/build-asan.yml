@@ -1,11 +1,11 @@
 name: Build + AddressSanitizer (Windows)
 
-# Heavy job: full MSVC/Qt backend build with AddressSanitizer (MW_ASAN=1).
+# Heavy job: full MSVC/Qt backend build with AddressSanitizer (-DMW_ASAN=ON).
 #
 # Manual trigger for now — this needs a first-run shakedown on a clean runner
-# (Qt modules, vendored-submodule prebuild order). Once the build is green, the
-# remaining piece for real value is exercising a stream under ASan so it actually
-# reports (the instrumented binary only flags issues while the code runs).
+# (Qt modules, submodule build order). Once the build is green, the remaining
+# piece for real value is exercising a stream under ASan so it actually reports
+# (the instrumented binary only flags issues while the code runs).
 
 on:
   workflow_dispatch:
@@ -14,8 +14,6 @@ jobs:
   asan:
     name: Backend build (ASan)
     runs-on: windows-latest
-    env:
-      MW_ASAN: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,6 +23,7 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.11.0'
+          arch: win64_msvc2022_64
           modules: qtwebsockets
           # aqt 3.3.0 doesn't know the new Qt 6.11 per-arch repo layout (404s on
           # Updates.xml); pin the commit that added it. py7zr 1.1.0 avoids the 7z
@@ -38,30 +37,17 @@ jobs:
         with:
           arch: x64
 
-      # Vendored submodules are built by dedicated scripts before qmake runs.
-      - name: Build libdatachannel
-        working-directory: backend
-        run: cmd /c build_libdatachannel.bat
-      - name: Build miniupnpc
-        working-directory: backend
-        run: cmd /c build_miniupnpc.bat
+      # CMake builds the vendored submodules (libdatachannel, miniupnpc, …) and
+      # links the instrumented binary in one shot. MW_ASAN adds /fsanitize=address.
+      - name: Configure (ASan)
+        run: cmake -S backend -B backend/build/asan -G Ninja -DCMAKE_BUILD_TYPE=Release -DMW_ASAN=ON
 
-      # Self-contained build: qmake reads MW_ASAN=1 from the env (see backend.pro),
-      # patch_makefile.ps1 works around a qmake MSVC generator bug, then nmake links.
-      # Qt (qmake) and MSVC (nmake) come from the steps above, not a local script.
       - name: Build backend with AddressSanitizer
-        working-directory: backend
-        shell: cmd
-        run: |
-          qmake -o Makefile.Release backend.pro -spec win32-msvc CONFIG+=release CONFIG+=qtquickcompiler CONFIG-=debug_and_release
-          if errorlevel 1 exit /b 1
-          powershell -NoProfile -ExecutionPolicy Bypass -File patch_makefile.ps1
-          if errorlevel 1 exit /b 1
-          nmake /f Makefile.Release
+        run: cmake --build backend/build/asan -j
 
       - name: Upload ASan binary
         uses: actions/upload-artifact@v4
         with:
-          name: mw-server-asan
-          path: backend/mw-server.exe
+          name: moonlight-web-asan
+          path: backend/build/asan/moonlight-web.exe
           if-no-files-found: error

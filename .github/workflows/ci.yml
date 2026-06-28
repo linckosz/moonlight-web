@@ -230,11 +230,11 @@ jobs:
       # windeployqt adds the Qt runtime DLLs (Qt6Core/Network/WebSockets/Widgets)
       # + plugins next to the exe inside the bundle.
       - name: Deploy Qt runtime
-        run: windeployqt --release backend/build/win/dist/mw-server.exe
+        run: windeployqt --release backend/build/win/dist/moonlight-web.exe
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mw-server-windows-x64
+          name: moonlight-web-windows-x64
           path: backend/build/win/dist
           if-no-files-found: warn
 
@@ -276,12 +276,12 @@ jobs:
       - name: Build
         run: cmake --build backend/build/win-arm64 -j
       - name: Deploy Qt runtime
-        run: windeployqt --release backend/build/win-arm64/mw-server.exe
+        run: windeployqt --release backend/build/win-arm64/moonlight-web.exe
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mw-server-windows-arm64
-          path: backend/build/win-arm64/mw-server.exe
+          name: moonlight-web-windows-arm64
+          path: backend/build/win-arm64/moonlight-web.exe
           if-no-files-found: warn
 
   build-linux-x64:
@@ -320,8 +320,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mw-server-linux-x64
-          path: backend/build/linux/mw-server
+          name: moonlight-web-linux-x64
+          path: backend/build/linux/moonlight-web
           if-no-files-found: warn
 
   build-macos-arm64:
@@ -358,6 +358,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mw-server-macos-arm64
-          path: backend/build/mac/mw-server
+          name: moonlight-web-macos-arm64
+          path: backend/build/mac/moonlight-web
           if-no-files-found: warn

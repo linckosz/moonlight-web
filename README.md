@@ -99,7 +99,7 @@ Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1
 
 1. **Prerequisite**: a PC with **Sunshine** installed and working.
 2. **Grab** the latest release binary, **or** build from source (see [Fork & build](#-fork--build)).
-3. **Run** `mw-server` (Windows: `mw-server.exe`). A **tray icon** appears.
+3. **Run** `moonlight-web` (Windows: `moonlight-web.exe`). A **tray icon** appears.
 4. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
    - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
    - First launch uses a **self‑signed** cert — accept the browser warning (normal on LAN).
@@ -207,10 +207,10 @@ cmd //c backend/build_msvc.bat
 # Linux / macOS (CMake):
 cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
 
-cd backend/build/release && ./mw-server   # Windows: mw-server.exe → open https://localhost
+cd backend/build/release && ./moonlight-web   # Windows: moonlight-web.exe → open https://localhost
 ```
 
-Cross‑platform (Windows x64/ARM64, Linux, macOS) via CMake; the qmake `.pro` stays valid for Qt Creator.
+Cross‑platform (Windows x64/ARM64, Linux, macOS) via CMake — the single, canonical build system (qmake removed). CMake also generates `compile_commands.json` for clangd / IDEs.
 
 **DNS stack (Internet access).** To offer auto sub‑domain + TLS you need an authoritative DNS server on a domain you own. [`deploy/powerdns/`](deploy/powerdns/) ships a turnkey Docker stack (dnsdist + PowerDNS + Caddy).\
 Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then set `MW_DOMAIN` / `MW_PDNS_URL` / `MW_PDNS_TOKEN` in the server's `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).

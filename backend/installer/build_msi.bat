@@ -18,7 +18,7 @@ echo Deploy:    %DEPLOY_DIR%
 echo Output:    %OUTPUT_MSI%
 
 REM Verify deploy directory exists
-if not exist "%DEPLOY_DIR%\mw-server.exe" (
+if not exist "%DEPLOY_DIR%\moonlight-web.exe" (
     echo ERROR: Deploy directory not staged. Run deploy.bat first.
     exit /b 1
 )

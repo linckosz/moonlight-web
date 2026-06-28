@@ -2,7 +2,7 @@
 Type=Application
 Name=Moonlight-Web
 Comment=Sunshine streaming client for the browser
-Exec=mw-server
+Exec=moonlight-web
 Icon=moonlight-web
 Categories=Network;Game;
 Terminal=true

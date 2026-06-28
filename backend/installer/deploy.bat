@@ -24,8 +24,8 @@ echo Deploy:   %DEPLOY_DIR%
 echo Frontend: %FRONTEND_DIR%
 
 REM Verify build exists
-if not exist "%BUILD_DIR%\mw-server.exe" (
-    echo ERROR: mw-server.exe not found. Run build_msvc.bat first.
+if not exist "%BUILD_DIR%\moonlight-web.exe" (
+    echo ERROR: moonlight-web.exe not found. Run build_msvc.bat first.
     exit /b 1
 )
 
@@ -35,11 +35,11 @@ mkdir "%DEPLOY_DIR%"
 
 REM Step 1: Copy binary
 echo [1/4] Copying binary...
-copy "%BUILD_DIR%\mw-server.exe" "%DEPLOY_DIR%\" > nul
+copy "%BUILD_DIR%\moonlight-web.exe" "%DEPLOY_DIR%\" > nul
 
 REM Step 2: Run windeployqt
 echo [2/4] Running windeployqt...
-windeployqt --release "%DEPLOY_DIR%\mw-server.exe"
+windeployqt --release "%DEPLOY_DIR%\moonlight-web.exe"
 if %ERRORLEVEL% neq 0 (
     echo WARNING: windeployqt returned error %ERRORLEVEL%
 )
@@ -67,6 +67,6 @@ echo To build MSI:
 echo   installer\build_msi.bat
 echo.
 echo To run directly:
-echo   %DEPLOY_DIR%\mw-server.exe
+echo   %DEPLOY_DIR%\moonlight-web.exe
 
 endlocal

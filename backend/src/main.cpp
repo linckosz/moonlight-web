@@ -122,12 +122,30 @@ static void loadEnvFile()
     Logger::info(QString("[.env] Loaded %1 variables from %2").arg(count).arg(path));
 }
 
+// Forward Qt's qDebug/qInfo/qWarning/qCritical (emitted across modules) into the
+// Logger so the windowless release build still records them in the log file —
+// there is no console to print to.
+static void mwMessageHandler(QtMsgType type, const QMessageLogContext&, const QString& msg)
+{
+    switch (type) {
+    case QtDebugMsg: Logger::debug(msg); break;
+    case QtInfoMsg: Logger::info(msg); break;
+    case QtWarningMsg: Logger::warning(msg); break;
+    default: Logger::error(msg); break; // Critical / Fatal
+    }
+}
+
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("Moonlight-Web");
     QCoreApplication::setApplicationVersion("0.1.0");
     QCoreApplication::setOrganizationName("Moonlight-Web");
+
+    // The Windows release build is windowless (no console): capture Qt messages
+    // and default to a log file next to the executable. --log overrides the path.
+    qInstallMessageHandler(mwMessageHandler);
+    Logger::instance()->setLogFile(QCoreApplication::applicationDirPath() + "/moonlight-web.log");
 
     // Load .env file before anything reads environment variables
     loadEnvFile();

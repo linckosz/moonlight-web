@@ -20,6 +20,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+# Export compile_commands.json (clangd / clang-tidy / IDE IntelliSense).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # All third-party deps are linked statically into mw-server.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -60,7 +63,9 @@ endif()
 find_package(OpenSSL 1.1 REQUIRED)
 
 # ── Qt 6 ───────────────────────────────────────────────────────────────────
+# EntryPoint provides WinMain->main for the windowless (WIN32_EXECUTABLE) build.
 find_package(Qt6 REQUIRED COMPONENTS Core Network WebSockets Widgets)
+find_package(Qt6 QUIET COMPONENTS EntryPoint)
 set(CMAKE_AUTOMOC ON)
 
 # ── Threads (pthread on Unix) ──────────────────────────────────────────────
@@ -111,7 +116,7 @@ target_include_directories(qmdnsengine PUBLIC
 target_link_libraries(qmdnsengine PUBLIC Qt6::Network)
 
 # ── mw-server target ───────────────────────────────────────────────────────
-# Explicit source list (mirrors backend.pro; excludes unused EnetControlStream/
+# Explicit source list (excludes unused EnetControlStream/
 # InputCrypto/InputEncoder which are not part of the current build).
 add_executable(mw-server
     src/main.cpp
@@ -144,6 +149,19 @@ add_executable(mw-server
     src/streaming/MediaTrackRelay.cpp
     src/streaming/SignalingServer.cpp
 )
+
+# Ship the binary as "moonlight-web(.exe)" regardless of the CMake target name.
+set_target_properties(mw-server PROPERTIES OUTPUT_NAME moonlight-web)
+
+# Windows release builds run windowless (no console): logs go to a file next to
+# the exe (see main.cpp). Debug keeps the console for development. WIN32_EXECUTABLE
+# switches to /SUBSYSTEM:WINDOWS, so Qt6::EntryPoint must provide WinMain->main.
+if(WIN32)
+    set_target_properties(mw-server PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release>)
+    if(TARGET Qt6::EntryPoint)
+        target_link_libraries(mw-server PRIVATE Qt6::EntryPoint)
+    endif()
+endif()
 
 target_include_directories(mw-server PRIVATE
     src
