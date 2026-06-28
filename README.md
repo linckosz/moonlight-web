@@ -195,14 +195,15 @@ Point your DNS (`A`/`CNAME`) to your IP.
 
 ## 🍴 Fork & build
 
-**Requirements:** Qt 6.11 (Core, Network, WebSockets; MSVC 2022 64‑bit kit on Windows) and OpenSSL 3.x (bundled in `backend/libs/windows/`).
+Cross‑platform build via **CMake** — the single, canonical build system (qmake removed).
+CMake also generates `compile_commands.json` for clangd / IDEs.
 
 ```bash
 git clone <this-repo>
 cd moonlight-web-deepseek
 git submodule update --init --recursive   # moonlight-common-c, qmdnsengine, libdatachannel...
 
-# Windows (MSVC):
+# Windows (MSVC) — detects VS 2022 + Qt, configures Ninja, builds Release:
 cmd //c backend/build_msvc.bat
 # Linux / macOS (CMake):
 cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
@@ -210,7 +211,9 @@ cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build ba
 cd backend/build/release && ./moonlight-web   # Windows: moonlight-web.exe → open https://localhost
 ```
 
-Cross‑platform (Windows x64/ARM64, Linux, macOS) via CMake — the single, canonical build system (qmake removed). CMake also generates `compile_commands.json` for clangd / IDEs.
+👉 **Full developer setup** — required tools (with links), Qt installer components,
+**Qt Creator** kit configuration, frontend tests and the PR workflow — is in
+**[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 **DNS stack (Internet access).** To offer auto sub‑domain + TLS you need an authoritative DNS server on a domain you own. [`deploy/powerdns/`](deploy/powerdns/) ships a turnkey Docker stack (dnsdist + PowerDNS + Caddy).\
 Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then set `MW_DOMAIN` / `MW_PDNS_URL` / `MW_PDNS_TOKEN` in the server's `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).

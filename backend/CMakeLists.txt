@@ -82,6 +82,9 @@ set(NO_WEBSOCKET ON  CACHE BOOL "" FORCE)
 set(NO_MEDIA     OFF CACHE BOOL "" FORCE)
 set(NO_EXAMPLES  ON  CACHE BOOL "" FORCE)
 set(NO_TESTS     ON  CACHE BOOL "" FORCE)
+# Prevent libsrtp (sub-dep) from building its test drivers (cipher_driver, etc.),
+# which otherwise clutter the run-target list in IDEs like Qt Creator.
+set(LIBSRTP_TEST_APPS OFF CACHE BOOL "" FORCE)
 set(USE_GNUTLS   OFF CACHE BOOL "" FORCE)
 set(USE_MBEDTLS  OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/libdatachannel)
