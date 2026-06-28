@@ -155,7 +155,7 @@ jobs:
         with:
           version: 6.11.0
           host: mac
-          arch: clang_arm64
+          arch: clang_64 # Qt 6.11 mac desktop is a universal (arm64+x64) binary
           modules: qtwebsockets
           # aqt 3.3.0 doesn't know the new Qt 6.11 per-arch repo layout (404s on
           # Updates.xml); pin the commit that added it. py7zr 1.1.0 avoids the 7z
