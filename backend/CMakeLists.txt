@@ -88,6 +88,11 @@ set(UPNPC_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
 set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/miniupnp/miniupnpc miniupnpc-build)
 
+# miniupnpc ships flat headers in include/, but our code includes them as
+# <miniupnpc/*.h>; stage a miniupnpc/-prefixed copy in the build tree.
+file(COPY third_party/miniupnp/miniupnpc/include/
+     DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/miniupnpc_include/miniupnpc)
+
 # qmdnsengine (mDNS discovery). The vendored CMakeLists hardcodes Qt5, so build
 # it ourselves as a static Qt6 library instead of add_subdirectory.
 set(QMDNS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qmdnsengine/qmdnsengine/src)
@@ -129,6 +134,7 @@ add_executable(mw-server
     src/backend/ComputerManager.cpp
     src/backend/IdentityManager.cpp
     src/backend/NvPairingManager.cpp
+    src/streaming/RelayBase.h # QObject base with no .cpp; listed so AUTOMOC mocs it
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp
     src/streaming/MoonlightShim.cpp
@@ -145,6 +151,7 @@ target_include_directories(mw-server PRIVATE
     third_party/qmdnsengine
     third_party/moonlight-common-c/src
     third_party/moonlight-common-c/enet/include
+    ${CMAKE_CURRENT_BINARY_DIR}/miniupnpc_include
 )
 
 target_compile_definitions(mw-server PRIVATE
