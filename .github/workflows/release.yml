@@ -46,7 +46,9 @@ jobs:
           version: 6.11.0
           arch: ${{ matrix.qt_arch }}
           modules: qtwebsockets
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
 
       - name: Configure
         shell: pwsh
@@ -99,7 +101,9 @@ jobs:
         with:
           version: 6.11.0
           modules: qtwebsockets
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
 
       - name: Build
         run: |
@@ -147,7 +151,9 @@ jobs:
           host: mac
           arch: clang_arm64
           modules: qtwebsockets
-          extra: --base https://download.qt.io # force official server (flaky mirrors)
+          # aqt 3.3.0 (latest release) doesn't know the new Qt 6.11 per-arch repo
+          # layout and 404s on Updates.xml; pin to the master fix until 3.3.1 ships.
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git@9e49c82edc6d946db376dec907cca5b4b486eec5
 
       - name: Build
         run: |
