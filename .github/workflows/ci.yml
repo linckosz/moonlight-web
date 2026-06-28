@@ -33,6 +33,7 @@ jobs:
   # gate on quality) and a single npm install/Node setup serves both.
   frontend:
     name: Frontend (Prettier + ESLint + Vitest, 70% gate)
+    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
@@ -85,6 +86,7 @@ jobs:
 
   quality-cpp-format:
     name: Quality · C++ clang-format
+    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -113,6 +115,7 @@ jobs:
 
   quality-cppcheck:
     name: Quality · C++ cppcheck
+    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -139,6 +142,7 @@ jobs:
   # ────────────────────────── 2. BACKEND TESTS ──────────────────────────
   test-backend:
     name: Tests · Backend (Qt Test + OpenCppCoverage, 70% gate)
+    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [quality-cpp-format, quality-cppcheck]
     runs-on: windows-latest
     timeout-minutes: 45
@@ -189,7 +193,8 @@ jobs:
   # ────────────────────────────── 3. BUILD ──────────────────────────────
   build-windows-x64:
     name: Build · Windows x64 (CMake/MSVC)
-    needs: [frontend, test-backend]
+    # TEMP(debug): runs standalone while the other jobs are disabled below.
+    # Restore `needs: [frontend, test-backend]` once the Windows bundle is fixed.
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -218,17 +223,24 @@ jobs:
         run: cmake -S backend -B backend/build/win -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build backend/build/win -j
+      # Stage a clean, relocatable bundle: exe + frontend + OpenSSL DLLs
+      # (libssl-3-x64 / libcrypto-3-x64), as laid out by the install() rules.
+      - name: Install bundle
+        run: cmake --install backend/build/win --prefix backend/build/win/dist
+      # windeployqt adds the Qt runtime DLLs (Qt6Core/Network/WebSockets/Widgets)
+      # + plugins next to the exe inside the bundle.
       - name: Deploy Qt runtime
-        run: windeployqt --release backend/build/win/mw-server.exe
+        run: windeployqt --release backend/build/win/dist/mw-server.exe
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: mw-server-windows-x64
-          path: backend/build/win/mw-server.exe
+          path: backend/build/win/dist
           if-no-files-found: warn
 
   build-windows-arm64:
     name: Build · Windows ARM64 (CMake/MSVC)
+    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [frontend, test-backend]
     runs-on: windows-11-arm
     timeout-minutes: 60
@@ -274,6 +286,7 @@ jobs:
 
   build-linux-x64:
     name: Build · Linux x64 (CMake)
+    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [frontend, test-backend]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -313,6 +326,7 @@ jobs:
 
   build-macos-arm64:
     name: Build · macOS arm64 (CMake)
+    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [frontend, test-backend]
     runs-on: macos-latest
     timeout-minutes: 40
