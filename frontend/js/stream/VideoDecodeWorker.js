@@ -321,7 +321,12 @@ function configureDecoder() {
               },
           }
         : {
-              colorSpace: { primaries: 'bt709', transfer: 'bt709', matrix: 'bt709', fullRange: false },
+              colorSpace: {
+                  primaries: 'bt709',
+                  transfer: 'bt709',
+                  matrix: 'bt709',
+                  fullRange: false,
+              },
           };
 
     const fallbacks =

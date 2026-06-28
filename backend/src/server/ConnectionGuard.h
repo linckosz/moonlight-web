@@ -80,12 +80,12 @@ public:
     static bool isExempt(const QString& ip);
 
     // ── Tunables (public so tests and callers can reference them) ────────────
-    static constexpr qint64 CONN_WINDOW_MS = 10'000;    // 10 s
-    static constexpr int CONN_MAX_PER_WINDOW = 200;     // generous: page loads burst
+    static constexpr qint64 CONN_WINDOW_MS = 10'000;     // 10 s
+    static constexpr int CONN_MAX_PER_WINDOW = 200;      // generous: page loads burst
     static constexpr qint64 AUTHFAIL_WINDOW_MS = 60'000; // 60 s
-    static constexpr int AUTHFAIL_MAX = 10;             // brute-force scanning
-    static constexpr qint64 BAN_MS = 600'000;           // 10 min temporary ban
-    static constexpr qint64 IDLE_PURGE_MS = 300'000;    // drop entry after 5 min idle
+    static constexpr int AUTHFAIL_MAX = 10;              // brute-force scanning
+    static constexpr qint64 BAN_MS = 600'000;            // 10 min temporary ban
+    static constexpr qint64 IDLE_PURGE_MS = 300'000;     // drop entry after 5 min idle
 
 private:
     struct IpState

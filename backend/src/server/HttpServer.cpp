@@ -1334,8 +1334,7 @@ bool HttpServer::isAuthenticated(const HttpRequest& req) const
 
 bool HttpServer::rejectIfAbusive(QTcpSocket* socket)
 {
-    if (m_ConnGuard.allowConnection(socket->peerAddress().toString()))
-        return false;
+    if (m_ConnGuard.allowConnection(socket->peerAddress().toString())) return false;
     socket->abort();
     socket->deleteLater();
     return true;

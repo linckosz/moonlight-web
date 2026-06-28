@@ -104,8 +104,7 @@ StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, Response
     qInfo() << "[Session] Stream settings:" << m_StreamWidth << "x" << m_StreamHeight << "@"
             << m_StreamFps << "fps, bitrate:" << m_StreamBitrateKbps << "kbps,"
             << "gaming:" << (m_GamingMode ? "on" : "off")
-            << "codec:" << static_cast<int>(videoCodec)
-            << "hdr:" << hdrEnabled;
+            << "codec:" << static_cast<int>(videoCodec) << "hdr:" << hdrEnabled;
 }
 
 StreamSession::~StreamSession()
@@ -166,10 +165,9 @@ void StreamSession::doResumeApp(const QByteArray& clientCert, const QByteArray& 
 {
     qInfo() << "[Session] Resuming session on" << m_Host->name << "appid=" << m_AppId;
     m_ResumeAttempted = true;
-    m_LaunchReply =
-        m_Http->resumeAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort, effectiveUniqueId(),
-                               m_Config.rikey, m_Config.rikeyid, clientCert, clientKey,
-                               m_Config.muteHostAudio ? 0 : 1);
+    m_LaunchReply = m_Http->resumeAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort,
+                                           effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
+                                           clientCert, clientKey, m_Config.muteHostAudio ? 0 : 1);
 
     connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
 }
@@ -188,7 +186,7 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert, const QByteArray& 
                                            effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
                                            m_StreamWidth, m_StreamHeight, m_StreamFps,
                                            m_StreamBitrateKbps, clientCert, clientKey,
-                                           m_Config.hdrEnabled ? 1 : 0, // hdrMode: 1=HDR, 0=SDR
+                                           m_Config.hdrEnabled ? 1 : 0,     // hdrMode: 1=HDR, 0=SDR
                                            m_Config.muteHostAudio ? 0 : 1); // localAudioPlayMode
 
     connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);

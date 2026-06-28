@@ -127,8 +127,10 @@ const MoonlightApp = {
 
         // Mark iOS in CSS (UA sniff) — used to restore tick visibility on
         // the settings checkbox, where Safari's native tick is invisible.
-        if (/iPhone|iPod|iPad/i.test(navigator.userAgent) ||
-            (['MacIntel', 'Mac68K'].indexOf(navigator.platform) !== -1 && 'ontouchend' in document)) {
+        if (
+            /iPhone|iPod|iPad/i.test(navigator.userAgent) ||
+            (['MacIntel', 'Mac68K'].indexOf(navigator.platform) !== -1 && 'ontouchend' in document)
+        ) {
             document.body.classList.add('ios');
         }
 

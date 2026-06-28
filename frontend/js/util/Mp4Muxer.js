@@ -568,7 +568,7 @@ export const HEVC_FALLBACK_CODEC_STRINGS = [
     'hvc1.1.6.L150.B0', // Main, High tier, Level 5.0
     'hvc1.1.6.L123.B0', // Main, High tier, Level 4.1
     'hvc1.1.6.L120.B0', // Main, High tier, Level 4.0
-    'hvc1.1.6.L93.B0',  // Main, High tier, Level 3.1
+    'hvc1.1.6.L93.B0', // Main, High tier, Level 3.1
     'hvc1.1.2.L153.B0', // Main, Main tier, Level 5.1
     'hvc1.1.2.L150.B0', // Main, Main tier, Level 5.0
 ];

@@ -128,7 +128,9 @@ async function setupDecoder() {
             mode = 'webcodecs';
             return true;
         } catch (err) {
-            console.warn('[audio-worker] WebCodecs unavailable (' + err.message + ') — WASM fallback');
+            console.warn(
+                '[audio-worker] WebCodecs unavailable (' + err.message + ') — WASM fallback',
+            );
             decoder = null;
         }
     }
@@ -167,38 +169,38 @@ self.onmessage = async (evt) => {
     if (!msg) return;
 
     switch (msg.type) {
-    case 'init':
-        sampleRate = msg.sampleRate || 48000;
-        channels = msg.channels || 2;
-        if (await setupDecoder()) {
-            self.postMessage({ type: 'ready', mode });
-        } else {
-            self.postMessage({ type: 'fail', message: 'no Opus decoder available' });
-        }
-        break;
-    case 'pcm-port':
-        pcmPort = msg.port;
-        break;
-    case 'opus':
-        decodeOpus(msg.data);
-        break;
-    case 'close':
-        try {
-            if (decoder && decoder.state !== 'closed') decoder.close();
-        } catch (e) {
-            /* ignore */
-        }
-        try {
-            if (wasmDecoder) wasmDecoder.free();
-        } catch (e) {
-            /* ignore */
-        }
-        decoder = null;
-        wasmDecoder = null;
-        self.close();
-        break;
-    default:
-        break;
+        case 'init':
+            sampleRate = msg.sampleRate || 48000;
+            channels = msg.channels || 2;
+            if (await setupDecoder()) {
+                self.postMessage({ type: 'ready', mode });
+            } else {
+                self.postMessage({ type: 'fail', message: 'no Opus decoder available' });
+            }
+            break;
+        case 'pcm-port':
+            pcmPort = msg.port;
+            break;
+        case 'opus':
+            decodeOpus(msg.data);
+            break;
+        case 'close':
+            try {
+                if (decoder && decoder.state !== 'closed') decoder.close();
+            } catch (e) {
+                /* ignore */
+            }
+            try {
+                if (wasmDecoder) wasmDecoder.free();
+            } catch (e) {
+                /* ignore */
+            }
+            decoder = null;
+            wasmDecoder = null;
+            self.close();
+            break;
+        default:
+            break;
     }
 };
 
