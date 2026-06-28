@@ -39,6 +39,7 @@
 #pragma comment(lib, "ws2_32.lib")
 #else
 #include <ifaddrs.h>
+#include <net/if.h> // IFF_LOOPBACK (not transitively included on Linux)
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
