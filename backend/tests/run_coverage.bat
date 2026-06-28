@@ -46,7 +46,9 @@ where OpenCppCoverage >nul 2>nul
 if errorlevel 1 goto no_coverage
 
 del cov.xml 2>nul
-OpenCppCoverage --quiet --sources moonlight-web-deepseek\backend\src --excluded_sources moonlight-web-deepseek\backend\third_party --excluded_sources moonlight-web-deepseek\backend\tests --export_type cobertura:cov.xml --export_type html:covhtml -- "%RUNNER%" >nul 2>&1
+REM Relative path filters: the checkout dir name differs between local and CI
+REM (moonlight-web-deepseek vs moonlight-web), so match on backend\... only.
+OpenCppCoverage --quiet --sources backend\src --excluded_sources backend\third_party --excluded_sources backend\tests --export_type cobertura:cov.xml --export_type html:covhtml -- "%RUNNER%" >nul 2>&1
 if not exist cov.xml goto no_report
 
 REM ---- 3) Coverage gate ----
