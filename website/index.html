@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moonlight‑Web — Stream your PC games from any browser</title>
+<meta name="description" content="A 100% web Sunshine / GameStream client. Stream your PC games to any device with a browser — nothing to install, just a URL.">
+<meta name="theme-color" content="#0a0a14">
+<!-- Open Graph -->
+<meta property="og:title" content="Moonlight‑Web — Stream your PC games from any browser">
+<meta property="og:description" content="A 100% web Sunshine / GameStream client. Nothing to install on the client, just a URL.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="/assets/desktop.png">
+<link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png">
+<style>
+  :root{
+    --bg:#0a0a14; --bg-2:#11111f; --panel:#15152a; --line:#262645;
+    --txt:#e7e7f5; --muted:#9a9ac4;
+    --accent:#41cd52;        /* Qt green */
+    --accent-2:#19d3ff;      /* cyber cyan */
+    --magenta:#ff2e88;
+    --radius:16px;
+    --maxw:1120px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; color:var(--txt); background:var(--bg);
+    font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background:
+      radial-gradient(900px 500px at 80% -10%, rgba(25,211,255,.12), transparent 60%),
+      radial-gradient(800px 500px at 0% 0%, rgba(255,46,136,.10), transparent 55%),
+      var(--bg);
+  }
+  a{color:var(--accent-2); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 22px}
+  h1,h2,h3{line-height:1.15; margin:0 0 .4em}
+  h2{font-size:clamp(1.6rem,3.5vw,2.4rem); text-align:center; margin-top:0}
+  .muted{color:var(--muted)}
+  .sub{color:var(--muted); text-align:center; max-width:680px; margin:0 auto 2.4rem}
+
+  /* Header */
+  header{
+    position:sticky; top:0; z-index:10;
+    backdrop-filter:blur(10px);
+    background:rgba(10,10,20,.7); border-bottom:1px solid var(--line);
+  }
+  header .wrap{display:flex; align-items:center; gap:14px; height:62px}
+  .brand{display:flex; align-items:center; gap:10px; font-weight:700; font-size:1.1rem}
+  .brand .moon{border-radius:6px; display:block}
+  header nav{margin-left:auto; display:flex; gap:22px; align-items:center}
+  header nav a{color:var(--muted); font-size:.95rem}
+  header nav a:hover{color:var(--txt); text-decoration:none}
+  .btn{
+    display:inline-block; padding:.7rem 1.25rem; border-radius:999px;
+    font-weight:600; border:1px solid transparent; cursor:pointer; transition:.15s;
+  }
+  .btn-primary{background:linear-gradient(90deg,var(--accent),var(--accent-2)); color:#04140a}
+  .btn-primary:hover{filter:brightness(1.08); text-decoration:none}
+  .btn-ghost{border-color:var(--line); color:var(--txt); background:var(--panel)}
+  .btn-ghost:hover{border-color:var(--accent-2); text-decoration:none}
+
+  /* Hero */
+  .hero{padding:72px 0 40px; text-align:center}
+  .hero h1{font-size:clamp(2.1rem,5.5vw,3.6rem); letter-spacing:-.5px}
+  .hero h1 .grad{
+    background:linear-gradient(90deg,var(--accent),var(--accent-2) 60%,var(--magenta));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .hero p.lead{font-size:clamp(1.05rem,2.2vw,1.3rem); color:var(--muted); max-width:680px; margin:1.1rem auto 1.8rem}
+  .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-bottom:42px}
+  .badges{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:8px}
+  .badge{font-size:.8rem; color:var(--muted); border:1px solid var(--line); padding:.3rem .7rem; border-radius:999px; background:var(--panel)}
+
+  .shot{
+    border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;
+    box-shadow:0 30px 80px -30px rgba(0,0,0,.8); display:block; width:100%;
+  }
+  .hero-shot{max-width:960px; margin:0 auto}
+
+  /* Sections */
+  section{padding:64px 0}
+  section.alt{background:linear-gradient(180deg,transparent,rgba(255,255,255,.015),transparent)}
+
+  /* Features grid */
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px}
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:22px; transition:.15s;
+  }
+  .card:hover{border-color:var(--accent-2); transform:translateY(-3px)}
+  .card .ico{font-size:1.6rem; margin-bottom:.4rem}
+  .card h3{font-size:1.08rem; margin-bottom:.3rem}
+  .card p{color:var(--muted); margin:0; font-size:.95rem}
+
+  /* Gallery */
+  .gallery{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px}
+  figure{margin:0}
+  figure img{cursor:zoom-in}
+  figcaption{color:var(--muted); font-size:.88rem; text-align:center; margin-top:.5rem}
+  .span-2{grid-column:span 2}
+  @media(max-width:680px){.span-2{grid-column:span 1}}
+
+  /* Steps */
+  .steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; counter-reset:s}
+  .step{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:22px; position:relative}
+  .step::before{
+    counter-increment:s; content:counter(s);
+    display:inline-grid; place-items:center; width:34px; height:34px; border-radius:50%;
+    background:linear-gradient(90deg,var(--accent),var(--accent-2)); color:#04140a; font-weight:800; margin-bottom:.6rem;
+  }
+  .step h3{font-size:1.05rem}
+  .step p{color:var(--muted); margin:0; font-size:.95rem}
+
+  /* CTA band */
+  .band{
+    text-align:center; border:1px solid var(--line); border-radius:24px; padding:48px 24px;
+    background:
+      radial-gradient(600px 300px at 50% -40%, rgba(25,211,255,.15), transparent 60%),
+      var(--panel);
+  }
+
+  footer{border-top:1px solid var(--line); padding:34px 0; color:var(--muted); font-size:.9rem}
+  footer .wrap{display:flex; gap:16px; flex-wrap:wrap; align-items:center; justify-content:space-between}
+
+  /* Lightbox */
+  #lb{position:fixed; inset:0; background:rgba(0,0,0,.92); display:none; place-items:center; z-index:100; cursor:zoom-out; padding:20px}
+  #lb.on{display:grid}
+  #lb img{max-width:96vw; max-height:92vh; border-radius:10px; box-shadow:0 20px 60px rgba(0,0,0,.6)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <span class="brand"><img class="moon" src="/assets/icon-192.png" alt="" width="28" height="28"> Moonlight‑Web</span>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#gallery">Screenshots</a>
+      <a href="#how">How it works</a>
+      <a class="btn btn-primary" href="https://github.com/brunoocto/moonlight-web" target="_blank" rel="noopener">GitHub ★</a>
+    </nav>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap">
+    <h1>Stream your PC games<br><span class="grad">from any browser.</span></h1>
+    <p class="lead">A 100% web <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> / GameStream client.
+      Nothing to install on the client — just a URL. PC, Mac, tablet, phone or TV.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/brunoocto/moonlight-web" target="_blank" rel="noopener">Get it on GitHub</a>
+      <a class="btn btn-ghost" href="#how">See how it works</a>
+    </div>
+    <div class="badges">
+      <span class="badge">Qt 6.11 · C++17</span>
+      <span class="badge">WebRTC transport</span>
+      <span class="badge">H.264 · HEVC · AV1</span>
+      <span class="badge">Up to 4K HDR · 120+ FPS</span>
+      <span class="badge">Windows · Linux · macOS</span>
+    </div>
+    <div style="margin-top:42px" class="hero-shot">
+      <img class="shot" src="/assets/desktop.png" alt="Desktop game streaming in the browser" loading="eager">
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features" class="alt">
+  <div class="wrap">
+    <h2>Everything, in the browser</h2>
+    <p class="sub">Turns any device with a modern browser into a low‑latency streaming client for your Sunshine‑powered gaming PC — with nothing to install.</p>
+    <div class="grid">
+      <div class="card"><div class="ico">🎮</div><h3>Low‑latency streaming</h3><p>Up to 4K HDR, 120+ FPS, with H.264 / HEVC / AV1 codecs.</p></div>
+      <div class="card"><div class="ico">🌐</div><h3>WebRTC transport</h3><p>DataChannels + RTP media tracks, with automatic WSS fallback.</p></div>
+      <div class="card"><div class="ico">🔊</div><h3>Opus audio</h3><p>Decoded in the browser with an adaptive jitter buffer and surround.</p></div>
+      <div class="card"><div class="ico">⌨️🖱️🎮</div><h3>Full input</h3><p>Keyboard, mouse (pointer‑lock), touch trackpad, Xbox/PS gamepads with rumble.</p></div>
+      <div class="card"><div class="ico">🔎</div><h3>Auto‑discovery</h3><p>Finds Sunshine hosts on your LAN via mDNS — or add an IP manually.</p></div>
+      <div class="card"><div class="ico">🔐</div><h3>Secure pairing</h3><p>PIN pairing, multi‑host and persistent sessions.</p></div>
+      <div class="card"><div class="ico">🌍</div><h3>Internet access</h3><p>One click: auto sub‑domain + free TLS certificate.</p></div>
+      <div class="card"><div class="ico">🪄</div><h3>Video Enhancement</h3><p>GPU upscaling &amp; sharpening (SGSRv1 + FSR1) right in the browser.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- GALLERY -->
+<section id="gallery">
+  <div class="wrap">
+    <h2>See it in action</h2>
+    <p class="sub">Same low‑latency, high‑quality streaming on any device — desktop, mobile, TV.</p>
+    <div class="gallery">
+      <figure class="span-2">
+        <img class="shot" src="/assets/home.png" alt="Home — Sunshine host list" loading="lazy">
+        <figcaption>Home — your Sunshine hosts, discovered automatically</figcaption>
+      </figure>
+      <figure>
+        <img class="shot" src="/assets/mobile.png" alt="iPhone streaming with virtual keyboard" loading="lazy">
+        <figcaption>Mobile — touch trackpad &amp; virtual keyboard</figcaption>
+      </figure>
+      <figure>
+        <img class="shot" src="/assets/settings.png" alt="Stream settings" loading="lazy">
+        <figcaption>Stream settings — bitrate, resolution, FPS, codec</figcaption>
+      </figure>
+      <figure>
+        <img class="shot" src="/assets/advanced.png" alt="Advanced options" loading="lazy">
+        <figcaption>Advanced options — HDR, 4:4:4 chroma, gaming mode</figcaption>
+      </figure>
+      <figure class="span-2">
+        <img class="shot" src="/assets/video_enhancement.png" alt="Video Enhancement — 720p upscaled to 1440p" loading="lazy">
+        <figcaption>Video Enhancement — stream at 720p, display crisp at 1440p</figcaption>
+      </figure>
+      <figure class="span-2">
+        <img class="shot" src="/assets/admin.png" alt="Admin page — Internet access & server config" loading="lazy">
+        <figcaption>Admin — Internet access, transport &amp; server config</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- HOW -->
+<section id="how" class="alt">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="sub">Run the server where Sunshine runs, open a browser, pair, and stream.</p>
+    <div class="steps">
+      <div class="step"><h3>Run the server</h3><p>On the machine where Sunshine runs. A tray icon appears.</p></div>
+      <div class="step"><h3>Open a browser</h3><p>At <code>https://localhost</code>, your LAN IP, or your domain.</p></div>
+      <div class="step"><h3>Pick a host</h3><p>Hosts are discovered via mDNS — or add an IP manually.</p></div>
+      <div class="step"><h3>Pair &amp; stream</h3><p>Enter the PIN, choose an app, and play.</p></div>
+    </div>
+    <p class="sub" style="margin-top:2.4rem">
+      The C++/Qt backend embeds <code>moonlight‑common‑c</code>: it speaks GameStream (RTSP/RTP/ENet) to Sunshine
+      and relays video/audio/input to the browser over WebRTC, with a WSS fallback.
+      Video decodes in WebCodecs + WebGPU/canvas, audio in AudioWorklet.
+    </p>
+  </div>
+</section>
+
+<!-- CTA -->
+<section>
+  <div class="wrap">
+    <div class="band">
+      <h2>Free &amp; open‑source</h2>
+      <p class="sub">GPL‑3.0. Built by a long‑time contributor to the Moonlight ecosystem.
+        A coffee helps keep the shared DNS domain server online. ☕</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/brunoocto/moonlight-web" target="_blank" rel="noopener">⭐ Star on GitHub</a>
+        <a class="btn btn-ghost" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> Moonlight‑Web · © 2026 Bruno Martin · GPL‑3.0</span>
+    <span>
+      <a href="https://github.com/brunoocto/moonlight-web" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> ·
+      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">Support</a>
+    </span>
+  </div>
+</footer>
+
+<div id="lb"><img alt=""></div>
+<script>
+  // Minimal lightbox for screenshots.
+  const lb = document.getElementById('lb'), lbImg = lb.querySelector('img');
+  document.querySelectorAll('.gallery img').forEach(img=>{
+    img.addEventListener('click',()=>{ lbImg.src = img.src; lbImg.alt = img.alt; lb.classList.add('on'); });
+  });
+  lb.addEventListener('click',()=>lb.classList.remove('on'));
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') lb.classList.remove('on'); });
+</script>
+</body>
+</html>

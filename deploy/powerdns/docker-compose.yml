@@ -83,6 +83,7 @@ services:
       - caddy_data:/data             # cert storage (Let's Encrypt)
       - caddy_config:/config
       - ./certs:/certs:ro            # your own certs when using MW_TLS_CERT/KEY
+      - ../../website:/srv/site:ro   # presentation website (repo-root ./website)
     networks: [mwnet]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]

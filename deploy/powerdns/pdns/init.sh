@@ -30,6 +30,7 @@ if ! $PDNSUTIL list-all-zones 2>/dev/null | grep -qx "$MW_DOMAIN"; then
     echo "[mw] Creating zone $MW_DOMAIN -> $MW_PUBLIC_IP"
     $PDNSUTIL create-zone "$MW_DOMAIN"
     $PDNSUTIL add-record "$MW_DOMAIN" @   A  "$MW_PUBLIC_IP"
+    $PDNSUTIL add-record "$MW_DOMAIN" www A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" ns1 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" ns2 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" api A  "$MW_PUBLIC_IP"
@@ -42,6 +43,25 @@ if ! $PDNSUTIL list-all-zones 2>/dev/null | grep -qx "$MW_DOMAIN"; then
 else
     echo "[mw] Zone $MW_DOMAIN already exists — skipping init"
 fi
+
+# Ensure the presentation-site records exist even on a pre-existing zone (created
+# before the website was added). Idempotent: only adds each when missing, so
+# re-running on an already-deployed DNS box safely backfills www/apex/api.
+ensure_a() {  # ensure_a <name>  — add an A record to MW_PUBLIC_IP if absent
+    name="$1"
+    fqdn="$( [ "$name" = "@" ] && echo "$MW_DOMAIN" || echo "${name}.${MW_DOMAIN}" )"
+    if ! $PDNSUTIL list-zone "$MW_DOMAIN" 2>/dev/null \
+         | grep -qiE "^${fqdn}\.[[:space:]].*[[:space:]]A[[:space:]]"; then
+        echo "[mw] Adding missing A record ${fqdn} -> $MW_PUBLIC_IP"
+        $PDNSUTIL add-record "$MW_DOMAIN" "$name" A "$MW_PUBLIC_IP"
+        NEED_RECTIFY=1
+    fi
+}
+NEED_RECTIFY=0
+ensure_a @     # apex — presentation site
+ensure_a www   # www  — presentation site
+ensure_a api   # api  — PowerDNS REST API
+[ "$NEED_RECTIFY" = "1" ] && $PDNSUTIL rectify-zone "$MW_DOMAIN" || true
 
 # Hand off to the official wrapper: it renders the REST API config from
 # PDNS_AUTH_API_KEY, then execs pdns_server.

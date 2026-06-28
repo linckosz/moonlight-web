@@ -57,7 +57,7 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 
 ## 🚀 How it works
 
-1. **Run the server** on the machine where Sunshine runs.
+1. **Run the server** on any machine on the same LAN as Sunshine (the Sunshine PC itself is ideal, but not required).
 2. **Open a browser** at `https://localhost` (or the PC's LAN IP, or your domain if Internet access is on).
 3. The server **discovers your Sunshine hosts** (mDNS) — or add an IP manually.
 4. **Pair** the host (PIN), pick an app, **stream**.
@@ -67,9 +67,9 @@ Video decodes in **WebCodecs + WebGPU/canvas**, audio in **AudioWorklet**.
 
 ### ⚙️ Stream settings
 
-From the in‑app overlay: **bitrate** (5–150 Mbps or auto), **resolution** (720p–2160p),\
-**FPS** (30–240), **codec** (auto / H.264 / HEVC / AV1, unsupported options greyed out),\
-**HDR**, **4:4:4 chroma**, **Gaming mode** (pointer‑lock), perf stats and aspect ratio.
+From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (720p–2160p),\
+**FPS** (15–240), **codec** (auto / H.264 / HEVC / AV1, unsupported options greyed out),\
+**HDR**, **4:4:4 chroma**, **Immersive mode** (pointer‑lock), perf stats and aspect ratio.
 
 <div align="center">
 
@@ -81,8 +81,7 @@ From the in‑app overlay: **bitrate** (5–150 Mbps or auto), **resolution** (7
 
 ### 🪄 Video Enhancement (bonus)
 
-Browser‑side image enhancement on the GPU (WebGPU): **upscaling (SGSRv1 + FSR1)** + **sharpening**, to gain sharpness when the stream resolution is below the screen's.\
-Stream at 720p (low bandwidth), display crisp at 1440p.
+Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1)** + **sharpening**, to gain sharpness when the stream resolution differs from the display resolution.
 
 <div align="center">
 
@@ -94,8 +93,9 @@ Stream at 720p (low bandwidth), display crisp at 1440p.
 
 ## 📦 Install
 
-> ✅ **Recommended: install Moonlight‑Web on the same machine as Sunshine** — minimal
-> latency (localhost), instant mDNS discovery, simpler port forwarding.
+> ✅ Moonlight‑Web runs on **any machine on the same LAN as Sunshine** — it doesn't have
+> to be the Sunshine PC. **Installing it on the Sunshine machine is ideal** (minimal latency
+> via localhost, instant mDNS discovery, simpler port forwarding), but not required.
 
 1. **Prerequisite**: a PC with **Sunshine** installed and working.
 2. **Grab** the latest release binary, **or** build from source (see [Fork & build](#-fork--build)).
@@ -137,16 +137,16 @@ Enabling **Internet Access** makes the server automatically:
 
 ```
    BROWSER (any device)                  Moonlight-Web SERVER (C++/Qt)            Sunshine HOST
- ┌──────────────────────────┐      ┌──────────────────────────────┐      ┌──────────────────┐
- │  Web App (Vanilla JS)    │ REST │  HTTP :80 → HTTPS :443        │HTTPS │  GameStream API  │
- │  Hosts / apps / pairing  │◄────►│  Static files + REST API     │◄────►│  /serverinfo     │
+ ┌───────────────────────────┐      ┌──────────────────────────────┐      ┌──────────────────┐
+ │  Web App (Vanilla JS)     │ REST │  HTTP :80 → HTTPS :443       │HTTPS │  GameStream API  │
+ │  Hosts / apps / pairing   │◄────►│  Static files + REST API     │◄────►│  /serverinfo     │
  │  Video : WebCodecs+WebGPU │      │  Proxy to Sunshine           │      │  /applist/launch │
  │  Audio : Opus/AudioWorklet│WebRTC│  ┌────────────────────────┐  │ RTSP │  /pair           │
  │  Input : kbd/mouse/gamepad│◄════►│  │  moonlight-common-c    │  │ RTP  │  GPU encoder     │
- │  Video Enhancement (GPU) │ (WSS │  │  RTSP/RTP/ENet → Relay  │  │◄════►│  (NVENC/AMF/QSV)  │
- └──────────────────────────┘ fall) └──────────────────────────────┘ UDP  └──────────────────┘
+ │  Video Enhancement (GPU)  │ (WSS │  │  RTSP/RTP/ENet → Relay │  │◄════►│  (NVENC/AMF/QSV) │
+ └───────────────────────────┘ fall)└──────────────────────────────┘ UDP  └──────────────────┘
         ▲ DNS (sub-domain) + TLS
- ┌──────┴───────────────────────────────────────────┐
+ ┌──────┴────────────────────────────────────────────┐
  │  Self-hosted DNS stack (Docker, separate machine) │  ← maintained by the author,
  │  dnsdist :53 · PowerDNS (API) · Caddy :80/:443    │    or host your own
  └───────────────────────────────────────────────────┘
