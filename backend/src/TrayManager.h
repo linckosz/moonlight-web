@@ -20,6 +20,7 @@
 #include <QObject>
 #include <QSystemTrayIcon>
 #include <QMenu>
+#include <QUrl>
 
 class HttpServer;
 
@@ -42,6 +43,10 @@ private slots:
     void onQuit();
 
 private:
+    /// localhost URL for `path`, preferring HTTPS, falling back to HTTP; empty if
+    /// no listener is up.
+    QUrl localUrl(const QString& path) const;
+
     HttpServer* m_Server;
     QSystemTrayIcon* m_TrayIcon;
     QMenu* m_Menu;

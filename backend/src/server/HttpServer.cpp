@@ -30,12 +30,19 @@
 #include <QSslCertificate>
 #include <QSslKey>
 #include <QSslConfiguration>
+#include <QRandomGenerator>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <functional>
 #include <memory>
+
+#include <openssl/bn.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 // Request hardening caps (anti-DoS): bound how much we buffer before a complete
 // request is available, so a client cannot grow our memory without limit by
@@ -249,31 +256,77 @@ private:
 
 // --- Helpers -------------------------------------------------------------------
 
-/// Locate a native (non-MSYS) openssl executable.
-/// On Windows, the Git Bash openssl appears in PATH and its MSYS2 runtime
-/// converts POSIX-looking arguments (e.g. "/CN=Moonlight-Web") into Windows
-/// paths, breaking req -subj. Prefer the Windows-native install paths.
-static QString findOpenssl()
+/// Generate a self-signed RSA-2048 certificate + private key entirely via
+/// libcrypto — no external openssl.exe dependency (CI artifacts run on clean
+/// machines without OpenSSL on PATH). `sans` entries use the OpenSSL v3 conf
+/// syntax ("DNS:localhost", "IP:127.0.0.1", ...). Writes PEM files.
+static bool generateSelfSignedToFiles(const QString& certPath, const QString& keyPath,
+                                      const QStringList& sans, const QString& commonName)
 {
-#ifdef Q_OS_WIN
-    // Force MSYS2_ARG_CONV_EXCL so that even if the MSYS openssl is picked,
-    // it won't mangle POSIX-looking arguments.
-    qputenv("MSYS2_ARG_CONV_EXCL", "*");
+    bool ok = false;
+    EVP_PKEY* pkey = EVP_RSA_gen(2048);
+    X509* x509 = X509_new();
 
-    QStringList candidates = {
-        QDir::fromNativeSeparators("C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe"),
-        QDir::fromNativeSeparators("C:\\Program Files\\OpenSSL\\bin\\openssl.exe"),
-    };
-    for (const QString& path : candidates) {
-        if (QFile::exists(path)) {
-            Logger::info(QString("[CERT] Using native OpenSSL: %1").arg(path));
-            return path;
+    do {
+        if (!pkey || !x509) break;
+
+        X509_set_version(x509, 2); // v3
+        ASN1_INTEGER_set_uint64(X509_get_serialNumber(x509),
+                                QRandomGenerator::global()->generate64());
+        X509_gmtime_adj(X509_getm_notBefore(x509), 0);
+        X509_gmtime_adj(X509_getm_notAfter(x509), 60L * 60 * 24 * 365); // 1 year
+        X509_set_pubkey(x509, pkey);
+
+        // Subject == issuer (self-signed), CN only.
+        QByteArray cn = commonName.toUtf8();
+        X509_NAME* name = X509_get_subject_name(x509);
+        X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                   reinterpret_cast<const unsigned char*>(cn.constData()), -1, -1, 0);
+        X509_set_issuer_name(x509, name);
+
+        // subjectAltName extension built from the SAN list.
+        if (!sans.isEmpty()) {
+            QByteArray sanStr = sans.join(',').toUtf8();
+            if (X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name,
+                                                          sanStr.constData())) {
+                X509_add_ext(x509, ext, -1);
+                X509_EXTENSION_free(ext);
+            }
         }
-    }
-    Logger::warning(
-        "[CERT] Native OpenSSL not found, falling back to PATH (MSYS2 may break -subj)");
-#endif
-    return "openssl";
+
+        if (!X509_sign(x509, pkey, EVP_sha256())) break;
+
+        // Serialize to PEM in memory, then write via QFile (handles unicode paths
+        // that BIO_new_file mishandles on Windows).
+        auto writePem = [](const QString& path, const std::function<int(BIO*)>& dump) -> bool {
+            BIO* bio = BIO_new(BIO_s_mem());
+            if (!bio) return false;
+            bool wrote = false;
+            if (dump(bio) == 1) {
+                char* data = nullptr;
+                long len = BIO_get_mem_data(bio, &data);
+                if (len > 0 && data) {
+                    QFile f(path);
+                    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                        wrote = (f.write(data, len) == len);
+                }
+            }
+            BIO_free(bio);
+            return wrote;
+        };
+
+        if (!writePem(keyPath, [pkey](BIO* b) {
+                return PEM_write_bio_PrivateKey(b, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+            }))
+            break;
+        if (!writePem(certPath, [x509](BIO* b) { return PEM_write_bio_X509(b, x509); })) break;
+
+        ok = true;
+    } while (false);
+
+    if (x509) X509_free(x509);
+    if (pkey) EVP_PKEY_free(pkey);
+    return ok;
 }
 
 /// Enumerate all private/local addresses on this machine (excluding loopback).
@@ -691,7 +744,7 @@ bool HttpServer::loadCert()
     QByteArray certData = resolvePemValue(m_CertPem);
     QByteArray keyData = resolvePemValue(m_CertKey);
 
-    // Build-time embedded fallback (GitHub Actions / .env at qmake time)
+    // Build-time embedded fallback (GitHub Actions / .env at build time)
 #ifdef MW_CERT_PEM
     if (certData.isEmpty()) certData = QByteArray(MW_CERT_PEM);
 #endif
@@ -820,7 +873,7 @@ bool HttpServer::reloadTls()
     QByteArray certData = resolvePemValue(m_CertPem);
     QByteArray keyData = resolvePemValue(m_CertKey);
 
-    // Build-time embedded fallback (GitHub Actions / .env at qmake time)
+    // Build-time embedded fallback (GitHub Actions / .env at build time)
 #ifdef MW_CERT_PEM
     if (certData.isEmpty()) certData = QByteArray(MW_CERT_PEM);
 #endif
@@ -897,81 +950,18 @@ bool HttpServer::generateSelfSignedCert()
         sans << "IP:" + clean.toString();
     }
 
-    // Erase old cert/key/config before generating new ones
+    // Erase old cert/key before generating new ones.
     QFile::remove(certDir + "key.pem");
     QFile::remove(certDir + "cert.pem");
-    QFile::remove(certDir + "openssl-san.cnf");
 
-    // Write a minimal OpenSSL config file for SANs (avoids -addext validation
-    // errors when the system openssl.cnf is not accessible).
-    QFile configFile(certDir + "openssl-san.cnf");
-    if (configFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QByteArray cnf = "[req]\n";
-        cnf += "distinguished_name = req_distinguished_name\n";
-        cnf += "x509_extensions = v3_req\n";
-        cnf += "prompt = no\n";
-        cnf += "[req_distinguished_name]\n";
-        cnf += "[v3_req]\n";
-        cnf += "subjectAltName = " + sans.join(",").toUtf8() + "\n";
-        configFile.write(cnf);
-        configFile.close();
-    }
-
-    QProcess gen;
-    gen.setProcessChannelMode(QProcess::MergedChannels);
-    gen.start(findOpenssl(), QStringList() << "req" << "-x509" << "-newkey" << "rsa:2048"
-                                           << "-keyout" << (certDir + "key.pem") << "-out"
-                                           << (certDir + "cert.pem") << "-days" << "365" << "-nodes"
-                                           << "-subj" << "/CN=Moonlight-Web"
-                                           << "-config" << (certDir + "openssl-san.cnf")
-                                           << "-extensions" << "v3_req");
-
-    if (!gen.waitForStarted(5000)) {
-        Logger::error("openssl not found in PATH, cannot generate self-signed certificate");
+    if (!generateSelfSignedToFiles(certDir + "cert.pem", certDir + "key.pem", sans,
+                                   "Moonlight-Web")) {
+        Logger::error("Failed to generate self-signed certificate (libcrypto)");
         return false;
     }
-
-    if (!gen.waitForFinished(30000)) {
-        gen.kill();
-        gen.waitForFinished(5000);
-        Logger::error("openssl timed out generating self-signed certificate");
-        return false;
-    }
-
-    QByteArray output = gen.readAll();
-
-    if (gen.exitCode() != 0) {
-        // Try without config file (older OpenSSL < 1.1.1 fallback)
-        Logger::warning(QString("openssl -config SAN failed (exit %1): %2")
-                            .arg(gen.exitCode())
-                            .arg(QString::fromUtf8(output).trimmed()));
-
-        QFile::remove(certDir + "key.pem");
-        QFile::remove(certDir + "cert.pem");
-
-        gen.start(findOpenssl(), QStringList()
-                                     << "req" << "-x509" << "-newkey" << "rsa:2048"
-                                     << "-keyout" << (certDir + "key.pem") << "-out"
-                                     << (certDir + "cert.pem") << "-days" << "365" << "-nodes"
-                                     << "-subj" << "/CN=Moonlight-Web");
-
-        if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000)) {
-            Logger::error("openssl fallback failed");
-            return false;
-        }
-        if (gen.exitCode() != 0) {
-            Logger::error(QString("openssl fallback failed (exit %1): %2")
-                              .arg(gen.exitCode())
-                              .arg(QString::fromUtf8(gen.readAll()).trimmed()));
-            return false;
-        }
-
-        Logger::info("Self-signed certificate generated WITHOUT SANs (OpenSSL too old)");
-    } else {
-        Logger::info(QString("Self-signed certificate generated with %1 SANs in %2")
-                         .arg(sans.size())
-                         .arg(certDir));
-    }
+    Logger::info(QString("Self-signed certificate generated with %1 SANs in %2")
+                     .arg(sans.size())
+                     .arg(certDir));
 
     // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).
     QFile::setPermissions(certDir + "key.pem", QFileDevice::ReadOwner | QFileDevice::WriteOwner);
@@ -995,12 +985,10 @@ void HttpServer::ensureLocalSslConfig()
     // (cert=fullchain.pem ZeroSSL + key=self-signed -> "key values mismatch").
     QString certPath = certDir + "local-cert.pem";
     QString keyPath = certDir + "local-key.pem";
-    QString configPath = certDir + "local-san.cnf";
 
     // Delete old files and regenerate with fresh SANs and current LAN IPs
     QFile::remove(certPath);
     QFile::remove(keyPath);
-    QFile::remove(configPath);
 
     // Build SAN list with current LAN IPs
     QStringList sans;
@@ -1014,49 +1002,9 @@ void HttpServer::ensureLocalSslConfig()
         sans << "IP:" + clean.toString();
     }
 
-    // Write a minimal OpenSSL config file to avoid the "Error checking x509
-    // extensions defined via -addext" validation error that occurs when the
-    // system openssl.cnf is not accessible or doesn't define the extensions.
-    QFile configFile(configPath);
-    if (configFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QByteArray cnf = "[req]\n";
-        cnf += "distinguished_name = req_distinguished_name\n";
-        cnf += "x509_extensions = v3_req\n";
-        cnf += "prompt = no\n";
-        cnf += "[req_distinguished_name]\n";
-        cnf += "[v3_req]\n";
-        cnf += "subjectAltName = " + sans.join(",").toUtf8() + "\n";
-        configFile.write(cnf);
-        configFile.close();
-    }
-
-    QProcess gen;
-    gen.setProcessChannelMode(QProcess::MergedChannels);
-    gen.start(findOpenssl(), QStringList() << "req" << "-x509" << "-newkey" << "rsa:2048"
-                                           << "-keyout" << keyPath << "-out" << certPath << "-days"
-                                           << "365" << "-nodes"
-                                           << "-subj" << "/CN=Moonlight-Web"
-                                           << "-config" << configPath << "-extensions" << "v3_req");
-
-    if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000) || gen.exitCode() != 0) {
-        QByteArray errOut = gen.readAll().trimmed();
-        Logger::warning(QString("[CERT] Local cert with SANs failed (exit=%1): %2")
-                            .arg(gen.exitCode())
-                            .arg(QString::fromUtf8(errOut)));
-        Logger::warning("[CERT] Retrying without SANs...");
-        QFile::remove(certPath);
-        QFile::remove(keyPath);
-        gen.start(findOpenssl(), QStringList() << "req" << "-x509" << "-newkey" << "rsa:2048"
-                                               << "-keyout" << keyPath << "-out" << certPath
-                                               << "-days" << "365" << "-nodes"
-                                               << "-subj" << "/CN=Moonlight-Web");
-        if (!gen.waitForStarted(5000) || !gen.waitForFinished(30000) || gen.exitCode() != 0) {
-            QByteArray errOut2 = gen.readAll().trimmed();
-            Logger::error(QString("[CERT] Cannot generate local self-signed cert (exit=%1): %2")
-                              .arg(gen.exitCode())
-                              .arg(QString::fromUtf8(errOut2)));
-            return;
-        }
+    if (!generateSelfSignedToFiles(certPath, keyPath, sans, "Moonlight-Web")) {
+        Logger::error("[CERT] Cannot generate local self-signed cert (libcrypto)");
+        return;
     }
 
     // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).

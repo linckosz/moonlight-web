@@ -23,6 +23,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QIcon>
+#include <QFile>
 #include <QProcess>
 #include <QCoreApplication>
 #include <QAction>
@@ -49,8 +50,12 @@ bool TrayManager::init()
     m_TrayIcon = new QSystemTrayIcon(this);
     m_Menu = new QMenu();
 
-    // Load tray icon — try frontend favicon first, fall back to standard icon
-    QIcon icon(QStringLiteral(FRONTEND_DIR "assets/favicon.ico"));
+    // Load tray icon — try the compile-time frontend path (development), then the
+    // executable-relative bundle path (artifact/MSI), then a standard fallback.
+    QString iconPath = QStringLiteral(FRONTEND_DIR "assets/favicon.ico");
+    if (!QFile::exists(iconPath))
+        iconPath = QCoreApplication::applicationDirPath() + "/frontend/assets/favicon.ico";
+    QIcon icon(iconPath);
     if (icon.isNull()) {
         qInfo() << "[TrayManager] favicon.ico not found, using standard icon";
         icon = QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
@@ -87,26 +92,39 @@ void TrayManager::onActivated(QSystemTrayIcon::ActivationReason reason)
     if (reason == QSystemTrayIcon::DoubleClick) onOpen();
 }
 
+// Build a localhost URL, preferring HTTPS; fall back to plain HTTP when the
+// TLS listener is down (e.g. cert generation failed) so the tray still works.
+QUrl TrayManager::localUrl(const QString& path) const
+{
+    quint16 httpsPort = m_Server->activeHttpsPort();
+    if (httpsPort != 0)
+        return QUrl(QStringLiteral("https://localhost:%1%2").arg(httpsPort).arg(path));
+
+    quint16 httpPort = m_Server->httpPort();
+    if (httpPort != 0)
+        return QUrl(QStringLiteral("http://localhost:%1%2").arg(httpPort).arg(path));
+
+    return QUrl();
+}
+
 void TrayManager::onOpen()
 {
-    quint16 port = m_Server->activeHttpsPort();
-    if (port == 0) {
-        qWarning() << "[TrayManager] Cannot open — HTTPS server not running";
+    QUrl url = localUrl(QString());
+    if (url.isEmpty()) {
+        qWarning() << "[TrayManager] Cannot open — no HTTP/HTTPS listener running";
         return;
     }
-    QUrl url(QStringLiteral("https://localhost:%1").arg(port));
     qInfo() << "[TrayManager] Opening" << url.toString();
     QDesktopServices::openUrl(url);
 }
 
 void TrayManager::onOpenSettings()
 {
-    quint16 port = m_Server->activeHttpsPort();
-    if (port == 0) {
-        qWarning() << "[TrayManager] Cannot open settings — HTTPS server not running";
+    QUrl url = localUrl(QStringLiteral("/admin"));
+    if (url.isEmpty()) {
+        qWarning() << "[TrayManager] Cannot open settings — no HTTP/HTTPS listener running";
         return;
     }
-    QUrl url(QStringLiteral("https://localhost:%1/admin").arg(port));
     qInfo() << "[TrayManager] Opening settings" << url.toString();
     QDesktopServices::openUrl(url);
 }

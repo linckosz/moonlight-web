@@ -48,7 +48,7 @@
                 <Shortcut Id="MoonlightWebShortcut"
                           Name="Moonlight-Web"
                           Description="Moonlight-Web Game Streaming Client"
-                          Target="[APPLICATIONFOLDER]mw-server.exe"
+                          Target="[APPLICATIONFOLDER]moonlight-web.exe"
                           WorkingDirectory="APPLICATIONFOLDER" />
                 <RemoveFolder Id="RemoveProgramMenuDir" On="uninstall" />
                 <RegistryValue Root="HKCU"
@@ -73,7 +73,7 @@
         <UIRef Id="WixUI_Minimal" />
 
         <!-- Icon for Add/Remove Programs -->
-        <Icon Id="app.ico" SourceFile="$(var.DeployDir)\mw-server.exe" />
+        <Icon Id="app.ico" SourceFile="$(var.DeployDir)\moonlight-web.exe" />
         <Property Id="ARPPRODUCTICON" Value="app.ico" />
 
         <!-- Publisher link in Add/Remove Programs -->

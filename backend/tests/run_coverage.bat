@@ -2,7 +2,7 @@
 REM ============================================================================
 REM Moonlight-Web - Backend TNR runner + coverage gate.
 REM
-REM Builds the unit-test runner (qmake6 + nmake, MSVC x64 + Qt 6.11), runs it for
+REM Builds the unit-test runner (CMake + Ninja, MSVC x64 + Qt 6.11), runs it for
 REM the pass/fail gate, then re-runs it under OpenCppCoverage to produce an HTML
 REM report + a Cobertura XML and enforces the 70% line-coverage gate over the
 REM in-scope sources.
@@ -14,25 +14,21 @@ REM ============================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-REM ---- Visual Studio 2022 x64 environment ----
+REM ---- Visual Studio 2022 x64 environment (Ninja needs cl on PATH) ----
 if not defined VSINSTALLDIR call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 
 REM ---- Qt 6.11 ----
 if not defined QTDIR set "QTDIR=C:\Qt\6.11.0\msvc2022_64"
 set "PATH=%QTDIR%\bin;%PATH%"
 
-REM ---- Shadow build ----
+REM ---- Configure + build (shadow build under tests\build) ----
 rmdir /s /q build 2>nul
-mkdir build
-cd build
+cmake -S "%~dp0." -B "%~dp0build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%QTDIR%"
+if errorlevel 1 goto cfg_fail
+cmake --build "%~dp0build" -j
+if errorlevel 1 goto build_fail
 
-qmake6 -o Makefile.Release ..\tests.pro -spec win32-msvc CONFIG+=release CONFIG-=debug_and_release
-if errorlevel 1 goto qmake_fail
-nmake /f Makefile.Release
-if errorlevel 1 goto nmake_fail
-
-set "RUNNER=%CD%\run_tests.exe"
-if not exist "%RUNNER%" set "RUNNER=%CD%\release\run_tests.exe"
+set "RUNNER=%~dp0build\run_tests.exe"
 if not exist "%RUNNER%" goto no_exe
 
 REM ---- 1) Pass/fail gate: run the suite directly (reliable exit code) ----
@@ -52,14 +48,14 @@ OpenCppCoverage --quiet --sources backend\src --excluded_sources backend\third_p
 if not exist cov.xml goto no_report
 
 REM ---- 3) Coverage gate ----
-powershell -NoProfile -ExecutionPolicy Bypass -File ..\check_coverage.ps1 -CoverageXml cov.xml -Threshold 70
+powershell -NoProfile -ExecutionPolicy Bypass -File check_coverage.ps1 -CoverageXml cov.xml -Threshold 70
 exit /b %errorlevel%
 
-:qmake_fail
-echo [ERROR] qmake failed
+:cfg_fail
+echo [ERROR] CMake configure failed
 exit /b 1
-:nmake_fail
-echo [ERROR] nmake failed
+:build_fail
+echo [ERROR] CMake build failed
 exit /b 1
 :no_exe
 echo [ERROR] run_tests.exe not found after build

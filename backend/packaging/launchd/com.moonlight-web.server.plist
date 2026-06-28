@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Moonlight-Web — macOS launchd job (auto-restart on crash).
+
+  Binding :80 / :443 needs root, so install as a LaunchDaemon:
+    sudo cp com.moonlight-web.server.plist /Library/LaunchDaemons/
+    sudo launchctl load -w /Library/LaunchDaemons/com.moonlight-web.server.plist
+
+  KeepAlive/SuccessfulExit=false → relaunch only when the program exits with a
+  non-zero status (crash). A clean quit (exit 0) is NOT relaunched, and
+  `launchctl unload` / `bootout` is an operator stop → no relaunch.
+  (Note: a LaunchDaemon runs without a GUI session, so no tray icon.)
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.moonlight-web.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Moonlight-Web.app/Contents/MacOS/moonlight-web</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Applications/Moonlight-Web.app/Contents/MacOS</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Relaunch only on abnormal (non-zero) exit, i.e. a crash. -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Throttle crash loops: wait at least 5 s between relaunches. -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/moonlight-web.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/moonlight-web.log</string>
+</dict>
+</plist>
