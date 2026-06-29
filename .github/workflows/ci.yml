@@ -196,6 +196,8 @@ jobs:
     # TEMP(debug): runs standalone while the other jobs are disabled below.
     # Restore `needs: [frontend, test-backend]` once the Windows bundle is fixed.
     runs-on: windows-latest
+    # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
+    environment: MoonlightWeb
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -220,6 +222,14 @@ jobs:
         with:
           arch: x64
       - name: Configure
+        # Internet-Access config embedded at build time from repo secrets (no
+        # .env shipped). Empty when a secret is unset → LAN-only fallback.
+        env:
+          MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
+          MW_PDNS_URL: ${{ secrets.MW_PDNS_URL }}
+          MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
+          MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
+          MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: cmake -S backend -B backend/build/win -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build backend/build/win -j

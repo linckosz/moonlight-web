@@ -243,6 +243,7 @@
         "transportSaveFailed": "Failed to save transport mode",
         "dnsPropagated": "DNS propagated -- your site is now available at {{domain}}",
         "dnsTimeout": "DNS propagation timed out after 5 minutes. Check your domain configuration.",
+        "internetNotActive": "Internet access is enabled but not active: DNS registration did not complete. Check the PowerDNS token and your network, then re-enable Internet access.",
         "changesDiscarded": "Settings changes discarded"
     },
     "stream": {

@@ -243,6 +243,7 @@
         "transportSaveFailed": "Échec de l'enregistrement du mode de transport",
         "dnsPropagated": "DNS propagé -- votre site est maintenant disponible sur {{domain}}",
         "dnsTimeout": "Délai de propagation DNS dépassé après 5 minutes. Vérifiez la configuration de votre domaine.",
+        "internetNotActive": "L'accès Internet est activé mais inactif : l'enregistrement DNS n'a pas abouti. Vérifiez le token PowerDNS et votre réseau, puis réactivez l'accès Internet.",
         "changesDiscarded": "Modifications des paramètres abandonnées"
     },
     "stream": {

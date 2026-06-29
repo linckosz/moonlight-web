@@ -122,6 +122,34 @@ static void loadEnvFile()
     Logger::info(QString("[.env] Loaded %1 variables from %2").arg(count).arg(path));
 }
 
+// Apply compile-time embedded defaults (baked in by CI via CMake from repo
+// secrets) for any Internet-Access env var the runtime environment / .env did
+// not already provide. Lets the distributed build carry its DNS/ACME config
+// without shipping a .env next to the executable. Runtime env and .env win;
+// embedded values are only a fallback.
+static void applyEmbeddedEnvDefaults()
+{
+    auto setIfEmpty = [](const char* key, const char* value) {
+        if (qEnvironmentVariableIsEmpty(key)) qputenv(key, value);
+    };
+    (void)setIfEmpty; // may be unused when nothing was embedded at build time
+#ifdef MW_DOMAIN
+    setIfEmpty("MW_DOMAIN", MW_DOMAIN);
+#endif
+#ifdef MW_PDNS_URL
+    setIfEmpty("MW_PDNS_URL", MW_PDNS_URL);
+#endif
+#ifdef MW_PDNS_TOKEN
+    setIfEmpty("MW_PDNS_TOKEN", MW_PDNS_TOKEN);
+#endif
+#ifdef MW_ZEROSSL_EAB_KID
+    setIfEmpty("MW_ZEROSSL_EAB_KID", MW_ZEROSSL_EAB_KID);
+#endif
+#ifdef MW_ZEROSSL_EAB_HMAC
+    setIfEmpty("MW_ZEROSSL_EAB_HMAC", MW_ZEROSSL_EAB_HMAC);
+#endif
+}
+
 // Forward Qt's qDebug/qInfo/qWarning/qCritical (emitted across modules) into the
 // Logger so the windowless release build still records them in the log file —
 // there is no console to print to.
@@ -147,8 +175,10 @@ int main(int argc, char* argv[])
     qInstallMessageHandler(mwMessageHandler);
     Logger::instance()->setLogFile(QCoreApplication::applicationDirPath() + "/moonlight-web.log");
 
-    // Load .env file before anything reads environment variables
+    // Load .env file before anything reads environment variables, then fall back
+    // to any values baked in at build time (CI secrets) for vars still unset.
     loadEnvFile();
+    applyEmbeddedEnvDefaults();
 
     // Parse command line
     QCommandLineParser parser;

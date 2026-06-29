@@ -31,6 +31,8 @@ jobs:
             cmake_arch: ARM64
     name: Package Windows ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
+    environment: MoonlightWeb
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,6 +64,14 @@ jobs:
 
       - name: Configure
         shell: pwsh
+        # Internet-Access config embedded at build time from repo secrets (no
+        # .env shipped). Empty when a secret is unset → LAN-only fallback.
+        env:
+          MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
+          MW_PDNS_URL: ${{ secrets.MW_PDNS_URL }}
+          MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
+          MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
+          MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: |
           $args = @("-S","backend","-B","build","-G","Ninja","-DCMAKE_BUILD_TYPE=Release")
           if ("${{ matrix.arch }}" -eq "arm64") {
@@ -96,6 +106,8 @@ jobs:
   linux:
     name: Package Linux x64
     runs-on: ubuntu-latest
+    # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
+    environment: MoonlightWeb
     steps:
       - uses: actions/checkout@v4
         with:
@@ -119,6 +131,14 @@ jobs:
           extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
 
       - name: Build
+        # Internet-Access config embedded at build time from repo secrets (no
+        # .env shipped). Empty when a secret is unset → LAN-only fallback.
+        env:
+          MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
+          MW_PDNS_URL: ${{ secrets.MW_PDNS_URL }}
+          MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
+          MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
+          MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: |
           cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j
@@ -150,6 +170,8 @@ jobs:
   macos:
     name: Package macOS arm64
     runs-on: macos-latest
+    # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
+    environment: MoonlightWeb
     steps:
       - uses: actions/checkout@v4
         with:
@@ -172,6 +194,14 @@ jobs:
           extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
 
       - name: Build
+        # Internet-Access config embedded at build time from repo secrets (no
+        # .env shipped). Empty when a secret is unset → LAN-only fallback.
+        env:
+          MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
+          MW_PDNS_URL: ${{ secrets.MW_PDNS_URL }}
+          MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
+          MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
+          MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: |
           cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j
