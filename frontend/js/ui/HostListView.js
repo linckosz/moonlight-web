@@ -17,9 +17,18 @@
 
 /**
  * Moonlight-Web — Host list view component
+ *
+ * Single-page model: each host box carries its own state inline.
+ *   - online + paired  → app grid (loaded per host, click to launch)
+ *   - online + locked  → centered "Pair" action
+ *   - offline + MAC    → centered "Wake on LAN" action
+ *   - offline          → centered offline message
+ * The online/offline badge sits next to the host name; "Remove" lives in a
+ * per-host "…" menu.
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Host } from '../models/Host.js';
+import { App } from '../models/App.js';
 import { PairDialog } from './PairDialog.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
@@ -31,7 +40,9 @@ export class HostListView {
         this.hosts = [];
         this.pollTimer = null;
         this.eventsBound = false;
-        this.onLaunch = null; // called with host when user clicks Launch
+        this.onLaunchApp = null; // called with (host, app) when an app card is clicked
+        // Per-host app cache: uuid -> { apps: App[] } | { error: string } | { loading: true }
+        this.appsByHost = {};
         this._active = false;
         this._destroyed = false;
         this.renderShell();
@@ -42,9 +53,32 @@ export class HostListView {
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
 
+        // Close any open kebab menu when clicking outside of it.
+        this._docClickHandler = (e) => {
+            if (this._destroyed) return;
+            if (!e.target.closest('.host-card-menu')) this._closeAllMenus();
+        };
+        document.addEventListener('click', this._docClickHandler);
+
         // Button delegation — bound once, cleaned up in destroy()
         this._clickHandler = (e) => {
             if (this._destroyed) return;
+
+            // ── Kebab menu toggle ──────────────────────────────────────────
+            const menuBtn = e.target.closest('.btn-host-menu');
+            if (menuBtn) {
+                e.stopPropagation();
+                const card = menuBtn.closest('.host-card');
+                const menu = card && card.querySelector('.host-menu');
+                if (!menu) return;
+                const wasHidden = menu.hasAttribute('hidden');
+                this._closeAllMenus();
+                if (wasHidden) {
+                    menu.removeAttribute('hidden');
+                    menuBtn.setAttribute('aria-expanded', 'true');
+                }
+                return;
+            }
 
             const pairBtn = e.target.closest('.btn-pair');
             if (pairBtn) {
@@ -58,17 +92,6 @@ export class HostListView {
                     };
                     dialog.onCancel = () => this.start();
                     dialog.show();
-                }
-                return;
-            }
-
-            const launchBtn = e.target.closest('.btn-open');
-            if (launchBtn) {
-                const uuid = launchBtn.dataset.uuid;
-                const host = this.hosts.find((h) => h.uuid === uuid);
-                if (host && host.isAvailable && this.onLaunch) {
-                    this.stop();
-                    this.onLaunch(host);
                 }
                 return;
             }
@@ -103,15 +126,45 @@ export class HostListView {
                 BackendClient.removeHost(uuid)
                     .then(() => {
                         this.hosts = this.hosts.filter((h) => h.uuid !== uuid);
+                        delete this.appsByHost[uuid];
                         this.renderList();
                     })
                     .catch((err) => {
                         console.error('[MW] Remove host failed:', err);
                         this.refresh();
                     });
+                return;
+            }
+
+            // ── App card launch ───────────────────────────────────────────
+            const appCard = e.target.closest('.app-card');
+            if (appCard) {
+                if (appCard.classList.contains('app-card--launching')) return;
+                const hostCard = appCard.closest('.host-card');
+                const uuid = hostCard && hostCard.dataset.uuid;
+                const host = this.hosts.find((h) => h.uuid === uuid);
+                const entry = this.appsByHost[uuid];
+                const appId = parseInt(appCard.dataset.appId, 10);
+                const app = entry && entry.apps && entry.apps.find((a) => a.id === appId);
+                if (host && app && this.onLaunchApp) {
+                    this.setLaunching(appCard);
+                    this.stop(); // pause polling so a refresh can't wipe the launching card
+                    this.onLaunchApp(host, app);
+                }
             }
         };
         this.container.addEventListener('click', this._clickHandler);
+
+        // App-card keyboard activation (Enter/Space) — cards are role="button".
+        this._keydownHandler = (e) => {
+            if (this._destroyed) return;
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const appCard = e.target.closest && e.target.closest('.app-card');
+            if (!appCard) return;
+            e.preventDefault();
+            appCard.click();
+        };
+        this.container.addEventListener('keydown', this._keydownHandler);
     }
 
     // --- Public API ---
@@ -146,6 +199,14 @@ export class HostListView {
         if (this._clickHandler) {
             this.container.removeEventListener('click', this._clickHandler);
             this._clickHandler = null;
+        }
+        if (this._keydownHandler) {
+            this.container.removeEventListener('keydown', this._keydownHandler);
+            this._keydownHandler = null;
+        }
+        if (this._docClickHandler) {
+            document.removeEventListener('click', this._docClickHandler);
+            this._docClickHandler = null;
         }
         if (this._visibilityHandler) {
             document.removeEventListener('visibilitychange', this._visibilityHandler);
@@ -293,52 +354,190 @@ export class HostListView {
                 card.replaceWith(newCard);
             }
         }
+
+        // Fill in app grids for available hosts (cache hit = instant).
+        for (const host of this.hosts) {
+            if (host.isAvailable) this._ensureAppsLoaded(host);
+        }
     }
 
     renderCard(host) {
         const cls = host.statusClass;
         return `
             <div class="host-card ${cls}" data-uuid="${host.uuid}">
-                <div class="host-card-icon">
-                    <span class="status-icon ${cls}">${host.statusIcon}</span>
-                </div>
-                <div class="host-card-info">
-                    <div class="host-name">${this.esc(host.displayName)}</div>
-                    <div class="host-address">${this.esc(host.displayAddress)}</div>
-                    ${
-                        host.displayGpu
-                            ? `<div class="host-gpu">${this.esc(host.displayGpu)}</div>`
-                            : ''
-                    }
-                    ${
-                        host.resolutionText
-                            ? `<div class="host-resolution">${this.esc(host.resolutionText)}</div>`
-                            : ''
-                    }
-                </div>
-                <div class="host-card-status">
-                    <span class="status-badge ${cls}">${host.statusLabel}</span>
-                </div>
-                <div class="host-card-actions">
-                    ${
-                        host.isAvailable
-                            ? `<button class="btn btn-open" data-uuid="${host.uuid}">${t('common.open')}</button>`
-                            : host.isLocked
-                              ? `<button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>`
-                              : host.canWake
-                                ? `<button class="btn btn-secondary btn-small btn-wol" data-uuid="${host.uuid}" title="${t('hosts.wakeTitle')}">${Icons.power}${t('hosts.wakeBtn')}</button>`
+                <div class="host-card-head">
+                    <div class="host-card-icon">
+                        <span class="status-icon ${cls}">${host.statusIcon}</span>
+                    </div>
+                    <div class="host-card-info">
+                        <div class="host-name-row">
+                            <span class="host-name">${this.esc(host.displayName)}</span>
+                            <span class="status-badge ${cls}">${host.statusLabel}</span>
+                        </div>
+                        <div class="host-address">${this.esc(host.displayAddress)}</div>
+                        ${
+                            host.displayGpu
+                                ? `<div class="host-gpu">${this.esc(host.displayGpu)}</div>`
                                 : ''
-                    }
+                        }
+                        ${
+                            host.resolutionText
+                                ? `<div class="host-resolution">${this.esc(host.resolutionText)}</div>`
+                                : ''
+                        }
+                    </div>
+                    <div class="host-card-menu">
+                        <button class="btn-icon btn-host-menu" data-uuid="${host.uuid}"
+                                aria-haspopup="true" aria-expanded="false"
+                                aria-label="${this.esc(t('hosts.menuAria'))}">${Icons.menu}</button>
+                        <div class="host-menu" hidden>
+                            <button class="host-menu-item btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
+                        </div>
+                    </div>
                 </div>
-                ${
-                    !host.isAvailable && !host.isLocked
-                        ? `<div class="host-card-remove">
-                         <button class="btn btn-secondary btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
-                       </div>`
-                        : ''
-                }
+                <div class="host-card-body">
+                    ${this.renderBody(host)}
+                </div>
             </div>
         `;
+    }
+
+    // Body content driven by the host state.
+    renderBody(host) {
+        if (host.isAvailable) {
+            // App grid filled asynchronously by _ensureAppsLoaded().
+            return `<div class="host-apps" data-uuid="${host.uuid}"></div>`;
+        }
+        if (host.isLocked) {
+            return `<div class="host-body-center">
+                        <button class="btn btn-secondary btn-pair" data-uuid="${host.uuid}">${t('common.pair')}</button>
+                    </div>`;
+        }
+        if (host.canWake) {
+            return `<div class="host-body-center">
+                        <button class="btn btn-secondary btn-wol" data-uuid="${host.uuid}"
+                                title="${this.esc(t('hosts.wakeTitle'))}">${Icons.power}${t('hosts.wakeBtn')}</button>
+                    </div>`;
+        }
+        // Offline with no usable MAC — nothing to do but show status.
+        return `<div class="host-body-center host-offline-msg">${t('hosts.offlineMessage')}</div>`;
+    }
+
+    // --- Per-host app loading ---
+
+    // Ensure the app grid for an available host is loaded and painted into its
+    // card. Uses a dataset flag so a re-render (host poll) never repaints an
+    // already-filled grid and clobbers a launching card.
+    _ensureAppsLoaded(host) {
+        const uuid = host.uuid;
+        const cont = this.container.querySelector(`.host-card[data-uuid="${uuid}"] .host-apps`);
+        if (!cont || cont.dataset.loaded === '1') return;
+
+        const entry = this.appsByHost[uuid];
+        if (entry && (entry.apps || entry.error)) {
+            this._paintApps(cont, entry);
+            cont.dataset.loaded = '1';
+            return;
+        }
+        if (entry && entry.loading) return; // request in flight, placeholder shown
+
+        cont.innerHTML = `<div class="host-apps-loading">${t('apps.loading')}</div>`;
+        this.appsByHost[uuid] = { loading: true };
+        BackendClient.getAppList(uuid)
+            .then((data) => {
+                if (data && data.status === 'ok') {
+                    this.appsByHost[uuid] = {
+                        apps: (data.apps || []).map((a) => new App(a, uuid)),
+                    };
+                } else {
+                    this.appsByHost[uuid] = { error: (data && data.message) || 'load_failed' };
+                }
+            })
+            .catch((err) => {
+                console.error('[MW] Failed to load app list:', err);
+                this.appsByHost[uuid] = { error: err.message };
+            })
+            .finally(() => {
+                if (this._destroyed) return;
+                const c2 = this.container.querySelector(
+                    `.host-card[data-uuid="${uuid}"] .host-apps`,
+                );
+                if (c2) {
+                    this._paintApps(c2, this.appsByHost[uuid]);
+                    c2.dataset.loaded = '1';
+                }
+            });
+    }
+
+    _paintApps(cont, entry) {
+        if (!entry || entry.error) {
+            cont.innerHTML = `<div class="host-apps-msg host-apps-error">${t('apps.loadFailed')}</div>`;
+            return;
+        }
+        const apps = entry.apps || [];
+        if (apps.length === 0) {
+            cont.innerHTML = `<div class="host-apps-msg">${t('apps.empty')}</div>`;
+            return;
+        }
+        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a)).join('')}</div>`;
+    }
+
+    renderApp(app) {
+        // The whole card is the launch action. role/tabindex keep it
+        // keyboard-accessible (Enter/Space handled by the keydown delegate).
+        return `
+            <div class="app-card" data-app-id="${app.id}"
+                 role="button" tabindex="0"
+                 aria-label="${this.esc(t('apps.launchAria', { name: app.displayName }))}">
+                <div class="app-card-image">
+                    ${
+                        app.boxArtUrl
+                            ? `<img src="${this.esc(app.boxArtUrl)}"
+                               alt="${this.esc(app.displayName)}"
+                               loading="lazy"
+                               onerror="this.outerHTML='<span class=\\'app-icon\\'>\u{1F3AE}</span>'">`
+                            : `<span class="app-icon">\u{1F3AE}</span>`
+                    }
+                </div>
+                <div class="app-card-name">${this.esc(app.displayName)}</div>
+            </div>
+        `;
+    }
+
+    // Switch a card into the "launching" state: a discreet Cyberpunk scan/glow
+    // animation driven entirely by CSS, plus a status label over the name.
+    setLaunching(card) {
+        card.classList.add('app-card--launching');
+        card.setAttribute('aria-busy', 'true');
+        const nameEl = card.querySelector('.app-card-name');
+        if (nameEl && !nameEl.dataset.label) {
+            nameEl.dataset.label = nameEl.textContent;
+            nameEl.textContent = t('apps.launching');
+        }
+    }
+
+    // Revert any card stuck in the "launching" state (e.g. backend crash/timeout)
+    // back to its idle appearance and restore the original app name.
+    clearLaunching() {
+        if (!this.container) return;
+        this.container.querySelectorAll('.app-card--launching').forEach((card) => {
+            card.classList.remove('app-card--launching');
+            card.removeAttribute('aria-busy');
+            const nameEl = card.querySelector('.app-card-name');
+            if (nameEl && nameEl.dataset.label) {
+                nameEl.textContent = nameEl.dataset.label;
+                delete nameEl.dataset.label;
+            }
+        });
+    }
+
+    _closeAllMenus() {
+        this.container.querySelectorAll('.host-menu:not([hidden])').forEach((m) => {
+            m.setAttribute('hidden', '');
+        });
+        this.container
+            .querySelectorAll('.btn-host-menu[aria-expanded="true"]')
+            .forEach((b) => b.setAttribute('aria-expanded', 'false'));
     }
 
     renderError(message) {
