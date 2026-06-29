@@ -40,6 +40,10 @@ if not exist "%BIN%" (
 "%NSSM%" set %SVC% Description "Browser-based Sunshine streaming server"
 "%NSSM%" set %SVC% Start SERVICE_AUTO_START
 
+REM Mark this as a supervised launch: on an auto-restart the instance must NOT
+REM steal a UPnP port mapping owned by another device (only a manual launch wins).
+"%NSSM%" set %SVC% AppEnvironmentExtra MW_SERVICE=1
+
 REM Restart on any unexpected exit, but exit code 0 (clean quit) = do NOT restart.
 "%NSSM%" set %SVC% AppExit Default Restart
 "%NSSM%" set %SVC% AppExit 0 Exit

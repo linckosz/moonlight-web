@@ -23,6 +23,10 @@ Type=simple
 ExecStart=/opt/moonlight-web/moonlight-web
 WorkingDirectory=/opt/moonlight-web
 
+# Marks this as a supervised launch: on an auto-restart, the instance must NOT
+# steal a UPnP port mapping owned by another device. Only a manual launch wins.
+Environment=MW_SERVICE=1
+
 # Restart ONLY on failure (non-zero exit code or terminating signal),
 # never on a clean exit 0.
 Restart=on-failure

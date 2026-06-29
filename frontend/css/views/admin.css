@@ -31,7 +31,9 @@
     letter-spacing: 4px;
     user-select: none;
 }
-.pin-display-area .btn { flex-shrink: 0; }
+.pin-display-area .btn {
+    flex-shrink: 0;
+}
 
 /* ── Session count + tunnel URL rows (inline-style extraction) ──────────── */
 #admin-session-count {
@@ -58,8 +60,12 @@
     line-height: 1.55;
     color: var(--text-2);
 }
-.internet-info-box p { margin-bottom: var(--space-1); }
-.internet-info-box p:last-child { margin-bottom: 0; }
+.internet-info-box p {
+    margin-bottom: var(--space-1);
+}
+.internet-info-box p:last-child {
+    margin-bottom: 0;
+}
 .internet-info-box code {
     font-family: var(--font-mono);
     background: rgba(86, 182, 230, 0.14);
@@ -101,7 +107,9 @@
     text-decoration: underline;
     word-break: break-all;
 }
-.tunnel-url-link:hover { color: var(--accent-1); }
+.tunnel-url-link:hover {
+    color: var(--accent-1);
+}
 .tunnel-url-disabled {
     font-family: var(--font-mono);
     font-size: 0.9rem;
@@ -123,4 +131,53 @@
     vertical-align: middle;
     margin-right: var(--space-1);
     flex-shrink: 0;
+}
+
+/* ── Cyberpunk "signal" loader ─────────────────────────────────────────────
+   Three pulsing neon bars shown next to a section title while the feature is
+   still coming up (yellow / cyan / magenta — CP2077 palette). The element is
+   the centre bar; ::before / ::after are the side bars. */
+.cyber-loader {
+    display: inline-block;
+    position: relative;
+    width: 3px;
+    height: 13px;
+    margin-left: var(--space-2);
+    vertical-align: middle;
+    background: var(--accent-1);
+    box-shadow: 0 0 5px var(--accent-1);
+    transform-origin: bottom;
+    animation: cyber-signal 1s ease-in-out infinite 0.15s;
+}
+.cyber-loader::before,
+.cyber-loader::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    width: 3px;
+    height: 13px;
+    transform-origin: bottom;
+    animation: cyber-signal 1s ease-in-out infinite;
+}
+.cyber-loader::before {
+    left: -6px;
+    background: var(--neon-cyan);
+    box-shadow: 0 0 5px var(--neon-cyan);
+}
+.cyber-loader::after {
+    left: 6px;
+    background: var(--neon-magenta);
+    box-shadow: 0 0 5px var(--neon-magenta);
+    animation-delay: 0.3s;
+}
+@keyframes cyber-signal {
+    0%,
+    100% {
+        transform: scaleY(0.3);
+        opacity: 0.55;
+    }
+    50% {
+        transform: scaleY(1);
+        opacity: 1;
+    }
 }

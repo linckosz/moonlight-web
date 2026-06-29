@@ -46,7 +46,9 @@
         "wolSent": "Wake-on-LAN envoyé à « {{name}} »",
         "addedSuccess": "« {{name}} » ajouté avec succès",
         "alreadyInList": "« {{name}} » déjà dans la liste",
-        "noHostReturned": "Aucun hôte renvoyé par le serveur"
+        "noHostReturned": "Aucun hôte renvoyé par le serveur",
+        "menuAria": "Options de l'hôte",
+        "offlineMessage": "Cet hôte est hors ligne"
     },
     "apps": {
         "backToHosts": "← Retour aux hôtes",
@@ -180,6 +182,7 @@
         "available": "Disponible",
         "notAvailable": "Non disponible",
         "dnsPropagating": "Propagation DNS en cours — votre site sera bientôt disponible. Cela peut prendre quelques minutes...",
+        "internetComingUp": "Mise en ligne de votre site…",
         "portMapping": "Mappage de ports",
         "portMappingHint": "UPnP n'est pas disponible sur votre routeur. Pour autoriser l'accès externe, redirigez manuellement les ports dans les paramètres de votre routeur :",
         "portMappingSource": "Source",
