@@ -99,6 +99,62 @@
     line-height: 1.4;
 }
 
+/* ── Internet Access activation loader ─────────────────────────────────────
+   Stepped checklist shown while Internet Access is coming up; the backend
+   reports the live step via statusJson "phase" (polled by AdminView). */
+.internet-activation {
+    margin-top: var(--space-3);
+    padding: 12px 14px;
+    background: var(--c-info-soft, rgba(45, 212, 240, 0.08));
+    border: 1px solid rgba(45, 212, 240, 0.2);
+    border-radius: var(--radius-sm);
+}
+.internet-activation-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-1);
+    margin-bottom: var(--space-2);
+}
+.activation-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.activation-steps li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 3px 0;
+    font-size: var(--fs-xs);
+    line-height: 1.4;
+}
+.activation-steps .step-dot {
+    color: var(--text-3);
+    width: 12px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.activation-steps .step-check {
+    color: var(--c-success, #5ad17a);
+    width: 12px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.activation-steps .step-pending {
+    color: var(--text-3);
+    opacity: 0.7;
+}
+.activation-steps .step-active {
+    color: var(--text-1);
+    font-weight: 600;
+}
+.activation-steps .step-done {
+    color: var(--text-2);
+}
+
 /* ── Tunnel URLs ───────────────────────────────────────────────────────── */
 .tunnel-url-link {
     font-family: var(--font-mono);

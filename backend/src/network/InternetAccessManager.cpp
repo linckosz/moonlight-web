@@ -152,6 +152,8 @@ void InternetAccessManager::start()
     // Clear any stale error from a previous attempt so the UI only reflects the
     // outcome of this run (the frontend auto-unchecks the toggle on last_error).
     m_LastError.clear();
+    // Phase drives the UI activation loader (read back via statusJson polling).
+    m_Phase = QStringLiteral("starting");
 
     // Step 1: Ensure identifiers exist (already done eagerly at startup,
     // but called again here in case setUniqueId was changed via API).
@@ -168,6 +170,7 @@ void InternetAccessManager::start()
             QStringLiteral("PowerDNS token is empty. Set the MW_PDNS_TOKEN environment variable "
                            "in Qt Creator (Projects → Run → Environment) or your shell.");
         qWarning() << "[InternetAccess]" << m_LastError;
+        m_Phase = QStringLiteral("pending");
         m_Settings->setPendingRegistration(true);
         m_PendingRegistrationTimer->start(kPendingRetryMs);
         return;
@@ -175,6 +178,7 @@ void InternetAccessManager::start()
     m_Pdns.setToken(token);
 
     // Step 3: Detect public IP via STUN (before A record creation)
+    m_Phase = QStringLiteral("detecting_ip");
     if (m_Settings->autoIpDetection()) {
         qInfo() << "[InternetAccess] Step 3 — detecting public IP via STUN...";
         detectPublicIp();
@@ -201,10 +205,12 @@ void InternetAccessManager::start()
 
         if (!skipARecordStep) {
             // Step 4: Create or update A record (with real IP from STUN)
+            m_Phase = QStringLiteral("registering_dns");
             qInfo() << "[InternetAccess] Step 4 — creating/verifying A record...";
             if (!createOrUpdateARecord()) {
                 qWarning() << "[InternetAccess] Step 4 FAILED — A record creation failed,"
                            << "will retry in" << (kPendingRetryMs / 1000) << "s";
+                m_Phase = QStringLiteral("pending");
                 m_Settings->setPendingRegistration(true);
                 m_PendingRegistrationTimer->start(kPendingRetryMs);
                 return;
@@ -215,6 +221,7 @@ void InternetAccessManager::start()
     }
 
     // Step 5: Initial DNS check (spaced to 24h thereafter)
+    m_Phase = QStringLiteral("checking_dns");
     {
         QString resolvedIp = resolveDomain(m_Domain);
         if (!resolvedIp.isEmpty()) {
@@ -233,6 +240,7 @@ void InternetAccessManager::start()
     }
 
     // Step 6: Issue/renew TLS certificate
+    m_Phase = QStringLiteral("issuing_certificate");
     {
         QString existingCert = m_Settings->certPem();
         qInfo() << "[InternetAccess] Step 6 — checking certificate: cert_pem=\"" << existingCert
@@ -241,6 +249,7 @@ void InternetAccessManager::start()
     checkCertificate();
 
     // Step 7: UPnP port mapping
+    m_Phase = QStringLiteral("configuring_ports");
     if (m_Settings->upnpEnabled()) {
         // Use the real server port if set, otherwise fall back to settings
         quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
@@ -320,6 +329,7 @@ void InternetAccessManager::start()
     }
 
     m_Active = true;
+    m_Phase = QStringLiteral("active");
     emit ready(m_Domain, m_PublicIp);
     qInfo() << "[InternetAccess] Setup complete, domain:" << m_Domain << "public IP:" << m_PublicIp;
 
@@ -338,6 +348,7 @@ void InternetAccessManager::stop()
     m_CertIssuing = false;
 
     m_Active = false;
+    m_Phase.clear();
     qInfo() << "[InternetAccess] Stopped";
 }
 
@@ -394,6 +405,7 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("public_ip")] = m_PublicIp;
     obj[QStringLiteral("unique_id")] = m_UniqueId;
     obj[QStringLiteral("internet_access_enabled")] = m_Settings->internetAccessEnabled();
+    obj[QStringLiteral("phase")] = m_Phase;
     obj[QStringLiteral("upnp_enabled")] = m_Settings->upnpEnabled();
     obj[QStringLiteral("auto_ip_detection")] = m_Settings->autoIpDetection();
     obj[QStringLiteral("transport_mode")] = m_Settings->transportMode();
@@ -1310,6 +1322,7 @@ void InternetAccessManager::onPendingRegistrationRetry()
 
         m_Settings->setPendingRegistration(false);
         m_Settings->setInternetAccessEnabled(false);
+        m_Phase = QStringLiteral("error");
         m_PendingRegistrationTimer->stop();
         m_PendingRetryCount = 0;
 
@@ -1348,9 +1361,11 @@ void InternetAccessManager::onPendingRegistrationRetry()
         qInfo() << "[InternetAccess] A record created on retry:" << m_Domain;
 
         // Continue with the rest of the setup
+        m_Phase = QStringLiteral("issuing_certificate");
         checkCertificate();
 
         m_Active = true;
+        m_Phase = QStringLiteral("active");
         m_PeriodicCheckTimer->start();
 
         emit ready(m_Domain, m_PublicIp);

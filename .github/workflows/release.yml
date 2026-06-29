@@ -106,10 +106,23 @@ jobs:
 
       - name: Build installer (Inno Setup)
         shell: pwsh
+        # Same DNS/ACME secrets as the build: the installer writes them to a .env
+        # next to the exe so Internet Access works on the user's machine.
+        env:
+          MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
+          MW_PDNS_URL: ${{ secrets.MW_PDNS_URL }}
+          MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
+          MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
+          MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             "/DSourceDir=$(Resolve-Path dist)" `
             "/DMyArch=${{ matrix.arch }}" `
+            "/DMwDomain=$env:MW_DOMAIN" `
+            "/DMwPdnsUrl=$env:MW_PDNS_URL" `
+            "/DMwPdnsToken=$env:MW_PDNS_TOKEN" `
+            "/DMwZerosslKid=$env:MW_ZEROSSL_EAB_KID" `
+            "/DMwZerosslHmac=$env:MW_ZEROSSL_EAB_HMAC" `
             "/O$(Get-Location)" `
             backend\installer\moonlight-web.iss
 
