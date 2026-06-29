@@ -20,9 +20,9 @@
  *
  * Navigation architecture:
  *
- *   Main views (in #main-content, with history entries):
- *     - hosts  at  "/"
- *     - apps   at  "/apps"  (with host context in history state)
+ *   Single main view (in #main-content, with a history entry):
+ *     - hosts  at  "/"  — host boxes carry their own app grids inline; an app
+ *                         is launched directly from its host box.
  *
  *   Overlays (in #main-content, no persistent history entry):
  *     - admin     — guard pushState + URL "/admin"  (survives refresh)
@@ -30,26 +30,22 @@
  *     - streaming — guard pushState, no URL change (fullscreen via StreamView)
  *
  *   Switching overlays (e.g. settings → admin) uses replaceState
- *   so a single Back returns to the underlying main view.
+ *   so a single Back returns to the hosts view.
  *
  *   History stack possibilities:
- *     [{hosts}]                                         — on Hosts
- *     [{hosts}, {apps, hostUuid, hostDisplayName}]      — on Apps
- *     [{hosts}, {apps, ...}, {overlay-guard, ...}]      — on Apps + overlay
+ *     [{hosts}]                          — on Hosts
+ *     [{hosts}, {overlay-guard, ...}]    — on Hosts + overlay
  *
  *   Back button: overlay guard is consumed first (→ close overlay),
- *   then main view transitions happen normally.
+ *   then the hosts view is shown.
  *
  *   Refresh behavior:
  *     /admin     → stays on Admin
  *     /          → stays on Hosts
- *     /apps      → redirect to Hosts
  *     /settings  → redirect to Hosts
  *     /streaming → redirect to Hosts
  */
 import { HostListView } from './ui/HostListView.js';
-import { AppListView } from './ui/AppListView.js';
-import { App } from './models/App.js';
 import { StreamView } from './ui/StreamView.js';
 import { SettingsView } from './ui/SettingsView.js';
 import { AdminView } from './ui/AdminView.js';
@@ -100,7 +96,6 @@ const MoonlightApp = {
     // ── View instances persisted across overlays ─────────────────────────────
     state: 'loading',
     hostListView: null,
-    appListView: null,
     streamView: null,
     settingsView: null,
     adminView: null,
@@ -114,9 +109,9 @@ const MoonlightApp = {
 
     // ── Navigation state (never destroyed by overlays) ──────────────────────
     _nav: {
-        /** 'hosts' | 'apps' — the underlying main view */
+        /** Always 'hosts' — the single main view */
         mainView: 'hosts',
-        /** Host context for apps view: { hostUuid, hostDisplayName } */
+        /** Reserved for future per-view state; currently unused */
         mainState: {},
         /** null | 'admin' | 'settings' | 'streaming' — current overlay */
         overlay: null,
@@ -188,21 +183,13 @@ const MoonlightApp = {
                     this._closeOverlay();
                 }
 
-                // Restore the main view revealed by popping the guard.
-                if (state.hostUuid) {
-                    this._setMainView('apps', {
-                        hostUuid: state.hostUuid,
-                        hostDisplayName: state.hostDisplayName || 'Host',
-                    });
-                } else {
-                    this._setMainView('hosts', {});
-                }
+                // Restore the (only) main view revealed by popping the guard.
+                this._setMainView('hosts', {});
                 return;
             }
 
             // ── Normal main-view navigation ──────────────────────────────────
-            const viewName = state.view || 'hosts';
-            this._navigateToMainView(viewName, state);
+            this._navigateToMainView('hosts', state);
         });
 
         // ── Initial route ──────────────────────────────────────────────────
@@ -224,7 +211,7 @@ const MoonlightApp = {
 
         this._nav.mainView = mainView;
         this._nav.mainState = mainState;
-        this._renderMainView(mainView, mainState);
+        this._renderMainView();
 
         if (initialOverlay) {
             this._openOverlay(initialOverlay);
@@ -236,106 +223,56 @@ const MoonlightApp = {
     // =========================================================================
 
     /**
-     * Navigate to a main view (hosts or apps), cleaning up any overlay first.
-     * Called from popstate handler and showHostList/showAppList.
+     * Navigate to the main (hosts) view, cleaning up any overlay first.
+     * Called from the popstate handler and showHostList.
      */
-    _navigateToMainView(view, state) {
+    _navigateToMainView() {
         // Close any open overlay before switching main view
         this._closeOverlay();
-
-        if (view === 'apps' && state && state.hostUuid) {
-            this._setMainView('apps', {
-                hostUuid: state.hostUuid,
-                hostDisplayName: state.hostDisplayName || 'Host',
-            });
-        } else {
-            this._setMainView('hosts', {});
-        }
+        this._setMainView('hosts', {});
     },
 
     /**
-     * Set the main view (hosts or apps) and render it into #main-content.
+     * Set the main view (hosts) and render it into #main-content.
      * Destroys the previous main view and all overlays.
-     * Also fixes the URL if admin overlay left it at /admin.
+     * Also fixes the URL if an overlay left it at /admin or /settings.
      */
     _setMainView(view, state) {
         this._closeOverlay();
         this._destroyMainViews();
 
-        this._nav.mainView = view;
-        this._nav.mainState = state;
+        this._nav.mainView = 'hosts';
+        this._nav.mainState = {};
 
         const main = document.getElementById('main-content');
         if (!main) return;
 
-        if (view === 'apps') {
-            this.transition('app_list');
-            const host = {
-                uuid: state.hostUuid,
-                displayName: state.hostDisplayName || 'Host',
-            };
-            this.appListView = new AppListView(main, host, this._takePrewarmedApps(host.uuid));
-            this.appListView.onBack = () => {
-                // Pop the apps entry — reveals hosts below, popstate navigates there.
-                history.back();
-            };
-            this.appListView.onLaunch = (app) => this.launchApp(host, app);
-            this._updateNavHighlight('hosts');
-        } else {
-            this.transition('host_list');
-            this.hostListView = new HostListView(main);
-            this.hostListView.onLaunch = (host) => this.showAppList(host);
-            this.hostListView.start();
-            this._updateNavHighlight('hosts');
-        }
+        this._renderHosts(main);
 
         // Fix URL if an overlay left it at /admin or /settings.
         if (window.location.pathname === '/admin' || window.location.pathname === '/settings') {
-            if (this._nav.mainView === 'apps' && this._nav.mainState.hostUuid) {
-                history.replaceState(
-                    {
-                        view: 'apps',
-                        hostUuid: this._nav.mainState.hostUuid,
-                        hostDisplayName: this._nav.mainState.hostDisplayName,
-                    },
-                    '',
-                    '/apps',
-                );
-            } else {
-                history.replaceState({ view: 'hosts' }, '', '/');
-            }
+            history.replaceState({ view: 'hosts' }, '', '/');
         }
     },
 
     /**
-     * Render a main view by name without pushing history or altering _nav.
+     * Render the hosts view without pushing history or altering _nav.
      * Used by _initRouter and the popstate → _setMainView chain.
      */
-    _renderMainView(view, state) {
+    _renderMainView() {
         this._destroyMainViews();
         const main = document.getElementById('main-content');
         if (!main) return;
+        this._renderHosts(main);
+    },
 
-        if (view === 'apps' && state && state.hostUuid) {
-            this.transition('app_list');
-            const host = {
-                uuid: state.hostUuid,
-                displayName: state.hostDisplayName || 'Host',
-            };
-            this.appListView = new AppListView(main, host, this._takePrewarmedApps(host.uuid));
-            this.appListView.onBack = () => {
-                // Pop the apps entry — reveals hosts below, popstate navigates there.
-                history.back();
-            };
-            this.appListView.onLaunch = (app) => this.launchApp(host, app);
-            this._updateNavHighlight('hosts');
-        } else {
-            this.transition('host_list');
-            this.hostListView = new HostListView(main);
-            this.hostListView.onLaunch = (host) => this.showAppList(host);
-            this.hostListView.start();
-            this._updateNavHighlight('hosts');
-        }
+    /** Build and start the HostListView, wiring app launches. */
+    _renderHosts(main) {
+        this.transition('host_list');
+        this.hostListView = new HostListView(main);
+        this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
+        this.hostListView.start();
+        this._updateNavHighlight('hosts');
     },
 
     // =========================================================================
@@ -607,17 +544,6 @@ const MoonlightApp = {
         this._setMainView('hosts', {});
     },
 
-    showAppList(host) {
-        this._closeOverlay();
-        const state = {
-            view: 'apps',
-            hostUuid: host.uuid,
-            hostDisplayName: host.displayName,
-        };
-        history.pushState(state, '', '/apps');
-        this._setMainView('apps', state);
-    },
-
     // =========================================================================
     // Remote connection detection
     // =========================================================================
@@ -774,8 +700,12 @@ const MoonlightApp = {
             // session hold — release it so we don't keep a silent element looping.
             iosAudioUnlock.release();
             this._hideRelaunchLoader();
-            // Revert the app card stuck on "Launching..." back to its idle state.
-            if (this.appListView) this.appListView.clearLaunching();
+            // Revert the app card stuck on "Launching..." back to its idle state
+            // and resume the host poll (paused when the launch began).
+            if (this.hostListView) {
+                this.hostListView.clearLaunching();
+                this.hostListView.start();
+            }
             // Distinguish a client-side timeout (backend hung/crashed) from a
             // regular failure so the user gets a clear, actionable message.
             const msg =
@@ -854,9 +784,6 @@ const MoonlightApp = {
         // ── Callbacks ──────────────────────────────────────────────────────
         // onQuit: normal end (Stop button / mid-stream disconnect).
         this.streamView.onQuit = () => this._onStreamingQuit();
-        // onQuitStart: Stop pressed — prefetch the apps list while the exit
-        // animation plays so the view is ready the instant we land on it.
-        this.streamView.onQuitStart = () => this._prewarmAppList();
         // onConnectionFailed: transport never connected → try the next entry
         // in the priority chain (or give up if the chain is exhausted).
         this.streamView.onConnectionFailed = (reason) => this._onTransportFailed(reason);
@@ -1060,23 +987,12 @@ const MoonlightApp = {
                 console.error('[MW] Codec fallback chain exhausted, giving up');
                 iosAudioUnlock.release(); // giving up — drop the iOS session hold
                 this._hideRelaunchLoader();
-                this.transition('app_list');
+                this.transition('host_list');
                 if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
                     history.back();
                 } else {
-                    this._renderMainView('apps', {
-                        hostUuid: fallbackHost.uuid,
-                        hostDisplayName: fallbackHost.displayName,
-                    });
-                    history.replaceState(
-                        {
-                            view: 'apps',
-                            hostUuid: fallbackHost.uuid,
-                            hostDisplayName: fallbackHost.displayName,
-                        },
-                        '',
-                        '/apps',
-                    );
+                    this._renderMainView();
+                    history.replaceState({ view: 'hosts' }, '', '/');
                 }
                 Toast.error(t('launch.hevcH264Unsupported'));
                 return;
@@ -1104,7 +1020,7 @@ const MoonlightApp = {
                 history.back();
             }
 
-            this.transition('app_list'); // Reset state for re-launch
+            this.transition('host_list'); // Reset state for re-launch
             this.launchApp(fallbackHost, fallbackApp, fallbackTarget.codec, fallbackTarget.hdr);
             return;
         }
@@ -1115,68 +1031,19 @@ const MoonlightApp = {
         // Real streaming exit — release the iOS playback-session hold.
         iosAudioUnlock.release();
 
-        this.transition('app_list');
+        this.transition('host_list');
 
-        // Pop the streaming guard from history to reveal apps/hosts state below.
+        // Pop the streaming guard from history to reveal the hosts view below.
         if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
             // Guard still present — pop it via history.back(). This fires
-            // popstate which navigates to the revealed main view.
+            // popstate which navigates to the hosts view.
             history.back();
         } else {
             // Guard already consumed (e.g. user pressed Back before pressing
-            // Stop). Navigate directly to the saved main view.
-            if (this._nav.mainView === 'apps' && this._nav.mainState.hostUuid) {
-                this._renderMainView('apps', this._nav.mainState);
-                history.replaceState(
-                    {
-                        view: 'apps',
-                        hostUuid: this._nav.mainState.hostUuid,
-                        hostDisplayName: this._nav.mainState.hostDisplayName,
-                    },
-                    '',
-                    '/apps',
-                );
-            } else {
-                this._renderMainView('hosts', { view: 'hosts' });
-                history.replaceState({ view: 'hosts' }, '', '/');
-            }
+            // Stop). Render the hosts view directly.
+            this._renderMainView();
+            history.replaceState({ view: 'hosts' }, '', '/');
         }
-    },
-
-    /**
-     * Prefetch the apps list (and warm box-art images) for the host we'll
-     * return to, so the apps view is fully built by the time the stream-exit
-     * animation finishes. Result is cached and consumed once on next render.
-     */
-    async _prewarmAppList() {
-        const state = this._nav.mainState;
-        if (!state || !state.hostUuid) return;
-        const hostUuid = state.hostUuid;
-        try {
-            const data = await BackendClient.getAppList(hostUuid);
-            if (!data || data.status !== 'ok') return;
-            const apps = (data.apps || []).map((a) => new App(a, hostUuid));
-            this._appListCache = { hostUuid, apps };
-            // Warm box-art images so the grid paints instantly (no lazy pop-in).
-            apps.forEach((a) => {
-                if (a.boxArtUrl) {
-                    const img = new Image();
-                    img.src = a.boxArtUrl;
-                }
-            });
-        } catch (e) {
-            // Prefetch is best-effort — AppListView falls back to normal load().
-        }
-    },
-
-    /** Pull the prefetched apps for `hostUuid` if any, consuming the cache. */
-    _takePrewarmedApps(hostUuid) {
-        const c = this._appListCache;
-        if (c && c.hostUuid === hostUuid) {
-            this._appListCache = null;
-            return c.apps;
-        }
-        return null;
     },
 
     // =========================================================================
@@ -1187,10 +1054,6 @@ const MoonlightApp = {
         if (this.hostListView) {
             this.hostListView.destroy();
             this.hostListView = null;
-        }
-        if (this.appListView) {
-            this.appListView.destroy();
-            this.appListView = null;
         }
         if (this.loginView) {
             this.loginView.destroy();
