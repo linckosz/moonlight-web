@@ -98,9 +98,26 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/* -DestinationPath "moonlight-web-windows-${{ matrix.arch }}.zip"
 
+      # Interactive installer: stepped wizard (Internet authorization, Sunshine
+      # detection/silent-install + pairing, Desktop admin shortcut).
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            "/DSourceDir=$(Resolve-Path dist)" `
+            "/DMyArch=${{ matrix.arch }}" `
+            "/O$(Get-Location)" `
+            backend\installer\moonlight-web.iss
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: moonlight-web-windows-${{ matrix.arch }}.zip
+          files: |
+            moonlight-web-windows-${{ matrix.arch }}.zip
+            moonlight-web-installer-win-${{ matrix.arch }}.exe
 
   # ── Linux x64 (AppImage) ─────────────────────────────────────────────────
   linux:
