@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🌙 Moonlight‑Web
+<img src="frontend/assets/logo.png" alt="Moonlight‑Web logo" width="128" />
+
+# Moonlight‑Web
 
 **Stream your PC games from any browser.**\
 A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream client\
@@ -18,7 +20,8 @@ Nothing to install on the client, just a URL.
 
 ## ❤️ Support
 
-If Moonlight-Web is useful to you, a coffee helps keep the shared DNS domain server online and the domain running 🙏
+If Moonlight-Web is useful to you,\
+a coffee helps keep the shared DNS domain server online and the domain running 🙏
 
 <div align="center">
 
