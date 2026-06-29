@@ -32,7 +32,7 @@
         "unableToConnect": "Impossible de se connecter au serveur"
     },
     "hosts": {
-        "title": "Hôtes",
+        "title": "Bibliothèque",
         "addManually": "Ajouter manuellement",
         "empty": "Aucun hôte trouvé",
         "emptyHint": "Cliquez sur « Scanner le réseau » ou ajoutez un hôte manuellement",

@@ -32,7 +32,7 @@
         "unableToConnect": "Unable to connect to server"
     },
     "hosts": {
-        "title": "Hosts",
+        "title": "Library",
         "addManually": "Add Manually",
         "empty": "No hosts found",
         "emptyHint": "Click \"Scan Network\" or add a host manually",

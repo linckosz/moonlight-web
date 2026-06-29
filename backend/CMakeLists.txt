@@ -125,6 +125,7 @@ add_executable(mw-server
     src/main.cpp
     src/server/AuthManager.cpp
     src/server/AppSettings.cpp
+    src/server/Provisioning.cpp
     src/server/ConnectionGuard.cpp
     src/server/HttpServer.cpp
     src/server/StaticFileHandler.cpp
@@ -142,6 +143,7 @@ add_executable(mw-server
     src/backend/ComputerManager.cpp
     src/backend/IdentityManager.cpp
     src/backend/NvPairingManager.cpp
+    src/backend/SunshineRestClient.cpp
     src/streaming/RelayBase.h # QObject base with no .cpp; listed so AUTOMOC mocs it
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp

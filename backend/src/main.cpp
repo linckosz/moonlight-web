@@ -36,6 +36,7 @@
 #endif
 #include <functional>
 #include "server/AppSettings.h"
+#include "server/Provisioning.h"
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
@@ -161,6 +162,22 @@ static void mwMessageHandler(QtMsgType type, const QMessageLogContext&, const QS
     case QtWarningMsg: Logger::warning(msg); break;
     default: Logger::error(msg); break; // Critical / Fatal
     }
+}
+
+// Write/refresh the Desktop ".url" shortcut that opens the admin page. The
+// installer cannot know the runtime HTTPS port or the assigned domain, so the
+// server owns the shortcut: it self-heals on every startup (and when Internet
+// Access becomes ready). Skipped under a service supervisor (session 0 has the
+// wrong desktop).
+static void writeAdminShortcut(const QString& url)
+{
+    if (!qEnvironmentVariableIsEmpty("MW_SERVICE")) return;
+    const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+    if (desktop.isEmpty()) return;
+    QFile f(desktop + "/Moonlight-Web Admin.url");
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+    f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
+    f.close();
 }
 
 int main(int argc, char* argv[])
@@ -1461,6 +1478,26 @@ int main(int argc, char* argv[])
     // Sync UPnP port mapping port with the actual server port
     internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
 
+    // Best admin URL: the public domain (valid certificate) once Internet Access
+    // is live, otherwise loopback HTTPS on the actual port (omit :443).
+    auto adminUrl = [&]() -> QString {
+        if (internetAccess.isActive() && !internetAccess.domain().isEmpty())
+            return "https://" + internetAccess.domain() + "/admin";
+        quint16 p = server.activeHttpsPort();
+        return p == 443 ? QStringLiteral("https://localhost/admin")
+                        : QStringLiteral("https://localhost:%1/admin").arg(p);
+    };
+    // Refresh the shortcut to the valid-certificate domain link once it is ready.
+    QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
+                     [](const QString& domain, const QString&) {
+                         writeAdminShortcut("https://" + domain + "/admin");
+                     });
+
+    // First-run provisioning written by the installer (authorize Internet
+    // Access, pair the local Sunshine). Runs before the auto-start below so a
+    // freshly authorized instance brings Internet Access up immediately.
+    Provisioning::applyOnce(QCoreApplication::applicationDirPath(), appSettings, computerManager);
+
     // Auto-start Internet Access if it was enabled before last shutdown.
     // This handles DNS registration + public IP detection at boot without
     // waiting for the user to toggle the checkbox in the UI.
@@ -1472,6 +1509,9 @@ int main(int argc, char* argv[])
                 << "domain:" << st.value("domain").toString()
                 << "lastError:" << st.value("last_error").toString();
     }
+
+    // Write the Desktop admin shortcut with the best URL known at this point.
+    writeAdminShortcut(adminUrl());
 
     // Configure HttpServer to proxy WebSocket upgrades to the signaling server.
     // Both HTTPS and WebSocket signaling share the same port (443 by default).
