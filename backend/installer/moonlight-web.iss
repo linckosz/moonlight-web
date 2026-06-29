@@ -37,6 +37,26 @@
   #define AdminUrl "https://localhost/admin"
 #endif
 
+; DNS / ACME secrets embedded by CI (from repo secrets). Written as a .env next
+; to the exe at install time so the installed app can bring Internet Access up
+; (loadEnvFile() reads this .env before the compile-time embedded defaults).
+; Empty by default → LAN-only fallback for local builds without secrets.
+#ifndef MwDomain
+  #define MwDomain ""
+#endif
+#ifndef MwPdnsUrl
+  #define MwPdnsUrl ""
+#endif
+#ifndef MwPdnsToken
+  #define MwPdnsToken ""
+#endif
+#ifndef MwZerosslKid
+  #define MwZerosslKid ""
+#endif
+#ifndef MwZerosslHmac
+  #define MwZerosslHmac ""
+#endif
+
 [Setup]
 AppId={{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}
 AppName={#MyAppName}
@@ -50,6 +70,10 @@ OutputBaseFilename=moonlight-web-installer-win-{#MyArch}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Branding: installer .exe icon + small wizard logo (top-right on inner pages).
+; Paths are relative to this .iss; PNG wizard images need Inno Setup 6.3+.
+SetupIconFile=..\..\frontend\assets\favicon.ico
+WizardSmallImageFile=..\..\frontend\assets\logo-512.png
 PrivilegesRequired=admin
 #if MyArch == "arm64"
 ArchitecturesInstallIn64BitMode=arm64
@@ -63,9 +87,49 @@ ArchitecturesAllowed=x64compatible
 Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 
+[CustomMessages]
+; --- English ---
+en.AutoStartTask=Start Moonlight-Web at logon (auto-restart)
+en.InternetPageCaption=Internet Link
+en.InternetPageDesc=Allow access from the Internet?
+en.InternetPageBody=Moonlight-Web can publish a secure public link (e.g. https://a1b2c3d4.moonlightweb.top) to stream outside your local network.%n%nThis is done once the application is installed.
+en.InternetPageOption=Allow the Internet link (recommended)
+en.SunshinePageCaption=Sunshine
+en.SunshinePageDesc=Sunshine streaming server
+en.SunshineInstallCheck=Install Sunshine automatically (silent)
+en.SunshineDetected=Sunshine is detected on this machine (Sunshine already installed).%nEnter its credentials to pair Moonlight-Web.
+en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically, then set its credentials.
+en.SunshineUserLabel=Username
+en.SunshinePassLabel=Password
+en.SunshineCredsRequired=Please enter the Sunshine username and password so Moonlight-Web can pair automatically.
+en.RunApp=Launch Moonlight-Web
+en.RunAdmin=Open the admin page
+en.SunshineDownloadCaption=Downloading and installing Sunshine...
+en.SunshineDownloadFail=Failed to download Sunshine:
+en.SunshineLaunchFail=Could not start the Sunshine installer.
+; --- French ---
+fr.AutoStartTask=Démarrer Moonlight-Web à l'ouverture de session (relance auto)
+fr.InternetPageCaption=Lien Internet
+fr.InternetPageDesc=Autoriser l'accès depuis Internet ?
+fr.InternetPageBody=Moonlight-Web peut publier un lien public sécurisé (ex. https://a1b2c3d4.moonlightweb.top) pour streamer hors de votre réseau local.%n%nCette opération est effectuée une fois l'application installée.
+fr.InternetPageOption=Autoriser le lien Internet (recommandé)
+fr.SunshinePageCaption=Sunshine
+fr.SunshinePageDesc=Serveur de streaming Sunshine
+fr.SunshineInstallCheck=Installer Sunshine automatiquement (silencieux)
+fr.SunshineDetected=Sunshine est détecté sur cette machine (Sunshine already installed).%nEntrez ses identifiants pour appairer Moonlight-Web.
+fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement, puis définissez ses identifiants.
+fr.SunshineUserLabel=Identifiant
+fr.SunshinePassLabel=Mot de passe
+fr.SunshineCredsRequired=Veuillez saisir l'identifiant et le mot de passe Sunshine pour que Moonlight-Web puisse appairer automatiquement.
+fr.RunApp=Lancer Moonlight-Web
+fr.RunAdmin=Ouvrir la page admin
+fr.SunshineDownloadCaption=Téléchargement et installation de Sunshine...
+fr.SunshineDownloadFail=Échec du téléchargement de Sunshine :
+fr.SunshineLaunchFail=Impossible de lancer l'installeur Sunshine.
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "autostart"; Description: "Démarrer Moonlight-Web à l'ouverture de session (relance auto)"
+Name: "autostart"; Description: "{cm:AutoStartTask}"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -76,8 +140,8 @@ Name: "{group}\{cm:UninstallProgram,Moonlight-Web}"; Filename: "{uninstallexe}"
 
 [Run]
 ; Launch the tray server so the admin page is reachable, then open it.
-Filename: "{app}\moonlight-web.exe"; Description: "Lancer Moonlight-Web"; Flags: nowait postinstall skipifsilent
-Filename: "{#AdminUrl}"; Description: "Ouvrir la page admin"; Flags: shellexec postinstall skipifsilent
+Filename: "{app}\moonlight-web.exe"; Description: "{cm:RunApp}"; Flags: nowait postinstall skipifsilent
+Filename: "{#AdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
 
 [Code]
 var
@@ -86,6 +150,8 @@ var
   SunshineInstallCheck: TNewCheckBox;
   SunshineUserEdit: TNewEdit;
   SunshinePassEdit: TNewEdit;
+  SunshineUserLabel: TNewStaticText;
+  SunshinePassLabel: TNewStaticText;
   SunshineStatusLabel: TNewStaticText;
   SunshineDetected: Boolean;
   SunshineExePath: String;
@@ -113,17 +179,15 @@ procedure InitializeWizard();
 begin
   // Step: Internet link authorization.
   InternetPage := CreateInputOptionPage(wpSelectTasks,
-    'Lien Internet', 'Autoriser l''accès depuis Internet ?',
-    'Moonlight-Web peut publier un lien public sécurisé (ex. ' +
-    'https://a1b2c3d4.moonlightweb.top) pour streamer hors de votre réseau local.' + #13#10 +
-    'Cette opération sera effectuée une fois l''application installée.',
+    ExpandConstant('{cm:InternetPageCaption}'), ExpandConstant('{cm:InternetPageDesc}'),
+    ExpandConstant('{cm:InternetPageBody}'),
     False, False);
-  InternetPage.Add('Autoriser le lien Internet (recommandé)');
+  InternetPage.Add(ExpandConstant('{cm:InternetPageOption}'));
   InternetPage.Values[0] := True;
 
   // Step: Sunshine.
-  SunshinePage := CreateCustomPage(InternetPage.ID, 'Sunshine',
-    'Serveur de streaming Sunshine');
+  SunshinePage := CreateCustomPage(InternetPage.ID,
+    ExpandConstant('{cm:SunshinePageCaption}'), ExpandConstant('{cm:SunshinePageDesc}'));
 
   SunshineStatusLabel := TNewStaticText.Create(WizardForm);
   SunshineStatusLabel.Parent := SunshinePage.Surface;
@@ -138,20 +202,29 @@ begin
   SunshineInstallCheck.Parent := SunshinePage.Surface;
   SunshineInstallCheck.Top := ScaleY(48);
   SunshineInstallCheck.Width := SunshinePage.SurfaceWidth;
-  SunshineInstallCheck.Caption := 'Installer Sunshine automatiquement (silencieux)';
+  SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheck}');
+
+  SunshineUserLabel := TNewStaticText.Create(WizardForm);
+  SunshineUserLabel.Parent := SunshinePage.Surface;
+  SunshineUserLabel.Top := ScaleY(80);
+  SunshineUserLabel.Caption := ExpandConstant('{cm:SunshineUserLabel}');
+
+  SunshinePassLabel := TNewStaticText.Create(WizardForm);
+  SunshinePassLabel.Parent := SunshinePage.Surface;
+  SunshinePassLabel.Left := ScaleX(200);
+  SunshinePassLabel.Top := ScaleY(80);
+  SunshinePassLabel.Caption := ExpandConstant('{cm:SunshinePassLabel}');
 
   SunshineUserEdit := TNewEdit.Create(WizardForm);
   SunshineUserEdit.Parent := SunshinePage.Surface;
-  SunshineUserEdit.Top := ScaleY(84);
+  SunshineUserEdit.Top := ScaleY(98);
   SunshineUserEdit.Width := ScaleX(180);
-  SunshineUserEdit.Text := 'admin';
 
   SunshinePassEdit := TNewEdit.Create(WizardForm);
   SunshinePassEdit.Parent := SunshinePage.Surface;
-  SunshinePassEdit.Top := ScaleY(84);
+  SunshinePassEdit.Top := ScaleY(98);
   SunshinePassEdit.Left := ScaleX(200);
   SunshinePassEdit.Width := ScaleX(180);
-  SunshinePassEdit.Text := 'admin';
   SunshinePassEdit.PasswordChar := '*';
 end;
 
@@ -160,17 +233,34 @@ begin
   if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
     SunshineDetected := DetectSunshine();
     if SunshineDetected then begin
-      SunshineStatusLabel.Caption :=
-        'Sunshine est détecté sur cette machine. Entrez ses identifiants pour ' +
-        'appairer Moonlight-Web (par défaut admin / admin).';
+      SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineDetected}');
       SunshineInstallCheck.Checked := False;
       SunshineInstallCheck.Enabled := False;
+      // Already installed: do NOT prefill. Wrong (default) credentials make the
+      // REST PIN push fail, leaving a pending pairing request and an unpaired
+      // host. Force the user to type Sunshine's real username/password.
+      SunshineUserEdit.Text := '';
+      SunshinePassEdit.Text := '';
     end else begin
-      SunshineStatusLabel.Caption :=
-        'Sunshine n''a pas été détecté. Cochez la case pour l''installer ' +
-        'automatiquement, puis définissez ses identifiants.';
+      SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineNotDetected}');
       SunshineInstallCheck.Enabled := True;
       SunshineInstallCheck.Checked := True;
+      // Fresh install: the silent installer sets these via --creds, so the
+      // admin/admin default is what will actually be configured.
+      if SunshineUserEdit.Text = '' then SunshineUserEdit.Text := 'admin';
+      if SunshinePassEdit.Text = '' then SunshinePassEdit.Text := 'admin';
+    end;
+  end;
+end;
+
+// Require Sunshine credentials before leaving the page so auto-pairing can work.
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
+    if (Trim(SunshineUserEdit.Text) = '') or (Trim(SunshinePassEdit.Text) = '') then begin
+      MsgBox(ExpandConstant('{cm:SunshineCredsRequired}'), mbError, MB_OK);
+      Result := False;
     end;
   end;
 end;
@@ -185,7 +275,8 @@ begin
   Result := '';
   if (SunshinePage = nil) or (not SunshineInstallCheck.Checked) then Exit;
 
-  DownloadPage := CreateDownloadPage('Sunshine', 'Téléchargement et installation de Sunshine…', nil);
+  DownloadPage := CreateDownloadPage(ExpandConstant('{cm:SunshinePageCaption}'),
+    ExpandConstant('{cm:SunshineDownloadCaption}'), nil);
   DownloadPage.Clear;
   DownloadPage.Add('{#SunshineUrl}', 'sunshine-installer.exe', '');
   DownloadPage.Show;
@@ -193,12 +284,12 @@ begin
     try
       DownloadPage.Download;
     except
-      Result := 'Échec du téléchargement de Sunshine : ' + GetExceptionMessage;
+      Result := ExpandConstant('{cm:SunshineDownloadFail}') + ' ' + GetExceptionMessage;
       Exit;
     end;
     tmp := ExpandConstant('{tmp}\sunshine-installer.exe');
     if not Exec(tmp, '/S', '', SW_HIDE, ewWaitUntilTerminated, rc) then begin
-      Result := 'Impossible de lancer l''installeur Sunshine.';
+      Result := ExpandConstant('{cm:SunshineLaunchFail}');
       Exit;
     end;
     // Re-detect to get the installed path, then set credentials via the CLI.
@@ -253,9 +344,20 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   json, internet, autopair: String;
-  shortcutPath: String;
+  shortcutPath, env: String;
 begin
   if CurStep <> ssPostInstall then Exit;
+
+  // DNS/ACME secrets → .env next to the exe so Internet Access can activate on
+  // this machine. Only written when CI passed the secrets via /D defines.
+  env := '';
+  if '{#MwDomain}' <> '' then env := env + 'MW_DOMAIN={#MwDomain}' + #13#10;
+  if '{#MwPdnsUrl}' <> '' then env := env + 'MW_PDNS_URL={#MwPdnsUrl}' + #13#10;
+  if '{#MwPdnsToken}' <> '' then env := env + 'MW_PDNS_TOKEN={#MwPdnsToken}' + #13#10;
+  if '{#MwZerosslKid}' <> '' then env := env + 'MW_ZEROSSL_EAB_KID={#MwZerosslKid}' + #13#10;
+  if '{#MwZerosslHmac}' <> '' then env := env + 'MW_ZEROSSL_EAB_HMAC={#MwZerosslHmac}' + #13#10;
+  if env <> '' then
+    SaveStringToFile(ExpandConstant('{app}\.env'), env, False);
 
   // provisioning.json — consumed and removed by the server on first run.
   if InternetPage.Values[0] then internet := 'true' else internet := 'false';
@@ -294,5 +396,6 @@ begin
     DeleteFile(ExpandConstant('{autodesktop}\Moonlight-Web Admin.url'));
     DeleteFile(ExpandConstant('{app}\provisioning.json'));
     DeleteFile(ExpandConstant('{app}\provisioning.consumed.json'));
+    DeleteFile(ExpandConstant('{app}\.env'));
   end;
 end;

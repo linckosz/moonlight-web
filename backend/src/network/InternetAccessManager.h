@@ -188,6 +188,7 @@ private:
         m_LocalIp; ///< LAN IP address of this host (discovered via UPnP or GetAdaptersAddresses)
     QString m_UniqueId;
     QString m_LastError;
+    QString m_Phase; ///< Current activation step (drives the UI loader). See statusJson "phase".
     bool m_CertIssuing = false; ///< True while ACME issuance is in progress
     quint16 m_HttpPort = 0;     ///< Actual HTTP server port
     quint16 m_HttpsPort = 0;    ///< Actual HTTPS server port

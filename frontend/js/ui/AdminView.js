@@ -53,6 +53,11 @@ export class AdminView {
         this._active = false; // DNS registration actually succeeded (domain live)
         this._lastError = '';
 
+        // Activation loader: live step reported by the backend (statusJson.phase).
+        this._activating = false;
+        this._phase = '';
+        this._phasePollTimer = null;
+
         // DNS propagation polling
         this._dnsPollTimer = null;
         this._dnsPollAttempts = 0;
@@ -111,6 +116,7 @@ export class AdminView {
             this._upnpAvailable = status.upnp_available || false;
             this._pendingRegistration = status.pending_registration || false;
             this._active = status.active || false;
+            this._phase = status.phase || '';
             this._lastError = status.last_error || '';
             // Auto-uncheck the toggle when the backend reports an error: an error
             // means the feature is not operational, so the checkbox must not look
@@ -162,6 +168,7 @@ export class AdminView {
     destroy() {
         this._stopDnsPolling();
         this._stopSessionsPolling();
+        this._stopPhasePolling();
     }
 
     // --- Sessions Polling ---
@@ -498,6 +505,12 @@ export class AdminView {
                             <span class="settings-checkbox-text">${t('admin.enableInternet')}</span>
                         </label>
                     </div>
+
+                    ${
+                        this._activating
+                            ? `<div id="internet-activation" class="internet-activation">${this._renderActivationSteps()}</div>`
+                            : ''
+                    }
 
                     ${
                         showDomain
@@ -1156,12 +1169,24 @@ export class AdminView {
     // Internet Access enable / disable
 
     async _enableInternet() {
+        // Show the activation loader immediately; the enable request blocks on the
+        // backend while it runs through its steps, so we poll status.phase in
+        // parallel to surface live progress in the loader.
+        this._activating = true;
+        this._phase = 'starting';
+        this._internetEnabled = true;
+        this._lastError = '';
+        this.render();
+        this.bindEvents();
+        this._startPhasePolling();
         try {
             const result = await BackendClient.enableInternet({
                 internet_access_enabled: true,
                 auto_ip_detection: true,
                 transport_mode: this._transportMode,
             });
+            this._stopPhasePolling();
+            this._activating = false;
             if (result.status === 'enabled') {
                 Toast.success(t('admin.internetEnabled', { domain: result.domain || '...' }));
                 await this._loadInternetState();
@@ -1172,14 +1197,45 @@ export class AdminView {
                 }
             } else {
                 Toast.error(t('admin.internetEnableFailed'));
-                const chk = this.container.querySelector('#chk-internet-enable');
-                if (chk) chk.checked = false;
+                this._internetEnabled = false;
+                await this._loadInternetState();
+                this.render();
+                this.bindEvents();
             }
         } catch (err) {
+            this._stopPhasePolling();
+            this._activating = false;
             console.error('[Admin] Failed to enable Internet Access:', err);
             Toast.error(t('admin.enableFailed', { message: err.message }));
-            const chk = this.container.querySelector('#chk-internet-enable');
-            if (chk) chk.checked = false;
+            this._internetEnabled = false;
+            this.render();
+            this.bindEvents();
+        }
+    }
+
+    // Poll status.phase while the (blocking) enable request is in flight so the
+    // activation loader reflects the backend's current step.
+    _startPhasePolling() {
+        this._stopPhasePolling();
+        this._phasePollTimer = setInterval(async () => {
+            try {
+                const status = await BackendClient.getInternetStatus();
+                const phase = status.phase || '';
+                if (phase && phase !== this._phase) {
+                    this._phase = phase;
+                    const loader = this.container.querySelector('#internet-activation');
+                    if (loader) loader.innerHTML = this._renderActivationSteps();
+                }
+            } catch (_err) {
+                // Transient during activation (backend busy) — ignore and retry.
+            }
+        }, 700);
+    }
+
+    _stopPhasePolling() {
+        if (this._phasePollTimer) {
+            clearInterval(this._phasePollTimer);
+            this._phasePollTimer = null;
         }
     }
 
@@ -1220,6 +1276,40 @@ export class AdminView {
     }
 
     // --- Helpers ---
+
+    // Build the activation step checklist for the loader. Marks steps before the
+    // current phase as done, the current one as spinning, the rest as pending.
+    _renderActivationSteps() {
+        const phases = [
+            ['detecting_ip', t('admin.phaseDetectingIp')],
+            ['registering_dns', t('admin.phaseRegisteringDns')],
+            ['checking_dns', t('admin.phaseCheckingDns')],
+            ['issuing_certificate', t('admin.phaseIssuingCert')],
+            ['configuring_ports', t('admin.phaseConfiguringPorts')],
+        ];
+        const order = phases.map((p) => p[0]);
+        const done = this._phase === 'active';
+        const cur = order.indexOf(this._phase);
+        const items = phases
+            .map(([, label], i) => {
+                let cls = 'step-pending';
+                let marker = '<span class="step-dot">○</span>';
+                if (done || (cur >= 0 && i < cur)) {
+                    cls = 'step-done';
+                    marker = '<span class="step-check">✓</span>';
+                } else if (i === cur) {
+                    cls = 'step-active';
+                    marker = '<span class="tunnel-spinner"></span>';
+                }
+                return `<li class="${cls}">${marker}<span class="step-label">${this.esc(label)}</span></li>`;
+            })
+            .join('');
+        return `
+            <div class="internet-activation-title">
+                <span class="tunnel-spinner"></span>${this.esc(t('admin.activating'))}
+            </div>
+            <ul class="activation-steps">${items}</ul>`;
+    }
 
     // Format a 6-char PIN as two groups of 3 for readability ("123 456",
     // "--- ---"). Any other length is returned unchanged.
