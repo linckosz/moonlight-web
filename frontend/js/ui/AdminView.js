@@ -50,6 +50,7 @@ export class AdminView {
         this._availableTransports = [];
         this._upnpAvailable = false;
         this._pendingRegistration = false;
+        this._active = false; // DNS registration actually succeeded (domain live)
         this._lastError = '';
 
         // DNS propagation polling
@@ -109,6 +110,7 @@ export class AdminView {
             this._availableTransports = status.available_transports || [];
             this._upnpAvailable = status.upnp_available || false;
             this._pendingRegistration = status.pending_registration || false;
+            this._active = status.active || false;
             this._lastError = status.last_error || '';
             // Do NOT overwrite _httpsPort from internet status: the authoritative
             // source is /api/admin/settings (_loadState()). InternetAccessManager
@@ -246,10 +248,11 @@ export class AdminView {
             }
             try {
                 const status = await BackendClient.getInternetStatus();
-                if (!status.pending_registration && status.domain) {
-                    // DNS propagated successfully
+                if (status.active && status.domain) {
+                    // Registration actually succeeded — domain is live
                     this._stopDnsPolling();
                     this._internetEnabled = true;
+                    this._active = true;
                     this._domain = status.domain || this._domain;
                     this._publicIp = status.public_ip || this._publicIp;
                     this._pendingRegistration = false;
@@ -257,6 +260,14 @@ export class AdminView {
                     this.render();
                     this.bindEvents();
                     Toast.success(t('admin.dnsPropagated', { domain: this._domain }));
+                } else if (!status.pending_registration) {
+                    // No longer pending but not active → registration failed/gave up
+                    this._stopDnsPolling();
+                    this._active = false;
+                    this._pendingRegistration = false;
+                    this._lastError = status.last_error || t('admin.internetNotActive');
+                    this.render();
+                    this.bindEvents();
                 } else if (status.last_error && status.last_error !== this._lastError) {
                     this._lastError = status.last_error;
                     this._pendingRegistration = status.pending_registration !== false;
@@ -481,6 +492,7 @@ export class AdminView {
                                 <div class="admin-url-row">
                                     ${
                                         this._internetEnabled &&
+                                        this._active &&
                                         !this._pendingRegistration &&
                                         domainUrl
                                             ? `<a href="${this.esc(domainUrl)}" target="_blank" rel="noopener" class="tunnel-url-link">${this.esc(domainUrl)}</a>`
@@ -523,6 +535,21 @@ export class AdminView {
                             ? `
                         <div class="internet-info-box internet-info-error">
                             <p>${this.esc(this._lastError)}</p>
+                        </div>
+                    `
+                            : ''
+                    }
+
+                    <!-- Enabled but registration not live, with no specific error
+                         (e.g. remote view where the reason is hidden) -->
+                    ${
+                        this._internetEnabled &&
+                        !this._active &&
+                        !this._pendingRegistration &&
+                        !this._lastError
+                            ? `
+                        <div class="internet-info-box internet-info-error">
+                            <p>${t('admin.internetNotActive')}</p>
                         </div>
                     `
                             : ''

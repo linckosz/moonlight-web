@@ -197,6 +197,17 @@ if(DEFINED ENV{MW_CERT_KEY} AND NOT "$ENV{MW_CERT_KEY}" STREQUAL "")
     message(STATUS "MW_CERT_KEY embedded at build time")
 endif()
 
+# Optional build-time embedding of Internet-Access config (CI/production). Lets
+# the distributed binary carry its DNS/ACME config without shipping a .env file.
+# Values come from CI secrets (env vars at configure time); skipped when unset.
+# A runtime env var / local .env still wins — see applyEmbeddedEnvDefaults().
+foreach(_mw_var MW_DOMAIN MW_PDNS_URL MW_PDNS_TOKEN MW_ZEROSSL_EAB_KID MW_ZEROSSL_EAB_HMAC)
+    if(DEFINED ENV{${_mw_var}} AND NOT "$ENV{${_mw_var}}" STREQUAL "")
+        target_compile_definitions(mw-server PRIVATE ${_mw_var}="$ENV{${_mw_var}}")
+        message(STATUS "${_mw_var} embedded at build time")
+    endif()
+endforeach()
+
 target_link_libraries(mw-server PRIVATE
     Qt6::Core Qt6::Network Qt6::WebSockets Qt6::Widgets
     moonlight-common-c
