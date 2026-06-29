@@ -102,6 +102,12 @@ InternetAccessManager::InternetAccessManager(AppSettings* settings, QObject* par
     m_Domain = m_Settings->domain();
     m_PublicIp = m_Settings->publicIp();
 
+    // Service-managed instances (systemd/launchd/NSSM set MW_SERVICE=1) must not
+    // fight over UPnP port mappings on an auto-restart: only a manual launch is
+    // allowed to take a mapping over from another device on the LAN.
+    m_ServiceManaged = !qEnvironmentVariableIsEmpty("MW_SERVICE");
+    qInfo() << "[InternetAccess] Service-managed launch:" << m_ServiceManaged;
+
     // Eager init: ensure unique_id and domain exist even when Internet Access
     // is disabled, so the UI can display the URL immediately.
     ensureIdentifiers();
@@ -142,6 +148,10 @@ void InternetAccessManager::start()
     qInfo() << "[InternetAccess] ═══ STARTING Internet Access setup ═══";
     qInfo() << "[InternetAccess] baseDomain:" << baseDomain() << "uniqueId:" << m_UniqueId
             << "fqdn:" << buildDomain();
+
+    // Clear any stale error from a previous attempt so the UI only reflects the
+    // outcome of this run (the frontend auto-unchecks the toggle on last_error).
+    m_LastError.clear();
 
     // Step 1: Ensure identifiers exist (already done eagerly at startup,
     // but called again here in case setUniqueId was changed via API).
@@ -240,23 +250,34 @@ void InternetAccessManager::start()
                 std::string existingClient, existingPort;
                 if (m_Upnp.getExistingPortMapping(port, protocol, existingClient, existingPort)) {
                     if (existingClient != m_Upnp.lanAddress()) {
-                        qWarning() << "[InternetAccess] Port" << port << protocol.c_str()
-                                   << "already mapped to" << existingClient.c_str() << ":"
-                                   << existingPort.c_str() << "— another device owns this mapping";
-                        m_LastError =
-                            QStringLiteral(
-                                "Port %1/%2 already forwarded to %3 on this router. "
-                                "Free it in your router settings or use a different port.")
-                                .arg(port)
-                                .arg(QString::fromStdString(protocol))
-                                .arg(QString::fromStdString(existingClient));
-                        emit error(m_LastError);
-                        return false;
+                        if (m_ServiceManaged) {
+                            // Service auto-restart: never steal a mapping owned by another
+                            // device — only a manual launch is allowed to take over.
+                            qWarning() << "[InternetAccess] Port" << port << protocol.c_str()
+                                       << "already mapped to" << existingClient.c_str() << ":"
+                                       << existingPort.c_str() << "— another device owns this mapping";
+                            m_LastError =
+                                QStringLiteral(
+                                    "Port %1/%2 already forwarded to %3 on this router. "
+                                    "Free it in your router settings or use a different port.")
+                                    .arg(port)
+                                    .arg(QString::fromStdString(protocol))
+                                    .arg(QString::fromStdString(existingClient));
+                            emit error(m_LastError);
+                            return false;
+                        }
+                        // Manual launch wins: evict the previous owner's mapping, then
+                        // claim the port for this host (the last instance started wins).
+                        qInfo() << "[InternetAccess] Port" << port << protocol.c_str()
+                                << "owned by" << existingClient.c_str() << ":" << existingPort.c_str()
+                                << "— taking over (manual launch)";
+                        m_Upnp.removePortMapping(port, protocol);
+                    } else {
+                        // Same host — re-add to refresh the lease
+                        qInfo() << "[InternetAccess] Port" << port << protocol.c_str()
+                                << "already mapped to us (" << existingClient.c_str()
+                                << ") — refreshing lease";
                     }
-                    // Same host — re-add to refresh the lease
-                    qInfo() << "[InternetAccess] Port" << port << protocol.c_str()
-                            << "already mapped to us (" << existingClient.c_str()
-                            << ") — refreshing lease";
                 }
                 return m_Upnp.addPortMapping(port, port, 3600, desc, protocol);
             };

@@ -112,6 +112,12 @@ export class AdminView {
             this._pendingRegistration = status.pending_registration || false;
             this._active = status.active || false;
             this._lastError = status.last_error || '';
+            // Auto-uncheck the toggle when the backend reports an error: an error
+            // means the feature is not operational, so the checkbox must not look
+            // enabled. start() clears stale errors, so last_error is current.
+            if (this._lastError) {
+                this._internetEnabled = false;
+            }
             // Do NOT overwrite _httpsPort from internet status: the authoritative
             // source is /api/admin/settings (_loadState()). InternetAccessManager
             // may hold a stale port if setPorts() was not called after a backend
@@ -266,11 +272,13 @@ export class AdminView {
                     this._active = false;
                     this._pendingRegistration = false;
                     this._lastError = status.last_error || t('admin.internetNotActive');
+                    this._internetEnabled = false; // error → uncheck the toggle
                     this.render();
                     this.bindEvents();
                 } else if (status.last_error && status.last_error !== this._lastError) {
                     this._lastError = status.last_error;
                     this._pendingRegistration = status.pending_registration !== false;
+                    this._internetEnabled = false; // error → uncheck the toggle
                     this.render();
                     this.bindEvents();
                 }
@@ -476,7 +484,12 @@ export class AdminView {
 
                 <!-- Internet -->
                 <div class="settings-section">
-                    <h3 class="settings-section-title">${t('admin.internet')}</h3>
+                    <h3 class="settings-section-title">${t('admin.internet')}${
+                        this._internetEnabled && !this._active && !this._lastError
+                            ? `<span class="cyber-loader" title="${this.esc(t('admin.internetComingUp'))}"
+                                     aria-label="${this.esc(t('admin.internetComingUp'))}"></span>`
+                            : ''
+                    }</h3>
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">

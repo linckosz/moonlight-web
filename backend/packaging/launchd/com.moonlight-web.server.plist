@@ -26,6 +26,15 @@
     <key>WorkingDirectory</key>
     <string>/Applications/Moonlight-Web.app/Contents/MacOS</string>
 
+    <!-- Marks this as a supervised launch: on an auto-restart the instance must
+         NOT steal a UPnP port mapping owned by another device. Only a manual
+         launch wins. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MW_SERVICE</key>
+        <string>1</string>
+    </dict>
+
     <key>RunAtLoad</key>
     <true/>
 

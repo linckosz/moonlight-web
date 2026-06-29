@@ -46,7 +46,9 @@
         "wolSent": "Wake-on-LAN sent to \"{{name}}\"",
         "addedSuccess": "\"{{name}}\" added successfully",
         "alreadyInList": "\"{{name}}\" already in list",
-        "noHostReturned": "No host was returned from the server"
+        "noHostReturned": "No host was returned from the server",
+        "menuAria": "Host options",
+        "offlineMessage": "This host is offline"
     },
     "apps": {
         "backToHosts": "← Back to Hosts",
@@ -180,6 +182,7 @@
         "available": "Available",
         "notAvailable": "Not available",
         "dnsPropagating": "DNS propagation in progress — your site will be available shortly. This may take a few minutes...",
+        "internetComingUp": "Bringing your site online…",
         "portMapping": "Port Mapping",
         "portMappingHint": "UPnP is not available on your router. To allow external access, manually forward ports in your router settings:",
         "portMappingSource": "Source",
