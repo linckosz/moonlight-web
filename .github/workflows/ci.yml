@@ -76,7 +76,7 @@ jobs:
             echo "Reproduce locally: \`cd frontend && npm run coverage\`."
             echo "Either a test regressed or coverage dropped below the 70% gate."
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: frontend-coverage
@@ -182,7 +182,7 @@ jobs:
             echo "Reproduce on Windows: \`backend\\tests\\run_coverage.bat\`."
             echo "Either a Qt Test regressed or line coverage dropped below the 70% gate."
           } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: backend-coverage
@@ -240,7 +240,7 @@ jobs:
       # + plugins next to the exe inside the bundle.
       - name: Deploy Qt runtime
         run: windeployqt --release backend/build/win/dist/MoonlightWeb.exe
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: moonlightweb-windows-x64
@@ -286,7 +286,7 @@ jobs:
         run: cmake --build backend/build/win-arm64 -j
       - name: Deploy Qt runtime
         run: windeployqt --release backend/build/win-arm64/MoonlightWeb.exe
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: moonlightweb-windows-arm64
@@ -326,7 +326,7 @@ jobs:
         run: cmake --build backend/build/linux -j
       - name: Security TNR (ctest)
         run: ctest --test-dir backend/build/linux --output-on-failure
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: moonlightweb-linux-x64
@@ -364,7 +364,7 @@ jobs:
         run: cmake --build backend/build/mac -j
       - name: Security TNR (ctest)
         run: ctest --test-dir backend/build/mac --output-on-failure
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: moonlightweb-macos-arm64
