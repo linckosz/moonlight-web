@@ -10,25 +10,60 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform(s) to build and release"
+        type: choice
+        default: all
+        options:
+          - all
+          - windows-x64
+          - windows-arm64
+          - linux
+          - macos
 
 permissions:
   contents: write
 
 jobs:
+  # ── Platform selection ───────────────────────────────────────────────────
+  # Turns the workflow_dispatch `platform` choice (default `all`, and `all` on a
+  # v* tag push where the input is unset) into per-job gates. The Windows matrix
+  # is emitted as JSON so a single arch can be selected; an empty array skips the
+  # Windows job entirely.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      windows: ${{ steps.sel.outputs.windows }}
+      linux: ${{ steps.sel.outputs.linux }}
+      macos: ${{ steps.sel.outputs.macos }}
+    steps:
+      - id: sel
+        env:
+          SEL: ${{ github.event.inputs.platform || 'all' }}
+        run: |
+          x64='{"arch":"x64","runner":"windows-latest","qt_arch":"win64_msvc2022_64","cmake_arch":"x64"}'
+          arm='{"arch":"arm64","runner":"windows-11-arm","qt_arch":"win64_msvc2022_arm64","cmake_arch":"ARM64"}'
+          win='[]'; lin='false'; mac='false'
+          case "$SEL" in
+            all)           win="[$x64,$arm]"; lin='true'; mac='true' ;;
+            windows-x64)   win="[$x64]" ;;
+            windows-arm64) win="[$arm]" ;;
+            linux)         lin='true' ;;
+            macos)         mac='true' ;;
+          esac
+          echo "windows=$win" >> "$GITHUB_OUTPUT"
+          echo "linux=$lin"   >> "$GITHUB_OUTPUT"
+          echo "macos=$mac"   >> "$GITHUB_OUTPUT"
+
   # ── Windows (x64 + ARM64) ────────────────────────────────────────────────
   windows:
+    needs: setup
+    if: ${{ needs.setup.outputs.windows != '[]' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x64
-            runner: windows-latest
-            qt_arch: win64_msvc2022_64
-            cmake_arch: x64
-          - arch: arm64
-            runner: windows-11-arm
-            qt_arch: win64_msvc2022_arm64
-            cmake_arch: ARM64
+        include: ${{ fromJSON(needs.setup.outputs.windows) }}
     name: Package Windows ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
@@ -126,6 +161,8 @@ jobs:
 
   # ── Linux x64 (AppImage) ─────────────────────────────────────────────────
   linux:
+    needs: setup
+    if: ${{ needs.setup.outputs.linux == 'true' }}
     name: Package Linux x64
     runs-on: ubuntu-latest
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
@@ -196,6 +233,8 @@ jobs:
 
   # ── macOS arm64 (.dmg) ───────────────────────────────────────────────────
   macos:
+    needs: setup
+    if: ${{ needs.setup.outputs.macos == 'true' }}
     name: Package macOS arm64
     runs-on: macos-latest
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
