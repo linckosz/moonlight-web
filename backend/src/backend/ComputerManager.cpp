@@ -915,6 +915,23 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
 
 std::pair<int, QJsonObject> ComputerManager::handleSubmitPin(const QString& uuid)
 {
+    // Reentrancy guard: a submit for this host is already blocked in a nested
+    // event loop (initiatePairing/completePairing run loop.exec()). The frontend
+    // polls every 5s; without this guard the second POST would reenter and share
+    // the same NvPairingManager*, freed by the first → use-after-free crash.
+    if (m_SubmitInFlight.contains(uuid)) {
+        QJsonObject obj;
+        obj["status"] = "awaiting_pin";
+        obj["message"] = "Pairing already in progress...";
+        return {200, obj};
+    }
+    m_SubmitInFlight.insert(uuid);
+    struct Guard {
+        QSet<QString>& set;
+        QString id;
+        ~Guard() { set.remove(id); }
+    } guard{m_SubmitInFlight, uuid};
+
     auto it = m_ActivePairings.find(uuid);
     if (it == m_ActivePairings.end()) {
         // Session already destroyed — check if pairing completed
