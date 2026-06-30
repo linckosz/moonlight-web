@@ -240,7 +240,7 @@ jobs:
       # windeployqt adds the Qt runtime DLLs (Qt6Core/Network/WebSockets/Widgets)
       # + plugins next to the exe inside the bundle.
       - name: Deploy Qt runtime
-        run: windeployqt --release backend/build/win/dist/moonlight-web.exe
+        run: windeployqt --release backend/build/win/dist/MoonlightWeb.exe
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -286,12 +286,12 @@ jobs:
       - name: Build
         run: cmake --build backend/build/win-arm64 -j
       - name: Deploy Qt runtime
-        run: windeployqt --release backend/build/win-arm64/moonlight-web.exe
+        run: windeployqt --release backend/build/win-arm64/MoonlightWeb.exe
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: moonlight-web-windows-arm64
-          path: backend/build/win-arm64/moonlight-web.exe
+          path: backend/build/win-arm64/MoonlightWeb.exe
           if-no-files-found: warn
 
   build-linux-x64:
@@ -331,7 +331,7 @@ jobs:
         if: always()
         with:
           name: moonlight-web-linux-x64
-          path: backend/build/linux/moonlight-web
+          path: backend/build/linux/MoonlightWeb
           if-no-files-found: warn
 
   build-macos-arm64:
@@ -369,5 +369,5 @@ jobs:
         if: always()
         with:
           name: moonlight-web-macos-arm64
-          path: backend/build/mac/moonlight-web
+          path: backend/build/mac/MoonlightWeb
           if-no-files-found: warn

@@ -49,5 +49,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: moonlight-web-asan
-          path: backend/build/asan/moonlight-web.exe
+          path: backend/build/asan/MoonlightWeb.exe
           if-no-files-found: error
