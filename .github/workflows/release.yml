@@ -69,7 +69,7 @@ jobs:
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
     environment: MoonlightWeb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -148,7 +148,7 @@ jobs:
             backend\installer\moonlightweb.iss
 
       # Downloadable on every run (incl. workflow_dispatch with no tag).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: MoonlightWeb-windows-${{ matrix.arch }}
           path: MoonlightWeb-installer-win-${{ matrix.arch }}.exe
@@ -168,7 +168,7 @@ jobs:
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
     environment: MoonlightWeb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -221,7 +221,7 @@ jobs:
             --plugin qt --output appimage
           mv MoonlightWeb*.AppImage moonlightweb-linux-x64.AppImage
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: moonlightweb-linux-x64
           path: moonlightweb-linux-x64.AppImage
@@ -240,7 +240,7 @@ jobs:
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
     environment: MoonlightWeb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -296,7 +296,7 @@ jobs:
           macdeployqt MoonlightWeb.app -dmg
           mv MoonlightWeb.dmg moonlightweb-macos-arm64.dmg
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: moonlightweb-macos-arm64
           path: moonlightweb-macos-arm64.dmg

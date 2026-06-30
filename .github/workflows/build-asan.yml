@@ -15,7 +15,7 @@ jobs:
     name: Backend build (ASan)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -46,7 +46,7 @@ jobs:
         run: cmake --build backend/build/asan -j
 
       - name: Upload ASan binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: moonlightweb-asan
           path: backend/build/asan/MoonlightWeb.exe
