@@ -11,10 +11,9 @@
 # is only spent on validated code.
 name: CI
 
+# PAUSED: automatic triggers (pull_request / push) disabled — releases are
+# launched manually from GitHub. Re-enable by restoring the triggers below.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # Least-privilege token: this pipeline only reads the repo and writes artifacts.
