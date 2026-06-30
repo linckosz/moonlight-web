@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -291,17 +291,17 @@ void InternetAccessManager::start()
                 return m_Upnp.addPortMapping(port, port, 3600, desc, protocol);
             };
 
-            checkAndMap(httpsPort, "TCP", "Moonlight-Web HTTPS");
+            checkAndMap(httpsPort, "TCP", "MoonlightWeb HTTPS");
 
             // Map HTTP port too, so the HTTP→HTTPS redirect works from the internet.
             // Without this mapping, external clients cannot reach the HTTP redirect
             // server through the NAT gateway.
             {
                 quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
-                checkAndMap(httpPort, "TCP", "Moonlight-Web HTTP");
+                checkAndMap(httpPort, "TCP", "MoonlightWeb HTTP");
             }
 
-            checkAndMap(47999, "UDP", "Moonlight-Web UDP Stream");
+            checkAndMap(47999, "UDP", "MoonlightWeb UDP Stream");
 
             // Capture local LAN IP for the UI (port mapping display)
             char buf[64] = {};
@@ -525,7 +525,7 @@ bool InternetAccessManager::claimOrVerifyOwnership(QString& errorMsg)
 
     // Owned by a different instance — refuse to touch the A record.
     errorMsg =
-        QStringLiteral("Subdomain %1 is already registered by another Moonlight-Web instance. "
+        QStringLiteral("Subdomain %1 is already registered by another MoonlightWeb instance. "
                        "Pick a different subdomain (unique_id) for this machine.")
             .arg(m_Domain);
     qWarning() << "[InternetAccess]" << errorMsg;
@@ -649,7 +649,7 @@ QString InternetAccessManager::detectPublicIpViaHttp()
 
         QByteArray request = QStringLiteral("GET / HTTP/1.1\r\n"
                                             "Host: %1\r\n"
-                                            "User-Agent: Moonlight-Web/1.0\r\n"
+                                            "User-Agent: MoonlightWeb/1.0\r\n"
                                             "Connection: close\r\n\r\n")
                                  .arg(host)
                                  .toUtf8();
@@ -1295,14 +1295,14 @@ void InternetAccessManager::onPeriodicCheck()
         };
 
         quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
-        checkAndRenew(httpsPort, "TCP", "Moonlight-Web HTTPS (renew)");
+        checkAndRenew(httpsPort, "TCP", "MoonlightWeb HTTPS (renew)");
 
         {
             quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
-            checkAndRenew(httpPort, "TCP", "Moonlight-Web HTTP (renew)");
+            checkAndRenew(httpPort, "TCP", "MoonlightWeb HTTP (renew)");
         }
 
-        checkAndRenew(47999, "UDP", "Moonlight-Web UDP Stream (renew)");
+        checkAndRenew(47999, "UDP", "MoonlightWeb UDP Stream (renew)");
     }
 
     emit statusChanged(statusJson());

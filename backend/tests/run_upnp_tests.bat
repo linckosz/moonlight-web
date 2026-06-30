@@ -1,5 +1,5 @@
 @echo off
-REM Moonlight-Web UPNPClient Unit Tests — Build & Run
+REM MoonlightWeb UPNPClient Unit Tests — Build & Run
 REM
 REM Usage:
 REM   run_upnp_tests              — build and run fallback tests only

@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
+ * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  *
  * Backend unit-test runner. Aggregates the per-unit suites and exits non-zero
  * if any check fails, so it can gate CI / PR validation. Run under coverage via
@@ -25,7 +25,7 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     // Keep app data hermetic-ish for any path the units resolve internally.
     QCoreApplication::setApplicationName("mw-server-tests");
-    QCoreApplication::setOrganizationName("moonlight-web");
+    QCoreApplication::setOrganizationName("moonlightweb");
 
     run_input_encoder_tests();
     run_stream_config_tests();

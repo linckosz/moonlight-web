@@ -9,7 +9,7 @@
 |---|---|
 | expert-moonlight-qt | Pacer keep-newest (MAX_QUEUED_FRAMES=3), decodeUnitQueue=15 overflow→flush+IDR, `waitingForIdrFrame` (deltas droppées AVANT le décodeur), coalescing IDR idempotent, anti "congestion collapse" (IDR demandé après la 1re frame complète post-perte) |
 | expert-moonlight-xbox | FrameQueue=5/HWM=3, drop à l'enqueue (alternance newest/oldest), IDR jamais droppé (évince l'oldest), catch-up rendu, zero-copy GPU, recommandation explicite d'un état "waiting for IDR" pour Android |
-| expert-moonlight-web-stream | `max_retransmits=0`, file d'envoi=3 avec deltas droppables, reset décodeur si backlog>200 ms + IDR, une seule VideoFrame vivante au rendu, flag `requestedIdr` par état |
+| expert-moonlightweb-stream | `max_retransmits=0`, file d'envoi=3 avec deltas droppables, reset décodeur si backlog>200 ms + IDR, une seule VideoFrame vivante au rendu, flag `requestedIdr` par état |
 | backend-dev | 20 findings (F1-F20) ; P0 : F5 drop non-sticky, F6 maxRetransmits=3, F1 file Qt non bornée |
 | frontend-dev | P0 : decodeQueueSize jamais consulté, aucun état referenceValid, recovery dépendant d'une erreur jamais émise par le décodeur Android |
 | code-reviewer (2 passes) | Verdict : approuvé avec amendements. Corrections factuelles : le zero-fill des P-frames N'EXISTE PAS (commentaire l.47 obsolète — frames incomplètes droppées silencieusement l.864-879) ; configs DC vidéo cohérentes des deux côtés (negotiated id=0, maxRetransmits=3) mais commentaires mensongers. Amendements : coalescing IDR backend obligatoire en prérequis, keyframes exclues de tout drop, seuil decodeQueueSize 3-4, trio de test à risque (Chrome Windows HEVC, Safari iOS, réseau lossy mobile) |

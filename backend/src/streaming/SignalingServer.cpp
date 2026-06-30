@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -907,7 +907,7 @@ bool SignalingServer::setupUPnP()
     bool mappingOk = false;
     for (int attempt = 0; attempt < kUpnpMaxPortAttempts; attempt++) {
         uint16_t tryPort = port + static_cast<uint16_t>(attempt);
-        if (upnp->addPortMapping(tryPort, tryPort, kUpnpLeaseDurationSec, "Moonlight-Web WebRTC")) {
+        if (upnp->addPortMapping(tryPort, tryPort, kUpnpLeaseDurationSec, "MoonlightWeb WebRTC")) {
             m_UpnpMappedPort = tryPort;
             mappingOk = true;
             break;
@@ -932,7 +932,7 @@ bool SignalingServer::setupUPnP()
             qInfo() << "[UPNP] Renewing port mapping (every" << (kUpnpRenewIntervalMs / 60000)
                     << "min)";
             m_Upnp->addPortMapping(m_UpnpMappedPort, m_UpnpMappedPort, kUpnpLeaseDurationSec,
-                                   "Moonlight-Web WebRTC");
+                                   "MoonlightWeb WebRTC");
         }
     });
     m_UpnpRenewTimer->start(kUpnpRenewIntervalMs);

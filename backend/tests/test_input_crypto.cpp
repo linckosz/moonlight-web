@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
+ * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  */
 #include "test_framework.h"
 #include "streaming/InputCrypto.h"

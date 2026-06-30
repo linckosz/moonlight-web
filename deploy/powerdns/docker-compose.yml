@@ -1,4 +1,4 @@
-# Moonlight-Web — self-hosted DNS stack (3 dedicated containers).
+# MoonlightWeb — self-hosted DNS stack (3 dedicated containers).
 #
 #   dnsdist  public DNS entry point :53  → pdns:5300  (anti-amplification, rate-limit)
 #   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)

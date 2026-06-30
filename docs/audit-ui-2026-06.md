@@ -1,4 +1,4 @@
-# Audit UI — Moonlight-Web (2026-06-17)
+# Audit UI — MoonlightWeb (2026-06-17)
 
 > Audit **sans modification de code**. Contraintes invariantes imposées :
 > **même navigation, même wording, même comportement, mêmes informations

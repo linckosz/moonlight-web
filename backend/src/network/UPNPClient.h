@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -51,7 +51,7 @@ public:
     // protocol: "TCP" or "UDP" (default: "UDP" for backward compat).
     // Returns true if the mapping was added successfully.
     bool addPortMapping(uint16_t externalPort, uint16_t internalPort, uint32_t leaseDurationSec = 0,
-                        const std::string& desc = "Moonlight-Web",
+                        const std::string& desc = "MoonlightWeb",
                         const std::string& protocol = "UDP");
 
     // Check if a port mapping already exists on the IGD.

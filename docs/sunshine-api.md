@@ -686,7 +686,7 @@ ci-dessous sont les ports par défaut de Sunshine :
 ## API REST Sunshine (gestion/configuration)
 
 Sunshine expose aussi une API REST moderne sur le **même port HTTPS** (47990 par défaut).
-Cette API n'est **pas utilisée par Moonlight-Web pour le streaming**, mais est documentée
+Cette API n'est **pas utilisée par MoonlightWeb pour le streaming**, mais est documentée
 ici pour référence (pourrait servir à l'avenir pour l'envoi automatique du PIN).
 
 ### Authentification
@@ -716,7 +716,7 @@ Documentation officielle : https://docs.lizardbyte.dev/projects/sunshine/latest/
 
 ---
 
-## Notes d'implémentation pour Moonlight-Web
+## Notes d'implémentation pour MoonlightWeb
 
 - **`uniqueid` et `uuid`** : envoyés dans TOUTES les requêtes HTTP et HTTPS.
   `uniqueid` = `0123456789ABCDEF` (valeur fixe partagée), `uuid` = UUID v4 aléatoire

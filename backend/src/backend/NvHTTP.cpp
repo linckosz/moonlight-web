@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -60,7 +60,7 @@ QNetworkReply* NvHTTP::getServerInfoAsync(const NvAddress& address, const QStrin
 
     QNetworkRequest req(url);
     req.setTransferTimeout(FAST_FAIL_TIMEOUT_MS);
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
     // Force a fresh connection each poll: Sunshine closes idle keep-alive
     // sockets, and reusing a dead one yields spurious RemoteHostClosedError.
     req.setRawHeader("Connection", "close");
@@ -81,7 +81,7 @@ QNetworkReply* NvHTTP::getServerInfoAsyncHttps(const NvAddress& address, const Q
 
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
     // Close immediately: Qt would otherwise keep the TLS socket alive ~120s for
     // reuse, holding Sunshine's single-threaded HTTPS server and making the host
     // appear offline to co-located native clients during that window.
@@ -193,7 +193,7 @@ QNetworkReply* NvHTTP::getAppListAsync(const NvAddress& address, quint16 httpsPo
 
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
     // Close immediately — see getServerInfoAsyncHttps. This periodic pair-check
     // (every 5 min) was the connection that lingered ~120s and wedged Sunshine's
     // HTTPS server, cycling the host offline for native iOS/Qt clients.
@@ -269,7 +269,7 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 
     QNetworkRequest req(url);
     req.setTransferTimeout(120000); // launch can take up to 120s per spec
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
     QSslCertificate clientCert(clientCertPem, QSsl::Pem);
@@ -307,7 +307,7 @@ QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPor
 
     QNetworkRequest req(url);
     req.setTransferTimeout(120000); // resume can take a while like launch
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
     sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));
@@ -332,7 +332,7 @@ QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
 
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
     sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));

@@ -1,6 +1,6 @@
 @echo off
 REM ===========================================================================
-REM  Moonlight-Web — install as an auto-restarting Windows service via NSSM.
+REM  MoonlightWeb — install as an auto-restarting Windows service via NSSM.
 REM
 REM  The app is a normal GUI/tray executable, not an SCM-aware service, so we
 REM  wrap it with NSSM (https://nssm.cc). Put nssm.exe on PATH or next to this
@@ -13,8 +13,8 @@ REM  (Note: a Windows service runs in session 0 with no desktop, so the tray
 REM   icon will not appear while running this way.)
 REM ===========================================================================
 setlocal
-set SVC=Moonlight-Web
-set BIN=%~dp0moonlight-web.exe
+set SVC=MoonlightWeb
+set BIN=%~dp0MoonlightWeb.exe
 
 where nssm >nul 2>&1
 if errorlevel 1 (
@@ -36,7 +36,7 @@ if not exist "%BIN%" (
 
 "%NSSM%" install %SVC% "%BIN%"
 "%NSSM%" set %SVC% AppDirectory "%~dp0"
-"%NSSM%" set %SVC% DisplayName "Moonlight-Web streaming server"
+"%NSSM%" set %SVC% DisplayName "MoonlightWeb streaming server"
 "%NSSM%" set %SVC% Description "Browser-based Sunshine streaming server"
 "%NSSM%" set %SVC% Start SERVICE_AUTO_START
 

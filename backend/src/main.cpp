@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -183,14 +183,14 @@ static void writeAdminShortcut(const QString& url)
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
-    QCoreApplication::setApplicationName("Moonlight-Web");
+    QCoreApplication::setApplicationName("MoonlightWeb");
     QCoreApplication::setApplicationVersion("0.1.0");
-    QCoreApplication::setOrganizationName("Moonlight-Web");
+    QCoreApplication::setOrganizationName("MoonlightWeb");
 
     // The Windows release build is windowless (no console): capture Qt messages
     // and default to a log file next to the executable. --log overrides the path.
     qInstallMessageHandler(mwMessageHandler);
-    Logger::instance()->setLogFile(QCoreApplication::applicationDirPath() + "/moonlight-web.log");
+    Logger::instance()->setLogFile(QCoreApplication::applicationDirPath() + "/moonlightweb.log");
 
     // Load .env file before anything reads environment variables, then fall back
     // to any values baked in at build time (CI secrets) for vars still unset.
@@ -199,7 +199,7 @@ int main(int argc, char* argv[])
 
     // Parse command line
     QCommandLineParser parser;
-    parser.setApplicationDescription("Moonlight-Web streaming server");
+    parser.setApplicationDescription("MoonlightWeb streaming server");
     parser.addHelpOption();
     parser.addVersionOption();
 
@@ -217,7 +217,7 @@ int main(int argc, char* argv[])
     // Configure logging
     if (parser.isSet(logOption)) Logger::instance()->setLogFile(parser.value(logOption));
 
-    Logger::info("Moonlight-Web server starting...");
+    Logger::info("MoonlightWeb server starting...");
     Logger::info("Version: " + QCoreApplication::applicationVersion());
 
     // Read HTTP/HTTPS port preferences from persisted settings.
@@ -662,7 +662,7 @@ int main(int argc, char* argv[])
         resp.statusCode = 200;
         resp.contentType = "text/plain; charset=utf-8";
         resp.headers["Content-Disposition"] =
-            "attachment; filename=\"moonlight-web-certificate.txt\"";
+            "attachment; filename=\"moonlightweb-certificate.txt\"";
         resp.body = token.toUtf8();
         return resp;
     });

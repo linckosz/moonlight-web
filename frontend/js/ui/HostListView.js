@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * Moonlight-Web — Host list view component
+ * MoonlightWeb — Host list view component
  *
  * Single-page model: each host box carries its own state inline.
  *   - online + paired  → app grid (loaded per host, click to launch)

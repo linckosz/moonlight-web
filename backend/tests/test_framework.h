@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
+ * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  *
  * Tiny assertion framework shared by the backend unit tests. Free-function
  * style (no Q_OBJECT test classes) to keep the moc/compile surface minimal.

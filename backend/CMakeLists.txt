@@ -1,5 +1,5 @@
 # ============================================================================
-# Moonlight-Web backend — cross-platform build (Windows x64/ARM64, Linux, macOS)
+# MoonlightWeb backend — cross-platform build (Windows x64/ARM64, Linux, macOS)
 # Replaces the Windows-only qmake (.pro) + .bat toolchain.
 #
 #   cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -10,7 +10,7 @@
 # OpenSSL: system package on Linux/macOS, prebuilt under libs/windows on Windows.
 # ============================================================================
 cmake_minimum_required(VERSION 3.21)
-project(moonlight-web-backend LANGUAGES C CXX)
+project(moonlightweb-backend LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -284,18 +284,18 @@ if(WIN32 AND _mw_ssl_prebuilt)
     install(FILES ${_mw_ssl_dlls} DESTINATION .)
 endif()
 
-set(CPACK_PACKAGE_NAME "moonlight-web")
-set(CPACK_PACKAGE_VENDOR "moonlight-web")
+set(CPACK_PACKAGE_NAME "moonlightweb")
+set(CPACK_PACKAGE_VENDOR "moonlightweb")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Sunshine streaming client for the browser")
 set(CPACK_PACKAGE_VERSION "1.0.0")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "moonlight-web")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "moonlightweb")
 if(WIN32)
     set(CPACK_GENERATOR "ZIP")
 elseif(APPLE)
     set(CPACK_GENERATOR "DragNDrop;TGZ")
 else()
     set(CPACK_GENERATOR "DEB;TGZ")
-    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "moonlight-web")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "moonlightweb")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 endif()
 include(CPack)

@@ -1,4 +1,4 @@
-# Moonlight-Web — Plan d'Architecture & Développement
+# MoonlightWeb — Plan d'Architecture & Développement
 
 > **Note :** Ce document a été mis à jour pour refléter l'état réel du code après
 > les phases 1-5a. L'architecture a évolué depuis la rédaction initiale — voir les
@@ -102,7 +102,7 @@ moonlight-web-deepseek/
 │       └── favicon.ico
 └── docs/
     ├── moonlight-qt-architecture.md
-    └── moonlight-web-plan.md
+    └── moonlightweb-plan.md
 ```
 
 [REEL] Fichiers du plan initial qui n'existent pas :
@@ -373,7 +373,7 @@ Main Thread (Qt event loop)           Worker Thread (LiStartConnection via QThre
 **Critères d'acceptation :**
 - Le projet compile et s'exécute sur Windows 11 x64 avec Qt 6.x
 - `http://localhost:48000/` redirige vers HTTPS puis affiche la page d'accueil
-- La console affiche "Moonlight-Web server starting..."
+- La console affiche "MoonlightWeb server starting..."
 
 ---
 

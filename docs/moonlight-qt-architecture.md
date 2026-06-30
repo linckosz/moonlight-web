@@ -1,6 +1,6 @@
 # Moonlight-Qt — Architecture Applicative
 
-Analyse du code source de `D:\Code\moonlight-qt\app` — référence pour le projet Moonlight-Web.
+Analyse du code source de `D:\Code\moonlight-qt\app` — référence pour le projet MoonlightWeb.
 
 ---
 
@@ -353,18 +353,18 @@ Session::clConnectionTerminated() → emit s_ActiveSession->sessionFinished(...)
 
 ---
 
-## 5. Intégration Moonlight-Web — Décisions réelles
+## 5. Intégration MoonlightWeb — Décisions réelles
 
 ### 5.1 Architecture d'intégration
 
-Moonlight-Web intègre directement moonlight-common-c dans son backend C++/Qt.
+MoonlightWeb intègre directement moonlight-common-c dans son backend C++/Qt.
 Contrairement à moonlight-qt qui lie LiStartConnection à une boucle SDL + décodeur
-FFmpeg + renderer GPU, moonlight-Web remplace toute la partie décodage/rendu par
+FFmpeg + renderer GPU, MoonlightWeb remplace toute la partie décodage/rendu par
 un relay WebSocket vers le navigateur.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                         MOONLIGHT-WEB (Backend C++/Qt)                  │
+│                         MoonlightWeb (Backend C++/Qt)                  │
 │                                                                         │
 │  ┌──────────────────────────────────────────────────────────┐          │
 │  │                Limelight C Library                        │          │

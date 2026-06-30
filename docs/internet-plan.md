@@ -1,30 +1,31 @@
-# Goal: MWServer — Internet Access via deSEC Dynamic DNS + WebRTC Direct Connection
+# Goal: MWServer — Internet Access via self-hosted PowerDNS + WebRTC Direct Connection
 
 ## Context
 
-This goal implements the full "Internet Access" feature: dynamic DNS via deSEC.io, TLS certificate automation,
+This goal implements the full "Internet Access" feature: subdomain registration on a self-hosted
+PowerDNS server, TLS certificate automation (ACME / ZeroSSL / Let's Encrypt via DNS-01),
 UPnP port mapping, public IP detection via STUN, and optimized WebRTC direct connection (no TURN).
+
+The parent domain `MW_DOMAIN` (e.g. `example.top`) is owned and hosted on the PowerDNS server.
+Each instance gets a random subdomain `{uniqueId}.{MW_DOMAIN}`.
 
 ---
 
-## 1. Unique ID & deSEC Domain Registration
+## 1. Unique ID & PowerDNS Subdomain Registration
 
 ### At installation:
 - Reuse the existing uniqueid mechanism (or generate one if absent).
-- Build the target domain: `moonlightweb-{uniqueId}.dedyn.io`
-- Call the deSEC API to check if the subdomain is already taken:
+- Build the target domain: `{uniqueId}.{MW_DOMAIN}`
+- Call the PowerDNS API to check if the subdomain (rrset) is already taken in the zone:
   ```
-  GET https://desec.io/api/v1/domains/{domain}/
-  Authorization: Token {DESEC_TOKEN}
+  GET {MW_PDNS_API}/zones/{MW_DOMAIN}.
+  X-API-Key: {MW_PDNS_TOKEN}
   ```
-  - If 404 → domain is available → register it:
-    ```
-    POST https://desec.io/api/v1/domains/
-    { "name": "moonlightweb-{uniqueId}.dedyn.io" }
-    ```
-  - If 200 → already taken → generate a new uniqueId and retry (max 5 attempts).
-- Store `uniqueId`, `domain`, and `desec_token` in persistent settings.
-- By default `desec_token` is "auto" or empty "", this means that it uses the Token provided in the code at the compilation time if available as deployment variable via Github Action.
+  - If the `{uniqueId}.{MW_DOMAIN}` rrset is absent → available → register it (see §5).
+  - If present → generate a new uniqueId and retry (max 5 attempts).
+- Store `uniqueId` and `domain` in persistent settings.
+- The PowerDNS API base URL (`MW_PDNS_API`) and token (`MW_PDNS_TOKEN`) come from the embedded
+  build-time defaults (CMake + GitHub Action secrets) and can be overridden in settings.
 
 ### If no Internet at install time:
 - Skip domain registration silently.
@@ -41,7 +42,7 @@ Display a clear consent screen during installation with the following:
 
 **Body:**
 > To allow remote access over the Internet, MWServer needs to:
-> - Share your **public IP address** with **deSEC.io** (a non-profit DNS provider) to create a secure subdomain pointing to your network.
+> - Share your **public IP address** with the **MWServer DNS service** (self-hosted PowerDNS) to create a secure subdomain pointing to your network.
 > - Optionally enable **UPnP** on your router to automatically open the required port.
 >
 > This data is used solely to make your server reachable. You can disable this feature at any time in Settings.
@@ -64,8 +65,7 @@ Add the following fields to the persistent settings store:
   "internet_access_enabled": false,
   "upnp_enabled": false,
   "unique_id": "abc123",
-  "domain": "moonlightweb-abc123.dedyn.io",
-  "desec_token": "auto",
+  "domain": "abc123.example.top",
   "public_ip": "",
   "auto_ip_detection": true,
   "transport_mode": "auto",
@@ -101,21 +101,24 @@ Detection logic:
 ## 5. A Record Management
 
 ### At installation:
-- If STUN succeeded → create A record: `moonlightweb-{uniqueId}.dedyn.io → {public_ip}`
+- If STUN succeeded → create A record: `{uniqueId}.{MW_DOMAIN} → {public_ip}`
 - If STUN failed → create A record pointing to `127.0.0.1` as placeholder.
 
-### A record create/update API call:
+### A record create/update API call (PowerDNS RRset patch):
 ```
-PUT https://desec.io/api/v1/domains/{domain}/rrsets/
-Authorization: Token {DESEC_TOKEN}
+PATCH {MW_PDNS_API}/zones/{MW_DOMAIN}.
+X-API-Key: {MW_PDNS_TOKEN}
 Content-Type: application/json
 
-[{
-  "subname": "",
-  "type": "A",
-  "ttl": 300,
-  "records": ["{public_ip}"]
-}]
+{
+  "rrsets": [{
+    "name": "{uniqueId}.{MW_DOMAIN}.",
+    "type": "A",
+    "ttl": 300,
+    "changetype": "REPLACE",
+    "records": [{ "content": "{public_ip}", "disabled": false }]
+  }]
+}
 ```
 
 ---
@@ -126,31 +129,33 @@ Run a background timer every 5 minutes that:
 
 1. **IP change check:**
    - If `auto_ip_detection` is true → run STUN to get current public IP.
-   - If result ≠ `settings.public_ip` → update `settings.public_ip` → update A record via deSEC API.
+   - If result ≠ `settings.public_ip` → update `settings.public_ip` → update A record via PowerDNS API.
 
 2. **Domain resolution check:**
-   - Resolve `moonlightweb-{uniqueId}.dedyn.io` via DNS.
-   - If resolved IP ≠ `settings.public_ip` → update A record via deSEC API.
+   - Resolve `{uniqueId}.{MW_DOMAIN}` via DNS.
+   - If resolved IP ≠ `settings.public_ip` → update A record via PowerDNS API.
    - If resolution fails entirely → log warning in admin UI.
 
 ---
 
-## 7. TLS Certificate (Let's Encrypt via DNS-01 challenge)
+## 7. TLS Certificate (ACME via DNS-01 challenge)
 
 ### At installation:
-- Use **acme.sh** or **certbot** with the deSEC DNS plugin to issue a TLS certificate for `moonlightweb-{uniqueId}.dedyn.io` via DNS-01 challenge (no need for port 80).
-- deSEC supports RFC 2136 / acme.sh natively.
+- Issue a TLS certificate for `{uniqueId}.{MW_DOMAIN}` via the DNS-01 challenge against the
+  self-hosted PowerDNS zone (no need for port 80). Provider: ZeroSSL (per-instance EAB) or
+  Let's Encrypt.
+- The DNS-01 TXT record is written/cleaned through the PowerDNS API.
 - Store certificate path and `cert_expiry` date in settings.
-- Certificate validity: 90 days (Let's Encrypt maximum).
+- Certificate validity: 90 days (ACME CA maximum).
 
 ### Auto-renewal:
 - On every MWServer startup and every 24h, check `cert_expiry`.
 - If less than 30 days remaining → trigger certificate renewal automatically.
 - On renewal success → reload TLS on the WSS/HTTPS listener without restart.
 
-### Suggested tooling:
-- Use `acme.sh --dns dns_desec` with the deSEC API token.
-- Or integrate `node-acme-client` if the stack is Node.js-based.
+### Tooling:
+- ACME client (e.g. `lego`) using the PowerDNS DNS provider with `MW_PDNS_API` + `MW_PDNS_TOKEN`.
+- Fallback to a self-signed certificate if ACME issuance fails.
 
 ---
 
@@ -165,7 +170,7 @@ Run a background timer every 5 minutes that:
 > **Manual port forwarding required**
 > UPnP could not configure your router automatically.
 > Please forward port **{PORT}** (TCP and UDP) to this machine's local IP in your router settings.
-> This allows the domain `moonlightweb-{uniqueId}.dedyn.io` to reach MWServer.
+> This allows the domain `{uniqueId}.{MW_DOMAIN}` to reach MWServer.
 
 - Detect double NAT: compare UPnP external IP with STUN public IP. If different → show specific warning:
   > "Your router is behind a carrier-grade NAT (CGNAT). Port forwarding may not be possible. Contact your ISP."
@@ -279,7 +284,7 @@ await sender.setParameters(params);
 In the settings/admin panel, add:
 
 - **Internet Access** toggle (reflects `internet_access_enabled`)
-- **Domain** display: `moonlightweb-{uniqueId}.dedyn.io` (read-only)
+- **Domain** display: `{uniqueId}.{MW_DOMAIN}` (read-only)
 - **Public IP** field: editable, with "Auto-detect" toggle (`auto_ip_detection`)
 - **Transport Mode** selector: Auto / force specific protocol
 - **UPnP Status** indicator: OK / Failed + manual port forwarding instructions if failed
@@ -290,10 +295,10 @@ In the settings/admin panel, add:
 
 ## 12. Security Notes
 
-- The deSEC API token must be stored encrypted at rest (not in plain text config).
-- Never log the deSEC token in application logs.
+- The PowerDNS API token must be stored encrypted at rest (not in plain text config).
+- Never log the PowerDNS API token in application logs.
 - TLS certificate private key must have restricted file permissions (600).
-- Public IP is shared with deSEC only — no other third party.
+- Public IP is shared only with the self-hosted PowerDNS service — no other third party.
 
 ---
 

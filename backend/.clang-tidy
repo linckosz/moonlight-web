@@ -1,4 +1,4 @@
-# clang-tidy configuration for the Moonlight-Web backend.
+# clang-tidy configuration for the MoonlightWeb backend.
 #
 # Requires a compile_commands.json — CMake emits it natively (the build sets
 # CMAKE_EXPORT_COMPILE_COMMANDS=ON; find it in the build dir). Scoped to our own

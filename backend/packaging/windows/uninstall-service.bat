@@ -1,7 +1,7 @@
 @echo off
-REM Remove the Moonlight-Web NSSM service. Run from an elevated prompt.
+REM Remove the MoonlightWeb NSSM service. Run from an elevated prompt.
 setlocal
-set SVC=Moonlight-Web
+set SVC=MoonlightWeb
 
 where nssm >nul 2>&1
 if errorlevel 1 (

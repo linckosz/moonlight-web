@@ -178,7 +178,7 @@ void test_discover_with_upnp()
             }
 
             // Test addPortMapping + removePortMapping
-            bool added = client.addPortMapping(48010, 48010, 3600, "Moonlight-Web Test");
+            bool added = client.addPortMapping(48010, 48010, 3600, "MoonlightWeb Test");
             if (added) {
                 TEST("addPortMapping(48010, 48010) succeeds", true);
                 qInfo() << "  Port mapping added for 48010 UDP";

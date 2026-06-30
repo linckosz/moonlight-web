@@ -1,4 +1,4 @@
-# Tolgee self-hosted — web interface to manage Moonlight-Web translations.
+# Tolgee self-hosted — web interface to manage MoonlightWeb translations.
 #
 # The runtime (frontend/js/i18n/i18n.js) does NOT depend on Tolgee: it only
 # reads frontend/locales/*.json. Tolgee is an *editor* that syncs with those

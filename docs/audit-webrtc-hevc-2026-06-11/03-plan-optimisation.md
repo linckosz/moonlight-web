@@ -18,7 +18,7 @@
 - **Problème :** après les fixes P0, jusqu'à 6 sources demanderont des IDR (backend : backpressure, sticky awaiting-IDR, file Qt pleine ; frontend : stale, starvation, referenceValid). Sans convergence → flood de `LiRequestIdrFrame` vers Sunshine (régression déjà vécue : épisode "reorder buffer → IDR flood").
 - **Quoi :** un point de convergence unique dans `DataChannelRelay` (toutes les demandes, internes et venues du frontend, passent par `requestIdrFrame()`), avec cooldown temporel de **250-500 ms** + relance automatique tant que l'état "awaiting IDR" est actif (généralisation du coalescing par épisode existant `m_BackpressureDropCount`).
 - **Fichiers :** `backend/src/streaming/DataChannelRelay.h/.cpp` (état + timer), `MoonlightShim` inchangé.
-- **Référence :** moonlight-common-c `idrFrameRequiredEvent` (coalescing idempotent) ; moonlight-web-stream `requestedIdr` (flag par état).
+- **Référence :** moonlight-common-c `idrFrameRequiredEvent` (coalescing idempotent) ; moonlightweb-stream `requestedIdr` (flag par état).
 - **Tests :** compteur de requêtes IDR émises sous perte continue → ≤ 2-4/s. **Gain :** prérequis de B. **Risque :** faible.
 
 ---
@@ -36,7 +36,7 @@
 - **Approche :**
   1. Avant `decode()` : si `decoder.decodeQueueSize > seuil` ET frame = delta → drop + armer l'état "awaiting keyframe" (OPT-4) + demander IDR (via OPT-0b). **Jamais de drop de keyframe** sur ce critère.
   2. Seuil : **3-4** (amendement reviewer : 2-3 trop agressif pour la latence de pipeline du décodeur HW iOS ; éventuellement adaptatif).
-  3. Critère de reset (pattern moonlight-web-stream) : si `decodeQueueSize × (1000/fps) > 200 ms` ET `decodeQueueSize > 2` → `decoder.reset()` + reconfiguration + demande d'IDR (obligatoire : un reset sans IDR laisserait le décodeur sans référence).
+  3. Critère de reset (pattern moonlightweb-stream) : si `decodeQueueSize × (1000/fps) > 200 ms` ET `decodeQueueSize > 2` → `decoder.reset()` + reconfiguration + demande d'IDR (obligatoire : un reset sans IDR laisserait le décodeur sans référence).
 - **Pourquoi :** levier n°1 du problème A — la file interne du VideoDecoder est le buffer non borné dominant ; le frameQueue cap 3 existant agit après décodage, trop tard.
 - **Références :** decodeUnitQueue=15 + overflow→flush+IDR (moonlight-qt) ; FrameQueue=5/HWM=3 drop à l'enqueue (xbox) ; reset si backlog>200 ms (web-stream).
 - **Impact :** borne dure sur la latence de décodage — le cœur du fix Android. **Risque :** moyen — valider l'absence de micro-drops parasites sur iOS/Safari et l'absence de ghosting sur Chrome Windows HEVC. **Effort :** ~30 lignes.

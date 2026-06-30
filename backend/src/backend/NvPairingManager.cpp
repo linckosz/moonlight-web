@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -104,7 +104,7 @@ QString NvPairingManager::openConnection(const QString& scheme, const QString& c
     url.setQuery(query);
 
     QNetworkRequest req(url);
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
     req.setTransferTimeout(timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT_MS);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);

@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * Moonlight-Web — Application entry point
+ * MoonlightWeb — Application entry point
  *
  * Navigation architecture:
  *
@@ -118,7 +118,7 @@ const MoonlightApp = {
     },
 
     async init() {
-        console.log('[MW] Initializing Moonlight-Web...');
+        console.log('[MW] Initializing MoonlightWeb...');
 
         // Mark iOS in CSS (UA sniff) — used to restore tick visibility on
         // the settings checkbox, where Safari's native tick is invisible.

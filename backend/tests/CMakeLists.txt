@@ -1,5 +1,5 @@
 # ============================================================================
-# Moonlight-Web — Backend TNR (non-regression) unit tests.
+# MoonlightWeb — Backend TNR (non-regression) unit tests.
 #
 # Standalone CMake project (replaces the old tests.pro): builds a console runner
 # over the in-scope, deterministic logic units, linked against their REAL
@@ -18,7 +18,7 @@
 # intentionally not part of this runner.
 # ============================================================================
 cmake_minimum_required(VERSION 3.21)
-project(moonlight-web-tests LANGUAGES C CXX)
+project(moonlightweb-tests LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

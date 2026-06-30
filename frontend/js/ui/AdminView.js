@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * Moonlight-Web — Server Settings
+ * MoonlightWeb — Server Settings
  *
  * Server administration functions (localhost only):
  *   - Internet Access (Azure DNS) with DNS propagation check
@@ -1007,7 +1007,7 @@ export class AdminView {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = 'moonlight-web-certificate.txt';
+                    a.download = 'moonlightweb-certificate.txt';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);

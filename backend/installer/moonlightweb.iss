@@ -15,7 +15,7 @@
 ;  machine carries or can edit them.
 ;
 ;  Build:
-;    iscc backend\installer\moonlight-web.iss /DSourceDir=<staged-dist> [/DMyArch=x64]
+;    iscc backend\installer\moonlightweb.iss /DSourceDir=<staged-dist> [/DMyArch=x64]
 ;  where <staged-dist> holds MoonlightWeb.exe + Qt runtime + frontend\ (the
 ;  output of `cmake --install` + windeployqt, see .github/workflows/release.yml).
 ; ===========================================================================
