@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * Moonlight-Web — Login View
+ * MoonlightWeb — Login View
  *
  * Authentication for remote visitors. Supports two methods:
  *   1. PIN-based (default): user enters the PIN shown on the admin page
@@ -123,7 +123,7 @@ export class LoginView {
                             <path d="M2 12l10 5 10-5"/>
                         </svg>
                     </div>
-                    <h1 class="login-title">Moonlight-Web</h1>
+                    <h1 class="login-title">MoonlightWeb</h1>
 
                     <div id="login-form-area">
                         ${

@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — TNR suite. Copyright (C) 2026 Bruno Martin.
+ * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  *
  * The real renderers touch WebGPU/Canvas/<video> and are out of scope; we mock

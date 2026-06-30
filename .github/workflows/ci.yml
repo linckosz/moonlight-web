@@ -1,4 +1,4 @@
-# Moonlight-Web — unified CI pipeline.
+# MoonlightWeb — unified CI pipeline.
 #
 # Single gated pipeline, each stage blocks the next:
 #   1. quality + frontend tests — frontend job (Prettier+ESLint then Vitest, one
@@ -244,7 +244,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: moonlight-web-windows-x64
+          name: moonlightweb-windows-x64
           path: backend/build/win/dist
           if-no-files-found: warn
 
@@ -290,7 +290,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: moonlight-web-windows-arm64
+          name: moonlightweb-windows-arm64
           path: backend/build/win-arm64/MoonlightWeb.exe
           if-no-files-found: warn
 
@@ -330,7 +330,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: moonlight-web-linux-x64
+          name: moonlightweb-linux-x64
           path: backend/build/linux/MoonlightWeb
           if-no-files-found: warn
 
@@ -368,6 +368,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: moonlight-web-macos-arm64
+          name: moonlightweb-macos-arm64
           path: backend/build/mac/MoonlightWeb
           if-no-files-found: warn

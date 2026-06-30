@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Moonlight-Web — unified TNR (non-regression) gate.
+# MoonlightWeb — unified TNR (non-regression) gate.
 #
 # Runs both test suites with coverage and aggregates the result, exiting
 # non-zero if either fails its gate. Intended for local pre-PR checks and CI.

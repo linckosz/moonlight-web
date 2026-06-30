@@ -2,10 +2,10 @@
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
     <!--
-        Moonlight-Web — Windows Installer Package
+        MoonlightWeb — Windows Installer Package
 
         Build process:
-          1. deploy.bat      — stage all runtime files into deploy/Moonlight-Web/
+          1. deploy.bat      — stage all runtime files into deploy/MoonlightWeb/
           2. build_msi.bat   — heat + candle + light to produce the MSI
 
         Variables (passed via candle.exe -d):
@@ -13,22 +13,22 @@
     -->
 
     <Product Id="*"
-             Name="Moonlight-Web"
+             Name="MoonlightWeb"
              Language="1033"
              Version="0.1.0"
-             Manufacturer="Moonlight-Web"
+             Manufacturer="MoonlightWeb"
              UpgradeCode="550F5B3E-4C7A-4F5A-8B3C-9D8F2A1E4C7B">
 
         <Package InstallerVersion="200"
                  Compressed="yes"
                  InstallScope="perMachine"
                  Platform="x64"
-                 Manufacturer="Moonlight-Web"
-                 Description="Moonlight-Web Game Streaming Client"
-                 Comments="Moonlight-Web allows streaming games from Sunshine-compatible hosts in a browser." />
+                 Manufacturer="MoonlightWeb"
+                 Description="MoonlightWeb Game Streaming Client"
+                 Comments="MoonlightWeb allows streaming games from Sunshine-compatible hosts in a browser." />
 
         <!-- Allow upgrades and block downgrades -->
-        <MajorUpgrade DowngradeErrorMessage="A newer version of Moonlight-Web is already installed. Please uninstall it first."
+        <MajorUpgrade DowngradeErrorMessage="A newer version of MoonlightWeb is already installed. Please uninstall it first."
                       AllowSameVersionUpgrades="yes" />
 
         <!-- Media template embeds cabinet inside the MSI -->
@@ -37,7 +37,7 @@
         <!-- Directory structure -->
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="ProgramFiles64Folder">
-                <Directory Id="APPLICATIONFOLDER" Name="Moonlight-Web" />
+                <Directory Id="APPLICATIONFOLDER" Name="MoonlightWeb" />
             </Directory>
             <Directory Id="ProgramMenuFolder" />
         </Directory>
@@ -46,13 +46,13 @@
         <DirectoryRef Id="ProgramMenuFolder">
             <Component Id="ApplicationShortcut" Guid="*">
                 <Shortcut Id="MoonlightWebShortcut"
-                          Name="Moonlight-Web"
-                          Description="Moonlight-Web Game Streaming Client"
-                          Target="[APPLICATIONFOLDER]moonlight-web.exe"
+                          Name="MoonlightWeb"
+                          Description="MoonlightWeb Game Streaming Client"
+                          Target="[APPLICATIONFOLDER]MoonlightWeb.exe"
                           WorkingDirectory="APPLICATIONFOLDER" />
                 <RemoveFolder Id="RemoveProgramMenuDir" On="uninstall" />
                 <RegistryValue Root="HKCU"
-                               Key="Software\Moonlight-Web"
+                               Key="Software\MoonlightWeb"
                                Name="installed"
                                Type="integer"
                                Value="1"
@@ -62,8 +62,8 @@
 
         <!-- Feature: includes all harvested files + shortcut -->
         <Feature Id="MainFeature"
-                 Title="Moonlight-Web"
-                 Description="Moonlight-Web Game Streaming Client"
+                 Title="MoonlightWeb"
+                 Description="MoonlightWeb Game Streaming Client"
                  Level="1">
             <ComponentGroupRef Id="DeployedFiles" />
             <ComponentRef Id="ApplicationShortcut" />
@@ -73,7 +73,7 @@
         <UIRef Id="WixUI_Minimal" />
 
         <!-- Icon for Add/Remove Programs -->
-        <Icon Id="app.ico" SourceFile="$(var.DeployDir)\moonlight-web.exe" />
+        <Icon Id="app.ico" SourceFile="$(var.DeployDir)\MoonlightWeb.exe" />
         <Property Id="ARPPRODUCTICON" Value="app.ico" />
 
         <!-- Publisher link in Add/Remove Programs -->

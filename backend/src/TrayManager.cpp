@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -63,7 +63,7 @@ bool TrayManager::init()
     m_TrayIcon->setIcon(icon);
 
     quint16 port = m_Server->activeHttpsPort();
-    m_TrayIcon->setToolTip(QStringLiteral("Moonlight-Web\nhttps://localhost:%1").arg(port));
+    m_TrayIcon->setToolTip(QStringLiteral("MoonlightWeb\nhttps://localhost:%1").arg(port));
 
     // Build context menu
     QAction* openAction = m_Menu->addAction(tr("&Open"));

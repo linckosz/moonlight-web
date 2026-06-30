@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -70,7 +70,7 @@ void GeoIpService::lookupIp(const QString& ip, const GeoCallback& callback)
     url.setQuery(query);
 
     QNetworkRequest req(url);
-    req.setRawHeader("User-Agent", "Moonlight-Web/1.0");
+    req.setRawHeader("User-Agent", "MoonlightWeb/1.0");
     req.setTransferTimeout(5000); // 5s timeout
 
     QNetworkReply* reply = m_nam->get(req);

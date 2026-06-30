@@ -2,11 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Moonlight-Web — macOS launchd job (auto-restart on crash).
+  MoonlightWeb — macOS launchd job (auto-restart on crash).
 
   Binding :80 / :443 needs root, so install as a LaunchDaemon:
-    sudo cp com.moonlight-web.server.plist /Library/LaunchDaemons/
-    sudo launchctl load -w /Library/LaunchDaemons/com.moonlight-web.server.plist
+    sudo cp com.moonlightweb.server.plist /Library/LaunchDaemons/
+    sudo launchctl load -w /Library/LaunchDaemons/com.moonlightweb.server.plist
 
   KeepAlive/SuccessfulExit=false → relaunch only when the program exits with a
   non-zero status (crash). A clean quit (exit 0) is NOT relaunched, and
@@ -16,7 +16,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.moonlight-web.server</string>
+    <string>com.moonlightweb.server</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -50,8 +50,8 @@
     <integer>5</integer>
 
     <key>StandardOutPath</key>
-    <string>/var/log/moonlight-web.log</string>
+    <string>/var/log/moonlightweb.log</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/moonlight-web.log</string>
+    <string>/var/log/moonlightweb.log</string>
 </dict>
 </plist>

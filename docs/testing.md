@@ -1,6 +1,6 @@
 # Testing & non-regression (TNR)
 
-Moonlight-Web ships a two-layer automated test gate used to validate pull
+MoonlightWeb ships a two-layer automated test gate used to validate pull
 requests. It protects the project's hand-written logic against regressions
 **without** freezing the architecture: tests assert *observable behavior*
 (inputs → outputs, emitted bytes, sent messages, persisted JSON), never private

@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — TNR suite. Copyright (C) 2026 Bruno Martin.
+ * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  *
  * Note: the module is named Mp4Muxer but exports NAL/AVCC/HVCC helpers used by

@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -68,7 +68,7 @@ static void pairLocalSunshine(ComputerManager& computers, const QString& user, c
     // attach the PIN to the pending pairing request.
     auto* rest = new SunshineRestClient(&computers);
     QTimer::singleShot(800, rest, [rest, pin, user, pass, restPort]() {
-        rest->sendPin(pin, user, pass, QStringLiteral("moonlight-web"), restPort);
+        rest->sendPin(pin, user, pass, QStringLiteral("MoonlightWeb"), restPort);
     });
 
     auto [submitStatus, submitResult] = computers.handleSubmitPin(uuid);

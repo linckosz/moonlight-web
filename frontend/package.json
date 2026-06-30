@@ -1,9 +1,9 @@
 {
-  "name": "moonlight-web-frontend",
+  "name": "moonlightweb-frontend",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Frontend tooling for Moonlight-Web (Vanilla JS, no build).",
+  "description": "Frontend tooling for MoonlightWeb (Vanilla JS, no build).",
   "scripts": {
     "lint": "eslint js scripts",
     "lint:fix": "eslint js scripts --fix",

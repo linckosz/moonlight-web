@@ -1,5 +1,5 @@
 @echo off
-REM Moonlight-Web — MSI build script
+REM MoonlightWeb — MSI build script
 REM
 REM Requires:
 REM   - WiX Toolset v3.x (candle.exe + light.exe in PATH)
@@ -9,16 +9,16 @@ REM   - Visual Studio 2022 environment (for MSBuild/VC vars, unless candle/light
 setlocal
 
 set INSTALLER_DIR=%~dp0
-set DEPLOY_DIR=%INSTALLER_DIR%Moonlight-Web
+set DEPLOY_DIR=%INSTALLER_DIR%MoonlightWeb
 set BUILD_DIR=%INSTALLER_DIR%build
-set OUTPUT_MSI=%INSTALLER_DIR%Moonlight-Web-0.1.0.msi
+set OUTPUT_MSI=%INSTALLER_DIR%MoonlightWeb-0.1.0.msi
 
-echo === Moonlight-Web MSI Build ===
+echo === MoonlightWeb MSI Build ===
 echo Deploy:    %DEPLOY_DIR%
 echo Output:    %OUTPUT_MSI%
 
 REM Verify deploy directory exists
-if not exist "%DEPLOY_DIR%\moonlight-web.exe" (
+if not exist "%DEPLOY_DIR%\MoonlightWeb.exe" (
     echo ERROR: Deploy directory not staged. Run deploy.bat first.
     exit /b 1
 )
@@ -43,11 +43,11 @@ if %ERRORLEVEL% neq 0 (
 
 REM Step 2: Compile with candle.exe
 echo [2/3] Compiling...
-candle "%INSTALLER_DIR%\moonlight-web.wxs" ^
+candle "%INSTALLER_DIR%\moonlightweb.wxs" ^
     -dDeployDir="%DEPLOY_DIR%" ^
-    -out "%BUILD_DIR%\moonlight-web.wixobj"
+    -out "%BUILD_DIR%\moonlightweb.wixobj"
 if %ERRORLEVEL% neq 0 (
-    echo ERROR: candle.exe failed (moonlight-web.wxs) with code %ERRORLEVEL%
+    echo ERROR: candle.exe failed (moonlightweb.wxs) with code %ERRORLEVEL%
     exit /b %ERRORLEVEL%
 )
 
@@ -61,7 +61,7 @@ if %ERRORLEVEL% neq 0 (
 
 REM Step 3: Link with light.exe
 echo [3/3] Linking MSI...
-light "%BUILD_DIR%\moonlight-web.wixobj" "%BUILD_DIR%\deploy-files.wixobj" ^
+light "%BUILD_DIR%\moonlightweb.wixobj" "%BUILD_DIR%\deploy-files.wixobj" ^
     -ext WixUIExtension ^
     -out "%OUTPUT_MSI%"
 if %ERRORLEVEL% neq 0 (

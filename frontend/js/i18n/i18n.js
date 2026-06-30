@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * Moonlight-Web — lightweight i18n runtime (no build step / no bundler).
+ * MoonlightWeb — lightweight i18n runtime (no build step / no bundler).
  *
  * - Loads locale JSON from /locales/<lang>.json (English always loaded as fallback).
  * - t(key, vars) — nested-key lookup with {{var}} interpolation; falls back to

@@ -1,4 +1,4 @@
-# Moonlight-Web — multi-platform release packaging.
+# MoonlightWeb — multi-platform release packaging.
 #
 # On a v* tag, builds self-contained bundles for Windows x64/ARM64, Linux x64
 # (AppImage) and macOS arm64 (.dmg), then attaches them to the GitHub Release.
@@ -110,7 +110,7 @@ jobs:
             "/DSourceDir=$(Resolve-Path dist)" `
             "/DMyArch=${{ matrix.arch }}" `
             "/O$(Get-Location)" `
-            backend\installer\moonlight-web.iss
+            backend\installer\moonlightweb.iss
 
       # Downloadable on every run (incl. workflow_dispatch with no tag).
       - uses: actions/upload-artifact@v4
@@ -179,20 +179,20 @@ jobs:
           chmod +x linuxdeploy*.AppImage
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
             -e build/MoonlightWeb \
-            -d backend/packaging/moonlight-web.desktop \
+            -d backend/packaging/moonlightweb.desktop \
             -i AppDir/MoonlightWeb.png \
             --plugin qt --output appimage
-          mv MoonlightWeb*.AppImage moonlight-web-linux-x64.AppImage
+          mv MoonlightWeb*.AppImage moonlightweb-linux-x64.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
-          name: moonlight-web-linux-x64
-          path: moonlight-web-linux-x64.AppImage
+          name: moonlightweb-linux-x64
+          path: moonlightweb-linux-x64.AppImage
 
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: moonlight-web-linux-x64.AppImage
+          files: moonlightweb-linux-x64.AppImage
 
   # ── macOS arm64 (.dmg) ───────────────────────────────────────────────────
   macos:
@@ -255,14 +255,14 @@ jobs:
       - name: Deploy Qt + create DMG
         run: |
           macdeployqt MoonlightWeb.app -dmg
-          mv MoonlightWeb.dmg moonlight-web-macos-arm64.dmg
+          mv MoonlightWeb.dmg moonlightweb-macos-arm64.dmg
 
       - uses: actions/upload-artifact@v4
         with:
-          name: moonlight-web-macos-arm64
-          path: moonlight-web-macos-arm64.dmg
+          name: moonlightweb-macos-arm64
+          path: moonlightweb-macos-arm64.dmg
 
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: moonlight-web-macos-arm64.dmg
+          files: moonlightweb-macos-arm64.dmg

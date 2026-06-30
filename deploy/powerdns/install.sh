@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Moonlight-Web — one-shot installer for the self-hosted DNS stack.
+# MoonlightWeb — one-shot installer for the self-hosted DNS stack.
 #
 # Brings a fresh Linux VM to a fully operational state:
 #   - Docker engine + compose plugin
@@ -278,7 +278,7 @@ DS_RECORD="$($COMPOSE exec -T pdns pdnsutil --config-dir=/etc/powerdns export-zo
 SUMMARY="NEXT-STEPS.txt"
 {
 echo "============================================================"
-echo " Moonlight-Web DNS stack — INSTALL COMPLETE"
+echo " MoonlightWeb DNS stack — INSTALL COMPLETE"
 echo "============================================================"
 echo
 echo " Your VM is up and running. Containers:"
@@ -323,7 +323,7 @@ else
     echo "                   --config-dir=/etc/powerdns export-zone-ds ${MW_DOMAIN:-<MW_DOMAIN>} )"
 fi
 echo
-echo "  [ ] 4. On your Moonlight-Web server, set in its own .env:"
+echo "  [ ] 4. On your MoonlightWeb server, set in its own .env:"
 echo "            MW_DOMAIN=${MW_DOMAIN:-<MW_DOMAIN>}"
 echo "            MW_PDNS_URL=https://api.${MW_DOMAIN:-<MW_DOMAIN>}/api/v1/servers/localhost"
 echo "            MW_PDNS_TOKEN=<the MW_PDNS_API_KEY value from $HERE/.env>"

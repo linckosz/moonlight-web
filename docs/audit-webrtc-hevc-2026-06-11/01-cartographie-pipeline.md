@@ -2,7 +2,7 @@
 
 > **Session :** 2026-06-11-audit-webrtc-hevc
 > **Périmètre :** Pipeline vidéo HEVC sur WebRTC DataChannel (SCTP/UDP), de Sunshine au Canvas.
-> **Sources :** Audit backend (backend-dev), audit frontend (frontend-dev), références croisées moonlight-qt, moonlight-xbox, moonlight-web-stream.
+> **Sources :** Audit backend (backend-dev), audit frontend (frontend-dev), références croisées moonlight-qt, moonlight-xbox, moonlightweb-stream.
 
 ---
 
@@ -73,7 +73,7 @@ Les ⚠ marquent les points faibles détaillés dans le livrable 2.
 | Canal vidéo | negotiated `id=0`, `unordered=true`, `maxRetransmits=3` **des deux côtés** (backend DataChannelRelay.cpp:697-701 ; frontend WebRtcDataChannel.js:574-579) — configs cohérentes entre elles mais contredites par leurs propres commentaires "no retransmits" (backend l.695, frontend l.566/570 dupliqué) |
 | Implication | Sous perte de paquets : SCTP retransmet jusqu'à 3× des données périmées → gonflement de `bufferedAmount`, head-of-line de fait, frames fraîches retardées (mécanisme principal du buffer bloat sur réseau mobile) |
 | Taille message | jusqu'à 64 017 octets → fragmenté par SCTP en de nombreux paquets ; en unreliable, la perte d'UN fragment SCTP invalide le message entier |
-| Référence | moonlight-web-stream utilise une media track RTP pour la vidéo (PlayoutDelay 0/0) et `max_retransmits: Some(0)` pour ses canaux temps-réel ; jamais `maxPacketLifeTime` |
+| Référence | moonlightweb-stream utilise une media track RTP pour la vidéo (PlayoutDelay 0/0) et `max_retransmits: Some(0)` pour ses canaux temps-réel ; jamais `maxPacketLifeTime` |
 
 ---
 
@@ -138,7 +138,7 @@ Latence de récupération actuelle : détection (jusqu'à 500 ms) + RTT + encoda
 
 ## 9. Synthèse des écarts vs implémentations de référence
 
-| Mécanisme | moonlight-qt | moonlight-xbox | moonlight-web-stream | **Moonlight-Web (actuel)** |
+| Mécanisme | moonlight-qt | moonlight-xbox | moonlightweb-stream | **MoonlightWeb (actuel)** |
 |---|---|---|---|---|
 | Queue bornée pré-décodage | decodeUnitQueue=15, overflow=flush+IDR | FrameQueue=5, HWM=3, drop à l'enqueue | file envoi=3, drop deltas | **Aucune** (file Qt non bornée ; decodeQueueSize ignoré) |
 | Keep-newest / catch-up | Pacer frameDropTarget 1-3 | renderModeImmediate saute à la plus récente | 1 seule VideoFrame vivante | frameQueue=3 post-décodage seulement |

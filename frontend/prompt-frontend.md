@@ -2,7 +2,7 @@
 
 ## Contexte
 
-Tu travailles sur `frontend/js/ui/StreamView.js` et `frontend/css/stream.css` du projet Moonlight-Web.
+Tu travailles sur `frontend/js/ui/StreamView.js` et `frontend/css/stream.css` du projet MoonlightWeb.
 Les commentaires dans le code doivent être en anglais.
 Les fichiers concernés sont en UTF-8 sans BOM.
 

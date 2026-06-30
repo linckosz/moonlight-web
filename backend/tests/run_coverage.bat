@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM Moonlight-Web - Backend TNR runner + coverage gate.
+REM MoonlightWeb - Backend TNR runner + coverage gate.
 REM
 REM Builds the unit-test runner (CMake + Ninja, MSVC x64 + Qt 6.11), runs it for
 REM the pass/fail gate, then re-runs it under OpenCppCoverage to produce an HTML
@@ -43,7 +43,7 @@ if errorlevel 1 goto no_coverage
 
 del cov.xml 2>nul
 REM Relative path filters: the checkout dir name differs between local and CI
-REM (moonlight-web-deepseek vs moonlight-web), so match on backend\... only.
+REM (moonlight-web-deepseek vs moonlightweb), so match on backend\... only.
 OpenCppCoverage --quiet --sources backend\src --excluded_sources backend\third_party --excluded_sources backend\tests --export_type cobertura:cov.xml --export_type html:covhtml -- "%RUNNER%" >nul 2>&1
 if not exist cov.xml goto no_report
 

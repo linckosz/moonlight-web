@@ -325,7 +325,7 @@ Je veux la meilleure qualité d'analyse possible pour cet audit.
 
 - Engineering Manager : `fable`
 - Agents backend-dev / frontend-dev : `opus` également — pour la phase d'audit, la précision prime sur la rapidité
-- Agents experts (moonlight-qt, moonlight-xbox, moonlight-web-stream) : `opus`
+- Agents experts (moonlight-qt, moonlight-xbox, moonlightweb-stream) : `opus`
 - Code-reviewer : `opus`
 
 Pas de contrainte de tokens — allez en profondeur.
@@ -335,7 +335,7 @@ Pas de contrainte de tokens — allez en profondeur.
 ## 7. Instructions pour l'Engineering Manager
 
 1. **Commence par l'audit** — lis et comprends TOUS les fichiers du pipeline avant de proposer des changements
-2. **Utilise les agents experts** (`expert-moonlight-qt`, `expert-moonlight-xbox`, `expert-moonlight-web-stream`) pour comprendre comment les implémentations de référence gèrent ces problèmes
+2. **Utilise les agents experts** (`expert-moonlight-qt`, `expert-moonlight-xbox`, `expert-moonlightweb-stream`) pour comprendre comment les implémentations de référence gèrent ces problèmes
 3. **Utilise `backend-dev` et `frontend-dev`** pour les analyses détaillées de code
 4. **Utilise `code-reviewer`** pour valider chaque proposition avant implémentation
 5. **Présente tes conclusions en français**, de façon structurée

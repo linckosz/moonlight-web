@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * Moonlight-Web — REST API client
+ * MoonlightWeb — REST API client
  */
 export class BackendClient {
     static async _handleError(resp, path = '') {
@@ -234,7 +234,7 @@ export class BackendClient {
         return this.post('/api/settings/streaming', settings);
     }
 
-    // ── deSEC Internet Access ────────────────────────────────────────────────────────────
+    // ── Internet Access (PowerDNS) ───────────────────────────────────────────────────────
 
     static async getInternetStatus() {
         return this.get('/api/internet/status');

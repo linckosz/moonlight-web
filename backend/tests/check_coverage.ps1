@@ -1,4 +1,4 @@
-# Moonlight-Web — backend coverage gate.
+# MoonlightWeb — backend coverage gate.
 #
 # Parses an OpenCppCoverage Cobertura XML and enforces a minimum LINE coverage
 # over the in-scope production sources only (the TNR target set). Exits non-zero

@@ -1,4 +1,4 @@
-# Self-hosted DNS stack for Moonlight-Web (Docker)
+# Self-hosted DNS stack for MoonlightWeb (Docker)
 
 Three dedicated containers (one process each — the idiomatic Docker layout):
 
@@ -18,7 +18,7 @@ Internet ─:80/:443─> [caddy]   ──> pdns:8081       HTTPS API, API rate-l
   `https://{MW_DOMAIN}` / `https://www.{MW_DOMAIN}` (repo-root `website/`,
   bind-mounted into the container).
 
-The Moonlight-Web server itself is **not** in this stack. It talks to this DNS
+The MoonlightWeb server itself is **not** in this stack. It talks to this DNS
 box over the REST API (`MW_PDNS_URL` + `MW_PDNS_TOKEN`) and creates per-instance
 subdomains `{uniqueId}.{MW_DOMAIN}` at runtime. This stack only bootstraps the
 parent zone, the nameserver glue, the `api.{MW_DOMAIN}` host and the `www`
@@ -93,7 +93,7 @@ the cloud firewall/NSG ports, registering `ns1`/`ns2` at your registrar, and
 submitting the DNSSEC DS record. Re-run `sudo ./install.sh` any time — it is
 idempotent and keeps an existing `.env`.
 
-On the Moonlight-Web server, set in its own `.env`:
+On the MoonlightWeb server, set in its own `.env`:
 
 ```
 MW_DOMAIN=example.top
@@ -287,6 +287,6 @@ curl -s https://api.example.top/api/v1/servers/localhost \
 - **Persistence** — the zone DB lives in `pdns_data`, Caddy's certs in
   `caddy_data`; rebuilding keeps both. Remove the volumes to start fresh.
 - **Idempotent init** — `pdns/init.sh` only creates the zone if absent, so
-  restarts are safe. Per-instance subdomains are managed by Moonlight-Web.
+  restarts are safe. Per-instance subdomains are managed by MoonlightWeb.
 - **API key** — keep `MW_PDNS_API_KEY` secret and identical to the server's
   `MW_PDNS_TOKEN`. Generate one with `openssl rand -hex 24`.

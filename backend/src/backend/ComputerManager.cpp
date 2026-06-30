@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -689,7 +689,7 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
 
     QNetworkRequest req(url);
     req.setTransferTimeout(NvHTTP::REQUEST_TIMEOUT_MS);
-    req.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QNetworkAccessManager nam;
     QNetworkReply* reply = nam.get(req);
@@ -1170,7 +1170,7 @@ void ComputerManager::startBoxArtFetch(const QString& uuid, int appId)
 
     QNetworkRequest artReq(artUrl);
     artReq.setTransferTimeout(5000);
-    artReq.setRawHeader("User-Agent", "Moonlight-Web/0.1");
+    artReq.setRawHeader("User-Agent", "MoonlightWeb/0.1");
     // Close immediately — don't leave the TLS socket pooled ~120s holding
     // Sunshine's single-threaded HTTPS server (see NvHTTP::getAppListAsync).
     artReq.setRawHeader("Connection", "close");

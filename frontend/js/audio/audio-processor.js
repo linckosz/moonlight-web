@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * AudioWorkletProcessor for Moonlight-Web audio pipeline.
+ * AudioWorkletProcessor for MoonlightWeb audio pipeline.
  *
  * Runs on the audio render thread (real-time priority). Receives Float32
  * interleaved stereo PCM chunks (already Opus-decoded by the WebCodecs

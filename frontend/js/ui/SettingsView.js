@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -16,7 +16,7 @@
  */
 
 /**
- * Moonlight-Web — Streaming Settings view
+ * MoonlightWeb — Streaming Settings view
  *
  * Streaming-related user preferences (video codec, resolution, bitrate, etc.).
  * Settings are stored in localStorage (per-browser) with default values

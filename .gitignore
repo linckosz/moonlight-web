@@ -49,7 +49,7 @@ backend/.cache/
 .claude/results/
 
 # Local dev config (committed once, then ignored)
-.moonlight-web-dev
+.moonlightweb-dev
 
 # Private key embedding (never committed)
 .env

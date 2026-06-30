@@ -20,7 +20,7 @@ Nothing to install on the client, just a URL.
 
 ## ❤️ Support
 
-If Moonlight-Web is useful to you,\
+If MoonlightWeb is useful to you,\
 a coffee helps keep the shared DNS domain server online and the domain running 🙏
 
 <div align="center">
@@ -102,7 +102,7 @@ Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1
 
 1. **Prerequisite**: a PC with **Sunshine** installed and working.
 2. **Grab** the latest release binary, **or** build from source (see [Fork & build](#-fork--build)).
-3. **Run** `moonlight-web` (Windows: `moonlight-web.exe`). A **tray icon** appears.
+3. **Run** `MoonlightWeb` (Windows: `MoonlightWeb.exe`). A **tray icon** appears.
 4. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
    - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
    - First launch uses a **self‑signed** cert — accept the browser warning (normal on LAN).
@@ -145,7 +145,7 @@ Enabling **Internet Access** makes the server automatically:
 ## 🏗️ Architecture
 
 ```
-   BROWSER (any device)                  Moonlight-Web SERVER (C++/Qt)            Sunshine HOST
+   BROWSER (any device)                  MoonlightWeb SERVER (C++/Qt)            Sunshine HOST
  ┌───────────────────────────┐      ┌──────────────────────────────┐      ┌──────────────────┐
  │  Web App (Vanilla JS)     │ REST │  HTTP :80 → HTTPS :443       │HTTPS │  GameStream API  │
  │  Hosts / apps / pairing   │◄────►│  Static files + REST API     │◄────►│  /serverinfo     │
@@ -172,9 +172,9 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 
 | OS | Path |
 |---|---|
-| **Windows** | `%APPDATA%\Moonlight-Web\Moonlight-Web\settings.json` |
-| **macOS** | `~/Library/Application Support/Moonlight-Web/Moonlight-Web/settings.json` |
-| **Linux** | `~/.local/share/Moonlight-Web/Moonlight-Web/settings.json` |
+| **Windows** | `%APPDATA%\MoonlightWeb\MoonlightWeb\settings.json` |
+| **macOS** | `~/Library/Application Support/MoonlightWeb/MoonlightWeb/settings.json` |
+| **Linux** | `~/.local/share/MoonlightWeb/MoonlightWeb/settings.json` |
 
 Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`.\
 Restart the server after a manual edit.
@@ -211,7 +211,7 @@ cmd //c backend/build_msvc.bat
 # Linux / macOS (CMake):
 cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
 
-cd backend/build/release && ./moonlight-web   # Windows: moonlight-web.exe → open https://localhost
+cd backend/build/release && ./MoonlightWeb   # Windows: MoonlightWeb.exe → open https://localhost
 ```
 
 👉 **Full developer setup** — required tools (with links), Qt installer components,

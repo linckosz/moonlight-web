@@ -1,6 +1,6 @@
 @echo off
-REM Moonlight-Web — Windows deployment script
-REM Stages all runtime files into deploy/Moonlight-Web/ for MSI packaging.
+REM MoonlightWeb — Windows deployment script
+REM Stages all runtime files into deploy/MoonlightWeb/ for MSI packaging.
 REM
 REM Usage:
 REM   cd backend
@@ -15,17 +15,17 @@ setlocal
 
 set PROJECT_DIR=%~dp0..
 set BUILD_DIR=%PROJECT_DIR%\build\release
-set DEPLOY_DIR=%~dp0Moonlight-Web
+set DEPLOY_DIR=%~dp0MoonlightWeb
 set FRONTEND_DIR=%PROJECT_DIR%\..\frontend
 
-echo === Moonlight-Web Deploy ===
+echo === MoonlightWeb Deploy ===
 echo Build:    %BUILD_DIR%
 echo Deploy:   %DEPLOY_DIR%
 echo Frontend: %FRONTEND_DIR%
 
 REM Verify build exists
-if not exist "%BUILD_DIR%\moonlight-web.exe" (
-    echo ERROR: moonlight-web.exe not found. Run build_msvc.bat first.
+if not exist "%BUILD_DIR%\MoonlightWeb.exe" (
+    echo ERROR: MoonlightWeb.exe not found. Run build_msvc.bat first.
     exit /b 1
 )
 
@@ -35,11 +35,11 @@ mkdir "%DEPLOY_DIR%"
 
 REM Step 1: Copy binary
 echo [1/4] Copying binary...
-copy "%BUILD_DIR%\moonlight-web.exe" "%DEPLOY_DIR%\" > nul
+copy "%BUILD_DIR%\MoonlightWeb.exe" "%DEPLOY_DIR%\" > nul
 
 REM Step 2: Run windeployqt
 echo [2/4] Running windeployqt...
-windeployqt --release "%DEPLOY_DIR%\moonlight-web.exe"
+windeployqt --release "%DEPLOY_DIR%\MoonlightWeb.exe"
 if %ERRORLEVEL% neq 0 (
     echo WARNING: windeployqt returned error %ERRORLEVEL%
 )
@@ -67,6 +67,6 @@ echo To build MSI:
 echo   installer\build_msi.bat
 echo.
 echo To run directly:
-echo   %DEPLOY_DIR%\moonlight-web.exe
+echo   %DEPLOY_DIR%\MoonlightWeb.exe
 
 endlocal

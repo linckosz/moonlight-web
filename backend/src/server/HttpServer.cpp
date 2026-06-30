@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -955,7 +955,7 @@ bool HttpServer::generateSelfSignedCert()
     QFile::remove(certDir + "cert.pem");
 
     if (!generateSelfSignedToFiles(certDir + "cert.pem", certDir + "key.pem", sans,
-                                   "Moonlight-Web")) {
+                                   "MoonlightWeb")) {
         Logger::error("Failed to generate self-signed certificate (libcrypto)");
         return false;
     }
@@ -1002,7 +1002,7 @@ void HttpServer::ensureLocalSslConfig()
         sans << "IP:" + clean.toString();
     }
 
-    if (!generateSelfSignedToFiles(certPath, keyPath, sans, "Moonlight-Web")) {
+    if (!generateSelfSignedToFiles(certPath, keyPath, sans, "MoonlightWeb")) {
         Logger::error("[CERT] Cannot generate local self-signed cert (libcrypto)");
         return;
     }

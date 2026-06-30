@@ -49,7 +49,7 @@ cmd //c backend/build_msvc.bat
 # Linux / macOS (CMake):
 cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
 
-cd backend/build/release && ./moonlight-web   # Windows: moonlight-web.exe → open https://localhost
+cd backend/build/release && ./MoonlightWeb   # Windows: MoonlightWeb.exe → open https://localhost
 ```
 
 > If CMake can't find Qt, pass `-DCMAKE_PREFIX_PATH=<your Qt kit path>` (e.g. `C:/Qt/6.11.0/msvc2022_64`).
@@ -62,7 +62,7 @@ cd backend/build/release && ./moonlight-web   # Windows: moonlight-web.exe → o
 2. In the **Configure Project** screen, tick the **Desktop Qt 6.11.0 MSVC2022 64‑bit** kit (untick others).
 3. Set the build configuration to **Release** (or **RelWithDebInfo** to debug).
 4. If Qt isn't auto‑detected: **Tools → Options → Kits**, point the kit's Qt version to your install.
-5. Pick the **`moonlight-web`** run target, then **Build (Ctrl+B)** / **Run (Ctrl+R)**.
+5. Pick the **`MoonlightWeb`** run target, then **Build (Ctrl+B)** / **Run (Ctrl+R)**.
 
 ---
 

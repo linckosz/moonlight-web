@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
+ * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  *
  * Standalone entry for the cross-platform security TNR (ctest). Runs only the
  * pure-logic security units that depend on Qt Core/Network alone (no OpenSSL,

@@ -26,7 +26,7 @@ La chaîne de récupération après perte de référence est trouée aux deux ex
 2. **Frontend** : toute frame incomplète (I ou P) est **droppée silencieusement** dans `_assembleFrame` (l.864-879) sans signalement au consommateur ni requête IDR immédiate — NB : le commentaire l.47 décrit un zero-fill des P-frames qui n'existe pas dans le code (validation code-reviewer). Aucune détection de gap de frameId ; aucun état "référence perdue → drop des deltas jusqu'à l'IDR" (F2.3, F1.3) : les deltas suivantes, qui référencent la frame jamais reçue, sont soumises au décodeur. Le décodeur HW Android les décode **sans émettre d'erreur**, donc le recovery existant (`_handleDecoderError`) ne se déclenche jamais (F2.10).
 3. **Récupération lente et fragile** : pas d'IDR immédiat à la perte (timers 200/500 ms, F1.2), pas de relance si l'IDR n'arrive pas (F9).
 
-Toutes les implémentations de référence (moonlight-qt `waitingForIdrFrame`, moonlight-web-stream `needsKeyFrame`) droppent les deltas AVANT le décodeur tant que la récupération n'est pas arrivée. C'est le mécanisme manquant central.
+Toutes les implémentations de référence (moonlight-qt `waitingForIdrFrame`, moonlightweb-stream `needsKeyFrame`) droppent les deltas AVANT le décodeur tant que la récupération n'est pas arrivée. C'est le mécanisme manquant central.
 
 ---
 

@@ -2,7 +2,7 @@ dummy read check
 
 ## License
 
-Moonlight-Web is free software, licensed under the **GNU General Public License
+MoonlightWeb is free software, licensed under the **GNU General Public License
 v3.0** (GPL-3.0). You are free to use, study, modify, fork and redistribute it,
 provided you keep it open-source under the same license and **preserve the
 copyright notice and credit the original author**.
@@ -16,7 +16,7 @@ the copyright notice and third-party component licenses.
 
 Most options are set from the in-app Settings/Admin UI and stored server-side in
 `settings.json` (under the OS app-data folder, e.g. on Windows
-`%APPDATA%/Moonlight-Web/Moonlight-Web/settings.json`).
+`%APPDATA%/MoonlightWeb/MoonlightWeb/settings.json`).
 
 ### File-only options (edit `settings.json` directly, no UI)
 

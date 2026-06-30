@@ -1,5 +1,5 @@
 /*
- * Moonlight-Web — browser-based Sunshine/GameStream client.
+ * MoonlightWeb — browser-based Sunshine/GameStream client.
  * Copyright (C) 2026 Bruno Martin <brunoocto@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -43,7 +43,7 @@ public:
     /// POST /api/pin {"pin","name"} with Basic Auth. Fire-and-forget: result is
     /// logged. Targets https://127.0.0.1:<port>/api/pin (port = Sunshine HTTPS).
     void sendPin(const QString& pin, const QString& user, const QString& pass,
-                 const QString& deviceName = QStringLiteral("moonlight-web"),
+                 const QString& deviceName = QStringLiteral("moonlightweb"),
                  quint16 port = 47990);
 
 private:
