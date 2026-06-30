@@ -87,60 +87,42 @@ jobs:
         run: cmake --install build --prefix dist
 
       - name: Deploy Qt runtime
-        run: windeployqt --release dist/moonlight-web.exe
+        run: windeployqt --release dist/MoonlightWeb.exe
 
       - name: Bundle OpenSSL (arm64)
         if: matrix.arch == 'arm64'
         shell: pwsh
         run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/arm64-windows/bin/*.dll" dist/ -ErrorAction SilentlyContinue
 
-      - name: Archive
-        shell: pwsh
-        run: Compress-Archive -Path dist/* -DestinationPath "moonlight-web-windows-${{ matrix.arch }}.zip"
-
       # Interactive installer: stepped wizard (Internet authorization, Sunshine
-      # detection/silent-install + pairing, Desktop admin shortcut).
+      # detection/silent-install + pairing, Desktop admin shortcut). It is the
+      # only Windows artifact shipped (no raw zip).
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
 
       - name: Build installer (Inno Setup)
         shell: pwsh
-        # Same DNS/ACME secrets as the build: the installer writes them to a .env
-        # next to the exe so Internet Access works on the user's machine.
-        env:
-          MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
-          MW_PDNS_URL: ${{ secrets.MW_PDNS_URL }}
-          MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
-          MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
-          MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
+        # DNS/ACME secrets are compiled into MoonlightWeb.exe at build time, not
+        # passed to the installer — nothing on the user's machine carries them.
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             "/DSourceDir=$(Resolve-Path dist)" `
             "/DMyArch=${{ matrix.arch }}" `
-            "/DMwDomain=$env:MW_DOMAIN" `
-            "/DMwPdnsUrl=$env:MW_PDNS_URL" `
-            "/DMwPdnsToken=$env:MW_PDNS_TOKEN" `
-            "/DMwZerosslKid=$env:MW_ZEROSSL_EAB_KID" `
-            "/DMwZerosslHmac=$env:MW_ZEROSSL_EAB_HMAC" `
             "/O$(Get-Location)" `
             backend\installer\moonlight-web.iss
 
       # Downloadable on every run (incl. workflow_dispatch with no tag).
       - uses: actions/upload-artifact@v4
         with:
-          name: moonlight-web-windows-${{ matrix.arch }}
-          path: |
-            moonlight-web-windows-${{ matrix.arch }}.zip
-            moonlight-web-installer-win-${{ matrix.arch }}.exe
+          name: MoonlightWeb-windows-${{ matrix.arch }}
+          path: MoonlightWeb-installer-win-${{ matrix.arch }}.exe
 
       # Published to the GitHub Release only on a v* tag push.
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: |
-            moonlight-web-windows-${{ matrix.arch }}.zip
-            moonlight-web-installer-win-${{ matrix.arch }}.exe
+          files: MoonlightWeb-installer-win-${{ matrix.arch }}.exe
 
   # ── Linux x64 (AppImage) ─────────────────────────────────────────────────
   linux:
@@ -186,9 +168,9 @@ jobs:
       - name: Assemble AppDir
         run: |
           mkdir -p AppDir/usr/bin
-          cp build/moonlight-web AppDir/usr/bin/
+          cp build/MoonlightWeb AppDir/usr/bin/
           cp -r frontend AppDir/usr/bin/frontend
-          cp frontend/assets/icon-512.png AppDir/moonlight-web.png
+          cp frontend/assets/icon-512.png AppDir/MoonlightWeb.png
 
       - name: Build AppImage
         run: |
@@ -196,11 +178,11 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
-            -e build/moonlight-web \
+            -e build/MoonlightWeb \
             -d backend/packaging/moonlight-web.desktop \
-            -i AppDir/moonlight-web.png \
+            -i AppDir/MoonlightWeb.png \
             --plugin qt --output appimage
-          mv Moonlight-Web*.AppImage moonlight-web-linux-x64.AppImage
+          mv MoonlightWeb*.AppImage moonlight-web-linux-x64.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
@@ -256,15 +238,15 @@ jobs:
         run: |
           APP=MoonlightWeb.app
           mkdir -p "$APP/Contents/MacOS"
-          cp build/moonlight-web "$APP/Contents/MacOS/moonlight-web"
+          cp build/MoonlightWeb "$APP/Contents/MacOS/MoonlightWeb"
           cp -r frontend "$APP/Contents/MacOS/frontend"
           cat > "$APP/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
-            <key>CFBundleExecutable</key><string>moonlight-web</string>
+            <key>CFBundleExecutable</key><string>MoonlightWeb</string>
             <key>CFBundleIdentifier</key><string>com.moonlightweb.server</string>
-            <key>CFBundleName</key><string>Moonlight-Web</string>
+            <key>CFBundleName</key><string>MoonlightWeb</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>1.0.0</string>
           </dict></plist>

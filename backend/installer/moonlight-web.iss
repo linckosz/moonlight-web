@@ -1,8 +1,8 @@
 ; ===========================================================================
-;  Moonlight-Web — interactive Windows installer (Inno Setup 6).
+;  MoonlightWeb — interactive Windows installer (Inno Setup 6).
 ;
-;  Produces a stepped wizard (moonlight-web-installer-win-<arch>.exe) that:
-;    1. installs the app + a Start-Menu shortcut,
+;  Produces a stepped wizard (MoonlightWeb-installer-win-<arch>.exe) that:
+;    1. installs the app + Start-Menu shortcuts (app, admin page, uninstaller),
 ;    2. asks the user to authorize the Internet link (named public domain),
 ;    3. detects Sunshine and optionally installs it silently, collecting the
 ;       Sunshine username/password (default admin/admin),
@@ -10,9 +10,13 @@
 ;       Internet Access, auto-pair the local Sunshine via its REST API),
 ;    5. creates a Desktop shortcut to the admin page and opens it at the end.
 ;
+;  DNS/ACME secrets are NOT shipped with the installer: they are compiled into
+;  MoonlightWeb.exe at build time (CMake, from CI secrets). Nothing on the user's
+;  machine carries or can edit them.
+;
 ;  Build:
 ;    iscc backend\installer\moonlight-web.iss /DSourceDir=<staged-dist> [/DMyArch=x64]
-;  where <staged-dist> holds moonlight-web.exe + Qt runtime + frontend\ (the
+;  where <staged-dist> holds MoonlightWeb.exe + Qt runtime + frontend\ (the
 ;  output of `cmake --install` + windeployqt, see .github/workflows/release.yml).
 ; ===========================================================================
 
@@ -30,43 +34,24 @@
   #define SunshineUrl "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe"
 #endif
 
-#define MyAppName "Moonlight-Web"
+#define MyAppName "MoonlightWeb"
+#define MyAppExe "MoonlightWeb.exe"
 ; Provisional admin URL written before first launch. The server rewrites this
 ; Desktop shortcut on startup with the real HTTPS port / public domain.
 #ifndef AdminUrl
   #define AdminUrl "https://localhost/admin"
 #endif
 
-; DNS / ACME secrets embedded by CI (from repo secrets). Written as a .env next
-; to the exe at install time so the installed app can bring Internet Access up
-; (loadEnvFile() reads this .env before the compile-time embedded defaults).
-; Empty by default → LAN-only fallback for local builds without secrets.
-#ifndef MwDomain
-  #define MwDomain ""
-#endif
-#ifndef MwPdnsUrl
-  #define MwPdnsUrl ""
-#endif
-#ifndef MwPdnsToken
-  #define MwPdnsToken ""
-#endif
-#ifndef MwZerosslKid
-  #define MwZerosslKid ""
-#endif
-#ifndef MwZerosslHmac
-  #define MwZerosslHmac ""
-#endif
-
 [Setup]
 AppId={{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppPublisher=Moonlight-Web
+AppPublisher=MoonlightWeb
 AppPublisherURL=https://github.com/moonlight-stream/moonlight-web
-DefaultDirName={autopf}\Moonlight-Web
-DefaultGroupName=Moonlight-Web
+DefaultDirName={autopf}\MoonlightWeb
+DefaultGroupName=MoonlightWeb
 DisableProgramGroupPage=yes
-OutputBaseFilename=moonlight-web-installer-win-{#MyArch}
+OutputBaseFilename=MoonlightWeb-installer-win-{#MyArch}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -74,6 +59,9 @@ WizardStyle=modern
 ; Paths are relative to this .iss; PNG wizard images need Inno Setup 6.3+.
 SetupIconFile=..\..\frontend\assets\favicon.ico
 WizardSmallImageFile=..\..\frontend\assets\logo-512.png
+; Add/Remove Programs entry shows the app icon (embedded in the exe).
+UninstallDisplayIcon={app}\{#MyAppExe}
+UninstallDisplayName={#MyAppName}
 PrivilegesRequired=admin
 #if MyArch == "arm64"
 ArchitecturesInstallIn64BitMode=arm64
@@ -89,43 +77,45 @@ Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 
 [CustomMessages]
 ; --- English ---
-en.AutoStartTask=Start Moonlight-Web at logon (auto-restart)
+en.AutoStartTask=Start MoonlightWeb at logon
 en.InternetPageCaption=Internet Link
 en.InternetPageDesc=Allow access from the Internet?
-en.InternetPageBody=Moonlight-Web can publish a secure public link (e.g. https://a1b2c3d4.moonlightweb.top) to stream outside your local network.%n%nThis is done once the application is installed.
+en.InternetPageBody=MoonlightWeb can publish a secure public link (e.g. https://a1b2c3d4.moonlightweb.top) to stream outside your local network.%n%nThis is done once the application is installed.
 en.InternetPageOption=Allow the Internet link (recommended)
 en.SunshinePageCaption=Sunshine
 en.SunshinePageDesc=Sunshine streaming server
-en.SunshineInstallCheck=Install Sunshine automatically (silent)
-en.SunshineDetected=Sunshine is detected on this machine (Sunshine already installed).%nEnter its credentials to pair Moonlight-Web.
+en.SunshineInstallCheck=Install Sunshine automatically
+en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb.
 en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically, then set its credentials.
 en.SunshineUserLabel=Username
 en.SunshinePassLabel=Password
-en.SunshineCredsRequired=Please enter the Sunshine username and password so Moonlight-Web can pair automatically.
-en.RunApp=Launch Moonlight-Web
+en.SunshineCredsRequired=Please enter the Sunshine username and password so MoonlightWeb can pair automatically.
+en.RunApp=Launch MoonlightWeb
 en.RunAdmin=Open the admin page
 en.SunshineDownloadCaption=Downloading and installing Sunshine...
 en.SunshineDownloadFail=Failed to download Sunshine:
 en.SunshineLaunchFail=Could not start the Sunshine installer.
+en.AdminShortcut=MoonlightWeb Admin
 ; --- French ---
-fr.AutoStartTask=Démarrer Moonlight-Web à l'ouverture de session (relance auto)
+fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
 fr.InternetPageDesc=Autoriser l'accès depuis Internet ?
-fr.InternetPageBody=Moonlight-Web peut publier un lien public sécurisé (ex. https://a1b2c3d4.moonlightweb.top) pour streamer hors de votre réseau local.%n%nCette opération est effectuée une fois l'application installée.
+fr.InternetPageBody=MoonlightWeb peut publier un lien public sécurisé (ex. https://a1b2c3d4.moonlightweb.top) pour streamer hors de votre réseau local.%n%nCette opération est effectuée une fois l'application installée.
 fr.InternetPageOption=Autoriser le lien Internet (recommandé)
 fr.SunshinePageCaption=Sunshine
 fr.SunshinePageDesc=Serveur de streaming Sunshine
-fr.SunshineInstallCheck=Installer Sunshine automatiquement (silencieux)
-fr.SunshineDetected=Sunshine est détecté sur cette machine (Sunshine already installed).%nEntrez ses identifiants pour appairer Moonlight-Web.
+fr.SunshineInstallCheck=Installer Sunshine automatiquement
+fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nEntrez ses identifiants pour appairer MoonlightWeb.
 fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement, puis définissez ses identifiants.
 fr.SunshineUserLabel=Identifiant
 fr.SunshinePassLabel=Mot de passe
-fr.SunshineCredsRequired=Veuillez saisir l'identifiant et le mot de passe Sunshine pour que Moonlight-Web puisse appairer automatiquement.
-fr.RunApp=Lancer Moonlight-Web
+fr.SunshineCredsRequired=Veuillez saisir l'identifiant et le mot de passe Sunshine pour que MoonlightWeb puisse appairer automatiquement.
+fr.RunApp=Lancer MoonlightWeb
 fr.RunAdmin=Ouvrir la page admin
 fr.SunshineDownloadCaption=Téléchargement et installation de Sunshine...
 fr.SunshineDownloadFail=Échec du téléchargement de Sunshine :
 fr.SunshineLaunchFail=Impossible de lancer l'installeur Sunshine.
+fr.AdminShortcut=Administration MoonlightWeb
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -135,12 +125,14 @@ Name: "autostart"; Description: "{cm:AutoStartTask}"
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\Moonlight-Web"; Filename: "{app}\moonlight-web.exe"
-Name: "{group}\{cm:UninstallProgram,Moonlight-Web}"; Filename: "{uninstallexe}"
+; Start-Menu group: application (embedded exe icon), admin page (.url created in
+; [Code]) and the uninstaller. The admin .url is added by CurStepChanged.
+Name: "{group}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"
+Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 
 [Run]
 ; Launch the tray server so the admin page is reachable, then open it.
-Filename: "{app}\moonlight-web.exe"; Description: "{cm:RunApp}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExe}"; Description: "{cm:RunApp}"; Flags: nowait postinstall skipifsilent
 Filename: "{#AdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
 
 [Code]
@@ -308,11 +300,11 @@ var
   rc: Integer;
 begin
   user := GetEnv('USERDOMAIN') + '\' + GetEnv('USERNAME');
-  exePath := ExpandConstant('{app}\moonlight-web.exe');
+  exePath := ExpandConstant('{app}\{#MyAppExe}');
   xml :=
     '<?xml version="1.0" encoding="UTF-8"?>' + #13#10 +
     '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">' + #13#10 +
-    '  <RegistrationInfo><Author>Moonlight-Web</Author></RegistrationInfo>' + #13#10 +
+    '  <RegistrationInfo><Author>MoonlightWeb</Author></RegistrationInfo>' + #13#10 +
     '  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>' + user + '</UserId></LogonTrigger></Triggers>' + #13#10 +
     '  <Principals><Principal id="Author">' +
     '<UserId>' + user + '</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>' +
@@ -329,11 +321,11 @@ begin
     '</Task>' + #13#10;
   xmlPath := ExpandConstant('{tmp}\mw-task.xml');
   if SaveStringToFile(xmlPath, xml, False) then
-    Exec('schtasks.exe', '/Create /TN "Moonlight-Web" /XML "' + xmlPath + '" /F',
+    Exec('schtasks.exe', '/Create /TN "MoonlightWeb" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
-// --- Provisioning + desktop shortcut --------------------------------------
+// --- Provisioning + shortcuts ---------------------------------------------
 function JsonEscape(const s: String): String;
 begin
   Result := s;
@@ -341,23 +333,21 @@ begin
   StringChangeEx(Result, '"', '\"', True);
 end;
 
+// Write an admin-page .url internet shortcut (logo icon) at the given path.
+procedure WriteAdminShortcut(const path: String);
+begin
+  SaveStringToFile(path,
+    '[InternetShortcut]' + #13#10 +
+    'URL={#AdminUrl}' + #13#10 +
+    'IconFile=' + ExpandConstant('{app}\frontend\assets\favicon.ico') + #13#10 +
+    'IconIndex=0' + #13#10, False);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   json, internet, autopair: String;
-  shortcutPath, env: String;
 begin
   if CurStep <> ssPostInstall then Exit;
-
-  // DNS/ACME secrets → .env next to the exe so Internet Access can activate on
-  // this machine. Only written when CI passed the secrets via /D defines.
-  env := '';
-  if '{#MwDomain}' <> '' then env := env + 'MW_DOMAIN={#MwDomain}' + #13#10;
-  if '{#MwPdnsUrl}' <> '' then env := env + 'MW_PDNS_URL={#MwPdnsUrl}' + #13#10;
-  if '{#MwPdnsToken}' <> '' then env := env + 'MW_PDNS_TOKEN={#MwPdnsToken}' + #13#10;
-  if '{#MwZerosslKid}' <> '' then env := env + 'MW_ZEROSSL_EAB_KID={#MwZerosslKid}' + #13#10;
-  if '{#MwZerosslHmac}' <> '' then env := env + 'MW_ZEROSSL_EAB_HMAC={#MwZerosslHmac}' + #13#10;
-  if env <> '' then
-    SaveStringToFile(ExpandConstant('{app}\.env'), env, False);
 
   // provisioning.json — consumed and removed by the server on first run.
   if InternetPage.Values[0] then internet := 'true' else internet := 'false';
@@ -373,13 +363,13 @@ begin
     '}' + #13#10;
   SaveStringToFile(ExpandConstant('{app}\provisioning.json'), json, False);
 
-  // Provisional Desktop Internet shortcut (.url). The server rewrites it on
-  // startup with the real HTTPS port / public domain.
-  if WizardIsTaskSelected('desktopicon') then begin
-    shortcutPath := ExpandConstant('{autodesktop}\Moonlight-Web Admin.url');
-    SaveStringToFile(shortcutPath,
-      '[InternetShortcut]' + #13#10 + 'URL={#AdminUrl}' + #13#10, False);
-  end;
+  // Start-Menu admin shortcut (in the group folder created by [Icons]).
+  WriteAdminShortcut(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
+
+  // Provisional Desktop admin shortcut. The server rewrites it on startup with
+  // the real HTTPS port / public domain.
+  if WizardIsTaskSelected('desktopicon') then
+    WriteAdminShortcut(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
 
   // Auto-start at logon (relaunches on crash, keeps the tray icon).
   if WizardIsTaskSelected('autostart') then
@@ -391,11 +381,11 @@ var
   rc: Integer;
 begin
   if CurUninstallStep = usUninstall then begin
-    Exec('schtasks.exe', '/Delete /TN "Moonlight-Web" /F', '', SW_HIDE,
+    Exec('schtasks.exe', '/Delete /TN "MoonlightWeb" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
-    DeleteFile(ExpandConstant('{autodesktop}\Moonlight-Web Admin.url'));
+    DeleteFile(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
+    DeleteFile(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
     DeleteFile(ExpandConstant('{app}\provisioning.json'));
     DeleteFile(ExpandConstant('{app}\provisioning.consumed.json'));
-    DeleteFile(ExpandConstant('{app}\.env'));
   end;
 end;
