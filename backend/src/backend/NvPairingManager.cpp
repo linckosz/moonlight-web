@@ -397,6 +397,11 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
         clientPairingSecret.append(clientSecretData);
         clientPairingSecret.append(signMessage(clientSecretData));
 
+        Logger::debug(QString("Stage 4: clientpairingsecret len=%1 (secret=%2 sig=%3)")
+                          .arg(clientPairingSecret.size())
+                          .arg(clientSecretData.toHex().left(16))
+                          .arg(signMessage(clientSecretData).toHex().left(32)));
+
         QString secretRespXml = openConnection(
             "http", "pair",
             "devicename=roth&updateState=1&clientpairingsecret=" + clientPairingSecret.toHex(),
@@ -405,7 +410,9 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
         NvHTTP::verifyResponseStatus(secretRespXml);
 
         if (NvHTTP::getXmlString(secretRespXml, "paired") != "1") {
-            Logger::warning("Pairing stage #4 failed");
+            Logger::warning(QString("Pairing stage #4 failed — paired='%1', response='%2'")
+                                .arg(NvHTTP::getXmlString(secretRespXml, "paired"))
+                                .arg(secretRespXml));
             openConnection("http", "unpair", QString(), REQUEST_TIMEOUT_MS);
             return FAILED;
         }
