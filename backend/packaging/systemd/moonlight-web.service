@@ -20,7 +20,7 @@ StartLimitBurst=5
 [Service]
 Type=simple
 # Adjust the install path to where you deployed the binary + web assets.
-ExecStart=/opt/moonlight-web/moonlight-web
+ExecStart=/opt/moonlight-web/MoonlightWeb
 WorkingDirectory=/opt/moonlight-web
 
 # Marks this as a supervised launch: on an auto-restart, the instance must NOT

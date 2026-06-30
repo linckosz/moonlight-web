@@ -1,26 +1,26 @@
 {
-  "name": "Moonlight Web",
-  "short_name": "Moonlight Web",
-  "description": "Sunshine game streaming in the browser",
-  "start_url": "/",
-  "scope": "/",
-  "display": "fullscreen",
-  "display_override": ["fullscreen", "standalone"],
-  "orientation": "landscape",
-  "background_color": "#05080b",
-  "theme_color": "#05080b",
-  "icons": [
-    {
-      "src": "assets/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "assets/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ]
+    "name": "MoonlightWeb",
+    "short_name": "MoonlightWeb",
+    "description": "Sunshine game streaming in the browser",
+    "start_url": "/",
+    "scope": "/",
+    "display": "fullscreen",
+    "display_override": ["fullscreen", "standalone"],
+    "orientation": "landscape",
+    "background_color": "#05080b",
+    "theme_color": "#05080b",
+    "icons": [
+        {
+            "src": "assets/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "assets/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ]
 }

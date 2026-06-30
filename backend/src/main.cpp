@@ -174,7 +174,7 @@ static void writeAdminShortcut(const QString& url)
     if (!qEnvironmentVariableIsEmpty("MW_SERVICE")) return;
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
     if (desktop.isEmpty()) return;
-    QFile f(desktop + "/Moonlight-Web Admin.url");
+    QFile f(desktop + "/MoonlightWeb Admin.url");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
     f.close();

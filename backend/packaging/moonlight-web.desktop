@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Moonlight-Web
+Name=MoonlightWeb
 Comment=Sunshine streaming client for the browser
-Exec=moonlight-web
-Icon=moonlight-web
+Exec=MoonlightWeb
+Icon=MoonlightWeb
 Categories=Network;Game;
 Terminal=true

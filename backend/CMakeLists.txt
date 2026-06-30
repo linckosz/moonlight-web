@@ -155,8 +155,8 @@ add_executable(mw-server
     src/streaming/SignalingServer.cpp
 )
 
-# Ship the binary as "moonlight-web(.exe)" regardless of the CMake target name.
-set_target_properties(mw-server PROPERTIES OUTPUT_NAME moonlight-web)
+# Ship the binary as "MoonlightWeb(.exe)" regardless of the CMake target name.
+set_target_properties(mw-server PROPERTIES OUTPUT_NAME MoonlightWeb)
 
 # Windows release builds run windowless (no console): logs go to a file next to
 # the exe (see main.cpp). Debug keeps the console for development. WIN32_EXECUTABLE
@@ -166,6 +166,11 @@ if(WIN32)
     if(TARGET Qt6::EntryPoint)
         target_link_libraries(mw-server PRIVATE Qt6::EntryPoint)
     endif()
+    # Embed the app icon so Explorer / taskbar / shortcuts show the logo.
+    enable_language(RC)
+    set(MW_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../frontend/assets/favicon.ico")
+    configure_file(app_icon.rc.in "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc" @ONLY)
+    target_sources(mw-server PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app_icon.rc")
 endif()
 
 target_include_directories(mw-server PRIVATE

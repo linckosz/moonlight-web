@@ -1,0 +1,4 @@
+// MoonlightWeb application icon, embedded into the .exe so Explorer, the taskbar
+// and Start-Menu/Desktop shortcuts show the logo. Lowest resource id wins in
+// Explorer. Path injected by CMake (configure_file).
+1 ICON "@MW_ICON_PATH@"

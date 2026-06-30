@@ -20,11 +20,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/Moonlight-Web.app/Contents/MacOS/moonlight-web</string>
+        <string>/Applications/MoonlightWeb.app/Contents/MacOS/MoonlightWeb</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Applications/Moonlight-Web.app/Contents/MacOS</string>
+    <string>/Applications/MoonlightWeb.app/Contents/MacOS</string>
 
     <!-- Marks this as a supervised launch: on an auto-restart the instance must
          NOT steal a UPnP port mapping owned by another device. Only a manual

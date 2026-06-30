@@ -32,6 +32,16 @@ import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 
 export class AdminView {
+    // Backend statusJson "phase" values that mean activation is still running.
+    static IN_PROGRESS_PHASES = [
+        'starting',
+        'detecting_ip',
+        'registering_dns',
+        'checking_dns',
+        'issuing_certificate',
+        'configuring_ports',
+    ];
+
     constructor(container, onClose) {
         this.container = container;
         this.onClose = onClose || (() => {});
@@ -89,6 +99,9 @@ export class AdminView {
         this.render();
         this.bindEvents();
         this._startDnsPollingIfNeeded();
+        // Provisioning may have started Internet Access before the page opened;
+        // keep the loader live until the backend reaches a terminal phase.
+        if (this._activating) this._startPhasePolling();
         this._startSessionsPolling();
     }
 
@@ -117,6 +130,9 @@ export class AdminView {
             this._pendingRegistration = status.pending_registration || false;
             this._active = status.active || false;
             this._phase = status.phase || '';
+            // Show the activation checklist whenever the backend is mid-activation,
+            // even when it was triggered by first-run provisioning (not the toggle).
+            this._activating = AdminView.IN_PROGRESS_PHASES.includes(this._phase);
             this._lastError = status.last_error || '';
             // Auto-uncheck the toggle when the backend reports an error: an error
             // means the feature is not operational, so the checkbox must not look
@@ -1225,6 +1241,18 @@ export class AdminView {
                     this._phase = phase;
                     const loader = this.container.querySelector('#internet-activation');
                     if (loader) loader.innerHTML = this._renderActivationSteps();
+                }
+                // Terminal phase (success, give-up or waiting): close the loader and
+                // refresh the full view. Needed when activation was triggered by
+                // provisioning (no awaited enable call to finalize). An empty phase
+                // is treated as "not reported yet", never as terminal.
+                if (phase === 'active' || phase === 'error' || phase === 'pending') {
+                    this._stopPhasePolling();
+                    this._activating = false;
+                    await this._loadInternetState();
+                    this.render();
+                    this.bindEvents();
+                    if (this._pendingRegistration) this._startDnsPolling();
                 }
             } catch (_err) {
                 // Transient during activation (backend busy) — ignore and retry.
