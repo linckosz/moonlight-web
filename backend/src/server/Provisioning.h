@@ -44,6 +44,15 @@ namespace Provisioning {
 /// the file is absent. Sets `internet_access_enabled` in settings (the caller's
 /// existing auto-start path then brings Internet Access up) and pairs the local
 /// Sunshine via the GameStream protocol + Sunshine REST `/api/pin`.
-void applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers);
+///
+/// Returns true when a provisioning.json was found and applied — the caller then
+/// wires the asynchronous A-record step via setStepStatus() so the installer's
+/// live checklist can observe it.
+bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers);
+
+/// Update one provisioning step in `<AppData>/provisioning.status.json`, the file
+/// the installer polls to render its live checklist. Steps: "pairing", "arecord".
+/// States: "pending" | "running" | "done" | "failed" | "skipped".
+void setStepStatus(const QString& step, const QString& state);
 
 } // namespace Provisioning

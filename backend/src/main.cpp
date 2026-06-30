@@ -188,9 +188,20 @@ int main(int argc, char* argv[])
     QCoreApplication::setOrganizationName("MoonlightWeb");
 
     // The Windows release build is windowless (no console): capture Qt messages
-    // and default to a log file next to the executable. --log overrides the path.
+    // and default to a log file. --log overrides the path. The file lives in the
+    // per-user data dir (next to settings.json/cert), NOT next to the exe: an
+    // admin install under Program Files is not writable by the user session, so
+    // a log there would silently fail to open. Platform paths:
+    //   Windows: %AppData%\MoonlightWeb\MoonlightWeb\logs
+    //   macOS:   ~/Library/Application Support/MoonlightWeb/MoonlightWeb/logs
+    //   Linux:   ~/.local/share/MoonlightWeb/MoonlightWeb/logs
     qInstallMessageHandler(mwMessageHandler);
-    Logger::instance()->setLogFile(QCoreApplication::applicationDirPath() + "/moonlightweb.log");
+    {
+        const QString logDir =
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
+        QDir().mkpath(logDir);
+        Logger::instance()->setLogFile(logDir + "/moonlightweb.log");
+    }
 
     // Load .env file before anything reads environment variables, then fall back
     // to any values baked in at build time (CI secrets) for vars still unset.
@@ -1487,16 +1498,29 @@ int main(int argc, char* argv[])
         return p == 443 ? QStringLiteral("https://localhost/admin")
                         : QStringLiteral("https://localhost:%1/admin").arg(p);
     };
-    // Refresh the shortcut to the valid-certificate domain link once it is ready.
-    QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
-                     [](const QString& domain, const QString&) {
-                         writeAdminShortcut("https://" + domain + "/admin");
-                     });
-
     // First-run provisioning written by the installer (authorize Internet
     // Access, pair the local Sunshine). Runs before the auto-start below so a
-    // freshly authorized instance brings Internet Access up immediately.
-    Provisioning::applyOnce(QCoreApplication::applicationDirPath(), appSettings, computerManager);
+    // freshly authorized instance brings Internet Access up immediately. When it
+    // applied a provisioning.json, the installer is polling its status file: feed
+    // the asynchronous A-record (domain ready) step into the live checklist.
+    const bool provisioned = Provisioning::applyOnce(QCoreApplication::applicationDirPath(),
+                                                     appSettings, computerManager);
+
+    // Refresh the shortcut to the valid-certificate domain link once it is ready,
+    // and (during a fresh install) mark the A-record checklist step done.
+    QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
+                     [provisioned](const QString& domain, const QString&) {
+                         writeAdminShortcut("https://" + domain + "/admin");
+                         if (provisioned)
+                             Provisioning::setStepStatus(QStringLiteral("arecord"),
+                                                         QStringLiteral("done"));
+                     });
+    if (provisioned)
+        QObject::connect(&internetAccess, &InternetAccessManager::error, &app,
+                         [](const QString&) {
+                             Provisioning::setStepStatus(QStringLiteral("arecord"),
+                                                         QStringLiteral("failed"));
+                         });
 
     // Auto-start Internet Access if it was enabled before last shutdown.
     // This handles DNS registration + public IP detection at boot without
@@ -1508,6 +1532,13 @@ int main(int argc, char* argv[])
         qInfo() << "[main] auto-start completed — active:" << internetAccess.isActive()
                 << "domain:" << st.value("domain").toString()
                 << "lastError:" << st.value("last_error").toString();
+        // start() may resolve synchronously (no 'ready' signal emitted): reflect
+        // the final A-record state into the installer checklist either way.
+        if (provisioned)
+            Provisioning::setStepStatus(QStringLiteral("arecord"),
+                                        internetAccess.isActive()
+                                            ? QStringLiteral("done")
+                                            : QStringLiteral("failed"));
     }
 
     // Write the Desktop admin shortcut with the best URL known at this point.
