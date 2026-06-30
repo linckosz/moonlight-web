@@ -23,6 +23,7 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QSslCertificate>
+#include <QSslSocket>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QDateTime>
@@ -230,6 +231,26 @@ int main(int argc, char* argv[])
 
     Logger::info("MoonlightWeb server starting...");
     Logger::info("Version: " + QCoreApplication::applicationVersion());
+
+    // Force Qt's TLS backend to OpenSSL. On Windows Qt defaults to Schannel,
+    // which cannot import the public ACME cert's PEM private key — handshakes on
+    // the public domain fail with SEC_E_CERT_UNKNOWN (0x80090327) and the browser
+    // ends up served the LAN self-signed cert (no public-domain SAN), yielding
+    // ERR_CERT_COMMON_NAME_INVALID. The OpenSSL plugin + libssl/libcrypto DLLs are
+    // shipped next to the exe (CMakeLists), so the PEM cert/key load reliably.
+    // Must run before any QSslSocket use locks the active backend.
+    if (QSslSocket::activeBackend() != QStringLiteral("openssl")) {
+        if (QSslSocket::availableBackends().contains(QStringLiteral("openssl"))) {
+            if (QSslSocket::setActiveBackend(QStringLiteral("openssl")))
+                Logger::info("Qt TLS backend set to OpenSSL");
+            else
+                Logger::warning("Failed to set Qt TLS backend to OpenSSL — using " +
+                                QSslSocket::activeBackend());
+        } else {
+            Logger::warning("OpenSSL TLS backend unavailable (plugin/DLLs missing) — "
+                            "using " + QSslSocket::activeBackend());
+        }
+    }
 
     // Read HTTP/HTTPS port preferences from persisted settings.
     // CLI --port overrides the persisted HTTP port when explicitly provided.
