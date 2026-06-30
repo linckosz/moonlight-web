@@ -148,13 +148,13 @@ jobs:
             backend\installer\moonlightweb.iss
 
       # Downloadable on every run (incl. workflow_dispatch with no tag).
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: MoonlightWeb-windows-${{ matrix.arch }}
           path: MoonlightWeb-installer-win-${{ matrix.arch }}.exe
 
       # Published to the GitHub Release only on a v* tag push.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: MoonlightWeb-installer-win-${{ matrix.arch }}.exe
@@ -221,12 +221,12 @@ jobs:
             --plugin qt --output appimage
           mv MoonlightWeb*.AppImage moonlightweb-linux-x64.AppImage
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: moonlightweb-linux-x64
           path: moonlightweb-linux-x64.AppImage
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: moonlightweb-linux-x64.AppImage
@@ -296,12 +296,12 @@ jobs:
           macdeployqt MoonlightWeb.app -dmg
           mv MoonlightWeb.dmg moonlightweb-macos-arm64.dmg
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: moonlightweb-macos-arm64
           path: moonlightweb-macos-arm64.dmg
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: moonlightweb-macos-arm64.dmg

@@ -46,7 +46,7 @@ jobs:
         run: cmake --build backend/build/asan -j
 
       - name: Upload ASan binary
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: moonlightweb-asan
           path: backend/build/asan/MoonlightWeb.exe
