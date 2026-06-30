@@ -100,4 +100,4 @@ backend/build_output.txt
 backend/tmp_build_test.txt
 backend/src/server/file_list.txt
 backend/src/tmp_list.txt
-backend/src/streaming/list_files.sh
+backend/src/streaming/list_files.shbackend/installer/MoonlightWeb/

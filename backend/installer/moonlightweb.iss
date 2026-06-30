@@ -131,7 +131,7 @@ fr.TaskArecord=Publier l'adresse Internet sécurisée
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-Name: "autostart"; Description: "{cm:AutoStartTask}"
+Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -244,26 +244,40 @@ begin
   ProgressPage := CreateOutputProgressPage(
     ExpandConstant('{cm:ProvisionPageCaption}'), ExpandConstant('{cm:ProvisionPageDesc}'));
 
+  // Header (Msg1Label, fed via SetText): let it wrap so the full sentence shows
+  // instead of being clipped, and reserve vertical space above the checklist.
+  ProgressPage.Msg1Label.AutoSize := False;
+  ProgressPage.Msg1Label.WordWrap := True;
+  ProgressPage.Msg1Label.Width := ProgressPage.SurfaceWidth;
+  ProgressPage.Msg1Label.Top := ScaleY(0);
+  ProgressPage.Msg1Label.Height := ScaleY(34);
+
   LblSunshine := TNewStaticText.Create(WizardForm);
   LblSunshine.Parent := ProgressPage.Surface;
-  LblSunshine.Top := ScaleY(8);
+  LblSunshine.Top := ScaleY(44);
   LblSunshine.Width := ProgressPage.SurfaceWidth;
   LblSunshine.Font.Name := 'Consolas';
   LblSunshine.Font.Size := 10;
 
   LblPairing := TNewStaticText.Create(WizardForm);
   LblPairing.Parent := ProgressPage.Surface;
-  LblPairing.Top := ScaleY(30);
+  LblPairing.Top := ScaleY(68);
   LblPairing.Width := ProgressPage.SurfaceWidth;
   LblPairing.Font.Name := 'Consolas';
   LblPairing.Font.Size := 10;
 
   LblArecord := TNewStaticText.Create(WizardForm);
   LblArecord.Parent := ProgressPage.Surface;
-  LblArecord.Top := ScaleY(52);
+  LblArecord.Top := ScaleY(92);
   LblArecord.Width := ProgressPage.SurfaceWidth;
   LblArecord.Font.Name := 'Consolas';
   LblArecord.Font.Size := 10;
+
+  // Progress bar below the checklist (not overlapping it), with the secondary
+  // message under the bar. Without this the bar sits on top of the labels.
+  ProgressPage.ProgressBar.Top := ScaleY(124);
+  ProgressPage.ProgressBar.Width := ProgressPage.SurfaceWidth;
+  ProgressPage.Msg2Label.Top := ScaleY(150);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

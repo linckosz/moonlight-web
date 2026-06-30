@@ -57,6 +57,21 @@ if exist "%BUILD_DIR%\libssl-3-x64.dll" (
     echo WARNING: libssl-3-x64.dll not found in build dir
 )
 
+REM Step 3b: Force-deploy the Qt OpenSSL TLS backend plugin. windeployqt ships
+REM only schannel/certonly; without qopensslbackend.dll the OpenSSL backend is
+REM unavailable and Qt falls back to Schannel, which cannot load the public ACME
+REM PEM key (browser then served the self-signed cert -> CN/SAN mismatch). See
+REM the QSslSocket::setActiveBackend("openssl") call in main.cpp.
+echo [3b] Copying Qt OpenSSL TLS plugin...
+for /f "delims=" %%I in ('where windeployqt') do set "WDQ_DIR=%%~dpI"
+if exist "%WDQ_DIR%..\plugins\tls\qopensslbackend.dll" (
+    if not exist "%DEPLOY_DIR%\tls" mkdir "%DEPLOY_DIR%\tls"
+    copy "%WDQ_DIR%..\plugins\tls\qopensslbackend.dll" "%DEPLOY_DIR%\tls\" > nul
+    echo   + qopensslbackend.dll
+) else (
+    echo WARNING: qopensslbackend.dll not found near windeployqt
+)
+
 REM Step 4: Copy frontend directory
 echo [4/4] Copying frontend...
 xcopy /e /i /q "%FRONTEND_DIR%" "%DEPLOY_DIR%\frontend\" > nul

@@ -124,6 +124,19 @@ jobs:
       - name: Deploy Qt runtime
         run: windeployqt --release dist/MoonlightWeb.exe
 
+      # windeployqt ships only the schannel/certonly TLS backends. Force-copy the
+      # OpenSSL backend plugin so QSslSocket::setActiveBackend("openssl") (main.cpp)
+      # succeeds; otherwise Qt falls back to Schannel, which cannot load the public
+      # ACME PEM key and the browser is served the self-signed cert (CN/SAN error).
+      - name: Deploy Qt OpenSSL TLS plugin
+        shell: pwsh
+        run: |
+          $wdq = (Get-Command windeployqt).Source
+          $tlsSrc = Join-Path (Split-Path (Split-Path $wdq)) "plugins\tls\qopensslbackend.dll"
+          New-Item -ItemType Directory -Force -Path dist\tls | Out-Null
+          Copy-Item $tlsSrc dist\tls\qopensslbackend.dll -Force
+          Write-Host "Deployed $tlsSrc"
+
       - name: Bundle OpenSSL (arm64)
         if: matrix.arch == 'arm64'
         shell: pwsh
