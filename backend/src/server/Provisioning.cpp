@@ -89,7 +89,14 @@ static bool pairLocalSunshine(ComputerManager& computers, const QString& user, c
         return false;
     }
     const QString pin = startResult.value(QStringLiteral("pin")).toString();
-    const quint16 restPort = (host && host->activeHttpsPort > 0) ? host->activeHttpsPort : 47990;
+    // Sunshine's REST config API ("/api/pin", HTTP basic-auth web UI) listens on
+    // the base port + 1 (47990 by default). This is NOT the GameStream HTTPS port
+    // kept in activeHttpsPort, which does not serve /api/pin and drops the
+    // connection ("Connection closed"). Derive it from the host's base HTTP port.
+    quint16 basePort = MW_HTTP_PORT;
+    if (host && host->manualAddress.port() > 0)
+        basePort = host->manualAddress.port();
+    const quint16 restPort = basePort + 1;
 
     // handleSubmitPin() blocks on getservercert (a nested Qt event loop) until
     // Sunshine receives the PIN. Schedule the REST push so it fires *during*

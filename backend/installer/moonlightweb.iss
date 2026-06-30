@@ -440,6 +440,21 @@ begin
   if (state = 'done') or (state = 'skipped') then Result := 1 else Result := 0;
 end;
 
+// Right-pad to a fixed width so the percentage column stays aligned (monospace).
+function PadRight(const s: String; n: Integer): String;
+begin
+  Result := s;
+  while Length(Result) < n do Result := Result + ' ';
+end;
+
+// Percentage shown right of the glyph. Blank for skipped/failed (the glyph
+// already says so); a live "NN%" while running; "100%" once done.
+function StepPercent(const state: String; pct: Integer): String;
+begin
+  if (state = 'skipped') or (state = 'failed') then Result := ''
+  else Result := IntToStr(pct) + '%';
+end;
+
 // Extract "<key>":"<value>" from the backend's compact provisioning.status.json.
 function StatusValue(const content, key: String): String;
 var
@@ -462,7 +477,10 @@ procedure RunProvisionChecklist();
 var
   statusPath, content, ps, ar, spin: String;
   raw: AnsiString; // LoadStringFromFile requires an AnsiString out-param.
-  i, rc, done: Integer;
+  i, rc: Integer;
+  pctSun, pctPair, pctAr, itSun, itPair, itAr: Integer;
+  prevSun, prevPair, prevAr: String;
+  holdDone: Boolean;
 begin
   // Start the windowless tray server now so provisioning.json is consumed and
   // pairing + A-record run. ewNoWait: it keeps running after setup exits.
@@ -478,9 +496,11 @@ begin
 
   ProgressPage.SetText(ExpandConstant('{cm:ProvisionWorking}'), '');
   ProgressPage.Show;
+  itSun := 0; itPair := 0; itAr := 0;
+  prevSun := ''; prevPair := ''; prevAr := '';
   try
-    // ~60s budget (200 * 300ms); the A-record may still finalize afterwards.
-    for i := 0 to 200 do begin
+    // ~90s budget (300 * 300ms); the A-record may still finalize afterwards.
+    for i := 0 to 300 do begin
       ps := ''; ar := '';
       if LoadStringFromFile(statusPath, raw) then begin
         content := raw; // implicit AnsiString -> String (Unicode Inno)
@@ -488,15 +508,40 @@ begin
         ar := StatusValue(content, 'arecord');
       end;
       spin := SpinChar(i);
-      LblSunshine.Caption := StepGlyph(SunshineStepState, spin) + '   ' + ExpandConstant('{cm:TaskSunshine}');
-      LblPairing.Caption  := StepGlyph(ps, spin) + '   ' + ExpandConstant('{cm:TaskPairing}');
-      LblArecord.Caption  := StepGlyph(ar, spin) + '   ' + ExpandConstant('{cm:TaskArecord}');
 
-      done := CountDone(SunshineStepState) + CountDone(ps) + CountDone(ar);
-      ProgressPage.SetProgress(done, 3);
+      // Pseudo-progress: climb ~1%/300ms while a task runs (capped at 95), then
+      // snap to 100 on done. Gives the long A-record/ACME step visible movement
+      // instead of a spinner that looks frozen.
+      if SunshineStepState = 'done' then pctSun := 100
+      else if IsTerminal(SunshineStepState) then pctSun := 0
+      else begin itSun := itSun + 1; pctSun := itSun; if pctSun > 95 then pctSun := 95; end;
 
-      if IsTerminal(SunshineStepState) and IsTerminal(ps) and IsTerminal(ar) then Break;
-      Sleep(300);
+      if ps = 'done' then pctPair := 100
+      else if IsTerminal(ps) then pctPair := 0
+      else begin itPair := itPair + 1; pctPair := itPair; if pctPair > 95 then pctPair := 95; end;
+
+      if ar = 'done' then pctAr := 100
+      else if IsTerminal(ar) then pctAr := 0
+      else begin itAr := itAr + 1; pctAr := itAr; if pctAr > 95 then pctAr := 95; end;
+
+      LblSunshine.Caption := StepGlyph(SunshineStepState, spin) + ' ' + PadRight(StepPercent(SunshineStepState, pctSun), 6) + ExpandConstant('{cm:TaskSunshine}');
+      LblPairing.Caption  := StepGlyph(ps, spin) + ' ' + PadRight(StepPercent(ps, pctPair), 6) + ExpandConstant('{cm:TaskPairing}');
+      LblArecord.Caption  := StepGlyph(ar, spin) + ' ' + PadRight(StepPercent(ar, pctAr), 6) + ExpandConstant('{cm:TaskArecord}');
+
+      // Smooth overall bar driven by the three pseudo-percentages (max 300).
+      ProgressPage.SetProgress(pctSun + pctPair + pctAr, 300);
+
+      // When a task has just turned [OK], pause 1s so the user registers it.
+      holdDone := ((SunshineStepState = 'done') and (prevSun <> 'done'))
+               or ((ps = 'done') and (prevPair <> 'done'))
+               or ((ar = 'done') and (prevAr <> 'done'));
+      prevSun := SunshineStepState; prevPair := ps; prevAr := ar;
+
+      if IsTerminal(SunshineStepState) and IsTerminal(ps) and IsTerminal(ar) then begin
+        if holdDone then Sleep(1000);
+        Break;
+      end;
+      if holdDone then Sleep(1000) else Sleep(300);
     end;
   finally
     ProgressPage.Hide;
@@ -545,7 +590,14 @@ var
   rc: Integer;
 begin
   if CurUninstallStep = usUninstall then begin
+    // Stop the running server first: remove the logon task (so it cannot be
+    // relaunched), end any task-started instance, then force-kill the tray
+    // process. Otherwise MoonlightWeb.exe keeps running and locks {app} files.
+    Exec('schtasks.exe', '/End /TN "MoonlightWeb"', '', SW_HIDE,
+         ewWaitUntilTerminated, rc);
     Exec('schtasks.exe', '/Delete /TN "MoonlightWeb" /F', '', SW_HIDE,
+         ewWaitUntilTerminated, rc);
+    Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     DeleteFile(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
     DeleteFile(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
