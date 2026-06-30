@@ -96,6 +96,12 @@ en.SunshineDownloadCaption=Downloading and installing Sunshine...
 en.SunshineDownloadFail=Failed to download Sunshine:
 en.SunshineLaunchFail=Could not start the Sunshine installer.
 en.AdminShortcut=MoonlightWeb Admin
+en.ProvisionPageCaption=Setting up MoonlightWeb
+en.ProvisionPageDesc=Finalizing the installation
+en.ProvisionWorking=Please wait while MoonlightWeb finishes setting up...
+en.TaskSunshine=Install the Sunshine streaming server
+en.TaskPairing=Pair the local Sunshine
+en.TaskArecord=Publish the secure Internet address
 ; --- French ---
 fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
@@ -116,6 +122,12 @@ fr.SunshineDownloadCaption=Téléchargement et installation de Sunshine...
 fr.SunshineDownloadFail=Échec du téléchargement de Sunshine :
 fr.SunshineLaunchFail=Impossible de lancer l'installeur Sunshine.
 fr.AdminShortcut=Administration MoonlightWeb
+fr.ProvisionPageCaption=Configuration de MoonlightWeb
+fr.ProvisionPageDesc=Finalisation de l'installation
+fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de MoonlightWeb...
+fr.TaskSunshine=Installer le serveur de streaming Sunshine
+fr.TaskPairing=Appairer le Sunshine local
+fr.TaskArecord=Publier l'adresse Internet sécurisée
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -131,8 +143,8 @@ Name: "{group}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"
 Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 
 [Run]
-; Launch the tray server so the admin page is reachable, then open it.
-Filename: "{app}\{#MyAppExe}"; Description: "{cm:RunApp}"; Flags: nowait postinstall skipifsilent
+; The tray server is already launched during the provisioning checklist (see
+; RunProvisionChecklist in [Code]); only offer to open the admin page here.
 Filename: "{#AdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
 
 [Code]
@@ -147,6 +159,12 @@ var
   SunshineStatusLabel: TNewStaticText;
   SunshineDetected: Boolean;
   SunshineExePath: String;
+  // Live post-install checklist (Sunshine / pairing / A-record).
+  ProgressPage: TOutputProgressWizardPage;
+  LblSunshine: TNewStaticText;
+  LblPairing: TNewStaticText;
+  LblArecord: TNewStaticText;
+  SunshineStepState: String;
 
 // --- Detection ------------------------------------------------------------
 function DetectSunshine(): Boolean;
@@ -218,6 +236,34 @@ begin
   SunshinePassEdit.Left := ScaleX(200);
   SunshinePassEdit.Width := ScaleX(180);
   SunshinePassEdit.PasswordChar := '*';
+
+  // Live checklist shown during post-install (driven in RunProvisionChecklist).
+  // Default each task to "skipped"; PrepareToInstall / the backend status file
+  // promote them to running/done/failed.
+  SunshineStepState := 'skipped';
+  ProgressPage := CreateOutputProgressPage(
+    ExpandConstant('{cm:ProvisionPageCaption}'), ExpandConstant('{cm:ProvisionPageDesc}'));
+
+  LblSunshine := TNewStaticText.Create(WizardForm);
+  LblSunshine.Parent := ProgressPage.Surface;
+  LblSunshine.Top := ScaleY(8);
+  LblSunshine.Width := ProgressPage.SurfaceWidth;
+  LblSunshine.Font.Name := 'Consolas';
+  LblSunshine.Font.Size := 10;
+
+  LblPairing := TNewStaticText.Create(WizardForm);
+  LblPairing.Parent := ProgressPage.Surface;
+  LblPairing.Top := ScaleY(30);
+  LblPairing.Width := ProgressPage.SurfaceWidth;
+  LblPairing.Font.Name := 'Consolas';
+  LblPairing.Font.Size := 10;
+
+  LblArecord := TNewStaticText.Create(WizardForm);
+  LblArecord.Parent := ProgressPage.Surface;
+  LblArecord.Top := ScaleY(52);
+  LblArecord.Width := ProgressPage.SurfaceWidth;
+  LblArecord.Font.Name := 'Consolas';
+  LblArecord.Font.Size := 10;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -265,7 +311,12 @@ var
   rc: Integer;
 begin
   Result := '';
-  if (SunshinePage = nil) or (not SunshineInstallCheck.Checked) then Exit;
+  if (SunshinePage = nil) or (not SunshineInstallCheck.Checked) then begin
+    // Not installing: either Sunshine is already present (done) or the user
+    // declined it (skipped — keep the default).
+    if SunshineDetected then SunshineStepState := 'done';
+    Exit;
+  end;
 
   DownloadPage := CreateDownloadPage(ExpandConstant('{cm:SunshinePageCaption}'),
     ExpandConstant('{cm:SunshineDownloadCaption}'), nil);
@@ -288,6 +339,7 @@ begin
     if DetectSunshine() then
       Exec(SunshineExePath, '--creds ' + SunshineUserEdit.Text + ' ' + SunshinePassEdit.Text,
            '', SW_HIDE, ewWaitUntilTerminated, rc);
+    SunshineStepState := 'done';
   finally
     DownloadPage.Hide;
   end;
@@ -343,6 +395,98 @@ begin
     'IconIndex=0' + #13#10, False);
 end;
 
+// --- Live provisioning checklist ------------------------------------------
+function SpinChar(i: Integer): String;
+begin
+  case (i mod 4) of
+    0: Result := '|';
+    1: Result := '/';
+    2: Result := '-';
+  else Result := '\';
+  end;
+end;
+
+// Glyph shown left of each task: animated spinner while running, terminal marks
+// otherwise. Monospace font keeps the labels aligned.
+function StepGlyph(const state, spin: String): String;
+begin
+  if state = 'done' then Result := '[OK]'
+  else if state = 'failed' then Result := '[!!]'
+  else if state = 'skipped' then Result := '[--]'
+  else Result := '[' + spin + ' ]';
+end;
+
+function IsTerminal(const state: String): Boolean;
+begin
+  Result := (state = 'done') or (state = 'failed') or (state = 'skipped');
+end;
+
+function CountDone(const state: String): Integer;
+begin
+  if (state = 'done') or (state = 'skipped') then Result := 1 else Result := 0;
+end;
+
+// Extract "<key>":"<value>" from the backend's compact provisioning.status.json.
+function StatusValue(const content, key: String): String;
+var
+  p, q: Integer;
+  pat: String;
+begin
+  Result := '';
+  pat := '"' + key + '":"';
+  p := Pos(pat, content);
+  if p = 0 then Exit;
+  p := p + Length(pat);
+  q := p;
+  while (q <= Length(content)) and (content[q] <> '"') do Inc(q);
+  Result := Copy(content, p, q - p);
+end;
+
+// Launch the server (kicks off first-run provisioning) and poll its status file,
+// driving the on-screen checklist until every task is terminal or it times out.
+procedure RunProvisionChecklist();
+var
+  statusPath, content, ps, ar, spin: String;
+  i, rc, done: Integer;
+begin
+  // Start the windowless tray server now so provisioning.json is consumed and
+  // pairing + A-record run. ewNoWait: it keeps running after setup exits.
+  Exec(ExpandConstant('{app}\{#MyAppExe}'), '', ExpandConstant('{app}'),
+       SW_HIDE, ewNoWait, rc);
+
+  // Silent installs have no UI to drive; the server still provisions in the
+  // background.
+  if WizardSilent then Exit;
+
+  // Qt AppDataLocation on Windows: %AppData%\<Org>\<App> = MoonlightWeb\MoonlightWeb.
+  statusPath := ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json');
+
+  ProgressPage.SetText(ExpandConstant('{cm:ProvisionWorking}'), '');
+  ProgressPage.Show;
+  try
+    // ~60s budget (200 * 300ms); the A-record may still finalize afterwards.
+    for i := 0 to 200 do begin
+      ps := ''; ar := '';
+      if LoadStringFromFile(statusPath, content) then begin
+        ps := StatusValue(content, 'pairing');
+        ar := StatusValue(content, 'arecord');
+      end;
+      spin := SpinChar(i);
+      LblSunshine.Caption := StepGlyph(SunshineStepState, spin) + '   ' + ExpandConstant('{cm:TaskSunshine}');
+      LblPairing.Caption  := StepGlyph(ps, spin) + '   ' + ExpandConstant('{cm:TaskPairing}');
+      LblArecord.Caption  := StepGlyph(ar, spin) + '   ' + ExpandConstant('{cm:TaskArecord}');
+
+      done := CountDone(SunshineStepState) + CountDone(ps) + CountDone(ar);
+      ProgressPage.SetProgress(done, 3);
+
+      if IsTerminal(SunshineStepState) and IsTerminal(ps) and IsTerminal(ar) then Break;
+      Sleep(300);
+    end;
+  finally
+    ProgressPage.Hide;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   json, internet, autopair: String;
@@ -374,6 +518,10 @@ begin
   // Auto-start at logon (relaunches on crash, keeps the tray icon).
   if WizardIsTaskSelected('autostart') then
     RegisterLogonTask();
+
+  // Launch the server and show the live checklist (Sunshine / pairing / A-record)
+  // while first-run provisioning completes.
+  RunProvisionChecklist();
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -387,5 +535,6 @@ begin
     DeleteFile(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
     DeleteFile(ExpandConstant('{app}\provisioning.json'));
     DeleteFile(ExpandConstant('{app}\provisioning.consumed.json'));
+    DeleteFile(ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json'));
   end;
 end;

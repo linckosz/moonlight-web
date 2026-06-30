@@ -23,41 +23,70 @@
 #include "../backend/SunshineRestClient.h"
 #include "../common/Logger.h"
 
+#include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStandardPaths>
 #include <QTimer>
 
 namespace Provisioning {
 
+// Live checklist the Windows installer polls during its post-install page. Lives
+// in the per-user data dir (writable; next to settings.json), NOT next to the
+// exe (Program Files is read-only for the user session).
+void setStepStatus(const QString& step, const QString& state)
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/provisioning.status.json");
+
+    QJsonObject root;
+    QFile f(path);
+    if (f.open(QIODevice::ReadOnly)) {
+        root = QJsonDocument::fromJson(f.readAll()).object();
+        f.close();
+    }
+    QJsonObject steps = root.value(QStringLiteral("steps")).toObject();
+    steps[step] = state;
+    root[QStringLiteral("steps")] = steps;
+    root[QStringLiteral("updated")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+        f.close();
+    }
+}
+
 // Pair the local Sunshine over the GameStream protocol while feeding the PIN
 // through Sunshine's REST API (no manual entry in Sunshine's web UI).
-static void pairLocalSunshine(ComputerManager& computers, const QString& user, const QString& pass)
+static bool pairLocalSunshine(ComputerManager& computers, const QString& user, const QString& pass)
 {
     auto [addStatus, addResult] = computers.handleAddManualHost(QStringLiteral("127.0.0.1"));
     if (addStatus != 200) {
         Logger::warning(QStringLiteral("Provisioning: cannot reach local Sunshine: %1")
                             .arg(addResult.value(QStringLiteral("message")).toString()));
-        return;
+        return false;
     }
 
     const QJsonArray hosts = addResult.value(QStringLiteral("hosts")).toArray();
-    if (hosts.isEmpty()) return;
+    if (hosts.isEmpty()) return false;
     const QString uuid = hosts.first().toObject().value(QStringLiteral("uuid")).toString();
-    if (uuid.isEmpty()) return;
+    if (uuid.isEmpty()) return false;
 
     NvComputer* host = computers.getHost(uuid);
     if (host && host->pairState == NvComputer::PS_PAIRED) {
         Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
-        return;
+        return true;
     }
 
     auto [startStatus, startResult] = computers.handleStartPairing(uuid);
     if (startResult.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
         Logger::warning(QStringLiteral("Provisioning: pairing could not start: %1")
                             .arg(startResult.value(QStringLiteral("message")).toString()));
-        return;
+        return false;
     }
     const QString pin = startResult.value(QStringLiteral("pin")).toString();
     const quint16 restPort = (host && host->activeHttpsPort > 0) ? host->activeHttpsPort : 47990;
@@ -72,19 +101,23 @@ static void pairLocalSunshine(ComputerManager& computers, const QString& user, c
     });
 
     auto [submitStatus, submitResult] = computers.handleSubmitPin(uuid);
+    const QString state = submitResult.value(QStringLiteral("status")).toString();
     Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1 (%2)")
-                     .arg(submitResult.value(QStringLiteral("status")).toString(),
-                          submitResult.value(QStringLiteral("message")).toString()));
+                     .arg(state, submitResult.value(QStringLiteral("message")).toString()));
+
+    NvComputer* paired = computers.getHost(uuid);
+    return (paired && paired->pairState == NvComputer::PS_PAIRED)
+           || state == QLatin1String("paired");
 }
 
-void applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers)
+bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers)
 {
     const QString path = exeDir + QStringLiteral("/provisioning.json");
     QFile file(path);
-    if (!file.exists()) return;
+    if (!file.exists()) return false;
     if (!file.open(QIODevice::ReadOnly)) {
         Logger::warning(QStringLiteral("Provisioning: cannot read %1").arg(path));
-        return;
+        return false;
     }
 
     QJsonObject obj = QJsonDocument::fromJson(file.readAll()).object();
@@ -92,18 +125,31 @@ void applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
 
     Logger::info(QStringLiteral("Provisioning: applying %1").arg(path));
 
+    const bool internet = obj.value(QStringLiteral("internet_access_authorized")).toBool();
+    const QJsonObject sun = obj.value(QStringLiteral("sunshine")).toObject();
+    const bool autoPair = sun.value(QStringLiteral("auto_pair")).toBool();
+
+    // Seed the live checklist up front so the installer renders the full task
+    // list immediately. The A-record completes asynchronously (see main.cpp);
+    // pairing resolves synchronously below.
+    setStepStatus(QStringLiteral("pairing"), autoPair ? QStringLiteral("running")
+                                                      : QStringLiteral("skipped"));
+    setStepStatus(QStringLiteral("arecord"), internet ? QStringLiteral("running")
+                                                       : QStringLiteral("skipped"));
+
     // Internet Access: just flip the persisted flag; main()'s existing
     // auto-start path brings the InternetAccessManager up after this returns.
-    if (obj.value(QStringLiteral("internet_access_authorized")).toBool()) {
+    if (internet) {
         settings.setInternetAccessEnabled(true);
         Logger::info(QStringLiteral("Provisioning: Internet Access authorized"));
     }
 
-    const QJsonObject sun = obj.value(QStringLiteral("sunshine")).toObject();
-    if (sun.value(QStringLiteral("auto_pair")).toBool()) {
+    if (autoPair) {
         const QString user = sun.value(QStringLiteral("username")).toString(QStringLiteral("admin"));
         const QString pass = sun.value(QStringLiteral("password")).toString(QStringLiteral("admin"));
-        pairLocalSunshine(computers, user, pass);
+        const bool ok = pairLocalSunshine(computers, user, pass);
+        setStepStatus(QStringLiteral("pairing"),
+                      ok ? QStringLiteral("done") : QStringLiteral("failed"));
     }
 
     // Consume: rewrite without the password, then remove the original so the
@@ -117,6 +163,7 @@ void applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
         consumed.close();
     }
     QFile::remove(path);
+    return true;
 }
 
 } // namespace Provisioning
