@@ -447,6 +447,7 @@ end;
 procedure RunProvisionChecklist();
 var
   statusPath, content, ps, ar, spin: String;
+  raw: AnsiString; // LoadStringFromFile requires an AnsiString out-param.
   i, rc, done: Integer;
 begin
   // Start the windowless tray server now so provisioning.json is consumed and
@@ -467,7 +468,8 @@ begin
     // ~60s budget (200 * 300ms); the A-record may still finalize afterwards.
     for i := 0 to 200 do begin
       ps := ''; ar := '';
-      if LoadStringFromFile(statusPath, content) then begin
+      if LoadStringFromFile(statusPath, raw) then begin
+        content := raw; // implicit AnsiString -> String (Unicode Inno)
         ps := StatusValue(content, 'pairing');
         ar := StatusValue(content, 'arecord');
       end;
