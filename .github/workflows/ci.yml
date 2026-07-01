@@ -11,12 +11,10 @@
 # is only spent on validated code.
 name: CI
 
-# CI paused: focusing on releases. Manual dispatch only — re-enable the
-# push/pull_request triggers below when returning to normal development.
 on:
-  # push:
-  #   branches: [main]
-  # pull_request:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 # Least-privilege token: this pipeline only reads the repo and writes artifacts.
