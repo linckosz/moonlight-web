@@ -262,9 +262,10 @@ void InternetAccessManager::start()
                         if (m_ServiceManaged) {
                             // Service auto-restart: never steal a mapping owned by another
                             // device — only a manual launch is allowed to take over.
-                            qWarning() << "[InternetAccess] Port" << port << protocol.c_str()
-                                       << "already mapped to" << existingClient.c_str() << ":"
-                                       << existingPort.c_str() << "— another device owns this mapping";
+                            qWarning()
+                                << "[InternetAccess] Port" << port << protocol.c_str()
+                                << "already mapped to" << existingClient.c_str() << ":"
+                                << existingPort.c_str() << "— another device owns this mapping";
                             m_LastError =
                                 QStringLiteral(
                                     "Port %1/%2 already forwarded to %3 on this router. "
@@ -277,8 +278,8 @@ void InternetAccessManager::start()
                         }
                         // Manual launch wins: evict the previous owner's mapping, then
                         // claim the port for this host (the last instance started wins).
-                        qInfo() << "[InternetAccess] Port" << port << protocol.c_str()
-                                << "owned by" << existingClient.c_str() << ":" << existingPort.c_str()
+                        qInfo() << "[InternetAccess] Port" << port << protocol.c_str() << "owned by"
+                                << existingClient.c_str() << ":" << existingPort.c_str()
                                 << "— taking over (manual launch)";
                         m_Upnp.removePortMapping(port, protocol);
                     } else {

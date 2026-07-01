@@ -281,7 +281,8 @@ static bool generateSelfSignedToFiles(const QString& certPath, const QString& ke
         QByteArray cn = commonName.toUtf8();
         X509_NAME* name = X509_get_subject_name(x509);
         X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                                   reinterpret_cast<const unsigned char*>(cn.constData()), -1, -1, 0);
+                                   reinterpret_cast<const unsigned char*>(cn.constData()), -1, -1,
+                                   0);
         X509_set_issuer_name(x509, name);
 
         // subjectAltName extension built from the SAN list.
