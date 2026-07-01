@@ -330,7 +330,9 @@ jobs:
   build-macos-arm64:
     name: Build · macOS arm64 (CMake)
     needs: [frontend, test-backend]
-    runs-on: macos-latest
+    # Pinned (not macos-latest) so the June 2026 migration to macOS 26 can't
+    # silently change the runner under us; both macos-15 and 14 are arm64.
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
