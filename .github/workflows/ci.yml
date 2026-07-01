@@ -11,9 +11,10 @@
 # is only spent on validated code.
 name: CI
 
-# PAUSED: automatic triggers (pull_request / push) disabled — releases are
-# launched manually from GitHub. Re-enable by restoring the triggers below.
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 # Least-privilege token: this pipeline only reads the repo and writes artifacts.
@@ -32,7 +33,6 @@ jobs:
   # gate on quality) and a single npm install/Node setup serves both.
   frontend:
     name: Frontend (Prettier + ESLint + Vitest, 70% gate)
-    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
@@ -85,7 +85,6 @@ jobs:
 
   quality-cpp-format:
     name: Quality · C++ clang-format
-    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -114,7 +113,6 @@ jobs:
 
   quality-cppcheck:
     name: Quality · C++ cppcheck
-    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -141,7 +139,6 @@ jobs:
   # ────────────────────────── 2. BACKEND TESTS ──────────────────────────
   test-backend:
     name: Tests · Backend (Qt Test + OpenCppCoverage, 70% gate)
-    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [quality-cpp-format, quality-cppcheck]
     runs-on: windows-latest
     timeout-minutes: 45
@@ -192,8 +189,7 @@ jobs:
   # ────────────────────────────── 3. BUILD ──────────────────────────────
   build-windows-x64:
     name: Build · Windows x64 (CMake/MSVC)
-    # TEMP(debug): runs standalone while the other jobs are disabled below.
-    # Restore `needs: [frontend, test-backend]` once the Windows bundle is fixed.
+    needs: [frontend, test-backend]
     runs-on: windows-latest
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
     environment: MoonlightWeb
@@ -249,7 +245,6 @@ jobs:
 
   build-windows-arm64:
     name: Build · Windows ARM64 (CMake/MSVC)
-    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [frontend, test-backend]
     runs-on: windows-11-arm
     timeout-minutes: 60
@@ -295,7 +290,6 @@ jobs:
 
   build-linux-x64:
     name: Build · Linux x64 (CMake)
-    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [frontend, test-backend]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -335,7 +329,6 @@ jobs:
 
   build-macos-arm64:
     name: Build · macOS arm64 (CMake)
-    if: ${{ false }} # TEMP(debug): disabled until Windows-x64 bundle is fixed
     needs: [frontend, test-backend]
     runs-on: macos-latest
     timeout-minutes: 40
