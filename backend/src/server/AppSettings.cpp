@@ -146,6 +146,21 @@ void AppSettings::setGamingMode(bool enabled)
     writeAll(obj);
 }
 
+// ── First-run setup ────────────────────────────────────────────────────────────
+
+bool AppSettings::setupCompleted() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("setup_completed").toBool(false);
+}
+
+void AppSettings::setSetupCompleted(bool completed)
+{
+    QJsonObject obj = readAll();
+    obj["setup_completed"] = completed;
+    writeAll(obj);
+}
+
 // ── Audio time-stretch (WSOLA) ─────────────────────────────────────────────────
 
 bool AppSettings::audioTimeStretch() const
@@ -481,7 +496,9 @@ void AppSettings::setTransportMode(const QString& mode)
 QString AppSettings::videoEnhancement() const
 {
     QJsonObject obj = readAll();
-    return obj.value("video_enhancement").toString() == "on" ? "on" : "off";
+    // Default ON when unset (fresh install): enhancement enabled with "auto" algo.
+    // Only an explicit "off" disables it.
+    return obj.value("video_enhancement").toString() == "off" ? "off" : "on";
 }
 
 void AppSettings::setVideoEnhancement(const QString& value)

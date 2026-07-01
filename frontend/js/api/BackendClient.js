@@ -234,6 +234,16 @@ export class BackendClient {
         return this.post('/api/settings/streaming', settings);
     }
 
+    // ── First-run setup wizard (localhost only) ──────────────────────────────
+
+    static async getSetupStatus() {
+        return this.get('/api/setup/status');
+    }
+    static async applySetup(options) {
+        // No client timeout: a Sunshine DMG download + install can take minutes.
+        return this.post('/api/setup/apply', options, { timeoutMs: 0 });
+    }
+
     // ── Internet Access (PowerDNS) ───────────────────────────────────────────────────────
 
     static async getInternetStatus() {

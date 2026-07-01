@@ -62,7 +62,7 @@ void setStepStatus(const QString& step, const QString& state)
 
 // Pair the local Sunshine over the GameStream protocol while feeding the PIN
 // through Sunshine's REST API (no manual entry in Sunshine's web UI).
-static bool pairLocalSunshine(ComputerManager& computers, const QString& user, const QString& pass)
+bool pairSunshine(ComputerManager& computers, const QString& user, const QString& pass)
 {
     auto [addStatus, addResult] = computers.handleAddManualHost(QStringLiteral("127.0.0.1"));
     if (addStatus != 200) {
@@ -155,7 +155,7 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
             sun.value(QStringLiteral("username")).toString(QStringLiteral("admin"));
         const QString pass =
             sun.value(QStringLiteral("password")).toString(QStringLiteral("admin"));
-        const bool ok = pairLocalSunshine(computers, user, pass);
+        const bool ok = pairSunshine(computers, user, pass);
         setStepStatus(QStringLiteral("pairing"),
                       ok ? QStringLiteral("done") : QStringLiteral("failed"));
     }
