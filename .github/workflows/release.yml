@@ -314,13 +314,30 @@ jobs:
         run: |
           # Deploy the Qt frameworks into the bundle (no -dmg yet).
           macdeployqt MoonlightWeb.app
-          # Ad-hoc codesign the whole bundle (identity "-"): no Apple Developer
-          # account needed, but it stops Gatekeeper from flagging the unsigned
-          # .app as "damaged". Users still get a one-time "unidentified developer"
-          # prompt (right-click → Open). Sign AFTER macdeployqt so the bundled Qt
-          # frameworks are included in the seal.
-          codesign --deep --force --options runtime -s - MoonlightWeb.app
+
+          # Ad-hoc re-sign (identity "-"): no Apple Developer account needed, but
+          # it stops Gatekeeper flagging the bundle as "damaged". Users still get
+          # a one-time "unidentified developer" prompt (right-click → Open).
+          #
+          # We must NOT use `codesign --deep`: it unreliably re-signs frameworks
+          # that already carry a signature. The Qt binaries from aqt are signed
+          # with The Qt Company's Team ID; --deep left them intact while the main
+          # binary became ad-hoc (empty Team ID), so at launch dyld rejected them
+          # with "mapping process and mapped file have different Team IDs" and the
+          # app crashed. Instead sign inside-out, explicitly, each Mach-O first,
+          # then the app bundle last, forcing every signature to ad-hoc.
+          find MoonlightWeb.app/Contents/Frameworks \
+            \( -name '*.dylib' -o -name '*.framework' \) -print0 |
+            xargs -0 -I {} codesign --force --timestamp=none -s - {}
+          # Any plugins deployed alongside (platforms, tls, imageformats, ...).
+          find MoonlightWeb.app/Contents/PlugIns -name '*.dylib' -print0 2>/dev/null |
+            xargs -0 -I {} codesign --force --timestamp=none -s - {} || true
+          # Main executable, then the whole bundle (seals everything above).
+          codesign --force --timestamp=none -s - MoonlightWeb.app/Contents/MacOS/MoonlightWeb
+          codesign --force --timestamp=none -s - MoonlightWeb.app
+          # Verify the seal is internally consistent (no Team-ID mismatch).
           codesign --verify --deep --strict --verbose=2 MoonlightWeb.app
+
           # Build the DMG from the signed bundle with hdiutil (a second
           # macdeployqt -dmg would re-deploy and invalidate the signature).
           hdiutil create -volname MoonlightWeb -srcfolder MoonlightWeb.app \
