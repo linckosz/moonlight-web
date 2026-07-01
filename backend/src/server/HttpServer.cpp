@@ -377,10 +377,16 @@ HttpServer::HttpServer(quint16 httpPort, quint16 httpsPort, QObject* parent)
     , m_HttpsPort(httpsPort)
 {
     // Try compile-time frontend path first (development), fall back to
-    // executable-relative path (deployment / MSI install).
+    // executable-relative path (deployment / MSI install), then to the macOS
+    // app-bundle Resources dir. On macOS the frontend cannot live next to the
+    // executable (Contents/MacOS): codesign treats everything there as code and
+    // rejects the non-code assets, so the bundle ships it under
+    // Contents/Resources/frontend (applicationDirPath is Contents/MacOS).
     QString frontendDir = QString(FRONTEND_DIR);
     if (!QDir(frontendDir).exists())
         frontendDir = QCoreApplication::applicationDirPath() + "/frontend/";
+    if (!QDir(frontendDir).exists())
+        frontendDir = QCoreApplication::applicationDirPath() + "/../Resources/frontend/";
     m_StaticFiles = new StaticFileHandler(frontendDir, this);
 }
 

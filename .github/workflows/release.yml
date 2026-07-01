@@ -289,9 +289,15 @@ jobs:
       - name: Assemble .app bundle
         run: |
           APP=MoonlightWeb.app
-          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp build/MoonlightWeb "$APP/Contents/MacOS/MoonlightWeb"
-          cp -r frontend "$APP/Contents/MacOS/frontend"
+          # Frontend assets go in Resources/, NOT MacOS/: codesign treats every
+          # file under Contents/MacOS as code and rejects non-code assets. The
+          # backend falls back to ../Resources/frontend at runtime. Drop the dev
+          # tooling dir (.claude etc.) that also trips codesign.
+          cp -r frontend "$APP/Contents/Resources/frontend"
+          rm -rf "$APP/Contents/Resources/frontend/.claude" \
+                 "$APP/Contents/Resources/frontend/node_modules"
           cat > "$APP/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
