@@ -73,21 +73,36 @@ DetectResult detect()
     for (const QString& p : {QStringLiteral("/Applications/Sunshine.app/Contents/MacOS/sunshine"),
                              QStringLiteral("/opt/homebrew/bin/sunshine"),
                              QStringLiteral("/usr/local/bin/sunshine")}) {
-        if (QFileInfo::exists(p)) { r.installed = true; r.exePath = p; return r; }
+        if (QFileInfo::exists(p)) {
+            r.installed = true;
+            r.exePath = p;
+            return r;
+        }
     }
 #elif defined(Q_OS_WIN)
     const QString pf = qEnvironmentVariable("ProgramFiles", QStringLiteral("C:/Program Files"));
     const QString p = pf + QStringLiteral("/Sunshine/sunshine.exe");
-    if (QFileInfo::exists(p)) { r.installed = true; r.exePath = p; return r; }
+    if (QFileInfo::exists(p)) {
+        r.installed = true;
+        r.exePath = p;
+        return r;
+    }
 #else
     for (const QString& p :
          {QStringLiteral("/usr/bin/sunshine"), QStringLiteral("/usr/local/bin/sunshine")}) {
-        if (QFileInfo::exists(p)) { r.installed = true; r.exePath = p; return r; }
+        if (QFileInfo::exists(p)) {
+            r.installed = true;
+            r.exePath = p;
+            return r;
+        }
     }
 #endif
 
     const QString onPath = which(QStringLiteral("sunshine"));
-    if (!onPath.isEmpty()) { r.installed = true; r.exePath = onPath; }
+    if (!onPath.isEmpty()) {
+        r.installed = true;
+        r.exePath = onPath;
+    }
     return r;
 }
 
@@ -100,10 +115,10 @@ QString installMacOS(const QString& user, const QString& pass)
 #else
     // Asset names follow the CPU arch: Sunshine-macOS-{arm64,x86_64}.dmg.
     const QString arch = QSysInfo::currentCpuArchitecture(); // "arm64" | "x86_64"
-    const QString url = QStringLiteral(
-                            "https://github.com/LizardByte/Sunshine/releases/latest/download/"
-                            "Sunshine-macOS-%1.dmg")
-                            .arg(arch);
+    const QString url =
+        QStringLiteral("https://github.com/LizardByte/Sunshine/releases/latest/download/"
+                       "Sunshine-macOS-%1.dmg")
+            .arg(arch);
     const QString dmg = QDir::tempPath() + QStringLiteral("/mw-sunshine.dmg");
     const QString mnt = QDir::tempPath() + QStringLiteral("/mw-sunshine-mnt");
 

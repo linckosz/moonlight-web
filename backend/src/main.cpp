@@ -2025,9 +2025,8 @@ int main(int argc, char* argv[])
     if (!appSettings.setupCompleted() && qEnvironmentVariableIsEmpty("MW_SERVICE") &&
         QSystemTrayIcon::isSystemTrayAvailable()) {
         quint16 p = server.activeHttpsPort();
-        const QString setupUrl = p == 443
-                                     ? QStringLiteral("https://localhost/setup")
-                                     : QStringLiteral("https://localhost:%1/setup").arg(p);
+        const QString setupUrl = p == 443 ? QStringLiteral("https://localhost/setup")
+                                          : QStringLiteral("https://localhost:%1/setup").arg(p);
         // Defer so the TLS listener is fully accepting before the browser hits it.
         QTimer::singleShot(1200, &app, [setupUrl]() {
             qInfo() << "[main] First run — opening setup wizard:" << setupUrl;
