@@ -62,25 +62,23 @@ bool installLoginItem()
     // No MW_SERVICE here: this is a normal GUI launch (tray icon), mirroring the
     // Windows logon Scheduled Task. KeepAlive/SuccessfulExit=false → relaunch only
     // on a crash, never after a clean quit.
-    const QString plist =
-        QStringLiteral(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
-            "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
-            "<plist version=\"1.0\">\n"
-            "<dict>\n"
-            "    <key>Label</key><string>%1</string>\n"
-            "    <key>ProgramArguments</key>\n"
-            "    <array><string>%2</string></array>\n"
-            "    <key>RunAtLoad</key><true/>\n"
-            "    <key>KeepAlive</key>\n"
-            "    <dict><key>SuccessfulExit</key><false/></dict>\n"
-            "    <key>ThrottleInterval</key><integer>5</integer>\n"
-            "    <key>StandardOutPath</key><string>%3</string>\n"
-            "    <key>StandardErrorPath</key><string>%3</string>\n"
-            "</dict>\n"
-            "</plist>\n")
-            .arg(xmlEscape(kLabel), xmlEscape(exe), xmlEscape(log));
+    const QString plist = QStringLiteral("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                                         "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                                         "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+                                         "<plist version=\"1.0\">\n"
+                                         "<dict>\n"
+                                         "    <key>Label</key><string>%1</string>\n"
+                                         "    <key>ProgramArguments</key>\n"
+                                         "    <array><string>%2</string></array>\n"
+                                         "    <key>RunAtLoad</key><true/>\n"
+                                         "    <key>KeepAlive</key>\n"
+                                         "    <dict><key>SuccessfulExit</key><false/></dict>\n"
+                                         "    <key>ThrottleInterval</key><integer>5</integer>\n"
+                                         "    <key>StandardOutPath</key><string>%3</string>\n"
+                                         "    <key>StandardErrorPath</key><string>%3</string>\n"
+                                         "</dict>\n"
+                                         "</plist>\n")
+                              .arg(xmlEscape(kLabel), xmlEscape(exe), xmlEscape(log));
 
     const QString path = plistPath();
     QDir().mkpath(QFileInfo(path).absolutePath());
