@@ -249,7 +249,8 @@ jobs:
     needs: setup
     if: ${{ needs.setup.outputs.macos == 'true' }}
     name: Package macOS arm64
-    runs-on: macos-latest
+    # Pinned (not macos-latest) to avoid the June 2026 macOS 26 auto-migration.
+    runs-on: macos-15
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
     environment: MoonlightWeb
     steps:
