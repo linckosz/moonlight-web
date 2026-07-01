@@ -306,8 +306,19 @@ jobs:
 
       - name: Deploy Qt + create DMG
         run: |
-          macdeployqt MoonlightWeb.app -dmg
-          mv MoonlightWeb.dmg moonlightweb-macos-arm64.dmg
+          # Deploy the Qt frameworks into the bundle (no -dmg yet).
+          macdeployqt MoonlightWeb.app
+          # Ad-hoc codesign the whole bundle (identity "-"): no Apple Developer
+          # account needed, but it stops Gatekeeper from flagging the unsigned
+          # .app as "damaged". Users still get a one-time "unidentified developer"
+          # prompt (right-click → Open). Sign AFTER macdeployqt so the bundled Qt
+          # frameworks are included in the seal.
+          codesign --deep --force --options runtime -s - MoonlightWeb.app
+          codesign --verify --deep --strict --verbose=2 MoonlightWeb.app
+          # Build the DMG from the signed bundle with hdiutil (a second
+          # macdeployqt -dmg would re-deploy and invalidate the signature).
+          hdiutil create -volname MoonlightWeb -srcfolder MoonlightWeb.app \
+            -ov -format UDZO moonlightweb-macos-arm64.dmg
 
       - uses: actions/upload-artifact@v6
         with:
