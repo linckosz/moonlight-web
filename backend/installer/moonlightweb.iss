@@ -30,8 +30,13 @@
   #define MyAppVersion "0.1.0"
 #endif
 ; Latest Sunshine Windows installer (NSIS, supports /S silent). Overridable.
+; Asset names are arch-specific: Sunshine-Windows-{AMD64,ARM64}-installer.exe.
 #ifndef SunshineUrl
-  #define SunshineUrl "https://github.com/LizardByte/Sunshine/releases/latest/download/sunshine-windows-installer.exe"
+  #if MyArch == "arm64"
+    #define SunshineUrl "https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-Windows-ARM64-installer.exe"
+  #else
+    #define SunshineUrl "https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-Windows-AMD64-installer.exe"
+  #endif
 #endif
 
 #define MyAppName "MoonlightWeb"
