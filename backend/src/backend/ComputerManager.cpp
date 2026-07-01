@@ -926,7 +926,8 @@ std::pair<int, QJsonObject> ComputerManager::handleSubmitPin(const QString& uuid
         return {200, obj};
     }
     m_SubmitInFlight.insert(uuid);
-    struct Guard {
+    struct Guard
+    {
         QSet<QString>& set;
         QString id;
         ~Guard() { set.remove(id); }

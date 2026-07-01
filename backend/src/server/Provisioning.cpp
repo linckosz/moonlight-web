@@ -94,8 +94,7 @@ static bool pairLocalSunshine(ComputerManager& computers, const QString& user, c
     // kept in activeHttpsPort, which does not serve /api/pin and drops the
     // connection ("Connection closed"). Derive it from the host's base HTTP port.
     quint16 basePort = MW_HTTP_PORT;
-    if (host && host->manualAddress.port() > 0)
-        basePort = host->manualAddress.port();
+    if (host && host->manualAddress.port() > 0) basePort = host->manualAddress.port();
     const quint16 restPort = basePort + 1;
 
     // handleSubmitPin() blocks on getservercert (a nested Qt event loop) until
@@ -113,8 +112,8 @@ static bool pairLocalSunshine(ComputerManager& computers, const QString& user, c
                      .arg(state, submitResult.value(QStringLiteral("message")).toString()));
 
     NvComputer* paired = computers.getHost(uuid);
-    return (paired && paired->pairState == NvComputer::PS_PAIRED)
-           || state == QLatin1String("paired");
+    return (paired && paired->pairState == NvComputer::PS_PAIRED) ||
+           state == QLatin1String("paired");
 }
 
 bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers)
@@ -139,10 +138,10 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
     // Seed the live checklist up front so the installer renders the full task
     // list immediately. The A-record completes asynchronously (see main.cpp);
     // pairing resolves synchronously below.
-    setStepStatus(QStringLiteral("pairing"), autoPair ? QStringLiteral("running")
-                                                      : QStringLiteral("skipped"));
-    setStepStatus(QStringLiteral("arecord"), internet ? QStringLiteral("running")
-                                                       : QStringLiteral("skipped"));
+    setStepStatus(QStringLiteral("pairing"),
+                  autoPair ? QStringLiteral("running") : QStringLiteral("skipped"));
+    setStepStatus(QStringLiteral("arecord"),
+                  internet ? QStringLiteral("running") : QStringLiteral("skipped"));
 
     // Internet Access: just flip the persisted flag; main()'s existing
     // auto-start path brings the InternetAccessManager up after this returns.
@@ -152,8 +151,10 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
     }
 
     if (autoPair) {
-        const QString user = sun.value(QStringLiteral("username")).toString(QStringLiteral("admin"));
-        const QString pass = sun.value(QStringLiteral("password")).toString(QStringLiteral("admin"));
+        const QString user =
+            sun.value(QStringLiteral("username")).toString(QStringLiteral("admin"));
+        const QString pass =
+            sun.value(QStringLiteral("password")).toString(QStringLiteral("admin"));
         const bool ok = pairLocalSunshine(computers, user, pass);
         setStepStatus(QStringLiteral("pairing"),
                       ok ? QStringLiteral("done") : QStringLiteral("failed"));

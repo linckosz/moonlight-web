@@ -43,8 +43,7 @@ public:
     /// POST /api/pin {"pin","name"} with Basic Auth. Fire-and-forget: result is
     /// logged. Targets https://127.0.0.1:<port>/api/pin (port = Sunshine HTTPS).
     void sendPin(const QString& pin, const QString& user, const QString& pass,
-                 const QString& deviceName = QStringLiteral("moonlightweb"),
-                 quint16 port = 47990);
+                 const QString& deviceName = QStringLiteral("moonlightweb"), quint16 port = 47990);
 
 private:
     QNetworkAccessManager* m_Nam = nullptr;

@@ -101,8 +101,7 @@ QUrl TrayManager::localUrl(const QString& path) const
         return QUrl(QStringLiteral("https://localhost:%1%2").arg(httpsPort).arg(path));
 
     quint16 httpPort = m_Server->httpPort();
-    if (httpPort != 0)
-        return QUrl(QStringLiteral("http://localhost:%1%2").arg(httpPort).arg(path));
+    if (httpPort != 0) return QUrl(QStringLiteral("http://localhost:%1%2").arg(httpPort).arg(path));
 
     return QUrl();
 }

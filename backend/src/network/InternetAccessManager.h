@@ -189,9 +189,9 @@ private:
     QString m_UniqueId;
     QString m_LastError;
     QString m_Phase; ///< Current activation step (drives the UI loader). See statusJson "phase".
-    bool m_CertIssuing = false; ///< True while ACME issuance is in progress
-    quint16 m_HttpPort = 0;     ///< Actual HTTP server port
-    quint16 m_HttpsPort = 0;    ///< Actual HTTPS server port
+    bool m_CertIssuing = false;    ///< True while ACME issuance is in progress
+    quint16 m_HttpPort = 0;        ///< Actual HTTP server port
+    quint16 m_HttpsPort = 0;       ///< Actual HTTPS server port
     bool m_ServiceManaged = false; ///< True when launched by a service supervisor (MW_SERVICE set);
                                    ///< such an instance never steals a port mapping owned by
                                    ///< another device — only a manual launch takes over.

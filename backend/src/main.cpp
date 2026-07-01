@@ -248,7 +248,8 @@ int main(int argc, char* argv[])
                                 QSslSocket::activeBackend());
         } else {
             Logger::warning("OpenSSL TLS backend unavailable (plugin/DLLs missing) — "
-                            "using " + QSslSocket::activeBackend());
+                            "using " +
+                            QSslSocket::activeBackend());
         }
     }
 
@@ -1537,11 +1538,9 @@ int main(int argc, char* argv[])
                                                          QStringLiteral("done"));
                      });
     if (provisioned)
-        QObject::connect(&internetAccess, &InternetAccessManager::error, &app,
-                         [](const QString&) {
-                             Provisioning::setStepStatus(QStringLiteral("arecord"),
-                                                         QStringLiteral("failed"));
-                         });
+        QObject::connect(&internetAccess, &InternetAccessManager::error, &app, [](const QString&) {
+            Provisioning::setStepStatus(QStringLiteral("arecord"), QStringLiteral("failed"));
+        });
 
     // Auto-start Internet Access if it was enabled before last shutdown.
     // This handles DNS registration + public IP detection at boot without
@@ -1556,10 +1555,9 @@ int main(int argc, char* argv[])
         // start() may resolve synchronously (no 'ready' signal emitted): reflect
         // the final A-record state into the installer checklist either way.
         if (provisioned)
-            Provisioning::setStepStatus(QStringLiteral("arecord"),
-                                        internetAccess.isActive()
-                                            ? QStringLiteral("done")
-                                            : QStringLiteral("failed"));
+            Provisioning::setStepStatus(QStringLiteral("arecord"), internetAccess.isActive()
+                                                                       ? QStringLiteral("done")
+                                                                       : QStringLiteral("failed"));
     }
 
     // Write the Desktop admin shortcut with the best URL known at this point.
