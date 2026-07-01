@@ -2,7 +2,9 @@
 # xcaddy). One process, one container — reverse-proxies the PowerDNS REST API
 # over HTTPS with automatic TLS (or user-supplied cert files).
 FROM caddy:2-builder AS builder
-RUN xcaddy build --with github.com/mholt/caddy-ratelimit
+# -v makes `go build` print each package as it compiles; the installer counts
+# those lines to render a live progress bar (Go has no native progress output).
+RUN XCADDY_GO_BUILD_FLAGS="-v" xcaddy build --with github.com/mholt/caddy-ratelimit
 
 FROM caddy:2
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

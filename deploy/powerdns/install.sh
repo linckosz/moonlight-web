@@ -266,6 +266,37 @@ set -a; . ./.env; set +a
 
 # ── Bring the stack up ───────────────────────────────────────────────────────
 step "Building and starting the stack (this can take a few minutes)"
+
+# The caddy image compiles Caddy from source via xcaddy (Go build) — slow on
+# low-RAM VMs. Go has no native progress, so we approximate: the Dockerfile runs
+# `go build -v`, which prints each package as it compiles; --progress=plain
+# streams those lines out of BuildKit and awk counts them against a rough total
+# (Caddy + caddy-ratelimit ≈ 540 pkgs) to render a live bar. Field 2 of a plain
+# BuildKit line is the elapsed time, which we reuse for the timer.
+build_caddy_with_progress() {
+    $COMPOSE build --progress=plain caddy 2>&1 | awk '
+        BEGIN { total = 540; el = 0 }
+        $2 ~ /^[0-9]+(\.[0-9]+)?$/ { el = $2 + 0 }
+        $3 ~ /^[a-z0-9._-]+\.[a-z0-9._-]+\// {
+            n++
+            pct = int(n * 100 / total); if (pct > 99) pct = 99
+            sec = int(el); mm = int(sec / 60); ss = sec % 60
+            bars = int(pct / 2); bar = ""
+            for (i = 0; i < bars; i++)  bar = bar "#"
+            for (i = bars; i < 50; i++) bar = bar "-"
+            printf "\r  compiling caddy [%s] %3d%%  (%d pkgs, %dm%02ds) ", bar, pct, n, mm, ss
+            fflush()
+        }
+        END {
+            if (n == 0) { print "  caddy image up to date (cached)" }
+            else {
+                bar = ""; for (i = 0; i < 50; i++) bar = bar "#"
+                printf "\r  compiling caddy [%s] 100%%  (%d pkgs) done          \n", bar, n
+            }
+        }
+    '
+}
+build_caddy_with_progress
 $COMPOSE up -d --build
 
 echo
