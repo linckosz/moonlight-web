@@ -51,8 +51,14 @@ namespace Provisioning {
 bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers);
 
 /// Update one provisioning step in `<AppData>/provisioning.status.json`, the file
-/// the installer polls to render its live checklist. Steps: "pairing", "arecord".
-/// States: "pending" | "running" | "done" | "failed" | "skipped".
+/// the installer polls to render its live checklist. Steps: "install", "pairing",
+/// "arecord". States: "pending" | "running" | "done" | "failed" | "skipped".
 void setStepStatus(const QString& step, const QString& state);
+
+/// Pair the local Sunshine (127.0.0.1) over the GameStream protocol, pushing the
+/// PIN through Sunshine's REST API with the given credentials so the user never
+/// types it in Sunshine's web UI. Returns true once the host reaches PS_PAIRED.
+/// Shared by applyOnce() (installer flow) and the in-app setup wizard.
+bool pairSunshine(ComputerManager& computers, const QString& user, const QString& pass);
 
 } // namespace Provisioning

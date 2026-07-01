@@ -17,6 +17,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -26,6 +27,7 @@
 #include <QSslSocket>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QUrl>
 #include <QDateTime>
 #include <QHostInfo>
 #include <QHostAddress>
@@ -44,6 +46,8 @@
 #include "common/Logger.h"
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
+#include "backend/SunshineInstaller.h"
+#include "Autostart.h"
 #include "streaming/Session.h"
 #include "streaming/MoonlightShim.h"
 #include "Limelight.h" // SCM_* codec-support masks
@@ -1631,6 +1635,125 @@ int main(int argc, char* argv[])
         }
     });
 
+    // ── First-run setup wizard (localhost only) ──────────────────────────────
+    // macOS/Linux ship without a native installer, so the app hosts the wizard
+    // the Windows Inno Setup installer provides: authorize Internet Access,
+    // install + pair the local Sunshine. Endpoints are localhost-only.
+
+    // GET /api/setup/status — what the wizard needs to render its steps.
+    server.router()->get("/api/setup/status", [&](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
+
+        QJsonObject obj;
+#if defined(Q_OS_WIN)
+        // Windows provisioning is owned by the Inno Setup installer — never show
+        // the in-app wizard there.
+        obj["setup_completed"] = true;
+        obj["os"] = "Windows";
+#elif defined(Q_OS_MACOS)
+        obj["setup_completed"] = appSettings.setupCompleted();
+        obj["os"] = "macOS";
+#else
+        obj["setup_completed"] = appSettings.setupCompleted();
+        obj["os"] = "Linux";
+#endif
+        SunshineInstaller::DetectResult sun = SunshineInstaller::detect();
+        QJsonObject sunObj;
+        sunObj["installed"] = sun.installed;
+        obj["sunshine"] = sunObj;
+
+        QJsonObject inet;
+        inet["enabled"] = appSettings.internetAccessEnabled();
+        inet["active"] = internetAccess.isActive();
+        inet["domain"] = internetAccess.domain();
+        inet["phase"] = internetAccess.statusJson().value("phase");
+        obj["internet"] = inet;
+
+        // Live checklist written by /api/setup/apply (reuses the installer's file).
+        QFile f(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                "/provisioning.status.json");
+        if (f.open(QIODevice::ReadOnly)) {
+            obj["steps"] = QJsonDocument::fromJson(f.readAll()).object().value("steps").toObject();
+            f.close();
+        }
+        return HttpResponse::json(obj);
+    });
+
+    // POST /api/setup/apply — run the wizard actions synchronously; the frontend
+    // polls /api/setup/status meanwhile to animate the checklist.
+    server.router()->post("/api/setup/apply", [&](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
+
+        QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        const bool internetAuth = body.value("internet_access_authorized").toBool(false);
+        const QJsonObject sun = body.value("sunshine").toObject();
+        const bool wantInstall = sun.value("install").toBool(false);
+        const QString user = sun.value("username").toString();
+        const QString pass = sun.value("password").toString();
+        const bool haveCreds = !user.isEmpty() && !pass.isEmpty();
+
+        SunshineInstaller::DetectResult det = SunshineInstaller::detect();
+
+        // Seed the checklist so the frontend renders the full task list up front.
+        Provisioning::setStepStatus("install",
+                                    (wantInstall && !det.installed) ? "running" : "skipped");
+        Provisioning::setStepStatus("pairing", haveCreds ? "pending" : "skipped");
+        Provisioning::setStepStatus("arecord", internetAuth ? "pending" : "skipped");
+
+        QJsonObject result;
+
+        // 1) Install Sunshine (macOS DMG) when requested and not already present.
+        if (wantInstall && !det.installed) {
+            const QString err = SunshineInstaller::installMacOS(user, pass);
+            if (err.isEmpty()) {
+                Provisioning::setStepStatus("install", "done");
+                det = SunshineInstaller::detect();
+                // Start Sunshine so macOS surfaces its Screen-Recording /
+                // Accessibility permission prompts (cannot be granted for it).
+                SunshineInstaller::launch();
+            } else {
+                Provisioning::setStepStatus("install", "failed");
+                result["sunshine_error"] = err;
+            }
+        } else if (det.installed && haveCreds) {
+            // Already installed: (re)apply the provided credentials so the REST
+            // PIN push during pairing authenticates.
+            SunshineInstaller::setCredentials(user, pass);
+        }
+
+        // 2) Pair the local Sunshine over GameStream + its REST /api/pin.
+        if (haveCreds && det.installed) {
+            Provisioning::setStepStatus("pairing", "running");
+            const bool ok = Provisioning::pairSunshine(computerManager, user, pass);
+            Provisioning::setStepStatus("pairing", ok ? "done" : "failed");
+            result["paired"] = ok;
+        }
+
+        // 3) Internet Access — flip the flag and bring the tunnel up.
+        if (internetAuth) {
+            Provisioning::setStepStatus("arecord", "running");
+            appSettings.setInternetAccessEnabled(true);
+            internetAccess.start();
+            const bool active = internetAccess.isActive();
+            Provisioning::setStepStatus("arecord", active ? "done" : "failed");
+            result["internet_active"] = active;
+            result["domain"] = internetAccess.domain();
+        }
+
+        // Mark setup done even if an optional step failed: the user retries from
+        // the admin page, and the wizard must not reappear on every launch.
+        appSettings.setSetupCompleted(true);
+
+        // Start at login (macOS LaunchAgent — GUI session, keeps the tray icon).
+        // Mirrors the Windows installer's default logon task. Best-effort.
+        result["autostart"] = Autostart::installLoginItem();
+
+        result["status"] = "completed";
+        return HttpResponse::json(result);
+    });
+
     // API route: disable Internet Access
     server.router()->post("/api/internet/disable", [&](const HttpRequest& req) {
         // Only localhost can modify internet access settings
@@ -1893,6 +2016,25 @@ int main(int argc, char* argv[])
     // Phase N: System tray icon
     TrayManager trayManager(&server);
     trayManager.init();
+
+#ifndef Q_OS_WIN
+    // First-run: open the in-app setup wizard in the browser. The Windows Inno
+    // Setup installer opens its own page, but macOS/Linux ship a bare bundle, so
+    // the server launches the browser once. Skipped under a service supervisor
+    // (session 0 has no GUI) and once setup has completed.
+    if (!appSettings.setupCompleted() && qEnvironmentVariableIsEmpty("MW_SERVICE") &&
+        QSystemTrayIcon::isSystemTrayAvailable()) {
+        quint16 p = server.activeHttpsPort();
+        const QString setupUrl = p == 443
+                                     ? QStringLiteral("https://localhost/setup")
+                                     : QStringLiteral("https://localhost:%1/setup").arg(p);
+        // Defer so the TLS listener is fully accepting before the browser hits it.
+        QTimer::singleShot(1200, &app, [setupUrl]() {
+            qInfo() << "[main] First run — opening setup wizard:" << setupUrl;
+            QDesktopServices::openUrl(QUrl(setupUrl));
+        });
+    }
+#endif
 
     Logger::info("Server ready. Open https://localhost" +
                  (httpsPort != 443 ? ":" + QString::number(server.activeHttpsPort()) : QString()) +

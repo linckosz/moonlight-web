@@ -50,6 +50,7 @@ import { StreamView } from './ui/StreamView.js';
 import { SettingsView } from './ui/SettingsView.js';
 import { AdminView } from './ui/AdminView.js';
 import { LoginView } from './ui/LoginView.js';
+import { SetupView } from './ui/SetupView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
@@ -100,6 +101,7 @@ const MoonlightApp = {
     settingsView: null,
     adminView: null,
     loginView: null,
+    setupView: null,
 
     // ── HEVC fallback guard ─────────────────────────────────────────────────
     // Counts consecutive HEVC→H.264 fallback attempts to prevent infinite
@@ -144,6 +146,13 @@ const MoonlightApp = {
         // ── Auth check: show login if remote and not authenticated ─────────
         const authOk = await this._checkAuth();
         if (!authOk) return; // LoginView handles rendering, stop here
+
+        // ── First-run setup wizard (localhost only) ────────────────────────
+        // macOS/Linux have no native installer, so the app hosts the setup
+        // wizard. Windows reports setup_completed=true (its Inno Setup installer
+        // owns provisioning), so the gate is a no-op there.
+        const setupShown = await this._maybeShowSetup();
+        if (setupShown) return; // SetupView handles rendering; continues on finish
 
         this._initNavButtons();
         this._initRouter();
@@ -453,6 +462,38 @@ const MoonlightApp = {
             `;
             return false;
         }
+    },
+
+    /**
+     * On localhost, check whether first-run setup is pending and, if so, render
+     * the SetupView. Returns true when the wizard was shown (init() should stop;
+     * the wizard reloads the page when finished). Best-effort: any error just
+     * lets normal init continue.
+     */
+    async _maybeShowSetup() {
+        const isLocal =
+            window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.hostname === '[::1]';
+        if (!isLocal) return false;
+
+        try {
+            const status = await BackendClient.getSetupStatus();
+            if (!status || status.setup_completed !== false) return false;
+        } catch (err) {
+            console.warn('[MW] Setup status check failed:', err);
+            return false;
+        }
+
+        const main = document.getElementById('main-content');
+        if (!main) return false;
+        main.innerHTML = '';
+        this.transition('setup');
+        this.setupView = new SetupView(main, () => {
+            this.setupView = null;
+        });
+        this.setupView.start();
+        return true;
     },
 
     // =========================================================================

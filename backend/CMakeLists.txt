@@ -138,12 +138,14 @@ add_executable(mw-server
     src/network/InternetAccessManager.cpp
     src/network/GeoIpService.cpp
     src/TrayManager.cpp
+    src/Autostart.cpp
     src/backend/NvHTTP.cpp
     src/backend/NvComputer.cpp
     src/backend/ComputerManager.cpp
     src/backend/IdentityManager.cpp
     src/backend/NvPairingManager.cpp
     src/backend/SunshineRestClient.cpp
+    src/backend/SunshineInstaller.cpp
     src/streaming/RelayBase.h # QObject base with no .cpp; listed so AUTOMOC mocs it
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp

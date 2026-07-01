@@ -133,7 +133,7 @@ public:
     //
     // Client-side feature (the browser renders via WebGPU). Persisted here so the
     // setting syncs across browsers. Stored as JSON string "video_enhancement"
-    // ("off" default | "on") and "video_enhancement_algo" ("auto" | "sgsr" | "fsr1" | "force2d").
+    // ("on" default | "off") and "video_enhancement_algo" ("auto" default | "sgsr" | "fsr1" | "force2d").
     // When "on", the launch transport negotiation skips webrtc-media (the canvas
     // pipeline is required).
 
@@ -155,6 +155,18 @@ public:
     // Seed documented file-only default keys into settings.json if absent, so they
     // are discoverable/editable in the file. Idempotent.
     void seedDocumentedDefaults();
+
+    // ── First-run setup ────────────────────────────────────────────────────────
+    //
+    // Whether the first-run setup wizard has completed. Stored as JSON bool
+    // "setup_completed", default false. While false (and on a GUI, non-service
+    // launch), the server opens the browser to /setup so the user can authorize
+    // Internet Access, install and pair the local Sunshine. Windows sets this via
+    // the Inno Setup installer's provisioning.json flow; macOS/Linux use the
+    // in-app wizard because there is no native installer.
+
+    bool setupCompleted() const;
+    void setSetupCompleted(bool completed);
 
     // ── UPnP NAT traversal ────────────────────────────────────────────────────
 

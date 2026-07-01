@@ -20,6 +20,32 @@
         "serverSettings": "Server Settings",
         "streamingSettings": "Streaming Settings"
     },
+    "setup": {
+        "title": "Welcome to MoonlightWeb",
+        "intro": "Let's finish setting up MoonlightWeb on this computer.",
+        "start": "Start setup",
+        "skip": "Skip for now",
+        "working": "Setting up MoonlightWeb…",
+        "internetTitle": "Internet link",
+        "internetBody": "MoonlightWeb can publish a secure public link (e.g. https://a1b2c3d4.moonlightweb.top) so you can stream from outside your local network.",
+        "internetOption": "Allow the Internet link (recommended)",
+        "sunshineTitle": "Sunshine",
+        "sunshineInstalled": "Sunshine is already installed. Enter its credentials so MoonlightWeb can pair with it.",
+        "sunshineNotDetected": "Sunshine was not detected. Install it automatically, then set the credentials MoonlightWeb will use to pair.",
+        "sunshineManual": "Sunshine was not detected. Please install Sunshine manually, then reopen this page to pair.",
+        "installSunshine": "Install Sunshine automatically",
+        "username": "Username",
+        "password": "Password",
+        "credsRequired": "Please enter the Sunshine username and password so MoonlightWeb can pair automatically.",
+        "stepInstall": "Install the Sunshine streaming server",
+        "stepPairing": "Pair the local Sunshine",
+        "stepArecord": "Publish the secure Internet address",
+        "doneTitle": "MoonlightWeb is ready.",
+        "doneDomain": "Your public address: {{domain}}",
+        "donePermissions": "One last step: open Sunshine and grant it Screen Recording and Accessibility permissions in System Settings — macOS requires you to do this manually.",
+        "finish": "Open MoonlightWeb",
+        "errorGeneric": "Setup failed. Please try again."
+    },
     "footer": {
         "tagline": "MoonlightWeb — Game Streaming Client"
     },
