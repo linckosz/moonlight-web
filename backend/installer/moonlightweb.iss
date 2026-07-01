@@ -90,6 +90,7 @@ en.InternetPageOption=Allow the Internet link (recommended)
 en.SunshinePageCaption=Sunshine
 en.SunshinePageDesc=Sunshine streaming server
 en.SunshineInstallCheck=Install Sunshine automatically
+en.SunshineInstallCheckDone=Install Sunshine automatically (already installed)
 en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb.
 en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically, then set its credentials.
 en.SunshineUserLabel=Username
@@ -116,6 +117,7 @@ fr.InternetPageOption=Autoriser le lien Internet (recommandé)
 fr.SunshinePageCaption=Sunshine
 fr.SunshinePageDesc=Serveur de streaming Sunshine
 fr.SunshineInstallCheck=Installer Sunshine automatiquement
+fr.SunshineInstallCheckDone=Installer Sunshine automatiquement (déjà installé)
 fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nEntrez ses identifiants pour appairer MoonlightWeb.
 fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement, puis définissez ses identifiants.
 fr.SunshineUserLabel=Identifiant
@@ -190,6 +192,26 @@ begin
   end;
 end;
 
+// Gray out the credential fields unless they are actually needed: when Sunshine
+// is already installed (user must supply its real creds) or the "install"
+// checkbox is ticked (creds for the fresh install). Disabled when Sunshine is
+// absent and installation is declined.
+procedure UpdateSunshineFieldsEnabled();
+var
+  enabled: Boolean;
+begin
+  enabled := SunshineDetected or SunshineInstallCheck.Checked;
+  SunshineUserEdit.Enabled := enabled;
+  SunshinePassEdit.Enabled := enabled;
+  SunshineUserLabel.Enabled := enabled;
+  SunshinePassLabel.Enabled := enabled;
+end;
+
+procedure SunshineInstallCheckClick(Sender: TObject);
+begin
+  UpdateSunshineFieldsEnabled();
+end;
+
 procedure InitializeWizard();
 begin
   // Step: Internet link authorization.
@@ -218,6 +240,7 @@ begin
   SunshineInstallCheck.Top := ScaleY(48);
   SunshineInstallCheck.Width := SunshinePage.SurfaceWidth;
   SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheck}');
+  SunshineInstallCheck.OnClick := @SunshineInstallCheckClick;
 
   SunshineUserLabel := TNewStaticText.Create(WizardForm);
   SunshineUserLabel.Parent := SunshinePage.Surface;
@@ -291,22 +314,28 @@ begin
     SunshineDetected := DetectSunshine();
     if SunshineDetected then begin
       SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineDetected}');
-      SunshineInstallCheck.Checked := False;
+      // Already installed: show the box ticked + "(already installed)" and keep
+      // it disabled. PrepareToInstall skips the download when SunshineDetected,
+      // so a ticked box here never triggers a reinstall.
+      SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheckDone}');
+      SunshineInstallCheck.Checked := True;
       SunshineInstallCheck.Enabled := False;
-      // Already installed: do NOT prefill. Wrong (default) credentials make the
-      // REST PIN push fail, leaving a pending pairing request and an unpaired
-      // host. Force the user to type Sunshine's real username/password.
+      // Do NOT prefill: wrong (default) credentials make the REST PIN push fail,
+      // leaving a pending pairing request and an unpaired host. Force the user
+      // to type Sunshine's real username/password.
       SunshineUserEdit.Text := '';
       SunshinePassEdit.Text := '';
     end else begin
       SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineNotDetected}');
+      SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheck}');
       SunshineInstallCheck.Enabled := True;
       SunshineInstallCheck.Checked := True;
-      // Fresh install: the silent installer sets these via --creds, so the
-      // admin/admin default is what will actually be configured.
+      // Fresh install: prefill the username (the silent installer sets it via
+      // --creds) but leave the password blank so the user picks one they know.
       if SunshineUserEdit.Text = '' then SunshineUserEdit.Text := 'admin';
-      if SunshinePassEdit.Text = '' then SunshinePassEdit.Text := 'admin';
+      SunshinePassEdit.Text := '';
     end;
+    UpdateSunshineFieldsEnabled();
   end;
 end;
 
@@ -315,7 +344,12 @@ function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
   if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
-    if (Trim(SunshineUserEdit.Text) = '') or (Trim(SunshinePassEdit.Text) = '') then begin
+    // Credentials are only required when they will actually be used: Sunshine
+    // already installed (pair with its real creds) or a fresh install requested.
+    // If Sunshine is absent and install is declined, the grayed-out fields are
+    // irrelevant — don't block.
+    if (SunshineDetected or SunshineInstallCheck.Checked)
+       and ((Trim(SunshineUserEdit.Text) = '') or (Trim(SunshinePassEdit.Text) = '')) then begin
       MsgBox(ExpandConstant('{cm:SunshineCredsRequired}'), mbError, MB_OK);
       Result := False;
     end;
@@ -330,9 +364,10 @@ var
   rc: Integer;
 begin
   Result := '';
-  if (SunshinePage = nil) or (not SunshineInstallCheck.Checked) then begin
-    // Not installing: either Sunshine is already present (done) or the user
-    // declined it (skipped — keep the default).
+  // Skip the download when Sunshine is already present (the box is ticked but
+  // disabled purely as an "already installed" indicator) or the user declined
+  // it. Only a ticked box on a machine WITHOUT Sunshine triggers a real install.
+  if (SunshinePage = nil) or SunshineDetected or (not SunshineInstallCheck.Checked) then begin
     if SunshineDetected then SunshineStepState := 'done';
     Exit;
   end;
