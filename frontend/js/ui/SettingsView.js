@@ -416,9 +416,9 @@ export class SettingsView {
                     ? 'on'
                     : 'off'
                 : this._videoEnhancement;
-            // Algo dropdown only exists in debug builds; production forces 'auto'.
+            // Algo dropdown is always available; defaults to 'auto'.
             const veAlgoEl = this.container.querySelector('#settings-video-enhancement-algo');
-            const videoEnhancementAlgo = this._debugBuild && veAlgoEl ? veAlgoEl.value : 'auto';
+            const videoEnhancementAlgo = veAlgoEl ? veAlgoEl.value : this._videoEnhancementAlgo;
 
             // Update internal state
             this._videoCodec = codec;
@@ -460,7 +460,7 @@ export class SettingsView {
         this._touchScreen = false;
         this._vsync = true;
         this._videoWorker = 'auto';
-        this._videoEnhancement = 'off';
+        this._videoEnhancement = 'on';
         this._videoEnhancementAlgo = 'auto';
         this._powerSave = false;
         this._powerSaveBackup = null;
@@ -734,13 +734,9 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.videoEnhancementDesc')}</span>
-                        ${
-                            this._debugBuild
-                                ? `<select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veCheckboxDisabled}>
+                        <select id="settings-video-enhancement-algo" class="settings-select u-mt-2"${veCheckboxDisabled}>
                             ${veAlgoOptions}
-                        </select>`
-                                : ''
-                        }
+                        </select>
                         ${veHdrNote}
                         ${veNote}
                     </div>
