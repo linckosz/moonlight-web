@@ -56,7 +56,8 @@ bool TrayManager::init()
     if (!QFile::exists(iconPath))
         iconPath = QCoreApplication::applicationDirPath() + "/frontend/assets/favicon.ico";
     if (!QFile::exists(iconPath))
-        iconPath = QCoreApplication::applicationDirPath() + "/../Resources/frontend/assets/favicon.ico";
+        iconPath =
+            QCoreApplication::applicationDirPath() + "/../Resources/frontend/assets/favicon.ico";
     QIcon icon(iconPath);
     if (icon.isNull()) {
         qInfo() << "[TrayManager] favicon.ico not found, using standard icon";
