@@ -20,6 +20,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QHostInfo>
@@ -61,6 +62,15 @@ static QString baseDomain()
 
 /// Default TTL for A records (5 minutes).
 static constexpr int kDefaultTtl = 300;
+
+/// Initial DNS check retries: a freshly created A record needs to propagate
+/// through PowerDNS and the local resolver before it resolves. Without retries
+/// the single check almost always fails right after creation, which misleads a
+/// developer reading the logs into thinking DNS is broken.
+static constexpr int kDnsCheckRetries = 10;
+
+/// Delay between DNS check retries (3s → up to ~30s total for propagation).
+static constexpr int kDnsCheckRetryMs = 3000;
 
 /// TLS certificate renewal threshold: 30 days.
 static constexpr int kCertRenewalDays = 30;
@@ -220,14 +230,33 @@ void InternetAccessManager::start()
         }
     }
 
-    // Step 5: Initial DNS check (spaced to 24h thereafter)
+    // Step 5: Initial DNS check (spaced to 24h thereafter). A freshly created A
+    // record needs time to propagate, so retry a few times before giving up —
+    // otherwise the first check fails and misleads anyone reading the logs.
     m_Phase = QStringLiteral("checking_dns");
     {
-        QString resolvedIp = resolveDomain(m_Domain);
-        if (!resolvedIp.isEmpty()) {
-            qInfo() << "[InternetAccess] Step 5 — DNS check:" << m_Domain << "->" << resolvedIp;
-        } else {
-            qWarning() << "[InternetAccess] Step 5 — DNS resolution failed for" << m_Domain;
+        QString resolvedIp;
+        for (int attempt = 1; attempt <= kDnsCheckRetries; ++attempt) {
+            resolvedIp = resolveDomain(m_Domain);
+            if (!resolvedIp.isEmpty()) {
+                qInfo() << "[InternetAccess] Step 5 — DNS check OK:" << m_Domain << "->"
+                        << resolvedIp << "(attempt" << attempt << "/" << kDnsCheckRetries << ")";
+                break;
+            }
+            if (attempt < kDnsCheckRetries) {
+                qInfo() << "[InternetAccess] Step 5 — DNS not propagated yet for" << m_Domain
+                        << "(attempt" << attempt << "/" << kDnsCheckRetries << "), retrying in"
+                        << (kDnsCheckRetryMs / 1000) << "s...";
+                // Wait without freezing the event loop (keeps status polling alive).
+                QEventLoop wait;
+                QTimer::singleShot(kDnsCheckRetryMs, &wait, &QEventLoop::quit);
+                wait.exec();
+            }
+        }
+
+        if (resolvedIp.isEmpty()) {
+            qWarning() << "[InternetAccess] Step 5 — DNS resolution still failing for" << m_Domain
+                       << "after" << kDnsCheckRetries << "attempts";
             if (pingDomain(m_Domain)) {
                 qInfo() << "[InternetAccess] Domain" << m_Domain
                         << "is reachable via ping despite DNS failure";
@@ -254,55 +283,21 @@ void InternetAccessManager::start()
         // Use the real server port if set, otherwise fall back to settings
         quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
         if (m_Upnp.discover()) {
-            // Check for port conflicts before adding mappings
-            auto checkAndMap = [this](quint16 port, const std::string& protocol, const char* desc) {
-                std::string existingClient, existingPort;
-                if (m_Upnp.getExistingPortMapping(port, protocol, existingClient, existingPort)) {
-                    if (existingClient != m_Upnp.lanAddress()) {
-                        if (m_ServiceManaged) {
-                            // Service auto-restart: never steal a mapping owned by another
-                            // device — only a manual launch is allowed to take over.
-                            qWarning()
-                                << "[InternetAccess] Port" << port << protocol.c_str()
-                                << "already mapped to" << existingClient.c_str() << ":"
-                                << existingPort.c_str() << "— another device owns this mapping";
-                            m_LastError =
-                                QStringLiteral(
-                                    "Port %1/%2 already forwarded to %3 on this router. "
-                                    "Free it in your router settings or use a different port.")
-                                    .arg(port)
-                                    .arg(QString::fromStdString(protocol))
-                                    .arg(QString::fromStdString(existingClient));
-                            emit error(m_LastError);
-                            return false;
-                        }
-                        // Manual launch wins: evict the previous owner's mapping, then
-                        // claim the port for this host (the last instance started wins).
-                        qInfo() << "[InternetAccess] Port" << port << protocol.c_str() << "owned by"
-                                << existingClient.c_str() << ":" << existingPort.c_str()
-                                << "— taking over (manual launch)";
-                        m_Upnp.removePortMapping(port, protocol);
-                    } else {
-                        // Same host — re-add to refresh the lease
-                        qInfo() << "[InternetAccess] Port" << port << protocol.c_str()
-                                << "already mapped to us (" << existingClient.c_str()
-                                << ") — refreshing lease";
-                    }
-                }
-                return m_Upnp.addPortMapping(port, port, 3600, desc, protocol);
-            };
-
-            checkAndMap(httpsPort, "TCP", "MoonlightWeb HTTPS");
+            // Co-existence: never evict another device's mapping. The first
+            // instance to claim the default port keeps a clean URL; further
+            // instances behind the same NAT fall back to a deterministic port and
+            // advertise it in their URL, so all instances stay reachable.
+            m_ExternalHttpsPort = mapPortWithFallback(httpsPort, "TCP", "MoonlightWeb HTTPS");
 
             // Map HTTP port too, so the HTTP→HTTPS redirect works from the internet.
             // Without this mapping, external clients cannot reach the HTTP redirect
             // server through the NAT gateway.
             {
                 quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
-                checkAndMap(httpPort, "TCP", "MoonlightWeb HTTP");
+                m_ExternalHttpPort = mapPortWithFallback(httpPort, "TCP", "MoonlightWeb HTTP");
             }
 
-            checkAndMap(47999, "UDP", "MoonlightWeb UDP Stream");
+            mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream");
 
             // Capture local LAN IP for the UI (port mapping display)
             char buf[64] = {};
@@ -358,6 +353,60 @@ void InternetAccessManager::setPorts(quint16 httpPort, quint16 httpsPort)
     m_HttpPort = httpPort;
     m_HttpsPort = httpsPort;
     qInfo() << "[InternetAccess] Ports set: http=" << m_HttpPort << "https=" << m_HttpsPort;
+}
+
+quint16 InternetAccessManager::fallbackExternalPort(quint16 internalPort) const
+{
+    // High-range port (40000..49999) derived from unique_id + the internal port,
+    // kept well away from well-known ports so two instances on the same LAN don't
+    // collide on their fallback. Uses a stable FNV-1a hash (NOT qHash, whose seed
+    // is randomized per process) so the same instance keeps the same URL across
+    // restarts.
+    const QByteArray seed = (m_UniqueId + QString::number(internalPort)).toUtf8();
+    quint32 h = 2166136261u;
+    for (char c : seed) {
+        h ^= static_cast<quint8>(c);
+        h *= 16777619u;
+    }
+    return static_cast<quint16>(40000 + (h % 10000));
+}
+
+quint16 InternetAccessManager::mapPortWithFallback(quint16 internalPort, const char* protocol,
+                                                   const char* desc)
+{
+    // Candidate external ports: the internal port first (so the first instance to
+    // claim it keeps a clean, port-less URL), then a deterministic fallback range.
+    // We never evict a mapping owned by another device — a second instance behind
+    // the same NAT simply takes its own external port, so both stay reachable from
+    // the internet (one public IP forwards each external port to a single host).
+    const quint16 fb = fallbackExternalPort(internalPort);
+    const quint16 candidates[] = {internalPort, fb, static_cast<quint16>(fb + 1),
+                                  static_cast<quint16>(fb + 2), static_cast<quint16>(fb + 3)};
+
+    for (quint16 ext : candidates) {
+        std::string existingClient, existingPort;
+        if (m_Upnp.getExistingPortMapping(ext, protocol, existingClient, existingPort)) {
+            if (existingClient != m_Upnp.lanAddress()) {
+                // Owned by another device — try the next candidate (no eviction).
+                qInfo() << "[InternetAccess] External port" << ext << protocol
+                        << "owned by" << existingClient.c_str() << "— trying next candidate";
+                continue;
+            }
+            // Already ours — re-add below to refresh the lease.
+        }
+        if (m_Upnp.addPortMapping(ext, internalPort, 3600, desc, protocol)) {
+            if (ext != internalPort)
+                qInfo() << "[InternetAccess] Using fallback external port" << ext << protocol
+                        << "-> internal" << internalPort << "(another instance holds the default)";
+            return ext;
+        }
+        // AddPortMapping may still fail (e.g. ConflictInMappingEntry on some
+        // routers) even when GetSpecific reported the port free — try next.
+    }
+
+    qWarning() << "[InternetAccess] Could not map any external port for internal" << internalPort
+               << protocol;
+    return 0;
 }
 
 void InternetAccessManager::forceRefresh()
@@ -418,6 +467,12 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("cert_issuing")] = m_CertIssuing;
     obj[QStringLiteral("upnp_available")] = m_Upnp.isAvailable();
     obj[QStringLiteral("https_port")] = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
+    // External (router-side) HTTPS port for the public domain URL: the mapped
+    // port when known, otherwise the local HTTPS port. Differs from https_port
+    // only for a second instance behind the same NAT (fallback port).
+    obj[QStringLiteral("external_https_port")] =
+        m_ExternalHttpsPort > 0 ? m_ExternalHttpsPort
+                                : (m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443));
 
     if (!m_LastError.isEmpty()) obj[QStringLiteral("last_error")] = m_LastError;
 
@@ -1271,39 +1326,17 @@ void InternetAccessManager::onPeriodicCheck()
         qInfo() << "[InternetAccess] ACME issuance in progress, skipping cert check";
     }
 
-    // 4. Re-verify UPnP mappings
+    // 4. Re-verify UPnP mappings. mapPortWithFallback is idempotent and self-
+    // healing: if our external port was taken over since last time, it re-derives
+    // the next free candidate — no eviction, so instances never fight over a port.
     if (m_Settings->upnpEnabled() && m_Upnp.isAvailable()) {
-        // Same conflict check as in start() — detect if another device
-        // claimed the port since our last mapping.
-        auto checkAndRenew = [this](quint16 port, const std::string& protocol, const char* desc) {
-            std::string existingClient, existingPort;
-            if (m_Upnp.getExistingPortMapping(port, protocol, existingClient, existingPort)) {
-                if (existingClient != m_Upnp.lanAddress()) {
-                    qWarning() << "[InternetAccess] Port" << port << protocol.c_str()
-                               << "now mapped to" << existingClient.c_str()
-                               << "— port was taken over by another device";
-                    m_LastError =
-                        QStringLiteral("Port %1/%2 has been taken over by %3. "
-                                       "Free it in your router settings or use a different port.")
-                            .arg(port)
-                            .arg(QString::fromStdString(protocol))
-                            .arg(QString::fromStdString(existingClient));
-                    emit error(m_LastError);
-                    return;
-                }
-            }
-            m_Upnp.addPortMapping(port, port, 3600, desc, protocol);
-        };
-
         quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
-        checkAndRenew(httpsPort, "TCP", "MoonlightWeb HTTPS (renew)");
+        m_ExternalHttpsPort = mapPortWithFallback(httpsPort, "TCP", "MoonlightWeb HTTPS (renew)");
 
-        {
-            quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
-            checkAndRenew(httpPort, "TCP", "MoonlightWeb HTTP (renew)");
-        }
+        quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
+        m_ExternalHttpPort = mapPortWithFallback(httpPort, "TCP", "MoonlightWeb HTTP (renew)");
 
-        checkAndRenew(47999, "UDP", "MoonlightWeb UDP Stream (renew)");
+        mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream (renew)");
     }
 
     emit statusChanged(statusJson());

@@ -83,6 +83,15 @@ public:
     /// Current public IP.
     QString publicIp() const { return m_PublicIp; }
 
+    /// External (router-side) HTTPS port this instance is reachable on from the
+    /// internet. Equals the internal HTTPS port (443) for the first instance to
+    /// claim it; a deterministic fallback port for further instances behind the
+    /// same NAT. 0 until UPnP mapping has run.
+    quint16 externalHttpsPort() const { return m_ExternalHttpsPort; }
+
+    /// External (router-side) HTTP port (used for the HTTP→HTTPS redirect).
+    quint16 externalHttpPort() const { return m_ExternalHttpPort; }
+
     /// UPnP client (exposed for integration with existing session code).
     UPNPClient* upnpClient() { return &m_Upnp; }
 
@@ -165,6 +174,17 @@ private:
     /// Build the domain name from unique ID.
     QString buildDomain() const;
 
+    /// Deterministic fallback external port derived from unique_id, so two
+    /// instances behind the same NAT never converge on the same port (the router
+    /// forwards each external port to a single host).
+    quint16 fallbackExternalPort(quint16 internalPort) const;
+
+    /// Map an external port to the given internal port, preferring the internal
+    /// port itself (clean URL) and falling back to a deterministic per-instance
+    /// port when another device already owns it. Never evicts another device's
+    /// mapping. Returns the external port actually mapped, or 0 on failure.
+    quint16 mapPortWithFallback(quint16 internalPort, const char* protocol, const char* desc);
+
     /// Resolve the domain via system DNS.
     QString resolveDomain(const QString& domain);
 
@@ -192,6 +212,8 @@ private:
     bool m_CertIssuing = false;    ///< True while ACME issuance is in progress
     quint16 m_HttpPort = 0;        ///< Actual HTTP server port
     quint16 m_HttpsPort = 0;       ///< Actual HTTPS server port
+    quint16 m_ExternalHttpsPort = 0; ///< Router-side external HTTPS port (443 or fallback)
+    quint16 m_ExternalHttpPort = 0;  ///< Router-side external HTTP port (80 or fallback)
     bool m_ServiceManaged = false; ///< True when launched by a service supervisor (MW_SERVICE set);
                                    ///< such an instance never steals a port mapping owned by
                                    ///< another device — only a manual launch takes over.

@@ -49,6 +49,10 @@ export class AdminView {
         // Server settings state
         this._httpsPort = 443;
         this._httpPort = 80;
+        // External (router-side) HTTPS port for the public domain URL. Equals the
+        // local port for the first instance; a fallback port for a co-existing
+        // instance behind the same NAT.
+        this._externalHttpsPort = 443;
 
         // Internet Access state (Azure DNS)
         this._internetEnabled = false;
@@ -121,6 +125,7 @@ export class AdminView {
             const status = await BackendClient.getInternetStatus();
             this._internetEnabled = status.internet_access_enabled || false;
             this._domain = status.domain || '';
+            this._externalHttpsPort = status.external_https_port || this._httpsPort;
             this._publicIp = status.public_ip || '';
             this._localIp = status.local_ip || '';
             this._uniqueId = status.unique_id || '';
@@ -283,6 +288,7 @@ export class AdminView {
                     this._internetEnabled = true;
                     this._active = true;
                     this._domain = status.domain || this._domain;
+                    this._externalHttpsPort = status.external_https_port || this._externalHttpsPort;
                     this._publicIp = status.public_ip || this._publicIp;
                     this._pendingRegistration = false;
                     this._lastError = '';
@@ -351,8 +357,11 @@ export class AdminView {
     _buildDomainUrl() {
         if (!this._domain) return '';
         const prefix = 'https://' + this._domain;
-        if (this._httpsPort !== 443) {
-            return prefix + ':' + this._httpsPort;
+        // Use the external (router-side) port: a second instance behind the same
+        // NAT is reachable from the internet on a fallback port, not 443.
+        const port = this._externalHttpsPort || this._httpsPort;
+        if (port !== 443) {
+            return prefix + ':' + port;
         }
         return prefix;
     }

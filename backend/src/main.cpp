@@ -1527,8 +1527,15 @@ int main(int argc, char* argv[])
     // Best admin URL: the public domain (valid certificate) once Internet Access
     // is live, otherwise loopback HTTPS on the actual port (omit :443).
     auto adminUrl = [&]() -> QString {
-        if (internetAccess.isActive() && !internetAccess.domain().isEmpty())
-            return "https://" + internetAccess.domain() + "/admin";
+        if (internetAccess.isActive() && !internetAccess.domain().isEmpty()) {
+            // Include the external (router-side) HTTPS port when it isn't the
+            // default 443 — a second instance behind the same NAT is reachable on
+            // a fallback port, which must appear in the URL.
+            quint16 ext = internetAccess.externalHttpsPort();
+            QString url = "https://" + internetAccess.domain();
+            if (ext != 0 && ext != 443) url += QStringLiteral(":%1").arg(ext);
+            return url + "/admin";
+        }
         quint16 p = server.activeHttpsPort();
         return p == 443 ? QStringLiteral("https://localhost/admin")
                         : QStringLiteral("https://localhost:%1/admin").arg(p);
@@ -1544,8 +1551,10 @@ int main(int argc, char* argv[])
     // Refresh the shortcut to the valid-certificate domain link once it is ready,
     // and (during a fresh install) mark the A-record checklist step done.
     QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
-                     [provisioned](const QString& domain, const QString&) {
-                         writeAdminShortcut("https://" + domain + "/admin");
+                     [&adminUrl, provisioned](const QString&, const QString&) {
+                         // adminUrl() folds in the external HTTPS port (fallback
+                         // port for a co-existing instance behind the same NAT).
+                         writeAdminShortcut(adminUrl());
                          if (provisioned)
                              Provisioning::setStepStatus(QStringLiteral("arecord"),
                                                          QStringLiteral("done"));
