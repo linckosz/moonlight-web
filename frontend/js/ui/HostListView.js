@@ -33,6 +33,7 @@ import { PairDialog } from './PairDialog.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
+import { escapeHtml } from '../util/escapeHtml.js';
 
 export class HostListView {
     constructor(container) {
@@ -601,8 +602,6 @@ export class HostListView {
     // --- Helpers ---
 
     esc(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return escapeHtml(text);
     }
 }

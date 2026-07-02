@@ -29,6 +29,7 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
+import { escapeHtml } from '../util/escapeHtml.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
 const IS_TOUCH_DEVICE =
@@ -1017,8 +1018,6 @@ export class SettingsView {
     // --- Helpers ---
 
     esc(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return escapeHtml(text);
     }
 }

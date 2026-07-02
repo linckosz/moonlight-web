@@ -25,6 +25,7 @@
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
+import { escapeHtml } from '../util/escapeHtml.js';
 
 export class PairDialog {
     constructor(host) {
@@ -157,8 +158,6 @@ export class PairDialog {
     }
 
     esc(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return escapeHtml(text);
     }
 }
