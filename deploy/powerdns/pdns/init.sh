@@ -51,7 +51,7 @@ ensure_a() {  # ensure_a <name>  — add an A record to MW_PUBLIC_IP if absent
     name="$1"
     fqdn="$( [ "$name" = "@" ] && echo "$MW_DOMAIN" || echo "${name}.${MW_DOMAIN}" )"
     if ! $PDNSUTIL list-zone "$MW_DOMAIN" 2>/dev/null \
-         | grep -qiE "^${fqdn}\.[[:space:]].*[[:space:]]A[[:space:]]"; then
+         | grep -qiE "^${fqdn}\.?[[:space:]].*[[:space:]]A[[:space:]]"; then
         echo "[mw] Adding missing A record ${fqdn} -> $MW_PUBLIC_IP"
         $PDNSUTIL add-record "$MW_DOMAIN" "$name" A "$MW_PUBLIC_IP"
         NEED_RECTIFY=1
