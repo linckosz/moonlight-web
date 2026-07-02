@@ -10,7 +10,12 @@
 # OpenSSL: system package on Linux/macOS, prebuilt under libs/windows on Windows.
 # ============================================================================
 cmake_minimum_required(VERSION 3.21)
-project(moonlightweb-backend LANGUAGES C CXX)
+project(moonlightweb-backend VERSION 0.1.0 LANGUAGES C CXX)
+
+# Single source of truth for the shipped version string: defaults to the project
+# version; the release workflow overrides it from the v* tag (-DMW_VERSION=x.y.z)
+# so the binary, installers and packages all report the same version.
+set(MW_VERSION "${PROJECT_VERSION}" CACHE STRING "Application version string")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -190,6 +195,7 @@ target_compile_definitions(mw-server PRIVATE
     RTC_ENABLE_MEDIA=1
     MW_HAVE_MINIUPNPC
     MINIUPNP_STATICLIB
+    MW_VERSION="${MW_VERSION}"
     PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../"
     FRONTEND_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../frontend/"
     CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/cert/"
@@ -281,7 +287,21 @@ endif()
 # DLLs on Windows. Qt runtime is added per-platform by the deploy tool
 # (windeployqt / macdeployqt / linuxdeploy) in the release workflow.
 install(TARGETS mw-server RUNTIME DESTINATION . BUNDLE DESTINATION .)
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../frontend" DESTINATION .)
+# Ship only the served assets: dev tooling (node_modules, tests, lint/TS configs,
+# internal .claude notes) must never reach user machines — and trips codesign on
+# macOS. Top-level dirs are excluded by REGEX so e.g. js/ subtrees stay intact.
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../frontend" DESTINATION .
+    REGEX "/frontend/(\\.claude|node_modules|test|scripts|build|coverage)$" EXCLUDE
+    PATTERN ".prettierignore" EXCLUDE
+    PATTERN ".prettierrc.json" EXCLUDE
+    PATTERN ".tolgeerc.json" EXCLUDE
+    PATTERN "eslint.config.js" EXCLUDE
+    PATTERN "package.json" EXCLUDE
+    PATTERN "package-lock.json" EXCLUDE
+    PATTERN "prompt-frontend.md" EXCLUDE
+    PATTERN "tsconfig.json" EXCLUDE
+    PATTERN "vitest.config.js" EXCLUDE
+)
 if(WIN32 AND _mw_ssl_prebuilt)
     install(FILES ${_mw_ssl_dlls} DESTINATION .)
 endif()
@@ -289,7 +309,7 @@ endif()
 set(CPACK_PACKAGE_NAME "moonlightweb")
 set(CPACK_PACKAGE_VENDOR "moonlightweb")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Sunshine streaming client for the browser")
-set(CPACK_PACKAGE_VERSION "1.0.0")
+set(CPACK_PACKAGE_VERSION "${MW_VERSION}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "moonlightweb")
 if(WIN32)
     set(CPACK_GENERATOR "ZIP")

@@ -55,6 +55,11 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
 /// "arecord". States: "pending" | "running" | "done" | "failed" | "skipped".
 void setStepStatus(const QString& step, const QString& state);
 
+/// Publish a top-level informational key in the same status file (e.g.
+/// "admin_url" with the real HTTPS port/domain, read by the installer's
+/// post-install "open admin page" action).
+void setInfo(const QString& key, const QString& value);
+
 /// Pair the local Sunshine (127.0.0.1) over the GameStream protocol, pushing the
 /// PIN through Sunshine's REST API with the given credentials so the user never
 /// types it in Sunshine's web UI. Returns true once the host reaches PS_PAIRED.

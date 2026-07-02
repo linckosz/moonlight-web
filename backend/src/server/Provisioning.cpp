@@ -60,6 +60,28 @@ void setStepStatus(const QString& step, const QString& state)
     }
 }
 
+// Publish a top-level informational key (e.g. the resolved admin URL) in the
+// same status file; the installer reads it to open the right page post-install.
+void setInfo(const QString& key, const QString& value)
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir().mkpath(dir);
+    const QString path = dir + QStringLiteral("/provisioning.status.json");
+
+    QJsonObject root;
+    QFile f(path);
+    if (f.open(QIODevice::ReadOnly)) {
+        root = QJsonDocument::fromJson(f.readAll()).object();
+        f.close();
+    }
+    root[key] = value;
+
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+        f.close();
+    }
+}
+
 // Pair the local Sunshine over the GameStream protocol while feeding the PIN
 // through Sunshine's REST API (no manual entry in Sunshine's web UI).
 bool pairSunshine(ComputerManager& computers, const QString& user, const QString& pass)

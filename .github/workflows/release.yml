@@ -1,9 +1,10 @@
 # MoonlightWeb — multi-platform release packaging.
 #
-# On a v* tag, builds self-contained bundles for Windows x64/ARM64, Linux x64
-# (AppImage) and macOS arm64 (.dmg), then attaches them to the GitHub Release.
-# Each bundle ships the executable, the Qt runtime (via the native deploy tool),
-# OpenSSL and the frontend/ served as static files.
+# On a v* tag, builds self-contained bundles for Windows x64/ARM64 (Inno Setup
+# installer), Linux x64 (.deb + .rpm + AppImage) and macOS arm64 (.dmg), then
+# attaches them to the GitHub Release. Each bundle ships the executable, the Qt
+# runtime (via the native deploy tool), OpenSSL and the frontend/ served as
+# static files (staged by `cmake --install`, which strips dev tooling).
 name: release
 
 on:
@@ -97,6 +98,15 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
 
+      # Version from the release tag (v1.2.3 → 1.2.3); CMake default elsewhere.
+      - name: Compute version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = '0.1.0'
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $v = $env:GITHUB_REF_NAME.Substring(1) }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
       - name: Configure
         shell: pwsh
         # Internet-Access config embedded at build time from repo secrets (no
@@ -108,7 +118,8 @@ jobs:
           MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
           MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: |
-          $args = @("-S","backend","-B","build","-G","Ninja","-DCMAKE_BUILD_TYPE=Release")
+          $args = @("-S","backend","-B","build","-G","Ninja","-DCMAKE_BUILD_TYPE=Release",
+                    "-DMW_VERSION=${{ steps.ver.outputs.version }}")
           if ("${{ matrix.arch }}" -eq "arm64") {
             $args += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
             $args += "-DVCPKG_TARGET_TRIPLET=arm64-windows"
@@ -157,6 +168,7 @@ jobs:
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             "/DSourceDir=$(Resolve-Path dist)" `
             "/DMyArch=${{ matrix.arch }}" `
+            "/DMyAppVersion=${{ steps.ver.outputs.version }}" `
             "/O$(Get-Location)" `
             backend\installer\moonlightweb.iss
 
@@ -172,7 +184,11 @@ jobs:
         with:
           files: MoonlightWeb-installer-win-${{ matrix.arch }}.exe
 
-  # ── Linux x64 (AppImage) ─────────────────────────────────────────────────
+  # ── Linux x64 (.deb + .rpm + AppImage) ───────────────────────────────────
+  # One linuxdeploy AppDir (bundled Qt, $ORIGIN rpaths) feeds all three outputs:
+  #   .deb  → Debian/Ubuntu/Mint (double-click install, no chmod)
+  #   .rpm  → Fedora/RHEL/openSUSE/Nobara
+  #   .AppImage → portable fallback (Arch, immutable gaming distros: SteamOS…)
   linux:
     needs: setup
     if: ${{ needs.setup.outputs.linux == 'true' }}
@@ -189,7 +205,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config \
-            libssl-dev libfuse2 wget
+            libssl-dev libfuse2 wget rpm ruby
+          # fpm turns the staged tree into .deb + .rpm (see make-packages.sh).
+          sudo gem install --no-document fpm
+
+      # Version from the release tag (v1.2.3 → 1.2.3); CMake default elsewhere.
+      - name: Compute version
+        id: ver
+        run: |
+          v=0.1.0
+          case "$GITHUB_REF" in refs/tags/v*) v="${GITHUB_REF_NAME#v}" ;; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - uses: jurplel/install-qt-action@v4
         with:
@@ -212,17 +238,21 @@ jobs:
           MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
           MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: |
-          cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DMW_VERSION=${{ steps.ver.outputs.version }}
           cmake --build build -j
 
+      # `cmake --install` applies the frontend excludes (node_modules, tests,
+      # .claude, lint configs) — never copy frontend/ straight from the checkout.
       - name: Assemble AppDir
         run: |
+          cmake --install build --prefix stage
           mkdir -p AppDir/usr/bin
           cp build/MoonlightWeb AppDir/usr/bin/
-          cp -r frontend AppDir/usr/bin/frontend
+          cp -r stage/frontend AppDir/usr/bin/frontend
           cp frontend/assets/icon-512.png AppDir/MoonlightWeb.png
 
-      - name: Build AppImage
+      - name: Deploy Qt into AppDir
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
@@ -231,18 +261,57 @@ jobs:
             -e build/MoonlightWeb \
             -d backend/packaging/moonlightweb.desktop \
             -i AppDir/MoonlightWeb.png \
-            --plugin qt --output appimage
+            --plugin qt
+
+      # linuxdeploy-plugin-qt only bundles the xcb platform plugin; add the
+      # Wayland client plugins so native Wayland sessions (GNOME/KDE defaults)
+      # don't warn and fall back to XWayland. Best-effort: Qt prebuilt plugins
+      # already carry $ORIGIN/../../lib rpaths matching the AppDir layout, and
+      # xcb remains the fallback if anything here is absent.
+      - name: Bundle Qt Wayland plugins (best effort)
+        run: |
+          P="$QT_ROOT_DIR/plugins"; L="$QT_ROOT_DIR/lib"
+          if [ -f "$P/platforms/libqwayland-generic.so" ]; then
+            cp -a "$P"/platforms/libqwayland-*.so AppDir/usr/plugins/platforms/
+            for d in wayland-decoration-client wayland-graphics-integration-client wayland-shell-integration; do
+              if [ -d "$P/$d" ]; then cp -a "$P/$d" AppDir/usr/plugins/; fi
+            done
+            cp -a "$L"/libQt6WaylandClient.so* AppDir/usr/lib/ 2>/dev/null || true
+            cp -a "$L"/libQt6WaylandEglClientHwIntegration.so* AppDir/usr/lib/ 2>/dev/null || true
+            echo "Wayland client plugins bundled"
+          else
+            echo "Qt Wayland plugins not present in this Qt install — skipped"
+          fi
+
+      # AppImage: portable fallback for distros without deb/rpm (Arch, and
+      # immutable gaming distros like SteamOS/Bazzite). Needs chmod +x once.
+      - name: Build AppImage
+        run: |
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
           mv MoonlightWeb*.AppImage moonlightweb-linux-x64.AppImage
+
+      # Native packages: double-click installs via the distro's GUI installer
+      # (no chmod needed). .deb → Debian/Ubuntu/Mint, .rpm → Fedora/RHEL/Nobara.
+      - name: Build .deb + .rpm
+        run: |
+          chmod +x backend/packaging/linux/make-packages.sh
+          backend/packaging/linux/make-packages.sh AppDir ${{ steps.ver.outputs.version }} .
 
       - uses: actions/upload-artifact@v6
         with:
           name: moonlightweb-linux-x64
-          path: moonlightweb-linux-x64.AppImage
+          path: |
+            moonlightweb-linux-x64.deb
+            moonlightweb-linux-x64.rpm
+            moonlightweb-linux-x64.AppImage
 
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: moonlightweb-linux-x64.AppImage
+          files: |
+            moonlightweb-linux-x64.deb
+            moonlightweb-linux-x64.rpm
+            moonlightweb-linux-x64.AppImage
 
   # ── macOS arm64 (.dmg) ───────────────────────────────────────────────────
   macos:
@@ -274,6 +343,14 @@ jobs:
           py7zrversion: ==1.1.0
           extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
 
+      # Version from the release tag (v1.2.3 → 1.2.3); CMake default elsewhere.
+      - name: Compute version
+        id: ver
+        run: |
+          v=0.1.0
+          case "$GITHUB_REF" in refs/tags/v*) v="${GITHUB_REF_NAME#v}" ;; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - name: Build
         # Internet-Access config embedded at build time from repo secrets (no
         # .env shipped). Empty when a secret is unset → LAN-only fallback.
@@ -284,22 +361,38 @@ jobs:
           MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
           MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
         run: |
-          cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S backend -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DMW_VERSION=${{ steps.ver.outputs.version }}
           cmake --build build -j
 
       - name: Assemble .app bundle
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           APP=MoonlightWeb.app
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp build/MoonlightWeb "$APP/Contents/MacOS/MoonlightWeb"
           # Frontend assets go in Resources/, NOT MacOS/: codesign treats every
           # file under Contents/MacOS as code and rejects non-code assets. The
-          # backend falls back to ../Resources/frontend at runtime. Drop the dev
-          # tooling dir (.claude etc.) that also trips codesign.
-          cp -r frontend "$APP/Contents/Resources/frontend"
-          rm -rf "$APP/Contents/Resources/frontend/.claude" \
-                 "$APP/Contents/Resources/frontend/node_modules"
-          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          # backend falls back to ../Resources/frontend at runtime. `cmake
+          # --install` applies the frontend excludes (node_modules, tests,
+          # .claude — the dev files that also trip codesign).
+          cmake --install build --prefix stage
+          cp -r stage/frontend "$APP/Contents/Resources/frontend"
+
+          # App icon: Finder/Dock ignore the bundle without a real .icns, so
+          # derive the iconset from the 512px PNG (skip the 1024 @2x variant —
+          # upscaling the 512 source buys nothing).
+          mkdir icon.iconset
+          for s in 16 32 128 256; do
+            sips -z $s $s frontend/assets/icon-512.png --out icon.iconset/icon_${s}x${s}.png >/dev/null
+            d=$((s * 2))
+            sips -z $d $d frontend/assets/icon-512.png --out icon.iconset/icon_${s}x${s}@2x.png >/dev/null
+          done
+          sips -z 512 512 frontend/assets/icon-512.png --out icon.iconset/icon_512x512.png >/dev/null
+          iconutil -c icns icon.iconset -o "$APP/Contents/Resources/MoonlightWeb.icns"
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
@@ -307,7 +400,11 @@ jobs:
             <key>CFBundleIdentifier</key><string>com.moonlightweb.server</string>
             <key>CFBundleName</key><string>MoonlightWeb</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>1.0.0</string>
+            <key>CFBundleIconFile</key><string>MoonlightWeb</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
           </dict></plist>
           PLIST
 
@@ -341,7 +438,12 @@ jobs:
 
           # Build the DMG from the signed bundle with hdiutil (a second
           # macdeployqt -dmg would re-deploy and invalidate the signature).
-          hdiutil create -volname MoonlightWeb -srcfolder MoonlightWeb.app \
+          # Standard layout: app + /Applications symlink so users drag-install
+          # instead of running from the read-only mounted volume.
+          mkdir dmg-staging
+          mv MoonlightWeb.app dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+          hdiutil create -volname MoonlightWeb -srcfolder dmg-staging \
             -ov -format UDZO moonlightweb-macos-arm64.dmg
 
       - uses: actions/upload-artifact@v6

@@ -78,8 +78,8 @@ xcopy /e /i /q "%FRONTEND_DIR%" "%DEPLOY_DIR%\frontend\" > nul
 
 echo === Deploy complete: %DEPLOY_DIR% ===
 echo.
-echo To build MSI:
-echo   installer\build_msi.bat
+echo To build the installer (Inno Setup):
+echo   iscc installer\moonlightweb.iss /DSourceDir=%DEPLOY_DIR%
 echo.
 echo To run directly:
 echo   %DEPLOY_DIR%\MoonlightWeb.exe
