@@ -538,7 +538,8 @@ int main(int argc, char* argv[])
             obj["status"] = "ok";
             obj["pin_regenerated"] = true;
             HttpResponse resp = HttpResponse::json(obj);
-            // Set HttpOnly session cookie, 10-year expiry, Strict SameSite
+            // Set HttpOnly session cookie, 90-day expiry, Strict SameSite
+            // (Max-Age=7776000s; matches the server-side sliding TTL).
             resp.headers["Set-Cookie"] =
                 QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
                     .arg(token);
@@ -1788,13 +1789,23 @@ int main(int argc, char* argv[])
     });
 
     // API route: force refresh (re-check IP, DNS, certificate)
-    server.router()->post("/api/internet/refresh", [&](const HttpRequest&) {
+    server.router()->post("/api/internet/refresh", [&](const HttpRequest& req) {
+        // Localhost only: refresh re-runs DNS/ACME and must not be triggerable by
+        // a remote session (avoids abusing the ACME provider's rate limits).
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
+
         internetAccess.forceRefresh();
         return HttpResponse::json(internetAccess.statusJson());
     });
 
     // API route: renew TLS certificate
-    server.router()->post("/api/internet/renew-cert", [&](const HttpRequest&) {
+    server.router()->post("/api/internet/renew-cert", [&](const HttpRequest& req) {
+        // Localhost only: certificate issuance is subject to strict ACME rate
+        // limits — never let a remote session drive it.
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
+
         internetAccess.renewCertificate();
         QJsonObject obj;
         obj["status"] = "renewing";
