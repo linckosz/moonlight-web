@@ -58,6 +58,7 @@ add_executable(run_tests
     test_app_settings.cpp
     test_auth_manager.cpp
     test_connection_guard.cpp
+    test_static_files.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp
@@ -66,6 +67,7 @@ add_executable(run_tests
     ${_src}/src/server/AppSettings.cpp
     ${_src}/src/server/AuthManager.cpp
     ${_src}/src/server/ConnectionGuard.cpp
+    ${_src}/src/server/StaticFileHandler.cpp
     ${_src}/src/common/Logger.cpp
 )
 

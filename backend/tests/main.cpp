@@ -19,6 +19,7 @@ void run_rest_router_tests();
 void run_app_settings_tests();
 void run_auth_manager_tests();
 void run_connection_guard_tests();
+void run_static_files_tests();
 
 int main(int argc, char** argv)
 {
@@ -34,6 +35,7 @@ int main(int argc, char** argv)
     run_app_settings_tests();
     run_auth_manager_tests();
     run_connection_guard_tests();
+    run_static_files_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");

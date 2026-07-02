@@ -16,7 +16,8 @@ param(
         'InputCrypto.cpp',
         'RestRouter.cpp',
         'AppSettings.cpp',
-        'AuthManager.cpp'
+        'AuthManager.cpp',
+        'StaticFileHandler.cpp'
     )
 )
 
