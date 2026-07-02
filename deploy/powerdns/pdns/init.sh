@@ -61,6 +61,15 @@ NEED_RECTIFY=0
 ensure_a @     # apex — presentation site
 ensure_a www   # www  — presentation site
 ensure_a api   # api  — PowerDNS REST API
+
+# Zones created before default-soa-content was set (zz-mw.conf) carry the image
+# placeholder SOA ("a.misconfigured.dns.server.invalid"); swap in a real one.
+if $PDNSUTIL list-zone "$MW_DOMAIN" 2>/dev/null | grep -q 'misconfigured\.dns\.server\.invalid'; then
+    echo "[mw] Replacing placeholder SOA for $MW_DOMAIN"
+    $PDNSUTIL replace-rrset "$MW_DOMAIN" @ SOA 3600 \
+        "ns1.${MW_DOMAIN}. hostmaster.${MW_DOMAIN}. $(date -u +%Y%m%d01) 10800 3600 604800 3600"
+    NEED_RECTIFY=1
+fi
 [ "$NEED_RECTIFY" = "1" ] && $PDNSUTIL rectify-zone "$MW_DOMAIN" || true
 
 # Hand off to the official wrapper: it renders the REST API config from

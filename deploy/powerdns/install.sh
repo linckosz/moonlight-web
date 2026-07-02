@@ -70,6 +70,9 @@ pm_refresh || warn "package index refresh failed — continuing"
 
 # Base tools used by this script.
 pm_install curl ca-certificates openssl || warn "could not install base tools"
+# dig, for the final self-check (package name varies per distro) — best effort.
+command -v dig >/dev/null 2>&1 || pm_install dnsutils 2>/dev/null || \
+    pm_install bind-utils 2>/dev/null || pm_install bind-tools 2>/dev/null || true
 
 # ── Docker + compose ─────────────────────────────────────────────────────────
 step "Installing Docker"
@@ -367,6 +370,51 @@ echo " This list is saved to: $HERE/$SUMMARY"
 echo "============================================================"
 } | tee "$HERE/$SUMMARY"
 [ "$TARGET_USER" != "root" ] && chown "$TARGET_USER" "$HERE/$SUMMARY" 2>/dev/null || true
+
+# ── Self-check — what the public Internet actually sees ─────────────────────
+# dns.google over HTTPS shows the world's view of the zone even from this VM,
+# which cannot otherwise test its own INBOUND port 53 (cloud firewall / NSG).
+step "Self-check — public DNS reachability"
+
+if command -v dig >/dev/null 2>&1; then
+    if [ -n "$(dig +short +time=3 SOA "$MW_DOMAIN" @127.0.0.1 2>/dev/null)" ]; then
+        ok "local stack answers DNS queries on 127.0.0.1:53"
+    else
+        warn "local stack does NOT answer on 127.0.0.1:53 — check: $COMPOSE logs dnsdist pdns"
+    fi
+fi
+
+doh_a="$(curl -fsS -m 10 "https://dns.google/resolve?name=api.${MW_DOMAIN}&type=A" 2>/dev/null || true)"
+case "$doh_a" in
+    *'"Status":0'*)
+        if printf '%s' "$doh_a" | grep -q "\"data\":\"${MW_PUBLIC_IP}\""; then
+            ok "public resolvers reach this VM (api.${MW_DOMAIN} -> ${MW_PUBLIC_IP})"
+        else
+            warn "api.${MW_DOMAIN} publicly resolves to a DIFFERENT address than ${MW_PUBLIC_IP}:"
+            printf '%s' "$doh_a" | grep -o '"data":"[^"]*"' | sed 's/^/         /'
+            warn "another DNS server still answers for this zone (stale registrar glue,"
+            warn "cached delegation, or a PREVIOUS VM still running) — shut the old"
+            warn "server down and/or update the ns1/ns2 glue records, then retest."
+        fi
+        ;;
+    *'"Status":2'*)
+        warn "public resolvers get SERVFAIL for ${MW_DOMAIN}: the delegation points here"
+        warn "but resolvers cannot reach this VM on port 53. Almost always the CLOUD"
+        warn "firewall (Azure NSG / AWS SG / GCP): open 53/udp AND 53/tcp inbound,"
+        warn "then retest with:  dig NS ${MW_DOMAIN} @8.8.8.8"
+        ;;
+    *'"Status":3'*)
+        warn "public resolvers get NXDOMAIN for ${MW_DOMAIN}: the registrar delegation"
+        warn "(ns1/ns2 glue -> ${MW_PUBLIC_IP}) is missing or has not propagated yet"
+        warn "(minutes to hours). See step 2 of the TODO list above."
+        ;;
+    '')
+        warn "could not query dns.google over HTTPS — skipped the public check"
+        ;;
+    *)
+        warn "unexpected answer from dns.google — inspect manually: dig NS ${MW_DOMAIN} @8.8.8.8"
+        ;;
+esac
 
 printf '\n%s%sAll set — your VM is operational.%s See the TODO list above.\n' \
     "$c_bold" "$c_green" "$c_reset"
