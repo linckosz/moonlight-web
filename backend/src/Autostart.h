@@ -21,19 +21,19 @@
  * @brief Registers the app to start at user login (GUI session).
  *
  * Windows uses a logon Scheduled Task created by the Inno Setup installer. macOS
- * has no native installer, so the in-app setup wizard installs a per-user
- * LaunchAgent (~/Library/LaunchAgents/com.moonlightweb.agent.plist) that runs the
- * app in the GUI session — keeping the menu-bar icon — and relaunches it only on
- * an abnormal exit (crash); a clean quit (exit 0) is never relaunched.
+ * and Linux have no wizard-driven installer, so the in-app setup wizard installs
+ * the platform login item itself: a per-user LaunchAgent on macOS
+ * (~/Library/LaunchAgents/com.moonlightweb.agent.plist, relaunch on crash only)
+ * and an XDG autostart entry on Linux (~/.config/autostart/moonlightweb.desktop).
  *
  * This is distinct from the root LaunchDaemon (packaging/launchd) used for a
  * headless server binding :80/:443, which sets MW_SERVICE=1 and shows no tray.
  */
 namespace Autostart {
 
-/// Install the per-user login item. Returns true on success. Writing the plist is
-/// enough for launchd to load it at the next login; the already-running instance
-/// is left untouched (no immediate second launch). macOS only — no-op elsewhere.
+/// Install the per-user login item. Returns true on success. Writing the file is
+/// enough for the next login; the already-running instance is left untouched (no
+/// immediate second launch). macOS + Linux — no-op on Windows.
 bool installLoginItem();
 
 /// Whether the per-user login item is already present.

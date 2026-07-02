@@ -156,6 +156,12 @@ static void applyEmbeddedEnvDefaults()
 #endif
 }
 
+// Version string baked in by CMake (MW_VERSION cache var, overridden by the
+// release tag in CI); fallback for builds that bypass CMake.
+#ifndef MW_VERSION
+#define MW_VERSION "0.1.0"
+#endif
+
 // Forward Qt's qDebug/qInfo/qWarning/qCritical (emitted across modules) into the
 // Logger so the windowless release build still records them in the log file —
 // there is no console to print to.
@@ -176,6 +182,9 @@ static void mwMessageHandler(QtMsgType type, const QMessageLogContext&, const QS
 // wrong desktop).
 static void writeAdminShortcut(const QString& url)
 {
+    // Expose the resolved URL to the installer (post-install "open admin page"
+    // action) regardless of the shortcut below.
+    Provisioning::setInfo(QStringLiteral("admin_url"), url);
     if (!qEnvironmentVariableIsEmpty("MW_SERVICE")) return;
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
     if (desktop.isEmpty()) return;
@@ -189,7 +198,7 @@ int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("MoonlightWeb");
-    QCoreApplication::setApplicationVersion("0.1.0");
+    QCoreApplication::setApplicationVersion(QStringLiteral(MW_VERSION));
     QCoreApplication::setOrganizationName("MoonlightWeb");
 
     // The Windows release build is windowless (no console): capture Qt messages

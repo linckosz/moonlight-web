@@ -101,7 +101,56 @@ bool isLoginItemInstalled()
     return QFile::exists(plistPath());
 }
 
-#else // non-macOS
+#elif defined(Q_OS_LINUX)
+
+namespace {
+
+// XDG autostart entry (~/.config/autostart), honored by GNOME/KDE/XFCE and
+// every desktop implementing the Desktop Application Autostart spec.
+QString entryPath()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) +
+           QStringLiteral("/autostart/moonlightweb.desktop");
+}
+
+} // namespace
+
+bool installLoginItem()
+{
+    // Inside an AppImage, applicationFilePath() points at the transient mount;
+    // relaunch the .AppImage itself instead ($APPIMAGE is set by the runtime).
+    QString exe = qEnvironmentVariable("APPIMAGE");
+    if (exe.isEmpty()) exe = QCoreApplication::applicationFilePath();
+
+    const QString entry = QStringLiteral("[Desktop Entry]\n"
+                                         "Type=Application\n"
+                                         "Name=MoonlightWeb\n"
+                                         "Comment=Sunshine streaming client for the browser\n"
+                                         "Exec=\"%1\"\n"
+                                         "Icon=moonlightweb\n"
+                                         "Terminal=false\n"
+                                         "X-GNOME-Autostart-enabled=true\n")
+                              .arg(exe);
+
+    const QString path = entryPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        Logger::warning(QStringLiteral("Autostart: cannot write %1").arg(path));
+        return false;
+    }
+    f.write(entry.toUtf8());
+    f.close();
+    Logger::info(QStringLiteral("Autostart: login item installed at %1").arg(path));
+    return true;
+}
+
+bool isLoginItemInstalled()
+{
+    return QFile::exists(entryPath());
+}
+
+#else // Windows (logon Scheduled Task owned by the Inno Setup installer)
 
 bool installLoginItem()
 {

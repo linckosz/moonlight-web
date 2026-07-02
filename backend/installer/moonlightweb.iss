@@ -152,7 +152,9 @@ Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 [Run]
 ; The tray server is already launched during the provisioning checklist (see
 ; RunProvisionChecklist in [Code]); only offer to open the admin page here.
-Filename: "{#AdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
+; GetAdminUrl reads the URL the server published (real HTTPS port / public
+; domain) and falls back to the provisional one if the server did not start.
+Filename: "{code:GetAdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
 
 [Code]
 var
@@ -390,8 +392,9 @@ begin
       Exit;
     end;
     // Re-detect to get the installed path, then set credentials via the CLI.
+    // Quote both values: spaces/special characters must reach Sunshine intact.
     if DetectSunshine() then
-      Exec(SunshineExePath, '--creds ' + SunshineUserEdit.Text + ' ' + SunshinePassEdit.Text,
+      Exec(SunshineExePath, '--creds "' + SunshineUserEdit.Text + '" "' + SunshinePassEdit.Text + '"',
            '', SW_HIDE, ewWaitUntilTerminated, rc);
     SunshineStepState := 'done';
   finally
@@ -509,6 +512,23 @@ begin
   q := p;
   while (q <= Length(content)) and (content[q] <> '"') do Inc(q);
   Result := Copy(content, p, q - p);
+end;
+
+// Admin URL for the post-install "open the admin page" action: prefer the URL
+// the server wrote into provisioning.status.json at startup (real HTTPS port,
+// public domain once ready) over the provisional compile-time default.
+function GetAdminUrl(Param: String): String;
+var
+  raw: AnsiString;
+  url: String;
+begin
+  Result := '{#AdminUrl}';
+  if LoadStringFromFile(
+       ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json'), raw) then
+  begin
+    url := StatusValue(raw, 'admin_url');
+    if url <> '' then Result := url;
+  end;
 end;
 
 // Launch the server (kicks off first-run provisioning) and poll its status file,
@@ -640,7 +660,11 @@ begin
     Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     DeleteFile(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
+    // Both desktops: the installer wrote the provisional shortcut to the common
+    // desktop ({autodesktop} elevated); the server self-heals one on the USER
+    // desktop at every startup (see writeAdminShortcut in main.cpp).
     DeleteFile(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
+    DeleteFile(ExpandConstant('{userdesktop}\MoonlightWeb Admin.url'));
     DeleteFile(ExpandConstant('{app}\provisioning.json'));
     DeleteFile(ExpandConstant('{app}\provisioning.consumed.json'));
     DeleteFile(ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json'));

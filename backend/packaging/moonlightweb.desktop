@@ -5,4 +5,4 @@ Comment=Sunshine streaming client for the browser
 Exec=MoonlightWeb
 Icon=MoonlightWeb
 Categories=Network;Game;
-Terminal=true
+Terminal=false
