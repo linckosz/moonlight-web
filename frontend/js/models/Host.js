@@ -60,13 +60,9 @@ export class Host {
     }
 
     get displayName() {
+        // Never fall back to the IP address — internal addresses stay hidden.
         if (this.name && this.name !== 'UNKNOWN') return this.name;
-        if (this.activeAddress) return this.activeAddress;
         return 'Unknown Host';
-    }
-
-    get displayAddress() {
-        return this.activeAddress ? `${this.activeAddress}:${this.port}` : '';
     }
 
     get displayGpu() {

@@ -1,6 +1,8 @@
 /* MoonlightWeb — Hosts view */
 
-.hosts-view { width: 100%; }
+.hosts-view {
+    width: 100%;
+}
 
 .hosts-header {
     display: flex;
@@ -21,6 +23,24 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+}
+/* Desktop: host boxes shrink to their content and sit side by side, so a
+   host with few apps no longer leaves a large empty area. */
+@media (min-width: 601px) {
+    .hosts-list {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+    .host-card {
+        flex: 0 1 auto;
+        min-width: 340px;
+        max-width: 100%;
+    }
+    .hosts-empty,
+    .hosts-error {
+        width: 100%;
+    }
 }
 
 .hosts-empty,
@@ -44,9 +64,13 @@
     display: flex;
     flex-direction: column;
     padding: var(--space-4) var(--space-5);
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition:
+        border-color 0.2s,
+        box-shadow 0.2s;
 }
-.host-card.offline { opacity: 0.6; }
+.host-card.offline {
+    opacity: 0.6;
+}
 
 /* Header row: status icon · name+badge+meta · kebab menu */
 .host-card-head {
@@ -55,7 +79,9 @@
     gap: var(--space-4);
 }
 
-.host-card-icon { flex-shrink: 0; }
+.host-card-icon {
+    flex-shrink: 0;
+}
 .status-icon {
     display: flex;
     align-items: center;
@@ -66,11 +92,23 @@
     font-size: 1.25rem;
     background-color: var(--surface-3);
 }
-.status-icon.ready   { color: var(--c-success); background-color: var(--c-success-soft); }
-.status-icon.locked  { color: var(--c-warning); background-color: var(--c-warning-soft); }
-.status-icon.offline { color: var(--c-danger);  background-color: var(--c-danger-soft); }
+.status-icon.ready {
+    color: var(--c-success);
+    background-color: var(--c-success-soft);
+}
+.status-icon.locked {
+    color: var(--c-warning);
+    background-color: var(--c-warning-soft);
+}
+.status-icon.offline {
+    color: var(--c-danger);
+    background-color: var(--c-danger-soft);
+}
 
-.host-card-info { flex: 1; min-width: 0; }
+.host-card-info {
+    flex: 1;
+    min-width: 0;
+}
 .host-name-row {
     display: flex;
     align-items: center;
@@ -85,11 +123,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.host-name-row .status-badge { flex-shrink: 0; }
-.host-address {
-    font-size: var(--fs-xs);
-    color: var(--text-2);
-    font-family: var(--font-mono);
+.host-name-row .status-badge {
+    flex-shrink: 0;
 }
 .host-gpu,
 .host-resolution {
@@ -99,7 +134,10 @@
 }
 
 /* Kebab menu */
-.host-card-menu { position: relative; flex-shrink: 0; }
+.host-card-menu {
+    position: relative;
+    flex-shrink: 0;
+}
 .host-menu {
     position: absolute;
     top: calc(100% + 4px);
@@ -124,18 +162,27 @@
     font-size: var(--fs-sm);
     cursor: pointer;
 }
-.host-menu-item:hover { background-color: rgba(255, 255, 255, 0.06); }
-.host-menu-item.btn-remove { color: var(--c-danger); }
+.host-menu-item:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+}
+.host-menu-item.btn-remove {
+    color: var(--c-danger);
+}
 
 /* Body: app grid, or a centered Pair / Wake-on-LAN / offline message */
-.host-card-body { margin-top: var(--space-4); }
+.host-card-body {
+    margin-top: var(--space-4);
+}
 .host-body-center {
     display: flex;
     align-items: center;
     justify-content: center;
     padding: var(--space-5) var(--space-3);
 }
-.host-offline-msg { color: var(--text-3); font-size: var(--fs-sm); }
+.host-offline-msg {
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+}
 
 .host-apps-loading,
 .host-apps-msg {
@@ -144,9 +191,15 @@
     color: var(--text-2);
     font-size: var(--fs-sm);
 }
-.host-apps-error { color: var(--c-danger); }
+.host-apps-error {
+    color: var(--c-danger);
+}
 
 @media (max-width: 600px) {
-    .host-card { padding: var(--space-3) var(--space-4); }
-    .host-card-head { gap: var(--space-3); }
+    .host-card {
+        padding: var(--space-3) var(--space-4);
+    }
+    .host-card-head {
+        gap: var(--space-3);
+    }
 }
