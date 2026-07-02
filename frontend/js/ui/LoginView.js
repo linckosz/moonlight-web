@@ -28,6 +28,7 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
+import { escapeHtml } from '../util/escapeHtml.js';
 
 export class LoginView {
     constructor(container, onAuthenticated) {
@@ -560,8 +561,6 @@ export class LoginView {
     }
 
     esc(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return escapeHtml(text);
     }
 }

@@ -30,6 +30,7 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
+import { escapeHtml } from '../util/escapeHtml.js';
 
 export class AdminView {
     // Backend statusJson "phase" values that mean activation is still running.
@@ -1356,9 +1357,6 @@ export class AdminView {
     }
 
     esc(text) {
-        if (typeof text !== 'string' && typeof text !== 'number') return '';
-        const div = document.createElement('div');
-        div.textContent = String(text);
-        return div.innerHTML;
+        return escapeHtml(text);
     }
 }
