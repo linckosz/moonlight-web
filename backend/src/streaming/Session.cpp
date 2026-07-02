@@ -341,7 +341,18 @@ void StreamSession::onLaunchReplyFinished()
             doLaunchApp(identity->getCertificate(), identity->getPrivateKey());
             return;
         }
-        m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(e.what())));
+        // Sunshine 503 = the host could not initialize video capture/encoding
+        // (display asleep/disconnected, no dummy plug). Surface a clear,
+        // actionable message instead of the opaque "502 Launch error: HTTP 503".
+        QString reason = QString::fromUtf8(e.what());
+        if (reason.contains("503")) {
+            m_Respond(HttpResponse::error(
+                503, QString("L'hôte \"%1\" n'a pas pu démarrer la capture vidéo. "
+                             "Vérifie qu'un écran est branché et allumé (ou un dummy plug HDMI).")
+                         .arg(m_Host->name)));
+        } else {
+            m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(reason)));
+        }
         emit sessionFailed(e.what());
         deleteLater();
         return;
