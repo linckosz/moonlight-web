@@ -374,7 +374,6 @@ export class HostListView {
                             <span class="host-name">${this.esc(host.displayName)}</span>
                             <span class="status-badge ${cls}">${host.statusLabel}</span>
                         </div>
-                        <div class="host-address">${this.esc(host.displayAddress)}</div>
                         ${
                             host.displayGpu
                                 ? `<div class="host-gpu">${this.esc(host.displayGpu)}</div>`

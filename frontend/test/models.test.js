@@ -30,7 +30,6 @@ describe('Host model', () => {
         expect(h.port).toBe(47989);
         expect(h.state).toBe('unknown');
         expect(h.displayName).toBe('Unknown Host');
-        expect(h.displayAddress).toBe('');
     });
 
     it('derives online/paired/locked/available state', () => {
@@ -54,16 +53,16 @@ describe('Host model', () => {
         expect(new Host({ state: 'online', macAddress: 'AA:BB:CC:DD:EE:FF' }).canWake).toBe(false);
     });
 
-    it('picks a display name from name, then address, then a fallback', () => {
+    it('picks a display name from name, never from the address', () => {
         expect(new Host({ name: 'Desk' }).displayName).toBe('Desk');
-        expect(new Host({ name: 'UNKNOWN', activeAddress: '10.0.0.5' }).displayName).toBe('10.0.0.5');
+        expect(new Host({ name: 'UNKNOWN', activeAddress: '10.0.0.5' }).displayName).toBe(
+            'Unknown Host',
+        );
         expect(new Host({ name: '' }).displayName).toBe('Unknown Host');
     });
 
-    it('formats the display address with the port', () => {
-        const h = new Host({ activeAddress: '10.0.0.5', port: 47984 });
-        expect(h.displayAddress).toBe('10.0.0.5:47984');
-        expect(h.displayGpu).toBe('');
+    it('exposes the GPU model when known', () => {
+        expect(new Host({}).displayGpu).toBe('');
         expect(new Host({ gpuModel: 'RTX' }).displayGpu).toBe('RTX');
     });
 

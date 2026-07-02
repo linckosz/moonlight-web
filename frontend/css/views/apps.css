@@ -1,6 +1,8 @@
 /* MoonlightWeb — Apps view */
 
-.apps-view { width: 100%; }
+.apps-view {
+    width: 100%;
+}
 
 .apps-header {
     display: flex;
@@ -8,7 +10,10 @@
     gap: var(--space-4);
     margin-bottom: var(--space-5);
 }
-.apps-host-info { flex: 1; min-width: 0; }
+.apps-host-info {
+    flex: 1;
+    min-width: 0;
+}
 .apps-host-name {
     font-weight: 600;
     font-size: var(--fs-lg);
@@ -19,7 +24,9 @@
     color: var(--text-2);
     font-family: var(--font-mono);
 }
-.apps-spacer { width: 100px; }  /* balance the back button */
+.apps-spacer {
+    width: 100px;
+} /* balance the back button */
 
 .apps-loading,
 .apps-error,
@@ -47,11 +54,21 @@
     padding: var(--space-5) var(--space-4);
     text-align: center;
     cursor: pointer;
-    transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+    transition:
+        border-color 0.2s,
+        transform 0.15s,
+        box-shadow 0.2s;
 }
-/* Desktop: a touch more breathing room left/right than the base space-4. */
+/* Desktop: fixed-width cards in a wrapping row, so the host box width is
+   driven by its content (side-by-side host boxes in hosts.css). */
 @media (min-width: 601px) {
+    .apps-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-5);
+    }
     .app-card {
+        width: 156px;
         padding-left: var(--space-5);
         padding-right: var(--space-5);
     }
@@ -107,8 +124,7 @@
     position: relative;
     box-shadow: var(--edge-accent), var(--glass-highlight);
     background:
-        linear-gradient(rgba(252, 238, 10, 0.16), rgba(252, 238, 10, 0.16)),
-        var(--surface-glass);
+        linear-gradient(rgba(252, 238, 10, 0.16), rgba(252, 238, 10, 0.16)), var(--surface-glass);
 }
 /* Status label: mono accent yellow, gently blinking to read as "loading". */
 .app-card--launching .app-card-name {
@@ -118,8 +134,13 @@
     animation: app-launch-blink 1.6s ease-in-out infinite;
 }
 @keyframes app-launch-blink {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.35; }
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.35;
+    }
 }
 
 /* Rotating gradient ring around the card — clockwise, slow, "loader" cue.
@@ -134,38 +155,57 @@
     content: '';
     position: absolute;
     inset: 0;
-    padding: 2px;              /* ring thickness */
+    padding: 2px; /* ring thickness */
     border-radius: inherit;
     clip-path: var(--notch-lg);
-    background: conic-gradient(from var(--app-spin),
+    background: conic-gradient(
+        from var(--app-spin),
         transparent 0deg,
         transparent 230deg,
         rgba(252, 238, 10, 0.55) 320deg,
-        transparent 360deg);
+        transparent 360deg
+    );
     /* Keep only the padding ring (exclude the inner content box). */
     -webkit-mask:
         linear-gradient(#000 0 0) content-box,
         linear-gradient(#000 0 0);
     -webkit-mask-composite: xor;
-            mask-composite: exclude;
+    mask-composite: exclude;
     pointer-events: none;
     animation: app-spin-ring 3.2s linear infinite;
 }
-@keyframes app-spin-ring { to { --app-spin: 360deg; } }
+@keyframes app-spin-ring {
+    to {
+        --app-spin: 360deg;
+    }
+}
 
 @media (prefers-reduced-motion: reduce) {
-    .app-card--launching .app-card-name { animation: none; }
-    .app-card--launching::before { animation: none; }
+    .app-card--launching .app-card-name {
+        animation: none;
+    }
+    .app-card--launching::before {
+        animation: none;
+    }
 }
 
 @media (max-width: 600px) {
     .apps-grid {
-        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-        gap: var(--space-4);
+        grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+        gap: var(--space-3);
+    }
+    .app-card {
+        gap: var(--space-2);
+        padding: var(--space-3) var(--space-2);
+    }
+    .app-card-name {
+        font-size: var(--fs-xs);
     }
     .apps-header {
         flex-wrap: wrap;
         gap: var(--space-3);
     }
-    .apps-spacer { display: none; }
+    .apps-spacer {
+        display: none;
+    }
 }
