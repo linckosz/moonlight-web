@@ -12,6 +12,7 @@ build-*/
 *.dylib
 moc_*.cpp
 qrc_*.cpp
+*.moc
 ui_*.h
 Makefile
 Makefile.Debug
