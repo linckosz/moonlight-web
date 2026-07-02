@@ -267,20 +267,32 @@ export class StreamView {
         //  - true HDR via the <video> sink (MediaStreamTrackGenerator): the canvas
         //    paths tone-map HDR away, so <video> presents it natively. The Enhancer
         //    is effectively OFF when HDR (it can't run on the <video> sink).
-        //  - Experimental HDR→SDR (ACES) tone-map path feeding FSR1/SGSR on a normal
-        //    SDR canvas, gated behind the dev flag `mw_hdr_tonemap=1` (OFF by default
-        //    because it needs software decode — see the HDR memory). Kept for future
-        //    experimentation. Decodes on the main thread → worker disabled when HDR.
-        let hdrTonemapDev = false;
+        //  - HDR→SDR (ACES) tone-map path: raw PQ planes read back (P010) and
+        //    tone-mapped in the renderer's Pass 0, then FSR1/SGSR run on a normal
+        //    SDR canvas. Costs a software decode (opaque hardware frames don't
+        //    support copyTo). Auto-selected when the Enhancer is on (it can't run
+        //    on the <video> sink) or when the display can't show HDR (HDR sent to
+        //    an SDR output clips → overexposed colors). Dev override:
+        //    mw_hdr_tonemap = '1' forces it on, '0' forces it off.
+        // Display HDR capability — main thread only (matchMedia doesn't exist in
+        // workers) and evaluated once at stream start (renderers can't hot-swap);
+        // reflects the OS toggle too (Windows "HDR off" → matches false).
+        let displayHdr = false;
         try {
-            hdrTonemapDev = localStorage.getItem('mw_hdr_tonemap') === '1';
+            displayHdr = window.matchMedia('(dynamic-range: high)').matches;
+        } catch (e) {}
+        this._displayHdr = displayHdr;
+        let tonemapWanted = this._videoEnhancementAlgo !== 'off' || !displayHdr;
+        try {
+            const dev = localStorage.getItem('mw_hdr_tonemap');
+            if (dev === '1') tonemapWanted = true;
+            else if (dev === '0') tonemapWanted = false;
         } catch (e) {}
         this._hdrTonemap =
-            hdrTonemapDev &&
+            tonemapWanted &&
             this._hdrEnabled &&
             transport !== 'webrtc-media' &&
             this._wantWebGpu &&
-            this._videoEnhancementAlgo !== 'off' &&
             !!navigator.gpu;
         this._useVideoSink =
             this._hdrEnabled &&
@@ -1582,7 +1594,14 @@ export class StreamView {
 
             const cfg = configs[index];
             const noDescription = cfg._noDescription === true;
-            VideoDecoder.isConfigSupported(cfg)
+            // Probe what _doConfigure will actually configure: the tone-map path
+            // forces prefer-software, and e.g. Chrome has no software HEVC — the
+            // plain config would probe "supported", then configure() would fail
+            // asynchronously (3 decoder errors before the codec fallback kicks in).
+            const probeCfg = this._hdrTonemap
+                ? { ...cfg, hardwareAcceleration: 'prefer-software' }
+                : cfg;
+            VideoDecoder.isConfigSupported(probeCfg)
                 .then((result) => {
                     if (result.supported) {
                         if (!applyConfig(cfg, noDescription)) {
@@ -2410,6 +2429,8 @@ export class StreamView {
                                 this._hdrEnabled +
                                 ' tonemap=' +
                                 this._hdrTonemap +
+                                ' displayHdr=' +
+                                this._displayHdr +
                                 ' videoSink=' +
                                 this._useVideoSink +
                                 ' algo=' +
@@ -3304,7 +3325,13 @@ export class StreamView {
         }
         this.decoderConfiguring = true;
 
-        const configs = buildAv1DecoderConfigs(seqHeaderObu || null);
+        let configs = buildAv1DecoderConfigs(seqHeaderObu || null);
+        if (this._hdrTonemap) {
+            // HDR→SDR tone-map reads the YUV planes back (copyTo); hardware
+            // decoders output opaque frames (format=null) that don't support it.
+            // Same forcing as the HEVC/H264 path in configureDecoder().
+            configs = configs.map((c) => ({ ...c, hardwareAcceleration: 'prefer-software' }));
+        }
 
         const tryCodecs = (index) => {
             if (index >= configs.length) {

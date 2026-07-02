@@ -58,7 +58,7 @@
         "unableToConnect": "Unable to connect to server"
     },
     "hosts": {
-        "title": "Library",
+        "title": "App Library",
         "addManually": "Add Manually",
         "empty": "No hosts found",
         "emptyHint": "Click \"Scan Network\" or add a host manually",
@@ -146,7 +146,7 @@
         "unavailableSuffix": " (unavailable)",
         "videoEnhancementDesc": "Leverages hardware acceleration to improve picture clarity by upscaling when stream resolution is below your display resolution.",
         "webgpuUnavailable": "WebGPU is not available in this browser — video enhancement is disabled.",
-        "videoEnhancementHdrLock": "Disabled while HDR is on — HDR uses a native &lt;video&gt; sink that bypasses the WebGPU enhancer.",
+        "videoEnhancementHdrNote": "With HDR, the stream is tone-mapped to SDR (ACES) before enhancement — uses software AV1 decoding, slightly heavier on the CPU.",
         "videoCodec": "Video Codec",
         "videoCodecDesc": "HEVC for best balance of quality and compatibility.",
         "codecUnavailable": "{{codec}} (unavailable)",
