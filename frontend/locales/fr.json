@@ -58,7 +58,7 @@
         "unableToConnect": "Impossible de se connecter au serveur"
     },
     "hosts": {
-        "title": "Bibliothèque",
+        "title": "Bibliothèque d'applications",
         "addManually": "Ajouter manuellement",
         "empty": "Aucun hôte trouvé",
         "emptyHint": "Cliquez sur « Scanner le réseau » ou ajoutez un hôte manuellement",
@@ -146,7 +146,7 @@
         "unavailableSuffix": " (indisponible)",
         "videoEnhancementDesc": "Exploite l'accélération matérielle pour améliorer la netteté de l'image en la mettant à l'échelle lorsque la résolution du flux est inférieure à celle de votre écran.",
         "webgpuUnavailable": "WebGPU n'est pas disponible dans ce navigateur — l'amélioration vidéo est désactivée.",
-        "videoEnhancementHdrLock": "Désactivée tant que le HDR est actif — le HDR utilise une sortie &lt;video&gt; native qui contourne l'amélioration WebGPU.",
+        "videoEnhancementHdrNote": "Avec le HDR, le flux est converti en SDR (tone mapping ACES) avant l'amélioration — décodage AV1 logiciel, un peu plus gourmand en CPU.",
         "videoCodec": "Codec vidéo",
         "videoCodecDesc": "HEVC pour le meilleur équilibre entre qualité et compatibilité.",
         "codecUnavailable": "{{codec}} (indisponible)",

@@ -630,7 +630,6 @@ export class SettingsView {
             { value: 'auto', label: t('settings.algoAuto'), disabled: false },
             { value: 'fsr1', label: t('settings.algoFsr1'), disabled: false },
             { value: 'sgsr', label: t('settings.algoSgsr'), disabled: false },
-            { value: 'force2d', label: t('settings.algoForce2d'), disabled: false },
         ];
         const veAlgoOptions = veAlgos
             .map(
@@ -642,16 +641,14 @@ export class SettingsView {
             ? `<div class="settings-note">${t('settings.webgpuUnavailable')}</div>`
             : '';
 
-        // HDR forces the Video Enhancer off: the true-HDR path renders to a native
-        // <video> sink that bypasses WebGPU, so the enhancer can't run. Lock the
-        // control (unchecked + disabled + dimmed) while HDR is on.
-        const veHdrLocked = this._hdrEnabled;
-        const veLockedClass = this._powerSave || veHdrLocked ? ' settings-field-locked' : '';
-        const veCheckboxDisabled =
-            webgpuUnavailable || this._powerSave || veHdrLocked ? ' disabled' : '';
-        const veChecked = this._videoEnhancement === 'on' && !veHdrLocked ? 'checked' : '';
-        const veHdrNote = veHdrLocked
-            ? `<div class="settings-note">${t('settings.videoEnhancementHdrLock')}</div>`
+        // HDR + Enhancer: the stream is tone-mapped HDR→SDR in the renderer's
+        // Pass 0, so FSR1/SGSR run on a normal SDR canvas. Show an informational
+        // note while HDR is on (the tone-map costs a software AV1 decode).
+        const veLockedClass = this._powerSave ? ' settings-field-locked' : '';
+        const veCheckboxDisabled = webgpuUnavailable || this._powerSave ? ' disabled' : '';
+        const veChecked = this._videoEnhancement === 'on' ? 'checked' : '';
+        const veHdrNote = this._hdrEnabled
+            ? `<div class="settings-note">${t('settings.videoEnhancementHdrNote')}</div>`
             : '';
 
         this.container.innerHTML = `
@@ -951,9 +948,7 @@ export class SettingsView {
         if (hdrCheck)
             hdrCheck.addEventListener('change', () => {
                 this._hdrEnabled = hdrCheck.checked;
-                // HDR uses a native <video> sink that bypasses WebGPU: force the
-                // enhancer off and re-render so its control locks/unlocks.
-                if (this._hdrEnabled) this._videoEnhancement = 'off';
+                // Re-render so the codec options and the enhancer HDR note update.
                 this._applyAutoBitrate();
                 this.render();
                 this.bindEvents();
