@@ -434,7 +434,8 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     // Use the local copy — safe even if main thread clears s_Instance concurrently.
     // Count the in-flight frame before emitting (decremented in relay onVideoFrame).
     instance->m_PendingVideoFrames.fetch_add(1, std::memory_order_acq_rel);
-    emit instance->videoFrameReady(frameData, decodeUnit->frameType, decodeUnit->frameNumber);
+    emit instance->videoFrameReady(frameData, decodeUnit->frameType, decodeUnit->frameNumber,
+                                   static_cast<qint64>(decodeUnit->presentationTimeUs));
     return DR_OK;
 }
 

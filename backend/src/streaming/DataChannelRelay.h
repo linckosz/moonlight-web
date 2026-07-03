@@ -80,6 +80,7 @@ public:
     {
         QByteArray kf = m_BufferedKeyframe;
         m_BufferedKeyframe.clear();
+        m_BufferedKeyframePresUs = -1;
         m_HaveBufferedKeyframe = false;
         m_NewKeyframeArrived = false;
         return kf;
@@ -100,7 +101,8 @@ public:
     // dataChannelsOpen, sessionEnded.
 
 private slots:
-    void onVideoFrame(const QByteArray& data, int frameType, int frameNumber);
+    void onVideoFrame(const QByteArray& data, int frameType, int frameNumber,
+                      qint64 presentationTimeUs);
     void onAudioSample(const QByteArray& data);
     void onShimConnectionTerminated(int errorCode);
 
@@ -130,8 +132,12 @@ private:
     // looping IDR requests at the 300ms throttle (3-4 fps).
     static constexpr size_t kHighWatermark = 256 * 1024;
 
+    // presentationTimeUs: the frame's own capture time (from the decode unit),
+    // carried through the queued signal. -1 = unknown → fall back to the shim's
+    // latest value. Never read the shim atomic for regular frames: a drained
+    // burst would share one backendTs and defeat the frontend's ordering filter.
     void sendFragmented(const QByteArray& data, bool isKeyframe,
-                        std::shared_ptr<rtc::DataChannel>& dc);
+                        std::shared_ptr<rtc::DataChannel>& dc, qint64 presentationTimeUs = -1);
 
     // Send a previously buffered keyframe (arrived before Video DC was open).
     // Called from the Video DC onOpen callback (marshaled to main thread).
@@ -206,6 +212,7 @@ private:
     // DELTA frames arriving do NOT make the buffer stale — they are useless
     // without a keyframe, so we must still send the buffered one.
     QByteArray m_BufferedKeyframe;
+    qint64 m_BufferedKeyframePresUs = -1; // presentationTimeUs of the buffered keyframe
     bool m_HaveBufferedKeyframe = false;
     bool m_NewKeyframeArrived = false; // True if a new keyframe was sent directly while buffer held
 

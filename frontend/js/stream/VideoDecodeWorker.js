@@ -94,6 +94,7 @@ const S = {
     // latency: worker-local steady→perf offset (perf.now origin differs from main,
     // but the delta is self-consistent within the worker)
     _steadyToPerfOffset: null,
+    _offsetFromStats: false,
 
     stopped: false,
 
@@ -756,6 +757,24 @@ self.onmessage = (e) => {
         case 'frameloss':
             S._referenceValid = false;
             break;
+        case 'stats': {
+            // Clock-offset refinement, mirroring StreamView._handleStatsMessage:
+            // streamTimeMs is the backend steady clock at send time; receipt here
+            // adds ~RTT/2 plus one postMessage hop (~ms). Replaces the crude
+            // first-frame estimate (fixed 30ms pipeline floor) that otherwise
+            // pins the worker's latency figure to a guess for the whole session.
+            if (typeof m.streamTimeMs === 'number' && m.streamTimeMs >= 0) {
+                const rtt = m.rttMs > 0 ? m.rttMs : 0;
+                const refined = m.streamTimeMs - performance.now() + rtt / 2;
+                if (!S._offsetFromStats) {
+                    S._steadyToPerfOffset = refined;
+                    S._offsetFromStats = true;
+                } else {
+                    S._steadyToPerfOffset = S._steadyToPerfOffset * 0.7 + refined * 0.3;
+                }
+            }
+            break;
+        }
         case 'resize':
             S.outW = m.outW;
             S.outH = m.outH;

@@ -172,7 +172,7 @@
         "settingsReset": "Paramètres réinitialisés par défaut",
         "powerSave": "Économie d'énergie",
         "powerSaveToggle": "Mode économie d'énergie",
-        "powerSaveDesc": "Force le pipeline le plus léger sur batterie : transport vidéo natif (UDP en priorité), H.264, pas de HDR, pas d'amélioration, VSync activée, 720p / 60fps. Résolution, fréquence et débit restent réglables. Décocher restaure vos valeurs précédentes si vous ne les avez pas modifiées.",
+        "powerSaveDesc": "Force le pipeline le plus léger sur batterie : transport vidéo natif (UDP en priorité), H.264, pas de HDR, pas d'amélioration, 720p / 60fps. Résolution, fréquence et débit restent réglables. Décocher restaure vos valeurs précédentes si vous ne les avez pas modifiées.",
         "algoAuto": "Auto",
         "algoSgsr": "SGSR1 (Performance)",
         "algoFsr1": "FSR1 (Quality)",

@@ -52,7 +52,11 @@ public:
     // The fragment header carries frameId/backendTs computed by the caller so
     // the worker stays purely mechanical. Keyframes are never dropped by the
     // queue cap; deltas are dropped (oldest first) if the worker falls behind.
-    void enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data, bool isKeyframe,
+    // Returns true if any queued delta was dropped to make room: those frames
+    // already carry a frameId, so the caller must start IDR recovery (the
+    // frames still queued after the hole reference a frame that will never be
+    // sent).
+    bool enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray& data, bool isKeyframe,
                  bool isAudio, uint32_t frameId, uint32_t backendTs);
 
     // Stop the worker thread and discard pending jobs. Idempotent; safe to call

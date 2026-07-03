@@ -172,7 +172,7 @@
         "settingsReset": "Settings reset to defaults",
         "powerSave": "Power Saving",
         "powerSaveToggle": "Power Saving Mode",
-        "powerSaveDesc": "Forces the lightest pipeline on battery: native video transport (UDP first), H.264, no HDR, no enhancement, VSync on, 720p / 60fps. Resolution, frame rate and bitrate stay adjustable. Unchecking restores your previous values if you didn't change them.",
+        "powerSaveDesc": "Forces the lightest pipeline on battery: native video transport (UDP first), H.264, no HDR, no enhancement, 720p / 60fps. Resolution, frame rate and bitrate stay adjustable. Unchecking restores your previous values if you didn't change them.",
         "algoAuto": "Auto",
         "algoSgsr": "SGSR1 (Performance)",
         "algoFsr1": "FSR1 (Quality)",

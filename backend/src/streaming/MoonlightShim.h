@@ -156,7 +156,12 @@ signals:
     void connectionStarted();
     void connectionFailed(const QString& error);
     void connectionTerminated(int errorCode);
-    void videoFrameReady(QByteArray data, int frameType, int frameNumber);
+    // presentationTimeUs travels WITH the frame through the queued connection:
+    // relays must not re-read the shim's "latest frame" atomics at drain time,
+    // or a drained burst gets stamped with one shared timestamp (defeats the
+    // frontend's out-of-order frame filter on reordering links).
+    void videoFrameReady(QByteArray data, int frameType, int frameNumber,
+                         qint64 presentationTimeUs);
     void audioSampleReady(QByteArray data);
     void connectionStopped();
     // Host requested controller rumble (forwarded to the browser's vibration API).
