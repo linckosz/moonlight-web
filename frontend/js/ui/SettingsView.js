@@ -466,7 +466,7 @@ export class SettingsView {
         this._powerSave = false;
         this._powerSaveBackup = null;
         // Bitrate follows the 1080p60 SDR 16:9 reference
-        this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, false, '16:9');
+        this._streamBitrateMbps = this._computeAutoBitrate(1080, 60, '16:9', false, false);
 
         await this._saveToStorage();
 
@@ -477,9 +477,18 @@ export class SettingsView {
     }
 
     /**
+     * Bitrate used by Power Saving: the 720p60 SDR auto estimate for the
+     * current aspect, reduced by 30% (rounded down) and floored at 2 Mbps.
+     */
+    _powerSaveBitrate() {
+        const base = this._computeAutoBitrate(720, 60, this._streamAspect, false, false);
+        return Math.max(2, Math.floor(base * 0.7));
+    }
+
+    /**
      * Toggle Power Saving mode (mobile only). Enabling forces the lightest
      * pipeline (native video / UDP-first transport, H.264, no HDR, no
-     * enhancement, VSync on, 720p / 60fps, auto bitrate) and grays out the
+     * enhancement, VSync on, 720p / 60fps, reduced bitrate) and grays out the
      * forced controls. Resolution / FPS / bitrate stay editable.
      *
      * The pre-enable values are snapshotted; disabling restores each one ONLY
@@ -504,12 +513,14 @@ export class SettingsView {
             this._vsync = true;
             this._streamHeight = 720;
             this._streamFps = 60;
-            this._streamBitrateMbps = this._computeAutoBitrate(720, 60, false, this._streamAspect);
+            // Power-save default bitrate: the 720p60 SDR auto value cut by 30%
+            // (floored) with a 2 Mbps floor, to spare mobile battery / data.
+            this._streamBitrateMbps = this._powerSaveBitrate();
             this._powerSave = true;
         } else {
             const b = this._powerSaveBackup;
             if (b) {
-                const psBitrate = this._computeAutoBitrate(720, 60, false, this._streamAspect);
+                const psBitrate = this._powerSaveBitrate();
                 // Restore each value only if untouched (still at the power-save default).
                 if (this._videoCodec === 'h264') this._videoCodec = b.video_codec;
                 if (this._hdrEnabled === false) this._hdrEnabled = b.hdr_enabled;
