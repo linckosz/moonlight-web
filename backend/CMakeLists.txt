@@ -134,6 +134,7 @@ add_executable(mw-server
     src/server/ConnectionGuard.cpp
     src/server/HttpServer.cpp
     src/server/HttpParser.cpp
+    src/server/CertManager.cpp
     src/server/StaticFileHandler.cpp
     src/server/RestRouter.cpp
     src/common/Logger.cpp
