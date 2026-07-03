@@ -27,6 +27,7 @@
 #include <functional>
 #include "common/Types.h"
 #include "server/ConnectionGuard.h"
+#include "server/CertManager.h"
 
 class RestRouter;
 class StaticFileHandler;
@@ -46,7 +47,7 @@ public:
     void stop();
 
     RestRouter* router() const { return m_Router; }
-    QSslConfiguration sslConfiguration() const { return m_SslConfig; }
+    QSslConfiguration sslConfiguration() const { return m_Certs.publicConfig(); }
 
     /// Port of the local signaling WebSocket server (for WS→proxy routing).
     void setSignalingPort(quint16 port) { m_SignalingPort = port; }
@@ -72,16 +73,16 @@ public:
 
     /// Set the cert_pem value from settings (env var name or file path).
     /// When non-empty, loadCert() tries to resolve it before auto-discovering.
-    void setCertPem(const QString& value) { m_CertPem = value; }
+    void setCertPem(const QString& value) { m_Certs.setCertPem(value); }
 
     /// Set the cert_key value from settings (env var name or file path).
-    void setCertKey(const QString& value) { m_CertKey = value; }
+    void setCertKey(const QString& value) { m_Certs.setCertKey(value); }
 
     /// Set the expected CN (Common Name) for certificate matching.
-    /// When set, findCertDir() filters certificates whose CN matches this domain.
-    void setDomain(const QString& domain) { m_Domain = domain; }
+    /// When set, CertManager filters certificates whose CN matches this domain.
+    void setDomain(const QString& domain) { m_Certs.setDomain(domain); }
 
-    QString domain() const { return m_Domain; }
+    QString domain() const { return m_Certs.domain(); }
 
     /// Check whether a client address (from peerAddress()) is localhost
     /// or a loopback address (127.0.0.1, ::1, or any loopback).
@@ -110,53 +111,18 @@ private:
     void sendResponse(QTcpSocket* socket, const HttpResponse& response);
     void handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData);
     bool isLanHost(const QString& host) const;
-    bool loadCert();
-    QString findCertDir();
-    bool loadCertFiles(const QString& certDir);
-    bool loadCertFilesExplicit(const QString& certFilePath);
 
-    /// Recursively scan cert directories for a PEM file whose CN matches domain.
-    /// Returns the directory containing the matching cert + key.pem, or empty.
-    QString findCertByDomain(const QString& domain);
-
-    /// Extract the Common Name from a PEM certificate file. Returns empty if unparseable.
-    QString extractCertCN(const QString& pemPath);
-
-    /// Scan directory recursively for a *.pem file containing a valid private key.
-    /// Returns the file path or QString() if none found.
-    QString scanKeyInDir(const QString& dir) const;
-
-    /// Load a private key from non-file sources.
-    /// Priority: MW_CERT_KEY env var, then built-in key (MW_HAS_BUILTIN_KEY).
-    /// Returns a null QSslKey if neither is available.
-    QSslKey loadKeyFromEnv() const;
-
-    /// Scan directory recursively for a *.pem file containing a valid certificate.
-    /// If domain is non-empty, only certificates whose CN matches are considered.
-    /// Returns the file path or QString() if none found.
-    QString scanCertInDir(const QString& dir, const QString& domain = QString()) const;
-
-    bool renewWithLego();
-    bool generateSelfSignedCert();
-
-    /// Ensure the local self-signed certificate exists in AppData/cert/ with
-    /// proper SANs (localhost, LAN IPs) and load it into m_LocalSslConfig.
-    /// Called after loadCert() to set up the second SSL configuration for SNI.
-    void ensureLocalSslConfig();
-
-    /// Push the current m_SslConfig onto the live SslServer as its public (SNI
-    /// default) config. Called after a TLS reload so new connections use the
+    /// Push CertManager's public config onto the live SslServer as its public
+    /// (SNI default) config. Called after a TLS reload so new connections use the
     /// freshly issued certificate without restarting the server.
     void applyPublicSslConfig();
 
     QTcpServer* m_HttpServer;
     QTcpServer* m_HttpsServer;
 
-    /// Default SSL configuration (served to public-domain clients via PositiveSSL/LE).
-    QSslConfiguration m_SslConfig;
-
-    /// Self-signed SSL configuration with LAN SANs (served to localhost / LAN IP clients).
-    QSslConfiguration m_LocalSslConfig;
+    /// Owns all TLS certificate discovery / loading / renewal / self-signed
+    /// generation. Produces the public + local (SNI) SSL configurations.
+    CertManager m_Certs;
 
     RestRouter* m_Router;
     StaticFileHandler* m_StaticFiles;
@@ -170,17 +136,6 @@ private:
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;
 
-    /// cert_pem value from settings: env var name or file path.
-    /// Set via setCertPem() before loadCert() or reloadTls().
-    QString m_CertPem;
-
-    /// cert_key value from settings: env var name or file path.
-    QString m_CertKey;
-
-    /// Expected Common Name for certificate matching (e.g. "brunoocto.moonlightweb.top").
-    /// Set via setDomain() before loadCert() or reloadTls().
-    QString m_Domain;
-
     /// PIN-based authentication manager (nullable — auth disabled when null).
     AuthManager* m_AuthManager = nullptr;
 
@@ -192,10 +147,6 @@ private:
     /// Reject a freshly accepted socket when its peer IP is banned or floods.
     /// Returns true when the connection was rejected (socket scheduled to close).
     bool rejectIfAbusive(QTcpSocket* socket);
-
-    /// Resolve a cert_pem/cert_key value to PEM data.
-    /// Tries qgetenv(value) first, then QFile(value).
-    static QByteArray resolvePemValue(const QString& value);
 
     static constexpr int ASYNC_TIMEOUT_MS = 30000;
 };
