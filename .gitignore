@@ -75,8 +75,11 @@ desktop.ini
 .claude/
 CLAUDE.md
 
-# Graphify
-graphify-out/
+# Graphify (share graph outputs, keep local cache/state out)
+graphify-out/*
+!graphify-out/graph.html
+!graphify-out/graph.json
+!graphify-out/GRAPH_REPORT.md
 
 # ── Local debug / scratch helpers (kept on disk, never pushed) ──
 # Root-level build & debug scripts + scratch output (none belong in the repo)
