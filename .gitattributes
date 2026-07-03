@@ -1,0 +1,14 @@
+# Vendored / third-party code — excluded from GitHub language stats and
+# collapsed in diffs so it doesn't drown the project's own sources.
+
+# Prebuilt OpenSSL headers + import libs (committed Windows dependency).
+backend/libs/** linguist-vendored
+
+# Third-party C/C++ sources pulled in-tree (submodules + qmdnsengine copy).
+backend/third_party/** linguist-vendored
+
+# Minified / bundled browser vendor code.
+frontend/js/vendor/** linguist-vendored
+
+# Generated Qt MOC output should never be diffed if it slips in.
+*.moc linguist-generated
