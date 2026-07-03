@@ -35,6 +35,16 @@
     filter: var(--glow-accent);
 }
 
+/* Moonlight logo recolored to neon yellow via CSS mask (source PNG is gray) */
+.login-logo-img {
+    display: block;
+    width: 48px;
+    height: 48px;
+    background: currentColor;
+    -webkit-mask: url("../../assets/logo.png") center / contain no-repeat;
+    mask: url("../../assets/logo.png") center / contain no-repeat;
+}
+
 .login-title {
     font-size: var(--fs-xl);
     font-weight: 700;

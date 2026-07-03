@@ -25,8 +25,12 @@
     /* Default = primary action */
     background: var(--accent-1);
     color: var(--on-accent);
-    transition: background 0.15s, color 0.15s, filter 0.2s, transform 0.08s,
-                opacity 0.15s;
+    transition:
+        background 0.15s,
+        color 0.15s,
+        filter 0.2s,
+        transform 0.08s,
+        opacity 0.15s;
 }
 .btn:hover {
     background: var(--accent-strong);
@@ -167,7 +171,11 @@
     animation: btnSpin 0.6s linear infinite;
     flex-shrink: 0;
 }
-@keyframes btnSpin { to { transform: rotate(360deg); } }
+@keyframes btnSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
 
 /* Icon button (header) */
 .btn-icon {
@@ -181,7 +189,10 @@
     background: transparent;
     color: var(--text-2);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    transition:
+        background 0.15s,
+        color 0.15s,
+        border-color 0.15s;
 }
 .btn-icon:hover {
     background: rgba(255, 255, 255, 0.06);
@@ -192,7 +203,9 @@
     border-color: var(--accent-ring);
     color: #cdddff;
 }
-.btn-icon svg { display: block; }
+.btn-icon svg {
+    display: block;
+}
 
 /* Close (×) button used in view headers */
 .view-close-btn {
@@ -208,7 +221,9 @@
     font-size: 1.4rem;
     line-height: 1;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition:
+        background 0.15s,
+        color 0.15s;
 }
 .view-close-btn:hover {
     background: rgba(255, 255, 255, 0.08);
@@ -276,9 +291,13 @@
     border-radius: var(--radius-sm);
     color: var(--text-1);
     outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition:
+        border-color 0.15s,
+        box-shadow 0.15s;
 }
-.settings-input { font-family: var(--font-mono); }
+.settings-input {
+    font-family: var(--font-mono);
+}
 .settings-input:focus,
 .login-input:focus,
 .login-pin-input:focus {
@@ -324,7 +343,9 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23aab3c4' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition:
+        border-color 0.15s,
+        box-shadow 0.15s;
 }
 .settings-select:focus {
     border-color: var(--accent-1);
@@ -394,7 +415,7 @@ body.ios .settings-checkbox-label {
     gap: var(--space-3);
     cursor: pointer;
 }
-body.ios .settings-checkbox-label input[type="checkbox"] {
+body.ios .settings-checkbox-label input[type='checkbox'] {
     -webkit-appearance: none;
     appearance: none;
     box-sizing: border-box;
@@ -409,7 +430,7 @@ body.ios .settings-checkbox-label input[type="checkbox"] {
     outline: none;
     cursor: pointer;
 }
-body.ios .settings-checkbox-label input[type="checkbox"]::before {
+body.ios .settings-checkbox-label input[type='checkbox']::before {
     content: '';
     display: block;
     width: 10px;
@@ -422,7 +443,7 @@ body.ios .settings-checkbox-label input[type="checkbox"]::before {
     transform: rotate(45deg);
     display: none;
 }
-body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
+body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     display: block;
 }
 .settings-checkbox-text {
@@ -442,7 +463,9 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     color: var(--accent-1);
     text-decoration: none;
 }
-.settings-hint a:hover { text-decoration: underline; }
+.settings-hint a:hover {
+    text-decoration: underline;
+}
 
 .settings-note {
     font-size: var(--fs-xs);
@@ -488,9 +511,18 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     letter-spacing: 0.8px;
     border: 1px solid currentColor;
 }
-.status-badge.ready   { background-color: var(--c-success-soft); color: var(--c-success); }
-.status-badge.locked  { background-color: var(--c-warning-soft); color: var(--c-warning); }
-.status-badge.offline { background-color: var(--c-danger-soft);  color: var(--c-danger); }
+.status-badge.ready {
+    background-color: var(--c-success-soft);
+    color: var(--c-success);
+}
+.status-badge.locked {
+    background-color: var(--c-warning-soft);
+    color: var(--c-warning);
+}
+.status-badge.offline {
+    background-color: var(--c-danger-soft);
+    color: var(--c-danger);
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    Toasts
@@ -524,18 +556,42 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
 .toast-exit {
     animation: toastFadeOut 0.3s ease forwards;
 }
-.toast-success { background: rgba(36, 110, 79, 0.92);  border-color: var(--c-success); }
-.toast-error   { background: rgba(140, 41, 45, 0.92);  border-color: var(--c-danger); }
-.toast-warning { background: rgba(150, 110, 20, 0.92); border-color: var(--c-warning); }
-.toast-info    { background: rgba(28, 88, 130, 0.92);  border-color: var(--c-info); }
+.toast-success {
+    background: rgba(36, 110, 79, 0.92);
+    border-color: var(--c-success);
+}
+.toast-error {
+    background: rgba(140, 41, 45, 0.92);
+    border-color: var(--c-danger);
+}
+.toast-warning {
+    background: rgba(150, 110, 20, 0.92);
+    border-color: var(--c-warning);
+}
+.toast-info {
+    background: rgba(28, 88, 130, 0.92);
+    border-color: var(--c-info);
+}
 
 @keyframes toastSlideIn {
-    from { opacity: 0; transform: translateX(60px); }
-    to   { opacity: 1; transform: translateX(0); }
+    from {
+        opacity: 0;
+        transform: translateX(60px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }
 @keyframes toastFadeOut {
-    from { opacity: 1; transform: translateX(0); }
-    to   { opacity: 0; transform: translateX(40px); }
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(40px);
+    }
 }
 
 @media (max-width: 600px) {
@@ -562,7 +618,14 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     z-index: 1000;
     animation: fadeIn 0.2s ease;
 }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
 
 .pairing-dialog {
     background-color: var(--surface-2);
@@ -591,9 +654,15 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     margin-bottom: var(--space-3);
     min-height: 18px;
 }
-.pairing-info    { color: var(--text-2); }
-.pairing-error   { color: var(--c-danger); }
-.pairing-success { color: var(--c-success); }
+.pairing-info {
+    color: var(--text-2);
+}
+.pairing-error {
+    color: var(--c-danger);
+}
+.pairing-success {
+    color: var(--c-success);
+}
 
 .pairing-pin-display {
     font-size: 42px;
@@ -611,7 +680,9 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     opacity: 0;
     transition: opacity 0.3s;
 }
-.pairing-pin-display.visible { opacity: 1; }
+.pairing-pin-display.visible {
+    opacity: 1;
+}
 
 .pairing-actions {
     display: flex;
@@ -619,7 +690,14 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     justify-content: center;
     margin-top: var(--space-5);
 }
-.pairing-actions .btn { min-width: 100px; }
+.pairing-actions .btn {
+    min-width: 100px;
+}
+
+/* Manual host add dialog — reuses the pairing overlay/dialog shell */
+.manual-add-input {
+    text-align: center;
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    Tables + pagination
@@ -669,7 +747,9 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     border-radius: var(--radius-1);
     cursor: text;
     outline: none;
-    transition: background 0.12s ease, box-shadow 0.12s ease;
+    transition:
+        background 0.12s ease,
+        box-shadow 0.12s ease;
 }
 .session-name-edit:hover {
     background: rgba(255, 255, 255, 0.06);
@@ -693,8 +773,13 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
     animation: session-streaming-pulse 1.6s ease-in-out infinite;
 }
 @keyframes session-streaming-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.55; }
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.55;
+    }
 }
 
 .sessions-pagination {
@@ -728,16 +813,44 @@ body.ios .settings-checkbox-label input[type="checkbox"]:checked::before {
 /* ════════════════════════════════════════════════════════════════════════
    Utilities — small helpers so view templates carry no inline style
    ════════════════════════════════════════════════════════════════════════ */
-.u-hidden { display: none; }
-.u-mono { font-family: var(--font-mono); }
-.u-row { display: flex; gap: var(--space-2); align-items: center; }
-.u-grow { flex: 1; }
-.u-shrink-0 { flex-shrink: 0; }
-.u-center { text-align: center; }
-.u-mt-2 { margin-top: var(--space-2); }
-.u-mt-3 { margin-top: var(--space-3); }
-.u-mb-1 { margin-bottom: var(--space-1); }
-.u-mb-2 { margin-bottom: var(--space-2); }
-.u-ml-2 { margin-left: var(--space-2); }
-.u-pt-0 { padding-top: 0; }
-.u-pt-3 { padding-top: var(--space-3); }
+.u-hidden {
+    display: none;
+}
+.u-mono {
+    font-family: var(--font-mono);
+}
+.u-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+}
+.u-grow {
+    flex: 1;
+}
+.u-shrink-0 {
+    flex-shrink: 0;
+}
+.u-center {
+    text-align: center;
+}
+.u-mt-2 {
+    margin-top: var(--space-2);
+}
+.u-mt-3 {
+    margin-top: var(--space-3);
+}
+.u-mb-1 {
+    margin-bottom: var(--space-1);
+}
+.u-mb-2 {
+    margin-bottom: var(--space-2);
+}
+.u-ml-2 {
+    margin-left: var(--space-2);
+}
+.u-pt-0 {
+    padding-top: 0;
+}
+.u-pt-3 {
+    padding-top: var(--space-3);
+}

@@ -91,11 +91,7 @@ export class SetupView {
             <div class="login-view" id="view-setup">
                 <div class="login-box setup-box">
                     <div class="login-logo">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                            <path d="M2 17l10 5 10-5"/>
-                            <path d="M2 12l10 5 10-5"/>
-                        </svg>
+                        <span class="login-logo-img" role="img" aria-label="Moonlight"></span>
                     </div>
                     <h1 class="login-title">${t('setup.title')}</h1>
                     ${body}
