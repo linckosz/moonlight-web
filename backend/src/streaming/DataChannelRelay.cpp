@@ -647,11 +647,19 @@ void DataChannelRelay::createDataChannels()
     qInfo() << "[DataChannelRelay] Creating DataChannels";
 
     // --- Video DataChannel (server->browser, H.264 NAL units) ---
-    // Unordered + partial reliability (3 retransmits): an HEVC keyframe is
+    // Ordered + partial reliability (3 retransmits): an HEVC keyframe is
     // ~11 chunks ≈ 140 UDP packets, so with 0 retransmits a single packet
     // loss kills the whole frame and forces an IDR recovery cycle.
+    //
+    // Ordered is required for video: frames reference their predecessor, so
+    // delivery order IS decode order. With unordered delivery, a retransmitted
+    // chunk made frame N complete AFTER frame N+1 — the frontend saw a frameId
+    // gap (false loss), invalidated the reference and requested an IDR on every
+    // reorder. Ordered lets SCTP hold N+1 the ~RTT the retransmit takes; frames
+    // abandoned after 3 retransmits are skipped via FORWARD-TSN and surface as
+    // a real gap.
     rtc::DataChannelInit videoConfig;
-    videoConfig.reliability.unordered = true;
+    videoConfig.reliability.unordered = false;
     videoConfig.reliability.maxRetransmits = 3; // Must match frontend negotiated channel config
     videoConfig.negotiated = true;
     videoConfig.id = 0;
@@ -745,7 +753,8 @@ void DataChannelRelay::createDataChannels()
 
 // --- Video/Audio forwarding (from MoonlightShim signals, on main thread) ---
 
-void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /*frameNumber*/)
+void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /*frameNumber*/,
+                                    qint64 presentationTimeUs)
 {
     // Balance the worker→main pending counter (incremented before each emit).
     // m_Shim lifetime is guaranteed: the shim is Qt-parented to this relay
@@ -794,6 +803,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
     // browser's VideoDecoder can never configure, and we get decoder=null.
     if (isKeyframe && (!m_VideoDc || !m_VideoDc->isOpen())) {
         m_BufferedKeyframe = frameData;
+        m_BufferedKeyframePresUs = presentationTimeUs;
         m_HaveBufferedKeyframe = true;
         m_NewKeyframeArrived = false; // Reset — we have the latest buffer
         return;
@@ -834,7 +844,7 @@ void DataChannelRelay::onVideoFrame(const QByteArray& data, int frameType, int /
         m_NewKeyframeArrived = true;
     }
 
-    sendFragmented(frameData, isKeyframe, m_VideoDc);
+    sendFragmented(frameData, isKeyframe, m_VideoDc, presentationTimeUs);
 }
 
 // --- Buffered keyframe ---
@@ -867,8 +877,9 @@ void DataChannelRelay::sendBufferedKeyframe()
     }
 
     qInfo() << "[DataChannelRelay] Sending buffered keyframe, size=" << m_BufferedKeyframe.size();
-    sendFragmented(m_BufferedKeyframe, true, m_VideoDc);
+    sendFragmented(m_BufferedKeyframe, true, m_VideoDc, m_BufferedKeyframePresUs);
     m_BufferedKeyframe.clear();
+    m_BufferedKeyframePresUs = -1;
     m_HaveBufferedKeyframe = false;
     m_NewKeyframeArrived = false;
 }
@@ -1036,7 +1047,8 @@ void DataChannelRelay::onInputMessage(const std::string& message)
 // All multi-byte fields in network byte order (big endian).
 
 void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
-                                      std::shared_ptr<rtc::DataChannel>& dc)
+                                      std::shared_ptr<rtc::DataChannel>& dc,
+                                      qint64 presentationTimeUs)
 {
     if (m_Stopping.load() || !dc || !dc->isOpen()) return;
     if (data.isEmpty()) return;
@@ -1124,7 +1136,13 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     uint32_t backendTs = 0;
     if (m_Shim) {
         int64_t firstArrivalSteadyMs = m_Shim->firstFrameArrivalSteadyMs();
-        int64_t presTimeUs = m_Shim->framePresentationTimeUs();
+        // Use the frame's OWN presentation time (carried through the queued
+        // signal). Re-reading the shim's latest-frame atomic here stamps every
+        // frame of a drained event-queue burst with one shared backendTs, which
+        // disables the frontend's out-of-order filter ("equal timestamps pass")
+        // and shows SCTP-reordered frames as back-and-forth jumps.
+        int64_t presTimeUs =
+            presentationTimeUs >= 0 ? presentationTimeUs : m_Shim->framePresentationTimeUs();
         if (firstArrivalSteadyMs > 0 && presTimeUs >= 0) {
             int64_t captureSteadyMs = firstArrivalSteadyMs + (presTimeUs / 1000);
             backendTs = static_cast<uint32_t>(captureSteadyMs & 0xFFFFFFFF);
@@ -1139,7 +1157,16 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     // Qt main thread (HTTP/REST/signaling) is never spent building chunks or
     // blocking on a full SCTP buffer. The job holds a shared_ptr copy of the DC,
     // so an in-flight send cannot outlive the channel during stop().
-    m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs);
+    //
+    // If the sender queue was full and a queued delta got evicted, that delta
+    // already carries a frameId: the frontend will see a frameId gap, and every
+    // delta still queued behind the hole references a frame that will never
+    // arrive. Start IDR recovery now instead of waiting a full round-trip for
+    // the frontend to detect the gap and ask.
+    if (m_Sender->enqueue(dc, data, isKeyframe, /*isAudio=*/false, frameId, backendTs)) {
+        m_AwaitingIdr = true;
+        sendIdrRequestThrottled();
+    }
 
     m_FrameCount++;
 }
@@ -1243,6 +1270,7 @@ void DataChannelRelay::stop()
 
     // Clear buffered keyframe (if any)
     m_BufferedKeyframe.clear();
+    m_BufferedKeyframePresUs = -1;
     m_HaveBufferedKeyframe = false;
     m_NewKeyframeArrived = false;
 

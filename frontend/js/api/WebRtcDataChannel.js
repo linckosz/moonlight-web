@@ -716,14 +716,17 @@ export class WebRtcDataChannel {
     }
 
     _createDataChannels() {
-        // Video DataChannel (ID=0, ordered=false, maxRetransmits=3)
-        // Must match backend DataChannelRelay::createDataChannels(): maxRetransmits=3.
+        // Video DataChannel (ID=0, ordered=true, maxRetransmits=3)
+        // Must match backend DataChannelRelay::createDataChannels().
         // Partial reliability: a keyframe spans ~140 UDP packets, so with zero
         // retransmits a single loss kills the whole frame and forces IDR recovery.
+        // Ordered: frames reference their predecessor, so delivery order IS
+        // decode order — unordered delivery turned every SCTP retransmit into a
+        // false frameId gap (frame N completing after N+1) and an IDR cycle.
         const videoInit = {
             negotiated: true,
             id: 0,
-            ordered: false,
+            ordered: true,
             maxRetransmits: 3,
         };
         this.dataChannels.video = this.pc.createDataChannel('video', videoInit);

@@ -439,6 +439,13 @@ export class StreamView {
         this._lastInboundBytes = 0;
         this._lastInboundFrames = 0;
         this._lastInboundStatsTime = 0;
+        // Interval deltas for the latency estimate (jitterBufferDelay and
+        // totalDecodeTime are cumulative since stream start — the cumulative
+        // average lags reality more and more as the session ages).
+        this._lastJbDelay = 0;
+        this._lastJbEmitted = 0;
+        this._lastDecodeTime = -1;
+        this._lastDecodedForLatency = 0;
 
         // ── Adaptive jitter buffer (webrtc-media only, behind mw_jitter_auto) ──
         // Sits at 0 on a clean link (= current behavior); grows only when jitter/
@@ -572,6 +579,12 @@ export class StreamView {
                 new Blob(['{}'], { type: 'application/json' }),
             );
         };
+
+        // pagehide: iOS/WebKit rarely fires beforeunload (tab close, app close),
+        // so the quit beacon must also be sent here. Sent even when
+        // event.persisted is true (bfcache): the stream cannot survive a page
+        // freeze, so a restored page would resume in a dead state anyway.
+        this._onPageHide = () => this._onBeforeUnload();
 
         // Reference validity: false after a gap/error, true once a keyframe is decoded.
         // Delta frames are dropped when false to avoid corrupted output.
@@ -2150,7 +2163,15 @@ export class StreamView {
         //   capturePerfTime = captureSteadyMs - _steadyToPerfOffset
         //   e2eLatency = performance.now() - capturePerfTime
         if (this._latestBackendTs !== undefined && this._steadyToPerfOffset !== null) {
-            const capturePerfTime = this._latestBackendTs - this._steadyToPerfOffset;
+            // Use THIS frame's capture time: for H.264/HEVC the decode timestamp
+            // is backendTs (ms→µs, +µs monotonic bumps). Pairing with the newest
+            // *received* ts instead would understate latency by the decode-queue
+            // depth exactly when frames back up. AV1 uses synthetic timestamps —
+            // detected by the plausibility window — and keeps the old pairing.
+            const tsMs = frame.timestamp / 1000;
+            const captureMs =
+                Math.abs(tsMs - this._latestBackendTs) < 10000 ? tsMs : this._latestBackendTs;
+            const capturePerfTime = captureMs - this._steadyToPerfOffset;
             const latency = performance.now() - capturePerfTime;
             if (latency > 0 && latency < 5000) {
                 // ignore outliers
@@ -2265,10 +2286,20 @@ export class StreamView {
     _pumpRender() {
         if (!this.renderRunning || !this._renderer) return;
 
-        // Previous render still in flight — drop intermediate frames; the draw's
+        // Presentation pacing. VSync (rAF-paced) mode keeps ONE frame in
+        // reserve and presents the oldest queued frame: a frame arriving a few
+        // ms late is shown at the next tick instead of producing the
+        // "repeat + skip" judder of drop-to-freshest (this is what makes the
+        // media transport feel smoother). Costs at most one refresh interval,
+        // transiently, only while the reserve is occupied — nothing in steady
+        // state. Immediate mode (VSync off) keeps only the freshest frame for
+        // minimum latency, as before.
+        const maxQueued = this._immediateRender ? 1 : 2;
+
+        // Previous render still in flight — trim the queue; the draw's
         // finally() re-pumps in immediate mode, the next rAF does so otherwise.
         if (this._rendering) {
-            while (this.frameQueue.length > 1) {
+            while (this.frameQueue.length > maxQueued) {
                 const old = this.frameQueue.shift();
                 old.close();
                 this.stats.dropped++;
@@ -2276,8 +2307,7 @@ export class StreamView {
             return;
         }
 
-        // Drop all but the latest frame — only render the freshest.
-        while (this.frameQueue.length > 1) {
+        while (this.frameQueue.length > maxQueued) {
             const old = this.frameQueue.shift();
             old.close();
             this.stats.dropped++;
@@ -2643,18 +2673,45 @@ export class StreamView {
                     }
                 }
 
-                // Latency ≈ jitter-buffer delay + network RTT/2 + backend↔Sunshine RTT.
+                // Latency ≈ current jitter-buffer delay + network RTT/2
+                //           + backend↔Sunshine one-way + per-frame decode time.
+                // jitterBufferDelay/jitterBufferEmittedCount are CUMULATIVE since
+                // stream start: use interval deltas for a *current* value (the
+                // cumulative average lags jitter-buffer changes by minutes on a
+                // long session). First tick falls back to the cumulative average.
                 let latency = 0;
-                if (inbound.jitterBufferDelay > 0 && inbound.jitterBufferEmittedCount > 0) {
+                const jbDelay = inbound.jitterBufferDelay || 0;
+                const jbEmitted = inbound.jitterBufferEmittedCount || 0;
+                if (jbEmitted > this._lastJbEmitted) {
                     latency +=
-                        (inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000;
+                        ((jbDelay - this._lastJbDelay) / (jbEmitted - this._lastJbEmitted)) * 1000;
+                } else if (jbDelay > 0 && jbEmitted > 0) {
+                    latency += (jbDelay / jbEmitted) * 1000;
                 }
+                this._lastJbDelay = jbDelay;
+                this._lastJbEmitted = jbEmitted;
                 if (candidatePair && candidatePair.currentRoundTripTime > 0) {
                     latency += (candidatePair.currentRoundTripTime * 1000) / 2;
                 }
                 if (this._hostRttStats.count > 0) {
                     latency += this._hostRttStats.avg;
                 }
+                // Decode time per frame (delta) — parity with the DC estimate,
+                // which includes decode. Not exposed by all browsers (guarded).
+                const decTime = inbound.totalDecodeTime;
+                const decFrames = inbound.framesDecoded || 0;
+                if (
+                    typeof decTime === 'number' &&
+                    this._lastDecodeTime >= 0 &&
+                    decFrames > this._lastDecodedForLatency
+                ) {
+                    latency +=
+                        ((decTime - this._lastDecodeTime) /
+                            (decFrames - this._lastDecodedForLatency)) *
+                        1000;
+                }
+                this._lastDecodeTime = typeof decTime === 'number' ? decTime : -1;
+                this._lastDecodedForLatency = decFrames;
                 if (latency > 0 && latency < 5000) this._mediaLatencyMs = latency;
             } catch (e) {
                 // getStats can throw transiently during teardown — ignore
@@ -3024,30 +3081,36 @@ export class StreamView {
         if (isMedia) {
             if (this._mediaLatencyMs > 0) avgLatency = this._mediaLatencyMs.toFixed(1) + 'ms';
         } else {
-            // Robust RTT-based latency for DataChannel and WSS. The steady-clock
-            // e2e estimate is fragile (32-bit timestamp wrap, clock-domain drift)
-            // and silently produced no value on these transports. Sum the
-            // measurable one-way components instead:
+            // Preferred: per-frame steady-clock e2e (backend arrival → browser
+            // decode output). Unlike the RTT sum below it includes what actually
+            // dominates under load — SCTP queueing, video-frame serialization
+            // (a 100KB frame is not a ping), reassembly and the decode queue.
+            // hostRttMs adds the Sunshine→backend leg that the e2e epoch hides
+            // (presentationTimeUs is anchored at first-frame arrival).
+            // Fallback: sum of measurable one-way components (understates under
+            // load, but always available):
             //   browser↔backend one-way (ping/pong RTT / 2)
             //   backend↔Sunshine one-way (hostRttMs, already halved server-side)
             //   backend decode/pipeline latency (decodeLatencyUs)
-            let latency = 0;
-            let haveLatency = false;
-            if (this._browserRttStats.count > 0) {
-                latency += this._browserRttStats.avg / 2;
-                haveLatency = true;
-            }
-            if (this._hostRttStats.count > 0) {
-                latency += this._hostRttStats.avg;
-                haveLatency = true;
-            }
-            if (this._decodeLatencyStats.count > 0) {
-                latency += this._decodeLatencyStats.avg;
-            }
-            if (haveLatency) {
+            if (this._e2eLatencyStats.count > 0) {
+                let latency = this._e2eLatencyStats.avg;
+                if (this._hostRttStats.count > 0) latency += this._hostRttStats.avg;
                 avgLatency = latency.toFixed(1) + 'ms';
-            } else if (this._e2eLatencyStats.count > 0) {
-                avgLatency = this._e2eLatencyStats.avg.toFixed(1) + 'ms';
+            } else {
+                let latency = 0;
+                let haveLatency = false;
+                if (this._browserRttStats.count > 0) {
+                    latency += this._browserRttStats.avg / 2;
+                    haveLatency = true;
+                }
+                if (this._hostRttStats.count > 0) {
+                    latency += this._hostRttStats.avg;
+                    haveLatency = true;
+                }
+                if (this._decodeLatencyStats.count > 0) {
+                    latency += this._decodeLatencyStats.avg;
+                }
+                if (haveLatency) avgLatency = latency.toFixed(1) + 'ms';
             }
         }
         html +=
@@ -3127,6 +3190,18 @@ export class StreamView {
                     // to smooth out jitter while adapting to clock drift.
                     this._steadyToPerfOffset = this._steadyToPerfOffset * 0.7 + refinedOffset * 0.3;
                 }
+                // Worker mode: forward the reference so the worker can refine its
+                // OWN offset. performance.now() origins differ between main thread
+                // and worker, so the offset value itself cannot be shared — the
+                // worker recomputes it against its clock at message receipt
+                // (adds ~a postMessage hop of error, vs. a frozen 30ms guess).
+                if (this._videoWorker) {
+                    this._videoWorker.postMessage({
+                        type: 'stats',
+                        streamTimeMs: msg.streamTimeMs,
+                        rttMs: rtt,
+                    });
+                }
             }
         }
     }
@@ -3144,14 +3219,13 @@ export class StreamView {
             return;
         }
 
-        // ── Stale frame detection (SCTP unordered delivery) ──────────────────
-        // WebRTC DataChannel uses ordered=false, maxRetransmits=0 for video,
-        // which allows SCTP chunks to arrive out of order.  The chunk reassembly
-        // in WebRtcDataChannel emits frames as soon as they complete, regardless
-        // of their original frameId sequence.  When an older frame (lower
-        // backendTs) completes reassembly after a newer frame (higher backendTs)
-        // has already been decoded and rendered, the old pixels overwrite the
-        // current canvas content — this is the "ghosting" bug.
+        // ── Stale frame detection (safety net) ───────────────────────────────
+        // The video DataChannel is now ordered=true (SCTP reorders internally),
+        // so frames normally arrive in send order. This filter remains as a
+        // safety net for transports/paths that can still deliver out of order
+        // (WS fallback races, historical unordered sessions): an older frame
+        // (lower backendTs) decoded after a newer one would overwrite the canvas
+        // with old pixels — the "ghosting" bug.
         //
         // We track the monotonic maximum backend timestamp.  Any frame with a
         // lower backendTs than the max is stale and is dropped, EXCEPT for
@@ -3184,9 +3258,8 @@ export class StreamView {
         // Disabled for WSS transport: TCP does not lose frames, so a frameId
         // discontinuity there is a false positive that would freeze the stream.
         if (this._transport !== 'wss' && frameId !== undefined && frameId !== 0) {
-            // Only forward jumps are gaps. A frameId <= lastFrameId is a late
-            // out-of-order frame (already filtered by the backendTs check above
-            // in most cases) — never a loss signal.
+            // Forward jump = frames were lost or delayed — drop deltas until the
+            // next keyframe restores the reference picture.
             if (this._lastFrameId !== -1 && frameId > this._lastFrameId + 1) {
                 console.warn(
                     '[StreamView] Frame gap: expected ' +
@@ -3199,7 +3272,18 @@ export class StreamView {
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
                 this._requestIdr('frame gap');
             }
-            if (frameId > this._lastFrameId) this._lastFrameId = frameId;
+            if (frameId > this._lastFrameId) {
+                this._lastFrameId = frameId;
+            } else if (this._lastFrameId !== -1 && !(isKeyframe && !this._referenceValid)) {
+                // Late out-of-order frame (SCTP unordered delivery): a newer frame
+                // was already submitted, so decoding this one would replay old
+                // pixels after newer ones (back-and-forth "future frame" jumps).
+                // frameId is assigned in backend send order, so it is authoritative;
+                // the backendTs check above misses backend bursts that share one
+                // timestamp. Recovery keyframes pass while the reference is invalid.
+                this.stats.dropped++;
+                return;
+            }
         }
 
         // Track cumulative video bytes for bitrate calculation
@@ -3516,6 +3600,7 @@ export class StreamView {
         this.streamEl.addEventListener('touchend', this._onTouchEnd, { passive: false });
         this.streamEl.addEventListener('touchcancel', this._onTouchEnd, { passive: false });
         window.addEventListener('beforeunload', this._onBeforeUnload);
+        window.addEventListener('pagehide', this._onPageHide);
         window.addEventListener('blur', this._onWindowBlur);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
         // All platforms: keep Escape inside the host while in fullscreen.
@@ -3707,6 +3792,7 @@ export class StreamView {
         document.removeEventListener('keyup', this._onKeyUp);
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
+        window.removeEventListener('pagehide', this._onPageHide);
         window.removeEventListener('blur', this._onWindowBlur);
         document.removeEventListener('visibilitychange', this._onVisibilityChange);
         document.removeEventListener('fullscreenchange', this._onFsChangeLock);
