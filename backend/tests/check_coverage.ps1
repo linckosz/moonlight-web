@@ -17,7 +17,8 @@ param(
         'RestRouter.cpp',
         'AppSettings.cpp',
         'AuthManager.cpp',
-        'StaticFileHandler.cpp'
+        'StaticFileHandler.cpp',
+        'HttpParser.cpp'
     )
 )
 

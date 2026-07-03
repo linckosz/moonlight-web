@@ -16,6 +16,7 @@
  */
 
 #include "HttpServer.h"
+#include "HttpParser.h"
 #include "RestRouter.h"
 #include "StaticFileHandler.h"
 #include "server/AuthManager.h"
@@ -1387,7 +1388,7 @@ void HttpServer::onDisconnected()
 
 void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestData)
 {
-    HttpRequest req = parseRequest(requestData);
+    HttpRequest req = HttpParser::parse(requestData);
     req.clientAddress = socket->peerAddress().toString();
 
     // HTTP→HTTPS redirect for plain HTTP connections.
@@ -1584,43 +1585,6 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
                      });
 
     target->connectToHost(QHostAddress::LocalHost, targetPort);
-}
-
-HttpRequest HttpServer::parseRequest(const QByteArray& raw) const
-{
-    HttpRequest req;
-    QString data = QString::fromUtf8(raw);
-    QStringList lines = data.split("\r\n");
-
-    if (!lines.isEmpty()) {
-        QStringList parts = lines[0].split(' ');
-        if (parts.size() >= 2) {
-            req.method = parts[0].toUpper();
-            QUrl url(parts[1]);
-            req.path = url.path();
-            if (req.path.isEmpty()) req.path = "/";
-            QUrlQuery query(url);
-            for (const auto& item : query.queryItems())
-                req.queryParams[item.first] = item.second;
-        }
-    }
-
-    int i = 1;
-    for (; i < lines.size(); i++) {
-        if (lines[i].isEmpty()) break;
-        int colon = lines[i].indexOf(':');
-        if (colon > 0) {
-            QString key = lines[i].left(colon).trimmed();
-            QString value = lines[i].mid(colon + 1).trimmed();
-            req.headers[key.toLower()] = value;
-        }
-    }
-
-    if (i < lines.size()) {
-        QStringList bodyLines = lines.mid(i + 1);
-        req.body = bodyLines.join("\r\n").toUtf8();
-    }
-    return req;
 }
 
 void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
