@@ -319,6 +319,9 @@ export class HostListView {
         const empty = list.querySelector('.hosts-empty');
         if (empty) empty.remove();
 
+        // Paired hosts first — stable sort keeps discovery order within groups.
+        this.hosts.sort((a, b) => Number(b.isPaired) - Number(a.isPaired));
+
         const currentUuids = new Set(this.hosts.map((h) => h.uuid));
 
         // Remove cards for hosts no longer in the list
@@ -334,18 +337,11 @@ export class HostListView {
             let card = list.querySelector(`.host-card[data-uuid="${host.uuid}"]`);
 
             if (!card) {
-                // New host — insert at correct position
+                // New host — create the card, positioned below
                 const tmp = document.createElement('div');
                 tmp.innerHTML = this.renderCard(host);
                 card = tmp.firstElementChild;
                 card.dataset.fingerprint = fp;
-                // Insert at the right position
-                const allCards = list.querySelectorAll('.host-card');
-                if (i < allCards.length) {
-                    list.insertBefore(card, allCards[i]);
-                } else {
-                    list.appendChild(card);
-                }
             } else if (card.dataset.fingerprint !== fp) {
                 // Data changed — replace just this card
                 const tmp = document.createElement('div');
@@ -353,7 +349,12 @@ export class HostListView {
                 const newCard = tmp.firstElementChild;
                 newCard.dataset.fingerprint = fp;
                 card.replaceWith(newCard);
+                card = newCard;
             }
+
+            // Keep DOM order in sync with the sorted hosts array.
+            const ref = list.children[i] || null;
+            if (ref !== card) list.insertBefore(card, ref);
         }
 
         // Fill in app grids for available hosts (cache hit = instant).
@@ -561,7 +562,7 @@ export class HostListView {
         const manualBtn = this.container.querySelector('#btn-manual');
         if (manualBtn) {
             manualBtn.addEventListener('click', async () => {
-                const addr = prompt(t('hosts.promptManual'));
+                const addr = await this._promptManualAddress();
                 if (!addr || !addr.trim()) return;
                 manualBtn.disabled = true;
                 manualBtn.classList.add('btn-loading');
@@ -597,6 +598,51 @@ export class HostListView {
                 }
             });
         }
+    }
+
+    /** Themed replacement for window.prompt(): asks for a host IP/hostname.
+     *  Resolves with the entered string, or null on cancel/Escape/backdrop click. */
+    _promptManualAddress() {
+        return new Promise((resolve) => {
+            // Guard against double-open (e.g. ghost click replaying on the button)
+            if (document.querySelector('.manual-add-overlay')) return resolve(null);
+
+            const overlay = document.createElement('div');
+            overlay.className = 'pairing-overlay manual-add-overlay';
+            overlay.innerHTML = `
+                <div class="pairing-dialog">
+                    <h3>${this.esc(t('hosts.addManually'))}</h3>
+                    <p class="pairing-instruction">${this.esc(t('hosts.promptManual'))}</p>
+                    <input type="text" class="settings-input manual-add-input"
+                           placeholder="192.168.1.5" autocomplete="off"
+                           autocapitalize="none" autocorrect="off" spellcheck="false" />
+                    <div class="pairing-actions">
+                        <button class="btn btn-secondary manual-add-cancel">${t('common.cancel')}</button>
+                        <button class="btn manual-add-ok">${t('common.add')}</button>
+                    </div>
+                </div>
+            `;
+
+            const input = overlay.querySelector('.manual-add-input');
+            const done = (value) => {
+                overlay.remove();
+                resolve(value);
+            };
+            overlay.querySelector('.manual-add-ok').addEventListener('click', () => {
+                done(input.value.trim() || null);
+            });
+            overlay.querySelector('.manual-add-cancel').addEventListener('click', () => done(null));
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) done(null);
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') done(input.value.trim() || null);
+                else if (e.key === 'Escape') done(null);
+            });
+
+            document.body.appendChild(overlay);
+            input.focus();
+        });
     }
 
     // --- Helpers ---

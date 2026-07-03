@@ -14,7 +14,8 @@
         "pair": "Appairer",
         "loading": "Chargement...",
         "unknown": "Inconnu",
-        "verifying": "Vérification..."
+        "verifying": "Vérification...",
+        "add": "Ajouter"
     },
     "header": {
         "serverSettings": "Paramètres serveur",

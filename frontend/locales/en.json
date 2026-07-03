@@ -14,7 +14,8 @@
         "pair": "Pair",
         "loading": "Loading...",
         "unknown": "Unknown",
-        "verifying": "Verifying..."
+        "verifying": "Verifying...",
+        "add": "Add"
     },
     "header": {
         "serverSettings": "Server Settings",

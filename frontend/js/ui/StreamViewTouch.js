@@ -43,11 +43,18 @@ export class StreamViewTouch {
         ) {
             this._hideShortcutsSlide();
         }
-        // Let UI buttons (Stop, Fullscreen, Keyboard) receive their native taps.
-        // Touches on the draggable stats card are handled by its own pointer
-        // listeners — never feed them into the game's trackpad tracking, or the
-        // cursor moves while dragging the card and jumps on the next real touch.
-        if (e.target.closest('button') || e.target.closest('#stream-stats-overlay')) return;
+        // UI buttons (Stop, Fullscreen, Keyboard) and the draggable stats card
+        // are never fed into the game's trackpad tracking. Their taps are
+        // resolved in handleTouchEnd() (manual click dispatch) — remember the
+        // start position so it can apply tap semantics (minimal movement).
+        if (e.target.closest('button') || e.target.closest('#stream-stats-overlay')) {
+            const t0 = e.changedTouches[0];
+            if (t0) {
+                this._uiTouchX = t0.clientX;
+                this._uiTouchY = t0.clientY;
+            }
+            return;
+        }
         e.preventDefault();
         const newCount = e.touches.length;
 
@@ -390,7 +397,22 @@ export class StreamViewTouch {
      * 1→0 finger transition with minimal movement → left click (tap).
      */
     handleTouchEnd(e) {
-        if (e.target.closest('button') || e.target.closest('#stream-stats-overlay')) return;
+        // UI buttons / stats card: suppress the browser's synthetic click — it
+        // hit-tests at dispatch time, so a tap that tears the stream view down
+        // (Stop) can ghost-fire on whatever the next view puts under the
+        // finger. Dispatch the button's click ourselves instead.
+        const uiBtn = e.target.closest('button');
+        if (uiBtn || e.target.closest('#stream-stats-overlay')) {
+            e.preventDefault();
+            const t0 = e.changedTouches[0];
+            const moved = t0
+                ? Math.hypot(t0.clientX - this._uiTouchX, t0.clientY - this._uiTouchY)
+                : 0;
+            if (uiBtn && e.type !== 'touchcancel' && e.touches.length === 0 && moved < 25) {
+                uiBtn.click();
+            }
+            return;
+        }
         e.preventDefault();
         this._touchFingerCount = e.touches.length;
 
