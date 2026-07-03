@@ -137,6 +137,9 @@ add_executable(mw-server
     src/server/CertManager.cpp
     src/server/StaticFileHandler.cpp
     src/server/RestRouter.cpp
+    src/server/routes/AuthRoutes.cpp
+    src/server/routes/HostRoutes.cpp
+    src/server/routes/SystemRoutes.cpp
     src/common/Logger.cpp
     src/network/UPNPClient.cpp
     src/network/PdnsClient.cpp
