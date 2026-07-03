@@ -148,7 +148,7 @@ export class StreamView {
         isRemote = false,
         showPerformanceStats = true,
         touchSensitivity = 2.0,
-        vsync = true,
+        tearing = false,
         videoWorker = true,
         videoEnhancement = 'off',
         videoEnhancementAlgo = 'auto',
@@ -171,10 +171,12 @@ export class StreamView {
         // AV1 10-bit). _hdrNegotiated is set after codec detection.
         this._hdrEnabled = hdrEnabled === true;
         this._hdrNegotiated = false;
-        // VSync: when false, the canvas 2D context is created with
-        // desynchronized=true to allow tearing (lower latency) on transports
-        // that render through the canvas (DataChannel / WSS).
-        this._vsync = vsync !== false;
+        // Allow tearing: when true, VSync pacing is disabled — the canvas 2D
+        // context is created with desynchronized=true and frames are presented
+        // as soon as they are decoded (lower latency, possible tearing) on
+        // transports that render through the canvas (DataChannel / WSS).
+        // Only effective on Chromium desktop; ignored elsewhere.
+        this._tearing = tearing === true;
         this.signalingUrl = signalingUrl;
         this.host = host;
         this.videoCodec = videoCodec || 'auto';
@@ -384,7 +386,7 @@ export class StreamView {
         this.frameCount = 0;
         this.renderRunning = false;
         this._rendering = false; // Guard: prevents overlapping GPU render ops
-        this._immediateRender = false; // VSync off: draw is driven by decoder output, not rAF
+        this._immediateRender = false; // Tearing on: draw is driven by decoder output, not rAF
         this._renderer = null; // VideoRenderer (Canvas2D / WebGPU); owns the context
         this._activeRendererKind = null; // 'canvas2d' | 'webgpu' (for the overlay)
         this._rendererHdrActive = false; // true once a renderer reports an HDR canvas
@@ -1198,7 +1200,7 @@ export class StreamView {
                     videoCodec: this.videoCodec,
                     isChromeWindowsHevc: this._isChromeWindowsHevc,
                     transport: this._transport,
-                    vsync: this._vsync,
+                    tearing: this._tearing,
                     webgpu: this._wantWebGpu,
                     algo: this._videoEnhancementAlgo,
                     hdr: this._hdrEnabled,
@@ -1215,7 +1217,7 @@ export class StreamView {
             this._videoWorker = null;
             // Recover the main-thread render path (canvas not transferred yet).
             createVideoRenderer(this.canvas, {
-                desynchronized: !this._vsync,
+                desynchronized: this._tearing,
                 videoCodec: this.videoCodec,
                 isChromeWindowsHevc: this._isChromeWindowsHevc,
                 webgpu: this._wantWebGpu,
@@ -2235,10 +2237,11 @@ export class StreamView {
         if (this._useWorker) return;
         this.renderRunning = true;
 
-        // VSync off (option A): rendering is driven by decoder output (onDecodedFrame
+        // Tearing on (option A): rendering is driven by decoder output (onDecodedFrame
         // → _pumpRender) for lower latency. The rAF loop then only handles context-loss
-        // detection. VSync on: the rAF loop paces rendering to the display refresh.
-        this._immediateRender = !this._vsync;
+        // detection. Tearing off (default): the rAF loop paces rendering to the
+        // display refresh (VSync).
+        this._immediateRender = this._tearing;
 
         const loop = (now) => {
             if (!this.renderRunning) return;
@@ -2475,7 +2478,7 @@ export class StreamView {
                     // Create the main-thread renderer here (not in render()) so the
                     // resolved _isChromeWindowsHevc flag gates the HEVC NV12 path.
                     createVideoRenderer(this.canvas, {
-                        desynchronized: !this._vsync,
+                        desynchronized: this._tearing,
                         videoCodec: this.videoCodec,
                         isChromeWindowsHevc: this._isChromeWindowsHevc,
                         webgpu: this._wantWebGpu,
@@ -4471,7 +4474,11 @@ export class StreamView {
      * Safe to call multiple times — resets the timer each call.
      */
     _showShortcutsSlide() {
-        if (!this._shortcutsSlide) return;
+        // Only shown once per user-initiated launch. Transport relaunches
+        // (congestion degradation / fallback chain) build a fresh StreamView
+        // with _firstFrameRendered reset, which would otherwise re-pop the
+        // slide on every degrade step — app.js sets this flag to suppress it.
+        if (!this._shortcutsSlide || this._suppressShortcutsSlide) return;
         this._shortcutsSlide.classList.remove('fading-out');
         this._shortcutsSlide.style.display = '';
 

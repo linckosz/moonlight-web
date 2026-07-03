@@ -720,8 +720,8 @@ self.onmessage = (e) => {
             // Always use a low-latency (desynchronized) context in the worker: it
             // lets the canvas bypass the document compositor and present sooner,
             // clawing back the ~1-frame latency that an OffscreenCanvas presented
-            // from a worker otherwise adds vs the main-thread rAF path. (m.vsync is
-            // kept for reference; tearing is acceptable for a real-time game stream.)
+            // from a worker otherwise adds vs the main-thread rAF path. (m.tearing
+            // is kept for reference; tearing is acceptable for a real-time stream.)
             // Renderer assigned in a microtask; well before any decoded frame reaches
             // drawFrame. mw_webgpu flag arrives via the message (no localStorage here).
             createVideoRenderer(S.canvas, {

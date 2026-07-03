@@ -131,6 +131,9 @@ const MoonlightApp = {
             document.body.classList.add('ios');
         }
 
+        // Block browser zoom on the app UI (allowed only on the stream surfaces).
+        this._initZoomGuard();
+
         // iOS: pre-buffer the audio-session unlock element and authorize it on
         // the first user interaction, so the launch-click unlock reliably starts
         // it (a freshly-created <audio> can have its first .play() rejected).
@@ -497,6 +500,59 @@ const MoonlightApp = {
     },
 
     // =========================================================================
+    // Global zoom guard
+    // =========================================================================
+
+    /**
+     * Prevent browser zoom on the application UI. Zoom gestures are allowed
+     * only on the stream surfaces (<canvas>/<video> and the transparent input
+     * layer covering them), where StreamViewTouch owns the pinch handling.
+     *
+     * The viewport meta (user-scalable=no) is ignored by iOS Safari and the
+     * body touch-action CSS doesn't cover Ctrl+wheel on desktop, so both
+     * paths need explicit JS guards.
+     */
+    _initZoomGuard() {
+        const onStreamSurface = (target) =>
+            target instanceof Element &&
+            !!target.closest('#stream-canvas, #stream-video, #stream-input-layer');
+
+        // iOS Safari pinch — non-standard gesture events, fired even with
+        // user-scalable=no. preventDefault() is the only reliable block.
+        for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+            document.addEventListener(
+                type,
+                (e) => {
+                    if (!onStreamSurface(e.target)) e.preventDefault();
+                },
+                { passive: false, capture: true },
+            );
+        }
+
+        // Safari fallback: an in-progress pinch is also reported on touchmove
+        // via the proprietary `scale` property.
+        document.addEventListener(
+            'touchmove',
+            (e) => {
+                if (e.scale !== undefined && e.scale !== 1 && !onStreamSurface(e.target)) {
+                    e.preventDefault();
+                }
+            },
+            { passive: false, capture: true },
+        );
+
+        // Desktop: Ctrl+wheel (mouse) and trackpad pinch (delivered as a
+        // ctrlKey wheel event) trigger page zoom unless prevented.
+        window.addEventListener(
+            'wheel',
+            (e) => {
+                if (e.ctrlKey && !onStreamSurface(e.target)) e.preventDefault();
+            },
+            { passive: false, capture: true },
+        );
+    },
+
+    // =========================================================================
     // Nav Buttons
     // =========================================================================
 
@@ -694,7 +750,7 @@ const MoonlightApp = {
         // Power Saving (mobile): force the native video transport, UDP first.
         // webrtc-media-udp is tried before any TCP/DataChannel fallback, so the
         // <video> pipeline (no canvas) and UDP have priority. The other settings
-        // (H.264, no HDR/enhancement, VSync, 720p/60) are already in the stored
+        // (H.264, no HDR/enhancement, no tearing, 720p/60) are already in the stored
         // object because SettingsView applied them when the mode was enabled.
         if (streamingSettings.power_save) {
             streamingSettings.transport_mode = 'webrtc-media-udp';
@@ -742,7 +798,9 @@ const MoonlightApp = {
                 // Remember context so a failed transport can be relaunched with
                 // the next entry in the priority chain (see _onTransportFailed).
                 this._lastStreamingSettings = streamingSettings;
-                this._startStreamView(result, host, streamingSettings);
+                // A codec/HDR fallback re-launch (codecOverride set) is not a
+                // fresh user launch — don't re-show the shortcuts/help slide.
+                this._startStreamView(result, host, streamingSettings, !!codecOverride);
                 // New StreamView rendered on top — drop any bridging loader left
                 // by a codec/HDR fallback re-launch.
                 this._hideRelaunchLoader();
@@ -775,7 +833,7 @@ const MoonlightApp = {
      * callbacks. Shared by the initial launch and transport-chain relaunches.
      * Stores the backend-reported transport fallback chain + index.
      */
-    _startStreamView(result, host, streamingSettings) {
+    _startStreamView(result, host, streamingSettings, suppressShortcuts = false) {
         const isRemote = this._isRemoteConnection();
         const upnpEnabled = true;
         const internalTransport = result.transport || (result.signalingUrl ? 'webrtc' : 'wss');
@@ -789,8 +847,13 @@ const MoonlightApp = {
                 : 2.2;
         // Mobile only: direct touch-screen input (absolute) instead of trackpad.
         const touchScreen = streamingSettings.touch_screen === true;
-        // VSync (default on): when off, the canvas allows tearing (lower latency)
-        const vsync = streamingSettings.vsync_enabled !== false;
+        // Allow tearing (default off): disables VSync pacing and presents frames
+        // on decode via a desynchronized canvas (Chromium desktop only — the
+        // flag is ignored elsewhere). Migrates the legacy inverted vsync key.
+        const tearing =
+            streamingSettings.tearing_enabled === true ||
+            (streamingSettings.tearing_enabled === undefined &&
+                streamingSettings.vsync_enabled === false);
         // Video worker mode: 'auto' (heuristic — desktop only), 'on' or 'off'.
         const videoWorker = streamingSettings.video_worker;
         // Video enhancement (WebGPU upscale/sharpen). Forced OFF on MediaTrack:
@@ -824,7 +887,7 @@ const MoonlightApp = {
             isRemote,
             showPerfStats,
             touchSensitivity,
-            vsync,
+            tearing,
             videoWorker,
             videoEnhancement,
             videoEnhancementAlgo,
@@ -833,6 +896,11 @@ const MoonlightApp = {
             touchScreen,
             audioTimeStretch,
         );
+
+        // The keyboard/gesture help slide shows once per user-initiated launch.
+        // Suppress it on transport relaunches (congestion degradation / fallback
+        // chain / codec fallback) so it doesn't re-pop on every degrade step.
+        this.streamView._suppressShortcutsSlide = suppressShortcuts;
 
         // ── Callbacks ──────────────────────────────────────────────────────
         // onQuit: normal end (Stop button / mid-stream disconnect).
@@ -991,7 +1059,9 @@ const MoonlightApp = {
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id, settings);
             if (result.status === 'streaming') {
-                this._startStreamView(result, host, this._lastStreamingSettings);
+                // Transport relaunch (fallback chain / congestion degradation) —
+                // suppress the shortcuts slide so it doesn't re-pop each step.
+                this._startStreamView(result, host, this._lastStreamingSettings, true);
                 // New StreamView rendered its own #stream-view on top — drop the
                 // bridging loader.
                 this._hideRelaunchLoader();

@@ -152,6 +152,17 @@ export function pickAutoEnhancer() {
     return 'sgsr';
 }
 
+/**
+ * True when the browser can actually present frames without VSync: a Canvas2D
+ * context created with { desynchronized: true } bypasses the compositor swap
+ * chain, allowing tearing for lower latency. Only Chromium on desktop
+ * implements it (Chrome/Edge); Safari and Firefox ignore the flag, and mobile
+ * compositors always re-synchronize. "Chrome/" in the UA covers the Chromium
+ * family and is absent from Safari ("CriOS" on iOS) and Firefox.
+ */
+export const SUPPORTS_CANVAS_TEARING =
+    platform.type === 'desktop' && /chrome\/\d+/i.test(navigator.userAgent || '');
+
 /** True when the app runs as an installed PWA (no browser chrome). */
 export const IS_STANDALONE =
     window.navigator.standalone === true ||
