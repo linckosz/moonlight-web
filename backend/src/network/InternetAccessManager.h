@@ -209,9 +209,9 @@ private:
     QString m_UniqueId;
     QString m_LastError;
     QString m_Phase; ///< Current activation step (drives the UI loader). See statusJson "phase".
-    bool m_CertIssuing = false;    ///< True while ACME issuance is in progress
-    quint16 m_HttpPort = 0;        ///< Actual HTTP server port
-    quint16 m_HttpsPort = 0;       ///< Actual HTTPS server port
+    bool m_CertIssuing = false;      ///< True while ACME issuance is in progress
+    quint16 m_HttpPort = 0;          ///< Actual HTTP server port
+    quint16 m_HttpsPort = 0;         ///< Actual HTTPS server port
     quint16 m_ExternalHttpsPort = 0; ///< Router-side external HTTPS port (443 or fallback)
     quint16 m_ExternalHttpPort = 0;  ///< Router-side external HTTP port (80 or fallback)
     bool m_ServiceManaged = false; ///< True when launched by a service supervisor (MW_SERVICE set);
