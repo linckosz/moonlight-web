@@ -23,13 +23,15 @@
  * fetched from the server on first visit.
  *
  * Layout:
- *   - Video section: resolution, FPS, HDR, VSync, bitrate
- *   - Advanced section: video enhancement, codec, performance stats, gaming mode
+ *   - Video section: resolution, FPS, HDR, bitrate
+ *   - Advanced section: video enhancement, codec, mute host, tearing,
+ *     performance stats, gaming mode
  */
 import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { SUPPORTS_CANVAS_TEARING } from '../util/BrowserDetect.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
 const IS_TOUCH_DEVICE =
@@ -57,7 +59,9 @@ export class SettingsView {
         // Mobile only: direct touch-screen input (absolute) instead of the
         // relative trackpad model. Off by default.
         this._touchScreen = false;
-        this._vsync = true;
+        // Allow tearing (default off = VSync pacing). Only meaningful on
+        // Chromium desktop (desynchronized canvas); forced off elsewhere.
+        this._tearing = false;
         // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
         this._videoWorker = 'auto';
         this._mediaTrackOnlyH264 = false;
@@ -144,7 +148,13 @@ export class SettingsView {
                 ? data.touch_sensitivity
                 : 2.2;
         this._touchScreen = data.touch_screen === true;
-        this._vsync = data.vsync_enabled !== false;
+        // Allow tearing (default off). Migrates the legacy inverted key
+        // (vsync_enabled:false meant "tearing allowed"); forced off where the
+        // platform cannot tear anyway (non-Chromium or non-desktop).
+        this._tearing =
+            data.tearing_enabled === true ||
+            (data.tearing_enabled === undefined && data.vsync_enabled === false);
+        if (!SUPPORTS_CANVAS_TEARING) this._tearing = false;
         // Back-compat: older saves stored a boolean; map it onto the tri-state.
         const vw = data.video_worker;
         this._videoWorker =
@@ -231,7 +241,7 @@ export class SettingsView {
             mute_host_audio: this._muteHostAudio,
             touch_sensitivity: this._touchSensitivity,
             touch_screen: this._touchScreen,
-            vsync_enabled: this._vsync,
+            tearing_enabled: this._tearing,
             video_worker: this._videoWorker,
             video_enhancement: this._videoEnhancement,
             video_enhancement_algo: this._videoEnhancementAlgo,
@@ -408,7 +418,8 @@ export class SettingsView {
             const touchScreen =
                 this.container.querySelector('#settings-touch-screen')?.checked ??
                 this._touchScreen;
-            const vsync = this.container.querySelector('#settings-vsync')?.checked ?? this._vsync;
+            const tearing =
+                this.container.querySelector('#settings-tearing')?.checked ?? this._tearing;
             const videoWorker =
                 this.container.querySelector('#settings-video-worker')?.value ?? this._videoWorker;
             const veCheck = this.container.querySelector('#settings-video-enhancement');
@@ -433,7 +444,7 @@ export class SettingsView {
             this._chroma444 = chroma444;
             this._touchSensitivity = sensitivity;
             this._touchScreen = touchScreen;
-            this._vsync = vsync;
+            this._tearing = tearing;
             this._videoWorker = videoWorker;
             this._videoEnhancement = videoEnhancement;
             this._videoEnhancementAlgo = videoEnhancementAlgo;
@@ -459,7 +470,7 @@ export class SettingsView {
         this._muteHostAudio = true;
         this._touchSensitivity = 2.2;
         this._touchScreen = false;
-        this._vsync = true;
+        this._tearing = false;
         this._videoWorker = 'auto';
         this._videoEnhancement = 'on';
         this._videoEnhancementAlgo = 'auto';
@@ -488,8 +499,8 @@ export class SettingsView {
     /**
      * Toggle Power Saving mode (mobile only). Enabling forces the lightest
      * pipeline (native video / UDP-first transport, H.264, no HDR, no
-     * enhancement, VSync on, 720p / 60fps, reduced bitrate) and grays out the
-     * forced controls. Resolution / FPS / bitrate stay editable.
+     * enhancement, no tearing, 720p / 60fps, reduced bitrate) and grays out
+     * the forced controls. Resolution / FPS / bitrate stay editable.
      *
      * The pre-enable values are snapshotted; disabling restores each one ONLY
      * if it is still at its power-save default (i.e. the user didn't change it).
@@ -501,7 +512,7 @@ export class SettingsView {
                 hdr_enabled: this._hdrEnabled,
                 chroma_444_enabled: this._chroma444,
                 video_enhancement: this._videoEnhancement,
-                vsync_enabled: this._vsync,
+                tearing_enabled: this._tearing,
                 stream_height: this._streamHeight,
                 stream_fps: this._streamFps,
                 stream_bitrate_mbps: this._streamBitrateMbps,
@@ -510,7 +521,7 @@ export class SettingsView {
             this._hdrEnabled = false;
             this._chroma444 = false;
             this._videoEnhancement = 'off';
-            this._vsync = true;
+            this._tearing = false;
             this._streamHeight = 720;
             this._streamFps = 60;
             // Power-save default bitrate: the 720p60 SDR auto value cut by 30%
@@ -526,7 +537,10 @@ export class SettingsView {
                 if (this._hdrEnabled === false) this._hdrEnabled = b.hdr_enabled;
                 if (this._chroma444 === false) this._chroma444 = b.chroma_444_enabled;
                 if (this._videoEnhancement === 'off') this._videoEnhancement = b.video_enhancement;
-                if (this._vsync === true) this._vsync = b.vsync_enabled;
+                // Old backups stored the inverted vsync_enabled key — skip them
+                // (tearing then simply stays at its off default).
+                if (this._tearing === false && b.tearing_enabled !== undefined)
+                    this._tearing = b.tearing_enabled;
                 if (this._streamHeight === 720) this._streamHeight = b.stream_height;
                 if (this._streamFps === 60) this._streamFps = b.stream_fps;
                 if (this._streamBitrateMbps === psBitrate)
@@ -554,6 +568,14 @@ export class SettingsView {
         const hdrDisabled = psDisabled;
         const hdrLocked = psLocked;
         const hdrChecked = this._hdrEnabled ? 'checked' : '';
+
+        // Allow tearing: only Chromium desktop can bypass VSync (desynchronized
+        // canvas swapchain) — elsewhere the field is dimmed + locked (🔒),
+        // unchecked, with the "(unavailable)" suffix. Power Saving also locks it.
+        const tearingUnavailable = !SUPPORTS_CANVAS_TEARING;
+        const tearingDisabled = tearingUnavailable || this._powerSave ? ' disabled' : '';
+        const tearingLocked = tearingUnavailable ? ' settings-field-locked' : psLocked;
+        const tearingChecked = this._tearing && !tearingUnavailable ? 'checked' : '';
 
         // Codec options (explicit, no "Auto")
         const codecs = [
@@ -708,12 +730,6 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.hdrDesc')}</span>
                     </div>
 
-                    <!-- VSync: no UI control. VSync stays on by default (the
-                         desynchronized/present-on-decode path causes judder on some
-                         platforms for only a marginal latency gain). It remains a
-                         power-user override via settings.json (vsync_enabled:false),
-                         which round-trips through this._vsync unchanged. -->
-
                     <div class="settings-field">
                         <label class="settings-label" for="settings-stream-bitrate">
                             ${t('settings.bitrate')} <strong id="settings-bitrate-value">${this._streamBitrateMbps}</strong> ${t('settings.bitrateUnit')}
@@ -770,6 +786,21 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.muteHostDesc')}</span>
+                    </div>
+
+                    <!-- Allow tearing: disables VSync pacing + desynchronized
+                         canvas. Dimmed + locked "(unavailable)" outside Chromium
+                         desktop — Safari/Firefox ignore the flag and mobile
+                         compositors always re-synchronize. -->
+                    <div class="settings-field${tearingLocked}">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-tearing"
+                                ${tearingChecked}${tearingDisabled} />
+                            <span class="settings-checkbox-text">
+                                <strong>${t('settings.tearing')}${tearingUnavailable ? t('settings.unavailableSuffix') : ''}</strong>
+                            </span>
+                        </label>
+                        <span class="setting-desc">${t('settings.tearingDesc')}</span>
                     </div>
 
                     <div class="settings-field${psLocked}">
@@ -994,8 +1025,8 @@ export class SettingsView {
         const perfCheck = this.container.querySelector('#settings-show-perf-stats');
         if (perfCheck) perfCheck.addEventListener('change', () => this._autoSave());
 
-        const vsyncCheck = this.container.querySelector('#settings-vsync');
-        if (vsyncCheck) vsyncCheck.addEventListener('change', () => this._autoSave());
+        const tearingCheck = this.container.querySelector('#settings-tearing');
+        if (tearingCheck) tearingCheck.addEventListener('change', () => this._autoSave());
 
         const workerCheck = this.container.querySelector('#settings-video-worker');
         if (workerCheck) workerCheck.addEventListener('change', () => this._autoSave());
