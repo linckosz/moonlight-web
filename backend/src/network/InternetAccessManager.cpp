@@ -388,8 +388,8 @@ quint16 InternetAccessManager::mapPortWithFallback(quint16 internalPort, const c
         if (m_Upnp.getExistingPortMapping(ext, protocol, existingClient, existingPort)) {
             if (existingClient != m_Upnp.lanAddress()) {
                 // Owned by another device — try the next candidate (no eviction).
-                qInfo() << "[InternetAccess] External port" << ext << protocol
-                        << "owned by" << existingClient.c_str() << "— trying next candidate";
+                qInfo() << "[InternetAccess] External port" << ext << protocol << "owned by"
+                        << existingClient.c_str() << "— trying next candidate";
                 continue;
             }
             // Already ours — re-add below to refresh the lease.

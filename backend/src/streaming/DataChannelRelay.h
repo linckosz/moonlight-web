@@ -184,8 +184,8 @@ private:
     // an IDR flood feeds the very congestion it tries to fix.
     static constexpr qint64 kIdrCooldownBaseMs = 300;
     static constexpr qint64 kIdrCooldownMaxMs = 5000;
-    QElapsedTimer m_IdrCooldownTimer;             // Monotonic timer; invalid until first request
-    qint64 m_IdrCooldownMs = kIdrCooldownBaseMs;  // Current adaptive cooldown
+    QElapsedTimer m_IdrCooldownTimer;            // Monotonic timer; invalid until first request
+    qint64 m_IdrCooldownMs = kIdrCooldownBaseMs; // Current adaptive cooldown
     bool m_IdrOutstanding = false; // True from an effective request until a keyframe is sent
 
     // Awaiting IDR: true when a delta was dropped (backpressure or DC not ready).
