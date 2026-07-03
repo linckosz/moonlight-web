@@ -111,6 +111,19 @@ private:
     // Main-thread only (called from onVideoFrame / sendBufferedKeyframe).
     uint32_t computeRtpTimestamp();
 
+    // IDR request throttle with exponential backoff (300 ms → 5 s while requests
+    // keep firing without a keyframe getting through). Browser PLI storms during
+    // sustained loss would otherwise flood Sunshine with IDR requests, inflating
+    // the encoded bitrate exactly when the link is saturated. Thread-safe:
+    // callers run on the libdatachannel PLI thread, the Qt main thread (input
+    // messages) and the session thread.
+    void sendIdrRequestThrottled();
+    static constexpr int64_t kIdrCooldownBaseMs = 300;
+    static constexpr int64_t kIdrCooldownMaxMs = 5000;
+    std::atomic<int64_t> m_IdrCooldownMs{kIdrCooldownBaseMs};
+    std::atomic<int64_t> m_LastIdrRequestMs{0}; // steady_clock ms of last effective request
+    std::atomic<bool> m_IdrOutstanding{false};  // True until the next keyframe is sent
+
     MoonlightShim* m_Shim;
 
     std::shared_ptr<rtc::PeerConnection> m_Pc;

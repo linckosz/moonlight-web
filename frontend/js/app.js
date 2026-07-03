@@ -634,6 +634,12 @@ const MoonlightApp = {
             // Reset transport-chain fallback state for a fresh launch.
             this._transportIndex = 0;
             this._firstTransportRetried = false;
+            // Reset the congestion-degradation ladder. The overrides are
+            // session-only (never persisted): a fresh launch always starts from
+            // the user's own settings.
+            this._degradeLevel = 0;
+            this._degradeOverrides = {};
+            this._lastDegradeTime = 0;
         }
 
         // Store host/app for HEVC fallback re-launch
@@ -651,6 +657,12 @@ const MoonlightApp = {
                 console.warn('[MW] Failed to parse streaming settings from localStorage:', e);
             }
         }
+
+        // Session-only congestion-degradation overrides (bitrate/fps/transport).
+        // They survive codec/HDR fallback relaunches within the same session and
+        // are reset on a fresh user-initiated launch above. localStorage (the UI
+        // settings) is never touched.
+        Object.assign(streamingSettings, this._degradeOverrides || {});
 
         // Override codec if provided (codec fallback chain)
         if (codecOverride) {
@@ -828,6 +840,10 @@ const MoonlightApp = {
         // onConnectionFailed: transport never connected → try the next entry
         // in the priority chain (or give up if the chain is exhausted).
         this.streamView.onConnectionFailed = (reason) => this._onTransportFailed(reason);
+        // onCongestion: sustained congestion detected mid-stream → relaunch with
+        // a degraded session-only profile (bitrate −30% steps, media transport,
+        // 60 fps cap). See _onStreamCongested().
+        this.streamView.onCongestion = () => this._onStreamCongested();
     },
 
     /** Human-readable label for a transport mode (warning toasts / logs). */
@@ -954,6 +970,7 @@ const MoonlightApp = {
         if (sv) {
             sv.onQuit = null;
             sv.onConnectionFailed = null;
+            sv.onCongestion = null;
             try {
                 await sv.quit({ silent: true });
             } catch (e) {
@@ -963,9 +980,14 @@ const MoonlightApp = {
 
         this._transportIndex = nextIndex;
 
-        // Relaunch targeting the next chain index. Same settings otherwise; the
-        // backend recomputes the same chain and picks chain[nextIndex].
-        const settings = { ...this._lastStreamingSettings, transport_index: nextIndex };
+        // Relaunch targeting the next chain index. Same settings otherwise (plus
+        // any session-only degradation overrides); the backend recomputes the
+        // chain and picks chain[nextIndex].
+        const settings = {
+            ...this._lastStreamingSettings,
+            ...(this._degradeOverrides || {}),
+            transport_index: nextIndex,
+        };
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id, settings);
             if (result.status === 'streaming') {
@@ -982,6 +1004,71 @@ const MoonlightApp = {
             console.warn('[MW] Relaunch failed for index', nextIndex, err);
             this._onTransportFailed('launch error');
         }
+    },
+
+    /**
+     * Sustained congestion reported by StreamView: relaunch the CURRENT stream
+     * with a degraded, session-only profile. The user's settings in the UI are
+     * never touched — a fresh launch starts from them again.
+     *
+     * Escalation ladder, one step per congestion event:
+     *   1. bitrate −30%
+     *   2. switch to the native media transport (RTP: no SCTP queueing/cwnd)
+     *   3. bitrate −30% + cap at 60 fps
+     *   4+ bitrate −30% … floor at 2 Mbps
+     * Once every knob is at its floor, keep restarting the transport — a fresh
+     * SCTP/ICE state is exactly what a manual stop/start fixes.
+     */
+    _onStreamCongested() {
+        if (this._nav.overlay !== 'streaming') return;
+        const now = performance.now();
+        if (this._lastDegradeTime && now - this._lastDegradeTime < 25000) return;
+        this._lastDegradeTime = now;
+
+        this._degradeOverrides = this._degradeOverrides || {};
+        const o = this._degradeOverrides;
+        const effective = { ...this._lastStreamingSettings, ...o };
+        const curBitrate = effective.stream_bitrate > 0 ? effective.stream_bitrate : 20000;
+        const curFps = effective.stream_fps > 0 ? effective.stream_fps : 60;
+        const chain = this._transportChain || [];
+        const curTransport = chain[this._transportIndex || 0] || '';
+        const onMedia = curTransport.startsWith('webrtc-media');
+
+        this._degradeLevel = (this._degradeLevel || 0) + 1;
+
+        // Step 2 switches to the media transport; every other step reduces bitrate.
+        const switchToMedia = this._degradeLevel === 2 && !onMedia;
+        let relaunchIndex = this._transportIndex || 0;
+        let toastKey;
+        const toastParams = {};
+
+        if (switchToMedia) {
+            o.transport_mode = 'webrtc-media-udp';
+            relaunchIndex = 0; // forced mode is first in the recomputed chain
+            toastKey = 'stream.degradeMedia';
+        } else {
+            if (curBitrate > 2000) {
+                o.stream_bitrate = Math.max(2000, Math.round(curBitrate * 0.7));
+                toastKey = 'stream.degradeBitrate';
+                toastParams.mbps = (o.stream_bitrate / 1000).toFixed(1);
+            } else {
+                // Every knob at its floor: plain transport restart (fresh
+                // SCTP/ICE state, same effect as a manual stop/start).
+                toastKey = 'stream.degradeRestart';
+            }
+            if (this._degradeLevel >= 3 && curFps > 60) {
+                o.stream_fps = 60;
+                toastKey = 'stream.degradeBitrateFps';
+                toastParams.mbps = ((o.stream_bitrate || curBitrate) / 1000).toFixed(1);
+            }
+        }
+
+        console.warn(
+            '[MW] Sustained congestion — degrade step ' + this._degradeLevel + ':',
+            JSON.stringify(o),
+        );
+        Toast.warning(t(toastKey, toastParams));
+        this._relaunchTransport(relaunchIndex);
     },
 
     /**

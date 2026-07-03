@@ -197,11 +197,21 @@ export class WebRtcDataChannel {
 
         // Shared IDR request throttle: minimum interval between any requestidr sent.
         // Covers stale-frame drops, starvation, and onFrameLoss — one timestamp for all.
+        // Exponential backoff: while requests keep firing without a keyframe being
+        // assembled in between, the interval doubles (500ms → 4s). Every IDR is a
+        // large frame that inflates the bitrate exactly when the link is saturated;
+        // occasional artifacts are preferable to feeding the congestion spiral.
         this._lastIdrRequestTime = 0;
-        this.IDR_THROTTLE_MS = 500; // minimum ms between IDR requests (> backend 300ms cooldown)
+        this.IDR_THROTTLE_MS = 500; // base interval between IDR requests (> backend 300ms cooldown)
+        this.IDR_BACKOFF_MAX_MS = 4000;
+        this._idrBackoffMs = this.IDR_THROTTLE_MS; // current adaptive interval
+        this._idrOutstanding = false; // true until the next keyframe is assembled
 
         // Callback: (frameId, wasKeyframe) — fired when an assembled frame is dropped incomplete.
         this.onFrameLoss = null;
+        // Callback: (reason) — fired when an IDR request is actually sent (post-throttle).
+        // StreamView's congestion monitor counts these to detect a saturated link.
+        this.onIdrRequested = null;
 
         this._lastAssembledFrameId = -1;
     }
@@ -1051,6 +1061,12 @@ export class WebRtcDataChannel {
         this._lastAssembledTime = performance.now();
         this._starvationRequested = false;
 
+        // Keyframe assembled: IDR recovery completed — reset the request backoff.
+        if (entry.keyframe) {
+            this._idrOutstanding = false;
+            this._idrBackoffMs = this.IDR_THROTTLE_MS;
+        }
+
         // Emit video frame with backend timestamp for latency calculations
         if (this.onVideo) {
             this.onVideo(assembled, entry.keyframe, entry.backendTs, frameId);
@@ -1150,13 +1166,22 @@ export class WebRtcDataChannel {
     }
 
     /** Request an IDR (key) frame from Sunshine via the input DataChannel or WS text (WSS/fallback mode).
-     *  Client-side throttle: at most one request per IDR_THROTTLE_MS; backend also throttles server-side. */
+     *  Client-side throttle with exponential backoff: at most one request per adaptive
+     *  interval (500ms base, doubling to 4s while no keyframe arrives); backend also
+     *  throttles server-side. */
     _requestIdrFrame(reason) {
         const now = performance.now();
-        if (now - this._lastIdrRequestTime < this.IDR_THROTTLE_MS) {
+        if (now - this._lastIdrRequestTime < this._idrBackoffMs) {
             return; // Throttled — too soon since last request
         }
+        // Previous request never yielded an assembled keyframe → back off.
+        // Reset to base when a keyframe is assembled (see _assembleFrame).
+        if (this._idrOutstanding) {
+            this._idrBackoffMs = Math.min(this._idrBackoffMs * 2, this.IDR_BACKOFF_MAX_MS);
+        }
+        this._idrOutstanding = true;
         this._lastIdrRequestTime = now;
+        if (this.onIdrRequested) this.onIdrRequested(reason);
 
         // WSS mode or WS fallback mode: send via signaling WS text message
         if (this._wssMode || this._wsFallback) {

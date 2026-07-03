@@ -138,8 +138,8 @@ private:
     void sendBufferedKeyframe();
 
     // Coalescing IDR throttle: all IDR requests (frontend + internal) go through
-    // this method. Requests arriving within 300 ms of the last effective request
-    // are absorbed to prevent LiRequestIdrFrame flooding.
+    // this method. Requests arriving within the adaptive cooldown of the last
+    // effective request are absorbed to prevent LiRequestIdrFrame flooding.
     void sendIdrRequestThrottled();
 
     MoonlightShim* m_Shim;
@@ -176,9 +176,17 @@ private:
     // Decode latency tracking (microseconds)
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
 
-    // IDR coalescing: cooldown 300 ms between effective LiRequestIdrFrame calls.
+    // IDR coalescing: adaptive cooldown between effective LiRequestIdrFrame calls.
     // All IDR sources (frontend requestidr, backpressure) converge here.
-    QElapsedTimer m_IdrCooldownTimer; // Monotonic timer; invalid until first request
+    // Exponential backoff: while requests keep firing without a keyframe getting
+    // through, the cooldown doubles (300 ms → 5 s). Each IDR is a large frame
+    // that inflates the encoded bitrate exactly when the link is saturated, so
+    // an IDR flood feeds the very congestion it tries to fix.
+    static constexpr qint64 kIdrCooldownBaseMs = 300;
+    static constexpr qint64 kIdrCooldownMaxMs = 5000;
+    QElapsedTimer m_IdrCooldownTimer;             // Monotonic timer; invalid until first request
+    qint64 m_IdrCooldownMs = kIdrCooldownBaseMs;  // Current adaptive cooldown
+    bool m_IdrOutstanding = false; // True from an effective request until a keyframe is sent
 
     // Awaiting IDR: true when a delta was dropped (backpressure or DC not ready).
     // All delta frames are dropped and IDR requested until a keyframe is sent.
