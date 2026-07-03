@@ -609,7 +609,12 @@ export const HEVC_ANNEXB_CODEC_STRINGS = [
  */
 export function toAvcc(annexB, stripParams = false, codec = null, useAnnexB = false) {
     const nals = splitNals(annexB);
-    const parts = [];
+    // Two-pass build: select the NALs to keep, then copy them into one
+    // preallocated buffer with set() (memcpy). This runs per frame on the
+    // decode path — appending byte-by-byte to a dynamic Array costs
+    // milliseconds on large keyframes and thrashes the GC on mobile.
+    const kept = [];
+    let total = 0;
     let hevcFoundIrap = false;
 
     for (const n of nals) {
@@ -639,18 +644,11 @@ export function toAvcc(annexB, stripParams = false, codec = null, useAnnexB = fa
             }
         }
 
-        const l = n.length;
-        if (useAnnexB && codec === CODEC_HEVC) {
-            // Annex B: 4-byte start codes
-            parts.push(0, 0, 0, 1);
-        } else {
-            // AVCC: 4-byte big-endian length prefix
-            parts.push((l >> 24) & 0xff, (l >> 16) & 0xff, (l >> 8) & 0xff, l & 0xff);
-        }
-        for (let i = 0; i < l; i++) parts.push(n[i]);
+        kept.push(n);
+        total += 4 + n.length; // 4-byte start code or length prefix + NAL
     }
 
-    if (parts.length === 0 && nals.length > 0) {
+    if (kept.length === 0 && nals.length > 0) {
         console.warn(
             '[toAvcc] PARTS IS EMPTY after stripping ' +
                 nals.length +
@@ -664,5 +662,23 @@ export function toAvcc(annexB, stripParams = false, codec = null, useAnnexB = fa
         );
     }
 
-    return new Uint8Array(parts);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const n of kept) {
+        const l = n.length;
+        if (useAnnexB && codec === CODEC_HEVC) {
+            // Annex B: 4-byte start codes
+            out[off + 3] = 1; // bytes 0-2 already zero
+        } else {
+            // AVCC: 4-byte big-endian length prefix
+            out[off] = (l >> 24) & 0xff;
+            out[off + 1] = (l >> 16) & 0xff;
+            out[off + 2] = (l >> 8) & 0xff;
+            out[off + 3] = l & 0xff;
+        }
+        out.set(n, off + 4);
+        off += 4 + l;
+    }
+
+    return out;
 }
