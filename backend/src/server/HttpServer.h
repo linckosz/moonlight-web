@@ -109,7 +109,6 @@ private:
     void onReadyReadSocket(QTcpSocket* socket);
     void sendResponse(QTcpSocket* socket, const HttpResponse& response);
     void handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData);
-    HttpRequest parseRequest(const QByteArray& raw) const;
     bool isLanHost(const QString& host) const;
     bool loadCert();
     QString findCertDir();
