@@ -31,6 +31,7 @@ extern "C" {
 #include <QThread>
 #include <QDebug>
 #include <QMap>
+#include <algorithm>
 #include <cstring>
 #include <random>
 #include <chrono>
@@ -229,9 +230,11 @@ void MediaTrackRelay::createTracksAndChannels()
             auto nackResponder = std::make_shared<rtc::RtcpNackResponder>(128);
             packetizer->addToChain(nackResponder);
             // PLI handler requests a keyframe from Sunshine on decoder PLI.
+            // Throttled with backoff: PLI storms during sustained loss must not
+            // flood Sunshine with IDR requests (each IDR inflates the bitrate).
             auto pliHandler = std::make_shared<rtc::PliHandler>([this]() {
                 if (m_Shim && !m_Stopping.load()) {
-                    m_Shim->requestIdrFrame();
+                    sendIdrRequestThrottled();
                 }
             });
             nackResponder->addToChain(pliHandler);
@@ -423,6 +426,9 @@ void MediaTrackRelay::sendBufferedKeyframe()
 
     try {
         m_VideoTrack->sendFrame(std::move(bin), *frameInfo);
+        // Keyframe sent: reset the IDR request backoff (recovery completed).
+        m_IdrOutstanding.store(false, std::memory_order_release);
+        m_IdrCooldownMs.store(kIdrCooldownBaseMs, std::memory_order_release);
     } catch (const std::exception& e) {
         qWarning() << "[MediaTrackRelay] sendBufferedKeyframe error:" << e.what();
     }
@@ -542,10 +548,10 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
         m_Shim->sendUtf8Text(msg["text"].toString());
     } else if (type == "request_idr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame via DataChannel (browser)";
-        m_Shim->requestIdrFrame();
+        sendIdrRequestThrottled();
     } else if (type == "requestidr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame from Sunshine (browser request)";
-        m_Shim->requestIdrFrame();
+        sendIdrRequestThrottled();
     } else if (type == "ping") {
         // Respond with pong (mirror the browser's timestamp for RTT calculation).
         int seq = msg["seq"].toInt(0);
@@ -662,6 +668,11 @@ void MediaTrackRelay::stop()
         m_HaveBufferedKeyframe = false;
     }
 
+    // Reset IDR throttle state for the next session
+    m_IdrCooldownMs.store(kIdrCooldownBaseMs, std::memory_order_release);
+    m_LastIdrRequestMs.store(0, std::memory_order_release);
+    m_IdrOutstanding.store(false, std::memory_order_release);
+
     // Close DataChannels
     auto closeDc = [](std::shared_ptr<rtc::DataChannel>& dc, const char* name) {
         if (dc) {
@@ -717,6 +728,33 @@ void MediaTrackRelay::requestIdrFrame()
 {
     if (m_Stopping.load() || !m_Shim) return;
     qInfo() << "[MediaTrackRelay] requestIdrFrame: forwarding to MoonlightShim";
+    sendIdrRequestThrottled();
+}
+
+void MediaTrackRelay::sendIdrRequestThrottled()
+{
+    if (m_Stopping.load() || !m_Shim) return;
+
+    using namespace std::chrono;
+    const int64_t nowMs =
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    int64_t last = m_LastIdrRequestMs.load(std::memory_order_acquire);
+    const int64_t cooldown = m_IdrCooldownMs.load(std::memory_order_acquire);
+    if (last != 0 && nowMs - last < cooldown) {
+        return; // Absorbed — cooldown not elapsed yet
+    }
+    // CAS claims the send slot; a concurrent caller (PLI thread vs main thread)
+    // that loses the race is absorbed like a throttled request.
+    if (!m_LastIdrRequestMs.compare_exchange_strong(last, nowMs, std::memory_order_acq_rel)) {
+        return;
+    }
+
+    // Backoff: previous request never produced a keyframe — double the cooldown
+    // (up to 5 s). Reset when a keyframe is sent (onVideoFrame keyframe path).
+    if (m_IdrOutstanding.exchange(true, std::memory_order_acq_rel)) {
+        m_IdrCooldownMs.store(std::min<int64_t>(cooldown * 2, kIdrCooldownMaxMs),
+                              std::memory_order_release);
+    }
     m_Shim->requestIdrFrame();
 }
 

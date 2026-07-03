@@ -317,6 +317,17 @@ export class StreamView {
          *  (ICE failure / closed before ever connecting). MoonlightApp relaunches
          *  with the next transport in the priority chain. Receives a reason string. */
         this.onConnectionFailed = null;
+        /** Callback invoked on SUSTAINED network congestion (IDR storms, backend
+         *  SCTP backpressure drops, PLI storms). MoonlightApp reacts by
+         *  relaunching the stream with a degraded session-only profile
+         *  (bitrate −30% steps, media transport, 60 fps cap). */
+        this.onCongestion = null;
+        // Congestion monitor: sliding window of congestion signals — see
+        // _recordCongestionEvent().
+        this._congEvents = [];
+        this._congFiredAt = 0;
+        this._lastBpDrops = 0; // cumulative backend backpressure drops (stats msg)
+        this._lastPliCount = 0; // cumulative PLIs sent (media mode getStats)
         /** True once the transport has connected at least once (DCs open / media
          *  playing). Distinguishes a connection failure (→ chain fallback) from a
          *  mid-stream disconnect (→ normal quit). */
@@ -1463,6 +1474,31 @@ export class StreamView {
         this._lastIdrRequestMs = now;
         console.log('[StreamView] Requesting IDR (' + reason + ')');
         this.webrtc.send({ type: 'requestidr' });
+        this._recordCongestionEvent('sv:' + reason);
+    }
+
+    /**
+     * Congestion monitor. Records one congestion signal — an IDR request
+     * actually sent, a batch of backend backpressure drops, or receiver PLIs —
+     * and fires onCongestion() when signals are SUSTAINED: ≥5 events within a
+     * 20s window. The first 10s of the stream are ignored (startup recovery
+     * traffic), and a 30s cooldown separates two detections so the relaunched
+     * degraded stream has time to prove itself.
+     */
+    _recordCongestionEvent(reason) {
+        if (!this.onCongestion || this._quitting) return;
+        const now = performance.now();
+        if (now - this._startTime < 10000) return;
+        this._congEvents.push(now);
+        while (this._congEvents.length > 0 && now - this._congEvents[0] > 20000) {
+            this._congEvents.shift();
+        }
+        if (this._congEvents.length >= 5 && now - this._congFiredAt > 30000) {
+            this._congFiredAt = now;
+            this._congEvents.length = 0;
+            console.warn('[StreamView] Sustained congestion detected (last: ' + reason + ')');
+            this.onCongestion();
+        }
     }
 
     configureDecoder() {
@@ -2488,6 +2524,9 @@ export class StreamView {
                 this._referenceValid = false;
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
             };
+            // IDR requests actually sent by the transport feed the congestion
+            // monitor (loss/starvation-driven — a storm means a saturated link).
+            this.webrtc.onIdrRequested = (reason) => this._recordCongestionEvent('dc:' + reason);
         }
         // Audio: WSS feeds Opus packets to the AudioPipeline. WebRTC transports
         // use a native RTP Opus track (rendered via the <audio> element), so no
@@ -2559,6 +2598,14 @@ export class StreamView {
                 this._lastInboundBytes = inbound.bytesReceived || 0;
                 this._lastInboundFrames = inbound.framesDecoded || 0;
                 this._lastInboundStatsTime = now;
+
+                // PLIs sent by the receiver = the media-mode equivalent of IDR
+                // requests: each one means the decoder lost its reference.
+                const pliCount = inbound.pliCount || 0;
+                if (pliCount > this._lastPliCount) {
+                    this._recordCongestionEvent('pli +' + (pliCount - this._lastPliCount));
+                }
+                this._lastPliCount = pliCount;
 
                 // Adaptive jitter buffer: drive receiver.jitterBufferTarget from
                 // measured jitter/loss/freezes (webrtc-media only, flag-gated).
@@ -3038,6 +3085,17 @@ export class StreamView {
             }
             if (msg.decodeLatencyUs !== undefined && msg.decodeLatencyUs > 0) {
                 this._decodeLatencyStats.addSample(msg.decodeLatencyUs / 1000);
+            }
+            // Backend SCTP backpressure drops (cumulative). Frames dropped
+            // backend-side never get a frameId, so this is the only signal the
+            // frontend has of the "keyframe slideshow" congestion regime.
+            if (typeof msg.bpDrops === 'number') {
+                if (msg.bpDrops > this._lastBpDrops) {
+                    this._recordCongestionEvent(
+                        'backend drops +' + (msg.bpDrops - this._lastBpDrops),
+                    );
+                }
+                this._lastBpDrops = msg.bpDrops;
             }
             // Track steady_clock reference for end-to-end latency calculation.
             // Refine the clock domain offset when a stats message arrives.

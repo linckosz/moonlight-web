@@ -1103,9 +1103,12 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
             sendIdrRequestThrottled();
             return;
         }
-        // Keyframe sent successfully: clear sticky state and backpressure counters.
+        // Keyframe sent successfully: clear sticky state and backpressure counters,
+        // and reset the IDR cooldown backoff (recovery completed).
         m_AwaitingIdr = false;
         m_BackpressureDropCount = 0;
+        m_IdrOutstanding = false;
+        m_IdrCooldownMs = kIdrCooldownBaseMs;
     }
 
     // Video-only path now (audio is a native RTP Opus track, not fragmented over
@@ -1159,6 +1162,11 @@ void DataChannelRelay::onStatsTimerTick()
     stats["type"] = "stats";
     stats["hostRttMs"] = hostRttMs;
     stats["decodeLatencyUs"] = static_cast<qint64>(decodeLatUs);
+    // Cumulative frames dropped by SCTP backpressure (deltas + keyframes).
+    // The frontend cannot see these drops (dropped frames never get a frameId),
+    // so this is its only signal that the link is saturated backend-side. It
+    // drives the frontend's congestion monitor (automatic bitrate degradation).
+    stats["bpDrops"] = m_DeltaDroppedCount + m_KeyframeBackpressureWarnings;
 
     // Send steady_clock reference for end-to-end latency calculation.
     // The frontend uses this + performance.now() delta to estimate current
@@ -1230,6 +1238,8 @@ void DataChannelRelay::stop()
     m_LastDecodeLatencyUs.store(0, std::memory_order_release);
     m_AwaitingIdr = false;
     m_IdrCooldownTimer.invalidate(); // Reset throttle state
+    m_IdrCooldownMs = kIdrCooldownBaseMs;
+    m_IdrOutstanding = false;
 
     // Clear buffered keyframe (if any)
     m_BufferedKeyframe.clear();
@@ -1296,14 +1306,23 @@ void DataChannelRelay::sendIdrRequestThrottled()
 {
     if (m_Stopping.load() || !m_Shim) return;
 
-    // Cooldown: absorb requests arriving within 300 ms of the last effective call.
-    static constexpr qint64 kIdrCooldownMs = 300;
-    if (m_IdrCooldownTimer.isValid() && m_IdrCooldownTimer.elapsed() < kIdrCooldownMs) {
+    // Cooldown: absorb requests arriving within the adaptive cooldown window.
+    if (m_IdrCooldownTimer.isValid() && m_IdrCooldownTimer.elapsed() < m_IdrCooldownMs) {
         return; // Absorbed — cooldown not elapsed yet
     }
 
+    // Backoff: the previous effective request never produced a delivered
+    // keyframe — the link is likely saturated. Double the cooldown (up to 5 s)
+    // so recovery IDRs stop feeding the congestion. Reset when a keyframe
+    // finally gets through (see the keyframe-sent path in sendFragmented).
+    if (m_IdrOutstanding) {
+        m_IdrCooldownMs = qMin(m_IdrCooldownMs * 2, kIdrCooldownMaxMs);
+    }
+    m_IdrOutstanding = true;
+
     m_IdrCooldownTimer.restart();
-    qInfo() << "[DataChannelRelay] IDR request → MoonlightShim (throttled)";
+    qInfo() << "[DataChannelRelay] IDR request → MoonlightShim (cooldown" << m_IdrCooldownMs
+            << "ms)";
     m_Shim->requestIdrFrame();
 }
 
