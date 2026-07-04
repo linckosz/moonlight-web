@@ -37,6 +37,8 @@ export class SetupView {
         this._step = 'loading'; // loading | config | progress | done | error
         this._os = 'Unknown';
         this._sunshineInstalled = false;
+        this._sunshinePaired = false;
+        this._autostartInstalled = false;
         this._internetActive = false;
         this._domain = '';
         this._error = '';
@@ -58,7 +60,10 @@ export class SetupView {
             const status = await BackendClient.getSetupStatus();
             this._os = status.os || 'Unknown';
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
+            this._sunshinePaired = !!(status.sunshine && status.sunshine.paired);
+            this._autostartInstalled = !!status.autostart_installed;
             this._internetActive = !!(status.internet && status.internet.active);
+            this._domain = (status.internet && status.internet.domain) || '';
             // Only macOS can auto-install Sunshine; elsewhere the user installs it.
             this._canAutoInstall = this._os === 'macOS';
             // Default the install checkbox off when Sunshine is already present or
@@ -110,10 +115,13 @@ export class SetupView {
     }
 
     _renderConfig() {
-        // Sunshine block: either "already installed", an auto-install checkbox
-        // (macOS), or a manual-install hint (other OS).
+        // Sunshine block: "installed & paired" (nothing to do), "installed but
+        // unpaired" (creds to pair), an auto-install checkbox (macOS), or a
+        // manual-install hint (other OS).
         let sunshineBlock;
-        if (this._sunshineInstalled) {
+        if (this._sunshineInstalled && this._sunshinePaired) {
+            sunshineBlock = this._okNote(t('setup.sunshinePaired'));
+        } else if (this._sunshineInstalled) {
             sunshineBlock = `
                 <p class="setup-note">${t('setup.sunshineInstalled')}</p>
                 ${this._credsFields()}`;
@@ -130,16 +138,29 @@ export class SetupView {
                 <p class="setup-note">${t('setup.sunshineManual')}</p>`;
         }
 
+        const internetBlock = this._internetActive
+            ? this._okNote(t('setup.internetActive', { domain: this._domain }))
+            : `
+                <p class="setup-note">${t('setup.internetBody')}</p>
+                <label class="setup-check">
+                    <input type="checkbox" id="chk-internet" ${this._internetAuth ? 'checked' : ''} />
+                    <span>${t('setup.internetOption')}</span>
+                </label>`;
+
+        const autostartBlock = this._autostartInstalled
+            ? this._okNote(t('setup.autostartInstalled'))
+            : `
+                <label class="setup-check">
+                    <input type="checkbox" id="chk-autostart" ${this._autoStart ? 'checked' : ''} />
+                    <span>${t('setup.autostartOption')}</span>
+                </label>`;
+
         return `
             <p class="login-subtitle">${t('setup.intro')}</p>
 
             <div class="setup-section">
                 <h2 class="setup-section-title">${t('setup.internetTitle')}</h2>
-                <p class="setup-note">${t('setup.internetBody')}</p>
-                <label class="setup-check">
-                    <input type="checkbox" id="chk-internet" ${this._internetAuth ? 'checked' : ''} />
-                    <span>${t('setup.internetOption')}</span>
-                </label>
+                ${internetBlock}
             </div>
 
             <div class="setup-section">
@@ -149,10 +170,7 @@ export class SetupView {
 
             <div class="setup-section">
                 <h2 class="setup-section-title">${t('setup.autostartTitle')}</h2>
-                <label class="setup-check">
-                    <input type="checkbox" id="chk-autostart" ${this._autoStart ? 'checked' : ''} />
-                    <span>${t('setup.autostartOption')}</span>
-                </label>
+                ${autostartBlock}
             </div>
 
             ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
@@ -161,6 +179,11 @@ export class SetupView {
                 ${t('setup.start')}
             </button>
             <button id="btn-setup-skip" class="btn btn-link u-mt-2">${t('setup.skip')}</button>`;
+    }
+
+    // Green "already done" row shown in place of a step's controls.
+    _okNote(text) {
+        return `<p class="setup-note setup-ok"><span class="setup-ok-check">✓</span> ${this.esc(text)}</p>`;
     }
 
     // Sunshine credential fields (shared by the "installed" and "install" cases).
@@ -221,8 +244,11 @@ export class SetupView {
             this._internetActive && this._domain
                 ? `<p class="setup-note">${t('setup.doneDomain', { domain: this.esc(this._domain) })}</p>`
                 : '';
+        // TCC permissions hint only when Sunshine was actually touched this run
+        // (a fully-paired setup revisit has nothing left to grant).
         const permsLine =
-            this._os === 'macOS' && (this._installSunshine || this._sunshineInstalled)
+            this._os === 'macOS' &&
+            (this._activeSteps.includes('install') || this._activeSteps.includes('pairing'))
                 ? `<p class="setup-note setup-warn">${t('setup.donePermissions')}</p>`
                 : '';
         return `
@@ -267,8 +293,12 @@ export class SetupView {
     }
 
     async _apply() {
-        this._internetAuth = !!this.container.querySelector('#chk-internet')?.checked;
-        this._autoStart = !!this.container.querySelector('#chk-autostart')?.checked;
+        // Steps already satisfied are rendered as "✓ done" (no controls) and
+        // must not run again: their flags are forced off here.
+        this._internetAuth =
+            !this._internetActive && !!this.container.querySelector('#chk-internet')?.checked;
+        this._autoStart =
+            !this._autostartInstalled && !!this.container.querySelector('#chk-autostart')?.checked;
         const chkInstall = this.container.querySelector('#chk-install');
         if (chkInstall) this._installSunshine = chkInstall.checked;
         const user = (this.container.querySelector('#setup-user')?.value || '').trim();
@@ -276,10 +306,11 @@ export class SetupView {
 
         const willInstall =
             this._installSunshine && this._canAutoInstall && !this._sunshineInstalled;
+        const needPairing = this._sunshineInstalled && !this._sunshinePaired;
         const haveCreds = !!user && !!pass;
 
         // Require credentials when they will actually be used (install or pairing).
-        if ((willInstall || this._sunshineInstalled) && !haveCreds) {
+        if ((willInstall || needPairing) && !haveCreds) {
             this._error = t('setup.credsRequired');
             this.render();
             this.bindEvents();
@@ -289,8 +320,7 @@ export class SetupView {
         // Compute the checklist rows that will run for live rendering.
         this._activeSteps = [];
         if (willInstall) this._activeSteps.push('install');
-        if (haveCreds && (willInstall || this._sunshineInstalled))
-            this._activeSteps.push('pairing');
+        if (haveCreds && (willInstall || needPairing)) this._activeSteps.push('pairing');
         if (this._internetAuth) this._activeSteps.push('arecord');
 
         this._step = 'progress';
@@ -308,8 +338,17 @@ export class SetupView {
                 },
             });
             this._stopPolling();
-            this._internetActive = !!result.internet_active;
-            this._domain = result.domain || '';
+            if (result.internet_active !== undefined) {
+                this._internetActive = !!result.internet_active;
+                this._domain = result.domain || '';
+            }
+            // A completed run re-arms the startup gate: if a step goes missing
+            // again later, the wizard reappears even after a previous "Skip".
+            try {
+                localStorage.removeItem('mw_setup_dismissed');
+            } catch (_e) {
+                /* best-effort */
+            }
             this._step = 'done';
             this.render();
             this.bindEvents();
@@ -344,8 +383,15 @@ export class SetupView {
         }
     }
 
-    // Skip the wizard: mark setup complete server-side with no actions.
+    // Skip the wizard: mark setup complete server-side with no actions, and
+    // dismiss it persistently for this browser (the startup gate re-shows the
+    // wizard while steps are missing unless this flag is set).
     async _skip() {
+        try {
+            localStorage.setItem('mw_setup_dismissed', '1');
+        } catch (_e) {
+            /* best-effort */
+        }
         try {
             await BackendClient.applySetup({ internet_access_authorized: false, sunshine: {} });
         } catch (_e) {

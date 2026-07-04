@@ -179,6 +179,12 @@
 .setup-warn {
     color: var(--c-warning, #e0a83b);
 }
+.setup-ok {
+    color: var(--c-success, #35c98f);
+}
+.setup-ok-check {
+    font-weight: 700;
+}
 .setup-check {
     display: flex;
     align-items: flex-start;
