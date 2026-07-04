@@ -1,0 +1,45 @@
+# MoonlightWeb
+
+> MoonlightWeb is a free, open-source (GPL-3.0), self-hosted game-streaming server
+> that turns any device with a web browser into a Sunshine / GameStream client.
+> Nothing to install on the client — just a URL.
+
+## What it does
+
+- Streams a gaming PC (running [Sunshine](https://github.com/LizardByte/Sunshine))
+  to any browser: phone, tablet, laptop, TV.
+- Up to 4K HDR at up to 240 fps, with H.264, HEVC and AV1 codecs (hardware-decoded
+  via WebCodecs).
+- Under 20 ms latency over Wi-Fi using a WebRTC UDP transport with automatic
+  fallback (UDP → TCP → WSS).
+- GPU Video Enhancement in the browser (WebGPU running SGSRv1 + FSR1): stream at
+  720p, display near-1440p quality.
+- Full input support: keyboard, pointer-lock mouse, multi-touch trackpad, virtual
+  keyboard, Xbox and PlayStation controllers with rumble.
+- Zero-config: Sunshine hosts are auto-discovered on the LAN via mDNS, paired with
+  a PIN.
+- One-click Internet access: personal sub-domain ({you}.moonlightweb.top), free
+  auto-renewed TLS certificate, UPnP port mapping.
+
+## How it works
+
+A small C++/Qt server runs on the gaming PC next to Sunshine. It embeds
+moonlight-common-c, speaks the GameStream protocol (RTSP/RTP/ENet) to Sunshine,
+and relays video/audio/input to browsers over WebRTC. The client is 100% web:
+WebCodecs for decoding, WebGPU for rendering, AudioWorklet for Opus audio.
+
+## Platforms (server)
+
+- Windows x64 / arm64 (guided installer)
+- macOS Apple Silicon (DMG)
+- Linux x64 (.deb, .rpm, portable AppImage)
+
+The client requires no install: any modern browser (Chrome, Edge, Safari, Firefox).
+
+## Links
+
+- Website: https://moonlightweb.top/
+- Source code & downloads: https://github.com/linckosz/moonlight-web
+- Latest releases: https://github.com/linckosz/moonlight-web/releases
+- Sunshine (host software): https://github.com/LizardByte/Sunshine
+- Author: Bruno Martin — support: https://buymeacoffee.com/brunoocto

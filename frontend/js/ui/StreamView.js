@@ -1356,8 +1356,8 @@ export class StreamView {
      * reconfigures the new decoder and resumes normal playback.
      */
     _handleDecoderError(err) {
-        // Guard: prevent recovery during quit
-        if (this._quitting) return;
+        // Guard: prevent recovery during quit (or the manual-quit animation)
+        if (this._quitting || this._manualQuitting) return;
         // Guard: prevent re-entrant recovery (error callback may fire during
         // setupDecoder(), which would loop back to this method)
         if (this._decoderRecovering) return;
@@ -1500,7 +1500,7 @@ export class StreamView {
      * degraded stream has time to prove itself.
      */
     _recordCongestionEvent(reason) {
-        if (!this.onCongestion || this._quitting) return;
+        if (!this.onCongestion || this._quitting || this._manualQuitting) return;
         const now = performance.now();
         if (now - this._startTime < 10000) return;
         this._congEvents.push(now);
@@ -1924,7 +1924,9 @@ export class StreamView {
      */
     _requestCodecFallback() {
         // Guard: only request the fallback once (decoder errors fire repeatedly).
-        if (this._codecFallbackRequested || this._quitting) return;
+        // _manualQuitting: Stop pressed — a fallback flag set now would make
+        // _onStreamingQuit() relaunch the session the user just stopped.
+        if (this._codecFallbackRequested || this._quitting || this._manualQuitting) return;
         this.decoderConfiguring = false;
 
         const target = this._computeCodecFallbackTarget();
@@ -2388,6 +2390,10 @@ export class StreamView {
      *  Returns true if the failure was handed off (caller should stop its own
      *  error/quit handling); false if there is no handler. Fires at most once. */
     _reportConnectionFailed(reason) {
+        // The user already pressed Stop (exit animation running, quit() on its
+        // way) — swallow the failure instead of handing it to the transport
+        // chain, which would relaunch the session the user just stopped.
+        if (this._manualQuitting || this._quitting) return true;
         if (this._connectionFailureReported) return true; // already handed off
         if (typeof this.onConnectionFailed !== 'function') return false;
         this._connectionFailureReported = true;
@@ -2405,7 +2411,9 @@ export class StreamView {
 
     setupWebRtc() {
         this.webrtc.onOpen = () => {
-            if (this._quitting) return;
+            // _manualQuitting: Stop pressed while connecting — don't spin up the
+            // decoder/renderer, quit() is about to tear everything down.
+            if (this._quitting || this._manualQuitting) return;
             this.connected = true;
             // Transport established at least once → past the connection-failure
             // window. Later failures are mid-stream disconnects, not fallbacks.
@@ -2527,7 +2535,9 @@ export class StreamView {
             this._initMobileFullscreen();
         };
         this.webrtc.onClose = () => {
-            if (this._quitting) return;
+            // _manualQuitting: Stop pressed, exit animation running — quit() is
+            // already scheduled, don't treat the close as a disconnect.
+            if (this._quitting || this._manualQuitting) return;
             // Taken over by another device — _handleTakeover() drives the exit.
             if (this._takenOver) return;
             // Never connected → connection failure, let the chain try the next
@@ -2540,7 +2550,7 @@ export class StreamView {
             setTimeout(() => this.quit(), 3000);
         };
         this.webrtc.onError = (err) => {
-            if (this._quitting) return;
+            if (this._quitting || this._manualQuitting) return;
             console.error('[StreamView] WebRTC error:', err.message);
             // Never connected → connection failure, defer to the transport chain.
             if (!this._everConnected && this._reportConnectionFailed(err.message)) return;
