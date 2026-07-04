@@ -1,0 +1,11 @@
+# Code owners for moonlight-web
+#
+# Every pull request automatically requests a review from the owner(s) below.
+# Combined with a branch protection rule on `main` that requires code-owner
+# review, this makes @linckosz the sole approver for any change.
+#
+# Syntax: <path pattern>  <owner>
+# Later matches take precedence over earlier ones.
+
+# Default owner for everything in the repo
+*       @linckosz
