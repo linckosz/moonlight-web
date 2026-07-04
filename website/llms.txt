@@ -8,7 +8,7 @@
 
 - Streams a gaming PC (running [Sunshine](https://github.com/LizardByte/Sunshine))
   to any browser: phone, tablet, laptop, TV.
-- Up to 4K HDR at up to 240 fps, with H.264, HEVC and AV1 codecs (hardware-decoded
+- Up to 4K HDR at up to 240 fps, with H264, HEVC and AV1 codecs (hardware-decoded
   via WebCodecs).
 - Under 20 ms latency over Wi-Fi using a WebRTC UDP transport with automatic
   fallback (UDP → TCP → WSS).

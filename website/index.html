@@ -42,7 +42,7 @@
   "author": { "@type": "Person", "name": "Bruno Martin" },
   "featureList": [
     "Game streaming in the browser, no client install",
-    "Up to 4K HDR at up to 240 fps (H.264, HEVC, AV1)",
+    "Up to 4K HDR at up to 240 fps (H264, HEVC, AV1)",
     "Under 20 ms latency over Wi-Fi (WebRTC UDP)",
     "GPU Video Enhancement: SGSRv1 and FSR1 upscaling in WebGPU",
     "Keyboard, mouse, touch trackpad, Xbox and PlayStation gamepads with rumble",
@@ -74,30 +74,40 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
   html{scroll-behavior:smooth}
   body{
-    margin:0; color:var(--txt); background:var(--bg);
+    margin:0; color:var(--txt);
+    /* Same page background as the app (frontend/css/tokens.css --app-bg) */
+    background:
+      radial-gradient(1100px 760px at 85% -12%, rgba(252,238,10,.10) 0%, transparent 52%),
+      radial-gradient(900px 720px at -5% 108%, rgba(255,42,109,.10) 0%, transparent 50%),
+      radial-gradient(700px 600px at 50% 50%, rgba(0,229,255,.05) 0%, transparent 60%),
+      linear-gradient(168deg,#080c11 0%,#05080b 72%);
+    background-attachment:fixed;
+    background-color:#05080b;
     font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;
     overflow-x:hidden;
   }
   ::selection{background:rgba(25,211,255,.35); color:#fff}
   :focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
-  /* Cyber grid backdrop */
+  body.lb-open{overflow:hidden}
+  /* Cyberpunk atmosphere: faint tech grid + CRT scanlines — same as the app
+     (frontend/css/base.css body::before / body::after) */
   body::before{
     content:""; position:fixed; inset:0; z-index:-2; pointer-events:none;
-    background:
-      linear-gradient(rgba(25,211,255,.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(25,211,255,.04) 1px, transparent 1px);
+    background-image:
+      linear-gradient(rgba(0,229,255,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,.04) 1px, transparent 1px);
     background-size:44px 44px;
-    mask-image:radial-gradient(ellipse 90% 60% at 50% 0%, #000 0%, transparent 75%);
-    -webkit-mask-image:radial-gradient(ellipse 90% 60% at 50% 0%, #000 0%, transparent 75%);
+    mask-image:radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
+    -webkit-mask-image:radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
   }
   body::after{
-    content:""; position:fixed; inset:0; z-index:-3; pointer-events:none;
-    background:
-      radial-gradient(1000px 560px at 82% -12%, rgba(25,211,255,.13), transparent 60%),
-      radial-gradient(820px 520px at -6% 4%, rgba(255,46,136,.09), transparent 55%),
-      radial-gradient(900px 700px at 50% 115%, rgba(65,205,82,.06), transparent 60%),
-      var(--bg);
+    content:""; position:fixed; inset:0; z-index:-2; pointer-events:none;
+    background:repeating-linear-gradient(
+      to bottom,
+      rgba(0,0,0,0) 0,
+      rgba(0,0,0,0) 2px,
+      rgba(0,0,0,.16) 3px);
   }
   a{color:var(--cyan); text-decoration:none}
   a:hover{text-decoration:underline}
@@ -176,6 +186,7 @@
   .hero p.lead{font-size:clamp(1.05rem,2.1vw,1.28rem); color:var(--muted); max-width:640px; margin:1.2rem auto 2rem}
   .hero p.lead strong{color:var(--txt); font-weight:600}
   .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap}
+  .cta-hero .btn{min-width:230px; justify-content:center}
 
   /* HUD stat strip — a wink at the in-app stats overlay.
      Grid + 1px gaps over a line-coloured background = separators that always align. */
@@ -393,20 +404,20 @@
 <section class="hero" aria-label="Introduction">
   <div class="wrap">
     <span class="kicker">100% web · open source · self‑hosted</span>
-    <h1>Your gaming PC.<br><span class="grad">Every screen you own.</span></h1>
+    <h1>Your gaming PC.<br><span class="grad">Streamed to any browser.</span></h1>
     <p class="lead">MoonlightWeb streams your <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig
       to any device with a browser — phone, tablet, laptop, TV.
       <strong>Nothing to install on the client. Just a URL.</strong></p>
-    <div class="cta">
+    <div class="cta cta-hero">
       <a class="btn btn-primary" href="#download">Download free</a>
-      <a class="btn btn-ghost" href="#showcase">See it in action ↓</a>
+      <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">☕ Buy me a coffee</a>
     </div>
 
     <div class="hud reveal" aria-label="Key performance numbers">
       <div><span class="k">Wi‑Fi latency</span><span class="n">&lt;20ms</span></div>
       <div><span class="k">Resolution</span><span class="n y">4K HDR</span></div>
       <div><span class="k">Framerate</span><span class="n g">up to 240fps</span></div>
-      <div><span class="k">Codecs</span><span class="n m">H.264·HEVC·AV1</span></div>
+      <div><span class="k">Codecs</span><span class="n m">H264·HEVC·AV1</span></div>
       <div><span class="k">Client install</span><span class="n">0 MB</span></div>
     </div>
 
@@ -426,7 +437,7 @@
     </div>
     <div class="grid">
       <div class="card cyb reveal"><div class="ico">⚡</div><h3>Console‑grade latency</h3><p>WebRTC UDP transport with adaptive congestion control — under 20 ms over Wi‑Fi. Play twitch shooters, not slideshow demos.</p></div>
-      <div class="card cyb reveal"><div class="ico">🎬</div><h3>Up to 4K HDR, 240 fps</h3><p>H.264, HEVC and AV1, hardware‑decoded via WebCodecs. Real HDR on HDR displays.</p></div>
+      <div class="card cyb reveal"><div class="ico">🎬</div><h3>Up to 4K HDR, 240 fps</h3><p>H264, HEVC and AV1, hardware‑decoded via WebCodecs. Real HDR on HDR displays.</p></div>
       <div class="card cyb reveal"><div class="ico">🪄</div><h3>Video Enhancement</h3><p>GPU upscaling &amp; sharpening (SGSRv1 + FSR1) in WebGPU. Stream 720p, see near‑1440p.</p></div>
       <div class="card cyb reveal"><div class="ico">🔊</div><h3>Surround Opus audio</h3><p>Decoded in‑browser with an adaptive jitter buffer. Stays in sync even on flaky Wi‑Fi.</p></div>
       <div class="card cyb reveal">
@@ -506,7 +517,7 @@
       <figure class="media reveal">
         <div class="glow" style="background:radial-gradient(50% 50% at 50% 50%, rgba(255,46,136,.14), transparent 70%)"></div>
         <div class="phone"><img src="assets/mobile.jpg" width="1170" height="2532" alt="iPhone streaming a PC game in Safari with the virtual keyboard open" loading="lazy"></div>
-        <figcaption>iPhone · Safari — HEVC, &lt;20 ms over Wi‑Fi</figcaption>
+        <figcaption>iPhone · Safari</figcaption>
       </figure>
     </div>
 
@@ -690,10 +701,11 @@
   const lb = document.getElementById('lb'), lbImg = lb.querySelector('img');
   document.querySelectorAll('.media img.shot, .phone img, .hero-shot img').forEach(img=>{
     img.style.cursor = 'zoom-in';
-    img.addEventListener('click',()=>{ lbImg.src = img.src; lbImg.alt = img.alt; lb.classList.add('on'); });
+    img.addEventListener('click',()=>{ lbImg.src = img.src; lbImg.alt = img.alt; lb.classList.add('on'); document.body.classList.add('lb-open'); });
   });
-  lb.addEventListener('click',()=>lb.classList.remove('on'));
-  document.addEventListener('keydown',e=>{ if(e.key==='Escape') lb.classList.remove('on'); });
+  const closeLb = () => { lb.classList.remove('on'); document.body.classList.remove('lb-open'); };
+  lb.addEventListener('click', closeLb);
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLb(); });
 
   // Before/after comparator — the range input drives the clip position.
   const ba = document.getElementById('ba');
