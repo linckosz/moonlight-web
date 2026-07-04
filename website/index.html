@@ -72,9 +72,13 @@
     --cut:16px;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
-  html{scroll-behavior:smooth}
+  html{height:100%}
   body{
     margin:0; color:var(--txt);
+    /* Page scroll lives in #scroll (below the header), like the app's
+       #main-content — so the scrollbar never runs alongside the header. */
+    height:100vh; height:100dvh; overflow:hidden;
+    display:flex; flex-direction:column;
     /* Same page background as the app (frontend/css/tokens.css --app-bg) */
     background:
       radial-gradient(1100px 760px at 85% -12%, rgba(252,238,10,.10) 0%, transparent 52%),
@@ -85,11 +89,33 @@
     background-color:#05080b;
     font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;
-    overflow-x:hidden;
   }
   ::selection{background:rgba(25,211,255,.35); color:#fff}
   :focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
-  body.lb-open{overflow:hidden}
+
+  /* Scroll container — cyberpunk neon scrollbar */
+  #scroll{
+    flex:1; min-height:0; overflow-y:auto; overflow-x:hidden;
+    scroll-behavior:smooth;
+    scrollbar-width:thin;                       /* Firefox */
+    scrollbar-color:var(--cyan) #0a0f16;
+  }
+  #scroll::-webkit-scrollbar{width:10px}
+  #scroll::-webkit-scrollbar-track{
+    background:#070b11;
+    border-left:1px solid var(--line);
+  }
+  #scroll::-webkit-scrollbar-thumb{
+    background:linear-gradient(180deg,#7ee7ff,var(--cyan) 30%,#0b6f8f);
+    border:2px solid #070b11;                   /* inset the neon bar */
+    border-radius:3px;
+    box-shadow:0 0 6px rgba(25,211,255,.55);
+  }
+  #scroll::-webkit-scrollbar-thumb:hover{
+    background:linear-gradient(180deg,#b9f1ff,#3fdcff 30%,#128ab0);
+    box-shadow:0 0 10px rgba(25,211,255,.8);
+  }
+  body.lb-open #scroll{overflow:hidden}
   /* Cyberpunk atmosphere: faint tech grid + CRT scanlines — same as the app
      (frontend/css/base.css body::before / body::after) */
   body::before{
@@ -380,7 +406,7 @@
   .reveal.in{opacity:1; transform:none}
   @media (prefers-reduced-motion: reduce){
     .reveal{opacity:1; transform:none; transition:none}
-    html{scroll-behavior:auto}
+    #scroll{scroll-behavior:auto}
   }
 </style>
 </head>
@@ -402,6 +428,7 @@
   </div>
 </header>
 
+<div id="scroll">
 <main>
 <!-- ═════ HERO ═════ -->
 <section class="hero" aria-label="Introduction">
@@ -697,6 +724,7 @@
     </span>
   </div>
 </footer>
+</div><!-- /#scroll -->
 
 <div id="lb"><img alt=""></div>
 <script>
