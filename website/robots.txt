@@ -1,0 +1,7 @@
+# MoonlightWeb — https://moonlightweb.top
+# All crawlers welcome, including AI/LLM crawlers.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://moonlightweb.top/sitemap.xml

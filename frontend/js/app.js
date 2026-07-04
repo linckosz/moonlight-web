@@ -667,6 +667,15 @@ const MoonlightApp = {
     // =========================================================================
 
     async launchApp(host, app, codecOverride, hdrOverride) {
+        // A launch is already in flight or a stream is active — ignore. A second
+        // launch here would trigger a backend take-over of the session the user
+        // just started. (HostListView blocks card clicks too; this covers every
+        // other entry point.)
+        if (this.state === 'launching' || this.state === 'streaming') {
+            console.warn(`[MW] Launch of "${app.name}" ignored: state=${this.state}`);
+            return;
+        }
+
         // iOS: create + unlock the AudioContext and start the silent element NOW,
         // while we still hold the launch-click user activation. The audio pipeline
         // is created only after the network round-trip below, by which point no
@@ -934,6 +943,12 @@ const MoonlightApp = {
     _onTransportFailed(reason) {
         // Ignore if streaming was already torn down (e.g. user pressed Back).
         if (this._nav.overlay !== 'streaming') return;
+        // Ignore if the user pressed Stop (quit animation / quit in progress) —
+        // relaunching here would resurrect the session being stopped.
+        if (this.streamView && (this.streamView._manualQuitting || this.streamView._quitting)) {
+            console.warn(`[MW] Transport failure ignored (stopping): ${reason}`);
+            return;
+        }
 
         const chain = this._transportChain || [];
         const cur = this._transportIndex || 0;

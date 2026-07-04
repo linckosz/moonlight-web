@@ -140,7 +140,10 @@ export class HostListView {
             // ── App card launch ───────────────────────────────────────────
             const appCard = e.target.closest('.app-card');
             if (appCard) {
-                if (appCard.classList.contains('app-card--launching')) return;
+                // A launch already in flight blocks ALL app cards (not just the
+                // launching one): a second click would start a concurrent
+                // session and take over the one being launched.
+                if (this.container.querySelector('.app-card--launching')) return;
                 const hostCard = appCard.closest('.host-card');
                 const uuid = hostCard && hostCard.dataset.uuid;
                 const host = this.hosts.find((h) => h.uuid === uuid);
