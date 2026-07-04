@@ -94,10 +94,13 @@
      (frontend/css/base.css body::before / body::after) */
   body::before{
     content:""; position:fixed; inset:0; z-index:-2; pointer-events:none;
+    /* Grid lines + a soft yellow light halo UNDER them (same geometry as the
+       app's --app-bg bloom): the light visually reveals the grid. */
     background-image:
       linear-gradient(rgba(0,229,255,.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,229,255,.04) 1px, transparent 1px);
-    background-size:44px 44px;
+      linear-gradient(90deg, rgba(0,229,255,.04) 1px, transparent 1px),
+      radial-gradient(1100px 760px at 85% -12%, rgba(252,238,10,.12) 0%, transparent 52%);
+    background-size:44px 44px, 44px 44px, 100% 100%;
     mask-image:radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
     -webkit-mask-image:radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
   }
