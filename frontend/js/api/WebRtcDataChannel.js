@@ -129,6 +129,7 @@ export class WebRtcDataChannel {
         this.onAudio = null; // (sample: Uint8Array)
         this.onStats = null; // (msg: object) stats/pong messages from backend
         this.onTakeover = null; // () session taken over by another device
+        this.onRevoked = null; // () this device's access was revoked by the admin
 
         // Stats
         this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
@@ -803,6 +804,8 @@ export class WebRtcDataChannel {
                         if (this.onStats) this.onStats(msg);
                     } else if (msg.type === 'takeover') {
                         if (this.onTakeover) this.onTakeover();
+                    } else if (msg.type === 'revoked') {
+                        if (this.onRevoked) this.onRevoked();
                     } else {
                         console.log('[WebRTC] Input DC message:', msg);
                     }
@@ -1338,6 +1341,8 @@ export class WebRtcDataChannel {
                     this.onStats(msg);
                 } else if (msg.type === 'takeover' && this.onTakeover) {
                     this.onTakeover();
+                } else if (msg.type === 'revoked' && this.onRevoked) {
+                    this.onRevoked();
                 }
             } catch (e) {
                 /* ignore non-JSON text */
@@ -1401,6 +1406,8 @@ export class WebRtcDataChannel {
                     if (this.onStats) this.onStats(msg);
                 } else if (msg.type === 'takeover') {
                     if (this.onTakeover) this.onTakeover();
+                } else if (msg.type === 'revoked') {
+                    if (this.onRevoked) this.onRevoked();
                 }
             } catch (e) {
                 /* non-JSON text — ignore */

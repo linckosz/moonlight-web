@@ -72,6 +72,8 @@ public:
 
     void notifyClientTakenOver() override;
 
+    void notifyClientRevoked() override;
+
     /// Retrieve and clear the buffered keyframe (if any).
     /// Used by SignalingServer before stop() to preserve the keyframe for
     /// WebSocket fallback — without this, the fallback starts with delta
@@ -107,6 +109,9 @@ private slots:
     void onShimConnectionTerminated(int errorCode);
 
 private:
+    // Best-effort exit notice ({"type": ...}) on the input DC before stop().
+    void sendExitNotice(const char* type);
+
     void setupPeerConnection(const rtc::Configuration& config);
     void createDataChannels();
     void onInputMessage(const std::string& message);

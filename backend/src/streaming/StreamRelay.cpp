@@ -102,6 +102,15 @@ void StreamRelay::notifyClientTakenOver()
         QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
 }
 
+void StreamRelay::notifyClientRevoked()
+{
+    // Best-effort "access revoked" notice over the WS before stop() closes it.
+    if (!m_WsClient || m_Stopping) return;
+    QJsonObject obj{{"type", "revoked"}};
+    m_WsClient->sendTextMessage(
+        QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+}
+
 void StreamRelay::stop()
 {
     // Marshal onto the relay's session thread when called cross-thread (main:

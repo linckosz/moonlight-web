@@ -63,6 +63,11 @@ public:
     /// close. Best-effort: sent on the control channel just before stop().
     virtual void notifyClientTakenOver() {}
 
+    /// Notify the browser that its device access was revoked by the admin,
+    /// so it can show a graceful "access revoked" exit before the channels
+    /// close. Best-effort: sent on the control channel just before stop().
+    virtual void notifyClientRevoked() {}
+
     /// Request an IDR frame from Sunshine (keyframe).
     virtual void requestIdrFrame() = 0;
 

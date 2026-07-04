@@ -469,6 +469,9 @@ export class StreamView {
         // Session taken over by another device → graceful cyberpunk exit.
         this.webrtc.onTakeover = () => this._handleTakeover();
 
+        // Device access revoked by the admin → same forced-exit path.
+        this.webrtc.onRevoked = () => this._handleRevoked();
+
         // Physical keys currently held down (e.code → keyup payload). Used to
         // release everything when the window loses focus: the OS can steal focus
         // mid-press (e.g. the Windows key opens the local Start menu), so the
@@ -4670,6 +4673,23 @@ export class StreamView {
      * onClose disconnect path stays silent.
      */
     _handleTakeover() {
+        this._handleForcedExit(t('stream.takenOverTitle'), t('stream.takenOverBody'));
+    }
+
+    /**
+     * This device's access was revoked by the admin mid-stream. The backend
+     * already tore down the relay and the Sunshine session, so exit locally
+     * without calling /quit (the session cookie is dead — it would 401).
+     */
+    _handleRevoked() {
+        this._handleForcedExit(t('stream.revokedTitle'), t('stream.revokedBody'));
+    }
+
+    /**
+     * Backend-initiated exit (take-over / revocation): show the 2s cyberpunk
+     * "connection terminated" transition, then quit locally (no backend /quit).
+     */
+    _handleForcedExit(title, body) {
         if (this._quitting || this._takenOver) return;
         this._takenOver = true;
         this.connected = false;
@@ -4677,7 +4697,6 @@ export class StreamView {
         // Full-screen glitch overlay (CP2077 style — see stream.css).
         const el = document.createElement('div');
         el.className = 'stream-takeover-overlay';
-        const title = t('stream.takenOverTitle');
         el.innerHTML =
             '<div class="takeover-scanlines"></div>' +
             '<div class="takeover-box">' +
@@ -4687,7 +4706,7 @@ export class StreamView {
             title +
             '</div>' +
             '<div class="takeover-sub">' +
-            t('stream.takenOverBody') +
+            body +
             '</div>' +
             '<div class="takeover-bar"><span></span></div>' +
             '</div>';

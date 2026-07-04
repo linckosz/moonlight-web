@@ -68,12 +68,24 @@ void run_auth_manager_tests()
     auth.saveSessions();
     auth.loadSessions();
 
+    // Revoking a session that is actively streaming must request stream teardown.
+    int revokedFired = 0;
+    QObject::connect(&auth, &AuthManager::streamingSessionRevoked,
+                     [&revokedFired]() { ++revokedFired; });
+    auth.setSessionStreaming(token, true); // re-flag: streaming is runtime-only, reset by load
     auth.destroySession(id);
     CHECK(!auth.validateSession(token)); // gone after destroy by id
+    CHECK_EQ(revokedFired, 1);           // streaming session revoked → teardown signal
 
     auth.createSession("198.51.100.21");
     auth.destroyAllSessions();
     CHECK_EQ(auth.activeSessionCount(), 0);
+    CHECK_EQ(revokedFired, 1); // non-streaming sessions → no teardown signal
+
+    QString token3 = auth.createSession("198.51.100.22");
+    auth.setSessionStreaming(token3, true);
+    auth.destroyAllSessions();
+    CHECK_EQ(revokedFired, 2); // destroy-all with a streaming session → teardown signal
     auth.purgeExpiredSessions(); // no-op, just exercised
 
     // ── Certificate auth ───────────────────────────────────────────────────
