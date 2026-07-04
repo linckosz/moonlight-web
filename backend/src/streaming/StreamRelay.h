@@ -42,6 +42,10 @@ public:
     /// another device, just before stop() closes the socket. Best-effort.
     void notifyClientTakenOver();
 
+    /// Notify the browser (over the WS) that its device access was revoked,
+    /// just before stop() closes the socket. Best-effort.
+    void notifyClientRevoked();
+
     void setServerHost(const QString& host) { m_ServerHost = host; }
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
     quint16 wsPort() const { return m_WsPort; }

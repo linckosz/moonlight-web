@@ -627,10 +627,19 @@ void MediaTrackRelay::onIceCheckTimeout()
 
 void MediaTrackRelay::notifyClientTakenOver()
 {
-    // Best-effort "taken over" notice on the input DC before stop() closes it.
+    sendExitNotice("takeover");
+}
+
+void MediaTrackRelay::notifyClientRevoked()
+{
+    sendExitNotice("revoked");
+}
+
+void MediaTrackRelay::sendExitNotice(const char* type)
+{
+    // Best-effort exit notice on the input DC before stop() closes it.
     if (!m_InputDc || m_Stopping.load()) return;
-    QByteArray json =
-        QJsonDocument(QJsonObject{{"type", "takeover"}}).toJson(QJsonDocument::Compact);
+    QByteArray json = QJsonDocument(QJsonObject{{"type", type}}).toJson(QJsonDocument::Compact);
     try {
         m_InputDc->send(std::string(json.constData(), json.size()));
     } catch (...) {}

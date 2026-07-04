@@ -185,6 +185,10 @@ signals:
     void pinChanged(const QString& newPin);
     void sessionCreated(const QString& ip, const QString& machineName);
     void sessionDestroyed(const QString& token);
+    /** Emitted when a destroyed session was actively streaming. The stream
+     *  lifecycle owner (main.cpp) must tear the live relay down so a revoked
+     *  device stops receiving the stream immediately. */
+    void streamingSessionRevoked();
     /** Emitted when session list changes (created or destroyed) */
     void sessionsChanged();
 

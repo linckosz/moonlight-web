@@ -315,6 +315,8 @@
         "streamEnd": "Fin du flux",
         "takenOverTitle": "Connexion terminée",
         "takenOverBody": "Cette session a été interrompue par un autre appareil.",
+        "revokedTitle": "Accès révoqué",
+        "revokedBody": "L'accès de cet appareil a été révoqué par l'administrateur.",
         "disconnectTitle": "Déconnexion",
         "disconnectBody": "Fermeture de la session — à bientôt.",
         "statResolution": "Résolution :",

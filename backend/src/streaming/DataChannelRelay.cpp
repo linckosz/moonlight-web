@@ -1219,12 +1219,21 @@ void DataChannelRelay::onStatsTimerTick()
 
 void DataChannelRelay::notifyClientTakenOver()
 {
+    sendExitNotice("takeover");
+}
+
+void DataChannelRelay::notifyClientRevoked()
+{
+    sendExitNotice("revoked");
+}
+
+void DataChannelRelay::sendExitNotice(const char* type)
+{
     // Best-effort control message on the input DC, sent before stop() closes it,
-    // so the browser can show a graceful "taken over" exit instead of a generic
-    // disconnect. Reliable/ordered channel → flushed ahead of the close.
+    // so the browser can show a graceful exit instead of a generic disconnect.
+    // Reliable/ordered channel → flushed ahead of the close.
     if (!m_InputDc || m_Stopping.load()) return;
-    QByteArray json =
-        QJsonDocument(QJsonObject{{"type", "takeover"}}).toJson(QJsonDocument::Compact);
+    QByteArray json = QJsonDocument(QJsonObject{{"type", type}}).toJson(QJsonDocument::Compact);
     try {
         m_InputDc->send(std::string(json.constData(), json.size()));
     } catch (...) {}

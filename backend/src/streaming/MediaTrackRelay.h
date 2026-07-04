@@ -72,6 +72,8 @@ public:
 
     void notifyClientTakenOver() override;
 
+    void notifyClientRevoked() override;
+
     void requestIdrFrame() override;
 
     // UPnP NAT traversal
@@ -99,6 +101,9 @@ private slots:
     void onIceCheckTimeout();
 
 private:
+    // Best-effort exit notice ({"type": ...}) on the input DC before stop().
+    void sendExitNotice(const char* type);
+
     void setupPeerConnection(const rtc::Configuration& config);
     void createTracksAndChannels();
     void onInputMessage(const std::string& message);

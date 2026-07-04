@@ -380,6 +380,9 @@ int main(int argc, char* argv[])
     // session. Used to reject a stale /quit from a client that was taken over
     // (its quit would otherwise tear down the NEW owner via the global pointer).
     QString g_ActiveClientUniqueId;
+    // UUID of the host the active relay streams from. Needed by teardown paths
+    // that have no HTTP request to read the host from (revoked-device kill).
+    QString g_ActiveHostUuid;
 
     // Suspend host polling whenever a relay is active, so we stop hammering
     // Sunshine's HTTP server while a stream is running (avoids wedging it and
@@ -397,6 +400,76 @@ int main(int argc, char* argv[])
                !g_ActiveStreamRelay.isNull() || !g_ActiveRelayRoot.isNull() ||
                !g_ActiveSession.isNull();
     });
+
+    // ── Revoked-device kill-switch ─────────────────────────────────────────────
+    // Revoking a device whose session is actively streaming must stop that
+    // stream immediately — the revoked browser must not keep receiving video
+    // just because its relay was established before the revocation. Teardown
+    // mirrors the proven /quit route (notify client, stop shim + relay,
+    // deleteLater), then cancels the Sunshine session keyed by the revoked
+    // browser's uniqueid. sessionEnded stays connected: its auto-quit lambda is
+    // re-entrant safe (stop() guards, deleteLater is idempotent) and a double
+    // Sunshine /cancel is harmless.
+    QObject::connect(
+        &authManager, &AuthManager::streamingSessionRevoked, qApp,
+        [&computerManager, &g_ActiveRelay, &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay,
+         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid]() {
+            qInfo() << "[main] Streaming session revoked — tearing down active stream";
+            bool relayStopped = false;
+
+            if (g_ActiveRelay) {
+                DataChannelRelay* relay = g_ActiveRelay;
+                g_ActiveRelay = nullptr;
+                relay->notifyClientRevoked();
+                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                relay->stop();
+                relay->deleteLater();
+                relayStopped = true;
+            }
+
+            if (g_ActiveMediaTrackRelay) {
+                MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
+                g_ActiveMediaTrackRelay = nullptr;
+                relay->notifyClientRevoked();
+                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                relay->stop();
+                relay->deleteLater();
+                relayStopped = true;
+            }
+
+            if (g_ActiveStreamRelay) {
+                StreamRelay* relay = g_ActiveStreamRelay;
+                g_ActiveStreamRelay = nullptr;
+                relay->notifyClientRevoked();
+                relay->stop();
+                relay->deleteLater();
+                relayStopped = true;
+            }
+
+            if (g_ActiveSession) {
+                g_ActiveSession->deleteLater();
+                g_ActiveSession = nullptr;
+            }
+
+            if (!relayStopped) {
+                qInfo() << "[main] Revoke teardown: no live relay (already stopped)";
+                return;
+            }
+
+            // Cancel the revoked browser's Sunshine session (keyed like /launch).
+            // Nobody legitimately resumes it, so leaving it alive is pointless.
+            NvComputer* host = computerManager.getHost(g_ActiveHostUuid);
+            if (host) {
+                auto* identity = IdentityManager::get();
+                auto* quitReply = computerManager.http()->quitAppAsync(
+                    host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
+                    identity->getPrivateKey(), g_ActiveClientUniqueId);
+                QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
+                                 &QNetworkReply::deleteLater);
+            }
+            g_ActiveClientUniqueId.clear();
+            g_ActiveHostUuid.clear();
+        });
 
     InternetAccessManager internetAccess(&appSettings);
     GeoIpService geoIpService;
@@ -524,6 +597,7 @@ int main(int argc, char* argv[])
                                                         &g_ActiveRelay, &g_ActiveStreamRelay,
                                                         &g_ActiveMediaTrackRelay, &g_ActiveSession,
                                                         &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
+                                                        &g_ActiveHostUuid,
                                                         &server, &appSettings, &authManager,
                                                         effectiveUpnpEnabled,
                                                         stunServer](const HttpRequest& req,
@@ -594,6 +668,7 @@ int main(int argc, char* argv[])
         }
         g_ActiveSession = nullptr;
         g_ActiveClientUniqueId.clear();
+        g_ActiveHostUuid.clear();
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
@@ -862,11 +937,13 @@ int main(int argc, char* argv[])
             QObject::connect(
                 s, &StreamSession::streamRelayCreated,
                 [&g_ActiveStreamRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                 &computerManager, &authManager, sessionToken, host, quitUid](StreamRelay* r) {
+                 &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
+                 quitUid](StreamRelay* r) {
                     qInfo() << "[main] streamRelayCreated, relay=" << r;
                     g_ActiveStreamRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
+                    g_ActiveHostUuid = host->uuid;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp so the lambda runs on the main thread: the relay
@@ -904,12 +981,14 @@ int main(int argc, char* argv[])
             // WebRTC DataChannel mode: DataChannelRelay tracking
             QObject::connect(
                 s, &StreamSession::relayCreated,
-                [&g_ActiveRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &computerManager,
-                 &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
+                [&g_ActiveRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &g_ActiveHostUuid,
+                 &computerManager, &authManager, sessionToken, host,
+                 quitUid](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
+                    g_ActiveHostUuid = host->uuid;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
@@ -947,11 +1026,13 @@ int main(int argc, char* argv[])
             QObject::connect(
                 s, &StreamSession::mediaTrackRelayCreated,
                 [&g_ActiveMediaTrackRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                 &computerManager, &authManager, sessionToken, host, quitUid](MediaTrackRelay* r) {
+                 &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
+                 quitUid](MediaTrackRelay* r) {
                     qInfo() << "[main] mediaTrackRelayCreated, relay=" << r;
                     g_ActiveMediaTrackRelay = r;
                     g_ActiveRelayRoot = r;
                     g_ActiveClientUniqueId = quitUid;
+                    g_ActiveHostUuid = host->uuid;
                     authManager.setSessionStreaming(sessionToken, true);
 
                     // Context = qApp: see StreamRelay note above (run on main thread).
@@ -1078,8 +1159,8 @@ int main(int argc, char* argv[])
     server.router()->postAsync(
         "/api/hosts/:id/quit",
         [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
-         &g_ActiveSession,
-         &g_ActiveClientUniqueId](const HttpRequest& req, const ResponseCallback& respond) {
+         &g_ActiveSession, &g_ActiveClientUniqueId,
+         &g_ActiveHostUuid](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                     << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -1171,6 +1252,7 @@ int main(int argc, char* argv[])
                 g_ActiveSession->deleteLater();
                 g_ActiveSession = nullptr;
                 g_ActiveClientUniqueId.clear();
+                g_ActiveHostUuid.clear();
             }
 
             if (!relayStopped) {

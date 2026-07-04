@@ -512,6 +512,10 @@ void AuthManager::destroySession(const QString& token)
         Logger::info(QString("[Auth] Session destroyed for %1 (machine='%2', remaining: %3)")
                          .arg(info.ip, info.machineName)
                          .arg(m_sessions.size()));
+        if (info.streaming) {
+            Logger::info("[Auth] Revoked session was streaming — requesting stream teardown");
+            emit streamingSessionRevoked();
+        }
     } else {
         Logger::warning(QString("[Auth] destroySession: token not found — token='%1' (len=%2)")
                             .arg(token)
@@ -538,11 +542,22 @@ bool AuthManager::renameSession(const QString& token, const QString& machineName
 void AuthManager::destroyAllSessions()
 {
     int count = m_sessions.size();
+    bool anyStreaming = false;
+    for (const SessionInfo& s : m_sessions) {
+        if (s.streaming) {
+            anyStreaming = true;
+            break;
+        }
+    }
     m_sessions.clear();
     saveSessions();
     if (count > 0) {
         emit sessionsChanged();
         Logger::info(QString("[Auth] All %1 sessions destroyed").arg(count));
+    }
+    if (anyStreaming) {
+        Logger::info("[Auth] A destroyed session was streaming — requesting stream teardown");
+        emit streamingSessionRevoked();
     }
 }
 

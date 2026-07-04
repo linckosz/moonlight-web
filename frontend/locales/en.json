@@ -315,6 +315,8 @@
         "streamEnd": "Stream end",
         "takenOverTitle": "Connection terminated",
         "takenOverBody": "This session was taken over by another device.",
+        "revokedTitle": "Access revoked",
+        "revokedBody": "This device's access was revoked by the administrator.",
         "disconnectTitle": "Disconnecting",
         "disconnectBody": "Closing session — see you soon.",
         "statResolution": "Resolution:",
