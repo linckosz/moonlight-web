@@ -106,7 +106,110 @@ DetectResult detect()
     return r;
 }
 
-QString installMacOS(const QString& user, const QString& pass)
+#if defined(Q_OS_LINUX)
+namespace {
+
+// Map /etc/os-release + CPU arch to the matching official Sunshine .deb asset,
+// or an empty string when this distro has no prebuilt .deb (manual install).
+QString linuxDebAsset()
+{
+    QFile f(QStringLiteral("/etc/os-release"));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
+    QString id, idLike, versionId;
+    const QStringList lines = QString::fromUtf8(f.readAll()).split('\n');
+    for (const QString& line : lines) {
+        const int eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        const QString key = line.left(eq).trimmed();
+        QString val = line.mid(eq + 1).trimmed();
+        if (val.size() >= 2 && val.startsWith('"') && val.endsWith('"'))
+            val = val.mid(1, val.size() - 2);
+        if (key == QLatin1String("ID")) id = val;
+        else if (key == QLatin1String("ID_LIKE")) idLike = val;
+        else if (key == QLatin1String("VERSION_ID")) versionId = val;
+    }
+
+    const QString cpu = QSysInfo::currentCpuArchitecture();
+    QString arch;
+    if (cpu == QLatin1String("x86_64")) arch = QStringLiteral("amd64");
+    else if (cpu == QLatin1String("arm64") || cpu == QLatin1String("aarch64"))
+        arch = QStringLiteral("arm64");
+    else return QString();
+
+    if (id == QLatin1String("ubuntu")) {
+        // Pick the newest asset series not newer than this Ubuntu release
+        // (assets track the LTS series + the upcoming one).
+        const double v = versionId.toDouble(); // "24.04" → 24.04
+        QString series = QStringLiteral("22.04");
+        if (v >= 26.04) series = QStringLiteral("26.04");
+        else if (v >= 24.04) series = QStringLiteral("24.04");
+        return QStringLiteral("sunshine-ubuntu-%1-%2.deb").arg(series, arch);
+    }
+    // Derivatives (Mint, Pop!_OS…) version differently; assume the current LTS.
+    if (idLike.contains(QLatin1String("ubuntu")))
+        return QStringLiteral("sunshine-ubuntu-24.04-%1.deb").arg(arch);
+    if (id == QLatin1String("debian") || idLike.contains(QLatin1String("debian")))
+        return QStringLiteral("sunshine-debian-trixie-%1.deb").arg(arch);
+    return QString();
+}
+
+// Download + install the official Sunshine .deb, then apply the credentials.
+QString installLinux(const QString& user, const QString& pass)
+{
+    const QString asset = linuxDebAsset();
+    if (asset.isEmpty())
+        return QStringLiteral(
+            "No prebuilt Sunshine package for this distribution — install it manually");
+    const QString url =
+        QStringLiteral("https://github.com/LizardByte/Sunshine/releases/latest/download/%1")
+            .arg(asset);
+    const QString deb = QDir::tempPath() + QStringLiteral("/mw-sunshine.deb");
+
+    Logger::info(QStringLiteral("SunshineInstaller: downloading %1").arg(url));
+    QString out;
+    int rc = -1;
+    // Ubuntu desktop ships wget by default but not always curl — try both.
+    const QString curl = which(QStringLiteral("curl"));
+    if (!curl.isEmpty()) {
+        rc = run(curl, {"-fLsS", "-o", deb, url}, 300000, &out);
+    } else {
+        const QString wget = which(QStringLiteral("wget"));
+        if (wget.isEmpty())
+            return QStringLiteral("Neither curl nor wget is available to download Sunshine");
+        rc = run(wget, {"-qO", deb, url}, 300000, &out);
+    }
+    if (rc != 0) return QStringLiteral("Download failed: %1").arg(out.trimmed());
+
+    // Install as root via polkit — pkexec pops the password dialog in the GUI
+    // session. apt-get resolves the .deb's dependencies (unlike dpkg -i).
+    rc = run(QStringLiteral("/usr/bin/pkexec"), {"apt-get", "install", "-y", deb}, 600000, &out);
+    QFile::remove(deb);
+    if (rc != 0) return QStringLiteral("Package installation failed: %1").arg(out.trimmed());
+
+    if (!setCredentials(user, pass))
+        Logger::warning(QStringLiteral("SunshineInstaller: setting credentials failed"));
+
+    Logger::info(QStringLiteral("SunshineInstaller: Sunshine .deb installed"));
+    return QString();
+}
+
+} // namespace
+#endif // Q_OS_LINUX
+
+bool canAutoInstall()
+{
+#if defined(Q_OS_MACOS)
+    return true;
+#elif defined(Q_OS_LINUX)
+    return !linuxDebAsset().isEmpty() && QFileInfo::exists(QStringLiteral("/usr/bin/pkexec")) &&
+           !which(QStringLiteral("apt-get")).isEmpty();
+#else
+    return false;
+#endif
+}
+
+#if !defined(Q_OS_LINUX) // Linux dispatches to installLinux; avoid an unused static.
+static QString installMacOS(const QString& user, const QString& pass)
 {
 #ifndef Q_OS_MACOS
     Q_UNUSED(user);
@@ -160,6 +263,16 @@ QString installMacOS(const QString& user, const QString& pass)
 
     Logger::info(QStringLiteral("SunshineInstaller: Sunshine installed to %1").arg(dst));
     return QString();
+#endif
+}
+#endif // !Q_OS_LINUX
+
+QString install(const QString& user, const QString& pass)
+{
+#if defined(Q_OS_LINUX)
+    return installLinux(user, pass);
+#else
+    return installMacOS(user, pass);
 #endif
 }
 

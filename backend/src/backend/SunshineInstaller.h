@@ -20,15 +20,19 @@
 #include <QString>
 
 /**
- * @brief Detects and (on macOS) installs the Sunshine streaming server.
+ * @brief Detects and (on macOS/Linux) installs the Sunshine streaming server.
  *
  * Windows uses the Inno Setup installer to fetch and silently install Sunshine,
- * so on Windows this only detects it. macOS has no native installer (the app is
- * shipped as a bare .dmg), so the in-app setup wizard drives the install here:
- * download the official Sunshine-macOS-<arch>.dmg, copy Sunshine.app into
- * /Applications, then set its credentials via the `--creds` CLI. TCC permissions
- * (Screen Recording / Accessibility) still require a manual user grant at
- * Sunshine's first launch — no API can bypass that.
+ * so on Windows this only detects it. macOS and Linux have no native installer
+ * (bare .dmg / .deb), so the in-app setup wizard drives the install here:
+ *  - macOS: download the official Sunshine-macOS-<arch>.dmg and copy
+ *    Sunshine.app into /Applications. TCC permissions (Screen Recording /
+ *    Accessibility) still require a manual user grant at Sunshine's first
+ *    launch — no API can bypass that.
+ *  - Linux (Debian/Ubuntu family): download the matching official .deb and
+ *    install it as root via `pkexec apt-get install` (polkit password prompt
+ *    in the user's GUI session). Other distros install manually.
+ * Both paths then set Sunshine's credentials via the `--creds` CLI.
  */
 namespace SunshineInstaller {
 
@@ -42,10 +46,15 @@ struct DetectResult
 /// Locate an existing Sunshine install (platform-specific well-known paths + PATH).
 DetectResult detect();
 
-/// macOS only: download + install the official Sunshine DMG, then apply the given
-/// credentials. Returns an empty string on success, or a human-readable error.
-/// No-op returning an error on other platforms.
-QString installMacOS(const QString& user, const QString& pass);
+/// Whether install() can work here: macOS always; Linux when a prebuilt .deb
+/// exists for this distro and pkexec + apt-get are available; Windows never
+/// (the Inno Setup installer owns the Sunshine install).
+bool canAutoInstall();
+
+/// Download + install the official Sunshine package for this platform, then
+/// apply the given credentials. Returns an empty string on success, or a
+/// human-readable error.
+QString install(const QString& user, const QString& pass);
 
 /// Set Sunshine's web-UI credentials via `sunshine --creds <user> <pass>`.
 /// Best-effort: returns true when the CLI exited 0.
