@@ -44,6 +44,7 @@ export class SetupView {
         // User choices (config step).
         this._internetAuth = true;
         this._installSunshine = true;
+        this._autoStart = true;
 
         this._pollTimer = null;
         // Which checklist rows are relevant to the run in progress.
@@ -144,6 +145,14 @@ export class SetupView {
             <div class="setup-section">
                 <h2 class="setup-section-title">${t('setup.sunshineTitle')}</h2>
                 ${sunshineBlock}
+            </div>
+
+            <div class="setup-section">
+                <h2 class="setup-section-title">${t('setup.autostartTitle')}</h2>
+                <label class="setup-check">
+                    <input type="checkbox" id="chk-autostart" ${this._autoStart ? 'checked' : ''} />
+                    <span>${t('setup.autostartOption')}</span>
+                </label>
             </div>
 
             ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
@@ -259,6 +268,7 @@ export class SetupView {
 
     async _apply() {
         this._internetAuth = !!this.container.querySelector('#chk-internet')?.checked;
+        this._autoStart = !!this.container.querySelector('#chk-autostart')?.checked;
         const chkInstall = this.container.querySelector('#chk-install');
         if (chkInstall) this._installSunshine = chkInstall.checked;
         const user = (this.container.querySelector('#setup-user')?.value || '').trim();
@@ -290,6 +300,7 @@ export class SetupView {
         try {
             const result = await BackendClient.applySetup({
                 internet_access_authorized: this._internetAuth,
+                autostart: this._autoStart,
                 sunshine: {
                     install: willInstall,
                     username: user,

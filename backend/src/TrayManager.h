@@ -21,6 +21,8 @@
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include <QUrl>
+#include <QIcon>
+#include <QElapsedTimer>
 
 class HttpServer;
 
@@ -34,6 +36,11 @@ public:
 
     /// Create and show the tray icon. Returns false if the system tray is unavailable.
     bool init();
+
+    /// Resolve the application icon from the shipped frontend assets (PNG
+    /// preferred: QtGui decodes it without the imageformats .ico plugin).
+    /// Also used by main() as the Dock/taskbar icon fallback. May be null.
+    static QIcon loadAppIcon();
 
 private slots:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
@@ -50,4 +57,6 @@ private:
     HttpServer* m_Server;
     QSystemTrayIcon* m_TrayIcon;
     QMenu* m_Menu;
+    QMenu* m_DockMenu;         // macOS Dock right-click menu (null elsewhere)
+    QElapsedTimer m_StartedAt; // filters out the app-launch activation (macOS)
 };

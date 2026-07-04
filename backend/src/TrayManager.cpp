@@ -33,11 +33,38 @@ TrayManager::TrayManager(HttpServer* server, QObject* parent)
     , m_Server(server)
     , m_TrayIcon(nullptr)
     , m_Menu(nullptr)
+    , m_DockMenu(nullptr)
 {}
+
+QIcon TrayManager::loadAppIcon()
+{
+    // Try the compile-time frontend path (development), then the
+    // executable-relative bundle paths (installed artifact / macOS bundle).
+    // PNG before .ico: QtGui decodes PNG natively, while .ico needs the
+    // imageformats plugin which is not always deployed on Linux.
+    const QStringList roots = {
+        QStringLiteral(FRONTEND_DIR),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/frontend/"),
+        QCoreApplication::applicationDirPath() + QStringLiteral("/../Resources/frontend/"),
+    };
+    const QStringList names = {QStringLiteral("assets/icon-512.png"),
+                               QStringLiteral("assets/favicon.ico")};
+    for (const QString& root : roots) {
+        for (const QString& name : names) {
+            const QString path = root + name;
+            if (!QFile::exists(path)) continue;
+            QIcon icon(path);
+            if (!icon.isNull()) return icon;
+        }
+    }
+    return QIcon();
+}
 
 TrayManager::~TrayManager()
 {
     if (m_TrayIcon) m_TrayIcon->hide();
+    delete m_Menu;
+    delete m_DockMenu;
 }
 
 bool TrayManager::init()
@@ -50,17 +77,9 @@ bool TrayManager::init()
     m_TrayIcon = new QSystemTrayIcon(this);
     m_Menu = new QMenu();
 
-    // Load tray icon — try the compile-time frontend path (development), then the
-    // executable-relative bundle path (artifact/MSI), then a standard fallback.
-    QString iconPath = QStringLiteral(FRONTEND_DIR "assets/favicon.ico");
-    if (!QFile::exists(iconPath))
-        iconPath = QCoreApplication::applicationDirPath() + "/frontend/assets/favicon.ico";
-    if (!QFile::exists(iconPath))
-        iconPath =
-            QCoreApplication::applicationDirPath() + "/../Resources/frontend/assets/favicon.ico";
-    QIcon icon(iconPath);
+    QIcon icon = loadAppIcon();
     if (icon.isNull()) {
-        qInfo() << "[TrayManager] favicon.ico not found, using standard icon";
+        qInfo() << "[TrayManager] app icon not found, using standard icon";
         icon = QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
     }
     m_TrayIcon->setIcon(icon);
@@ -84,6 +103,27 @@ bool TrayManager::init()
 
     m_TrayIcon->setContextMenu(m_Menu);
     m_TrayIcon->show();
+
+#ifdef Q_OS_MACOS
+    // Dock right-click menu — reuse the tray actions; macOS appends its own
+    // Quit entry, so ours is omitted here.
+    m_DockMenu = new QMenu();
+    m_DockMenu->addAction(openAction);
+    m_DockMenu->addAction(controlPanelAction);
+    m_DockMenu->addSeparator();
+    m_DockMenu->addAction(restartAction);
+    m_DockMenu->setAsDockMenu();
+
+    // Clicking the Dock icon re-activates the app; with no native window the
+    // expected result is the admin page in the browser. The app also activates
+    // once at launch — filter that out with a short startup grace window.
+    m_StartedAt.start();
+    connect(qApp, &QGuiApplication::applicationStateChanged, this,
+            [this](Qt::ApplicationState state) {
+                if (state == Qt::ApplicationActive && m_StartedAt.elapsed() > 3000)
+                    onOpenSettings();
+            });
+#endif
 
     qInfo() << "[TrayManager] System tray icon created, port" << port;
     return true;
