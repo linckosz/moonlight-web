@@ -468,10 +468,14 @@ const MoonlightApp = {
     },
 
     /**
-     * On localhost, check whether first-run setup is pending and, if so, render
-     * the SetupView. Returns true when the wizard was shown (init() should stop;
-     * the wizard reloads the page when finished). Best-effort: any error just
-     * lets normal init continue.
+     * On localhost, check whether setup is pending and, if so, render the
+     * SetupView. Shown on first run, but also on later launches whenever an
+     * essential step is missing (Sunshine not installed / not paired — e.g.
+     * stale settings from a previous install), with the completed steps
+     * pre-checked. "Skip for now" dismisses it persistently for this browser.
+     * Returns true when the wizard was shown (init() should stop; the wizard
+     * reloads the page when finished). Best-effort: any error just lets normal
+     * init continue.
      */
     async _maybeShowSetup() {
         const isLocal =
@@ -482,7 +486,16 @@ const MoonlightApp = {
 
         try {
             const status = await BackendClient.getSetupStatus();
-            if (!status || status.setup_completed !== false) return false;
+            // Windows provisioning is owned by the Inno Setup installer.
+            if (!status || status.os === 'Windows') return false;
+            const firstRun = status.setup_completed === false;
+            const sunshineReady = !!(
+                status.sunshine &&
+                status.sunshine.installed &&
+                status.sunshine.paired
+            );
+            const dismissed = localStorage.getItem('mw_setup_dismissed') === '1';
+            if (!firstRun && (sunshineReady || dismissed)) return false;
         } catch (err) {
             console.warn('[MW] Setup status check failed:', err);
             return false;
