@@ -403,15 +403,37 @@ begin
 end;
 
 // --- Auto-start: logon scheduled task (keeps the tray icon, native) -------
+
+// Escape a value for embedding in the task XML. SaveStringToFile writes ANSI
+// and the file carries no <?xml?> declaration (see RegisterLogonTask), so the
+// output must stay pure ASCII: non-ASCII characters (accented usernames) are
+// emitted as numeric character references.
+function TaskXmlEscape(const s: String): String;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := 1 to Length(s) do begin
+    if s[i] = '&' then Result := Result + '&amp;'
+    else if s[i] = '<' then Result := Result + '&lt;'
+    else if s[i] = '>' then Result := Result + '&gt;'
+    else if Ord(s[i]) > 126 then Result := Result + '&#' + IntToStr(Ord(s[i])) + ';'
+    else Result := Result + s[i];
+  end;
+end;
+
 procedure RegisterLogonTask();
 var
   user, xml, xmlPath, exePath: String;
   rc: Integer;
 begin
-  user := GetEnv('USERDOMAIN') + '\' + GetEnv('USERNAME');
-  exePath := ExpandConstant('{app}\{#MyAppExe}');
+  user := TaskXmlEscape(GetEnv('USERDOMAIN') + '\' + GetEnv('USERNAME'));
+  exePath := TaskXmlEscape(ExpandConstant('{app}\{#MyAppExe}'));
+  // No <?xml?> declaration: schtasks' MSXML rejects a declared encoding when
+  // the file bytes don't match it exactly ("unable to switch the encoding" —
+  // SaveStringToFile writes ANSI, not UTF-8/UTF-16). Without a declaration a
+  // pure-ASCII file always parses; TaskXmlEscape keeps it pure ASCII.
   xml :=
-    '<?xml version="1.0" encoding="UTF-8"?>' + #13#10 +
     '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">' + #13#10 +
     '  <RegistrationInfo><Author>MoonlightWeb</Author></RegistrationInfo>' + #13#10 +
     '  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>' + user + '</UserId></LogonTrigger></Triggers>' + #13#10 +

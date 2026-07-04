@@ -38,6 +38,8 @@
         "username": "Identifiant",
         "password": "Mot de passe",
         "credsRequired": "Veuillez saisir l'identifiant et le mot de passe Sunshine pour que MoonlightWeb puisse appairer automatiquement.",
+        "autostartTitle": "Démarrage automatique",
+        "autostartOption": "Lancer MoonlightWeb automatiquement à l'ouverture de session",
         "stepInstall": "Installer le serveur de streaming Sunshine",
         "stepPairing": "Appairer le Sunshine local",
         "stepArecord": "Publier l'adresse Internet sécurisée",

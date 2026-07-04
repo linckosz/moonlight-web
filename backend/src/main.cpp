@@ -197,12 +197,37 @@ static void writeAdminShortcut(const QString& url)
     f.close();
 }
 
+#ifndef Q_OS_WIN
+// True when a desktop session can show a browser/tray: never under a service
+// supervisor, and on Linux only when a display server is reachable. Do NOT use
+// QSystemTrayIcon::isSystemTrayAvailable() for this: GNOME has no system tray
+// by default, which would wrongly report "headless" and skip the first-run
+// setup wizard.
+static bool hasGuiSession()
+{
+    if (!qEnvironmentVariableIsEmpty("MW_SERVICE")) return false;
+#if defined(Q_OS_LINUX)
+    return !qEnvironmentVariableIsEmpty("DISPLAY") ||
+           !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY");
+#else
+    return true;
+#endif
+}
+#endif
+
 int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("MoonlightWeb");
     QCoreApplication::setApplicationVersion(QStringLiteral(MW_VERSION));
     QCoreApplication::setOrganizationName("MoonlightWeb");
+
+    // Dock (macOS) / taskbar icon fallback: without this the Dock shows an
+    // empty icon when the bundle .icns is missing or unreadable.
+    {
+        QIcon appIcon = TrayManager::loadAppIcon();
+        if (!appIcon.isNull()) app.setWindowIcon(appIcon);
+    }
 
     // The Windows release build is windowless (no console): capture Qt messages
     // and default to a log file. --log overrides the path. The file lives in the
@@ -1197,6 +1222,10 @@ int main(int argc, char* argv[])
     // Best admin URL: the public domain (valid certificate) once Internet Access
     // is live, otherwise loopback HTTPS on the actual port (omit :443).
     auto adminUrl = [&]() -> QString {
+#ifdef Q_OS_WIN
+        // Windows installer flow: the Desktop shortcut doubles as the "your
+        // public address" link, so prefer the domain (valid certificate) once
+        // Internet Access is live.
         if (internetAccess.isActive() && !internetAccess.domain().isEmpty()) {
             // Include the external (router-side) HTTPS port when it isn't the
             // default 443 — a second instance behind the same NAT is reachable on
@@ -1206,6 +1235,10 @@ int main(int argc, char* argv[])
             if (ext != 0 && ext != 443) url += QStringLiteral(":%1").arg(ext);
             return url + "/admin";
         }
+#endif
+        // macOS/Linux: local entry points (Desktop shortcut, Dock, tray) always
+        // use loopback — works even when DNS/Internet Access is down and matches
+        // the localhost-only admin APIs.
         quint16 p = server.activeHttpsPort();
         return p == 443 ? QStringLiteral("https://localhost/admin")
                         : QStringLiteral("https://localhost:%1/admin").arg(p);
@@ -1272,18 +1305,22 @@ int main(int argc, char* argv[])
 #ifndef Q_OS_WIN
     // First-run: open the in-app setup wizard in the browser. The Windows Inno
     // Setup installer opens its own page, but macOS/Linux ship a bare bundle, so
-    // the server launches the browser once. Skipped under a service supervisor
-    // (session 0 has no GUI) and once setup has completed.
-    if (!appSettings.setupCompleted() && qEnvironmentVariableIsEmpty("MW_SERVICE") &&
-        QSystemTrayIcon::isSystemTrayAvailable()) {
-        quint16 p = server.activeHttpsPort();
-        const QString setupUrl = p == 443 ? QStringLiteral("https://localhost/setup")
-                                          : QStringLiteral("https://localhost:%1/setup").arg(p);
-        // Defer so the TLS listener is fully accepting before the browser hits it.
-        QTimer::singleShot(1200, &app, [setupUrl]() {
-            qInfo() << "[main] First run — opening setup wizard:" << setupUrl;
-            QDesktopServices::openUrl(QUrl(setupUrl));
-        });
+    // the server launches the browser once. Skipped under a service supervisor /
+    // headless session and once setup has completed.
+    if (!appSettings.setupCompleted()) {
+        if (hasGuiSession()) {
+            quint16 p = server.activeHttpsPort();
+            const QString setupUrl = p == 443 ? QStringLiteral("https://localhost/setup")
+                                              : QStringLiteral("https://localhost:%1/setup").arg(p);
+            // Defer so the TLS listener is fully accepting before the browser hits it.
+            QTimer::singleShot(1200, &app, [setupUrl]() {
+                qInfo() << "[main] First run — opening setup wizard:" << setupUrl;
+                QDesktopServices::openUrl(QUrl(setupUrl));
+            });
+        } else {
+            qInfo() << "[main] First-run setup pending, but no GUI session — "
+                       "wizard not auto-opened (visit /setup from a browser)";
+        }
     }
 #endif
 

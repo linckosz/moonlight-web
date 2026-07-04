@@ -152,6 +152,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
         QJsonObject body = QJsonDocument::fromJson(req.body).object();
         const bool internetAuth = body.value("internet_access_authorized").toBool(false);
+        const bool autostart = body.value("autostart").toBool(false);
         const QJsonObject sun = body.value("sunshine").toObject();
         const bool wantInstall = sun.value("install").toBool(false);
         const QString user = sun.value("username").toString();
@@ -210,9 +211,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // the admin page, and the wizard must not reappear on every launch.
         appSettings.setSetupCompleted(true);
 
-        // Start at login (macOS LaunchAgent — GUI session, keeps the tray icon).
-        // Mirrors the Windows installer's default logon task. Best-effort.
-        result["autostart"] = Autostart::installLoginItem();
+        // Start at login (macOS LaunchAgent / Linux XDG autostart — GUI session,
+        // keeps the tray icon). Mirrors the Windows installer's logon-task
+        // checkbox: only when the wizard's checkbox was ticked. Best-effort.
+        result["autostart"] = autostart ? Autostart::installLoginItem() : false;
 
         result["status"] = "completed";
         return HttpResponse::json(result);
