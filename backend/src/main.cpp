@@ -1219,26 +1219,12 @@ int main(int argc, char* argv[])
     // Sync UPnP port mapping port with the actual server port
     internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
 
-    // Best admin URL: the public domain (valid certificate) once Internet Access
-    // is live, otherwise loopback HTTPS on the actual port (omit :443).
+    // Admin URL for local entry points (Desktop shortcut, installer post-install
+    // page, Dock, tray): always loopback — the admin APIs are localhost-only
+    // (the public-domain admin page would get 403s) and loopback works even when
+    // DNS/Internet Access is down. The public address is shown inside the admin
+    // UI itself.
     auto adminUrl = [&]() -> QString {
-#ifdef Q_OS_WIN
-        // Windows installer flow: the Desktop shortcut doubles as the "your
-        // public address" link, so prefer the domain (valid certificate) once
-        // Internet Access is live.
-        if (internetAccess.isActive() && !internetAccess.domain().isEmpty()) {
-            // Include the external (router-side) HTTPS port when it isn't the
-            // default 443 — a second instance behind the same NAT is reachable on
-            // a fallback port, which must appear in the URL.
-            quint16 ext = internetAccess.externalHttpsPort();
-            QString url = "https://" + internetAccess.domain();
-            if (ext != 0 && ext != 443) url += QStringLiteral(":%1").arg(ext);
-            return url + "/admin";
-        }
-#endif
-        // macOS/Linux: local entry points (Desktop shortcut, Dock, tray) always
-        // use loopback — works even when DNS/Internet Access is down and matches
-        // the localhost-only admin APIs.
         quint16 p = server.activeHttpsPort();
         return p == 443 ? QStringLiteral("https://localhost/admin")
                         : QStringLiteral("https://localhost:%1/admin").arg(p);
