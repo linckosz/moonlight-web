@@ -64,8 +64,9 @@ export class SetupView {
             this._autostartInstalled = !!status.autostart_installed;
             this._internetActive = !!(status.internet && status.internet.active);
             this._domain = (status.internet && status.internet.domain) || '';
-            // Only macOS can auto-install Sunshine; elsewhere the user installs it.
-            this._canAutoInstall = this._os === 'macOS';
+            // The backend says whether it can auto-install Sunshine here (macOS
+            // DMG, or Linux .deb on Debian/Ubuntu-family distros with polkit).
+            this._canAutoInstall = !!(status.sunshine && status.sunshine.can_auto_install);
             // Default the install checkbox off when Sunshine is already present or
             // cannot be auto-installed on this OS.
             this._installSunshine = this._canAutoInstall && !this._sunshineInstalled;

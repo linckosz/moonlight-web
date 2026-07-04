@@ -36,6 +36,7 @@
 #include <QJsonObject>
 #include <QNetworkInterface>
 #include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
 
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
@@ -127,6 +128,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         SunshineInstaller::DetectResult sun = SunshineInstaller::detect();
         QJsonObject sunObj;
         sunObj["installed"] = sun.installed;
+        sunObj["can_auto_install"] = SunshineInstaller::canAutoInstall();
         // Paired = some known host is paired AND lives on this machine (loopback
         // or one of our own interface addresses — mDNS may have registered the
         // local Sunshine under its LAN IP rather than 127.0.0.1).
@@ -198,15 +200,18 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
         QJsonObject result;
 
-        // 1) Install Sunshine (macOS DMG) when requested and not already present.
+        // 1) Install Sunshine (macOS DMG / Linux .deb) when requested and not
+        //    already present.
         if (wantInstall && !det.installed) {
-            const QString err = SunshineInstaller::installMacOS(user, pass);
+            const QString err = SunshineInstaller::install(user, pass);
             if (err.isEmpty()) {
                 Provisioning::setStepStatus("install", "done");
                 det = SunshineInstaller::detect();
-                // Start Sunshine so macOS surfaces its Screen-Recording /
-                // Accessibility permission prompts (cannot be granted for it).
-                SunshineInstaller::launch();
+                // Start Sunshine: on macOS this surfaces its Screen-Recording /
+                // Accessibility permission prompts (cannot be granted for it);
+                // everywhere it must be serving before the pairing below. Give
+                // the fresh process a moment to open its GameStream port.
+                if (SunshineInstaller::launch()) QThread::sleep(3);
             } else {
                 Provisioning::setStepStatus("install", "failed");
                 result["sunshine_error"] = err;
