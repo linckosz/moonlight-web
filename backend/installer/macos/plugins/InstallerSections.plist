@@ -4,9 +4,9 @@
   Section order for Installer.app. The built-in section names are fixed; the
   custom entry "Sunshine" is the InstallerSectionTitle of MoonlightWebInstaller
   .bundle (see the plugin's Info.plist). That one section chains two panes
-  internally (credentials -> download progress) via -nextPane, so a single entry
-  here covers both. This file sits alongside the .bundle in the productbuild
-  --plugins directory.
+  internally (credentials then download progress), so a single entry here covers
+  both. This file sits alongside the .bundle in the productbuild plugins
+  directory.
 -->
 <plist version="1.0">
 <dict>

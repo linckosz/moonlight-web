@@ -11,9 +11,9 @@
   (root); pairing + the public A-record are done by MoonlightWeb.app on first
   launch (Provisioning::applyOnce), which is why they are NOT installer panes.
 
-  Built by backend/installer/macos/build-pkg.sh (and the release.yml macos job):
-    productbuild --distribution distribution.xml --resources resources \
-                 --plugins plugins --package-path <dir> moonlightweb-macos-arm64.pkg
+  Built by backend/installer/macos/build-pkg.sh (and the release.yml macos job),
+  which runs productbuild with this distribution plus the resources and plugins
+  directories to produce moonlightweb-macos-arm64.pkg.
 -->
 <installer-gui-script minSpecVersion="2">
     <title>MoonlightWeb</title>
@@ -41,6 +41,6 @@
         <pkg-ref id="com.moonlightweb.server"/>
     </choice>
 
-    <!-- Version is carried by the component pkg (pkgbuild --version). -->
+    <!-- Version is carried by the component pkg (set via pkgbuild). -->
     <pkg-ref id="com.moonlightweb.server" onConclusion="none">MoonlightWeb-component.pkg</pkg-ref>
 </installer-gui-script>
