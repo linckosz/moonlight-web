@@ -50,7 +50,8 @@
         "doneDomain": "Votre adresse publique : {{domain}}",
         "donePermissions": "Dernière étape : ouvrez Sunshine et accordez-lui les autorisations Enregistrement de l'écran et Accessibilité dans les Réglages Système — macOS exige de le faire manuellement.",
         "finish": "Ouvrir MoonlightWeb",
-        "errorGeneric": "La configuration a échoué. Veuillez réessayer."
+        "errorGeneric": "La configuration a échoué. Veuillez réessayer.",
+        "sunshineInstallFailed": "L'installation de Sunshine a échoué : {{error}}. Réessayez (votre mot de passe vous sera redemandé), décochez Sunshine ou ignorez cette étape."
     },
     "footer": {
         "tagline": "MoonlightWeb — Client de streaming de jeux"
@@ -293,7 +294,19 @@
         "dnsPropagated": "DNS propagé -- votre site est maintenant disponible sur {{domain}}",
         "dnsTimeout": "Délai de propagation DNS dépassé après 5 minutes. Vérifiez la configuration de votre domaine.",
         "internetNotActive": "L'accès Internet est activé mais inactif : l'enregistrement DNS n'a pas abouti. Vérifiez le token PowerDNS et votre réseau, puis réactivez l'accès Internet.",
-        "changesDiscarded": "Modifications des paramètres abandonnées"
+        "changesDiscarded": "Modifications des paramètres abandonnées",
+        "sunshine": "Sunshine",
+        "sunshineInstalled": "Sunshine est installé sur cet ordinateur.",
+        "sunshineNotInstalled": "Sunshine n'est pas installé. Installez-le pour streamer les jeux de cet ordinateur.",
+        "sunshineManual": "Sunshine n'est pas installé, et l'installation automatique n'est pas disponible sur ce système. Veuillez installer Sunshine manuellement.",
+        "sunshineUsername": "Identifiant Sunshine",
+        "sunshinePassword": "Mot de passe Sunshine",
+        "installSunshine": "Installer Sunshine",
+        "installingSunshine": "Installation de Sunshine…",
+        "sunshineInstallHint": "Votre système d'exploitation vous demandera le mot de passe de votre compte pour installer Sunshine.",
+        "sunshineCredsRequired": "Saisissez un identifiant et un mot de passe pour Sunshine.",
+        "sunshineInstalledOk": "Sunshine installé avec succès.",
+        "sunshineInstallFailed": "Échec de l'installation de Sunshine : {{message}}"
     },
     "stream": {
         "stop": "Arrêter",
