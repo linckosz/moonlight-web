@@ -57,7 +57,7 @@ export class PairDialog {
         const pinEl = this.overlay.querySelector('.pairing-pin-display');
 
         try {
-            const result = await BackendClient.getPairState(this.host.uuid);
+            const result = await this._getPairStateWithRetry();
 
             if (result.status === 'initiated' && result.pin) {
                 this.pin = result.pin;
@@ -78,6 +78,22 @@ export class PairDialog {
         } catch (err) {
             statusEl.textContent = t('pairing.contactFailed', { message: err.message });
             statusEl.className = 'pairing-status-text pairing-error';
+        }
+    }
+
+    // The initial PIN request occasionally fails at the network level ("failed
+    // to fetch") on a transient hiccup; retry a couple of times before showing
+    // an error so the user never has to reload the page. HTTP-level errors
+    // (statusCode set) are real answers — no retry.
+    async _getPairStateWithRetry(attempts = 3) {
+        for (let i = 1; ; i++) {
+            try {
+                return await BackendClient.getPairState(this.host.uuid);
+            } catch (err) {
+                if (err.statusCode || i >= attempts || !this.overlay) throw err;
+                console.warn(`[PairDialog] pair request failed (try ${i}), retrying:`, err);
+                await new Promise((r) => setTimeout(r, 1000 * i));
+            }
         }
     }
 
