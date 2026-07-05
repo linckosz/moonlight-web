@@ -586,13 +586,14 @@ const MoonlightApp = {
             // Windows provisioning is owned by the Inno Setup installer.
             if (!status || status.os === 'Windows') return false;
             const firstRun = status.setup_completed === false;
-            const sunshineReady = !!(
-                status.sunshine &&
-                status.sunshine.installed &&
-                status.sunshine.paired
-            );
+            // Only Sunshine's *installed* state gates a re-show: `paired` is
+            // discovered asynchronously (mDNS host list), so at cold start a
+            // fully set-up machine often reports paired=false for a moment — which
+            // used to re-pop the wizard on every launch. If Sunshine is installed
+            // but momentarily unpaired, the hosts page handles pairing itself.
+            const sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             const dismissed = localStorage.getItem('mw_setup_dismissed') === '1';
-            if (!firstRun && (sunshineReady || dismissed)) return false;
+            if (!firstRun && (sunshineInstalled || dismissed)) return false;
         } catch (err) {
             console.warn('[MW] Setup status check failed:', err);
             return false;
