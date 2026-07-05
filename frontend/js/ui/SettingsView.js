@@ -680,7 +680,7 @@ export class SettingsView {
         // note while HDR is on (the tone-map costs a software AV1 decode).
         const veLockedClass = this._powerSave ? ' settings-field-locked' : '';
         const veCheckboxDisabled = webgpuUnavailable || this._powerSave ? ' disabled' : '';
-        const veChecked = this._videoEnhancement === 'on' ? 'checked' : '';
+        const veChecked = this._videoEnhancement === 'on' && !webgpuUnavailable ? 'checked' : '';
         const veHdrNote = this._hdrEnabled
             ? `<div class="settings-note">${t('settings.videoEnhancementHdrNote')}</div>`
             : '';
