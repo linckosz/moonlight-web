@@ -157,6 +157,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["sunshine"] = sunObj;
 
         obj["autostart_installed"] = Autostart::isLoginItemInstalled();
+        // The wizard is served over http://localhost (no cert warning); its
+        // "Open MoonlightWeb" button switches to the HTTPS origin for streaming.
+        obj["https_port"] = static_cast<int>(server.activeHttpsPort());
 
         QJsonObject inet;
         inet["enabled"] = appSettings.internetAccessEnabled();

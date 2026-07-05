@@ -59,6 +59,57 @@
     opacity: 0.7;
 }
 
+/* ── Insecure (http://) gate ───────────────────────────────────────────── */
+.insecure-gate {
+    max-width: 520px;
+    margin: var(--space-8) auto;
+    text-align: center;
+    padding: var(--space-8) var(--space-5);
+    color: var(--text-2);
+    background-color: var(--surface-2);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-1);
+}
+.insecure-gate-icon {
+    font-size: 2.5rem;
+    margin-bottom: var(--space-3);
+    opacity: 0.85;
+}
+.insecure-gate h2 {
+    font-size: var(--fs-xl);
+    font-weight: 700;
+    color: var(--text-1);
+    margin-bottom: var(--space-3);
+}
+.insecure-gate p {
+    margin-bottom: var(--space-5);
+    line-height: 1.5;
+}
+
+/* ── Remote-access banner (https://localhost) ──────────────────────────── */
+.remote-access-banner {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-5);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    background-color: var(--surface-2);
+    border: 1px solid var(--border-1);
+    border-radius: var(--radius-md);
+}
+.remote-access-banner a {
+    margin-left: var(--space-3);
+    color: var(--accent, #35c98f);
+    text-decoration: none;
+    word-break: break-all;
+}
+.remote-access-banner a:hover {
+    text-decoration: underline;
+}
+
 /* ── Host card ─────────────────────────────────────────────────────────── */
 .host-card {
     display: flex;

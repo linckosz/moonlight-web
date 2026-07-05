@@ -635,14 +635,20 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
     // HTTP→HTTPS redirect for plain HTTP connections.
     //
-    // Redirect ALL HTTP requests to HTTPS, regardless of whether the
-    // hostname is LAN (localhost, 192.168.x.x) or public domain.
+    // Redirect HTTP requests to HTTPS so LAN/public access is always encrypted.
     //
-    // Exception: skip redirect when the client is localhost AND the Host
+    // Exception 1: skip redirect when the client is localhost AND the Host
     // header is a public domain — this indicates a TLS-terminating tunnel
     // (e.g. cloudflared, nport TLS mode) that forwards decrypted traffic
     // to our HTTP port. In that case the browser is already on HTTPS at
     // the tunnel edge, and redirecting would create a loop.
+    //
+    // Exception 2: skip redirect for a loopback Host (localhost / 127.0.0.1 /
+    // ::1). Serving these over plain HTTP is safe (traffic never leaves the
+    // machine) and lets the local entry points — the setup wizard and admin
+    // page — open without a self-signed-cert warning (which some browsers,
+    // notably Ubuntu's snap Firefox, render as a blank page). Streaming pages
+    // still require HTTPS: the frontend gates them and offers a secure link.
     //
     // The redirect URL omits the port when it is the standard 443, so
     // http://domain → https://domain (clean URL without :443).
@@ -653,10 +659,13 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
         bool isLocalClient = HttpServer::isLocalRequest(req.clientAddress);
         bool isPublicDomain = !isLanHost(hostname);
+        bool isLoopbackHost = hostname.compare("localhost", Qt::CaseInsensitive) == 0 ||
+                              hostname == "127.0.0.1" || hostname == "::1" ||
+                              hostname == "[::1]";
 
-        // Skip redirect when behind a TLS-terminating tunnel (localhost
-        // client + public Host header = tunnel already handled TLS).
-        if (!(isLocalClient && isPublicDomain)) {
+        // Skip redirect behind a TLS-terminating tunnel (localhost client +
+        // public Host header) or for a loopback Host (served as HTTP directly).
+        if (!((isLocalClient && isPublicDomain) || isLoopbackHost)) {
             QString portPart;
             if (m_ActiveHttpsPort != 443) portPart = QString(":%1").arg(m_ActiveHttpsPort);
 

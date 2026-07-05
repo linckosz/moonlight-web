@@ -41,6 +41,7 @@ export class SetupView {
         this._autostartInstalled = false;
         this._internetActive = false;
         this._domain = '';
+        this._httpsPort = 443; // for the "Open MoonlightWeb" switch to HTTPS
         this._error = '';
 
         // User choices (config step).
@@ -64,6 +65,7 @@ export class SetupView {
             this._autostartInstalled = !!status.autostart_installed;
             this._internetActive = !!(status.internet && status.internet.active);
             this._domain = (status.internet && status.internet.domain) || '';
+            this._httpsPort = status.https_port || 443;
             // The backend says whether it can auto-install Sunshine here (macOS
             // DMG, or Linux .deb on Debian/Ubuntu-family distros with polkit).
             this._canAutoInstall = !!(status.sunshine && status.sunshine.can_auto_install);
@@ -403,8 +405,16 @@ export class SetupView {
 
     _finish() {
         this._stopPolling();
-        // Full reload: setup_completed is now true, so init() proceeds normally.
-        window.location.href = '/';
+        // The wizard runs over http://localhost (no cert warning). Streaming
+        // needs a trusted TLS origin, so switch to https:// now — the user
+        // accepts the self-signed cert once here, then the host list works.
+        // Same host, HTTPS port (omit :443).
+        if (window.location.protocol === 'https:') {
+            window.location.href = '/';
+            return;
+        }
+        const port = this._httpsPort && this._httpsPort !== 443 ? ':' + this._httpsPort : '';
+        window.location.href = 'https://' + window.location.hostname + port + '/';
     }
 
     esc(text) {
