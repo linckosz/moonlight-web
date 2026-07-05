@@ -966,17 +966,27 @@ const MoonlightApp = {
         const chain = this._transportChain || [];
         const cur = this._transportIndex || 0;
 
+        // WebCodecs cannot decode anything on this machine/browser: retrying the
+        // same transport (or any other WebCodecs-based one) is pointless.
+        const decoderFail = reason === 'decoder_unsupported';
+
         // Always retry the FIRST transport once before moving down the chain — a
         // single transient ICE failure on the preferred transport shouldn't
         // immediately downgrade. The retry is silent (no warning toast).
-        if (cur === 0 && !this._firstTransportRetried) {
+        if (cur === 0 && !this._firstTransportRetried && !decoderFail) {
             this._firstTransportRetried = true;
             console.warn(`[MW] Transport ${chain[0]} failed (${reason}) — retrying once (silent)`);
             this._relaunchTransport(0);
             return;
         }
 
-        const next = cur + 1;
+        let next = cur + 1;
+        // On a decode-capability failure, skip every other WebCodecs-based
+        // transport (webrtc-dc-*, wss) and jump straight to a native-media one
+        // (<video> RTP decodes via the browser's regular media stack).
+        if (decoderFail) {
+            while (next < chain.length && !chain[next].startsWith('webrtc-media')) next++;
+        }
         if (next < chain.length) {
             console.warn(`[MW] Transport ${chain[cur]} failed (${reason}) — trying ${chain[next]}`);
             Toast.warning(

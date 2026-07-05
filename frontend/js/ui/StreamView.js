@@ -1397,6 +1397,7 @@ export class StreamView {
                     this._recoveryAttempts +
                     ' attempts — AV1 decoding is broken in this browser',
             );
+            if (this._reportConnectionFailed('decoder_unsupported')) return;
             this._fatalDecodeError = true;
             if (this.decoder) {
                 try {
@@ -1421,6 +1422,10 @@ export class StreamView {
                     this.MAX_RECOVERY_ATTEMPTS +
                     ') reached, giving up',
             );
+            // Never decoded a single frame → WebCodecs is unusable here; a
+            // native media transport may still work — advance the chain.
+            if (this.stats.decoded === 0 && this._reportConnectionFailed('decoder_unsupported'))
+                return;
             this.setStatus('error', 'Max recovery attempts exceeded');
             return;
         }
@@ -1935,10 +1940,14 @@ export class StreamView {
         const target = this._computeCodecFallbackTarget();
 
         if (!target) {
-            // Already H.264 SDR — nothing left to try.
+            // Already H.264 SDR — nothing left to try with WebCodecs. A native
+            // media transport (<video> RTP) decodes through the browser's normal
+            // media stack and may still work (e.g. GPU-less boxes / browsers
+            // without WebCodecs H.264): hand off to the transport chain first.
             this._codecFallback = null;
             this._codecFallbackRequested = false;
             console.error('[StreamView] Codec fallback exhausted (H.264 SDR unsupported)');
+            if (this._reportConnectionFailed('decoder_unsupported')) return;
             this.setStatus('error', 'Codec not supported by browser');
             this.quit();
             return;
@@ -2423,6 +2432,23 @@ export class StreamView {
             this._everConnected = true;
             this.setStatus('connecting', 'Waiting for stream...');
             this._updateStartupStep(2);
+
+            // No-video watchdog: transport up but nothing ever rendered — the
+            // decode/render path is broken on this transport (not the network),
+            // e.g. WebCodecs can't decode on a GPU-less box while the native
+            // <video> path would. Hand it to the transport chain instead of
+            // sitting on the "Waiting for stream" overlay forever.
+            if (this._noVideoTimer) clearTimeout(this._noVideoTimer);
+            this._noVideoTimer = setTimeout(() => {
+                if (this._firstFrameRendered || this._quitting || this._manualQuitting) return;
+                const webcodecs = this._transport !== 'webrtc-media';
+                const reason =
+                    webcodecs && this.stats.decoded === 0 ? 'decoder_unsupported' : 'no_video';
+                console.error('[StreamView] No video 15s after connect (' + reason + ')');
+                if (this._reportConnectionFailed(reason)) return;
+                this.setStatus('error', 'No video received');
+                this.quit();
+            }, 15000);
 
             // Start ping timer for browser-side RTT measurement.
             // Sends a ping every 2s on the input DC; backend echoes back a pong.
@@ -4864,6 +4890,10 @@ export class StreamView {
         if (this._overlayInterval) {
             clearInterval(this._overlayInterval);
             this._overlayInterval = null;
+        }
+        if (this._noVideoTimer) {
+            clearTimeout(this._noVideoTimer);
+            this._noVideoTimer = null;
         }
         if (this._overlayEl) {
             this._overlayEl.style.display = 'none';
