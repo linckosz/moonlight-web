@@ -70,7 +70,11 @@ if ! sunshine_bin >/dev/null; then
     if [ -f "$DMG" ]; then
         MNT="/tmp/mw-sunshine-mnt"
         /bin/mkdir -p "$MNT"
-        if /usr/bin/hdiutil attach "$DMG" -nobrowse -noverify -mountpoint "$MNT"; then
+        # The Sunshine DMG embeds a GPL software-license agreement, so `hdiutil
+        # attach` prints it and *cancels* the mount when there is no TTY to accept
+        # it (this root postinstall). Pipe `yes` in to auto-accept. The pipeline's
+        # exit status is hdiutil's (last command); `yes` dies on SIGPIPE after.
+        if /usr/bin/yes | /usr/bin/hdiutil attach "$DMG" -nobrowse -noverify -mountpoint "$MNT"; then
             /bin/ls -la "$MNT" # debug aid: DMG layout, in case the app moves
             SUN_SRC="$MNT/Sunshine.app"
             [ -d "$SUN_SRC" ] || SUN_SRC="$(/usr/bin/find "$MNT" -maxdepth 2 -name '*.app' -type d -print 2>/dev/null | /usr/bin/head -1)"
