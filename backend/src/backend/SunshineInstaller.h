@@ -26,12 +26,15 @@
  * so on Windows this only detects it. macOS and Linux have no native installer
  * (bare .dmg / .deb), so the in-app setup wizard drives the install here:
  *  - macOS: download the official Sunshine-macOS-<arch>.dmg and copy
- *    Sunshine.app into /Applications. TCC permissions (Screen Recording /
+ *    Sunshine.app into /Applications — unprivileged first, falling back to an
+ *    osascript "with administrator privileges" prompt (the macOS pkexec) when
+ *    /Applications is not user-writable. TCC permissions (Screen Recording /
  *    Accessibility) still require a manual user grant at Sunshine's first
  *    launch — no API can bypass that.
- *  - Linux (Debian/Ubuntu family): download the matching official .deb and
- *    install it as root via `pkexec apt-get install` (polkit password prompt
- *    in the user's GUI session). Other distros install manually.
+ *  - Linux: download the official package matching the distro family (.deb,
+ *    Fedora/openSUSE .rpm, Arch .pkg.tar.zst) and install it as root via
+ *    pkexec + apt-get/dnf/zypper/pacman (polkit password prompt in the user's
+ *    GUI session). Distros outside those families install manually.
  * Both paths then set Sunshine's credentials via the `--creds` CLI.
  */
 namespace SunshineInstaller {
