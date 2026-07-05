@@ -448,7 +448,8 @@ begin
     '<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>' +
     '<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>' +
     '</Settings>' + #13#10 +
-    '  <Actions Context="Author"><Exec><Command>"' + exePath + '"</Command></Exec></Actions>' + #13#10 +
+    '  <Actions Context="Author"><Exec><Command>"' + exePath + '"</Command>' +
+    '<Arguments>--autostart</Arguments></Exec></Actions>' + #13#10 +
     '</Task>' + #13#10;
   xmlPath := ExpandConstant('{tmp}\mw-task.xml');
   if SaveStringToFile(xmlPath, xml, False) then
@@ -566,7 +567,9 @@ var
 begin
   // Start the windowless tray server now so provisioning.json is consumed and
   // pairing + A-record run. ewNoWait: it keeps running after setup exits.
-  Exec(ExpandConstant('{app}\{#MyAppExe}'), '', ExpandConstant('{app}'),
+  // --autostart: an automatic launch must not open the browser itself — the
+  // [Run] "open the admin page" checkbox owns that.
+  Exec(ExpandConstant('{app}\{#MyAppExe}'), '--autostart', ExpandConstant('{app}'),
        SW_HIDE, ewNoWait, rc);
 
   // Silent installs have no UI to drive; the server still provisions in the
