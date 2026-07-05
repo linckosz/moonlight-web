@@ -158,6 +158,12 @@ export class BackendClient {
         );
     }
 
+    // Open macOS' Screen Recording privacy pane on the host so the user can
+    // grant Sunshine capture permission (localhost + macOS only backend-side).
+    static async openScreenRecordingSettings() {
+        return this.post('/api/system/open-screen-recording');
+    }
+
     // ── Auth API ───────────────────────────────────────────────────────────
 
     static async validatePin(pin, machineName) {

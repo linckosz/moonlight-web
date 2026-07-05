@@ -35,6 +35,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkInterface>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -255,6 +256,28 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
         result["status"] = "completed";
         return HttpResponse::json(result);
+    });
+
+    // POST /api/system/open-screen-recording — open macOS' Screen Recording
+    // privacy pane so the user can grant Sunshine capture permission. Sunshine
+    // can't stream without it (its log: "No screen capture permission!"), and
+    // macOS forbids granting it programmatically (TCC). Localhost-only + macOS-
+    // only: it acts on the host, and only someone physically at that Mac can use
+    // the pane it opens.
+    server.router()->post("/api/system/open-screen-recording", [&](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
+#if defined(Q_OS_MACOS)
+        QProcess::startDetached(
+            QStringLiteral("/usr/bin/open"),
+            {QStringLiteral(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")});
+        QJsonObject obj;
+        obj["status"] = "opened";
+        return HttpResponse::json(obj);
+#else
+        return HttpResponse::error(400, "Only available on macOS");
+#endif
     });
 
     // API route: disable Internet Access

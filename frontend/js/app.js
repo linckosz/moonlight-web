@@ -937,6 +937,15 @@ const MoonlightApp = {
                 this.hostListView.clearLaunching();
                 this.hostListView.start();
             }
+            // Sunshine couldn't start video capture (503). The dominant macOS
+            // cause is a missing Screen Recording permission, which can't be
+            // granted programmatically — show an explicit dialog telling the user
+            // exactly what to enable, with a button to open the settings pane.
+            if (err && err.responseBody && err.responseBody.code === 'video_capture_failed') {
+                this._showVideoCaptureHelp(host, err.message);
+                this.transition('app_list');
+                return;
+            }
             // Distinguish a client-side timeout (backend hung/crashed) from a
             // regular failure so the user gets a clear, actionable message.
             const msg =
@@ -946,6 +955,59 @@ const MoonlightApp = {
             Toast.error(msg);
             this.transition('app_list');
         }
+    },
+
+    /**
+     * Explicit modal shown when Sunshine can't start video capture. Leads with
+     * the macOS Screen Recording permission (the common cause) and offers a
+     * button to open the settings pane on the host — shown only when the browser
+     * is on the host itself (localhost), the only place the button can act and
+     * where the backend endpoint is reachable.
+     */
+    _showVideoCaptureHelp(host, detail) {
+        const hostname = window.location.hostname;
+        const onHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+        const name = (host && (host.displayName || host.name)) || '';
+
+        const overlay = document.createElement('div');
+        overlay.className = 'pairing-overlay';
+        const openBtn = onHost
+            ? `<button class="btn btn-open btn-open-screenrec">${escapeHtml(
+                  t('permission.screenRecording.openSettings'),
+              )}</button>`
+            : '';
+        overlay.innerHTML = `
+            <div class="pairing-dialog">
+                <h3>${escapeHtml(t('permission.screenRecording.title'))}</h3>
+                <p class="pairing-instruction">${escapeHtml(
+                    t('permission.screenRecording.body', { name }),
+                )}</p>
+                <div class="pairing-actions">
+                    ${openBtn}
+                    <button class="btn btn-secondary btn-dismiss">${escapeHtml(
+                        t('common.close'),
+                    )}</button>
+                </div>
+            </div>
+        `;
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+        overlay.querySelector('.btn-dismiss').addEventListener('click', close);
+        const ob = overlay.querySelector('.btn-open-screenrec');
+        if (ob) {
+            ob.addEventListener('click', async () => {
+                try {
+                    await BackendClient.openScreenRecordingSettings();
+                    Toast.info(t('permission.screenRecording.opened'));
+                } catch (e) {
+                    console.warn('[MW] open screen recording settings failed:', e);
+                    Toast.error(e.message || t('permission.screenRecording.openFailed'));
+                }
+            });
+        }
+        document.body.appendChild(overlay);
     },
 
     /**

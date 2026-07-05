@@ -397,5 +397,14 @@
         "timeout": "Server not responding — launch cancelled",
         "hevcH264Unsupported": "HEVC and H.264 both unsupported by browser",
         "hdrFallback": "HDR unavailable — switched to {{to}} without HDR"
+    },
+    "permission": {
+        "screenRecording": {
+            "title": "Screen recording permission needed",
+            "body": "Sunshine on \"{{name}}\" can't capture the screen yet. On macOS, open System Settings → Privacy & Security → Screen Recording, turn on Sunshine, then quit and reopen Sunshine. (If there's no display, connect one or use an HDMI dummy plug.)",
+            "openSettings": "Open Screen Recording settings",
+            "opened": "Opened Screen Recording settings on the host.",
+            "openFailed": "Couldn't open the settings pane — open it manually."
+        }
     }
 }
