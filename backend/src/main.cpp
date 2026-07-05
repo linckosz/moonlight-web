@@ -194,18 +194,27 @@ static void writeAdminShortcut(const QString& url)
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
     if (desktop.isEmpty()) return;
 #if defined(Q_OS_LINUX)
-    // No .url handler on Linux (it opens in a text editor): write a Type=Link
-    // .desktop entry. GNOME's desktop icons require BOTH the exec bit and the
-    // gio "trusted" metadata to launch it without an "untrusted" prompt.
+    // No .url handler on Linux (it opens in a text editor). A Type=Link entry
+    // renders a generic icon and, on GNOME, silently refuses to launch; a
+    // Type=Application entry that shells out to xdg-open both shows the app icon
+    // (Icon=moonlightweb, installed in the hicolor theme by the package) and
+    // opens the URL reliably. GNOME's desktop icons require the entry to be
+    // executable AND carry the gio "trusted" metadata to launch without an
+    // "untrusted" prompt.
     const QString path = desktop + "/MoonlightWeb Admin.desktop";
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(("[Desktop Entry]\nType=Link\nName=MoonlightWeb Admin\nURL=" + url +
-             "\nIcon=moonlightweb\n")
+    f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=MoonlightWeb Admin\n"
+             "Exec=xdg-open " +
+             url + "\nIcon=moonlightweb\nTerminal=false\n")
                 .toUtf8());
     f.close();
-    QFile::setPermissions(path, QFile::permissions(path) | QFileDevice::ExeOwner |
-                                    QFileDevice::ExeGroup | QFileDevice::ExeOther);
+    // Owner rwx + group/other r-x: launchable and (re)writable on the next port
+    // change, but not world-writable.
+    QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                    QFileDevice::ExeOwner | QFileDevice::ReadGroup |
+                                    QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                    QFileDevice::ExeOther);
     QProcess::startDetached(QStringLiteral("gio"),
                             {QStringLiteral("set"), path, QStringLiteral("metadata::trusted"),
                              QStringLiteral("true")});
@@ -231,6 +240,22 @@ static bool hasGuiSession()
 #else
     return true;
 #endif
+}
+
+// Open a URL in the user's default browser. On Linux, QDesktopServices::openUrl
+// routes through the XDG desktop portal, which under Ubuntu's snap-packaged
+// Firefox (the distro default) can pop a blank window that never receives the
+// URL — the bar stays empty. Invoking xdg-open directly (the same path a working
+// .desktop launcher uses) delivers the URL reliably. Other platforms use Qt's
+// opener. Note: a self-signed localhost cert still shows a one-time browser
+// warning the user must accept — that is inherent to self-signed TLS.
+static void openInBrowser(const QString& url)
+{
+#if defined(Q_OS_LINUX)
+    if (QProcess::startDetached(QStringLiteral("xdg-open"), {url})) return;
+    // xdg-open missing (minimal desktop): fall through to Qt's opener.
+#endif
+    QDesktopServices::openUrl(QUrl(url));
 }
 
 int main(int argc, char* argv[])
@@ -341,7 +366,7 @@ int main(int argc, char* argv[])
             const QString url = p == 443 ? QStringLiteral("https://localhost/")
                                          : QStringLiteral("https://localhost:%1/").arg(p);
             Logger::info("Opening the running instance's web UI: " + url);
-            QDesktopServices::openUrl(QUrl(url));
+            openInBrowser(url);
         }
         return 0;
     }
@@ -1433,7 +1458,7 @@ int main(int argc, char* argv[])
         // Defer so the TLS listener is fully accepting before the browser hits it.
         QTimer::singleShot(1200, &app, [url]() {
             qInfo() << "[main] Opening web UI:" << url;
-            QDesktopServices::openUrl(QUrl(url));
+            openInBrowser(url);
         });
     } else if (!appSettings.setupCompleted()) {
         qInfo() << "[main] Setup pending, browser not auto-opened — visit /setup";
