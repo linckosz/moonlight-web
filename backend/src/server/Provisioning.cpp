@@ -140,7 +140,17 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
 
 bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers)
 {
-    const QString path = exeDir + QStringLiteral("/provisioning.json");
+    // The installer drops provisioning.json next to the executable (Windows +
+    // Linux). On macOS the .pkg postinstall runs as root and cannot write inside
+    // the signed app bundle (exeDir = MoonlightWeb.app/Contents/MacOS), so it
+    // writes into the per-user data dir instead — fall back to it. The consumed
+    // marker and removal happen next to whichever file we actually found.
+    QString dir = exeDir;
+    QString path = dir + QStringLiteral("/provisioning.json");
+    if (!QFile::exists(path)) {
+        dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        path = dir + QStringLiteral("/provisioning.json");
+    }
     QFile file(path);
     if (!file.exists()) return false;
     if (!file.open(QIODevice::ReadOnly)) {
@@ -187,7 +197,7 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
     QJsonObject consumedSun = sun;
     consumedSun.remove(QStringLiteral("password"));
     if (!consumedSun.isEmpty()) obj[QStringLiteral("sunshine")] = consumedSun;
-    QFile consumed(exeDir + QStringLiteral("/provisioning.consumed.json"));
+    QFile consumed(dir + QStringLiteral("/provisioning.consumed.json"));
     if (consumed.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         consumed.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
         consumed.close();

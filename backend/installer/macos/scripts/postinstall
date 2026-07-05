@@ -1,0 +1,153 @@
+#!/bin/bash
+# ===========================================================================
+#  MoonlightWeb — macOS .pkg postinstall (runs as root during the Install phase).
+#
+#  Mirrors what the Windows Inno installer does before the app's first run:
+#    1. install the Sunshine streaming server (from the DMG the installer plugin
+#       already downloaded to /tmp, or fetched here as a fallback),
+#    2. set Sunshine's web-UI credentials (`sunshine --creds`),
+#    3. drop a provisioning.json in the console user's app-data dir so the server
+#       auto-pairs the local Sunshine + brings Internet Access up on first launch
+#       (Provisioning::applyOnce — the same file/contract as Windows),
+#    4. install the per-user LaunchAgent (auto-start at login, keeps the tray),
+#    5. launch the app once now so pairing runs and the in-app live checklist
+#       (SetupView / provisioning.status.json) shows in the browser.
+#
+#  User choices (Sunshine user/pass, Internet toggle, downloaded DMG path) are
+#  handed over by the InstallerPlugin panes via /tmp/moonlightweb-provisioning
+#  .plist (written in the user session; read here as root).
+# ===========================================================================
+set -u
+
+APP="/Applications/MoonlightWeb.app"
+EXE="$APP/Contents/MacOS/MoonlightWeb"
+HANDOFF="/tmp/moonlightweb-provisioning" # `defaults` appends .plist
+LOG="/tmp/moonlightweb-postinstall.log"
+exec >>"$LOG" 2>&1
+echo "== postinstall $(date) =="
+
+# ── Console (GUI) user: scripts run as root, but the LaunchAgent, app-data dir
+#    and the app launch must target the logged-in user's session. ────────────
+CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console)"
+if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
+    # No one logged in (e.g. `installer` CLI as root): fall back to $USER/$HOME.
+    CONSOLE_USER="${USER:-root}"
+fi
+CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || echo 0)"
+CONSOLE_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+[ -z "$CONSOLE_HOME" ] && CONSOLE_HOME="/Users/$CONSOLE_USER"
+echo "console user=$CONSOLE_USER uid=$CONSOLE_UID home=$CONSOLE_HOME"
+
+# ── Read the plugin hand-off (best-effort defaults; no jq/python on stock macOS).
+read_val() { /usr/bin/defaults read "$HANDOFF" "$1" 2>/dev/null; }
+SUN_USER="$(read_val username)"; [ -z "$SUN_USER" ] && SUN_USER="admin"
+SUN_PASS="$(read_val password)"; [ -z "$SUN_PASS" ] && SUN_PASS="admin"
+DMG="$(read_val dmg)"
+INTERNET_RAW="$(read_val internet)" # 1 / 0 / empty
+if [ "$INTERNET_RAW" = "1" ] || [ "$INTERNET_RAW" = "true" ]; then
+    INTERNET="true"; else INTERNET="false"; fi
+
+# ── 1) Install Sunshine (skip if already present). ──────────────────────────
+sunshine_bin() {
+    for p in "/Applications/Sunshine.app/Contents/MacOS/sunshine" \
+             "/opt/homebrew/bin/sunshine" "/usr/local/bin/sunshine"; do
+        [ -x "$p" ] && { echo "$p"; return 0; }
+    done
+    return 1
+}
+
+if ! sunshine_bin >/dev/null; then
+    # Fetch the DMG if the plugin didn't (no network in the pane, or CLI install).
+    if [ -z "$DMG" ] || [ ! -f "$DMG" ]; then
+        ARCH="$(/usr/bin/uname -m)" # arm64 | x86_64
+        [ "$ARCH" = "arm64" ] || ARCH="x86_64"
+        DMG="/tmp/mw-sunshine.dmg"
+        echo "downloading Sunshine DMG ($ARCH)"
+        /usr/bin/curl -fLsS -o "$DMG" \
+          "https://github.com/LizardByte/Sunshine/releases/latest/download/Sunshine-macOS-${ARCH}.dmg" \
+          || echo "WARN: Sunshine download failed"
+    fi
+    if [ -f "$DMG" ]; then
+        MNT="/tmp/mw-sunshine-mnt"
+        /bin/mkdir -p "$MNT"
+        if /usr/bin/hdiutil attach "$DMG" -nobrowse -noverify -mountpoint "$MNT"; then
+            if [ -d "$MNT/Sunshine.app" ]; then
+                /bin/rm -rf "/Applications/Sunshine.app"
+                /bin/cp -R "$MNT/Sunshine.app" "/Applications/"
+                /usr/bin/xattr -dr com.apple.quarantine "/Applications/Sunshine.app" 2>/dev/null
+                echo "Sunshine installed"
+            else
+                echo "WARN: Sunshine.app not found in the DMG"
+            fi
+            /usr/bin/hdiutil detach "$MNT" -force 2>/dev/null
+        else
+            echo "WARN: could not mount the Sunshine DMG"
+        fi
+    fi
+else
+    echo "Sunshine already present, skipping install"
+fi
+
+# ── 2) Apply Sunshine web-UI credentials (best-effort). ─────────────────────
+SUN_BIN="$(sunshine_bin || true)"
+if [ -n "$SUN_BIN" ]; then
+    "$SUN_BIN" --creds "$SUN_USER" "$SUN_PASS" || echo "WARN: setting Sunshine creds failed"
+fi
+
+# ── 3) provisioning.json for the app's first-run pairing (Provisioning::applyOnce).
+#    Written into the console user's Qt AppDataLocation
+#    (~/Library/Application Support/MoonlightWeb/MoonlightWeb), owned by them.
+json_escape() { printf '%s' "$1" | /usr/bin/sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+APPDATA="$CONSOLE_HOME/Library/Application Support/MoonlightWeb/MoonlightWeb"
+/bin/mkdir -p "$APPDATA"
+cat > "$APPDATA/provisioning.json" <<JSON
+{
+  "internet_access_authorized": $INTERNET,
+  "sunshine": {
+    "auto_pair": true,
+    "username": "$(json_escape "$SUN_USER")",
+    "password": "$(json_escape "$SUN_PASS")"
+  }
+}
+JSON
+/usr/sbin/chown -R "$CONSOLE_USER" "$CONSOLE_HOME/Library/Application Support/MoonlightWeb"
+echo "wrote $APPDATA/provisioning.json (internet=$INTERNET)"
+
+# ── 4) LaunchAgent: auto-start at login (mirrors Autostart::installLoginItem).
+#    RunAtLoad + KeepAlive/SuccessfulExit=false → relaunch on crash only, never
+#    after a clean quit. NOT bootstrapped here (we launch once below instead);
+#    launchd loads it at the next login.
+AGENTS="$CONSOLE_HOME/Library/LaunchAgents"
+LOGDIR="$APPDATA/logs"
+/bin/mkdir -p "$AGENTS" "$LOGDIR"
+cat > "$AGENTS/com.moonlightweb.agent.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.moonlightweb.agent</string>
+    <key>ProgramArguments</key>
+    <array><string>$EXE</string><string>--autostart</string></array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key>
+    <dict><key>SuccessfulExit</key><false/></dict>
+    <key>ThrottleInterval</key><integer>5</integer>
+    <key>StandardOutPath</key><string>$LOGDIR/agent.log</string>
+    <key>StandardErrorPath</key><string>$LOGDIR/agent.log</string>
+</dict>
+</plist>
+PLIST
+/usr/sbin/chown "$CONSOLE_USER" "$AGENTS/com.moonlightweb.agent.plist"
+echo "wrote LaunchAgent"
+
+# ── 5) Launch the app once in the user session (no --autostart → it opens the
+#    browser so the live setup checklist shows while first-run pairing runs).
+if [ "$CONSOLE_UID" != "0" ]; then
+    /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" \
+        /usr/bin/open -a "$APP" || echo "WARN: could not launch the app"
+fi
+
+# ── Cleanup: the hand-off carries the Sunshine password in plaintext. ───────
+/bin/rm -f "$HANDOFF.plist"
+echo "== postinstall done =="
+exit 0

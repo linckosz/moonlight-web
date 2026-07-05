@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist for the MoonlightWeb Installer.app plugin bundle.
+  NSPrincipalClass is the InstallerPane subclass Installer.app instantiates;
+  InstallerSectionTitle is the left-list name and must match the "Sunshine"
+  entry in ../plugins/InstallerSections.plist.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>MoonlightWebInstaller</string>
+    <key>CFBundleIdentifier</key><string>com.moonlightweb.installer.plugin</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>MoonlightWebInstaller</string>
+    <key>CFBundlePackageType</key><string>BNDL</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>NSPrincipalClass</key><string>MWSunshinePane</string>
+    <key>InstallerSectionTitle</key><string>Sunshine</string>
+</dict>
+</plist>

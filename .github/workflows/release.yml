@@ -1,7 +1,8 @@
 # MoonlightWeb — multi-platform release packaging.
 #
 # On a v* tag, builds self-contained bundles for Windows x64/ARM64 (Inno Setup
-# installer), Linux x64 (.deb + .rpm + AppImage) and macOS arm64 (.dmg), then
+# installer), Linux x64 (.deb + .rpm + AppImage) and macOS arm64 (interactive
+# .pkg installer), then
 # attaches them to the GitHub Release. Each bundle ships the executable, the Qt
 # runtime (via the native deploy tool), OpenSSL and the frontend/ served as
 # static files (staged by `cmake --install`, which strips dev tooling).
@@ -313,7 +314,7 @@ jobs:
             moonlightweb-linux-x64.rpm
             moonlightweb-linux-x64.AppImage
 
-  # ── macOS arm64 (.dmg) ───────────────────────────────────────────────────
+  # ── macOS arm64 (.pkg) ───────────────────────────────────────────────────
   macos:
     needs: setup
     if: ${{ needs.setup.outputs.macos == 'true' }}
@@ -408,9 +409,9 @@ jobs:
           </dict></plist>
           PLIST
 
-      - name: Deploy Qt + create DMG
+      - name: Deploy Qt + sign bundle
         run: |
-          # Deploy the Qt frameworks into the bundle (no -dmg yet).
+          # Deploy the Qt frameworks into the bundle.
           macdeployqt MoonlightWeb.app
 
           # Ad-hoc re-sign (identity "-"): no Apple Developer account needed, but
@@ -436,22 +437,27 @@ jobs:
           # Verify the seal is internally consistent (no Team-ID mismatch).
           codesign --verify --deep --strict --verbose=2 MoonlightWeb.app
 
-          # Build the DMG from the signed bundle with hdiutil (a second
-          # macdeployqt -dmg would re-deploy and invalidate the signature).
-          # Standard layout: app + /Applications symlink so users drag-install
-          # instead of running from the read-only mounted volume.
-          mkdir dmg-staging
-          mv MoonlightWeb.app dmg-staging/
-          ln -s /Applications dmg-staging/Applications
-          hdiutil create -volname MoonlightWeb -srcfolder dmg-staging \
-            -ov -format UDZO moonlightweb-macos-arm64.dmg
+      - name: Build interactive .pkg installer
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        # Compiles the Installer.app plugin (Sunshine credentials + Internet
+        # toggle + Sunshine download progress), packs the signed app + the
+        # postinstall (installs Sunshine, writes provisioning.json, LaunchAgent,
+        # launches the app) into the component pkg, and wraps it in a guided
+        # productbuild archive. Pairing + the public A-record run in the app on
+        # first launch (Provisioning::applyOnce). Unsigned: no Apple Developer
+        # account (same posture as the old ad-hoc DMG).
+        run: |
+          APP="$PWD/MoonlightWeb.app" \
+          OUT="$PWD/moonlightweb-macos-arm64.pkg" \
+            bash backend/installer/macos/build-pkg.sh
 
       - uses: actions/upload-artifact@v6
         with:
           name: moonlightweb-macos-arm64
-          path: moonlightweb-macos-arm64.dmg
+          path: moonlightweb-macos-arm64.pkg
 
       - uses: softprops/action-gh-release@v3
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: moonlightweb-macos-arm64.dmg
+          files: moonlightweb-macos-arm64.pkg
