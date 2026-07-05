@@ -397,5 +397,14 @@
         "timeout": "Le serveur ne répond pas — démarrage annulé",
         "hevcH264Unsupported": "HEVC et H.264 non pris en charge par le navigateur",
         "hdrFallback": "HDR indisponible — bascule en {{to}} sans HDR"
+    },
+    "permission": {
+        "screenRecording": {
+            "title": "Autorisation d'enregistrement de l'écran requise",
+            "body": "Sunshine sur « {{name}} » ne peut pas encore capturer l'écran. Sur macOS, ouvre Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran, active Sunshine, puis quitte et rouvre Sunshine. (S'il n'y a pas d'écran, branches-en un ou utilise un dummy plug HDMI.)",
+            "openSettings": "Ouvrir les réglages d'enregistrement de l'écran",
+            "opened": "Réglages d'enregistrement de l'écran ouverts sur l'hôte.",
+            "openFailed": "Impossible d'ouvrir le panneau — ouvre-le manuellement."
+        }
     }
 }

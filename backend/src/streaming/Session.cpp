@@ -348,13 +348,20 @@ void StreamSession::onLaunchReplyFinished()
         // actionable message instead of the opaque "502 Launch error: HTTP 503".
         QString reason = QString::fromUtf8(e.what());
         if (reason.contains("503")) {
-            m_Respond(HttpResponse::error(
-                503, QString("Host \"%1\" could not start video capture. On macOS, grant "
-                             "Sunshine the \"Screen Recording\" permission in System Settings "
-                             "> Privacy & Security > Screen Recording, then quit and reopen "
-                             "Sunshine. Otherwise, make sure a display is connected and powered "
-                             "on (or use an HDMI dummy plug).")
-                         .arg(m_Host->name)));
+            // Machine-readable `code` lets the frontend show an explicit
+            // "grant Screen Recording" dialog (with a button to open the macOS
+            // settings pane) instead of a plain toast.
+            QJsonObject err;
+            err["error"] =
+                QString("Host \"%1\" could not start video capture. On macOS, grant "
+                        "Sunshine the \"Screen Recording\" permission in System Settings "
+                        "> Privacy & Security > Screen Recording, then quit and reopen "
+                        "Sunshine. Otherwise, make sure a display is connected and powered "
+                        "on (or use an HDMI dummy plug).")
+                    .arg(m_Host->name);
+            err["code"] = QStringLiteral("video_capture_failed");
+            err["status"] = 503;
+            m_Respond(HttpResponse::json(err, 503));
         } else {
             m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(reason)));
         }
