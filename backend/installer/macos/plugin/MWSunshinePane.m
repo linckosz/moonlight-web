@@ -7,8 +7,10 @@
  * happens in the .pkg postinstall, which runs as root). Everything is handed to
  * the postinstall through the /tmp plist (see MWCommon.h).
  *
- * The view is built programmatically (no .xib) so the bundle compiles with a
- * plain clang invocation in CI. Pairing + the public A-record are NOT done here:
+ * The nib (MWSunshinePane.xib) only carries the template-mandated wiring
+ * (section.firstPane -> pane, pane.contentView -> empty view); the controls are
+ * built programmatically in awakeFromNib so no Interface Builder is needed
+ * beyond a plain ibtool compile. Pairing + the public A-record are NOT done here:
  * they need the app installed and running, so MoonlightWeb.app does them on first
  * launch (Provisioning::applyOnce) and shows the live checklist in the browser.
  */
@@ -19,7 +21,7 @@
 @end
 
 @implementation MWSunshinePane {
-    NSView *_view;
+    BOOL _built;
     NSTextField *_userField;
     NSSecureTextField *_passField;
     NSButton *_internetCheck;
@@ -29,40 +31,48 @@
     BOOL _started;
 }
 
-// Must match the "Sunshine" entry in InstallerSections.plist / InstallerSectionTitle.
+// Sidebar label comes from InstallerSectionTitle; this is the pane title shown
+// above the content area.
 - (NSString *)title { return @"Sunshine"; }
 
-- (NSTextField *)labelAt:(CGFloat)y text:(NSString *)s
+- (NSTextField *)labelAt:(CGFloat)y text:(NSString *)s in:(NSView *)view
 {
     NSTextField *l = [[NSTextField alloc] initWithFrame:NSMakeRect(0, y, 470, 18)];
     l.stringValue = s;
     l.bezeled = NO; l.drawsBackground = NO; l.editable = NO; l.selectable = NO;
-    [_view addSubview:l];
+    [view addSubview:l];
     return l;
 }
 
-- (void)buildView
+// The nib provides an empty contentView (real InstallerPane IBOutlet); populate
+// it once. Outlets are connected before awakeFromNib fires.
+- (void)awakeFromNib
 {
-    _view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 470, 240)];
+    [super awakeFromNib];
+    if (_built) return;
+    NSView *view = [self contentView];
+    if (!view) return;
+    _built = YES;
 
-    [self labelAt:212 text:@"Enter the Sunshine credentials MoonlightWeb should use to pair."];
+    [self labelAt:212 text:@"Enter the Sunshine credentials MoonlightWeb should use to pair."
+               in:view];
 
-    [self labelAt:184 text:@"Username"];
+    [self labelAt:184 text:@"Username" in:view];
     _userField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 160, 220, 22)];
     _userField.stringValue = @"admin";
-    [_view addSubview:_userField];
+    [view addSubview:_userField];
 
-    [self labelAt:128 text:@"Password"];
+    [self labelAt:128 text:@"Password" in:view];
     _passField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0, 104, 220, 22)];
-    [_view addSubview:_passField];
+    [view addSubview:_passField];
 
     _internetCheck = [[NSButton alloc] initWithFrame:NSMakeRect(0, 66, 470, 22)];
     [_internetCheck setButtonType:NSButtonTypeSwitch];
     _internetCheck.title = @"Allow a secure public Internet link (recommended)";
     _internetCheck.state = NSControlStateValueOn;
-    [_view addSubview:_internetCheck];
+    [view addSubview:_internetCheck];
 
-    _statusLabel = [self labelAt:34 text:@"Preparing Sunshine…"];
+    _statusLabel = [self labelAt:34 text:@"Preparing Sunshine…" in:view];
     _statusLabel.textColor = [NSColor secondaryLabelColor];
 
     _progress = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 12, 470, 16)];
@@ -70,13 +80,7 @@
     _progress.indeterminate = NO;
     _progress.minValue = 0.0;
     _progress.maxValue = 1.0;
-    [_view addSubview:_progress];
-}
-
-- (NSView *)paneView
-{
-    if (!_view) [self buildView];
-    return _view;
+    [view addSubview:_progress];
 }
 
 // Start the Sunshine download once, when the pane first appears. It runs while

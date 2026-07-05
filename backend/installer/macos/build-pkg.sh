@@ -29,8 +29,12 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo "== 1/4 build InstallerPlugin bundle =="
 BUNDLE="$WORK/plugins/MoonlightWebInstaller.bundle"
-mkdir -p "$BUNDLE/Contents/MacOS"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$HERE/plugin/Info.plist" "$BUNDLE/Contents/Info.plist"
+# Installer.app instantiates the framework's InstallerSection (NSPrincipalClass),
+# which loads NSMainNibFile; the nib wires section.firstPane -> MWSunshinePane.
+xcrun ibtool --compile "$BUNDLE/Contents/Resources/MWSunshinePane.nib" \
+    "$HERE/plugin/MWSunshinePane.xib"
 # InstallerPlugins.framework is deprecated and header-stripped in the SDK, so we
 # self-declare its InstallerPane API (see plugin/MWInstallerPane.h) and only LINK
 # the framework binary. Do NOT add -F /System/Library/Frameworks: that points at
@@ -68,8 +72,9 @@ pkgbuild \
     "$COMPONENTS/MoonlightWeb-component.pkg"
 
 echo "== 4/4 productbuild archive =="
+sed "s/@MW_VERSION@/$VERSION/g" "$HERE/distribution.xml" > "$WORK/distribution.xml"
 productbuild \
-    --distribution "$HERE/distribution.xml" \
+    --distribution "$WORK/distribution.xml" \
     --resources "$HERE/resources" \
     --plugins "$WORK/plugins" \
     --package-path "$COMPONENTS" \

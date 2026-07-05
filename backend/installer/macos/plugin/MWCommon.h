@@ -1,10 +1,10 @@
 /*
  * MoonlightWeb — macOS Installer.app plugin, shared helpers.
  *
- * Two chained InstallerPanes collect the same choices the Windows Inno installer
- * does, then hand them to the .pkg postinstall (which runs as root) through a
- * plist in /tmp: username, password, internet flag, and the path of the Sunshine
- * DMG the download pane fetched.
+ * The single "Sunshine" InstallerPane collects the same choices the Windows Inno
+ * installer does, then hands them to the .pkg postinstall (which runs as root)
+ * through a plist in /tmp: username, password, internet flag, and the path of
+ * the Sunshine DMG the pane downloaded in the background.
  */
 #import <Cocoa/Cocoa.h>
 

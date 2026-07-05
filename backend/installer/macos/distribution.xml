@@ -1,21 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  MoonlightWeb — macOS product archive (productbuild distribution).
+  MoonlightWeb, macOS product archive (productbuild distribution).
 
-  Wraps the component package (MoonlightWeb-component.pkg, built by pkgbuild) in
-  a guided Installer.app flow: Introduction / License / the custom InstallerPlugin
-  panes (Sunshine credentials + Internet toggle + Sunshine download progress,
-  loaded from the Plugins/ dir via InstallerSections.plist) / Install / Summary.
+  Kept as close as possible to what `productbuild` synthesizes: Installer.app is
+  strict and barely documented, and extra elements are known to break it. In
+  particular the <domains> element (combined with rootVolumeOnly) made the
+  Install phase fail with "there was no software found to install"; system-wide
+  install now relies on rootVolumeOnly alone.
 
-  Sunshine install + credentials happen in the component's postinstall script
-  (root); pairing + the public A-record are done by MoonlightWeb.app on first
-  launch (Provisioning::applyOnce), which is why they are NOT installer panes.
+  The custom "Sunshine" pane (credentials, Internet toggle, download progress)
+  is an InstallerPlugin loaded through the plugins directory; see
+  plugins/InstallerSections.plist. Sunshine install + credentials happen in the
+  component's postinstall script (root); pairing + the public A-record are done
+  by MoonlightWeb.app on first launch (Provisioning::applyOnce), which is why
+  they are NOT installer panes.
 
   Built by backend/installer/macos/build-pkg.sh (and the release.yml macos job),
-  which runs productbuild with this distribution plus the resources and plugins
-  directories to produce moonlightweb-macos-arm64.pkg.
+  which substitutes @MW_VERSION@ and runs productbuild with this distribution
+  plus the resources and plugins directories.
 -->
-<installer-gui-script minSpecVersion="2">
+<installer-gui-script minSpecVersion="1">
     <title>MoonlightWeb</title>
     <organization>com.moonlightweb</organization>
 
@@ -24,12 +28,10 @@
     <license file="license.html" mime-type="text/html"/>
     <conclusion file="conclusion.html" mime-type="text/html"/>
 
-    <!-- System-wide install into /Applications; the custom panes still show
+    <!-- System-wide install onto the boot volume; the custom panes still show
          (customize="never" only hides the package-selection list). -->
-    <options customize="never" require-scripts="true" rootVolumeOnly="true"
+    <options customize="never" require-scripts="false" rootVolumeOnly="true"
              hostArchitectures="arm64"/>
-    <domains enable_localSystem="true" enable_anywhere="false"
-             enable_currentUserHome="false"/>
 
     <choices-outline>
         <line choice="default">
@@ -41,6 +43,5 @@
         <pkg-ref id="com.moonlightweb.server"/>
     </choice>
 
-    <!-- Version is carried by the component pkg (set via pkgbuild). -->
-    <pkg-ref id="com.moonlightweb.server" onConclusion="none">MoonlightWeb-component.pkg</pkg-ref>
+    <pkg-ref id="com.moonlightweb.server" version="@MW_VERSION@" onConclusion="none">MoonlightWeb-component.pkg</pkg-ref>
 </installer-gui-script>
