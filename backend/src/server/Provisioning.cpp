@@ -30,6 +30,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
 
 namespace Provisioning {
@@ -187,10 +188,22 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
             sun.value(QStringLiteral("username")).toString(QStringLiteral("admin"));
         const QString pass =
             sun.value(QStringLiteral("password")).toString(QStringLiteral("admin"));
-        const bool ok = pairSunshine(computers, user, pass);
+        // The installer typically launched Sunshine moments before this app (the
+        // macOS postinstall starts both back-to-back): retry a couple of times so
+        // a Sunshine still opening its GameStream port doesn't fail the step.
+        bool ok = pairSunshine(computers, user, pass);
+        for (int attempt = 0; !ok && attempt < 2; ++attempt) {
+            QThread::sleep(3);
+            ok = pairSunshine(computers, user, pass);
+        }
         setStepStatus(QStringLiteral("pairing"),
                       ok ? QStringLiteral("done") : QStringLiteral("failed"));
     }
+
+    // The installer owns first-run provisioning: mark setup done so the app
+    // opens the normal admin page, not the in-app setup wizard (which stays
+    // available as a fallback if Sunshine turns out to be missing).
+    settings.setSetupCompleted(true);
 
     // Consume: rewrite without the password, then remove the original so the
     // plaintext credential never lingers and provisioning is not replayed.
