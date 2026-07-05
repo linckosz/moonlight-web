@@ -362,9 +362,9 @@ int main(int argc, char* argv[])
     if (!instanceLock.tryLock(100)) {
         Logger::info("Another instance is already running");
         if (hasGuiSession() && !parser.isSet(autostartOption)) {
-            quint16 p = appSettings.httpPort(80); // running instance persisted its port
-            const QString url = p == 80 ? QStringLiteral("http://localhost/")
-                                        : QStringLiteral("http://localhost:%1/").arg(p);
+            quint16 p = appSettings.httpsPort(443); // running instance persisted its port
+            const QString url = p == 443 ? QStringLiteral("https://localhost/")
+                                         : QStringLiteral("https://localhost:%1/").arg(p);
             Logger::info("Opening the running instance's web UI: " + url);
             openInBrowser(url);
         }
@@ -1372,17 +1372,15 @@ int main(int argc, char* argv[])
     internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
 
     // Admin URL for local entry points (Desktop shortcut, installer post-install
-    // page, Dock, tray): always loopback over plain HTTP — the admin APIs are
-    // localhost-only (the public-domain admin page would get 403s), loopback
-    // works even when DNS/Internet Access is down, and HTTP avoids the
-    // self-signed-cert warning (a blank page in Ubuntu's snap Firefox). The
-    // backend serves loopback over HTTP directly (no HTTPS redirect); streaming
-    // pages upgrade to HTTPS in the frontend. The public address is shown inside
-    // the admin UI itself.
+    // page, Dock, tray): loopback over HTTPS — the admin APIs are localhost-only
+    // (the public-domain admin page would get 403s), and loopback works even when
+    // DNS/Internet Access is down. Streaming requires a trusted TLS origin, so we
+    // open HTTPS directly; the browser asks to accept the self-signed cert once.
+    // The public address is shown inside the admin UI itself.
     auto adminUrl = [&]() -> QString {
-        quint16 p = server.httpPort();
-        return p == 80 ? QStringLiteral("http://localhost/admin")
-                       : QStringLiteral("http://localhost:%1/admin").arg(p);
+        quint16 p = server.activeHttpsPort();
+        return p == 443 ? QStringLiteral("https://localhost/admin")
+                        : QStringLiteral("https://localhost:%1/admin").arg(p);
     };
     // First-run provisioning written by the installer (authorize Internet
     // Access, pair the local Sunshine). Runs before the auto-start below so a
@@ -1455,11 +1453,12 @@ int main(int argc, char* argv[])
         const QString path =
             appSettings.setupCompleted() ? QStringLiteral("/") : QStringLiteral("/setup");
 #endif
-        // HTTP loopback: no cert warning / blank page. The hosts page gates
-        // streaming and offers a secure HTTPS link when the user needs it.
-        quint16 p = server.httpPort();
-        const QString url = p == 80 ? QStringLiteral("http://localhost%1").arg(path)
-                                    : QStringLiteral("http://localhost:%1%2").arg(p).arg(path);
+        // Open HTTPS loopback directly so streaming works right away; the browser
+        // asks to accept the self-signed cert once. (If a user later reaches the
+        // hosts page over plain http://, the frontend gates it with a secure link.)
+        quint16 p = server.activeHttpsPort();
+        const QString url = p == 443 ? QStringLiteral("https://localhost%1").arg(path)
+                                     : QStringLiteral("https://localhost:%1%2").arg(p).arg(path);
         // Defer so the TLS listener is fully accepting before the browser hits it.
         QTimer::singleShot(1200, &app, [url]() {
             qInfo() << "[main] Opening web UI:" << url;
