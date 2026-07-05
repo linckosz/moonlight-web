@@ -1,6 +1,7 @@
 /*
- * MoonlightWeb — Installer.app plugin: Sunshine credentials + Internet toggle.
- * First pane of the "Sunshine" section; chains to MWDownloadPane on Next.
+ * MoonlightWeb — Installer.app plugin: single "Sunshine" pane (credentials +
+ * Internet toggle + Sunshine download progress). Instantiated from
+ * MWSunshinePane.nib, wired as the section's firstPane (see Info.plist).
  */
 #import "MWInstallerPane.h"
 

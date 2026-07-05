@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Section order for Installer.app. The built-in section names are fixed; the
-  custom entry "Sunshine" is the InstallerSectionTitle of MoonlightWebInstaller
-  .bundle (see the plugin's Info.plist). That one section chains two panes
-  internally (credentials then download progress), so a single entry here covers
-  both. This file sits alongside the .bundle in the productbuild plugins
-  directory.
+  Section order for Installer.app. The built-in section names are fixed; a
+  custom section is referenced by its bundle FILE NAME (with the .bundle
+  extension), NOT by its InstallerSectionTitle. The sidebar label shown for it
+  comes from InstallerSectionTitle in the bundle's Info.plist ("Sunshine").
+  This file sits alongside the .bundle in the productbuild plugins directory.
 -->
 <plist version="1.0">
 <dict>
@@ -17,7 +16,7 @@
         <string>License</string>
         <string>Target</string>
         <string>PackageSelection</string>
-        <string>Sunshine</string>
+        <string>MoonlightWebInstaller.bundle</string>
         <string>Install</string>
         <string>FinishUp</string>
     </array>

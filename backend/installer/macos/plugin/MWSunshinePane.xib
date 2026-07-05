@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Nib for the "Sunshine" installer section, hand-written and compiled by ibtool
+  in build-pkg.sh (no .xcodeproj). Matches Apple's Installer Plug-in template:
+  File's Owner is the InstallerSection loading this nib; its firstPane outlet
+  points at our MWSunshinePane, whose contentView outlet points at an empty
+  custom view that the pane populates programmatically in awakeFromNib.
+-->
+<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="21507" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none">
+    <dependencies>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="21507"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <objects>
+        <customObject id="-2" userLabel="File's Owner" customClass="InstallerSection">
+            <connections>
+                <outlet property="firstPane" destination="MWP-1" id="oc-fp"/>
+            </connections>
+        </customObject>
+        <customObject id="-1" userLabel="First Responder" customClass="FirstResponder"/>
+        <customObject id="-3" userLabel="Application" customClass="NSObject"/>
+        <customObject id="MWP-1" customClass="MWSunshinePane">
+            <connections>
+                <outlet property="contentView" destination="MWV-1" id="oc-cv"/>
+            </connections>
+        </customObject>
+        <customView id="MWV-1">
+            <rect key="frame" x="0.0" y="0.0" width="470" height="240"/>
+            <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+        </customView>
+    </objects>
+</document>
