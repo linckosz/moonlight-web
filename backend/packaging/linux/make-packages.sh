@@ -63,6 +63,25 @@ cat > "$ROOT/postinst.sh" <<'EOF'
 #!/bin/sh
 update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
+
+# Best-effort: start MoonlightWeb inside the active graphical session so the
+# first-run setup page opens right after install (postinst runs as root with no
+# display; systemd-run --user runs the app under the user's session manager,
+# which carries DISPLAY/WAYLAND_DISPLAY). Skipped when already running (e.g.
+# upgrade) or when no session user is found — the Apps menu entry covers those.
+if ! pgrep -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
+    for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+        uid=$(id -u "$u" 2>/dev/null) || continue
+        [ -S "/run/user/$uid/bus" ] || continue
+        if runuser -u "$u" -- env \
+            XDG_RUNTIME_DIR="/run/user/$uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+            systemd-run --user --collect --quiet \
+            /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
+            break
+        fi
+    done
+fi
 exit 0
 EOF
 cat > "$ROOT/prerm.sh" <<'EOF'

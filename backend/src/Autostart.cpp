@@ -69,7 +69,8 @@ bool installLoginItem()
                                          "<dict>\n"
                                          "    <key>Label</key><string>%1</string>\n"
                                          "    <key>ProgramArguments</key>\n"
-                                         "    <array><string>%2</string></array>\n"
+                                         "    <array><string>%2</string>"
+                                         "<string>--autostart</string></array>\n"
                                          "    <key>RunAtLoad</key><true/>\n"
                                          "    <key>KeepAlive</key>\n"
                                          "    <dict><key>SuccessfulExit</key><false/></dict>\n"
@@ -126,7 +127,7 @@ bool installLoginItem()
                                          "Type=Application\n"
                                          "Name=MoonlightWeb\n"
                                          "Comment=Sunshine streaming client for the browser\n"
-                                         "Exec=\"%1\"\n"
+                                         "Exec=\"%1\" --autostart\n"
                                          "Icon=moonlightweb\n"
                                          "Terminal=false\n"
                                          "X-GNOME-Autostart-enabled=true\n")

@@ -22,7 +22,9 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QPointer>
+#include <QProcess>
 #include <QSslCertificate>
 #include <QSslSocket>
 #include <QStandardPaths>
@@ -191,13 +193,30 @@ static void writeAdminShortcut(const QString& url)
     if (!qEnvironmentVariableIsEmpty("MW_SERVICE")) return;
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
     if (desktop.isEmpty()) return;
+#if defined(Q_OS_LINUX)
+    // No .url handler on Linux (it opens in a text editor): write a Type=Link
+    // .desktop entry. GNOME's desktop icons require BOTH the exec bit and the
+    // gio "trusted" metadata to launch it without an "untrusted" prompt.
+    const QString path = desktop + "/MoonlightWeb Admin.desktop";
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+    f.write(("[Desktop Entry]\nType=Link\nName=MoonlightWeb Admin\nURL=" + url +
+             "\nIcon=moonlightweb\n")
+                .toUtf8());
+    f.close();
+    QFile::setPermissions(path, QFile::permissions(path) | QFileDevice::ExeOwner |
+                                    QFileDevice::ExeGroup | QFileDevice::ExeOther);
+    QProcess::startDetached(QStringLiteral("gio"),
+                            {QStringLiteral("set"), path, QStringLiteral("metadata::trusted"),
+                             QStringLiteral("true")});
+#else
     QFile f(desktop + "/MoonlightWeb Admin.url");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
     f.close();
+#endif
 }
 
-#ifndef Q_OS_WIN
 // True when a desktop session can show a browser/tray: never under a service
 // supervisor, and on Linux only when a display server is reachable. Do NOT use
 // QSystemTrayIcon::isSystemTrayAvailable() for this: GNOME has no system tray
@@ -213,7 +232,6 @@ static bool hasGuiSession()
     return true;
 #endif
 }
-#endif
 
 int main(int argc, char* argv[])
 {
@@ -265,6 +283,13 @@ int main(int argc, char* argv[])
     QCommandLineOption wsPortOption("ws-port", "WebRTC signaling WebSocket port", "port", "48001");
     parser.addOption(wsPortOption);
 
+    // Set by every automatic launcher (XDG autostart, LaunchAgent, Windows logon
+    // task, installer post-install start): suppresses the browser auto-open a
+    // manual launch performs.
+    QCommandLineOption autostartOption("autostart",
+                                       "Started automatically at login (don't open the browser)");
+    parser.addOption(autostartOption);
+
     parser.process(app);
 
     // Configure logging
@@ -300,6 +325,26 @@ int main(int argc, char* argv[])
     appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
     quint16 httpPort = appSettings.httpPort(80);
     if (parser.isSet("port")) httpPort = parser.value("port").toUShort();
+
+    // ── Single instance ──────────────────────────────────────────────────────
+    // The app has no window: launching it again (Apps / Start-menu click) must
+    // not spawn a duplicate server on fallback ports. Surface the running
+    // instance instead by opening its web UI, then exit cleanly (exit 0 = no
+    // supervisor relaunch).
+    QLockFile instanceLock(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                           "/moonlightweb.lock");
+    instanceLock.setStaleLockTime(0); // stale detection by PID liveness only
+    if (!instanceLock.tryLock(100)) {
+        Logger::info("Another instance is already running");
+        if (hasGuiSession() && !parser.isSet(autostartOption)) {
+            quint16 p = appSettings.httpsPort(443); // running instance persisted its port
+            const QString url = p == 443 ? QStringLiteral("https://localhost/")
+                                         : QStringLiteral("https://localhost:%1/").arg(p);
+            Logger::info("Opening the running instance's web UI: " + url);
+            QDesktopServices::openUrl(QUrl(url));
+        }
+        return 0;
+    }
 
     HttpServer server(httpPort);
 
@@ -1370,27 +1415,29 @@ int main(int argc, char* argv[])
     TrayManager trayManager(&server);
     trayManager.init();
 
-#ifndef Q_OS_WIN
-    // First-run: open the in-app setup wizard in the browser. The Windows Inno
-    // Setup installer opens its own page, but macOS/Linux ship a bare bundle, so
-    // the server launches the browser once. Skipped under a service supervisor /
-    // headless session and once setup has completed.
-    if (!appSettings.setupCompleted()) {
-        if (hasGuiSession()) {
-            quint16 p = server.activeHttpsPort();
-            const QString setupUrl = p == 443 ? QStringLiteral("https://localhost/setup")
-                                              : QStringLiteral("https://localhost:%1/setup").arg(p);
-            // Defer so the TLS listener is fully accepting before the browser hits it.
-            QTimer::singleShot(1200, &app, [setupUrl]() {
-                qInfo() << "[main] First run — opening setup wizard:" << setupUrl;
-                QDesktopServices::openUrl(QUrl(setupUrl));
-            });
-        } else {
-            qInfo() << "[main] First-run setup pending, but no GUI session — "
-                       "wizard not auto-opened (visit /setup from a browser)";
-        }
-    }
+    // The app is windowless, so on a manual launch (Apps / Start-menu click) the
+    // browser IS the app surface: open it — the setup wizard on first run
+    // (macOS/Linux; Windows provisioning is owned by the Inno Setup installer),
+    // the app page afterwards. Automatic launches (--autostart from the login
+    // item / logon task / installer) and headless sessions stay silent.
+    if (hasGuiSession() && !parser.isSet(autostartOption)) {
+#ifdef Q_OS_WIN
+        const QString path = QStringLiteral("/");
+#else
+        const QString path =
+            appSettings.setupCompleted() ? QStringLiteral("/") : QStringLiteral("/setup");
 #endif
+        quint16 p = server.activeHttpsPort();
+        const QString url = p == 443 ? QStringLiteral("https://localhost%1").arg(path)
+                                     : QStringLiteral("https://localhost:%1%2").arg(p).arg(path);
+        // Defer so the TLS listener is fully accepting before the browser hits it.
+        QTimer::singleShot(1200, &app, [url]() {
+            qInfo() << "[main] Opening web UI:" << url;
+            QDesktopServices::openUrl(QUrl(url));
+        });
+    } else if (!appSettings.setupCompleted()) {
+        qInfo() << "[main] Setup pending, browser not auto-opened — visit /setup";
+    }
 
     Logger::info("Server ready. Open https://localhost" +
                  (httpsPort != 443 ? ":" + QString::number(server.activeHttpsPort()) : QString()) +
