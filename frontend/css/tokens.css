@@ -24,8 +24,8 @@
 
     /* ── Accent — CP2077 signature yellow ──────────────────────────────── */
     --accent-1: #fcee0a;
-    --accent-strong: #fff64a;   /* brighter on hover */
-    --accent-deep: #d4c800;     /* pressed */
+    --accent-strong: #fff64a; /* brighter on hover */
+    --accent-deep: #d4c800; /* pressed */
     --accent-soft: rgba(252, 238, 10, 0.12);
     --accent-ring: rgba(252, 238, 10, 0.55);
     /* Black text on the yellow fill — the iconic high-contrast combo */
@@ -38,7 +38,7 @@
     --magenta-soft: rgba(255, 42, 109, 0.14);
 
     /* ── On-screen keyboard (touch) — neon cyan, matching the Stop button ── */
-    --kbd-on: var(--cyan-soft);      /* latched / active fill */
+    --kbd-on: var(--cyan-soft); /* latched / active fill */
     --kbd-on-edge: var(--neon-cyan); /* neon edge + text, like the Stop border */
 
     /* ── Semantic ──────────────────────────────────────────────────────── */
@@ -46,6 +46,11 @@
     --c-warning: #ffb627;
     --c-danger: #ff2a6d;
     --c-info: #00e5ff;
+    /* Lighter, higher-legibility tints for use as body TEXT on dark surfaces —
+       the saturated base colors above are for icons/accents/borders and read
+       poorly as small paragraph text. */
+    --c-danger-text: #ff9db1;
+    --c-warning-text: #ffce6b;
     --c-success-soft: rgba(42, 212, 160, 0.14);
     --c-warning-soft: rgba(255, 182, 39, 0.14);
     --c-danger-soft: rgba(255, 42, 109, 0.14);
@@ -71,8 +76,9 @@
     --fs-lg: 1.125rem;
     --fs-xl: 1.375rem;
     --fs-2xl: 1.75rem;
-    --font-ui: 'Rajdhani', 'Chakra Petch', -apple-system, BlinkMacSystemFont,
-               'Segoe UI', Roboto, sans-serif;
+    --font-ui:
+        'Rajdhani', 'Chakra Petch', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        sans-serif;
     --font-mono: 'Share Tech Mono', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
 
     /* ── Radii — angular ───────────────────────────────────────────────── */
@@ -82,27 +88,33 @@
     --radius-pill: 2px;
 
     /* ── Notch (bevelled corner) clip-paths — the CP2077 signature ─────── */
-    --notch-lg: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%,
-                        16px 100%, 0 calc(100% - 16px));
-    --notch-sm: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%,
-                        9px 100%, 0 calc(100% - 9px));
+    --notch-lg: polygon(
+        0 0,
+        calc(100% - 16px) 0,
+        100% 16px,
+        100% 100%,
+        16px 100%,
+        0 calc(100% - 16px)
+    );
+    --notch-sm: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
 
     /* ── Shadows + neon glows ──────────────────────────────────────────── */
-    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.40);
-    --shadow-2: 0 6px 22px rgba(0, 0, 0, 0.50);
-    --shadow-3: 0 14px 44px rgba(0, 0, 0, 0.60);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 6px 22px rgba(0, 0, 0, 0.5);
+    --shadow-3: 0 14px 44px rgba(0, 0, 0, 0.6);
     /* Outer glow for hovered notched panels (use via filter: drop-shadow) */
     --glow-accent: drop-shadow(0 0 10px rgba(252, 238, 10, 0.45));
-    --glow-cyan: drop-shadow(0 0 8px rgba(0, 229, 255, 0.40));
+    --glow-cyan: drop-shadow(0 0 8px rgba(0, 229, 255, 0.4));
     /* Inset neon edge that follows a notched clip-path */
     --edge-cyan: inset 0 0 0 1px var(--border-2);
     --edge-accent: inset 0 0 0 1px var(--accent-ring);
 
     /* ── Page background — neon bloom + faint grid base ────────────────── */
-    --app-bg: radial-gradient(1100px 760px at 85% -12%, rgba(252, 238, 10, 0.10) 0%, transparent 52%),
-              radial-gradient(900px 720px at -5% 108%, rgba(255, 42, 109, 0.10) 0%, transparent 50%),
-              radial-gradient(700px 600px at 50% 50%, rgba(0, 229, 255, 0.05) 0%, transparent 60%),
-              linear-gradient(168deg, #080c11 0%, var(--surface-0) 72%);
+    --app-bg:
+        radial-gradient(1100px 760px at 85% -12%, rgba(252, 238, 10, 0.1) 0%, transparent 52%),
+        radial-gradient(900px 720px at -5% 108%, rgba(255, 42, 109, 0.1) 0%, transparent 50%),
+        radial-gradient(700px 600px at 50% 50%, rgba(0, 229, 255, 0.05) 0%, transparent 60%),
+        linear-gradient(168deg, #080c11 0%, var(--surface-0) 72%);
 
     /* ════════════════════════════════════════════════════════════════════
        Legacy aliases — map old variable names onto the new palette.

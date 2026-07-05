@@ -12,8 +12,7 @@
     width: 100%;
     max-width: 360px;
     background:
-        linear-gradient(150deg, rgba(0, 229, 255, 0.06), rgba(0, 229, 255, 0) 60%),
-        var(--surface-2);
+        linear-gradient(150deg, rgba(0, 229, 255, 0.06), rgba(0, 229, 255, 0) 60%), var(--surface-2);
     border: none;
     border-radius: 0;
     clip-path: var(--notch-lg);
@@ -41,8 +40,8 @@
     width: 48px;
     height: 48px;
     background: currentColor;
-    -webkit-mask: url("../../assets/logo.png") center / contain no-repeat;
-    mask: url("../../assets/logo.png") center / contain no-repeat;
+    -webkit-mask: url('../../assets/logo.png') center / contain no-repeat;
+    mask: url('../../assets/logo.png') center / contain no-repeat;
 }
 
 .login-title {
@@ -62,12 +61,18 @@
     line-height: 1.5;
 }
 
-.login-form { text-align: left; }
+.login-form {
+    text-align: left;
+}
 
-.login-field { margin-bottom: var(--space-4); }
+.login-field {
+    margin-bottom: var(--space-4);
+}
 
 .login-pin-input-wrap,
-.login-cert-upload-wrap { width: 100%; }
+.login-cert-upload-wrap {
+    width: 100%;
+}
 
 .login-cert-input {
     width: 100%;
@@ -101,10 +106,20 @@
 }
 
 .login-error {
-    color: var(--c-danger);
+    color: var(--c-danger-text);
     font-size: var(--fs-sm);
     min-height: 1.2em;
     margin: var(--space-2) 0 0;
+    line-height: 1.45;
+}
+/* A populated error becomes a legible alert chip (soft danger panel + light red
+   text). The empty placeholder stays blank so the login form doesn't shift. */
+.login-error:not(:empty) {
+    background: var(--c-danger-soft);
+    border: 1px solid rgba(255, 42, 109, 0.35);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    min-height: 0;
 }
 .login-remaining {
     color: var(--c-warning);
@@ -177,7 +192,7 @@
     margin: 0 0 var(--space-2);
 }
 .setup-warn {
-    color: var(--c-warning, #e0a83b);
+    color: var(--c-warning-text, #ffce6b);
 }
 .setup-ok {
     color: var(--c-success, #35c98f);
@@ -202,6 +217,6 @@
     margin-top: var(--space-2);
 }
 .activation-steps .step-failed {
-    color: var(--c-error, #e05a5a);
+    color: var(--c-danger-text);
     font-weight: 600;
 }
