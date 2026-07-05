@@ -180,11 +180,10 @@ static void mwMessageHandler(QtMsgType type, const QMessageLogContext&, const QS
     }
 }
 
-// Write/refresh the Desktop ".url" shortcut that opens the admin page. The
-// installer cannot know the runtime HTTPS port or the assigned domain, so the
-// server owns the shortcut: it self-heals on every startup (and when Internet
-// Access becomes ready). Skipped under a service supervisor (session 0 has the
-// wrong desktop).
+// Write/refresh the Desktop shortcut that opens the app's web UI. The installer
+// cannot know the runtime HTTPS port or the assigned domain, so the server owns
+// the shortcut: it self-heals on every startup (and when Internet Access becomes
+// ready). Skipped under a service supervisor (session 0 has the wrong desktop).
 static void writeAdminShortcut(const QString& url)
 {
     // Expose the resolved URL to the installer (post-install "open admin page"
@@ -201,10 +200,13 @@ static void writeAdminShortcut(const QString& url)
     // opens the URL reliably. GNOME's desktop icons require the entry to be
     // executable AND carry the gio "trusted" metadata to launch without an
     // "untrusted" prompt.
-    const QString path = desktop + "/MoonlightWeb Admin.desktop";
+    // Drop the pre-rename shortcut (it pointed at /admin) so the desktop doesn't
+    // keep a stale duplicate.
+    QFile::remove(desktop + "/MoonlightWeb Admin.desktop");
+    const QString path = desktop + "/MoonlightWeb.desktop";
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=MoonlightWeb Admin\n"
+    f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=MoonlightWeb\n"
              "Exec=xdg-open " +
              url + "\nIcon=moonlightweb\nTerminal=false\n")
                 .toUtf8());
@@ -219,7 +221,8 @@ static void writeAdminShortcut(const QString& url)
                             {QStringLiteral("set"), path, QStringLiteral("metadata::trusted"),
                              QStringLiteral("true")});
 #else
-    QFile f(desktop + "/MoonlightWeb Admin.url");
+    QFile::remove(desktop + "/MoonlightWeb Admin.url"); // pre-rename duplicate
+    QFile f(desktop + "/MoonlightWeb.url");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
     f.close();
@@ -1371,16 +1374,16 @@ int main(int argc, char* argv[])
     // Sync UPnP port mapping port with the actual server port
     internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
 
-    // Admin URL for local entry points (Desktop shortcut, installer post-install
-    // page, Dock, tray): loopback over HTTPS — the admin APIs are localhost-only
-    // (the public-domain admin page would get 403s), and loopback works even when
-    // DNS/Internet Access is down. Streaming requires a trusted TLS origin, so we
-    // open HTTPS directly; the browser asks to accept the self-signed cert once.
-    // The public address is shown inside the admin UI itself.
-    auto adminUrl = [&]() -> QString {
+    // URL for local entry points (Desktop shortcut, installer post-install page,
+    // Dock, tray): loopback over HTTPS at the app root ("/") — the user lands on
+    // the normal host/streaming page (admin/server settings stay one click away
+    // via the header button). Loopback works even when DNS/Internet Access is
+    // down; streaming needs a trusted TLS origin, so we open HTTPS directly and
+    // the browser asks to accept the self-signed cert once.
+    auto homeUrl = [&]() -> QString {
         quint16 p = server.activeHttpsPort();
-        return p == 443 ? QStringLiteral("https://localhost/admin")
-                        : QStringLiteral("https://localhost:%1/admin").arg(p);
+        return p == 443 ? QStringLiteral("https://localhost/")
+                        : QStringLiteral("https://localhost:%1/").arg(p);
     };
     // First-run provisioning written by the installer (authorize Internet
     // Access, pair the local Sunshine). Runs before the auto-start below so a
@@ -1393,10 +1396,10 @@ int main(int argc, char* argv[])
     // Refresh the shortcut to the valid-certificate domain link once it is ready,
     // and (during a fresh install) mark the A-record checklist step done.
     QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
-                     [&adminUrl, provisioned](const QString&, const QString&) {
-                         // adminUrl() folds in the external HTTPS port (fallback
-                         // port for a co-existing instance behind the same NAT).
-                         writeAdminShortcut(adminUrl());
+                     [&homeUrl, provisioned](const QString&, const QString&) {
+                         // homeUrl() folds in the active HTTPS port (fallback port
+                         // for a co-existing instance behind the same NAT).
+                         writeAdminShortcut(homeUrl());
                          if (provisioned)
                              Provisioning::setStepStatus(QStringLiteral("arecord"),
                                                          QStringLiteral("done"));
@@ -1424,8 +1427,8 @@ int main(int argc, char* argv[])
                                                                        : QStringLiteral("failed"));
     }
 
-    // Write the Desktop admin shortcut with the best URL known at this point.
-    writeAdminShortcut(adminUrl());
+    // Write the Desktop shortcut with the best URL known at this point.
+    writeAdminShortcut(homeUrl());
 
     // Configure HttpServer to proxy WebSocket upgrades to the signaling server.
     // Both HTTPS and WebSocket signaling share the same port (443 by default).
