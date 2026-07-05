@@ -80,7 +80,13 @@
         "alreadyInList": "« {{name}} » déjà dans la liste",
         "noHostReturned": "Aucun hôte renvoyé par le serveur",
         "menuAria": "Options de l'hôte",
-        "offlineMessage": "Cet hôte est hors ligne"
+        "offlineMessage": "Cet hôte est hors ligne",
+        "remoteAccess": "Les autres ordinateurs peuvent se connecter à ce serveur via :"
+    },
+    "secure": {
+        "title": "Connexion sécurisée requise",
+        "explain": "Vous avez ouvert MoonlightWeb via une connexion non chiffrée. Le streaming nécessite une page sécurisée (HTTPS). Cliquez ci-dessous pour la rouvrir en sécurisé — votre navigateur vous demandera d'accepter le certificat local une seule fois.",
+        "openSecure": "Ouvrir la page sécurisée"
     },
     "apps": {
         "backToHosts": "← Retour aux hôtes",

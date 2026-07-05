@@ -80,7 +80,13 @@
         "alreadyInList": "\"{{name}}\" already in list",
         "noHostReturned": "No host was returned from the server",
         "menuAria": "Host options",
-        "offlineMessage": "This host is offline"
+        "offlineMessage": "This host is offline",
+        "remoteAccess": "Other computers can connect to this server at:"
+    },
+    "secure": {
+        "title": "Secure connection required",
+        "explain": "You opened MoonlightWeb over an unencrypted connection. Streaming needs a secure (HTTPS) page. Click below to reopen it securely — your browser will ask you to accept the local certificate once.",
+        "openSecure": "Open secure page"
     },
     "apps": {
         "backToHosts": "← Back to Hosts",

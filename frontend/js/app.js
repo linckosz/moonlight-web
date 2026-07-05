@@ -57,6 +57,7 @@ import { VersionGuard } from './util/VersionGuard.js';
 import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
+import { escapeHtml } from './util/escapeHtml.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
@@ -281,10 +282,106 @@ const MoonlightApp = {
     /** Build and start the HostListView, wiring app launches. */
     _renderHosts(main) {
         this.transition('host_list');
+        this._updateNavHighlight('hosts');
+
+        // Streaming needs a trusted TLS origin: the signaling WebSocket is wss://,
+        // which a plain-HTTP page can't open against the self-signed localhost
+        // cert (the browser never prompts for a WS cert — it just fails). The
+        // loopback entry points open over http:// to dodge the cert warning /
+        // Firefox blank page, so when we're on http:// show a gate that switches
+        // to HTTPS instead of an unusable host list.
+        if (window.location.protocol === 'http:') {
+            this._renderInsecureGate(main);
+            return;
+        }
+
         this.hostListView = new HostListView(main);
         this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
         this.hostListView.start();
-        this._updateNavHighlight('hosts');
+
+        // On https://localhost, tell the user how OTHER PCs reach this server.
+        this._maybeShowRemoteAccessBanner();
+    },
+
+    /**
+     * Requirement: opened over http:// → hide the hosts and show a button that
+     * reopens the app on the secure HTTPS origin (needed for streaming).
+     */
+    async _renderInsecureGate(main) {
+        main.innerHTML = `
+            <div class="insecure-gate" id="view-hosts">
+                <div class="insecure-gate-icon" role="img" aria-hidden="true">\u{1F512}</div>
+                <h2>${t('secure.title')}</h2>
+                <p>${t('secure.explain')}</p>
+                <button class="btn btn-neutral" id="btn-open-secure">${t('secure.openSecure')}</button>
+            </div>`;
+
+        // Build the HTTPS URL for this host (needs the HTTPS port).
+        let httpsPort = 443;
+        try {
+            const admin = await BackendClient.getAdminSettings();
+            httpsPort = admin.https_port || 443;
+        } catch (err) {
+            console.warn('[MW] Could not read HTTPS port for secure gate:', err);
+        }
+        const port = httpsPort !== 443 ? ':' + httpsPort : '';
+        const url = 'https://' + window.location.hostname + port + '/';
+        const btn = main.querySelector('#btn-open-secure');
+        if (btn) btn.addEventListener('click', () => (window.location.href = url));
+    },
+
+    /**
+     * Requirement: on https://localhost, show an informative banner listing the
+     * HTTPS addresses other PCs can use to reach this server (LAN IP + domain).
+     * Best-effort and localhost-only; silently skipped otherwise.
+     */
+    async _maybeShowRemoteAccessBanner() {
+        const hostname = window.location.hostname;
+        const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+        if (!isLocal) return;
+
+        let httpsPort = 443;
+        let extPort = 443;
+        let domain = '';
+        let localIp = '';
+        try {
+            const [admin, status] = await Promise.all([
+                BackendClient.getAdminSettings(),
+                BackendClient.getInternetStatus(),
+            ]);
+            httpsPort = admin.https_port || 443;
+            domain = status.domain || '';
+            localIp = status.local_ip || '';
+            extPort = status.external_https_port || httpsPort;
+        } catch (err) {
+            console.warn('[MW] Could not build remote-access banner:', err);
+            return;
+        }
+
+        const links = [];
+        if (localIp) {
+            const p = httpsPort !== 443 ? ':' + httpsPort : '';
+            links.push('https://' + localIp + p);
+        }
+        if (domain) {
+            const p = extPort !== 443 ? ':' + extPort : '';
+            links.push('https://' + domain + p);
+        }
+        if (!links.length) return;
+
+        const view = document.getElementById('view-hosts');
+        if (!view || view.querySelector('.remote-access-banner')) return;
+        const linksHtml = links
+            .map(
+                (u) =>
+                    `<a href="${encodeURI(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a>`,
+            )
+            .join('');
+        const banner = document.createElement('div');
+        banner.className = 'remote-access-banner';
+        banner.innerHTML = `<span class="remote-access-icon" aria-hidden="true">\u{1F310}</span>
+            <span>${t('hosts.remoteAccess')} ${linksHtml}</span>`;
+        view.insertBefore(banner, view.firstChild);
     },
 
     // =========================================================================
