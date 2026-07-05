@@ -376,8 +376,18 @@ static QString installMacOS(const QString& user, const QString& pass)
         return QStringLiteral("Download failed: %1").arg(out.trimmed());
 
     QDir().mkpath(mnt);
-    if (run(QStringLiteral("/usr/bin/hdiutil"),
-            {"attach", dmg, "-nobrowse", "-noverify", "-mountpoint", mnt}, 60000, &out) != 0)
+    // The Sunshine DMG embeds a GPL software-license agreement: `hdiutil attach`
+    // prints it and cancels the mount when it has no TTY to accept it (our
+    // QProcess has none). Pipe `yes` in via a shell to auto-accept. Single-quote
+    // the paths (they live under QDir::tempPath(), but be safe).
+    const auto shq = [](const QString& s) {
+        return QStringLiteral("'") + QString(s).replace('\'', QStringLiteral("'\\''")) +
+               QStringLiteral("'");
+    };
+    const QString attachCmd =
+        QStringLiteral("/usr/bin/yes | /usr/bin/hdiutil attach %1 -nobrowse -noverify -mountpoint %2")
+            .arg(shq(dmg), shq(mnt));
+    if (run(QStringLiteral("/bin/sh"), {"-c", attachCmd}, 60000, &out) != 0)
         return QStringLiteral("Could not mount the disk image: %1").arg(out.trimmed());
 
     QString copyErr;
