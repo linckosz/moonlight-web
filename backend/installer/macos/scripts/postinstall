@@ -88,10 +88,19 @@ else
     echo "Sunshine already present, skipping install"
 fi
 
-# ── 2) Apply Sunshine web-UI credentials (best-effort). ─────────────────────
+# ── 2) Apply Sunshine web-UI credentials (best-effort). Unlike Windows
+#    (global %PROGRAMDATA% config), Sunshine on macOS stores its state per-user
+#    (~/.config/sunshine): run --creds as the console user, not root, or the
+#    credentials land in /var/root and the user's Sunshine keeps its defaults.
 SUN_BIN="$(sunshine_bin || true)"
 if [ -n "$SUN_BIN" ]; then
-    "$SUN_BIN" --creds "$SUN_USER" "$SUN_PASS" || echo "WARN: setting Sunshine creds failed"
+    if [ "$CONSOLE_UID" != "0" ]; then
+        /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" \
+            "$SUN_BIN" --creds "$SUN_USER" "$SUN_PASS" \
+            || echo "WARN: setting Sunshine creds failed"
+    else
+        "$SUN_BIN" --creds "$SUN_USER" "$SUN_PASS" || echo "WARN: setting Sunshine creds failed"
+    fi
 fi
 
 # ── 3) provisioning.json for the app's first-run pairing (Provisioning::applyOnce).

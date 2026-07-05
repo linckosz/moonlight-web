@@ -30,12 +30,16 @@ static inline NSString *MWSunshineDmgURL(void)
                                       MWSunshineArch()];
 }
 
-// Merge key/values into the hand-off plist (created if absent), preserving any
-// keys a previous pane already wrote.
+// Merge key/values into the hand-off plist (created if absent), preserving keys
+// written earlier. 0600: it carries the Sunshine password in plaintext until the
+// postinstall (root) reads and deletes it.
 static inline void MWHandoffMerge(NSDictionary *values)
 {
     NSMutableDictionary *d =
         [NSMutableDictionary dictionaryWithContentsOfFile:kMWHandoffPath] ?: [NSMutableDictionary dictionary];
     [d addEntriesFromDictionary:values];
     [d writeToFile:kMWHandoffPath atomically:YES];
+    [[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0600}
+                                     ofItemAtPath:kMWHandoffPath
+                                            error:nil];
 }
