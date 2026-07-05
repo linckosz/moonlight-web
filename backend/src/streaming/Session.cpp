@@ -341,14 +341,19 @@ void StreamSession::onLaunchReplyFinished()
             doLaunchApp(identity->getCertificate(), identity->getPrivateKey());
             return;
         }
-        // Sunshine 503 = the host could not initialize video capture/encoding
-        // (display asleep/disconnected, no dummy plug). Surface a clear,
+        // Sunshine 503 = the host could not initialize video capture/encoding.
+        // The most common macOS cause is a missing Screen Recording permission
+        // (Sunshine logs "No screen capture permission!"); elsewhere it's a
+        // sleeping/disconnected display with no dummy plug. Surface a clear,
         // actionable message instead of the opaque "502 Launch error: HTTP 503".
         QString reason = QString::fromUtf8(e.what());
         if (reason.contains("503")) {
             m_Respond(HttpResponse::error(
-                503, QString("L'hôte \"%1\" n'a pas pu démarrer la capture vidéo. "
-                             "Vérifie qu'un écran est branché et allumé (ou un dummy plug HDMI).")
+                503, QString("Host \"%1\" could not start video capture. On macOS, grant "
+                             "Sunshine the \"Screen Recording\" permission in System Settings "
+                             "> Privacy & Security > Screen Recording, then quit and reopen "
+                             "Sunshine. Otherwise, make sure a display is connected and powered "
+                             "on (or use an HDMI dummy plug).")
                          .arg(m_Host->name)));
         } else {
             m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(reason)));
