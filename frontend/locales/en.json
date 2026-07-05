@@ -50,7 +50,8 @@
         "doneDomain": "Your public address: {{domain}}",
         "donePermissions": "One last step: open Sunshine and grant it Screen Recording and Accessibility permissions in System Settings — macOS requires you to do this manually.",
         "finish": "Open MoonlightWeb",
-        "errorGeneric": "Setup failed. Please try again."
+        "errorGeneric": "Setup failed. Please try again.",
+        "sunshineInstallFailed": "Sunshine installation failed: {{error}}. Try again (you'll be asked for your password), uncheck Sunshine, or skip this step."
     },
     "footer": {
         "tagline": "MoonlightWeb — Game Streaming Client"
@@ -293,7 +294,19 @@
         "dnsPropagated": "DNS propagated -- your site is now available at {{domain}}",
         "dnsTimeout": "DNS propagation timed out after 5 minutes. Check your domain configuration.",
         "internetNotActive": "Internet access is enabled but not active: DNS registration did not complete. Check the PowerDNS token and your network, then re-enable Internet access.",
-        "changesDiscarded": "Settings changes discarded"
+        "changesDiscarded": "Settings changes discarded",
+        "sunshine": "Sunshine",
+        "sunshineInstalled": "Sunshine is installed on this computer.",
+        "sunshineNotInstalled": "Sunshine is not installed. Install it to stream games from this computer.",
+        "sunshineManual": "Sunshine is not installed, and automatic installation is not available on this system. Please install Sunshine manually.",
+        "sunshineUsername": "Sunshine username",
+        "sunshinePassword": "Sunshine password",
+        "installSunshine": "Install Sunshine",
+        "installingSunshine": "Installing Sunshine…",
+        "sunshineInstallHint": "Your operating system will ask for your account password to install Sunshine.",
+        "sunshineCredsRequired": "Enter a username and password for Sunshine.",
+        "sunshineInstalledOk": "Sunshine installed successfully.",
+        "sunshineInstallFailed": "Sunshine install failed: {{message}}"
     },
     "stream": {
         "stop": "Stop",

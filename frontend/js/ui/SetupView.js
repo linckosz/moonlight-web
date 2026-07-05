@@ -326,6 +326,7 @@ export class SetupView {
         if (haveCreds && (willInstall || needPairing)) this._activeSteps.push('pairing');
         if (this._internetAuth) this._activeSteps.push('arecord');
 
+        this._error = '';
         this._step = 'progress';
         this.render();
         this._startPolling();
@@ -344,6 +345,20 @@ export class SetupView {
             if (result.internet_active !== undefined) {
                 this._internetActive = !!result.internet_active;
                 this._domain = result.domain || '';
+            }
+            // Sunshine install can fail on its own (e.g. the user mistyped the OS
+            // password in the polkit dialog) while /apply still returns 200. Don't
+            // dead-end on the "done" screen: return to config with the error shown
+            // so the user can retry (the password prompt re-appears), uncheck
+            // Sunshine, or skip. Steps that succeeded above are reflected as done.
+            if (result.sunshine_error) {
+                this._error = t('setup.sunshineInstallFailed', {
+                    error: result.sunshine_error,
+                });
+                this._step = 'config';
+                this.render();
+                this.bindEvents();
+                return;
             }
             // A completed run re-arms the startup gate: if a step goes missing
             // again later, the wizard reappears even after a previous "Skip".
@@ -405,8 +420,8 @@ export class SetupView {
 
     _finish() {
         this._stopPolling();
-        // The wizard runs over http://localhost (no cert warning). Streaming
-        // needs a trusted TLS origin, so switch to https:// now — the user
+        // Streaming needs a trusted TLS origin. The wizard normally already runs
+        // over https://, but if it was reached over http:// switch now — the user
         // accepts the self-signed cert once here, then the host list works.
         // Same host, HTTPS port (omit :443).
         if (window.location.protocol === 'https:') {
