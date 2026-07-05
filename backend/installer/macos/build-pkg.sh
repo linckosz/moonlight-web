@@ -31,9 +31,13 @@ echo "== 1/4 build InstallerPlugin bundle =="
 BUNDLE="$WORK/plugins/MoonlightWebInstaller.bundle"
 mkdir -p "$BUNDLE/Contents/MacOS"
 cp "$HERE/plugin/Info.plist" "$BUNDLE/Contents/Info.plist"
-# InstallerPlugins.framework is a system framework; -F covers both possible homes.
-clang -bundle -fobjc-arc -mmacosx-version-min=12.0 \
-    -F /System/Library/Frameworks -F /System/Library/PrivateFrameworks \
+# InstallerPlugins.framework is deprecated and header-stripped in the SDK, so we
+# self-declare its InstallerPane API (see plugin/MWInstallerPane.h) and only LINK
+# the framework binary. Do NOT add -F /System/Library/Frameworks: that points at
+# the headerless runtime copy and shadows the SDK. Build via xcrun so the SDK
+# sysroot (and its framework binaries) are found.
+xcrun clang -bundle -fobjc-arc -mmacosx-version-min=12.0 \
+    -isysroot "$(xcrun --show-sdk-path)" \
     -framework InstallerPlugins -framework Cocoa -framework Foundation \
     -I "$HERE/plugin" \
     -o "$BUNDLE/Contents/MacOS/MoonlightWebInstaller" \
