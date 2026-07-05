@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MoonlightWeb — macOS product archive (productbuild distribution).
+
+  Wraps the component package (MoonlightWeb-component.pkg, built by pkgbuild) in
+  a guided Installer.app flow: Introduction / License / the custom InstallerPlugin
+  panes (Sunshine credentials + Internet toggle + Sunshine download progress,
+  loaded from the Plugins/ dir via InstallerSections.plist) / Install / Summary.
+
+  Sunshine install + credentials happen in the component's postinstall script
+  (root); pairing + the public A-record are done by MoonlightWeb.app on first
+  launch (Provisioning::applyOnce), which is why they are NOT installer panes.
+
+  Built by backend/installer/macos/build-pkg.sh (and the release.yml macos job):
+    productbuild --distribution distribution.xml --resources resources \
+                 --plugins plugins --package-path <dir> moonlightweb-macos-arm64.pkg
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>MoonlightWeb</title>
+    <organization>com.moonlightweb</organization>
+
+    <!-- HTML shown on the Introduction / License / Summary panes. -->
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <license file="license.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <!-- System-wide install into /Applications; the custom panes still show
+         (customize="never" only hides the package-selection list). -->
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"
+             hostArchitectures="arm64"/>
+    <domains enable_localSystem="true" enable_anywhere="false"
+             enable_currentUserHome="false"/>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.moonlightweb.server"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.moonlightweb.server" visible="false">
+        <pkg-ref id="com.moonlightweb.server"/>
+    </choice>
+
+    <!-- Version is carried by the component pkg (pkgbuild --version). -->
+    <pkg-ref id="com.moonlightweb.server" onConclusion="none">MoonlightWeb-component.pkg</pkg-ref>
+</installer-gui-script>
