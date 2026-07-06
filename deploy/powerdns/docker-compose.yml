@@ -1,8 +1,10 @@
-# MoonlightWeb — self-hosted DNS stack (3 dedicated containers).
+# MoonlightWeb — self-hosted DNS stack (5 dedicated containers).
 #
 #   dnsdist  public DNS entry point :53  → pdns:5300  (anti-amplification, rate-limit)
 #   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)
-#   caddy    public :80/:443 → pdns:8081               (HTTPS API, rate-limit, auto-TLS)
+#   caddy    public :80/:443 → pdns:8081 / umami:3000  (HTTPS API + site + stats, auto-TLS)
+#   umami    web analytics (stats.{domain}), internal  → umami-db (Postgres)
+#   umami-db Postgres for Umami, internal only
 #
 # Quick start:
 #   cd deploy/powerdns
@@ -91,10 +93,52 @@ services:
     pids_limit: 200
     mem_limit: 256m
 
+  # ── Umami: privacy-friendly, cookieless web analytics ──────────────────────
+  # Serves the presentation-site stats at https://stats.${MW_DOMAIN} (via caddy).
+  # Internal only — never published to the host; caddy reverse-proxies :3000.
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    container_name: moonlight-umami
+    restart: unless-stopped
+    depends_on:
+      umami-db:
+        condition: service_healthy
+    environment:
+      DATABASE_TYPE: postgresql
+      DATABASE_URL: postgresql://umami:${MW_UMAMI_DB_PASSWORD}@umami-db:5432/umami
+      # Signs the auth cookies / API tokens of the Umami DASHBOARD (admin login),
+      # not the tracked visitors (analytics stays cookieless). Keep it secret.
+      APP_SECRET: ${MW_UMAMI_SECRET}
+    networks: [mwnet]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 200
+    mem_limit: 512m
+
+  umami-db:
+    image: postgres:16-alpine
+    container_name: moonlight-umami-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: umami
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: ${MW_UMAMI_DB_PASSWORD}
+    volumes:
+      - umami_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U umami -d umami"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [mwnet]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 200
+    mem_limit: 256m
+
 volumes:
   pdns_data:
   caddy_data:
   caddy_config:
+  umami_db:
 
 networks:
   mwnet:

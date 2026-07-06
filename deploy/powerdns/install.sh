@@ -153,14 +153,18 @@ esac
 step "Configuring host firewall"
 fw_done=""
 if command -v ufw >/dev/null 2>&1; then
-    ufw --force enable >/dev/null 2>&1 || true
+    # Allow SSH FIRST, then enable — enabling before the ssh rule can lock us out.
     ufw allow 22/tcp   >/dev/null 2>&1 || true
     ufw allow 53/udp   >/dev/null 2>&1 || true
     ufw allow 53/tcp   >/dev/null 2>&1 || true
     ufw allow 80/tcp   >/dev/null 2>&1 || true
     ufw allow 443/tcp  >/dev/null 2>&1 || true
+    ufw --force enable >/dev/null 2>&1 || true
     fw_done="ufw"
-elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld 2>/dev/null; then
+elif command -v firewall-cmd >/dev/null 2>&1; then
+    # firewalld may be installed but inactive (common on RHEL/Fedora) — start it,
+    # otherwise the --permanent rules are written but never enforced.
+    systemctl enable --now firewalld >/dev/null 2>&1 || true
     firewall-cmd --permanent --add-port=22/tcp  >/dev/null 2>&1 || true
     firewall-cmd --permanent --add-port=53/udp  >/dev/null 2>&1 || true
     firewall-cmd --permanent --add-port=53/tcp  >/dev/null 2>&1 || true
@@ -169,11 +173,30 @@ elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet fire
     firewall-cmd --reload >/dev/null 2>&1 || true
     fw_done="firewalld"
 fi
+
+# Verify (read-back): the firewall must be ACTIVE and every required port present.
 if [ -n "$fw_done" ]; then
-    ok "host firewall configured ($fw_done): 22, 53/udp, 53/tcp, 80, 443"
+    fw_active=""; fw_rules=""; missing=""
+    if [ "$fw_done" = "ufw" ]; then
+        fw_rules="$(ufw status verbose 2>/dev/null || true)"
+        printf '%s' "$fw_rules" | grep -qi 'Status: active' && fw_active=1
+    else
+        systemctl is-active --quiet firewalld 2>/dev/null && fw_active=1
+        fw_rules="$(firewall-cmd --list-ports 2>/dev/null || true)"
+    fi
+    for p in 22/tcp 53/udp 53/tcp 80/tcp 443/tcp; do
+        printf '%s' "$fw_rules" | grep -q "$p" || missing="$missing $p"
+    done
+    if [ -n "$fw_active" ] && [ -z "$missing" ]; then
+        ok "host firewall ACTIVE ($fw_done): 22/tcp, 53/udp, 53/tcp, 80/tcp, 443/tcp verified open"
+    else
+        [ -z "$fw_active" ] && warn "host firewall ($fw_done) is NOT active — enable it, then re-run"
+        [ -n "$missing" ]   && warn "firewall ($fw_done) missing rules:$missing — re-run or add manually"
+        warn "current rules:"; printf '%s\n' "$fw_rules" | sed 's/^/         /'
+    fi
 else
     warn "no managed firewall (ufw/firewalld) detected — relying on your cloud"
-    warn "security group / NSG. Make sure those ports are open there."
+    warn "security group / NSG. Make sure 53/udp, 53/tcp, 80/tcp, 443/tcp are open there."
 fi
 
 # ── Free port 53 (systemd-resolved stub) ─────────────────────────────────────
@@ -225,6 +248,14 @@ ask() {  # ask <var> <prompt> <default>  → echoes the answer
 
 if [ -f .env ]; then
     warn ".env already exists — keeping it (delete it to reconfigure)"
+    # Backfill keys added by newer versions (e.g. the Umami analytics secrets), so
+    # upgrading an existing box doesn't leave docker compose with empty variables.
+    gen_secret() { openssl rand -hex 24 2>/dev/null || head -c24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+    ensure_env() {  # ensure_env <KEY> <value>  — append KEY=value if absent
+        grep -q "^$1=" .env || { printf '%s=%s\n' "$1" "$2" >> .env; ok "added missing $1 to .env"; }
+    }
+    ensure_env MW_UMAMI_DB_PASSWORD "$(gen_secret)"
+    ensure_env MW_UMAMI_SECRET      "$(gen_secret)"
 else
     detected_ip="$(curl -fsS https://api.ipify.org 2>/dev/null || true)"
 
@@ -241,8 +272,13 @@ else
         [ -n "$MW_PUBLIC_IP" ] || warn "public IP is required"
     done
 
-    gen_key="$(openssl rand -hex 24 2>/dev/null || head -c24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    gen_secret() { openssl rand -hex 24 2>/dev/null || head -c24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+    gen_key="$(gen_secret)"
     MW_PDNS_API_KEY="$(ask MW_PDNS_API_KEY 'PowerDNS API key (blank = generate)' "$gen_key")"
+
+    # Analytics secrets — generated silently (no prompt; the user rarely cares).
+    MW_UMAMI_DB_PASSWORD="$(gen_secret)"
+    MW_UMAMI_SECRET="$(gen_secret)"
 
     echo "  Optional TLS (blank = automatic Let's Encrypt via Caddy):"
     MW_TLS_EMAIL="$(ask MW_TLS_EMAIL 'Email for Let'\''s Encrypt notices' '')"
@@ -259,6 +295,8 @@ MW_PDNS_API_KEY=${MW_PDNS_API_KEY}
 MW_TLS_EMAIL=${MW_TLS_EMAIL}
 MW_TLS_CERT=${MW_TLS_CERT}
 MW_TLS_KEY=${MW_TLS_KEY}
+MW_UMAMI_DB_PASSWORD=${MW_UMAMI_DB_PASSWORD}
+MW_UMAMI_SECRET=${MW_UMAMI_SECRET}
 EOF
     [ "$TARGET_USER" != "root" ] && chown "$TARGET_USER" .env 2>/dev/null || true
     ok ".env written"
@@ -319,6 +357,8 @@ echo " Your VM is up and running. Containers:"
 echo "   pdns     PowerDNS authoritative + REST API (internal only)"
 echo "   dnsdist  public DNS front on :53 (UDP/TCP)"
 echo "   caddy    public API https://api.${MW_DOMAIN:-<MW_DOMAIN>} (:80/:443)"
+echo "   umami    web analytics  https://stats.${MW_DOMAIN:-<MW_DOMAIN>} (internal, via caddy)"
+echo "   umami-db Postgres for Umami (internal only)"
 echo
 echo " Where to change things later:"
 echo "   - Variables ............ $HERE/.env   (then: $COMPOSE up -d --build)"
@@ -365,6 +405,15 @@ echo
 echo "  [ ] 5. Verify once DNS delegation has propagated (minutes to hours):"
 echo "            dig +short NS ${MW_DOMAIN:-<MW_DOMAIN>}"
 echo "            dig +short api.${MW_DOMAIN:-<MW_DOMAIN>}"
+echo
+echo "  [ ] 6. Turn ON website analytics (Umami):"
+echo "         a) open  https://stats.${MW_DOMAIN:-<MW_DOMAIN>}   (default login: admin / umami)"
+echo "         b) change the admin password immediately"
+echo "         c) Settings -> Websites -> Add: name 'MoonlightWeb', domain '${MW_DOMAIN:-<MW_DOMAIN>}'"
+echo "         d) copy the website's ID and paste it into the data-website-id"
+echo "            attribute in $HERE/../../website/index.html, then: $COMPOSE restart caddy"
+echo "         Visits, regions and clicks (Download / GitHub / Buy me a coffee)"
+echo "         then show up in the Umami dashboard."
 echo
 echo " This list is saved to: $HERE/$SUMMARY"
 echo "============================================================"

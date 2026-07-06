@@ -29,6 +29,14 @@ api.@MW_DOMAIN@ {
 	reverse_proxy pdns:8081
 }
 
+# Analytics dashboard — self-hosted Umami (privacy-friendly, cookieless).
+# Serves both the tracker script (/script.js) and the admin dashboard.
+stats.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	encode zstd gzip
+	reverse_proxy umami:3000
+}
+
 # Presentation website — apex + www both serve the static ./site folder.
 @MW_DOMAIN@, www.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@

@@ -25,6 +25,13 @@
 <link rel="icon" href="assets/favicon.ico" type="image/x-icon">
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
 <link rel="apple-touch-icon" sizes="180x180" href="assets/icon-180.png">
+<!-- Privacy-friendly, cookieless analytics (self-hosted Umami on stats.{domain}).
+     data-website-id: paste the UUID shown in the Umami dashboard after you create
+     the "MoonlightWeb" website there (Settings → Websites). data-domains keeps it
+     from recording localhost / preview builds. Harmless if Umami is offline. -->
+<script defer src="https://stats.moonlightweb.top/script.js"
+        data-website-id="00000000-0000-0000-0000-000000000000"
+        data-domains="moonlightweb.top,www.moonlightweb.top"></script>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -443,7 +450,7 @@
         <button type="button" data-i18n-lang="en" aria-pressed="true">EN</button>
         <button type="button" data-i18n-lang="fr" aria-pressed="false">FR</button>
       </span>
-      <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">★ GitHub</a>
+      <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="nav">★ GitHub</a>
     </nav>
   </div>
 </header>
@@ -459,8 +466,8 @@
       to any device with a browser<br>phone, tablet, laptop, TV.
       <strong>Free and open source. Nothing to install on the client. Just a URL.</strong></p>
     <div class="cta cta-hero">
-      <a class="btn btn-primary" href="#download" data-i18n="hero.cta1">Download free</a>
-      <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="hero.cta2">☕ Buy me a coffee</a>
+      <a class="btn btn-primary" href="#download" data-i18n="hero.cta1" data-umami-event="download-cta" data-umami-event-loc="hero">Download free</a>
+      <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="hero.cta2" data-umami-event="buy-me-a-coffee" data-umami-event-loc="hero">☕ Buy me a coffee</a>
     </div>
 
     <div class="hud reveal" aria-label="Key performance numbers">
@@ -678,7 +685,7 @@
       <p data-i18n="dl.p">One download, on the gaming PC only. Every other device just opens a browser.</p>
     </div>
     <div class="dl-main reveal">
-      <a class="btn btn-primary" id="dl-btn" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">⬇ Download MoonlightWeb</a>
+      <a class="btn btn-primary" id="dl-btn" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="main">⬇ Download MoonlightWeb</a>
       <span class="dl-meta" id="dl-meta">Latest release on GitHub</span>
     </div>
     <div class="dl-grid">
@@ -687,8 +694,8 @@
         <h3>Windows</h3>
         <p data-i18n="dl.win">Guided installer — Sunshine &amp; Internet access included in the wizard.</p>
         <div class="fmt">
-          <a data-asset="win-x64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">x64 .exe</a>
-          <a data-asset="win-arm64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">arm64 .exe</a>
+          <a data-asset="win-x64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="win-x64">x64 .exe</a>
+          <a data-asset="win-arm64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="win-arm64">arm64 .exe</a>
         </div>
       </div>
       <div class="dl-card cyb reveal">
@@ -696,7 +703,7 @@
         <h3>macOS</h3>
         <p data-i18n="dl.mac">Apple Silicon DMG with a first‑launch setup wizard.</p>
         <div class="fmt">
-          <a data-asset="mac" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">arm64 .dmg</a>
+          <a data-asset="mac" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="mac">arm64 .dmg</a>
         </div>
       </div>
       <div class="dl-card cyb reveal">
@@ -704,15 +711,15 @@
         <h3>Linux</h3>
         <p data-i18n="dl.linux">Native packages, or a portable AppImage for everything else.</p>
         <div class="fmt">
-          <a data-asset="linux-deb" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">.deb</a>
-          <a data-asset="linux-rpm" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">.rpm</a>
-          <a data-asset="linux-appimage" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">.AppImage</a>
+          <a data-asset="linux-deb" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="linux-deb">.deb</a>
+          <a data-asset="linux-rpm" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="linux-rpm">.rpm</a>
+          <a data-asset="linux-appimage" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="linux-appimage">.AppImage</a>
         </div>
       </div>
     </div>
     <p class="muted reveal" style="text-align:center; font-size:.88rem; margin-top:1.6rem" data-i18n-html="dl.foot">
       Playing from a phone, tablet or TV? Nothing to download — the client is your browser.
-      <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">All releases →</a>
+      <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="all-releases">All releases →</a>
     </p>
   </div>
 </section>
@@ -726,8 +733,8 @@
       <p data-i18n="cta.p">GPL‑3.0, self‑hosted, no accounts, no subscriptions. Built by a long‑time contributor to the
         Moonlight ecosystem. A coffee helps keep the shared DNS domain online. ☕</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-i18n="cta.btn1">⭐ Star on GitHub</a>
-        <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="cta.btn2">☕ Buy me a coffee</a>
+        <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-i18n="cta.btn1" data-umami-event="github" data-umami-event-loc="cta">⭐ Star on GitHub</a>
+        <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="cta.btn2" data-umami-event="buy-me-a-coffee" data-umami-event-loc="cta">☕ Buy me a coffee</a>
       </div>
     </div>
   </div>
@@ -738,9 +745,9 @@
   <div class="wrap">
     <span><img src="assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL‑3.0</span>
     <span>
-      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> ·
       <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> ·
-      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">Support</a>
+      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer">Support</a>
     </span>
   </div>
 </footer>
