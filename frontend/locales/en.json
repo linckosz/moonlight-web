@@ -423,10 +423,13 @@
     "permission": {
         "screenRecording": {
             "title": "Screen recording permission needed",
-            "body": "Sunshine on \"{{name}}\" can't capture the screen yet. On macOS, open System Settings → Privacy & Security → Screen Recording, turn on Sunshine, then quit and reopen Sunshine. (If there's no display, connect one or use an HDMI dummy plug.)",
+            "body": "Sunshine on \"{{name}}\" can't capture the screen yet. On macOS, open System Settings → Privacy & Security → Screen Recording and turn on Sunshine, then use \"Restart Sunshine & retry\" below (macOS only applies the permission after Sunshine restarts). If there's no display, connect one or use an HDMI dummy plug.",
             "openSettings": "Open Screen Recording settings",
             "opened": "Opened Screen Recording settings on the host.",
-            "openFailed": "Couldn't open the settings pane — open it manually."
+            "openFailed": "Couldn't open the settings pane — open it manually.",
+            "restartRetry": "Restart Sunshine & retry",
+            "restarted": "Restarted Sunshine — retrying…",
+            "restartFailed": "Couldn't restart Sunshine — quit and reopen it manually."
         }
     }
 }

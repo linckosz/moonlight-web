@@ -942,7 +942,7 @@ const MoonlightApp = {
             // granted programmatically — show an explicit dialog telling the user
             // exactly what to enable, with a button to open the settings pane.
             if (err && err.responseBody && err.responseBody.code === 'video_capture_failed') {
-                this._showVideoCaptureHelp(host, err.message);
+                this._showVideoCaptureHelp(host, app, err.message);
                 this.transition('app_list');
                 return;
             }
@@ -959,22 +959,32 @@ const MoonlightApp = {
 
     /**
      * Explicit modal shown when Sunshine can't start video capture. Leads with
-     * the macOS Screen Recording permission (the common cause) and offers a
-     * button to open the settings pane on the host — shown only when the browser
-     * is on the host itself (localhost), the only place the button can act and
-     * where the backend endpoint is reachable.
+     * the macOS Screen Recording permission (the common cause) and offers two
+     * host-side actions — shown only when the browser is on the host itself
+     * (localhost), the only place the buttons can act:
+     *   1. Open the Screen Recording settings pane so the user can grant it.
+     *   2. Restart Sunshine + retry the launch. macOS only applies a freshly
+     *      granted TCC permission to a *relaunched* process, so a Sunshine that
+     *      was already running keeps failing capture even after the user ticks
+     *      the box — the reason the dialog "reappears even though I authorized
+     *      it". Restarting Sunshine is what actually clears the error.
+     * Buttons are stacked (column) so the long "Open Screen Recording settings"
+     * label fits inside the narrow dialog instead of being clipped.
      */
-    _showVideoCaptureHelp(host, detail) {
+    _showVideoCaptureHelp(host, app, detail) {
         const hostname = window.location.hostname;
         const onHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
         const name = (host && (host.displayName || host.name)) || '';
 
         const overlay = document.createElement('div');
         overlay.className = 'pairing-overlay';
-        const openBtn = onHost
+        const hostBtns = onHost
             ? `<button class="btn btn-open btn-open-screenrec">${escapeHtml(
                   t('permission.screenRecording.openSettings'),
-              )}</button>`
+              )}</button>
+               <button class="btn btn-save btn-restart-sunshine">${escapeHtml(
+                   t('permission.screenRecording.restartRetry'),
+               )}</button>`
             : '';
         overlay.innerHTML = `
             <div class="pairing-dialog">
@@ -982,8 +992,8 @@ const MoonlightApp = {
                 <p class="pairing-instruction">${escapeHtml(
                     t('permission.screenRecording.body', { name }),
                 )}</p>
-                <div class="pairing-actions">
-                    ${openBtn}
+                <div class="pairing-actions pairing-actions-stack">
+                    ${hostBtns}
                     <button class="btn btn-secondary btn-dismiss">${escapeHtml(
                         t('common.close'),
                     )}</button>
@@ -1004,6 +1014,31 @@ const MoonlightApp = {
                 } catch (e) {
                     console.warn('[MW] open screen recording settings failed:', e);
                     Toast.error(e.message || t('permission.screenRecording.openFailed'));
+                }
+            });
+        }
+        const rb = overlay.querySelector('.btn-restart-sunshine');
+        if (rb) {
+            rb.addEventListener('click', async () => {
+                rb.disabled = true;
+                rb.classList.add('btn-loading');
+                try {
+                    // Stop then start so the new process reads the just-granted
+                    // Screen Recording permission (TCC only applies it on
+                    // relaunch). Give the fresh process a moment to open its
+                    // GameStream port before retrying the launch.
+                    await BackendClient.stopSunshine();
+                    await new Promise((r) => setTimeout(r, 800));
+                    await BackendClient.startSunshine();
+                    await new Promise((r) => setTimeout(r, 3000));
+                    Toast.info(t('permission.screenRecording.restarted'));
+                    close();
+                    if (app) this.launchApp(host, app);
+                } catch (e) {
+                    console.warn('[MW] restart Sunshine failed:', e);
+                    Toast.error(e.message || t('permission.screenRecording.restartFailed'));
+                    rb.disabled = false;
+                    rb.classList.remove('btn-loading');
                 }
             });
         }

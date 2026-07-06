@@ -693,6 +693,19 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 .pairing-actions .btn {
     min-width: 100px;
 }
+/* Stacked variant — buttons on their own row, full width. Used by dialogs with
+   long labels (e.g. "Open Screen Recording settings") that would otherwise be
+   clipped by the row layout + white-space: nowrap. */
+.pairing-actions-stack {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+}
+.pairing-actions-stack .btn {
+    width: 100%;
+    white-space: normal;
+    text-align: center;
+}
 
 /* Manual host add dialog — reuses the pairing overlay/dialog shell */
 .manual-add-input {
