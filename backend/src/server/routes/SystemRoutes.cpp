@@ -280,6 +280,18 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 #endif
     });
 
+    // POST /api/system/stop-sunshine — stop the local Sunshine server. Localhost-
+    // only: it's a host-machine service action (and would kill any in-progress
+    // stream), so only someone at/administering the host triggers it.
+    server.router()->post("/api/system/stop-sunshine", [&](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
+        const bool ok = SunshineInstaller::stop();
+        QJsonObject obj;
+        obj["status"] = ok ? "stopped" : "not_running";
+        return HttpResponse::json(obj);
+    });
+
     // API route: disable Internet Access
     server.router()->post("/api/internet/disable", [&](const HttpRequest& req) {
         // Only localhost can modify internet access settings

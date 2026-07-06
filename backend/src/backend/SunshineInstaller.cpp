@@ -468,4 +468,16 @@ bool launch()
 #endif
 }
 
+bool stop()
+{
+#if defined(Q_OS_WIN)
+    return run(QStringLiteral("taskkill"), {"/IM", "sunshine.exe", "/F"}, 15000) == 0;
+#else
+    // pkill's default signal is SIGTERM, so Sunshine can shut down cleanly
+    // (deregister its mDNS service, remove the menu-bar/tray item). `-x` matches
+    // the exact process name ("sunshine"). Exit 0 = at least one was signaled.
+    return run(QStringLiteral("/usr/bin/pkill"), {"-x", "sunshine"}, 15000) == 0;
+#endif
+}
+
 } // namespace SunshineInstaller

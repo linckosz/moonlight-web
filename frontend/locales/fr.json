@@ -306,7 +306,13 @@
         "sunshineInstallHint": "Votre système d'exploitation vous demandera le mot de passe de votre compte pour installer Sunshine.",
         "sunshineCredsRequired": "Saisissez un identifiant et un mot de passe pour Sunshine.",
         "sunshineInstalledOk": "Sunshine installé avec succès.",
-        "sunshineInstallFailed": "Échec de l'installation de Sunshine : {{message}}"
+        "sunshineInstallFailed": "Échec de l'installation de Sunshine : {{message}}",
+        "stopSunshine": "Arrêter Sunshine",
+        "stoppingSunshine": "Arrêt…",
+        "stopSunshineHint": "Arrête le serveur Sunshine qui tourne sur cet ordinateur. Sur macOS, il est aussi dans la barre de menus en haut à droite. Il redémarre à votre prochaine connexion (ou lancez-le depuis Applications).",
+        "sunshineStopped": "Sunshine arrêté.",
+        "sunshineNotRunning": "Sunshine n'était pas en cours d'exécution.",
+        "sunshineStopFailed": "Impossible d'arrêter Sunshine : {{message}}"
     },
     "stream": {
         "stop": "Arrêter",

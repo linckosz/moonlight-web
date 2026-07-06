@@ -306,7 +306,13 @@
         "sunshineInstallHint": "Your operating system will ask for your account password to install Sunshine.",
         "sunshineCredsRequired": "Enter a username and password for Sunshine.",
         "sunshineInstalledOk": "Sunshine installed successfully.",
-        "sunshineInstallFailed": "Sunshine install failed: {{message}}"
+        "sunshineInstallFailed": "Sunshine install failed: {{message}}",
+        "stopSunshine": "Stop Sunshine",
+        "stoppingSunshine": "Stopping…",
+        "stopSunshineHint": "Stops the Sunshine server running on this computer. On macOS it also lives in the top-right menu bar. It restarts at your next login (or launch it from Applications).",
+        "sunshineStopped": "Sunshine stopped.",
+        "sunshineNotRunning": "Sunshine was not running.",
+        "sunshineStopFailed": "Could not stop Sunshine: {{message}}"
     },
     "stream": {
         "stop": "Stop",

@@ -164,6 +164,11 @@ export class BackendClient {
         return this.post('/api/system/open-screen-recording');
     }
 
+    // Stop the local Sunshine server on the host (localhost-only backend-side).
+    static async stopSunshine() {
+        return this.post('/api/system/stop-sunshine');
+    }
+
     // ── Auth API ───────────────────────────────────────────────────────────
 
     static async validatePin(pin, machineName) {
