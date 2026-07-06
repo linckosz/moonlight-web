@@ -65,6 +65,10 @@
     --yellow:#f5d90a;
     --green:#41cd52;
     --magenta:#ff2e88;
+    /* Title gradient: cool cyan → warm gold (no pink, keeps it from feeling cold) */
+    --grad-a:#19d3ff;
+    --grad-b:#cceb2e;
+    --grad:linear-gradient(96deg,var(--grad-a) 0%,var(--grad-b) 100%);
     --radius:14px;
     --maxw:1160px;
     --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
@@ -204,12 +208,21 @@
     header nav .btn{padding:.5rem 1rem; font-size:.85rem;
       clip-path:polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px)}
   }
+  /* Language toggle — stays visible on mobile (it's a group, not a nav link) */
+  .lang{display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden}
+  .lang button{
+    appearance:none; background:transparent; color:var(--muted); cursor:pointer; border:0;
+    font:700 .74rem var(--mono); letter-spacing:.08em; padding:.32rem .6rem; transition:.15s;
+  }
+  .lang button+button{border-left:1px solid var(--line)}
+  .lang button[aria-pressed="true"]{background:rgba(25,211,255,.14); color:var(--cyan)}
+  @media(hover:hover){ .lang button:hover{color:var(--cyan)} }
 
   /* ───── Hero ───── */
   .hero{padding:88px 0 30px; text-align:center; position:relative}
   .hero h1{font-size:clamp(2.3rem,6vw,4rem); font-weight:800; letter-spacing:-1.5px}
   .hero h1 .grad{
-    background:linear-gradient(92deg,var(--cyan) 5%,#7ee7ff 40%,var(--magenta) 105%);
+    background:var(--grad);
     -webkit-background-clip:text; background-clip:text; color:transparent;
   }
   .hero p.lead{font-size:clamp(1.05rem,2.1vw,1.28rem); color:var(--muted); max-width:640px; margin:1.2rem auto 2rem}
@@ -227,8 +240,9 @@
   }
   .hud > div{padding:.95rem .5rem; text-align:center; font-family:var(--mono); background:rgba(10,15,22,.92)}
   .hud .k{display:block; font-size:.6rem; letter-spacing:.18em; color:var(--muted); text-transform:uppercase; white-space:nowrap}
-  .hud .n{font-size:1.18rem; font-weight:700; color:var(--cyan); white-space:nowrap}
-  .hud .n.y{color:var(--yellow)} .hud .n.g{color:var(--green)} .hud .n.m{color:var(--magenta)}
+  .hud .n{font-size:1.18rem; font-weight:700; color:var(--grad-a); white-space:nowrap}
+  /* Alternate the two title colours across the stat strip */
+  .hud > div:nth-child(even) .n{color:var(--grad-b)}
   @media(max-width:760px){
     .hud{grid-template-columns:repeat(2,1fr)}
     .hud > div:last-child{grid-column:1 / -1}
@@ -249,7 +263,8 @@
   /* ───── Sections ───── */
   section{padding:88px 0}
   .sec-head{text-align:center; max-width:720px; margin:0 auto 3.2rem}
-  .sec-head h2{font-size:clamp(1.7rem,3.6vw,2.5rem); font-weight:800; text-shadow:0 0 26px rgba(25,211,255,.18)}
+  .sec-head h2{font-size:clamp(1.7rem,3.6vw,2.5rem); font-weight:800;
+    background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent;}
   .sec-head p{color:var(--muted); margin:0}
 
   /* Feature cards */
@@ -390,7 +405,8 @@
       radial-gradient(500px 280px at 85% 120%, rgba(255,46,136,.10), transparent 60%),
       linear-gradient(180deg,var(--panel-2),var(--panel));
   }
-  .band h2{font-size:clamp(1.8rem,4vw,2.6rem); font-weight:800}
+  .band h2{font-size:clamp(1.8rem,4vw,2.6rem); font-weight:800;
+    background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent}
   .band p{color:var(--muted); max-width:560px; margin:0 auto 1.8rem}
 
   footer{border-top:1px solid var(--line); padding:36px 0; color:var(--muted); font-size:.9rem}
@@ -419,10 +435,14 @@
       MOONLIGHTWEB <span class="v">GPL‑3.0</span>
     </span>
     <nav aria-label="Main navigation">
-      <a href="#features">Features</a>
-      <a href="#showcase">Showcase</a>
-      <a href="#how">How it works</a>
-      <a href="#download">Download</a>
+      <a href="#features" data-i18n="nav.features">Features</a>
+      <a href="#showcase" data-i18n="nav.showcase">Showcase</a>
+      <a href="#how" data-i18n="nav.how">How it works</a>
+      <a href="#download" data-i18n="nav.download">Download</a>
+      <span class="lang" role="group" aria-label="Language">
+        <button type="button" data-i18n-lang="en" aria-pressed="true">EN</button>
+        <button type="button" data-i18n-lang="fr" aria-pressed="false">FR</button>
+      </span>
       <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">★ GitHub</a>
     </nav>
   </div>
@@ -433,22 +453,22 @@
 <!-- ═════ HERO ═════ -->
 <section class="hero" aria-label="Introduction">
   <div class="wrap">
-    <span class="kicker">100% web · open source · self‑hosted</span>
-    <h1>Your gaming PC.<br><span class="grad">Streamed to any browser.</span></h1>
-    <p class="lead">MoonlightWeb streams your <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig
-      to any device with a browser — phone, tablet, laptop, TV.
-      <strong>Nothing to install on the client. Just a URL.</strong></p>
+    <span class="kicker" data-i18n="hero.kicker">100% web · open source · self‑hosted</span>
+    <h1 data-i18n-html="hero.h1">Your gaming PC.<br><span class="grad">Streamed to any browser.</span></h1>
+    <p class="lead" data-i18n-html="hero.lead">MoonlightWeb streams your <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig
+      to any device with a browser<br>phone, tablet, laptop, TV.
+      <strong>Free and open source. Nothing to install on the client. Just a URL.</strong></p>
     <div class="cta cta-hero">
-      <a class="btn btn-primary" href="#download">Download free</a>
-      <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+      <a class="btn btn-primary" href="#download" data-i18n="hero.cta1">Download free</a>
+      <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="hero.cta2">☕ Buy me a coffee</a>
     </div>
 
     <div class="hud reveal" aria-label="Key performance numbers">
-      <div><span class="k">Wi‑Fi latency</span><span class="n">&lt;20ms</span></div>
-      <div><span class="k">Resolution</span><span class="n y">4K HDR</span></div>
-      <div><span class="k">Framerate</span><span class="n g">up to 240fps</span></div>
-      <div><span class="k">Codecs</span><span class="n m">H264·HEVC·AV1</span></div>
-      <div><span class="k">Client install</span><span class="n">0 MB</span></div>
+      <div><span class="k" data-i18n="hud.k1">Wi‑Fi latency</span><span class="n">&lt;20ms</span></div>
+      <div><span class="k" data-i18n="hud.k2">Resolution</span><span class="n">4K HDR</span></div>
+      <div><span class="k" data-i18n="hud.k3">Framerate</span><span class="n" data-i18n="hud.v3">up to 240fps</span></div>
+      <div><span class="k" data-i18n="hud.k4">Codecs</span><span class="n">H264·HEVC·AV1</span></div>
+      <div><span class="k" data-i18n="hud.k5">Client install</span><span class="n">0 MB</span></div>
     </div>
 
     <div class="hero-shot reveal">
@@ -461,15 +481,15 @@
 <section id="features" aria-label="Features">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="kicker">Feature set</span>
-      <h2>Built like a native client.<br>Delivered like a web page.</h2>
-      <p>Everything you expect from a serious game‑streaming client — running entirely in the browser.</p>
+      <span class="kicker" data-i18n="feat.kicker">Feature set</span>
+      <h2 data-i18n-html="feat.h2">Built like a native client.<br>Delivered like a web page.</h2>
+      <p data-i18n="feat.p">Everything you expect from a serious game‑streaming client — running entirely in the browser.</p>
     </div>
     <div class="grid">
-      <div class="card cyb reveal"><div class="ico">⚡</div><h3>Console‑grade latency</h3><p>WebRTC UDP transport with adaptive congestion control — under 20 ms over Wi‑Fi. Play twitch shooters, not slideshow demos.</p></div>
-      <div class="card cyb reveal"><div class="ico">🎬</div><h3>Up to 4K HDR, 240 fps</h3><p>H264, HEVC and AV1, hardware‑decoded via WebCodecs. Real HDR on HDR displays.</p></div>
-      <div class="card cyb reveal"><div class="ico">🪄</div><h3>Video Enhancement</h3><p>GPU upscaling &amp; sharpening (SGSRv1 + FSR1) in WebGPU. Stream 720p, see near‑1440p.</p></div>
-      <div class="card cyb reveal"><div class="ico">🔊</div><h3>Surround Opus audio</h3><p>Decoded in‑browser with an adaptive jitter buffer. Stays in sync even on flaky Wi‑Fi.</p></div>
+      <div class="card cyb reveal"><div class="ico">⚡</div><h3 data-i18n="card1.h3">Console‑grade latency</h3><p data-i18n="card1.p">WebRTC UDP transport with adaptive congestion control — under 20 ms over Wi‑Fi. Play twitch shooters, not slideshow demos.</p></div>
+      <div class="card cyb reveal"><div class="ico">🎬</div><h3 data-i18n="card2.h3">Up to 4K HDR, 240 fps</h3><p data-i18n="card2.p">H264, HEVC and AV1, hardware‑decoded via WebCodecs. Real HDR on HDR displays.</p></div>
+      <div class="card cyb reveal"><div class="ico">🪄</div><h3 data-i18n="card3.h3">Video Enhancement</h3><p data-i18n-html="card3.p">GPU upscaling &amp; sharpening (SGSRv1 + FSR1) in WebGPU. Stream 720p, see near‑1440p.</p></div>
+      <div class="card cyb reveal"><div class="ico">🔊</div><h3 data-i18n="card4.h3">Surround Opus audio</h3><p data-i18n="card4.p">Decoded in‑browser with an adaptive jitter buffer. Stays in sync even on flaky Wi‑Fi.</p></div>
       <div class="card cyb reveal">
         <svg class="pad-art" viewBox="0 0 260 150" role="img" aria-label="Xbox controller">
           <path d="M65 25 C85 15 175 15 195 25 C220 33 236 62 240 92 C243 117 231 132 216 129 C200 126 194 106 184 97 C174 88 86 88 76 97 C66 106 60 126 44 129 C29 132 17 117 20 92 C24 62 40 33 65 25 Z"
@@ -495,11 +515,11 @@
           <circle cx="152" cy="84" r="14" fill="#0f1a28" stroke="#19d3ff" stroke-width="1.6" stroke-opacity=".7"/>
           <circle cx="152" cy="84" r="8.4" fill="#101c2b" stroke="#19d3ff" stroke-width="1.4"/>
         </svg>
-        <h3>Full input, full rumble</h3><p>Keyboard, pointer‑lock mouse, touch trackpad, virtual keyboard — and Xbox &amp; PlayStation controllers with rumble.</p>
+        <h3 data-i18n="card5.h3">Full input, full rumble</h3><p data-i18n="card5.p">Keyboard, pointer‑lock mouse, touch trackpad, virtual keyboard — and Xbox &amp; PlayStation controllers with rumble.</p>
       </div>
-      <div class="card cyb reveal"><div class="ico">🔎</div><h3>Zero‑config discovery</h3><p>Sunshine hosts appear automatically via mDNS. PIN pairing, multi‑host, persistent sessions.</p></div>
-      <div class="card cyb reveal"><div class="ico">🌍</div><h3>One‑click Internet play</h3><p>Auto sub‑domain, free TLS certificate and UPnP port mapping. Share a link, play from anywhere.</p></div>
-      <div class="card cyb reveal"><div class="ico">🛟</div><h3>Never drops you</h3><p>Transport auto‑fallback (UDP → TCP → WSS) rides through hostile networks and strict firewalls.</p></div>
+      <div class="card cyb reveal"><div class="ico">🔎</div><h3 data-i18n="card6.h3">Zero‑config discovery</h3><p data-i18n="card6.p">Sunshine hosts appear automatically via mDNS. PIN pairing, multi‑host, persistent sessions.</p></div>
+      <div class="card cyb reveal"><div class="ico">🌍</div><h3 data-i18n="card7.h3">One‑click Internet play</h3><p data-i18n="card7.p">Auto sub‑domain, free TLS certificate and UPnP port mapping. Share a link, play from anywhere.</p></div>
+      <div class="card cyb reveal"><div class="ico">🛟</div><h3 data-i18n="card8.h3">Never drops you</h3><p data-i18n="card8.p">Transport auto‑fallback (UDP → TCP → WSS) rides through hostile networks and strict firewalls.</p></div>
     </div>
   </div>
 </section>
@@ -508,40 +528,40 @@
 <section id="showcase" style="padding-top:40px" aria-label="Showcase">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="kicker">Showcase</span>
-      <h2>See it in action</h2>
-      <p>Same rig, same games — every screen in the house (and beyond).</p>
+      <span class="kicker" data-i18n="show.kicker">Showcase</span>
+      <h2 data-i18n="show.h2">See it in action</h2>
+      <p data-i18n="show.p">Same rig, same games — every screen in the house (and beyond).</p>
     </div>
 
     <!-- 01 · Library -->
     <div class="show">
       <div class="txt reveal">
-        <span class="kicker">01 · Discover</span>
-        <h3>All your rigs.<br>One URL.</h3>
-        <p>Open the page and your Sunshine machines are already there — discovered on the LAN, sorted, remembered.</p>
+        <span class="kicker" data-i18n="s1.kicker">01 · Discover</span>
+        <h3 data-i18n-html="s1.h3">All your rigs.<br>One URL.</h3>
+        <p data-i18n="s1.p">Open the page and your Sunshine machines are already there — discovered on the LAN, sorted, remembered.</p>
         <ul>
-          <li><strong>mDNS auto‑discovery</strong> — no IP hunting, hosts just show up</li>
-          <li><strong>PIN pairing</strong> — secure handshake in seconds</li>
-          <li><strong>Multi‑host</strong> — desktop, living‑room PC, home server</li>
+          <li data-i18n-html="s1.li1"><strong>mDNS auto‑discovery</strong> — no IP hunting, hosts just show up</li>
+          <li data-i18n-html="s1.li2"><strong>PIN pairing</strong> — secure handshake in seconds</li>
+          <li data-i18n-html="s1.li3"><strong>Multi‑host</strong> — desktop, living‑room PC, home server</li>
         </ul>
       </div>
       <figure class="media reveal">
         <div class="glow" style="background:radial-gradient(55% 55% at 50% 50%, rgba(25,211,255,.16), transparent 70%)"></div>
         <img class="shot crop-home" src="assets/home.jpg" width="1191" height="876" alt="MoonlightWeb app library — Sunshine hosts discovered automatically, ready to pair" loading="lazy">
-        <figcaption>APP LIBRARY — hosts found via mDNS, one click from pairing</figcaption>
+        <figcaption data-i18n="s1.cap">APP LIBRARY — hosts found via mDNS, one click from pairing</figcaption>
       </figure>
     </div>
 
     <!-- 02 · Mobile -->
     <div class="show rev">
       <div class="txt reveal">
-        <span class="kicker">02 · Go mobile</span>
-        <h3>A gaming handheld,<br>hiding in your pocket.</h3>
-        <p>Your phone becomes a full client: multi‑touch trackpad, native virtual keyboard with modifier keys, gamepad support — up to 240 fps with &lt;20 ms Wi‑Fi latency.</p>
+        <span class="kicker" data-i18n="s2.kicker">02 · Go mobile</span>
+        <h3 data-i18n-html="s2.h3">A gaming handheld,<br>hiding in your pocket.</h3>
+        <p data-i18n="s2.p">Your phone becomes a full client: multi‑touch trackpad, native virtual keyboard with modifier keys, gamepad support — up to 240 fps with &lt;20 ms Wi‑Fi latency.</p>
         <ul>
-          <li><strong>Touch trackpad</strong> — 1 finger aims, 2 scroll &amp; pinch, taps click</li>
-          <li><strong>Real keyboard input</strong> — Win, Esc, Ctrl, arrows… all there</li>
-          <li><strong>Nothing from the App Store</strong> — Safari or Chrome is enough</li>
+          <li data-i18n-html="s2.li1"><strong>Touch trackpad</strong> — 1 finger aims, 2 scroll &amp; pinch, taps click</li>
+          <li data-i18n-html="s2.li2"><strong>Real keyboard input</strong> — Win, Esc, Ctrl, arrows… all there</li>
+          <li data-i18n-html="s2.li3"><strong>Nothing from the App Store</strong> — Safari or Chrome is enough</li>
         </ul>
       </div>
       <figure class="media reveal">
@@ -554,13 +574,13 @@
     <!-- 03 · Enhance -->
     <div class="show">
       <div class="txt reveal">
-        <span class="kicker yellow">03 · Enhance</span>
-        <h3>Stream light.<br>Display sharp.</h3>
-        <p>Video Enhancement upscales and sharpens the stream on your device's GPU — WebGPU running SGSRv1 and FSR1 shaders. Stream at 720p over 4G, watch it crisp on a 1440p panel.</p>
+        <span class="kicker yellow" data-i18n="s3.kicker">03 · Enhance</span>
+        <h3 data-i18n-html="s3.h3">Stream light.<br>Display sharp.</h3>
+        <p data-i18n="s3.p">Video Enhancement upscales and sharpens the stream on your device's GPU — WebGPU running SGSRv1 and FSR1 shaders. Stream at 720p over 4G, watch it crisp on a 1440p panel.</p>
         <ul>
-          <li><strong>Less bandwidth, more detail</strong> — great on cellular and hotel Wi‑Fi</li>
-          <li><strong>Runs client‑side</strong> — zero extra load on the gaming PC</li>
-          <li><strong>Drag the slider</strong> — 720p stream vs. enhanced output →</li>
+          <li data-i18n-html="s3.li1"><strong>Less bandwidth, more detail</strong> — great on cellular and hotel Wi‑Fi</li>
+          <li data-i18n-html="s3.li2"><strong>Runs client‑side</strong> — zero extra load on the gaming PC</li>
+          <li data-i18n-html="s3.li3"><strong>Drag the slider</strong> — 720p stream vs. enhanced output →</li>
         </ul>
       </div>
       <figure class="media reveal">
@@ -568,26 +588,26 @@
         <div class="ba" id="ba">
           <img class="before" src="assets/enhance_before.jpg" width="814" height="984" alt="Original 720p game stream, zoomed on a character's face">
           <img class="after" src="assets/enhance_after.jpg" width="818" height="984" alt="Same frame after Video Super Resolution upscaling to 1440p">
-          <span class="tag l">720p STREAM</span>
-          <span class="tag r">ENHANCED ▸ 1440p</span>
+          <span class="tag l" data-i18n="s3.tagl">720p STREAM</span>
+          <span class="tag r" data-i18n="s3.tagr">ENHANCED ▸ 1440p</span>
           <div class="bar"></div>
           <div class="knob">◂▸</div>
           <input type="range" min="0" max="100" value="50" aria-label="Compare original and enhanced image">
         </div>
-        <figcaption>Prince of Persia — streamed at 720p, displayed at 1440p</figcaption>
+        <figcaption data-i18n="s3.cap">Prince of Persia — streamed at 720p, displayed at 1440p</figcaption>
       </figure>
     </div>
 
     <!-- 04 · Tune -->
     <div class="show rev">
       <div class="txt reveal">
-        <span class="kicker">04 · Fine‑tune</span>
-        <h3>Set it and forget it.<br>Or tweak everything.</h3>
-        <p>Sane defaults with auto bitrate out of the box — and a full pro panel when you want control, on desktop and mobile alike.</p>
+        <span class="kicker" data-i18n="s4.kicker">04 · Fine‑tune</span>
+        <h3 data-i18n-html="s4.h3">Set it and forget it.<br>Or tweak everything.</h3>
+        <p data-i18n="s4.p">Sane defaults with auto bitrate out of the box — and a full pro panel when you want control, on desktop and mobile alike.</p>
         <ul>
-          <li><strong>Resolution, FPS, bitrate</strong> — auto‑tuned, always overridable</li>
-          <li><strong>HDR &amp; 4:4:4 chroma</strong> — for the pixel purists</li>
-          <li><strong>Codec choice</strong> — options your browser can't decode are simply greyed out</li>
+          <li data-i18n-html="s4.li1"><strong>Resolution, FPS, bitrate</strong> — auto‑tuned, always overridable</li>
+          <li data-i18n-html="s4.li2"><strong>HDR &amp; 4:4:4 chroma</strong> — for the pixel purists</li>
+          <li data-i18n-html="s4.li3"><strong>Codec choice</strong> — options your browser can't decode are simply greyed out</li>
         </ul>
       </div>
       <figure class="media reveal">
@@ -596,26 +616,26 @@
           <img class="shot" src="assets/settings.jpg" width="1374" height="982" alt="MoonlightWeb streaming settings — resolution, frame rate, HDR, bitrate" loading="lazy">
           <div class="phone"><img src="assets/advanced.jpg" width="1170" height="2532" alt="Advanced options on mobile — Video Enhancement, codec, 4:4:4 chroma" loading="lazy"></div>
         </div>
-        <figcaption>Streaming settings &amp; advanced options</figcaption>
+        <figcaption data-i18n="s4.cap">Streaming settings &amp; advanced options</figcaption>
       </figure>
     </div>
 
     <!-- 05 · Go global -->
     <div class="show">
       <div class="txt reveal">
-        <span class="kicker">05 · Go global</span>
-        <h3>LAN party today.<br>Hotel room tomorrow.</h3>
-        <p>Tick one box and your rig goes online: MoonlightWeb registers a personal sub‑domain, issues a free TLS certificate and maps the ports via UPnP. No dynamic‑DNS accounts, no reverse‑proxy homework.</p>
+        <span class="kicker" data-i18n="s5.kicker">05 · Go global</span>
+        <h3 data-i18n-html="s5.h3">LAN party today.<br>Hotel room tomorrow.</h3>
+        <p data-i18n="s5.p">Tick one box and your rig goes online: MoonlightWeb registers a personal sub‑domain, issues a free TLS certificate and maps the ports via UPnP. No dynamic‑DNS accounts, no reverse‑proxy homework.</p>
         <ul>
-          <li><strong>https://you.moonlightweb.top</strong> — your own address, automatically</li>
-          <li><strong>Free auto‑renewed TLS</strong> — padlock included</li>
-          <li><strong>Self‑hosted</strong> — your games never touch anyone's cloud</li>
+          <li data-i18n-html="s5.li1"><strong>https://you.moonlightweb.top</strong> — your own address, automatically</li>
+          <li data-i18n-html="s5.li2"><strong>Free auto‑renewed TLS</strong> — padlock included</li>
+          <li data-i18n-html="s5.li3"><strong>Self‑hosted</strong> — your games never touch anyone's cloud</li>
         </ul>
       </div>
       <figure class="media reveal">
         <div class="glow" style="background:radial-gradient(55% 55% at 55% 50%, rgba(65,205,82,.13), transparent 70%)"></div>
         <img class="shot crop-admin" src="assets/admin.jpg" width="1817" height="1225" alt="MoonlightWeb admin page — one-click Internet access with public URL, and local access" loading="lazy">
-        <figcaption>ADMIN — Internet access enabled in one click</figcaption>
+        <figcaption data-i18n="s5.cap">ADMIN — Internet access enabled in one click</figcaption>
       </figure>
     </div>
   </div>
@@ -625,18 +645,18 @@
 <section id="how" aria-label="How it works">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="kicker">Setup</span>
-      <h2>Playing in about 60 seconds</h2>
-      <p>One small server on the gaming PC. Browsers everywhere else.</p>
+      <span class="kicker" data-i18n="how.kicker">Setup</span>
+      <h2 data-i18n="how.h2">Playing in about 60 seconds</h2>
+      <p data-i18n="how.p">One small server on the gaming PC. Browsers everywhere else.</p>
     </div>
     <div class="steps">
-      <div class="step cyb reveal"><h3>Run the server</h3><p>On the machine where Sunshine runs. A tray icon appears — that's it for the install.</p></div>
-      <div class="step cyb reveal"><h3>Open a browser</h3><p>At <code>https://localhost</code>, your LAN IP, or your personal domain from any device.</p></div>
-      <div class="step cyb reveal"><h3>Pair once</h3><p>Your hosts are already listed. Enter the PIN Sunshine shows — done forever.</p></div>
-      <div class="step cyb reveal"><h3>Press play</h3><p>Pick a game or the full desktop. Fullscreen, gamepad in hand, go.</p></div>
+      <div class="step cyb reveal"><h3 data-i18n="step1.h3">Run the server</h3><p data-i18n="step1.p">On the machine where Sunshine runs. A tray icon appears — that's it for the install.</p></div>
+      <div class="step cyb reveal"><h3 data-i18n="step2.h3">Open a browser</h3><p data-i18n-html="step2.p">At <code>https://localhost</code>, your LAN IP, or your personal domain from any device.</p></div>
+      <div class="step cyb reveal"><h3 data-i18n="step3.h3">Pair once</h3><p data-i18n="step3.p">Your hosts are already listed. Enter the PIN Sunshine shows — done forever.</p></div>
+      <div class="step cyb reveal"><h3 data-i18n="step4.h3">Press play</h3><p data-i18n="step4.p">Pick a game or the full desktop. Fullscreen, gamepad in hand, go.</p></div>
     </div>
 
-    <p class="muted reveal" style="text-align:center; max-width:760px; margin:3rem auto 0">
+    <p class="muted reveal" style="text-align:center; max-width:760px; margin:3rem auto 0" data-i18n-html="how.under">
       Under the hood: a C++/Qt backend embeds <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>,
       speaks GameStream (RTSP/RTP/ENet) to Sunshine, and relays video, audio and input to the browser over WebRTC —
       with automatic WSS fallback. Decoding happens in WebCodecs, rendering in WebGPU, audio in an AudioWorklet.
@@ -653,9 +673,9 @@
 <section id="download" style="padding-top:20px" aria-label="Download">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="kicker">Download</span>
-      <h2>Grab the server. Bring the games.</h2>
-      <p>One download, on the gaming PC only. Every other device just opens a browser.</p>
+      <span class="kicker" data-i18n="dl.kicker">Download</span>
+      <h2 data-i18n="dl.h2">Grab the server. Bring the games.</h2>
+      <p data-i18n="dl.p">One download, on the gaming PC only. Every other device just opens a browser.</p>
     </div>
     <div class="dl-main reveal">
       <a class="btn btn-primary" id="dl-btn" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">⬇ Download MoonlightWeb</a>
@@ -665,7 +685,7 @@
       <div class="dl-card cyb reveal">
         <svg class="os" viewBox="0 0 24 24" role="img" aria-label="Windows logo"><path d="M0 3.449 9.75 2.1v9.451H0zM10.949 1.949 24 0v11.4H10.949zM0 12.6h9.75v9.451L0 20.699zM10.949 12.6H24V24l-13.051-1.801z"/></svg>
         <h3>Windows</h3>
-        <p>Guided installer — Sunshine &amp; Internet access included in the wizard.</p>
+        <p data-i18n="dl.win">Guided installer — Sunshine &amp; Internet access included in the wizard.</p>
         <div class="fmt">
           <a data-asset="win-x64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">x64 .exe</a>
           <a data-asset="win-arm64" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">arm64 .exe</a>
@@ -674,7 +694,7 @@
       <div class="dl-card cyb reveal">
         <svg class="os" viewBox="0 0 24 24" role="img" aria-label="Apple logo"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
         <h3>macOS</h3>
-        <p>Apple Silicon DMG with a first‑launch setup wizard.</p>
+        <p data-i18n="dl.mac">Apple Silicon DMG with a first‑launch setup wizard.</p>
         <div class="fmt">
           <a data-asset="mac" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">arm64 .dmg</a>
         </div>
@@ -682,7 +702,7 @@
       <div class="dl-card cyb reveal">
         <svg class="os" viewBox="0 0 24 24" role="img" aria-label="Linux Tux logo"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg>
         <h3>Linux</h3>
-        <p>Native packages, or a portable AppImage for everything else.</p>
+        <p data-i18n="dl.linux">Native packages, or a portable AppImage for everything else.</p>
         <div class="fmt">
           <a data-asset="linux-deb" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">.deb</a>
           <a data-asset="linux-rpm" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">.rpm</a>
@@ -690,7 +710,7 @@
         </div>
       </div>
     </div>
-    <p class="muted reveal" style="text-align:center; font-size:.88rem; margin-top:1.6rem">
+    <p class="muted reveal" style="text-align:center; font-size:.88rem; margin-top:1.6rem" data-i18n-html="dl.foot">
       Playing from a phone, tablet or TV? Nothing to download — the client is your browser.
       <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">All releases →</a>
     </p>
@@ -701,13 +721,13 @@
 <section style="padding-top:20px" aria-label="Call to action">
   <div class="wrap">
     <div class="band cyb reveal">
-      <span class="kicker">Free &amp; open source</span>
-      <h2>Press play on your own cloud.</h2>
-      <p>GPL‑3.0, self‑hosted, no accounts, no subscriptions. Built by a long‑time contributor to the
+      <span class="kicker" data-i18n="cta.kicker">Free &amp; open source</span>
+      <h2 data-i18n="cta.h2">Press play on your own cloud.</h2>
+      <p data-i18n="cta.p">GPL‑3.0, self‑hosted, no accounts, no subscriptions. Built by a long‑time contributor to the
         Moonlight ecosystem. A coffee helps keep the shared DNS domain online. ☕</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">⭐ Star on GitHub</a>
-        <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+        <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-i18n="cta.btn1">⭐ Star on GitHub</a>
+        <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="cta.btn2">☕ Buy me a coffee</a>
       </div>
     </div>
   </div>
@@ -752,7 +772,8 @@
   }
 
   // Download section — resolve the latest GitHub release asset for this platform.
-  // Any failure (offline, rate-limit, no release yet) keeps the /releases fallback links.
+  // Button + meta text are language-aware (re-rendered on 'langchange'). Any failure
+  // (offline, rate-limit, no release yet) keeps the /releases fallback links.
   (async () => {
     const REPO = 'linckosz/moonlight-web';
     const btn = document.getElementById('dl-btn'), meta = document.getElementById('dl-meta');
@@ -767,13 +788,40 @@
       const hints = await navigator.userAgentData?.getHighEntropyValues?.(['architecture']);
       if (/arm/i.test(hints?.architecture || '')) arch = 'arm64';
     } catch {}
-    const label = {win:'Download for Windows', mac:'Download for macOS', linux:'Download for Linux'};
-    if (label[os]) btn.textContent = '⬇ ' + label[os];
-    if (os === 'mobile') meta.textContent = 'On this device, just open the URL of your server — the download goes on the gaming PC.';
+
+    // Localised copy for the dynamic button + meta line.
+    const T = {
+      en: {
+        base: '⬇ Download MoonlightWeb',
+        os: {win:'⬇ Download for Windows', mac:'⬇ Download for macOS', linux:'⬇ Download for Linux'},
+        latest: 'Latest release on GitHub',
+        mobile: 'On this device, just open the URL of your server — the download goes on the gaming PC.',
+        all: t => `${t} — all downloads on GitHub`,
+      },
+      fr: {
+        base: '⬇ Télécharger MoonlightWeb',
+        os: {win:'⬇ Télécharger pour Windows', mac:'⬇ Télécharger pour macOS', linux:'⬇ Télécharger pour Linux'},
+        latest: 'Dernière version sur GitHub',
+        mobile: 'Sur cet appareil, ouvrez simplement l’URL de votre serveur — le téléchargement se fait sur le PC gamer.',
+        all: t => `${t} — tous les téléchargements sur GitHub`,
+      },
+    };
+    let best = null, rel = null;                       // filled once the fetch resolves
+    const render = () => {
+      const L = T[document.documentElement.lang === 'fr' ? 'fr' : 'en'];
+      btn.textContent = (os && L.os[os]) || L.base;
+      if (best && rel) meta.textContent = `${rel.tag_name} · ${best.name} · ${(best.size / 1048576).toFixed(0)} MB`;
+      else if (os === 'mobile') meta.textContent = L.mobile;
+      else if (rel) meta.textContent = L.all(rel.tag_name);
+      else meta.textContent = L.latest;
+    };
+    document.addEventListener('langchange', render);
+    render();
+
     try {
       const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
       if (!r.ok) throw new Error(r.status);
-      const rel = await r.json();
+      rel = await r.json();
       const find = re => (rel.assets || []).find(a => re.test(a.name));
       // Asset names produced by .github/workflows/release.yml:
       //   MoonlightWeb-installer-win-{x64,arm64}.exe
@@ -791,14 +839,10 @@
         const m = assets[a.dataset.asset];
         if (m) a.href = m.browser_download_url;
       });
-      const best = {win: assets[`win-${arch}`] || assets['win-x64'], mac: assets.mac, linux: assets['linux-appimage']}[os];
-      if (best) {
-        btn.href = best.browser_download_url;
-        meta.textContent = `${rel.tag_name} · ${best.name} · ${(best.size / 1048576).toFixed(0)} MB`;
-      } else if (os !== 'mobile') {
-        meta.textContent = `${rel.tag_name} — all downloads on GitHub`;
-      }
+      best = {win: assets[`win-${arch}`] || assets['win-x64'], mac: assets.mac, linux: assets['linux-appimage']}[os] || null;
+      if (best) btn.href = best.browser_download_url;
     } catch { /* keep the /releases fallback */ }
+    render();
   })();
 
   // Scroll reveal (skipped if reduced motion).
@@ -810,6 +854,120 @@
   } else {
     document.querySelectorAll('.reveal').forEach(el=>el.classList.add('in'));
   }
+
+  // ─── i18n ─────────────────────────────────────────────────────────────────
+  // English is the source of truth (the HTML itself, captured on load); French
+  // comes from the dictionary below. The choice is persisted; EN is the default.
+  const FR = {
+    'nav.features':'Fonctionnalités', 'nav.showcase':'En images',
+    'nav.how':'Comment ça marche', 'nav.download':'Télécharger',
+
+    'hero.kicker':'100% web · open source · auto‑hébergé',
+    'hero.h1':'Votre PC gamer.<br><span class="grad">Streamé dans le navigateur.</span>',
+    'hero.lead':'MoonlightWeb streame votre PC <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> vers n’importe quel appareil doté d’un navigateur<br>téléphone, tablette, ordinateur, TV. <strong>Gratuit et open source. Rien à installer côté client. Juste une URL.</strong>',
+    'hero.cta1':'Télécharger gratuitement', 'hero.cta2':'☕ Offrez‑moi un café',
+    'hud.k1':'Latence Wi‑Fi', 'hud.k2':'Résolution', 'hud.k3':'Fréquence',
+    'hud.k4':'Codecs', 'hud.k5':'Install. client', 'hud.v3':'jusqu’à 240fps',
+
+    'feat.kicker':'Fonctionnalités',
+    'feat.h2':'Conçu comme un client natif.<br>Livré comme une page web.',
+    'feat.p':'Tout ce qu’on attend d’un vrai client de game streaming, entièrement dans le navigateur.',
+    'card1.h3':'Latence de console',
+    'card1.p':'Transport WebRTC UDP avec contrôle de congestion adaptatif : moins de 20 ms en Wi‑Fi. Jouez à des FPS nerveux, pas à des diaporamas.',
+    'card2.h3':'Jusqu’à 4K HDR, 240 fps',
+    'card2.p':'H264, HEVC et AV1, décodés matériellement via WebCodecs. Vrai HDR sur écrans HDR.',
+    'card3.h3':'Amélioration vidéo',
+    'card3.p':'Upscaling et netteté GPU (SGSRv1 + FSR1) en WebGPU. Streamez en 720p, voyez du quasi‑1440p.',
+    'card4.h3':'Audio surround Opus',
+    'card4.p':'Décodé dans le navigateur avec un buffer de gigue adaptatif. Reste synchro même sur un Wi‑Fi capricieux.',
+    'card5.h3':'Toutes les commandes, vibrations comprises',
+    'card5.p':'Clavier, souris en pointer‑lock, trackpad tactile, clavier virtuel, et manettes Xbox & PlayStation avec vibrations.',
+    'card6.h3':'Découverte sans configuration',
+    'card6.p':'Les hôtes Sunshine apparaissent automatiquement via mDNS. Appairage par PIN, multi‑hôtes, sessions persistantes.',
+    'card7.h3':'Jeu en ligne en un clic',
+    'card7.p':'Sous‑domaine auto, certificat TLS gratuit et redirection de ports UPnP. Partagez un lien, jouez de partout.',
+    'card8.h3':'Ne vous lâche jamais',
+    'card8.p':'Bascule de transport automatique (UDP → TCP → WSS) qui traverse les réseaux hostiles et les pare‑feux stricts.',
+
+    'show.kicker':'En images', 'show.h2':'Voyez‑le en action',
+    'show.p':'Même PC, mêmes jeux, sur tous les écrans de la maison (et au‑delà).',
+    's1.kicker':'01 · Découvrir', 's1.h3':'Tous vos PC.<br>Une seule URL.',
+    's1.p':'Ouvrez la page : vos machines Sunshine sont déjà là, découvertes sur le réseau local, triées, mémorisées.',
+    's1.li1':'<strong>Découverte mDNS</strong> — plus de chasse aux IP, les hôtes apparaissent seuls',
+    's1.li2':'<strong>Appairage par PIN</strong> — connexion sécurisée en quelques secondes',
+    's1.li3':'<strong>Multi‑hôtes</strong> — PC de bureau, PC du salon, serveur maison',
+    's1.cap':'BIBLIOTHÈQUE — hôtes trouvés via mDNS, à un clic de l’appairage',
+    's2.kicker':'02 · En mobilité', 's2.h3':'Une console portable,<br>cachée dans votre poche.',
+    's2.p':'Votre téléphone devient un client complet : trackpad multitouch, clavier virtuel natif avec touches de modification, support des manettes — jusqu’à 240 fps avec moins de 20 ms de latence Wi‑Fi.',
+    's2.li1':'<strong>Trackpad tactile</strong> — 1 doigt vise, 2 défilent et zooment, tapotez pour cliquer',
+    's2.li2':'<strong>Vraies entrées clavier</strong> — Win, Échap, Ctrl, flèches… tout y est',
+    's2.li3':'<strong>Rien depuis l’App Store</strong> — Safari ou Chrome suffit',
+    's3.kicker':'03 · Améliorer', 's3.h3':'Streamez léger.<br>Affichez net.',
+    's3.p':'L’amélioration vidéo upscale et affine le flux sur le GPU de votre appareil — WebGPU exécutant les shaders SGSRv1 et FSR1. Streamez en 720p en 4G, profitez d’une image nette sur une dalle 1440p.',
+    's3.li1':'<strong>Moins de bande passante, plus de détail</strong> — parfait en 4G et sur le Wi‑Fi d’hôtel',
+    's3.li2':'<strong>Exécuté côté client</strong> — aucune charge supplémentaire sur le PC gamer',
+    's3.li3':'<strong>Faites glisser le curseur</strong> — flux 720p vs. sortie améliorée →',
+    's3.tagl':'FLUX 720p', 's3.tagr':'AMÉLIORÉ ▸ 1440p',
+    's3.cap':'Prince of Persia — streamé en 720p, affiché en 1440p',
+    's4.kicker':'04 · Ajuster', 's4.h3':'Réglez et oubliez.<br>Ou ajustez tout.',
+    's4.p':'Des réglages par défaut sensés avec bitrate auto d’emblée — et un panneau pro complet quand vous voulez le contrôle, sur ordinateur comme sur mobile.',
+    's4.li1':'<strong>Résolution, FPS, bitrate</strong> — auto‑réglés, toujours modifiables',
+    's4.li2':'<strong>HDR &amp; chroma 4:4:4</strong> — pour les puristes du pixel',
+    's4.li3':'<strong>Choix du codec</strong> — les options que votre navigateur ne peut pas décoder sont simplement grisées',
+    's4.cap':'Réglages de streaming &amp; options avancées',
+    's5.kicker':'05 · Passer en ligne', 's5.h3':'LAN party aujourd’hui.<br>Chambre d’hôtel demain.',
+    's5.p':'Cochez une case et votre PC passe en ligne : MoonlightWeb enregistre un sous‑domaine personnel, émet un certificat TLS gratuit et redirige les ports via UPnP. Aucun compte DNS dynamique, aucun reverse‑proxy à configurer.',
+    's5.li1':'<strong>https://vous.moonlightweb.top</strong> — votre propre adresse, automatiquement',
+    's5.li2':'<strong>TLS gratuit auto‑renouvelé</strong> — cadenas inclus',
+    's5.li3':'<strong>Auto‑hébergé</strong> — vos jeux ne touchent jamais le cloud de qui que ce soit',
+    's5.cap':'ADMIN — accès Internet activé en un clic',
+
+    'how.kicker':'Installation', 'how.h2':'En jeu en 60 secondes environ',
+    'how.p':'Un petit serveur sur le PC gamer. Des navigateurs partout ailleurs.',
+    'step1.h3':'Lancez le serveur',
+    'step1.p':'Sur la machine où tourne Sunshine. Une icône apparaît dans la zone de notification — et l’installation est terminée.',
+    'step2.h3':'Ouvrez un navigateur',
+    'step2.p':'Sur <code>https://localhost</code>, votre IP locale, ou votre domaine personnel depuis n’importe quel appareil.',
+    'step3.h3':'Appairez une fois',
+    'step3.p':'Vos hôtes sont déjà listés. Saisissez le PIN affiché par Sunshine — et c’est réglé pour de bon.',
+    'step4.h3':'Appuyez sur play',
+    'step4.p':'Choisissez un jeu ou le bureau complet. Plein écran, manette en main, c’est parti.',
+    'how.under':'Sous le capot : un backend C++/Qt embarque <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>, dialogue en GameStream (RTSP/RTP/ENet) avec Sunshine, et relaie vidéo, audio et entrées vers le navigateur via WebRTC — avec bascule WSS automatique. Le décodage se fait en WebCodecs, le rendu en WebGPU, l’audio dans un AudioWorklet.',
+
+    'dl.kicker':'Télécharger', 'dl.h2':'Récupérez le serveur. Amenez les jeux.',
+    'dl.p':'Un seul téléchargement, sur le PC gamer uniquement. Tous les autres appareils ouvrent juste un navigateur.',
+    'dl.win':'Installeur guidé — Sunshine et accès Internet inclus dans l’assistant.',
+    'dl.mac':'DMG Apple Silicon avec un assistant de configuration au premier lancement.',
+    'dl.linux':'Paquets natifs, ou une AppImage portable pour tout le reste.',
+    'dl.foot':'Vous jouez depuis un téléphone, une tablette ou une TV ? Rien à télécharger — le client, c’est votre navigateur. <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">Toutes les versions →</a>',
+
+    'cta.kicker':'Gratuit &amp; open source', 'cta.h2':'Appuyez sur play sur votre propre cloud.',
+    'cta.p':'GPL‑3.0, auto‑hébergé, sans compte, sans abonnement. Développé par un contributeur de longue date de l’écosystème Moonlight. Un café aide à garder le domaine DNS partagé en ligne. ☕',
+    'cta.btn1':'⭐ Star sur GitHub', 'cta.btn2':'☕ Offrez‑moi un café',
+  };
+
+  const _orig = new Map();
+  document.querySelectorAll('[data-i18n]').forEach(el => _orig.set(el, el.textContent));
+  document.querySelectorAll('[data-i18n-html]').forEach(el => _orig.set(el, el.innerHTML));
+  function applyLang(lang){
+    lang = lang === 'fr' ? 'fr' : 'en';
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      el.textContent = lang === 'fr' ? (FR[el.dataset.i18n] ?? _orig.get(el)) : _orig.get(el);
+    });
+    document.querySelectorAll('[data-i18n-html]').forEach(el => {
+      el.innerHTML = lang === 'fr' ? (FR[el.dataset.i18nHtml] ?? _orig.get(el)) : _orig.get(el);
+    });
+    document.querySelectorAll('[data-i18n-lang]').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.i18nLang === lang)));
+    try { localStorage.setItem('mw_lang', lang); } catch {}
+    document.dispatchEvent(new CustomEvent('langchange', {detail: lang}));
+  }
+  document.querySelectorAll('[data-i18n-lang]').forEach(b =>
+    b.addEventListener('click', () => applyLang(b.dataset.i18nLang)));
+  let _saved = 'en';
+  try { _saved = localStorage.getItem('mw_lang') || 'en'; } catch {}
+  applyLang(_saved);
 </script>
 </body>
 </html>
