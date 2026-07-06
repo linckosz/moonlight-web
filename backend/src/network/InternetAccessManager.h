@@ -77,6 +77,13 @@ public:
     /// Whether the manager is currently active (Internet Access enabled).
     bool isActive() const { return m_Active; }
 
+    /// True when @p label collides with a subdomain the PowerDNS stack owns
+    /// (apex, www, api, stats, ns1/ns2, mail) or an internal token label
+    /// (anything starting with '_', e.g. _owner / _acme-challenge). A
+    /// per-instance unique_id must be rejected when this returns true, otherwise
+    /// it would hijack the DNS server's own records. Case-insensitive.
+    static bool isReservedSubdomain(const QString& label);
+
     /// The registered domain name (e.g. "92b8d127.example.com").
     QString domain() const { return m_Domain; }
 

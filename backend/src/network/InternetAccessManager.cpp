@@ -501,6 +501,21 @@ QString InternetAccessManager::generateUniqueId()
     return hex;
 }
 
+bool InternetAccessManager::isReservedSubdomain(const QString& label)
+{
+    const QString l = label.trimmed().toLower();
+    if (l.isEmpty()) return true;                     // apex ("@")
+    if (l.startsWith(QLatin1Char('_'))) return true;  // _owner / _acme-challenge tokens
+    // Labels the DNS stack itself publishes under the base domain — keep in sync
+    // with deploy/powerdns/pdns/init.sh (plus "stats" for the Umami analytics host).
+    static const char* const kReserved[] = {
+        "www", "api", "stats", "ns1", "ns2", "mail",
+    };
+    for (const char* r : kReserved)
+        if (l == QLatin1String(r)) return true;
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // Identifiers — eagerly initialized at startup, without touching DNS
 // ---------------------------------------------------------------------------
