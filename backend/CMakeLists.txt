@@ -147,6 +147,7 @@ add_executable(mw-server
     src/network/AcmeClient.cpp
     src/network/InternetAccessManager.cpp
     src/network/GeoIpService.cpp
+    src/network/UpdateChecker.cpp
     src/TrayManager.cpp
     src/Autostart.cpp
     src/backend/NvHTTP.cpp

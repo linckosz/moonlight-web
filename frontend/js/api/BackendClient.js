@@ -227,6 +227,18 @@ export class BackendClient {
         return this.get('/api/server/hostname');
     }
 
+    /** Check whether a newer MoonlightWeb release is available for this host.
+     *  Returns { current, latest, update_available, download_url, release_url,
+     *  asset_name }. Best-effort — resolves null on any failure so callers can
+     *  stay silent when offline / rate-limited. */
+    static async checkForUpdate() {
+        try {
+            return await this.get('/api/update/check');
+        } catch (_) {
+            return null;
+        }
+    }
+
     // ── Admin Settings ───────────────────────────────────────────────────────────
 
     static async getAdminSettings() {

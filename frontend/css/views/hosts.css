@@ -4,6 +4,80 @@
     width: 100%;
 }
 
+/* Discreet "new version available" banner at the very top of the Hosts view.
+   Muted surface + a single accent edge so it reads as informative, not alarming. */
+.update-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    background-color: var(--accent-soft);
+    border: 1px solid var(--border-1);
+    border-left: 2px solid var(--accent-1);
+    border-radius: var(--radius-sm);
+}
+.update-banner[hidden] {
+    display: none;
+}
+.update-banner-icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    color: var(--accent-1);
+}
+.update-banner-icon svg {
+    width: 16px;
+    height: 16px;
+}
+.update-banner-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--text-1);
+}
+.update-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex: 0 0 auto;
+}
+.update-banner-download {
+    padding: 4px 12px;
+    font-size: var(--fs-xs);
+    text-decoration: none;
+    white-space: nowrap;
+}
+.update-banner-notes {
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+    white-space: nowrap;
+}
+.update-banner-notes:hover {
+    color: var(--accent-1);
+}
+.update-banner-dismiss {
+    flex: 0 0 auto;
+    padding: 4px;
+    background: none;
+    border: none;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+    line-height: 1;
+    cursor: pointer;
+}
+.update-banner-dismiss:hover {
+    color: var(--accent-1);
+}
+@media (max-width: 600px) {
+    .update-banner {
+        flex-wrap: wrap;
+    }
+    .update-banner-text {
+        flex-basis: 100%;
+    }
+}
+
 .hosts-header {
     display: flex;
     align-items: center;

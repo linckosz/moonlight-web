@@ -62,6 +62,7 @@
 #include "streaming/TransportPriorities.h"
 #include "network/InternetAccessManager.h"
 #include "network/GeoIpService.h"
+#include "network/UpdateChecker.h"
 #include "TrayManager.h"
 
 #include <openssl/ssl.h>
@@ -542,6 +543,7 @@ int main(int argc, char* argv[])
 
     InternetAccessManager internetAccess(&appSettings);
     GeoIpService geoIpService;
+    UpdateChecker updateChecker(QCoreApplication::applicationVersion());
 
     // Re-sync domain on HttpServer — ensureIdentifiers() (called in
     // the InternetAccessManager constructor) may have just generated a
@@ -618,6 +620,14 @@ int main(int argc, char* argv[])
         obj["status"] = "ok";
         obj["version"] = QCoreApplication::applicationVersion();
         return HttpResponse::json(obj);
+    });
+
+    // GET /api/update/check — is a newer MoonlightWeb release available? Returns
+    // the cached GitHub Releases result (current/latest/update_available plus the
+    // exact installer download URL for this OS/arch); a stale cache refreshes in
+    // the background without blocking this handler.
+    server.router()->get("/api/update/check", [&updateChecker](const HttpRequest&) {
+        return HttpResponse::json(updateChecker.statusJson());
     });
 
     // GET /api/server/hostname — returns the server's hostname and OS info
