@@ -65,6 +65,19 @@ export class HostListView {
         this._clickHandler = (e) => {
             if (this._destroyed) return;
 
+            // ── Update banner dismiss ──────────────────────────────────────
+            const dismissBtn = e.target.closest('.update-banner-dismiss');
+            if (dismissBtn) {
+                // Remember the dismissed version so only a newer release re-shows.
+                localStorage.setItem('mw_update_dismissed', dismissBtn.dataset.version || '');
+                const banner = this.container.querySelector('#update-banner');
+                if (banner) {
+                    banner.hidden = true;
+                    banner.innerHTML = '';
+                }
+                return;
+            }
+
             // ── Kebab menu toggle ──────────────────────────────────────────
             const menuBtn = e.target.closest('.btn-host-menu');
             if (menuBtn) {
@@ -177,6 +190,51 @@ export class HostListView {
         this._active = true;
         this._autoScan();
         this.scheduleNextPoll(0); // immediate first refresh
+        this._checkForUpdate(); // discreet "new version available" banner (once)
+    }
+
+    // --- Update banner ---
+
+    // Ask the backend (cached GitHub Releases check) whether a newer MoonlightWeb
+    // build exists and, if so, paint a discreet dismissible banner at the top of
+    // the Hosts view. Runs at most once per view lifetime; failures stay silent.
+    async _checkForUpdate() {
+        if (this._updateChecked) return;
+        this._updateChecked = true;
+        const info = await BackendClient.checkForUpdate();
+        if (this._destroyed || !info || !info.update_available) return;
+        // Respect a prior dismissal — but only for that exact version, so a newer
+        // release re-surfaces the banner.
+        if (localStorage.getItem('mw_update_dismissed') === info.latest) return;
+        this._renderUpdateBanner(info);
+    }
+
+    _renderUpdateBanner(info) {
+        const banner = this.container.querySelector('#update-banner');
+        if (!banner) return;
+        const url = info.download_url || info.release_url || '';
+        const notes = info.release_url || '';
+        banner.innerHTML = `
+            <span class="update-banner-icon" aria-hidden="true">${Icons.power}</span>
+            <span class="update-banner-text">${t('update.available', { version: this.esc(info.latest) })}</span>
+            <span class="update-banner-actions">
+                ${
+                    url
+                        ? `<a class="btn btn-secondary update-banner-download" href="${this.esc(url)}"
+                              target="_blank" rel="noopener noreferrer">${t('update.download')}</a>`
+                        : ''
+                }
+                ${
+                    notes
+                        ? `<a class="update-banner-notes" href="${this.esc(notes)}"
+                              target="_blank" rel="noopener noreferrer">${t('update.releaseNotes')}</a>`
+                        : ''
+                }
+            </span>
+            <button class="update-banner-dismiss" data-version="${this.esc(info.latest)}"
+                    aria-label="${this.esc(t('update.dismiss'))}">${Icons.close || '✕'}</button>
+        `;
+        banner.hidden = false;
     }
 
     async _autoScan() {
@@ -290,6 +348,7 @@ export class HostListView {
     renderShell() {
         this.container.innerHTML = `
             <div class="hosts-view" id="view-hosts">
+                <div class="update-banner" id="update-banner" hidden></div>
                 <div class="hosts-header">
                     <h2>${t('hosts.title')}</h2>
                     <div class="hosts-actions">
