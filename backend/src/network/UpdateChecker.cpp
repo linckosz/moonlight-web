@@ -54,8 +54,8 @@ QJsonObject UpdateChecker::statusJson()
 {
     // Serve the cache; refresh in the background when stale (never blocks the
     // HTTP handler — the first caller just gets update_available=false).
-    const bool stale =
-        !m_lastCheck.isValid() || m_lastCheck.secsTo(QDateTime::currentDateTimeUtc()) > kCacheHours * 3600;
+    const bool stale = !m_lastCheck.isValid() ||
+                       m_lastCheck.secsTo(QDateTime::currentDateTimeUtc()) > kCacheHours * 3600;
     if (stale && !m_inFlight) doFetch();
 
     if (m_result.isEmpty()) {
