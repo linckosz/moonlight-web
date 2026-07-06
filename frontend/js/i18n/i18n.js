@@ -45,12 +45,27 @@ const state = {
     fallback: {}, // English catalog (always loaded)
 };
 
-/** Pick the initial language: stored choice → browser language → English. */
+/**
+ * Pick the initial language: stored choice → browser preferences → English.
+ *
+ * Browser preferences are read from `navigator.languages` (the user's ordered
+ * list, e.g. ["fr-FR", "fr", "en-US"]) and we take the first entry whose base
+ * language ("fr-FR" → "fr") we actually ship. Falls back to English.
+ */
 function detectLanguage() {
+    const supported = (code) => AVAILABLE_LANGUAGES.some((l) => l.code === code);
+
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored && AVAILABLE_LANGUAGES.some((l) => l.code === stored)) return stored;
-    const nav = (navigator.language || '').slice(0, 2).toLowerCase();
-    if (AVAILABLE_LANGUAGES.some((l) => l.code === nav)) return nav;
+    if (stored && supported(stored)) return stored;
+
+    const prefs =
+        navigator.languages && navigator.languages.length
+            ? navigator.languages
+            : [navigator.language || ''];
+    for (const tag of prefs) {
+        const base = tag.slice(0, 2).toLowerCase();
+        if (supported(base)) return base;
+    }
     return FALLBACK_LANG;
 }
 
