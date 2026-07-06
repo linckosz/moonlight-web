@@ -67,4 +67,8 @@ bool setCredentials(const QString& user, const QString& pass);
 /// Screen Recording / Accessibility permissions it needs). Best-effort.
 bool launch();
 
+/// Stop a running Sunshine (SIGTERM so it can deregister mDNS and drop its tray;
+/// taskkill on Windows). Best-effort: returns true when an instance was signaled.
+bool stop();
+
 } // namespace SunshineInstaller

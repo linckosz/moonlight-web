@@ -240,6 +240,30 @@ export class AdminView {
         }
     }
 
+    // Stop the local Sunshine server (host machine). The button only renders on
+    // localhost (see _renderSunshineSection); the endpoint is localhost-only too.
+    async _stopSunshine() {
+        const btn = this.container.querySelector('#btn-stop-sunshine');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = t('admin.stoppingSunshine');
+        }
+        try {
+            const res = await BackendClient.stopSunshine();
+            if (res.status === 'stopped') Toast.success(t('admin.sunshineStopped'));
+            else Toast.info(t('admin.sunshineNotRunning'));
+        } catch (err) {
+            console.error('[Admin] Failed to stop Sunshine:', err);
+            Toast.error(t('admin.sunshineStopFailed', { message: err.message }));
+        } finally {
+            const b = this.container.querySelector('#btn-stop-sunshine');
+            if (b) {
+                b.disabled = false;
+                b.textContent = t('admin.stopSunshine');
+            }
+        }
+    }
+
     async _loadSessions() {
         try {
             const result = await BackendClient.getAuthSessions();
@@ -770,7 +794,11 @@ export class AdminView {
         if (this._sunshineInstalled) {
             body = `<p class="setting-desc setup-ok">
                         <span class="setup-ok-check">✓</span> ${t('admin.sunshineInstalled')}
-                    </p>`;
+                    </p>
+                    <button class="btn btn-danger u-mt-2" id="btn-stop-sunshine">
+                        ${t('admin.stopSunshine')}
+                    </button>
+                    <p class="settings-hint">${t('admin.stopSunshineHint')}</p>`;
         } else if (this._sunshineCanAutoInstall) {
             body = `
                 <p class="setting-desc">${t('admin.sunshineNotInstalled')}</p>
@@ -1201,6 +1229,12 @@ export class AdminView {
         const installSunBtn = this.container.querySelector('#btn-install-sunshine');
         if (installSunBtn) {
             installSunBtn.addEventListener('click', () => this._installSunshine());
+        }
+
+        // Stop Sunshine button (localhost only, shown when installed)
+        const stopSunBtn = this.container.querySelector('#btn-stop-sunshine');
+        if (stopSunBtn) {
+            stopSunBtn.addEventListener('click', () => this._stopSunshine());
         }
 
         // Close button
