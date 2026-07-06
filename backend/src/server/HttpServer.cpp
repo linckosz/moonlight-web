@@ -660,8 +660,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         bool isLocalClient = HttpServer::isLocalRequest(req.clientAddress);
         bool isPublicDomain = !isLanHost(hostname);
         bool isLoopbackHost = hostname.compare("localhost", Qt::CaseInsensitive) == 0 ||
-                              hostname == "127.0.0.1" || hostname == "::1" ||
-                              hostname == "[::1]";
+                              hostname == "127.0.0.1" || hostname == "::1" || hostname == "[::1]";
 
         // Skip redirect behind a TLS-terminating tunnel (localhost client +
         // public Host header) or for a loopback Host (served as HTTP directly).

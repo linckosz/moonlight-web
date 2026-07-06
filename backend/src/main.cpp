@@ -214,9 +214,9 @@ static void writeAdminShortcut(const QString& url)
                                     QFileDevice::ExeOwner | QFileDevice::ReadGroup |
                                     QFileDevice::ExeGroup | QFileDevice::ReadOther |
                                     QFileDevice::ExeOther);
-    QProcess::startDetached(QStringLiteral("gio"),
-                            {QStringLiteral("set"), path, QStringLiteral("metadata::trusted"),
-                             QStringLiteral("true")});
+    QProcess::startDetached(
+        QStringLiteral("gio"),
+        {QStringLiteral("set"), path, QStringLiteral("metadata::trusted"), QStringLiteral("true")});
 #else
     QFile f(desktop + "/MoonlightWeb Admin.url");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
@@ -666,9 +666,8 @@ int main(int argc, char* argv[])
                                                         &g_ActiveRelay, &g_ActiveStreamRelay,
                                                         &g_ActiveMediaTrackRelay, &g_ActiveSession,
                                                         &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                                                        &g_ActiveHostUuid,
-                                                        &server, &appSettings, &authManager,
-                                                        effectiveUpnpEnabled,
+                                                        &g_ActiveHostUuid, &server, &appSettings,
+                                                        &authManager, effectiveUpnpEnabled,
                                                         stunServer](const HttpRequest& req,
                                                                     ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
@@ -1003,22 +1002,22 @@ int main(int argc, char* argv[])
             const QString& quitUid = reqClientUniqueId;
 
             // WSS mode: StreamRelay tracking
-            QObject::connect(
-                s, &StreamSession::streamRelayCreated,
-                [&g_ActiveStreamRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                 &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
-                 quitUid](StreamRelay* r) {
-                    qInfo() << "[main] streamRelayCreated, relay=" << r;
-                    g_ActiveStreamRelay = r;
-                    g_ActiveRelayRoot = r;
-                    g_ActiveClientUniqueId = quitUid;
-                    g_ActiveHostUuid = host->uuid;
-                    authManager.setSessionStreaming(sessionToken, true);
+            QObject::connect(s, &StreamSession::streamRelayCreated,
+                             [&g_ActiveStreamRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
+                              &g_ActiveHostUuid, &computerManager, &authManager, sessionToken, host,
+                              quitUid](StreamRelay* r) {
+                                 qInfo() << "[main] streamRelayCreated, relay=" << r;
+                                 g_ActiveStreamRelay = r;
+                                 g_ActiveRelayRoot = r;
+                                 g_ActiveClientUniqueId = quitUid;
+                                 g_ActiveHostUuid = host->uuid;
+                                 authManager.setSessionStreaming(sessionToken, true);
 
-                    // Context = qApp so the lambda runs on the main thread: the relay
-                    // emits sessionEnded from its dedicated thread, but quitAppAsync()
-                    // touches the shared QNAM that lives on the main thread.
-                    QObject::connect(r, &StreamRelay::sessionEnded, qApp,
+                                 // Context = qApp so the lambda runs on the main thread: the relay
+                                 // emits sessionEnded from its dedicated thread, but quitAppAsync()
+                                 // touches the shared QNAM that lives on the main thread.
+                                 QObject::connect(
+                                     r, &StreamRelay::sessionEnded, qApp,
                                      [r, &g_ActiveStreamRelay, &computerManager, &authManager,
                                       sessionToken, host, quitUid]() {
                                          qInfo() << "[main] StreamRelay sessionEnded";
@@ -1045,14 +1044,13 @@ int main(int argc, char* argv[])
                                          if (g_ActiveStreamRelay == r)
                                              g_ActiveStreamRelay = nullptr;
                                      });
-                });
+                             });
 
             // WebRTC DataChannel mode: DataChannelRelay tracking
             QObject::connect(
                 s, &StreamSession::relayCreated,
                 [&g_ActiveRelay, &g_ActiveRelayRoot, &g_ActiveClientUniqueId, &g_ActiveHostUuid,
-                 &computerManager, &authManager, sessionToken, host,
-                 quitUid](DataChannelRelay* r) {
+                 &computerManager, &authManager, sessionToken, host, quitUid](DataChannelRelay* r) {
                     qInfo() << "[main] relayCreated, relay=" << r;
                     g_ActiveRelay = r;
                     g_ActiveRelayRoot = r;
