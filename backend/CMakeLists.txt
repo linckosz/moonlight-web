@@ -261,6 +261,15 @@ if(MW_ASAN)
     message(STATUS "AddressSanitizer ENABLED")
     if(MSVC)
         target_compile_options(mw-server PRIVATE /fsanitize=address /Zi)
+        # MSVC ASan turns on STL container-overflow annotations, but only mw-server
+        # is instrumented — the vendored static libs (qmdnsengine, …) are built
+        # without ASan, so their non-annotated std::string/vector clash at link
+        # time (LNK2038 annotate_string/vector/optional). Disabling the container
+        # annotations keeps every other ASan check (heap/stack/use-after-free)
+        # while letting instrumented and non-instrumented TUs link together.
+        target_compile_definitions(mw-server PRIVATE
+            _DISABLE_STRING_ANNOTATION=1
+            _DISABLE_VECTOR_ANNOTATION=1)
     else()
         target_compile_options(mw-server PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
         target_link_options(mw-server PRIVATE -fsanitize=address)
