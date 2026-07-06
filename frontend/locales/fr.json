@@ -84,6 +84,12 @@
         "offlineMessage": "Cet hôte est hors ligne",
         "remoteAccess": "Les autres ordinateurs peuvent se connecter à ce serveur via :"
     },
+    "update": {
+        "available": "MoonlightWeb {{version}} est disponible",
+        "download": "Télécharger",
+        "releaseNotes": "Nouveautés",
+        "dismiss": "Masquer l'avis de mise à jour"
+    },
     "secure": {
         "title": "Connexion sécurisée requise",
         "explain": "Vous avez ouvert MoonlightWeb via une connexion non chiffrée. Le streaming nécessite une page sécurisée (HTTPS). Cliquez ci-dessous pour la rouvrir en sécurisé — votre navigateur vous demandera d'accepter le certificat local une seule fois.",
@@ -253,6 +259,7 @@
         "revoking": "Révocation...",
         "revoke": "Révoquer",
         "revokeTitle": "Révoquer cette session",
+        "editNameTitle": "Cliquer pour renommer cette session",
         "streaming": "● En streaming",
         "streamingTitle": "En streaming actuellement",
         "colMachine": "Machine",
@@ -284,6 +291,8 @@
         "regenerateFailed": "Échec de la régénération : {{message}}",
         "sessionRevoked": "Session révoquée",
         "revokeFailed": "Échec de la révocation : {{message}}",
+        "sessionRenamed": "Session renommée",
+        "renameFailed": "Échec du renommage : {{message}}",
         "internetEnabled": "Accès Internet activé -- domaine : {{domain}}",
         "internetEnableFailed": "Échec de l'activation de l'accès Internet",
         "enableFailed": "Échec de l'activation : {{message}}",

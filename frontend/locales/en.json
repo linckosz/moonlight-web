@@ -84,6 +84,12 @@
         "offlineMessage": "This host is offline",
         "remoteAccess": "Other computers can connect to this server at:"
     },
+    "update": {
+        "available": "MoonlightWeb {{version}} is available",
+        "download": "Download",
+        "releaseNotes": "What's new",
+        "dismiss": "Dismiss update notice"
+    },
     "secure": {
         "title": "Secure connection required",
         "explain": "You opened MoonlightWeb over an unencrypted connection. Streaming needs a secure (HTTPS) page. Click below to reopen it securely — your browser will ask you to accept the local certificate once.",
@@ -253,6 +259,7 @@
         "revoking": "Revoking...",
         "revoke": "Revoke",
         "revokeTitle": "Revoke this session",
+        "editNameTitle": "Click to rename this session",
         "streaming": "● Streaming",
         "streamingTitle": "Currently streaming",
         "colMachine": "Machine",
@@ -284,6 +291,8 @@
         "regenerateFailed": "Failed to regenerate: {{message}}",
         "sessionRevoked": "Session revoked",
         "revokeFailed": "Failed to revoke: {{message}}",
+        "sessionRenamed": "Session renamed",
+        "renameFailed": "Failed to rename: {{message}}",
         "internetEnabled": "Internet Access enabled -- domain: {{domain}}",
         "internetEnableFailed": "Failed to enable Internet Access",
         "enableFailed": "Failed to enable: {{message}}",
