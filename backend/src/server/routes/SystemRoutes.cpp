@@ -68,8 +68,15 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
         // unique_id is immutable once assigned: it keys this instance's subdomain,
         // its DNS ownership token, and its certificate. Only accept it when unset.
-        if (body.contains("unique_id") && appSettings.uniqueId().isEmpty())
-            appSettings.setUniqueId(body["unique_id"].toString());
+        if (body.contains("unique_id") && appSettings.uniqueId().isEmpty()) {
+            const QString requestedUid = body["unique_id"].toString().trimmed().toLower();
+            // Reject labels the PowerDNS stack owns (www, api, stats, ns1/ns2, ...):
+            // using one would hijack the DNS server's own records for this domain.
+            if (InternetAccessManager::isReservedSubdomain(requestedUid))
+                return HttpResponse::error(
+                    400, "This subdomain is reserved by the DNS server — choose another unique_id");
+            appSettings.setUniqueId(requestedUid);
+        }
         // pdns_token is no longer stored in settings; set MW_PDNS_TOKEN env var instead.
         if (body.contains("auto_ip_detection"))
             appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
