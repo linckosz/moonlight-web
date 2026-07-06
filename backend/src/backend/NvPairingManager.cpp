@@ -20,20 +20,19 @@
 #include "NvHTTP.h"
 #include "common/Logger.h"
 
-#include <QEventLoop>
-#include <QTimer>
 #include <QUrl>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QNetworkProxy>
 #include <QSslConfiguration>
 #include <QSslCertificate>
+#include <QSslError>
 #include <QSslKey>
 #include <QSslSocket>
 #include <QUuid>
 #include <QCryptographicHash>
-#include <QCoreApplication>
 #include <stdexcept>
+#include <utility>
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -87,10 +86,11 @@ NvPairingManager::~NvPairingManager()
     delete m_Nam;
 }
 
-// --- Synchronous HTTP request ---
+// --- Asynchronous HTTP request ---
 
-QString NvPairingManager::openConnection(const QString& scheme, const QString& command,
-                                         const QString& arguments, int timeoutMs)
+void NvPairingManager::openConnection(const QString& scheme, const QString& command,
+                                      const QString& arguments, int timeoutMs,
+                                      std::function<void(const QString&, const QString&)> cb)
 {
     QUrl url;
     url.setScheme(scheme);
@@ -105,6 +105,8 @@ QString NvPairingManager::openConnection(const QString& scheme, const QString& c
 
     QNetworkRequest req(url);
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
+    // On timeout the reply finishes with OperationCanceledError — surfaced to
+    // `cb` as an error string, no separate timer needed.
     req.setTransferTimeout(timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT_MS);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
@@ -120,35 +122,32 @@ QString NvPairingManager::openConnection(const QString& scheme, const QString& c
         req.setSslConfiguration(ssl);
     }
 
-    // Ignore SSL errors (self-signed cert)
-    auto sslConn = QObject::connect(
-        m_Nam, &QNetworkAccessManager::sslErrors,
-        [](QNetworkReply* reply, const QList<QSslError>&) { reply->ignoreSslErrors(); });
-
     QNetworkReply* reply = m_Nam->get(req);
 
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    QObject::connect(qApp, &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
+    // Ignore SSL errors (self-signed cert) — scoped to this reply.
+    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+                     [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
 
-    if (timeoutMs > 0) QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+    QObject::connect(
+        reply, &QNetworkReply::finished, reply, [reply, scheme, command, cb = std::move(cb)]() {
+            QString body;
+            QString error;
+            if (reply->error() != QNetworkReply::NoError) {
+                error = reply->errorString();
+                Logger::warning(
+                    QString("Pairing request failed: %1 %2 → %3").arg(scheme, command, error));
+            } else {
+                body = QString::fromUtf8(reply->readAll());
+            }
+            reply->deleteLater();
+            cb(body, error);
+        });
+}
 
-    loop.exec(QEventLoop::ExcludeUserInputEvents);
-
-    QObject::disconnect(sslConn);
-
-    if (!reply->isFinished()) reply->abort();
-
-    if (reply->error() != QNetworkReply::NoError) {
-        QString err = reply->errorString();
-        Logger::warning(QString("Pairing request failed: %1 %2 → %3").arg(scheme, command, err));
-        delete reply;
-        throw std::runtime_error(err.toStdString());
-    }
-
-    QString body = QString::fromUtf8(reply->readAll());
-    delete reply;
-    return body;
+void NvPairingManager::unpair()
+{
+    openConnection("http", "unpair", QString(), REQUEST_TIMEOUT_MS,
+                   [](const QString&, const QString&) {});
 }
 
 // --- Crypto helpers ---
@@ -269,47 +268,57 @@ QByteArray NvPairingManager::signMessage(const QByteArray& message)
 
 // --- Pairing protocol ---
 
-NvPairingManager::InitResult NvPairingManager::initiatePairing()
+void NvPairingManager::initiatePairing(std::function<void(InitResult)> cb)
 {
-    if (m_Stage1Done) return INIT_OK;
+    if (m_Stage1Done) {
+        cb(INIT_OK);
+        return;
+    }
 
     m_Salt = generateRandomBytes(16);
 
-    try {
-        QString args = "devicename=roth&updateState=1&phrase=getservercert&salt=" + m_Salt.toHex() +
-                       "&clientcert=" + IdentityManager::get()->getCertificate().toHex();
+    QString args = "devicename=roth&updateState=1&phrase=getservercert&salt=" + m_Salt.toHex() +
+                   "&clientcert=" + IdentityManager::get()->getCertificate().toHex();
 
-        QString response = openConnection("http", "pair", args, PAIRING_PIN_WAIT_MS);
+    openConnection(
+        "http", "pair", args, PAIRING_PIN_WAIT_MS,
+        [this, cb = std::move(cb)](const QString& response, const QString& error) {
+            if (!error.isEmpty()) {
+                Logger::warning(QString("Pairing stage #1 failed: %1").arg(error));
+                cb(INIT_FAILED);
+                return;
+            }
 
-        NvHTTP::verifyResponseStatus(response);
-
-        if (NvHTTP::getXmlString(response, "paired") != "1") {
-            Logger::warning("Pairing stage #1 failed: paired != 1");
-            return INIT_FAILED;
-        }
-
-        QByteArray plainCert = NvHTTP::getXmlStringFromHex(response, "plaincert");
-        if (plainCert.isEmpty()) {
-            Logger::warning("Server likely already pairing — no plaincert received");
             try {
-                openConnection("http", "unpair", QString(), REQUEST_TIMEOUT_MS);
-            } catch (...) {}
-            return INIT_ALREADY_IN_PROGRESS;
-        }
+                NvHTTP::verifyResponseStatus(response);
 
-        m_ServerCertPem = plainCert;
-        m_Stage1Done = true;
-        Logger::info("Pairing stage #1 OK — received server certificate");
-        return INIT_OK;
+                if (NvHTTP::getXmlString(response, "paired") != "1") {
+                    Logger::warning("Pairing stage #1 failed: paired != 1");
+                    cb(INIT_FAILED);
+                    return;
+                }
 
-    } catch (const std::exception& e) {
-        Logger::warning(QString("Pairing stage #1 exception: %1").arg(e.what()));
-        return INIT_FAILED;
-    }
+                QByteArray plainCert = NvHTTP::getXmlStringFromHex(response, "plaincert");
+                if (plainCert.isEmpty()) {
+                    Logger::warning("Server likely already pairing — no plaincert received");
+                    unpair();
+                    cb(INIT_ALREADY_IN_PROGRESS);
+                    return;
+                }
+
+                m_ServerCertPem = plainCert;
+                m_Stage1Done = true;
+                Logger::info("Pairing stage #1 OK — received server certificate");
+                cb(INIT_OK);
+            } catch (const std::exception& e) {
+                Logger::warning(QString("Pairing stage #1 exception: %1").arg(e.what()));
+                cb(INIT_FAILED);
+            }
+        });
 }
 
-NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin,
-                                                              QByteArray& outServerCertPem)
+void NvPairingManager::completePairing(const QString& pin,
+                                       std::function<void(PairState, const QByteArray&)> cb)
 {
     QCryptographicHash::Algorithm hashAlgo =
         m_ServerMajorVersion >= 7 ? QCryptographicHash::Sha256 : QCryptographicHash::Sha1;
@@ -317,142 +326,177 @@ NvPairingManager::PairState NvPairingManager::completePairing(const QString& pin
     QByteArray aesKey = QCryptographicHash::hash(saltPin(m_Salt, pin), hashAlgo);
     aesKey.truncate(16);
 
-    try {
-        // --- Stage 2: client challenge ---
+    QByteArray randomChallenge = generateRandomBytes(16);
+    QByteArray encryptedChallenge = encrypt(randomChallenge, aesKey);
 
-        QByteArray randomChallenge = generateRandomBytes(16);
-        QByteArray encryptedChallenge = encrypt(randomChallenge, aesKey);
+    // Preserved from the original synchronous flow: a transport error or an
+    // unexpected parse failure *after* stage 1 succeeded means Sunshine most
+    // likely tore the pairing session down following an earlier successful
+    // handshake — treat the host as paired. The subsequent app-list HTTPS fetch
+    // re-validates the client cert and resets the pair state if this was wrong.
+    auto assumePaired = [this, cb](const QString& why) {
+        Logger::info(QString("Session already completed — paired successfully (%1)").arg(why));
+        cb(PAIRED, m_ServerCertPem);
+    };
 
-        QString challengeXml = openConnection("http", "pair",
-                                              "devicename=roth&updateState=1&clientchallenge=" +
-                                                  encryptedChallenge.toHex(),
-                                              REQUEST_TIMEOUT_MS);
-
-        NvHTTP::verifyResponseStatus(challengeXml);
-
-        if (NvHTTP::getXmlString(challengeXml, "paired") != "1") {
-            // PIN not yet entered in Sunshine — retryable
-            Logger::warning("Pairing stage #2: PIN not accepted yet");
-            return PIN_WRONG;
-        }
-
-        QByteArray challengeResponseData =
-            decrypt(NvHTTP::getXmlStringFromHex(challengeXml, "challengeresponse"), aesKey);
-
-        QByteArray clientSecretData = generateRandomBytes(16);
-        QByteArray challengeResponse;
-
-        // serverResponse = first hashLength bytes of decrypted challenge response
-        QByteArray serverResponse(challengeResponseData.data(), m_HashLength);
-
-        // Build our challenge response: remaining 16 bytes + cert sig + client secret
-        challengeResponse.append(challengeResponseData.data() + m_HashLength, 16);
-        challengeResponse.append(getSignatureFromCert(m_Cert));
-        challengeResponse.append(clientSecretData);
-
-        QByteArray paddedHash = QCryptographicHash::hash(challengeResponse, hashAlgo);
-        paddedHash.resize(32);
-        QByteArray encryptedChallengeResponseHash = encrypt(paddedHash, aesKey);
-
-        // --- Stage 3: server challenge response ---
-
-        QString respXml = openConnection("http", "pair",
-                                         "devicename=roth&updateState=1&serverchallengeresp=" +
-                                             encryptedChallengeResponseHash.toHex(),
-                                         REQUEST_TIMEOUT_MS);
-
-        NvHTTP::verifyResponseStatus(respXml);
-
-        if (NvHTTP::getXmlString(respXml, "paired") != "1") {
-            Logger::warning("Pairing stage #3 failed");
-            return PIN_WRONG;
-        }
-
-        QByteArray pairingSecret = NvHTTP::getXmlStringFromHex(respXml, "pairingsecret");
-        QByteArray serverSecret = pairingSecret.left(16);
-        QByteArray serverSignature = pairingSecret.mid(16);
-
-        // Verify server signature (anti-MITM)
-        if (!verifySignature(serverSecret, serverSignature, m_ServerCertPem)) {
-            Logger::warning("MITM detected — server signature verification failed");
-            openConnection("http", "unpair", QString(), REQUEST_TIMEOUT_MS);
-            return FAILED;
-        }
-
-        // Verify PIN
-        QByteArray expectedResponseData;
-        expectedResponseData.append(randomChallenge);
-        expectedResponseData.append(getSignatureFromPemCert(m_ServerCertPem));
-        expectedResponseData.append(serverSecret);
-
-        if (QCryptographicHash::hash(expectedResponseData, hashAlgo) != serverResponse) {
-            Logger::warning("Incorrect PIN");
-            openConnection("http", "unpair", QString(), REQUEST_TIMEOUT_MS);
-            return PIN_WRONG;
-        }
-
-        // --- Stage 4: client pairing secret ---
-
-        QByteArray clientPairingSecret;
-        clientPairingSecret.append(clientSecretData);
-        clientPairingSecret.append(signMessage(clientSecretData));
-
-        Logger::debug(QString("Stage 4: clientpairingsecret len=%1 (secret=%2 sig=%3)")
-                          .arg(clientPairingSecret.size())
-                          .arg(clientSecretData.toHex().left(16))
-                          .arg(signMessage(clientSecretData).toHex().left(32)));
-
-        QString secretRespXml = openConnection(
-            "http", "pair",
-            "devicename=roth&updateState=1&clientpairingsecret=" + clientPairingSecret.toHex(),
-            REQUEST_TIMEOUT_MS);
-
-        NvHTTP::verifyResponseStatus(secretRespXml);
-
-        if (NvHTTP::getXmlString(secretRespXml, "paired") != "1") {
-            Logger::warning(QString("Pairing stage #4 failed — paired='%1', response='%2'")
-                                .arg(NvHTTP::getXmlString(secretRespXml, "paired"))
-                                .arg(secretRespXml));
-            openConnection("http", "unpair", QString(), REQUEST_TIMEOUT_MS);
-            return FAILED;
-        }
-
-        // --- Stage 5: pair challenge (HTTPS — mutual TLS verification) ---
-        // This confirms the client cert is recognized by Sunshine over TLS.
-
-        try {
-            QString pairChallengeXml = openConnection(
-                "https", "pair", "devicename=roth&updateState=1&phrase=pairchallenge",
-                REQUEST_TIMEOUT_MS);
-
-            NvHTTP::verifyResponseStatus(pairChallengeXml);
-
-            if (NvHTTP::getXmlString(pairChallengeXml, "paired") != "1") {
-                Logger::warning("Pairing stage #5: paired != 1");
+    // --- Stage 2: client challenge ---
+    openConnection(
+        "http", "pair",
+        "devicename=roth&updateState=1&clientchallenge=" + encryptedChallenge.toHex(),
+        REQUEST_TIMEOUT_MS,
+        [this, cb, aesKey, randomChallenge, hashAlgo, assumePaired](const QString& challengeXml,
+                                                                    const QString& error) {
+            if (!error.isEmpty()) {
+                assumePaired(error);
+                return;
             }
-        } catch (const std::exception& e) {
-            // Stage 5 is non-fatal — pairing is already complete after stage 4
-            Logger::warning(QString("Pairing stage #5 failed (non-fatal): %1").arg(e.what()));
-        }
+            try {
+                NvHTTP::verifyResponseStatus(challengeXml);
 
-        // Success — stages 1-4 completed the actual pairing
-        outServerCertPem = m_ServerCertPem;
-        Logger::info("Pairing completed successfully");
-        return PAIRED;
+                if (NvHTTP::getXmlString(challengeXml, "paired") != "1") {
+                    // PIN not yet entered in Sunshine — retryable
+                    Logger::warning("Pairing stage #2: PIN not accepted yet");
+                    cb(PIN_WRONG, QByteArray());
+                    return;
+                }
 
-    } catch (const std::exception& e) {
-        // If stage 1 already succeeded, the Sunshine session was
-        // destroyed after a prior successful stage 4 — that means we're paired
-        if (m_Stage1Done) {
-            Logger::info("Session already completed — paired successfully");
-            outServerCertPem = m_ServerCertPem;
-            return PAIRED;
-        }
+                QByteArray challengeResponseData =
+                    decrypt(NvHTTP::getXmlStringFromHex(challengeXml, "challengeresponse"), aesKey);
 
-        Logger::warning(QString("Pairing exception: %1").arg(e.what()));
-        try {
-            openConnection("http", "unpair", QString(), REQUEST_TIMEOUT_MS);
-        } catch (...) {}
-        return FAILED;
-    }
+                QByteArray clientSecretData = generateRandomBytes(16);
+                QByteArray challengeResponse;
+
+                // serverResponse = first hashLength bytes of decrypted challenge response
+                QByteArray serverResponse(challengeResponseData.data(), m_HashLength);
+
+                // Build our challenge response: remaining 16 bytes + cert sig + client secret
+                challengeResponse.append(challengeResponseData.data() + m_HashLength, 16);
+                challengeResponse.append(getSignatureFromCert(m_Cert));
+                challengeResponse.append(clientSecretData);
+
+                QByteArray paddedHash = QCryptographicHash::hash(challengeResponse, hashAlgo);
+                paddedHash.resize(32);
+                QByteArray encryptedChallengeResponseHash = encrypt(paddedHash, aesKey);
+
+                // --- Stage 3: server challenge response ---
+                openConnection(
+                    "http", "pair",
+                    "devicename=roth&updateState=1&serverchallengeresp=" +
+                        encryptedChallengeResponseHash.toHex(),
+                    REQUEST_TIMEOUT_MS,
+                    [this, cb, randomChallenge, clientSecretData, serverResponse, hashAlgo,
+                     assumePaired](const QString& respXml, const QString& error) {
+                        if (!error.isEmpty()) {
+                            assumePaired(error);
+                            return;
+                        }
+                        try {
+                            NvHTTP::verifyResponseStatus(respXml);
+
+                            if (NvHTTP::getXmlString(respXml, "paired") != "1") {
+                                Logger::warning("Pairing stage #3 failed");
+                                cb(PIN_WRONG, QByteArray());
+                                return;
+                            }
+
+                            QByteArray pairingSecret =
+                                NvHTTP::getXmlStringFromHex(respXml, "pairingsecret");
+                            QByteArray serverSecret = pairingSecret.left(16);
+                            QByteArray serverSignature = pairingSecret.mid(16);
+
+                            // Verify server signature (anti-MITM)
+                            if (!verifySignature(serverSecret, serverSignature, m_ServerCertPem)) {
+                                Logger::warning(
+                                    "MITM detected — server signature verification failed");
+                                unpair();
+                                cb(FAILED, QByteArray());
+                                return;
+                            }
+
+                            // Verify PIN
+                            QByteArray expectedResponseData;
+                            expectedResponseData.append(randomChallenge);
+                            expectedResponseData.append(getSignatureFromPemCert(m_ServerCertPem));
+                            expectedResponseData.append(serverSecret);
+
+                            if (QCryptographicHash::hash(expectedResponseData, hashAlgo) !=
+                                serverResponse) {
+                                Logger::warning("Incorrect PIN");
+                                unpair();
+                                cb(PIN_WRONG, QByteArray());
+                                return;
+                            }
+
+                            // --- Stage 4: client pairing secret ---
+                            QByteArray clientPairingSecret;
+                            clientPairingSecret.append(clientSecretData);
+                            clientPairingSecret.append(signMessage(clientSecretData));
+
+                            openConnection(
+                                "http", "pair",
+                                "devicename=roth&updateState=1&clientpairingsecret=" +
+                                    clientPairingSecret.toHex(),
+                                REQUEST_TIMEOUT_MS,
+                                [this, cb, assumePaired](const QString& secretRespXml,
+                                                         const QString& error) {
+                                    if (!error.isEmpty()) {
+                                        assumePaired(error);
+                                        return;
+                                    }
+                                    try {
+                                        NvHTTP::verifyResponseStatus(secretRespXml);
+
+                                        if (NvHTTP::getXmlString(secretRespXml, "paired") != "1") {
+                                            Logger::warning(
+                                                QString("Pairing stage #4 failed — response='%1'")
+                                                    .arg(secretRespXml));
+                                            unpair();
+                                            cb(FAILED, QByteArray());
+                                            return;
+                                        }
+
+                                        // --- Stage 5: pair challenge (HTTPS, non-fatal) ---
+                                        // Confirms the client cert is recognized over mutual TLS;
+                                        // pairing is already complete after stage 4.
+                                        openConnection(
+                                            "https", "pair",
+                                            "devicename=roth&updateState=1&phrase=pairchallenge",
+                                            REQUEST_TIMEOUT_MS,
+                                            [this, cb](const QString& pairChallengeXml,
+                                                       const QString& error) {
+                                                if (!error.isEmpty()) {
+                                                    Logger::warning(
+                                                        QString("Pairing stage #5 failed "
+                                                                "(non-fatal): %1")
+                                                            .arg(error));
+                                                } else {
+                                                    try {
+                                                        NvHTTP::verifyResponseStatus(
+                                                            pairChallengeXml);
+                                                        if (NvHTTP::getXmlString(pairChallengeXml,
+                                                                                 "paired") != "1")
+                                                            Logger::warning(
+                                                                "Pairing stage #5: paired != 1");
+                                                    } catch (const std::exception& e) {
+                                                        Logger::warning(
+                                                            QString("Pairing stage #5 failed "
+                                                                    "(non-fatal): %1")
+                                                                .arg(e.what()));
+                                                    }
+                                                }
+                                                Logger::info("Pairing completed successfully");
+                                                cb(PAIRED, m_ServerCertPem);
+                                            });
+                                    } catch (const std::exception& e) {
+                                        assumePaired(e.what());
+                                    }
+                                });
+                        } catch (const std::exception& e) {
+                            assumePaired(e.what());
+                        }
+                    });
+            } catch (const std::exception& e) {
+                assumePaired(e.what());
+            }
+        });
 }

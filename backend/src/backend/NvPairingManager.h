@@ -21,11 +21,21 @@
 #include <QByteArray>
 #include <QNetworkAccessManager>
 
+#include <functional>
+
 struct x509_st;
 struct evp_pkey_st;
 typedef struct x509_st X509;
 typedef struct evp_pkey_st EVP_PKEY;
 
+// Drives the Sunshine/GameStream challenge-response pairing handshake.
+//
+// Fully asynchronous: every HTTP request is issued via QNetworkAccessManager
+// and resolved through a callback, so no method ever spins a nested Qt event
+// loop. This matters because pairing is driven from the single-threaded HTTP
+// server — a nested loop there would re-enter request dispatch and free objects
+// still held on the stack (use-after-free). The owner must keep the instance
+// alive until the final callback fires.
 class NvPairingManager
 {
 public:
@@ -53,11 +63,16 @@ public:
     NvPairingManager(const NvPairingManager&) = delete;
     NvPairingManager& operator=(const NvPairingManager&) = delete;
 
-    // Stage 1: send salt + client cert → server displays PIN
-    InitResult initiatePairing();
+    // Stage 1 (async): send salt + client cert → server displays PIN.
+    // The getservercert request blocks server-side up to 60s until the user
+    // enters the PIN in Sunshine; `cb` fires when the request resolves. Fully
+    // event-driven — no nested Qt event loop (see class comment).
+    void initiatePairing(std::function<void(InitResult)> cb);
 
-    // Stages 2-5: complete pairing with user-provided PIN
-    PairState completePairing(const QString& pin, QByteArray& outServerCertPem);
+    // Stages 2-5 (async): complete pairing with the user-provided PIN.
+    // `cb` receives the final state and, on PAIRED, the server certificate PEM.
+    void completePairing(const QString& pin,
+                         std::function<void(PairState, const QByteArray& serverCertPem)> cb);
 
 private:
     QByteArray generateRandomBytes(int length);
@@ -70,9 +85,15 @@ private:
                          const QByteArray& serverCertificate);
     QByteArray signMessage(const QByteArray& message);
 
-    // Synchronous HTTP request
-    QString openConnection(const QString& scheme, const QString& command, const QString& arguments,
-                           int timeoutMs);
+    // Asynchronous HTTP request. Invokes cb(body, error) when the reply
+    // finishes; `error` is empty on success, otherwise the reply error string
+    // (and `body` is empty). Never blocks the calling thread.
+    void openConnection(const QString& scheme, const QString& command, const QString& arguments,
+                        int timeoutMs,
+                        std::function<void(const QString& body, const QString& error)> cb);
+
+    // Fire-and-forget unpair (used to abort a half-completed handshake).
+    void unpair();
 
     QByteArray m_ServerVersion; // "7.1.431" from serverinfo
     QString m_Host;

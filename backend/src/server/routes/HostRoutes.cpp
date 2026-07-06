@@ -72,12 +72,14 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(result, status);
     });
 
-    server.router()->post("/api/hosts/:id/pair", [&computerManager](const HttpRequest& req) {
+    server.router()->postAsync("/api/hosts/:id/pair", [&computerManager](const HttpRequest& req,
+                                                                         ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
-
-        auto [status, result] = computerManager.handleSubmitPin(uuid);
-        return HttpResponse::json(result, status);
+        if (uuid.isEmpty()) {
+            respond(HttpResponse::error(400, "Missing host ID"));
+            return;
+        }
+        computerManager.handleSubmitPin(uuid, std::move(respond));
     });
 
     // Phase 4: App list (async — fetches from Sunshine via HTTPS)
