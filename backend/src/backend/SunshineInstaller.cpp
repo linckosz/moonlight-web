@@ -484,7 +484,14 @@ bool launch()
 bool stop()
 {
 #if defined(Q_OS_WIN)
-    return run(QStringLiteral("taskkill"), {"/IM", "sunshine.exe", "/F"}, 15000) == 0;
+    // On Windows Sunshine runs as the LocalSystem "SunshineService", which
+    // supervises and respawns sunshine.exe. A non-elevated taskkill is denied,
+    // and stopping the service needs admin (which MoonlightWeb's logon task does
+    // not have). We don't try — Windows users stop it from Sunshine's tray icon
+    // or Services. The admin UI hides the Stop button on Windows accordingly.
+    Logger::info(QStringLiteral(
+        "SunshineInstaller: stop() is a no-op on Windows (SunshineService is admin-managed)"));
+    return false;
 #else
     // pkill's default signal is SIGTERM, so Sunshine can shut down cleanly
     // (deregister its mDNS service, remove the menu-bar/tray item). `-x` matches

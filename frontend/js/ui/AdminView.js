@@ -82,6 +82,7 @@ export class AdminView {
         this._sunshineInstalled = false;
         this._sunshineCanAutoInstall = false;
         this._sunshineChecked = false; // status fetched at least once
+        this._os = ''; // 'Windows' | 'macOS' | 'Linux' — gates host-only actions
 
         // Auth / PIN state (default "------" = no valid PIN, 6 digits)
         this._pin = '------';
@@ -187,6 +188,7 @@ export class AdminView {
             const status = await BackendClient.getSetupStatus();
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             this._sunshineCanAutoInstall = !!(status.sunshine && status.sunshine.can_auto_install);
+            this._os = status.os || '';
             this._sunshineChecked = true;
         } catch (err) {
             console.warn('[Admin] Failed to load Sunshine status:', err);
@@ -792,13 +794,22 @@ export class AdminView {
 
         let body;
         if (this._sunshineInstalled) {
+            // Stop button on macOS/Linux only: there Sunshine runs as a user
+            // process pkill can signal. On Windows it's the LocalSystem
+            // SunshineService (respawns sunshine.exe, and killing it needs
+            // elevation MoonlightWeb's non-elevated logon task doesn't have) —
+            // Windows users manage it from Sunshine's tray / Services instead.
+            const canStop = this._os && this._os !== 'Windows';
+            const stopBtn = canStop
+                ? `<button class="btn btn-danger u-mt-2" id="btn-stop-sunshine">
+                        ${t('admin.stopSunshine')}
+                    </button>
+                    <p class="settings-hint">${t('admin.stopSunshineHint')}</p>`
+                : '';
             body = `<p class="setting-desc setup-ok">
                         <span class="setup-ok-check">✓</span> ${t('admin.sunshineInstalled')}
                     </p>
-                    <button class="btn btn-danger u-mt-2" id="btn-stop-sunshine">
-                        ${t('admin.stopSunshine')}
-                    </button>
-                    <p class="settings-hint">${t('admin.stopSunshineHint')}</p>`;
+                    ${stopBtn}`;
         } else if (this._sunshineCanAutoInstall) {
             body = `
                 <p class="setting-desc">${t('admin.sunshineNotInstalled')}</p>
