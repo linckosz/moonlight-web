@@ -31,6 +31,7 @@ if ! $PDNSUTIL list-all-zones 2>/dev/null | grep -qx "$MW_DOMAIN"; then
     $PDNSUTIL create-zone "$MW_DOMAIN"
     $PDNSUTIL add-record "$MW_DOMAIN" @   A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" www A  "$MW_PUBLIC_IP"
+    $PDNSUTIL add-record "$MW_DOMAIN" stats A "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" ns1 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" ns2 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" api A  "$MW_PUBLIC_IP"
@@ -58,9 +59,10 @@ ensure_a() {  # ensure_a <name>  — add an A record to MW_PUBLIC_IP if absent
     fi
 }
 NEED_RECTIFY=0
-ensure_a @     # apex — presentation site
-ensure_a www   # www  — presentation site
-ensure_a api   # api  — PowerDNS REST API
+ensure_a @     # apex  — presentation site
+ensure_a www   # www   — presentation site
+ensure_a api   # api   — PowerDNS REST API
+ensure_a stats # stats — Umami analytics dashboard
 
 # Zones created before default-soa-content was set (zz-mw.conf) carry the image
 # placeholder SOA ("a.misconfigured.dns.server.invalid"); swap in a real one.

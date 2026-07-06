@@ -5,7 +5,9 @@ Three dedicated containers (one process each — the idiomatic Docker layout):
 ```
 Internet ─:53──────> [dnsdist] ──> pdns:5300       anti-amplification + DNS rate-limit
 Internet ─:80/:443─> [caddy]   ──> pdns:8081       HTTPS API, API rate-limit, auto-TLS
+                              └──> umami:3000       stats.{domain} analytics dashboard
                      [pdns]    (internal, non-root) PowerDNS authoritative + REST API
+                     [umami+db](internal)           privacy-friendly web analytics
 ```
 
 - **dnsdist** — official `powerdns/dnsdist-19` image. The public DNS entry point;
@@ -40,12 +42,39 @@ Caddy container (`../../website → /srv/site`), so edit it freely then
 `docker compose restart caddy` — no rebuild needed. The zone bootstrap adds the
 `www` A record automatically; the apex `@` A record already existed.
 
+## Website analytics (Umami)
+
+The stack ships a self-hosted **Umami** instance — privacy-friendly, cookieless
+(no consent banner needed), lightweight — that measures the presentation site:
+visits, visitor **countries/regions**, referrers, devices, and **clicks** on the
+key links (`Download`, `GitHub`, `Buy me a coffee`).
+
+- Dashboard + tracker are served at `https://stats.{MW_DOMAIN}` (Caddy reverse-
+  proxies the internal `umami:3000`; a `stats` A record is added to the zone).
+- Umami stores data in its own internal Postgres (`umami-db`, never published).
+- The site (`website/index.html`) already carries the tracker `<script>` and the
+  `data-umami-event` attributes on the tracked links — nothing to add there.
+
+**One-time setup after the first `docker compose up`:**
+
+1. Open `https://stats.{MW_DOMAIN}` and log in with **`admin` / `umami`**.
+2. **Change the admin password** immediately (Settings → Profile).
+3. Settings → Websites → **Add website**: name `MoonlightWeb`, domain
+   `{MW_DOMAIN}`. Umami generates a **Website ID** (a UUID).
+4. Paste that UUID into the `data-website-id` attribute in
+   `website/index.html` (it ships as all-zeros), then `docker compose restart caddy`.
+
+Until step 4 the tracker loads but records nothing (the placeholder ID is
+ignored) — completely harmless. The two Umami secrets (`MW_UMAMI_DB_PASSWORD`,
+`MW_UMAMI_SECRET`) are generated automatically by `install.sh`; set them yourself
+in `.env` for a manual install.
+
 ## Contents
 
 ```
 deploy/powerdns/
 ├── install.sh               # one-shot installer (Docker, security, firewall, up)
-├── docker-compose.yml       # dnsdist + pdns + caddy
+├── docker-compose.yml       # dnsdist + pdns + caddy + umami (+ umami-db)
 ├── pdns/
 │   ├── init.sh              # zone bootstrap, then the official pdns wrapper
 │   └── zz-mw.conf           # hardening snippet merged via include-dir
@@ -226,7 +255,7 @@ this machine. DNS needs both UDP and TCP.
 | 53   | UDP      | dnsdist   | Resolvers query your zone — primary path |
 | 53   | TCP      | dnsdist   | Fallback for truncated responses, DNSSEC |
 | 80   | TCP      | caddy     | Let's Encrypt HTTP-01 challenge + HTTP→HTTPS redirect |
-| 443  | TCP      | caddy     | `api.{MW_DOMAIN}` REST API + presentation site (`{MW_DOMAIN}`/`www`) |
+| 443  | TCP      | caddy     | `api.{MW_DOMAIN}` REST API + presentation site (`{MW_DOMAIN}`/`www`) + `stats.{MW_DOMAIN}` analytics |
 
 PowerDNS' own ports (`5300` DNS, `8081` API) stay on the internal compose
 network — never published.
