@@ -112,7 +112,14 @@ namespace {
 
 // Package family this distro belongs to, mapped to the matching official
 // Sunshine release asset + the package manager that installs a local file.
-enum class PkgFamily { None, Apt, Dnf, Zypper, Pacman };
+enum class PkgFamily
+{
+    None,
+    Apt,
+    Dnf,
+    Zypper,
+    Pacman
+};
 
 struct DistroInfo
 {
@@ -148,19 +155,24 @@ DistroInfo detectDistro()
         QString val = line.mid(eq + 1).trimmed();
         if (val.size() >= 2 && val.startsWith('"') && val.endsWith('"'))
             val = val.mid(1, val.size() - 2);
-        if (key == QLatin1String("ID")) d.id = val;
-        else if (key == QLatin1String("ID_LIKE")) d.idLike = val;
-        else if (key == QLatin1String("VERSION_ID")) d.versionId = val;
+        if (key == QLatin1String("ID"))
+            d.id = val;
+        else if (key == QLatin1String("ID_LIKE"))
+            d.idLike = val;
+        else if (key == QLatin1String("VERSION_ID"))
+            d.versionId = val;
     }
 
     const auto like = [&d](const char* n) { return d.idLike.contains(QLatin1String(n)); };
     if (d.id == QLatin1String("ubuntu") || d.id == QLatin1String("debian") || like("ubuntu") ||
         like("debian"))
         d.family = PkgFamily::Apt;
-    else if (d.id == QLatin1String("fedora") || like("fedora")) d.family = PkgFamily::Dnf;
+    else if (d.id == QLatin1String("fedora") || like("fedora"))
+        d.family = PkgFamily::Dnf;
     else if (d.id.startsWith(QLatin1String("opensuse")) || like("suse"))
         d.family = PkgFamily::Zypper;
-    else if (d.id == QLatin1String("arch") || like("arch")) d.family = PkgFamily::Pacman;
+    else if (d.id == QLatin1String("arch") || like("arch"))
+        d.family = PkgFamily::Pacman;
     return d;
 }
 
@@ -184,8 +196,10 @@ QString debAssetFor(const DistroInfo& d)
         // (assets track the LTS series + the upcoming one).
         const double v = d.versionId.toDouble(); // "24.04" → 24.04
         QString series = QStringLiteral("22.04");
-        if (v >= 26.04) series = QStringLiteral("26.04");
-        else if (v >= 24.04) series = QStringLiteral("24.04");
+        if (v >= 26.04)
+            series = QStringLiteral("26.04");
+        else if (v >= 24.04)
+            series = QStringLiteral("24.04");
         return QStringLiteral("sunshine-ubuntu-%1-%2.deb").arg(series, d.debArch);
     }
     // Derivatives (Mint, Pop!_OS…) version differently; assume the current LTS.
@@ -273,8 +287,7 @@ QString installLinux(const QString& user, const QString& pass)
     case PkgFamily::Dnf: {
         // Assets are per Fedora release: Sunshine-<tag>-1.fcNN.<arch>.rpm — take
         // the newest fcNN not newer than this system.
-        const QRegularExpression re(
-            QStringLiteral("\\.fc(\\d+)\\.%1\\.rpm$").arg(d.rpmArch));
+        const QRegularExpression re(QStringLiteral("\\.fc(\\d+)\\.%1\\.rpm$").arg(d.rpmArch));
         const QStringList urls = resolveAssetUrls(re, &err);
         const int rel = d.versionId.toInt();
         int best = -1;
@@ -286,9 +299,8 @@ QString installLinux(const QString& user, const QString& pass)
             }
         }
         if (url.isEmpty())
-            return err.isEmpty() ? QStringLiteral(
-                                       "No Sunshine package for this Fedora release — "
-                                       "install it manually")
+            return err.isEmpty() ? QStringLiteral("No Sunshine package for this Fedora release — "
+                                                  "install it manually")
                                  : err;
         file = QDir::tempPath() + QStringLiteral("/mw-sunshine.rpm");
         installArgs = {tool, QStringLiteral("install"), QStringLiteral("-y"), file};
@@ -385,7 +397,8 @@ static QString installMacOS(const QString& user, const QString& pass)
                QStringLiteral("'");
     };
     const QString attachCmd =
-        QStringLiteral("/usr/bin/yes | /usr/bin/hdiutil attach %1 -nobrowse -noverify -mountpoint %2")
+        QStringLiteral(
+            "/usr/bin/yes | /usr/bin/hdiutil attach %1 -nobrowse -noverify -mountpoint %2")
             .arg(shq(dmg), shq(mnt));
     if (run(QStringLiteral("/bin/sh"), {"-c", attachCmd}, 60000, &out) != 0)
         return QStringLiteral("Could not mount the disk image: %1").arg(out.trimmed());
