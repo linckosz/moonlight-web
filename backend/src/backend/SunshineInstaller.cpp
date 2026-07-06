@@ -487,8 +487,8 @@ bool isRunning()
     // tasklist filtered on the image name; the header line only prints when a
     // match exists, so a mention of the exe in the output means it's running.
     QString out;
-    if (run(QStringLiteral("tasklist"), {"/FI", "IMAGENAME eq sunshine.exe", "/NH"}, 10000,
-            &out) != 0)
+    if (run(QStringLiteral("tasklist"), {"/FI", "IMAGENAME eq sunshine.exe", "/NH"}, 10000, &out) !=
+        0)
         return false;
     return out.contains(QStringLiteral("sunshine.exe"), Qt::CaseInsensitive);
 #else
