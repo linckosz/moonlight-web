@@ -169,6 +169,11 @@ export class BackendClient {
         return this.post('/api/system/stop-sunshine');
     }
 
+    // Start the local Sunshine server on the host (localhost-only backend-side).
+    static async startSunshine() {
+        return this.post('/api/system/start-sunshine');
+    }
+
     // ── Auth API ───────────────────────────────────────────────────────────
 
     static async validatePin(pin, machineName) {

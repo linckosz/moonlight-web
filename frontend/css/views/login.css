@@ -174,6 +174,13 @@
 .setup-box .login-logo {
     text-align: center;
 }
+/* Neon-green logo on the setup screen: the default yellow sits too close to the
+   panel's warm tint and reads poorly. Green matches the hosts "Ready" accent. */
+.setup-box .login-logo {
+    background: var(--c-success-soft);
+    color: var(--c-success);
+    filter: drop-shadow(0 0 10px rgba(42, 212, 160, 0.45));
+}
 .setup-section {
     margin-top: var(--space-4);
     padding-top: var(--space-3);

@@ -81,6 +81,7 @@ export class AdminView {
         // Sunshine (local streaming server) state — from /api/setup/status.
         this._sunshineInstalled = false;
         this._sunshineCanAutoInstall = false;
+        this._sunshineRunning = false;
         this._sunshineChecked = false; // status fetched at least once
         this._os = ''; // 'Windows' | 'macOS' | 'Linux' — gates host-only actions
 
@@ -188,6 +189,7 @@ export class AdminView {
             const status = await BackendClient.getSetupStatus();
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             this._sunshineCanAutoInstall = !!(status.sunshine && status.sunshine.can_auto_install);
+            this._sunshineRunning = !!(status.sunshine && status.sunshine.running);
             this._os = status.os || '';
             this._sunshineChecked = true;
         } catch (err) {
@@ -258,11 +260,32 @@ export class AdminView {
             console.error('[Admin] Failed to stop Sunshine:', err);
             Toast.error(t('admin.sunshineStopFailed', { message: err.message }));
         } finally {
-            const b = this.container.querySelector('#btn-stop-sunshine');
-            if (b) {
-                b.disabled = false;
-                b.textContent = t('admin.stopSunshine');
-            }
+            // Refresh from the real process state and re-render so the button
+            // flips to Start (or stays Stop if it's still up).
+            await this._loadSunshineState();
+            this.render();
+            this.bindEvents();
+        }
+    }
+
+    // Start the local Sunshine server (host machine). Localhost-only, like stop.
+    async _startSunshine() {
+        const btn = this.container.querySelector('#btn-start-sunshine');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = t('admin.startingSunshine');
+        }
+        try {
+            const res = await BackendClient.startSunshine();
+            if (res.status === 'started') Toast.success(t('admin.sunshineStarted'));
+            else Toast.error(t('admin.sunshineStartFailed', { message: '' }));
+        } catch (err) {
+            console.error('[Admin] Failed to start Sunshine:', err);
+            Toast.error(t('admin.sunshineStartFailed', { message: err.message }));
+        } finally {
+            await this._loadSunshineState();
+            this.render();
+            this.bindEvents();
         }
     }
 
@@ -799,17 +822,32 @@ export class AdminView {
             // SunshineService (respawns sunshine.exe, and killing it needs
             // elevation MoonlightWeb's non-elevated logon task doesn't have) —
             // Windows users manage it from Sunshine's tray / Services instead.
-            const canStop = this._os && this._os !== 'Windows';
-            const stopBtn = canStop
-                ? `<button class="btn btn-danger u-mt-2" id="btn-stop-sunshine">
-                        ${t('admin.stopSunshine')}
-                    </button>
-                    <p class="settings-hint">${t('admin.stopSunshineHint')}</p>`
-                : '';
-            body = `<p class="setting-desc setup-ok">
-                        <span class="setup-ok-check">✓</span> ${t('admin.sunshineInstalled')}
-                    </p>
-                    ${stopBtn}`;
+            // Start/Stop control on macOS/Linux only: there Sunshine runs as a
+            // user process we can pgrep/pkill/launch. On Windows it's the
+            // LocalSystem SunshineService (respawns sunshine.exe, and killing it
+            // needs elevation MoonlightWeb's non-elevated logon task doesn't have)
+            // — Windows users manage it from Sunshine's tray / Services instead.
+            const canControl = this._os && this._os !== 'Windows';
+            let controlBtn = '';
+            if (canControl) {
+                controlBtn = this._sunshineRunning
+                    ? `<button class="btn btn-danger u-mt-2" id="btn-stop-sunshine">
+                            ${t('admin.stopSunshine')}
+                        </button>
+                        <p class="settings-hint">${t('admin.stopSunshineHint')}</p>`
+                    : `<button class="btn btn-neutral u-mt-2" id="btn-start-sunshine">
+                            ${t('admin.startSunshine')}
+                        </button>
+                        <p class="settings-hint">${t('admin.startSunshineHint')}</p>`;
+            }
+            // Reflect the live run state in the status line (running vs stopped).
+            const stateLabel = this._sunshineRunning
+                ? t('admin.sunshineRunning')
+                : t('admin.sunshineStopped2');
+            const stateCls = this._sunshineRunning ? 'setup-ok' : 'setup-warn';
+            const stateMark = this._sunshineRunning ? '<span class="setup-ok-check">✓</span> ' : '';
+            body = `<p class="setting-desc ${stateCls}">${stateMark}${this.esc(stateLabel)}</p>
+                    ${controlBtn}`;
         } else if (this._sunshineCanAutoInstall) {
             body = `
                 <p class="setting-desc">${t('admin.sunshineNotInstalled')}</p>
@@ -1242,10 +1280,16 @@ export class AdminView {
             installSunBtn.addEventListener('click', () => this._installSunshine());
         }
 
-        // Stop Sunshine button (localhost only, shown when installed)
+        // Stop Sunshine button (localhost only, shown when running)
         const stopSunBtn = this.container.querySelector('#btn-stop-sunshine');
         if (stopSunBtn) {
             stopSunBtn.addEventListener('click', () => this._stopSunshine());
+        }
+
+        // Start Sunshine button (localhost only, shown when installed but stopped)
+        const startSunBtn = this.container.querySelector('#btn-start-sunshine');
+        if (startSunBtn) {
+            startSunBtn.addEventListener('click', () => this._startSunshine());
         }
 
         // Close button
