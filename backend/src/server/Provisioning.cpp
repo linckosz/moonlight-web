@@ -120,23 +120,22 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     if (host && host->manualAddress.port() > 0) basePort = host->manualAddress.port();
     const quint16 restPort = basePort + 1;
 
-    // handleSubmitPin() blocks on getservercert (a nested Qt event loop) until
-    // Sunshine receives the PIN. Schedule the REST push so it fires *during*
-    // that block — getservercert must already be in flight for Sunshine to
-    // attach the PIN to the pending pairing request.
+    // Pairing stage 1 (getservercert) stays in flight until Sunshine receives
+    // the PIN. Schedule the REST push so it fires *after* the chain has started
+    // and getservercert is already in flight, letting Sunshine attach the PIN to
+    // the pending request.
     auto* rest = new SunshineRestClient(&computers);
     QTimer::singleShot(800, rest, [rest, pin, user, pass, restPort]() {
         rest->sendPin(pin, user, pass, QStringLiteral("MoonlightWeb"), restPort);
     });
 
-    auto [submitStatus, submitResult] = computers.handleSubmitPin(uuid);
-    const QString state = submitResult.value(QStringLiteral("status")).toString();
-    Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1 (%2)")
-                     .arg(state, submitResult.value(QStringLiteral("message")).toString()));
-
-    NvComputer* paired = computers.getHost(uuid);
-    return (paired && paired->pairState == NvComputer::PS_PAIRED) ||
-           state == QLatin1String("paired");
+    // Drive the (asynchronous) pairing chain to completion under a local event
+    // loop. Safe here: provisioning runs once at startup, before the main event
+    // loop and outside the reentrant HTTP request path.
+    const bool paired = computers.pairHostBlocking(uuid, 65000);
+    Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1")
+                     .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
+    return paired;
 }
 
 bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers)

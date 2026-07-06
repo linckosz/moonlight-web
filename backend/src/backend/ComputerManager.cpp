@@ -878,11 +878,22 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
         return {400, err};
     }
 
-    // Clean up any abandoned previous session
+    // Clean up any abandoned previous session. If a pairing chain is still in
+    // flight against it, freeing the NvPairingManager would leave its pending
+    // async callbacks dangling (use-after-free) — return the PIN already in use
+    // instead (it is bound to the in-flight stage-1 salt).
     if (m_ActivePairings.contains(uuid)) {
+        if (m_SubmitInFlight.contains(uuid)) {
+            QJsonObject obj;
+            obj["status"] = "initiated";
+            obj["pin"] = m_PairingPins.value(uuid);
+            obj["message"] = "Enter this PIN in Sunshine (Web UI or stdin)";
+            return {200, obj};
+        }
         delete m_ActivePairings.take(uuid);
         m_PairingPins.remove(uuid);
     }
+    m_PairingError.remove(uuid);
 
     QVector<NvAddress> addrs = host->uniqueAddresses();
     if (addrs.isEmpty()) {
@@ -898,7 +909,8 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
     QString pin = generatePairingPin();
     m_PairingPins[uuid] = pin;
 
-    // Create PairingManager (stage 1 runs later in handleSubmitPin)
+    // Create PairingManager (stage 1 runs later, in the background chain kicked
+    // off by the first handleSubmitPin poll)
     auto* pm =
         new NvPairingManager(host->appVersion, addr.address(), addr.port(),
                              host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT);
@@ -913,145 +925,172 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
     return {200, obj};
 }
 
-std::pair<int, QJsonObject> ComputerManager::handleSubmitPin(const QString& uuid)
+void ComputerManager::handleSubmitPin(const QString& uuid, ResponseCallback respond)
 {
-    // Reentrancy guard: a submit for this host is already blocked in a nested
-    // event loop (initiatePairing/completePairing run loop.exec()). The frontend
-    // polls every 5s; without this guard the second POST would reenter and share
-    // the same NvPairingManager*, freed by the first → use-after-free crash.
-    if (m_SubmitInFlight.contains(uuid)) {
-        QJsonObject obj;
-        obj["status"] = "awaiting_pin";
-        obj["message"] = "Pairing already in progress...";
-        return {200, obj};
+    auto reply = [&respond](const char* status, const QString& message, int code) {
+        respond(HttpResponse::json({{"status", status}, {"message", message}}, code));
+    };
+
+    // A background chain finished with a terminal error — deliver it once.
+    if (m_PairingError.contains(uuid)) {
+        reply("error", m_PairingError.take(uuid), 400);
+        return;
     }
-    m_SubmitInFlight.insert(uuid);
-    struct Guard
-    {
-        QSet<QString>& set;
-        QString id;
-        ~Guard() { set.remove(id); }
-    } guard{m_SubmitInFlight, uuid};
+
+    // Already paired (the chain completed on a previous poll).
+    NvComputer* host = findHostByUuid(uuid);
+    if (host && host->pairState == NvComputer::PS_PAIRED) {
+        reply("paired", "Already paired.", 200);
+        return;
+    }
+
+    // A pairing chain is running for this host — keep polling.
+    if (m_SubmitInFlight.contains(uuid)) {
+        reply("awaiting_pin", "Pairing already in progress...", 200);
+        return;
+    }
 
     auto it = m_ActivePairings.find(uuid);
     if (it == m_ActivePairings.end()) {
-        // Session already destroyed — check if pairing completed
-        NvComputer* host = findHostByUuid(uuid);
-        if (host && host->pairState == NvComputer::PS_PAIRED) {
-            QJsonObject obj;
-            obj["status"] = "paired";
-            obj["message"] = "Already paired.";
-            return {200, obj};
-        }
-        // PIN exists means a parallel request may have succeeded; keep polling
+        // No session and no terminal result — a PIN still on file means a start
+        // is expected; otherwise the caller must start pairing first.
         if (m_PairingPins.contains(uuid)) {
-            QJsonObject obj;
-            obj["status"] = "awaiting_pin";
-            obj["message"] = "Waiting for pairing to complete...";
-            return {200, obj};
+            reply("awaiting_pin", "Waiting for pairing to complete...", 200);
+            return;
         }
-        QJsonObject err;
-        err["status"] = "error";
-        err["message"] = "No active pairing session. Start pairing first.";
-        return {404, err};
+        reply("error", "No active pairing session. Start pairing first.", 404);
+        return;
     }
 
-    QString pin = m_PairingPins.value(uuid);
-    if (pin.isEmpty()) {
-        QJsonObject err;
-        err["status"] = "error";
-        err["message"] = "No PIN found for this session. Start pairing again.";
-        return {400, err};
+    if (m_PairingPins.value(uuid).isEmpty()) {
+        reply("error", "No PIN found for this session. Start pairing again.", 400);
+        return;
     }
 
+    // Kick off the async pairing chain and answer immediately. Stage 1
+    // (getservercert) blocks up to 60s server-side until the user enters the
+    // PIN in Sunshine; the frontend keeps polling every 5s and picks up the
+    // terminal result (paired / error) on a later poll. No request is held open
+    // and no nested event loop runs in the HTTP dispatch path.
+    startPairingChain(uuid);
+    reply("awaiting_pin", "Waiting for PIN to be entered in Sunshine...", 200);
+}
+
+void ComputerManager::startPairingChain(const QString& uuid)
+{
+    if (m_SubmitInFlight.contains(uuid)) return; // one chain per host
+
+    auto it = m_ActivePairings.find(uuid);
+    if (it == m_ActivePairings.end()) return;
     NvPairingManager* pm = it.value();
-    QByteArray serverCertPem;
 
-    // Stage 1: getservercert — BLOCKS until user enters PIN in Sunshine (up to 60s)
-    NvPairingManager::InitResult initResult;
-    try {
-        initResult = pm->initiatePairing();
-    } catch (const std::exception& e) {
-        m_ActivePairings.erase(it);
-        m_PairingPins.remove(uuid);
-        delete pm;
-        QJsonObject obj;
-        obj["status"] = "awaiting_pin";
-        obj["message"] = QString("Still waiting for PIN: %1").arg(e.what());
-        return {200, obj};
-    }
+    m_SubmitInFlight.insert(uuid);
 
-    if (initResult == NvPairingManager::INIT_ALREADY_IN_PROGRESS) {
-        m_ActivePairings.erase(it);
-        m_PairingPins.remove(uuid);
-        delete pm;
-        QJsonObject err;
-        err["status"] = "error";
-        err["message"] = "Pairing already in progress on host.";
-        return {409, err};
-    }
+    // Stage 1 — getservercert (blocks server-side until PIN entry, up to 60s).
+    pm->initiatePairing([this, uuid](NvPairingManager::InitResult initResult) {
+        // Re-resolve the session: while in flight nothing frees it, but the host
+        // could still be gone if the whole ComputerManager path changed.
+        auto it = m_ActivePairings.find(uuid);
+        if (it == m_ActivePairings.end()) {
+            m_SubmitInFlight.remove(uuid);
+            return;
+        }
+        NvPairingManager* pm = it.value();
 
-    if (initResult != NvPairingManager::INIT_OK) {
-        // Stage 1 failed (timeout or unreachable) — keep session for retry
-        QJsonObject obj;
-        obj["status"] = "awaiting_pin";
-        obj["message"] = "Waiting for PIN to be entered in Sunshine...";
-        return {200, obj};
-    }
-
-    // Stages 2-5: challenge-response
-    NvPairingManager::PairState result;
-    try {
-        result = pm->completePairing(pin, serverCertPem);
-    } catch (const std::exception& e) {
-        m_ActivePairings.erase(it);
-        m_PairingPins.remove(uuid);
-        delete pm;
-        QJsonObject err;
-        err["status"] = "error";
-        err["message"] = QString("Pairing error: %1").arg(e.what());
-        return {400, err};
-    }
-
-    switch (result) {
-    case NvPairingManager::PAIRED: {
-        NvComputer* host = findHostByUuid(uuid);
-        if (host) {
-            host->serverCertPem = serverCertPem;
-            host->pairState = NvComputer::PS_PAIRED;
-            host->state = NvComputer::CS_ONLINE;
-            saveHosts();
-            emit hostsChanged();
+        if (initResult == NvPairingManager::INIT_ALREADY_IN_PROGRESS) {
+            m_ActivePairings.erase(it);
+            m_PairingPins.remove(uuid);
+            delete pm;
+            m_PairingError[uuid] = "Pairing already in progress on host.";
+            m_SubmitInFlight.remove(uuid);
+            return;
         }
 
-        m_ActivePairings.erase(it);
-        m_PairingPins.remove(uuid);
-        delete pm;
+        if (initResult != NvPairingManager::INIT_OK) {
+            // Stage 1 timed out or the host was unreachable — keep the session
+            // so the next poll restarts the chain.
+            m_SubmitInFlight.remove(uuid);
+            return;
+        }
 
-        QJsonObject obj;
-        obj["status"] = "paired";
-        obj["message"] = "Pairing successful. The host list will update shortly.";
-        return {200, obj};
-    }
-    case NvPairingManager::PIN_WRONG: {
-        // PIN was entered but wrong, or stages 2-3 failed — keep session for retry
-        QJsonObject obj;
-        obj["status"] = "awaiting_pin";
-        obj["message"] = "Waiting for PIN to be entered in Sunshine...";
-        return {200, obj};
-    }
-    case NvPairingManager::ALREADY_IN_PROGRESS:
-    case NvPairingManager::FAILED:
-    default: {
-        m_ActivePairings.erase(it);
-        m_PairingPins.remove(uuid);
-        delete pm;
-        QJsonObject err;
-        err["status"] = "error";
-        err["message"] = "Pairing failed. Close any running games on the host and try again.";
-        return {400, err};
-    }
-    }
+        const QString pin = m_PairingPins.value(uuid);
+
+        // Stages 2-5 — challenge/response.
+        pm->completePairing(
+            pin, [this, uuid](NvPairingManager::PairState result, const QByteArray& serverCertPem) {
+                auto it = m_ActivePairings.find(uuid);
+                if (it == m_ActivePairings.end()) {
+                    m_SubmitInFlight.remove(uuid);
+                    return;
+                }
+                NvPairingManager* pm = it.value();
+
+                switch (result) {
+                case NvPairingManager::PAIRED: {
+                    NvComputer* host = findHostByUuid(uuid);
+                    if (host) {
+                        host->serverCertPem = serverCertPem;
+                        host->pairState = NvComputer::PS_PAIRED;
+                        host->state = NvComputer::CS_ONLINE;
+                        saveHosts();
+                        emit hostsChanged();
+                    }
+                    m_ActivePairings.erase(it);
+                    m_PairingPins.remove(uuid);
+                    delete pm;
+                    break;
+                }
+                case NvPairingManager::PIN_WRONG:
+                    // PIN not accepted yet / stages 2-3 rejected — keep the
+                    // session so the next poll restarts the chain.
+                    break;
+                case NvPairingManager::ALREADY_IN_PROGRESS:
+                case NvPairingManager::FAILED:
+                default:
+                    m_ActivePairings.erase(it);
+                    m_PairingPins.remove(uuid);
+                    delete pm;
+                    m_PairingError[uuid] =
+                        "Pairing failed. Close any running games on the host and try again.";
+                    break;
+                }
+
+                m_SubmitInFlight.remove(uuid);
+            });
+    });
+}
+
+bool ComputerManager::pairHostBlocking(const QString& uuid, int timeoutMs)
+{
+    if (!m_ActivePairings.contains(uuid)) return false;
+
+    QEventLoop loop;
+
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+    deadline.start(timeoutMs);
+
+    // Poll for a terminal state; if the chain goes idle (stage-1 timeout or a
+    // rejected PIN) while the session survives, restart it for another attempt.
+    QTimer poll;
+    poll.setInterval(250);
+    connect(&poll, &QTimer::timeout, this, [this, uuid, &loop]() {
+        NvComputer* host = findHostByUuid(uuid);
+        if ((host && host->pairState == NvComputer::PS_PAIRED) || m_PairingError.contains(uuid)) {
+            loop.quit();
+            return;
+        }
+        if (!m_SubmitInFlight.contains(uuid) && m_ActivePairings.contains(uuid))
+            startPairingChain(uuid);
+    });
+    poll.start();
+
+    startPairingChain(uuid);
+    loop.exec();
+
+    NvComputer* host = findHostByUuid(uuid);
+    return host && host->pairState == NvComputer::PS_PAIRED;
 }
 
 // --- HTTPS Pair Verification -------------------------------------------------
