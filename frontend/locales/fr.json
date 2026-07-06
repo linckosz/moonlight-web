@@ -321,7 +321,14 @@
         "stopSunshineHint": "Arrête le serveur Sunshine qui tourne sur cet ordinateur. Sur macOS, il est aussi dans la barre de menus en haut à droite. Il redémarre à votre prochaine connexion (ou lancez-le depuis Applications).",
         "sunshineStopped": "Sunshine arrêté.",
         "sunshineNotRunning": "Sunshine n'était pas en cours d'exécution.",
-        "sunshineStopFailed": "Impossible d'arrêter Sunshine : {{message}}"
+        "sunshineStopFailed": "Impossible d'arrêter Sunshine : {{message}}",
+        "startSunshine": "Démarrer Sunshine",
+        "startingSunshine": "Démarrage…",
+        "startSunshineHint": "Démarre le serveur Sunshine sur cet ordinateur pour pouvoir streamer depuis celui-ci.",
+        "sunshineStarted": "Sunshine démarré.",
+        "sunshineStartFailed": "Impossible de démarrer Sunshine : {{message}}",
+        "sunshineRunning": "Sunshine est installé et en cours d'exécution.",
+        "sunshineStopped2": "Sunshine est installé mais pas démarré."
     },
     "stream": {
         "stop": "Arrêter",

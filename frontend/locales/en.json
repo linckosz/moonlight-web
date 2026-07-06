@@ -321,7 +321,14 @@
         "stopSunshineHint": "Stops the Sunshine server running on this computer. On macOS it also lives in the top-right menu bar. It restarts at your next login (or launch it from Applications).",
         "sunshineStopped": "Sunshine stopped.",
         "sunshineNotRunning": "Sunshine was not running.",
-        "sunshineStopFailed": "Could not stop Sunshine: {{message}}"
+        "sunshineStopFailed": "Could not stop Sunshine: {{message}}",
+        "startSunshine": "Start Sunshine",
+        "startingSunshine": "Starting…",
+        "startSunshineHint": "Starts the Sunshine server on this computer so you can stream from it.",
+        "sunshineStarted": "Sunshine started.",
+        "sunshineStartFailed": "Could not start Sunshine: {{message}}",
+        "sunshineRunning": "Sunshine is installed and running.",
+        "sunshineStopped2": "Sunshine is installed but not running."
     },
     "stream": {
         "stop": "Stop",

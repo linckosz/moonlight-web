@@ -130,6 +130,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         QJsonObject sunObj;
         sunObj["installed"] = sun.installed;
         sunObj["can_auto_install"] = SunshineInstaller::canAutoInstall();
+        sunObj["running"] = sun.installed && SunshineInstaller::isRunning();
         // Paired = some known host is paired AND lives on this machine (loopback
         // or one of our own interface addresses — mDNS may have registered the
         // local Sunshine under its LAN IP rather than 127.0.0.1).
@@ -289,6 +290,18 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         const bool ok = SunshineInstaller::stop();
         QJsonObject obj;
         obj["status"] = ok ? "stopped" : "not_running";
+        return HttpResponse::json(obj);
+    });
+
+    // POST /api/system/start-sunshine — start the local Sunshine server. Localhost-
+    // only (host-machine service action). Used by the admin page when Sunshine is
+    // installed but not currently running.
+    server.router()->post("/api/system/start-sunshine", [&](const HttpRequest& req) {
+        if (!HttpServer::isLocalRequest(req.clientAddress))
+            return HttpResponse::error(403, "Only available from localhost");
+        const bool ok = SunshineInstaller::launch();
+        QJsonObject obj;
+        obj["status"] = ok ? "started" : "failed";
         return HttpResponse::json(obj);
     });
 

@@ -67,6 +67,10 @@ bool setCredentials(const QString& user, const QString& pass);
 /// Screen Recording / Accessibility permissions it needs). Best-effort.
 bool launch();
 
+/// Whether a Sunshine process is currently running. Best-effort process probe
+/// (pgrep on macOS/Linux, tasklist on Windows).
+bool isRunning();
+
 /// Stop a running Sunshine (SIGTERM so it can deregister mDNS and drop its tray;
 /// taskkill on Windows). Best-effort: returns true when an instance was signaled.
 bool stop();
