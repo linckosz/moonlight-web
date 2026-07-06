@@ -12,9 +12,7 @@
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  # Disabled temporarily (2026-07-06) — re-enable by restoring push/pull_request.
   workflow_dispatch:
 
 # Least-privilege token: this pipeline only reads the repo and writes artifacts.
