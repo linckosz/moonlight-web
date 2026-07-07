@@ -1093,7 +1093,7 @@ const MoonlightApp = {
 
         this.streamView = new StreamView(
             document.getElementById('app'),
-            result.signalingUrl || result.wsUrl,
+            this._streamWsUrl(result.signalingUrl || result.wsUrl),
             host,
             result.videoCodec,
             result.gamingMode !== false,
@@ -1129,6 +1129,31 @@ const MoonlightApp = {
         // a degraded session-only profile (bitrate −30% steps, media transport,
         // 60 fps cap). See _onStreamCongested().
         this.streamView.onCongestion = () => this._onStreamCongested();
+    },
+
+    /**
+     * Anchor the signaling WebSocket to the exact origin the page was loaded
+     * from, keeping only the backend-provided path (/ws or /ws/stream).
+     *
+     * The WS is proxied through the same HTTPS port as the page (HttpServer
+     * upgrades /ws), but the backend builds the URL from its *internal* HTTPS
+     * port (443). When this instance is reached through a non-standard external
+     * port — e.g. the UPnP multi-instance fallback maps public :44729 → internal
+     * :443 — the backend emits wss://domain/ws (i.e. :443), which the router
+     * forwards to a *different* instance that owns external 443. The result is an
+     * immediate 1006 "connection failed" and every transport falls through.
+     * window.location.host already carries the correct host:port (the REST calls
+     * use it and succeed), so reuse it verbatim.
+     */
+    _streamWsUrl(rawUrl) {
+        let path = '/ws';
+        try {
+            if (rawUrl) path = new URL(rawUrl, window.location.href).pathname || '/ws';
+        } catch (e) {
+            console.warn('[MW] Could not parse signaling URL, defaulting to /ws:', rawUrl, e);
+        }
+        const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        return `${scheme}://${window.location.host}${path}`;
     },
 
     /** Human-readable label for a transport mode (warning toasts / logs). */
