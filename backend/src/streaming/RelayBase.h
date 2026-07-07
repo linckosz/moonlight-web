@@ -76,6 +76,12 @@ public:
     virtual void setPublicAddress(const std::string& publicIP, uint16_t publicPort) = 0;
     virtual void setForceHostCandidatePublic(bool force) = 0;
     virtual void setSuppressIPv6Candidates(bool suppress) = 0;
+    // When host candidates are rewritten to the public IP, also advertise the
+    // original private LAN candidate — but ONLY for a client that is itself on
+    // the LAN (loopback/RFC1918, incl. NAT-hairpinned access via the public
+    // URL), so the private IP is never leaked to internet peers. Lets a same-LAN
+    // client connect directly when the router doesn't hairpin UDP.
+    virtual void setEmitLanHostCandidate(bool enable) = 0;
 
     // ── Status ────────────────────────────────────────────────────────────────
 

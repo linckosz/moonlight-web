@@ -87,6 +87,12 @@ public:
 
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
 
+    /// Whether the streaming client is on our LAN (loopback/RFC1918, incl. a
+    /// NAT-hairpinned client reaching us via the public URL). Forwarded to the
+    /// SignalingServer so the relay may advertise the private LAN ICE candidate
+    /// to a local client without leaking it to internet peers.
+    void setClientIsLocal(bool local) { m_ClientIsLocal = local; }
+
     /// Set the ordered transport fallback chain and the index of the attempt
     /// this session represents. Echoed back to the browser so the frontend can
     /// walk the chain (relaunch with the next index) when a transport fails.
@@ -180,6 +186,9 @@ private:
 
     /// If non-empty, overrides SignalingServer::wsUrl() in the /start response.
     QString m_ExplicitWsUrl;
+
+    /// Streaming client is on our LAN (see setClientIsLocal).
+    bool m_ClientIsLocal = false;
 
     /// The HTTPS port HttpServer is actually listening on (may be != 443).
     quint16 m_HttpsPort = 443;

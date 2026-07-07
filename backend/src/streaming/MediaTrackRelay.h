@@ -80,6 +80,7 @@ public:
     void setPublicAddress(const std::string& publicIP, uint16_t publicPort) override;
     void setForceHostCandidatePublic(bool force) override { m_ForceHostPublic = force; }
     void setSuppressIPv6Candidates(bool suppress) override { m_SuppressIPv6 = suppress; }
+    void setEmitLanHostCandidate(bool enable) override { m_EmitLanCandidate = enable; }
 
     bool isConnected() const override { return m_Connected; }
 
@@ -170,6 +171,7 @@ private:
     uint16_t m_PublicPort = 0;
     bool m_ForceHostPublic = false;
     bool m_SuppressIPv6 = false;
+    bool m_EmitLanCandidate = false; // Also emit the private host candidate (LAN client only)
 
     // ── ICE connection timeout ──────────────────────────────────────────────
     // Starts on setRemoteDescription(), cancelled on PC Connected or stop().

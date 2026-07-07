@@ -859,6 +859,28 @@ int main(int argc, char* argv[])
         int colon = serverHost.indexOf(':');
         if (colon >= 0) serverHost = serverHost.left(colon);
 
+        // Is the streaming client on our own LAN? True for loopback / RFC1918,
+        // which also covers a LAN client reaching us through the public URL:
+        // the router source-NATs the hairpinned connection to a private gateway
+        // IP (e.g. 192.168.1.254). When true, the relay may also advertise its
+        // private host ICE candidate so a local client can connect directly
+        // (routers rarely hairpin UDP); it is never advertised to internet
+        // clients (public source IP), so the LAN IP is not leaked.
+        const bool clientIsLocal = [&req]() {
+            QString ip = req.clientAddress;
+            if (ip.startsWith("::ffff:")) ip = ip.mid(7);
+            QHostAddress addr(ip);
+            if (addr.isNull()) return false;
+            if (addr.isLoopback()) return true;
+            if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
+                quint32 v = addr.toIPv4Address();
+                return (v & 0xFF000000) == 0x0A000000 || // 10.0.0.0/8
+                       (v & 0xFFF00000) == 0xAC100000 || // 172.16.0.0/12
+                       (v & 0xFFFF0000) == 0xC0A80000;   // 192.168.0.0/16
+            }
+            return false;
+        }();
+
         // ================================================================
         // Resolve transport mode (from AppSettings).
         //
@@ -1167,6 +1189,7 @@ int main(int argc, char* argv[])
             s->setLowAudio(reqLowAudio);
             s->setMuteHostAudio(reqMuteHost);
             s->setClientUniqueId(reqClientUniqueId);
+            s->setClientIsLocal(clientIsLocal);
             attachRelayTracking(s);
             // Track the active session so a later take-over can quit() it (stops
             // the SignalingServer first → frees the fixed port). QPointer auto-

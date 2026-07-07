@@ -267,6 +267,10 @@ void SignalingServer::onNewWsConnection()
         // Residential IPv6 often has firewall rules that block unsolicited
         // inbound traffic, causing DTLS/SCTP to fail silently.
         m_Relay->setSuppressIPv6Candidates(true);
+        // For a same-LAN client (incl. one on the public URL, hairpinned), also
+        // let the relay advertise the private host candidate for a direct path
+        // (routers rarely hairpin UDP). Never for internet clients — no LAN leak.
+        m_Relay->setEmitLanHostCandidate(m_ClientIsLocal);
         qInfo() << "[SignalingServer] UPnP: relaying host candidate as" << m_UpnpPublicIP << ":"
                 << m_UpnpMappedPort;
     }
