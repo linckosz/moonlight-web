@@ -172,6 +172,13 @@ public:
     /// Called before start() to set the preference from settings.
     void setUseUPnP(bool enable) { m_UseUPnP = enable; }
 
+    /// Whether the streaming client is on our LAN (loopback/RFC1918, incl. a
+    /// NAT-hairpinned client on the public URL). When true and UPnP rewrites host
+    /// candidates to the public IP, the relay also advertises the private LAN
+    /// candidate so the local client can connect directly. Never set for internet
+    /// clients — avoids leaking the LAN IP.
+    void setClientIsLocal(bool local) { m_ClientIsLocal = local; }
+
     /// The external port mapped via UPnP (0 = not mapped).
     uint16_t upnpMappedPort() const { return m_UpnpMappedPort; }
 
@@ -194,6 +201,7 @@ private:
                                              bool forceIceTcp = false);
 
     bool m_UseUPnP = true;
+    bool m_ClientIsLocal = false; // Streaming client is on our LAN (see setClientIsLocal)
     UPNPClient* m_Upnp = nullptr;
     uint16_t m_UpnpMappedPort = 0;
     QString m_UpnpPublicIP;

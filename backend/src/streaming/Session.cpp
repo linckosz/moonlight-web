@@ -488,6 +488,7 @@ void StreamSession::onLaunchReplyFinished()
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
+        signaling->setClientIsLocal(m_ClientIsLocal);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
@@ -552,6 +553,7 @@ void StreamSession::onLaunchReplyFinished()
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
+        signaling->setClientIsLocal(m_ClientIsLocal);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {

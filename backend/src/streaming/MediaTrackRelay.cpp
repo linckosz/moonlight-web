@@ -149,11 +149,17 @@ void MediaTrackRelay::setupPeerConnection(const rtc::Configuration& config)
             }
 
             if (isIpv4) {
+                // Same-LAN client (incl. NAT-hairpinned public URL): also emit
+                // the private host candidate for a direct connection. Gated on
+                // m_EmitLanCandidate (false for internet clients) — see
+                // DataChannelRelay for the full rationale.
+                if (m_EmitLanCandidate)
+                    emit signalingIceCandidate(candStr, std::string(candidate.mid()));
                 try {
                     modCandidate.changeAddress(m_PublicIP, m_PublicPort);
-                    qInfo() << "[MediaTrackRelay] Rewrote host candidate:"
-                            << QString::fromStdString(candidate.candidate()) << "->"
-                            << QString::fromStdString(m_PublicIP) << ":" << m_PublicPort;
+                    qInfo() << "[MediaTrackRelay] Host candidate ->"
+                            << QString::fromStdString(m_PublicIP) << ":" << m_PublicPort
+                            << (m_EmitLanCandidate ? "(+ LAN)" : "");
                 } catch (const std::exception& e) {
                     qWarning() << "[MediaTrackRelay] Failed to rewrite candidate:" << e.what();
                 }

@@ -566,11 +566,20 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
             }
 
             if (isIpv4) {
+                // For a client on our own LAN (incl. one reaching us through the
+                // public URL via NAT hairpin), also advertise the original
+                // private host candidate so it can connect directly to
+                // 192.168.x.x — many routers don't hairpin UDP, so a public-only
+                // candidate never becomes reachable locally. Gated on
+                // m_EmitLanCandidate (false for internet clients) so the private
+                // IP is never leaked outside the LAN.
+                if (m_EmitLanCandidate)
+                    emit signalingIceCandidate(candStr, std::string(candidate.mid()));
                 try {
                     modCandidate.changeAddress(m_PublicIP, m_PublicPort);
-                    qInfo() << "[DataChannelRelay] Rewrote host candidate:"
-                            << QString::fromStdString(candidate.candidate()) << "->"
-                            << QString::fromStdString(m_PublicIP) << ":" << m_PublicPort;
+                    qInfo() << "[DataChannelRelay] Host candidate ->"
+                            << QString::fromStdString(m_PublicIP) << ":" << m_PublicPort
+                            << (m_EmitLanCandidate ? "(+ LAN)" : "");
                 } catch (const std::exception& e) {
                     qWarning() << "[DataChannelRelay] Failed to rewrite candidate:" << e.what();
                 }
