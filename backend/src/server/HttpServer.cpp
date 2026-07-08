@@ -785,9 +785,16 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             m_PendingAsyncSockets.remove(socket);
             sendResponse(socket, resp);
         } else {
+            // The socket is no longer pending because it disconnected mid-request:
+            // onDisconnected() already did socket->deleteLater(), so by the time
+            // this async response arrives the QTcpSocket is a FREED QObject. Stream
+            // its ADDRESS as a plain void* — never the QObject* itself, because
+            // QDebug::operator<<(const QObject*) dereferences it (className/
+            // objectName) and would crash on the dangling object (the UAF that took
+            // the whole server down on browser-close double /quit).
             qWarning()
                 << "[HttpServer] Respond called but socket no longer pending — response discarded"
-                << "socket=" << socket << "status=" << resp.statusCode;
+                << "socket=" << static_cast<const void*>(socket) << "status=" << resp.statusCode;
         }
     });
 }
@@ -828,9 +835,12 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // Parse the WebSocket path from the upgrade request to determine the target.
     //   GET /ws          → proxy to m_SignalingPort (WebRTC signaling)
     //   GET /ws/stream   → proxy to m_StreamRelayPort (legacy WSS StreamRelay)
+    //   GET /ws/control  → proxy to m_ControlPort (single-tab dedup channel)
     QString firstLine = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n")));
     QString path = firstLine.section(' ', 1, 1);
-    quint16 targetPort = (path == "/ws/stream") ? m_StreamRelayPort : m_SignalingPort;
+    quint16 targetPort = (path == "/ws/stream")    ? m_StreamRelayPort
+                         : (path == "/ws/control") ? m_ControlPort
+                                                   : m_SignalingPort;
 
     qInfo() << "[HttpServer] WebSocket upgrade detected, path=" << path
             << "targetPort=" << targetPort;
