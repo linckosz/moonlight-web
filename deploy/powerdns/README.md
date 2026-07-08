@@ -105,6 +105,7 @@ then builds and starts the stack.
 ```bash
 git clone <this-repo>
 cd <repo>/deploy/powerdns
+chmod +x install.sh   # make the script executable (git may not preserve the bit)
 sudo ./install.sh
 ```
 
@@ -197,6 +198,7 @@ stack:
 
 ```bash
 git clone <this-repo> && cd <repo>/deploy/powerdns
+chmod +x install.sh   # make the script executable (git may not preserve the bit)
 sudo ./install.sh
 ```
 
