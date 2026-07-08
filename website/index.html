@@ -864,10 +864,11 @@
       if (!r.ok) throw new Error(r.status);
       rel = await r.json();
       const find = re => (rel.assets || []).find(a => re.test(a.name));
-      // Asset names produced by .github/workflows/release.yml:
-      //   MoonlightWeb-installer-win-{x64,arm64}.exe
-      //   moonlightweb-linux-x64.{deb,rpm,AppImage}
-      //   moonlightweb-macos-arm64.pkg
+      // Asset names produced by .github/workflows/release.yml (version-stamped,
+      // matched here by their platform/arch/extension suffix):
+      //   MoonlightWeb-installer-<ver>-win-{x64,arm64}.exe
+      //   moonlightweb-<ver>-linux-x64.{deb,rpm,AppImage}
+      //   moonlightweb-<ver>-macos-arm64.pkg
       const assets = {
         'win-x64': find(/win-x64\.exe$/i),
         'win-arm64': find(/win-arm64\.exe$/i),

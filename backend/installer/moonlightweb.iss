@@ -1,7 +1,7 @@
-; ===========================================================================
+﻿; ===========================================================================
 ;  MoonlightWeb — interactive Windows installer (Inno Setup 6).
 ;
-;  Produces a stepped wizard (MoonlightWeb-installer-win-<arch>.exe) that:
+;  Produces a stepped wizard (MoonlightWeb-installer-<version>-win-<arch>.exe) that:
 ;    1. installs the app + Start-Menu shortcuts (app, admin page, uninstaller),
 ;    2. asks the user to authorize the Internet link (named public domain),
 ;    3. detects Sunshine and optionally installs it silently, collecting the
@@ -56,7 +56,7 @@ AppPublisherURL=https://github.com/moonlight-stream/moonlight-web
 DefaultDirName={autopf}\MoonlightWeb
 DefaultGroupName=MoonlightWeb
 DisableProgramGroupPage=yes
-OutputBaseFilename=MoonlightWeb-installer-win-{#MyArch}
+OutputBaseFilename=MoonlightWeb-installer-{#MyAppVersion}-win-{#MyArch}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -79,6 +79,9 @@ ArchitecturesAllowed=x64compatible
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
+; Simplified Chinese is not shipped with Inno Setup, so the translation is
+; vendored next to this script (UTF-8 with BOM). Path is relative to the .iss.
+Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 
 [CustomMessages]
 ; --- English ---
@@ -135,6 +138,33 @@ fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de Moo
 fr.TaskSunshine=Installer le serveur de streaming Sunshine
 fr.TaskPairing=Appairer le Sunshine local
 fr.TaskArecord=Publier l'adresse Internet sécurisée
+; --- Simplified Chinese ---
+zh.AutoStartTask=登录时启动 MoonlightWeb
+zh.InternetPageCaption=互联网链接
+zh.InternetPageDesc=是否允许从互联网访问？
+zh.InternetPageBody=MoonlightWeb 可以发布一个安全的公共链接（例如 https://a1b2c3d4.moonlightweb.top），以便在本地网络之外进行串流。%n%n此操作将在应用程序安装完成后进行。
+zh.InternetPageOption=允许互联网链接（推荐）
+zh.SunshinePageCaption=Sunshine
+zh.SunshinePageDesc=Sunshine 串流服务器
+zh.SunshineInstallCheck=自动安装 Sunshine
+zh.SunshineInstallCheckDone=自动安装 Sunshine（已安装）
+zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n请输入其凭据以配对 MoonlightWeb。
+zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装，然后设置其凭据。
+zh.SunshineUserLabel=用户名
+zh.SunshinePassLabel=密码
+zh.SunshineCredsRequired=请输入 Sunshine 的用户名和密码，以便 MoonlightWeb 自动配对。
+zh.RunApp=启动 MoonlightWeb
+zh.RunAdmin=打开管理页面
+zh.SunshineDownloadCaption=正在下载并安装 Sunshine...
+zh.SunshineDownloadFail=下载 Sunshine 失败：
+zh.SunshineLaunchFail=无法启动 Sunshine 安装程序。
+zh.AdminShortcut=MoonlightWeb 管理
+zh.ProvisionPageCaption=正在设置 MoonlightWeb
+zh.ProvisionPageDesc=正在完成安装
+zh.ProvisionWorking=请稍候，MoonlightWeb 正在完成设置...
+zh.TaskSunshine=安装 Sunshine 串流服务器
+zh.TaskPairing=配对本地 Sunshine
+zh.TaskArecord=发布安全的互联网地址
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"

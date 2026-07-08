@@ -16,6 +16,7 @@
  */
 
 #include "DataChannelRelay.h"
+#include "ClipboardBridge.h"
 #include "MoonlightShim.h"
 
 extern "C" {
@@ -480,6 +481,26 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
     connect(m_StatsTimer, &QTimer::timeout, this, &DataChannelRelay::onStatsTimerTick);
 }
 
+void DataChannelRelay::setClipboardEnabled(bool enabled)
+{
+    m_ClipboardEnabled = enabled;
+    if (!enabled) return;
+    // Host clipboard changes → push to the browser over the input DC.
+    // Context 'this': the slot runs on the relay's (future) thread; the DC
+    // send itself is thread-safe. Auto-disconnected when the relay dies.
+    connect(ClipboardBridge::instance(), &ClipboardBridge::hostTextChanged, this,
+            [this](const QString& text) {
+                if (m_Stopping.load() || !m_Connected || !m_InputDc) return;
+                QJsonObject m;
+                m["type"] = "clipboard";
+                m["text"] = text;
+                QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+                try {
+                    m_InputDc->send(std::string(j.constData(), j.size()));
+                } catch (const std::exception&) {}
+            });
+}
+
 DataChannelRelay::~DataChannelRelay()
 {
     qInfo() << "[DataChannelRelay] Destructor";
@@ -730,6 +751,16 @@ void DataChannelRelay::createDataChannels()
             // All 3 DataChannels are open when we reach here
             // (they all open together as part of SCTP association)
             emit dataChannelsOpen();
+
+            if (m_ClipboardEnabled) {
+                // Advertise clipboard sync, then push the current host
+                // clipboard once so copy-before-connect pastes locally.
+                static const char kCaps[] = "{\"type\":\"clipboardcaps\",\"available\":true}";
+                try {
+                    m_InputDc->send(std::string(kCaps));
+                } catch (const std::exception&) {}
+                ClipboardBridge::instance()->requestAnnounce();
+            }
 
             // Start periodic stats timer — marshal to the Qt main thread:
             // this callback runs on a libdatachannel thread and QTimer::start()
@@ -1003,6 +1034,14 @@ void DataChannelRelay::onInputMessage(const std::string& message)
     } else if (type == "textinput") {
         // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
         m_Shim->sendUtf8Text(msg["text"].toString());
+    } else if (type == "clipboardpaste") {
+        // Browser Ctrl/Cmd+V: commit the client text to the host clipboard,
+        // then inject the paste chord (main-thread hop keeps that order).
+        // Only meaningful when the streamed host is this machine.
+        if (m_ClipboardEnabled) {
+            ClipboardBridge::instance()->pasteFromClient(m_Shim, msg["text"].toString(),
+                                                         msg["injectCtrl"].toBool(false));
+        }
     } else if (type == "requestidr") {
         qInfo() << "[DataChannelRelay] Requesting IDR frame from Sunshine (browser request)";
         m_AwaitingIdr = true;

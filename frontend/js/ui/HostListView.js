@@ -543,6 +543,15 @@ export class HostListView {
             return;
         }
         cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a)).join('')}</div>`;
+        // Box-art fallback: the CSP (script-src 'self') blocks inline onerror
+        // attributes, so the broken-image swap has to be wired up here.
+        cont.querySelectorAll('.app-card-image img').forEach((img) => {
+            const showFallback = () => {
+                img.outerHTML = `<span class="app-icon">\u{1F3AE}</span>`;
+            };
+            if (img.complete && img.naturalWidth === 0) showFallback();
+            else img.addEventListener('error', showFallback, { once: true });
+        });
     }
 
     renderApp(app) {
@@ -557,8 +566,7 @@ export class HostListView {
                         app.boxArtUrl
                             ? `<img src="${this.esc(app.boxArtUrl)}"
                                alt="${this.esc(app.displayName)}"
-                               loading="lazy"
-                               onerror="this.outerHTML='<span class=\\'app-icon\\'>\u{1F3AE}</span>'">`
+                               loading="lazy">`
                             : `<span class="app-icon">\u{1F3AE}</span>`
                     }
                 </div>
@@ -608,7 +616,7 @@ export class HostListView {
             <div class="hosts-view">
                 <div class="hosts-header">
                     <h2>${t('hosts.title')}</h2>
-                    <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
+                    <button class="btn btn-reload">${t('common.retry')}</button>
                 </div>
                 <div class="hosts-error">
                     <p>${t('hosts.connectionLost')}</p>
@@ -616,6 +624,9 @@ export class HostListView {
                 </div>
             </div>
         `;
+        this.container
+            .querySelector('.btn-reload')
+            .addEventListener('click', () => location.reload());
     }
 
     // --- Events ---

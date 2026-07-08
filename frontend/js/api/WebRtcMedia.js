@@ -561,7 +561,13 @@ export class WebRtcMedia {
             } else if (label === this.DC_INPUT_LABEL) {
                 try {
                     const msg = JSON.parse(evt.data);
-                    if (msg.type === 'stats' || msg.type === 'pong') {
+                    if (
+                        msg.type === 'stats' ||
+                        msg.type === 'pong' ||
+                        msg.type === 'rumble' ||
+                        msg.type === 'clipboard' ||
+                        msg.type === 'clipboardcaps'
+                    ) {
                         if (this.onStats) this.onStats(msg);
                     } else {
                         console.log('[WebRtcMedia] Input DC message:', msg);

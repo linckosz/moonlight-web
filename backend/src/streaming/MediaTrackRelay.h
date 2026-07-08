@@ -86,6 +86,12 @@ public:
 
     MoonlightShim* moonlightShim() const override { return m_Shim; }
 
+    /// Enable bidirectional text clipboard sync. Only called with true when
+    /// the streamed host is this machine (the backend clipboard IS the host
+    /// clipboard) — see ClipboardBridge. Must be called before the relay is
+    /// moved to its dedicated thread (Session does, right after creation).
+    void setClipboardEnabled(bool enabled);
+
     // Signals inherited from RelayBase: signalingSdpReady, signalingIceCandidate,
     // dataChannelsOpen, sessionEnded.
 
@@ -142,6 +148,10 @@ private:
 
     std::atomic<bool> m_Connected{false};
     std::atomic<bool> m_Stopping{false};
+    // Bidirectional clipboard sync (only when the streamed host is this
+    // machine). Written once on the main thread before the relay moves to its
+    // dedicated thread, read from relay/libdatachannel threads afterwards.
+    bool m_ClipboardEnabled = false;
     int m_FrameCount = 0;
 
     // P2-B: when true, onVideoFrame runs on the capture thread (DirectConnection)

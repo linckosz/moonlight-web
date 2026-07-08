@@ -58,6 +58,12 @@ public:
     /// Access the MoonlightShim for explicit stopConnection() before cleanup.
     MoonlightShim* moonlightShim() const { return m_Shim; }
 
+    /// Enable bidirectional text clipboard sync. Only called with true when
+    /// the streamed host is this machine (the backend clipboard IS the host
+    /// clipboard) — see ClipboardBridge. Must be called before the relay is
+    /// moved to its dedicated thread (Session does, right after creation).
+    void setClipboardEnabled(bool enabled);
+
 signals:
     void sessionEnded();
     void clientConnected();
@@ -109,6 +115,10 @@ private:
     bool m_Running = false;
     bool m_Stopping = false;
     bool m_StreamStarted = false;
+    // Bidirectional clipboard sync (only when the streamed host is this
+    // machine). Written once on the main thread before the relay moves to
+    // its dedicated thread.
+    bool m_ClipboardEnabled = false;
     bool m_UseVideoFragmentation =
         false;              // WSS fragmentation OFF — full frames sent as single WS messages
     uint32_t m_FrameId = 0; // Monotonic frame ID for fragmentation

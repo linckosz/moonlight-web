@@ -16,6 +16,7 @@
  */
 
 #include "StreamRelay.h"
+#include "ClipboardBridge.h"
 #include "MoonlightShim.h"
 
 #include <QCoreApplication>
@@ -74,6 +75,26 @@ StreamRelay::~StreamRelay()
 {
     qInfo() << "[StreamRelay] Destructor";
     stop();
+}
+
+void StreamRelay::setClipboardEnabled(bool enabled)
+{
+    m_ClipboardEnabled = enabled;
+    if (!enabled) return;
+    // Host clipboard changes → push to the browser over the WebSocket.
+    // Context 'this': the slot runs on the relay's (future) thread, which
+    // owns the socket. Auto-disconnected when the relay dies.
+    connect(ClipboardBridge::instance(), &ClipboardBridge::hostTextChanged, this,
+            [this](const QString& text) {
+                if (m_Stopping || !m_WsClient ||
+                    m_WsClient->state() != QAbstractSocket::ConnectedState)
+                    return;
+                QJsonObject m;
+                m["type"] = "clipboard";
+                m["text"] = text;
+                m_WsClient->sendTextMessage(
+                    QString::fromUtf8(QJsonDocument(m).toJson(QJsonDocument::Compact)));
+            });
 }
 
 bool StreamRelay::start()
@@ -468,6 +489,13 @@ void StreamRelay::onNewWsConnection()
         m_StatsTimer->start();
     }
 
+    if (m_ClipboardEnabled) {
+        // Advertise clipboard sync, then push the current host clipboard
+        // once so copy-before-connect pastes locally.
+        m_WsClient->sendTextMessage(QStringLiteral("{\"type\":\"clipboardcaps\",\"available\":true}"));
+        ClipboardBridge::instance()->requestAnnounce();
+    }
+
     emit clientConnected();
 }
 
@@ -548,6 +576,14 @@ void StreamRelay::onWsTextMessage(const QString& message)
     } else if (type == "textinput") {
         // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
         m_Shim->sendUtf8Text(msg["text"].toString());
+    } else if (type == "clipboardpaste") {
+        // Browser Ctrl/Cmd+V: commit the client text to the host clipboard,
+        // then inject the paste chord (main-thread hop keeps that order).
+        // Only meaningful when the streamed host is this machine.
+        if (m_ClipboardEnabled) {
+            ClipboardBridge::instance()->pasteFromClient(m_Shim, msg["text"].toString(),
+                                                         msg["injectCtrl"].toBool(false));
+        }
     } else if (type == "requestidr") {
         // Browser lost its reference picture — forward to Sunshine (throttled).
         // Without this, a single decode-queue overflow freezes the WSS stream
