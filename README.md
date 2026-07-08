@@ -88,7 +88,7 @@ Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1
 
 <div align="center">
 
-![Video Enhancement — 720p upscaled to 1440p](docs/screenshots/video_enhancement.png)
+![Video Enhancement — 720p upscaled to 1440p](docs/screenshots/video_enhancement.gif)
 
 </div>
 
