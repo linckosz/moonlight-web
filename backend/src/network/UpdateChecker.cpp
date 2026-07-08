@@ -177,10 +177,12 @@ bool UpdateChecker::isNewer(const QString& latest, const QString& current)
 QString UpdateChecker::pickAsset(const QJsonArray& assets, QString& outName)
 {
     // Build the ordered list of filename suffixes/tokens to accept for this
-    // platform, most-specific first. The CI asset names (release.yml):
-    //   Windows: MoonlightWeb-installer-win-x64.exe / -arm64.exe
-    //   macOS:   moonlightweb-macos-arm64.pkg
-    //   Linux:   moonlightweb-linux-x64.{deb,rpm,AppImage}
+    // platform, most-specific first. The CI asset names embed the version but
+    // keep the platform/arch/extension suffix intact so this matching still
+    // holds (release.yml):
+    //   Windows: MoonlightWeb-installer-<ver>-win-x64.exe / -win-arm64.exe
+    //   macOS:   moonlightweb-<ver>-macos-arm64.pkg
+    //   Linux:   moonlightweb-<ver>-linux-x64.{deb,rpm,AppImage}
     QStringList wanted;
 #if defined(Q_OS_WIN)
     wanted << (isArm64() ? QStringLiteral("win-arm64.exe") : QStringLiteral("win-x64.exe"));

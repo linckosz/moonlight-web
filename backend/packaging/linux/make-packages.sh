@@ -136,8 +136,8 @@ common=(
     -C "$PKG"
 )
 
-fpm "${common[@]}" -t deb -a amd64  -p "$OUT/moonlightweb-linux-x64.deb" .
-fpm "${common[@]}" -t rpm -a x86_64 -p "$OUT/moonlightweb-linux-x64.rpm" .
+fpm "${common[@]}" -t deb -a amd64  -p "$OUT/moonlightweb-$VERSION-linux-x64.deb" .
+fpm "${common[@]}" -t rpm -a x86_64 -p "$OUT/moonlightweb-$VERSION-linux-x64.rpm" .
 
 echo "Packages written to $OUT:"
-ls -lh "$OUT"/moonlightweb-linux-x64.{deb,rpm}
+ls -lh "$OUT"/moonlightweb-"$VERSION"-linux-x64.{deb,rpm}

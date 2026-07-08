@@ -70,10 +70,11 @@ window.addEventListener('error', (evt) => {
                 <div class="hosts-error">
                     <p>${t('appError.failedToLoad')}</p>
                     <p class="hint">${(evt.error && evt.error.message) || evt.message || t('appError.unknownError')}</p>
-                    <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
+                    <button class="btn btn-reload">${t('common.retry')}</button>
                 </div>
             </div>
         `;
+        main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
     }
 });
 
@@ -87,10 +88,11 @@ window.addEventListener('unhandledrejection', (evt) => {
                 <div class="hosts-header"><h2>${t('appError.initTitle')}</h2></div>
                 <div class="hosts-error">
                     <p>${msg}</p>
-                    <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
+                    <button class="btn btn-reload">${t('common.retry')}</button>
                 </div>
             </div>
         `;
+        main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
     }
 });
 
@@ -542,6 +544,16 @@ const MoonlightApp = {
         try {
             const health = await BackendClient.get('/api/health');
             console.log('[MW] Server:', health);
+            // Reflect the real backend version in the header. The HTML ships an
+            // empty, hidden placeholder so we never flash a stale/wrong number:
+            // the tag stays invisible until the real version arrives here.
+            if (health && health.version) {
+                const versionEl = document.querySelector('.app-header .version');
+                if (versionEl) {
+                    versionEl.textContent = 'v' + health.version;
+                    versionEl.hidden = false;
+                }
+            }
         } catch (err) {
             console.warn('[MW] Server health check failed:', err);
         }
@@ -674,10 +686,11 @@ const MoonlightApp = {
                     <div class="hosts-error">
                         <p>${t('appError.unableToConnect')}</p>
                         <p class="hint">${err.message || t('appError.unknownError')}</p>
-                        <button class="btn" onclick="location.reload()">${t('common.retry')}</button>
+                        <button class="btn btn-reload">${t('common.retry')}</button>
                     </div>
                 </div>
             `;
+            main.querySelector('.btn-reload').addEventListener('click', () => location.reload());
             return false;
         }
     },

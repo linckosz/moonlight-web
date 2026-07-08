@@ -16,6 +16,7 @@
  */
 
 #include "MediaTrackRelay.h"
+#include "ClipboardBridge.h"
 #include "MoonlightShim.h"
 
 extern "C" {
@@ -68,6 +69,26 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
     m_StatsTimer = new QTimer(this);
     m_StatsTimer->setInterval(2000);
     connect(m_StatsTimer, &QTimer::timeout, this, &MediaTrackRelay::onStatsTimerTick);
+}
+
+void MediaTrackRelay::setClipboardEnabled(bool enabled)
+{
+    m_ClipboardEnabled = enabled;
+    if (!enabled) return;
+    // Host clipboard changes → push to the browser over the input DC.
+    // Context 'this': the slot runs on the relay's (future) thread; the DC
+    // send itself is thread-safe. Auto-disconnected when the relay dies.
+    connect(ClipboardBridge::instance(), &ClipboardBridge::hostTextChanged, this,
+            [this](const QString& text) {
+                if (m_Stopping.load() || !m_Connected || !m_InputDc) return;
+                QJsonObject m;
+                m["type"] = "clipboard";
+                m["text"] = text;
+                QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+                try {
+                    m_InputDc->send(std::string(j.constData(), j.size()));
+                } catch (const std::exception&) {}
+            });
 }
 
 MediaTrackRelay::~MediaTrackRelay()
@@ -303,6 +324,16 @@ void MediaTrackRelay::createTracksAndChannels()
                 qInfo() << "[MediaTrackRelay] Input DataChannel open";
                 m_Connected = true;
                 emit dataChannelsOpen();
+
+                if (m_ClipboardEnabled) {
+                    // Advertise clipboard sync, then push the current host
+                    // clipboard once so copy-before-connect pastes locally.
+                    static const char kCaps[] = "{\"type\":\"clipboardcaps\",\"available\":true}";
+                    try {
+                        m_InputDc->send(std::string(kCaps));
+                    } catch (const std::exception&) {}
+                    ClipboardBridge::instance()->requestAnnounce();
+                }
 
                 // Start periodic stats timer
                 if (m_StatsTimer) {
@@ -552,6 +583,14 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     } else if (type == "textinput") {
         // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
         m_Shim->sendUtf8Text(msg["text"].toString());
+    } else if (type == "clipboardpaste") {
+        // Browser Ctrl/Cmd+V: commit the client text to the host clipboard,
+        // then inject the paste chord (main-thread hop keeps that order).
+        // Only meaningful when the streamed host is this machine.
+        if (m_ClipboardEnabled) {
+            ClipboardBridge::instance()->pasteFromClient(m_Shim, msg["text"].toString(),
+                                                         msg["injectCtrl"].toBool(false));
+        }
     } else if (type == "request_idr") {
         qInfo() << "[MediaTrackRelay] Requesting IDR frame via DataChannel (browser)";
         sendIdrRequestThrottled();

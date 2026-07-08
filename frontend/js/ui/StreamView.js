@@ -479,9 +479,26 @@ export class StreamView {
         // "e" into Win+E, etc. We synthesize the missing keyups on blur/hidden.
         this._heldPhysKeys = new Map();
 
+        // ── Clipboard bridge state ─────────────────────────────────────────
+        // Enabled by a backend 'clipboardcaps' message, sent only when the
+        // streamed host is the backend machine (shared clipboard).
+        this._clipboardEnabled = false;
+        // Swallowed Ctrl/Cmd+V keydown waiting for its native 'paste' event
+        // ({ code, keydownMsg, injectCtrl, timer }).
+        this._pendingPasteKey = null;
+        // e.code of a V key whose keyup must be swallowed (the backend
+        // already injected the complete paste chord).
+        this._suppressPasteKeyUpCode = null;
+        // Host clipboard text waiting for a user gesture to be written
+        // locally (Safari requires a gesture for clipboard.writeText,
+        // Firefox a <5s-old one; Chrome writes immediately).
+        this._pendingClipboardWrite = null;
+
         // Bound handlers
         this._onKeyDown = (e) => this.handleKeyDown(e);
         this._onKeyUp = (e) => this.handleKeyUp(e);
+        this._onPaste = (e) => this.handlePaste(e);
+        this._onPointerDownFlush = () => this._flushPendingClipboard();
         this._onWindowBlur = () => this._releaseAllPhysKeys();
         this._onMouseMove = (e) => this.handleMouseMove(e);
         this._onMouseDown = (e) => this.handleMouseDown(e);
@@ -3178,6 +3195,21 @@ export class StreamView {
             if (this._gamepadManager) this._gamepadManager.rumble(msg.index, msg.low, msg.high);
             return;
         }
+        if (msg.type === 'clipboardcaps') {
+            // Backend advertises clipboard sync (streamed host == backend
+            // machine). Until this arrives, Ctrl+V is forwarded as a plain
+            // keystroke like before.
+            this._clipboardEnabled = !!msg.available;
+            console.log(
+                '[StreamView] Host clipboard sync ' +
+                    (this._clipboardEnabled ? 'enabled' : 'disabled'),
+            );
+            return;
+        }
+        if (msg.type === 'clipboard') {
+            if (typeof msg.text === 'string') this._applyHostClipboard(msg.text);
+            return;
+        }
         if (msg.type === 'pong') {
             const browserRtt = performance.now() - msg.ts;
             if (browserRtt > 0 && browserRtt < 10000) {
@@ -3633,6 +3665,12 @@ export class StreamView {
         // Common events (both modes)
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
+        // Native paste event: the only permission-free way to read the local
+        // clipboard (Ctrl/Cmd+V IS the user's consent). See handlePaste().
+        document.addEventListener('paste', this._onPaste);
+        // Any pointer gesture is an opportunity to flush a host-clipboard
+        // write that was denied for lack of transient activation.
+        document.addEventListener('pointerdown', this._onPointerDownFlush, true);
         this.inputEl.addEventListener('wheel', this._onWheel, { passive: false });
         this.streamEl.addEventListener('contextmenu', this._onContextMenu);
         // Touch events (mobile): bound to the WHOLE overlay so the entire
@@ -3694,8 +3732,10 @@ export class StreamView {
     _bindGamingEvents() {
         document.addEventListener('pointerlockchange', this._onPointerLockChange);
 
-        // Pre-focus: cursor visible (browser default — pointer lock hides it natively)
-        this.inputEl.style.cursor = '';
+        // Pre-focus: default cursor until the first move; the first mousemove
+        // hides it over the picture (the host cursor tracks the position and is
+        // rendered in the video, so showing the local cursor too looks double).
+        this.inputEl.style.cursor = 'default';
 
         // Unified mousemove: absolute tracking when visible (pre-focus),
         // relative movement via pointer lock deltas when focused.
@@ -3706,8 +3746,16 @@ export class StreamView {
                 const rect = this._mediaRect();
                 const rawX = e.clientX - rect.left;
                 const rawY = e.clientY - rect.top;
+                // Hide the local cursor over the actual picture — the host cursor
+                // (which follows this absolute position) is already drawn in the
+                // stream, so both showing at once looks like a double cursor.
+                // Keep the arrow over the surrounding letterbox bars.
+                const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
+                if (!IS_TOUCH_DEVICE) {
+                    this.inputEl.style.cursor = inside ? 'none' : 'default';
+                }
                 // Outside the picture (letterbox bars) → don't move the host cursor.
-                if (rawX < 0 || rawY < 0 || rawX > rect.width || rawY > rect.height) return;
+                if (!inside) return;
                 const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
                 const y = Math.round(Math.max(0, Math.min(rawY, rect.height)));
                 const refW = Math.round(rect.width);
@@ -3832,6 +3880,12 @@ export class StreamView {
         if (this._gamepadManager) this._gamepadManager.stop();
         document.removeEventListener('keydown', this._onKeyDown);
         document.removeEventListener('keyup', this._onKeyUp);
+        document.removeEventListener('paste', this._onPaste);
+        document.removeEventListener('pointerdown', this._onPointerDownFlush, true);
+        if (this._pendingPasteKey) {
+            clearTimeout(this._pendingPasteKey.timer);
+            this._pendingPasteKey = null;
+        }
         document.removeEventListener('pointerlockchange', this._onPointerLockChange);
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         window.removeEventListener('pagehide', this._onPageHide);
@@ -4095,6 +4149,9 @@ export class StreamView {
     handleKeyDown(e) {
         // Ignore all keyboard input while the stream is being shut down
         if (this._quitting) return;
+        // Any keystroke is a user gesture: flush a host-clipboard write that
+        // was denied for lack of transient activation (Safari/Firefox).
+        if (this._pendingClipboardWrite) this._flushPendingClipboard();
         // Soft-keyboard events on the capture element are handled by its own
         // listeners (beforeinput/keydown) — don't double-process here.
         if (e.target === this._kbdCapture) return;
@@ -4118,6 +4175,43 @@ export class StreamView {
         if (this._cssFullscreen && e.key === 'Escape') {
             e.preventDefault();
             this._exitCssFallbackFullscreen();
+            return;
+        }
+
+        // ── Ctrl/Cmd+V: local→host clipboard paste ─────────────────────────
+        // When the backend shares the host clipboard, neither forward nor
+        // preventDefault the paste chord: letting the browser run its default
+        // action fires the native 'paste' event — the only permission-free
+        // way to read the local clipboard. handlePaste() then ships the text
+        // and the backend replays the chord AFTER committing the clipboard.
+        // If no paste event follows (empty/non-text local clipboard), a short
+        // timer forwards the swallowed keydown so host-side Ctrl+V still
+        // pastes the HOST's own clipboard.
+        if (
+            this._clipboardEnabled &&
+            (e.ctrlKey || e.metaKey) &&
+            !e.altKey &&
+            !e.shiftKey &&
+            (e.key === 'v' || e.key === 'V')
+        ) {
+            if (this._pendingPasteKey) clearTimeout(this._pendingPasteKey.timer);
+            this._pendingPasteKey = {
+                code: e.code,
+                keydownMsg: {
+                    type: 'keydown',
+                    keyCode: StreamView.codeToWindowsVk(e.code) || e.keyCode,
+                    code: e.code,
+                    key: e.key,
+                    ctrlKey: e.ctrlKey,
+                    shiftKey: e.shiftKey,
+                    altKey: e.altKey,
+                    metaKey: e.metaKey,
+                },
+                // Cmd-based paste (Mac): the host sees Cmd as the Win key, so
+                // the backend must wrap the injected V with its own Ctrl.
+                injectCtrl: e.metaKey && !e.ctrlKey,
+                timer: setTimeout(() => this._sendPendingPasteKey(), 150),
+            };
             return;
         }
 
@@ -4234,6 +4328,18 @@ export class StreamView {
 
     handleKeyUp(e) {
         if (e.target === this._kbdCapture) return;
+        // Clipboard paste chord: the backend injected V down+up itself —
+        // swallow the real keyup so the host doesn't get an unmatched release.
+        if (this._suppressPasteKeyUpCode && e.code === this._suppressPasteKeyUpCode) {
+            this._suppressPasteKeyUpCode = null;
+            e.preventDefault();
+            return;
+        }
+        // V released before its 'paste' event arrived: flush the swallowed
+        // keydown now so the keyup below doesn't land unmatched on the host.
+        if (this._pendingPasteKey && e.code === this._pendingPasteKey.code) {
+            this._sendPendingPasteKey();
+        }
         e.preventDefault();
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
         this._heldPhysKeys.delete(e.code || vkCode);
@@ -4264,6 +4370,95 @@ export class StreamView {
             });
         }
         this._heldPhysKeys.clear();
+    }
+
+    // =========================================================================
+    // Clipboard sync (see backend ClipboardBridge for the full protocol)
+    // =========================================================================
+
+    // Max text shipped per paste — mirrors ClipboardBridge::kMaxTextChars and
+    // keeps the JSON message well under the input channel's message limits.
+    static kMaxClipboardChars = 262144;
+
+    /** Native 'paste' event following a Ctrl/Cmd+V swallowed by
+     *  handleKeyDown. Ships the local clipboard text to the backend, which
+     *  commits it to the host clipboard and injects the paste chord. */
+    handlePaste(e) {
+        // Mobile soft-keyboard textarea: its input-diff listener already
+        // turns the paste into a 'textinput' message — don't double-handle.
+        if (e.target === this._kbdCapture) return;
+        const pending = this._pendingPasteKey;
+        if (!pending) return; // not initiated by a swallowed Ctrl/Cmd+V
+        e.preventDefault();
+        let text = '';
+        try {
+            text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+        } catch (err) {
+            /* clipboardData unavailable — fall back to a plain keystroke */
+        }
+        if (!text) {
+            // Non-text local clipboard (image/files): forward the swallowed
+            // keydown so the host pastes its own clipboard content instead.
+            this._sendPendingPasteKey();
+            return;
+        }
+        clearTimeout(pending.timer);
+        this._pendingPasteKey = null;
+        // The backend injects the complete V down+up — swallow the real keyup.
+        this._suppressPasteKeyUpCode = pending.code;
+        this.webrtc.send({
+            type: 'clipboardpaste',
+            text:
+                text.length > StreamView.kMaxClipboardChars
+                    ? text.slice(0, StreamView.kMaxClipboardChars)
+                    : text,
+            injectCtrl: pending.injectCtrl,
+        });
+    }
+
+    /** Forward the Ctrl/Cmd+V keydown that handleKeyDown swallowed while
+     *  waiting for a 'paste' event that brought no text (or never fired).
+     *  The host then performs a regular paste of its OWN clipboard. */
+    _sendPendingPasteKey() {
+        const pending = this._pendingPasteKey;
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this._pendingPasteKey = null;
+        // Register for focus-loss auto-release like any forwarded keydown.
+        this._heldPhysKeys.set(pending.code || pending.keydownMsg.keyCode, {
+            type: 'keyup',
+            keyCode: pending.keydownMsg.keyCode,
+            code: pending.keydownMsg.code,
+            key: pending.keydownMsg.key,
+        });
+        this.webrtc.send(pending.keydownMsg);
+    }
+
+    /** Host clipboard changed: mirror it into the local clipboard. Browsers
+     *  may reject the write outside a user gesture (Safari always, Firefox
+     *  when the last gesture is >5s old) — keep the text pending and retry
+     *  on the next keystroke/pointer gesture. */
+    _applyHostClipboard(text) {
+        if (!text) return;
+        this._pendingClipboardWrite = text;
+        this._flushPendingClipboard();
+    }
+
+    _flushPendingClipboard() {
+        const text = this._pendingClipboardWrite;
+        if (text == null) return;
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+            this._pendingClipboardWrite = null; // no async clipboard API — give up
+            return;
+        }
+        navigator.clipboard.writeText(text).then(
+            () => {
+                if (this._pendingClipboardWrite === text) this._pendingClipboardWrite = null;
+            },
+            () => {
+                /* denied (no activation / unfocused doc) — retry on next gesture */
+            },
+        );
     }
 
     handleMouseMove(e) {

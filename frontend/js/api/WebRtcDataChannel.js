@@ -800,7 +800,13 @@ export class WebRtcDataChannel {
                 // Parse server-to-client JSON messages (stats, pong, rumble, etc.)
                 try {
                     const msg = JSON.parse(evt.data);
-                    if (msg.type === 'stats' || msg.type === 'pong') {
+                    if (
+                        msg.type === 'stats' ||
+                        msg.type === 'pong' ||
+                        msg.type === 'rumble' ||
+                        msg.type === 'clipboard' ||
+                        msg.type === 'clipboardcaps'
+                    ) {
                         if (this.onStats) this.onStats(msg);
                     } else if (msg.type === 'takeover') {
                         if (this.onTakeover) this.onTakeover();
@@ -1337,7 +1343,14 @@ export class WebRtcDataChannel {
         if (typeof evt.data === 'string') {
             try {
                 const msg = JSON.parse(evt.data);
-                if ((msg.type === 'stats' || msg.type === 'pong') && this.onStats) {
+                if (
+                    (msg.type === 'stats' ||
+                        msg.type === 'pong' ||
+                        msg.type === 'rumble' ||
+                        msg.type === 'clipboard' ||
+                        msg.type === 'clipboardcaps') &&
+                    this.onStats
+                ) {
                     this.onStats(msg);
                 } else if (msg.type === 'takeover' && this.onTakeover) {
                     this.onTakeover();
@@ -1402,7 +1415,13 @@ export class WebRtcDataChannel {
         if (typeof evt.data === 'string') {
             try {
                 const msg = JSON.parse(evt.data);
-                if (msg.type === 'stats' || msg.type === 'pong') {
+                if (
+                    msg.type === 'stats' ||
+                    msg.type === 'pong' ||
+                    msg.type === 'rumble' ||
+                    msg.type === 'clipboard' ||
+                    msg.type === 'clipboardcaps'
+                ) {
                     if (this.onStats) this.onStats(msg);
                 } else if (msg.type === 'takeover') {
                     if (this.onTakeover) this.onTakeover();

@@ -161,6 +161,7 @@ add_executable(mw-server
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp
     src/streaming/MoonlightShim.cpp
+    src/streaming/ClipboardBridge.cpp
     src/streaming/StreamRelay.cpp
     src/streaming/DataChannelRelay.cpp
     src/streaming/FrameSender.cpp

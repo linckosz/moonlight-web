@@ -16,6 +16,7 @@
  */
 
 #include "Session.h"
+#include "ClipboardBridge.h"
 #include "DataChannelRelay.h"
 #include "MediaTrackRelay.h"
 #include "SignalingServer.h"
@@ -426,6 +427,14 @@ void StreamSession::onLaunchReplyFinished()
     // be connected to all signals before frames arrive.
     m_Shim = new MoonlightShim(this);
 
+    // Clipboard sync is only possible when the streamed host is this machine
+    // (standard installer deployment: backend runs next to Sunshine) — the
+    // backend clipboard is then the host's. For remote Sunshine hosts the
+    // relay stays clipboard-silent and the browser keeps today's behavior.
+    const bool clipboardLocal = ClipboardBridge::isSelfAddress(m_Host->activeAddress.address());
+    qInfo() << "[Session] Clipboard sync" << (clipboardLocal ? "enabled" : "disabled")
+            << "(host address:" << m_Host->activeAddress.address() << ")";
+
     // Branch: WSS (legacy StreamRelay) or WebRTC (DataChannelRelay + SignalingServer)
     if (m_Transport == "wss") {
         // ── Legacy WSS mode: uses plain WebSocket StreamRelay ──────────────
@@ -434,6 +443,7 @@ void StreamSession::onLaunchReplyFinished()
         auto* streamRelay = new StreamRelay(m_Shim, m_StreamRelayPort, {}, nullptr);
         streamRelay->setServerHost(m_ServerHost);
         streamRelay->setHttpsPort(m_HttpsPort);
+        streamRelay->setClipboardEnabled(clipboardLocal);
 
         connect(m_Shim, &MoonlightShim::connectionStarted, this,
                 &StreamSession::onShimConnectionStarted);
@@ -480,6 +490,7 @@ void StreamSession::onLaunchReplyFinished()
         // MediaTrackRelay: owns the libdatachannel PeerConnection + video track + audio/input DCs.
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new MediaTrackRelay(m_Shim, nullptr);
+        relay->setClipboardEnabled(clipboardLocal);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
@@ -544,6 +555,7 @@ void StreamSession::onLaunchReplyFinished()
         // DataChannelRelay: owns the libdatachannel PeerConnection + DataChannels.
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new DataChannelRelay(m_Shim, nullptr);
+        relay->setClipboardEnabled(clipboardLocal);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         // NonSecure mode: external tunnel or Cloudflare provides TLS termination.
