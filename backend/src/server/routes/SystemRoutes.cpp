@@ -401,28 +401,27 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
     // — Admin settings (localhost only, server config) —
 
-    server.router()->get("/api/admin/settings",
-                         [&server, &appSettings, &authManager](const HttpRequest& req) {
-                             QJsonObject obj;
-                             obj["http_port"] = static_cast<int>(server.httpPort());
-                             // Report the persisted (canonical) HTTPS port, not the
-                             // primary listener's live port: after a port-parity
-                             // rebind the host adopts the router-side port (e.g.
-                             // 44729) as its single https_port — served locally by
-                             // the secondary listener on every interface — so the
-                             // admin UI's Local Access URL and port input must show
-                             // that port, matching the public-domain URL. In the
-                             // normal case main.cpp keeps this in sync with the
-                             // active listener at startup, so they are identical.
-                             obj["https_port"] =
-                                 static_cast<int>(appSettings.httpsPort(server.activeHttpsPort()));
-                             obj["cert_auth_enabled"] = authManager.certAuthEnabled();
-                             // Host machine only: the current host key, so the
-                             // admin page can carry its session over to the
-                             // public-domain URL after Internet activation.
-                             if (req.isLocal) obj["local_key"] = appSettings.localKey();
-                             return HttpResponse::json(obj);
-                         });
+    server.router()->get(
+        "/api/admin/settings", [&server, &appSettings, &authManager](const HttpRequest& req) {
+            QJsonObject obj;
+            obj["http_port"] = static_cast<int>(server.httpPort());
+            // Report the persisted (canonical) HTTPS port, not the
+            // primary listener's live port: after a port-parity
+            // rebind the host adopts the router-side port (e.g.
+            // 44729) as its single https_port — served locally by
+            // the secondary listener on every interface — so the
+            // admin UI's Local Access URL and port input must show
+            // that port, matching the public-domain URL. In the
+            // normal case main.cpp keeps this in sync with the
+            // active listener at startup, so they are identical.
+            obj["https_port"] = static_cast<int>(appSettings.httpsPort(server.activeHttpsPort()));
+            obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+            // Host machine only: the current host key, so the
+            // admin page can carry its session over to the
+            // public-domain URL after Internet activation.
+            if (req.isLocal) obj["local_key"] = appSettings.localKey();
+            return HttpResponse::json(obj);
+        });
 
     server.router()->post("/api/admin/settings", [&server, &appSettings, &authManager,
                                                   &internetAccess](const HttpRequest& req) {
