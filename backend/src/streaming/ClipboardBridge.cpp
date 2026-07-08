@@ -114,7 +114,8 @@ void ClipboardBridge::requestAnnounce()
 void ClipboardBridge::onClipboardChanged()
 {
     // Don't even read the clipboard while no session is listening.
-    static const QMetaMethod changedSignal = QMetaMethod::fromSignal(&ClipboardBridge::hostTextChanged);
+    static const QMetaMethod changedSignal =
+        QMetaMethod::fromSignal(&ClipboardBridge::hostTextChanged);
     if (!isSignalConnected(changedSignal)) return;
 
     const QString text = QGuiApplication::clipboard()->text().left(kMaxTextChars);
