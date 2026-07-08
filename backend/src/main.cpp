@@ -22,10 +22,15 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QEventLoop>
 #include <QLockFile>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPointer>
 #include <QProcess>
 #include <QSslCertificate>
+#include <QSslConfiguration>
 #include <QSslSocket>
 #include <QStandardPaths>
 #include <QTimer>
@@ -43,6 +48,7 @@
 #include "server/AppSettings.h"
 #include "server/Provisioning.h"
 #include "server/HttpServer.h"
+#include "server/ControlChannel.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/routes/AuthRoutes.h"
@@ -197,17 +203,24 @@ static void writeAdminShortcut(const QString& url)
 #if defined(Q_OS_LINUX)
     // No .url handler on Linux (it opens in a text editor). A Type=Link entry
     // renders a generic icon and, on GNOME, silently refuses to launch; a
-    // Type=Application entry that shells out to xdg-open both shows the app icon
-    // (Icon=moonlightweb, installed in the hicolor theme by the package) and
-    // opens the URL reliably. GNOME's desktop icons require the entry to be
-    // executable AND carry the gio "trusted" metadata to launch without an
-    // "untrusted" prompt.
+    // Type=Application entry both shows the app icon (Icon=moonlightweb,
+    // installed in the hicolor theme by the package) and launches reliably.
+    // GNOME's desktop icons require the entry to be executable AND carry the gio
+    // "trusted" metadata to launch without an "untrusted" prompt.
+    //
+    // Exec launches the binary itself, NOT the URL: the windowless app then
+    // starts (when not running) or, when already running, its single-instance
+    // logic surfaces the admin page — either way the user lands on Admin. This
+    // is why the URL argument is unused here (it is still published for the
+    // installer via Provisioning::setInfo above).
+    Q_UNUSED(url);
+    const QString exe = QCoreApplication::applicationFilePath();
     const QString path = desktop + "/MoonlightWeb Admin.desktop";
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=MoonlightWeb Admin\n"
-             "Exec=xdg-open " +
-             url + "\nIcon=moonlightweb\nTerminal=false\n")
+             "Exec=\"" +
+             exe + "\"\nIcon=moonlightweb\nTerminal=false\n")
                 .toUtf8());
     f.close();
     // Owner rwx + group/other r-x: launchable and (re)writable on the next port
@@ -219,7 +232,16 @@ static void writeAdminShortcut(const QString& url)
     QProcess::startDetached(
         QStringLiteral("gio"),
         {QStringLiteral("set"), path, QStringLiteral("metadata::trusted"), QStringLiteral("true")});
+#elif defined(Q_OS_WIN)
+    // The Windows Desktop/Start-Menu shortcuts are .lnk files pointing at the
+    // exe, created by the Inno Setup installer ([Icons]). Launching the exe both
+    // starts the app (when down) and surfaces the admin page (when up), so there
+    // is no runtime-port URL to self-heal here — only the published admin_url
+    // above (used by the installer's post-install "open admin page" action).
+    Q_UNUSED(url);
 #else
+    // macOS: the app is launched from the Dock/Applications; keep a plain .url
+    // pointer on the Desktop as a convenience.
     QFile f(desktop + "/MoonlightWeb Admin.url");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
@@ -257,6 +279,40 @@ static void openInBrowser(const QString& url)
     // xdg-open missing (minimal desktop): fall through to Qt's opener.
 #endif
     QDesktopServices::openUrl(QUrl(url));
+}
+
+// Ask an already-running instance (reached over loopback HTTPS at @p base, e.g.
+// "https://localhost:443") to surface the admin page: it redirects an existing
+// browser tab to /admin via the control channel, or opens a fresh tab when no
+// tab is connected. Returns true when the running instance handled the request
+// (HTTP 200); false on any network/timeout error so the caller can fall back to
+// opening the browser itself. The localhost cert is self-signed, so peer
+// verification is disabled for this one loopback call.
+static bool requestFocusAdmin(const QString& base)
+{
+    QNetworkAccessManager nam;
+    QNetworkRequest req{QUrl(base + QStringLiteral("/api/local/focus"))};
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
+    ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
+    req.setSslConfiguration(ssl);
+
+    QNetworkReply* reply = nam.post(req, QByteArrayLiteral("{}"));
+    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+                     [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
+
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timer.start(3000);
+    loop.exec();
+
+    const bool ok = timer.isActive() && reply->error() == QNetworkReply::NoError &&
+                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
+    reply->deleteLater();
+    return ok;
 }
 
 int main(int argc, char* argv[])
@@ -361,10 +417,10 @@ int main(int argc, char* argv[])
     if (parser.isSet("port")) httpPort = parser.value("port").toUShort();
 
     // ── Single instance ──────────────────────────────────────────────────────
-    // The app has no window: launching it again (Apps / Start-menu click) must
-    // not spawn a duplicate server on fallback ports. Surface the running
-    // instance instead by opening its web UI, then exit cleanly (exit 0 = no
-    // supervisor relaunch).
+    // The app has no window: launching it again (Desktop shortcut / Apps /
+    // Start-menu click) must not spawn a duplicate server on fallback ports.
+    // Surface the running instance's admin page instead, then exit cleanly
+    // (exit 0 = no supervisor relaunch).
     QLockFile instanceLock(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                            "/moonlightweb.lock");
     instanceLock.setStaleLockTime(0); // stale detection by PID liveness only
@@ -372,10 +428,15 @@ int main(int argc, char* argv[])
         Logger::info("Another instance is already running");
         if (hasGuiSession() && !parser.isSet(autostartOption)) {
             quint16 p = appSettings.httpsPort(443); // running instance persisted its port
-            const QString url = p == 443 ? QStringLiteral("https://localhost/")
-                                         : QStringLiteral("https://localhost:%1/").arg(p);
-            Logger::info("Opening the running instance's web UI: " + url);
-            openInBrowser(url);
+            const QString base = p == 443 ? QStringLiteral("https://localhost")
+                                          : QStringLiteral("https://localhost:%1").arg(p);
+            // Prefer redirecting an already-open tab (no duplicate). Only when the
+            // running instance can't be reached do we open the admin page here.
+            Logger::info("Asking the running instance to surface the admin page: " + base);
+            if (!requestFocusAdmin(base)) {
+                Logger::info("Running instance unreachable — opening the admin page directly");
+                openInBrowser(base + QStringLiteral("/admin"));
+            }
         }
         return 0;
     }
@@ -1496,6 +1557,31 @@ int main(int argc, char* argv[])
     // Legacy WSS StreamRelay uses the next port for its local WS server.
     server.setStreamRelayPort(signalingPort + 1);
 
+    // Single-tab dedup control channel: every open app tab keeps a WebSocket
+    // (proxied at /ws/control) open here. A second launch asks us — over
+    // POST /api/local/focus — to surface the admin page: redirect a connected
+    // tab (no duplicate) if any, else open a fresh browser tab.
+    ControlChannel controlChannel(signalingPort + 2);
+    controlChannel.start();
+    server.setControlPort(controlChannel.port());
+
+    server.router()->post(
+        "/api/local/focus",
+        [&controlChannel, adminUrl](const HttpRequest& req) -> HttpResponse {
+            // Loopback only: this is the private IPC surface a second local
+            // launch uses, never something a remote peer should trigger.
+            if (!req.isLocal) return HttpResponse::error(403, "local only");
+            QJsonObject obj;
+            if (controlChannel.hasClients()) {
+                controlChannel.broadcastFocusAdmin();
+                obj["delivered"] = true;
+            } else {
+                openInBrowser(adminUrl());
+                obj["delivered"] = false;
+            }
+            return HttpResponse::json(obj, 200);
+        });
+
     // — Internet Access via PowerDNS —
 
     // The host key is single-use: after each redemption the rotated key must be
@@ -1527,10 +1613,10 @@ int main(int argc, char* argv[])
     // item / logon task / installer) and headless sessions stay silent.
     if (hasGuiSession() && !parser.isSet(autostartOption)) {
 #ifdef Q_OS_WIN
-        const QString path = QStringLiteral("/");
+        const QString path = QStringLiteral("/admin");
 #else
         const QString path =
-            appSettings.setupCompleted() ? QStringLiteral("/") : QStringLiteral("/setup");
+            appSettings.setupCompleted() ? QStringLiteral("/admin") : QStringLiteral("/setup");
 #endif
         // Public domain when Internet Access is live (valid cert + host key),
         // HTTPS loopback otherwise; the browser asks to accept the self-signed

@@ -173,8 +173,100 @@ const MoonlightApp = {
         this._initNavButtons();
         this._initRouter();
 
+        // Single-tab dedup: keep a control-channel WebSocket open so a second
+        // app launch (Desktop shortcut) surfaces the admin page in THIS tab
+        // instead of opening a duplicate.
+        this._initControlChannel();
+
         // Background async housekeeping — never blocks the initial render.
         this._initAsync();
+    },
+
+    // =========================================================================
+    // Control channel (single-tab dedup)
+    // =========================================================================
+
+    /**
+     * Open a persistent WebSocket to the backend (proxied at /ws/control).
+     * When the user clicks the Desktop shortcut while the app is already open,
+     * the freshly-launched process asks the running backend to surface admin;
+     * the backend broadcasts {"type":"focus-admin"} here, and this tab opens the
+     * admin overlay + brings itself to the foreground — no duplicate tab.
+     *
+     * Host-machine only: admin is host-local, and only the host's own tab should
+     * react to a local relaunch. Reconnects with capped exponential backoff so a
+     * backend restart (or transient drop) re-establishes the channel.
+     */
+    _initControlChannel() {
+        if (!this._isHostLocal()) return;
+        if (this._controlWs) return;
+
+        const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const url = `${scheme}://${window.location.host}/ws/control`;
+        let backoff = 1000;
+
+        const connect = () => {
+            let ws;
+            try {
+                ws = new WebSocket(url);
+            } catch (e) {
+                console.warn('[MW] control channel: connect failed', e);
+                this._controlReconnectTimer = setTimeout(connect, backoff);
+                backoff = Math.min(backoff * 2, 30000);
+                return;
+            }
+            this._controlWs = ws;
+            ws.onopen = () => {
+                backoff = 1000;
+            };
+            ws.onmessage = (ev) => {
+                let msg;
+                try {
+                    msg = JSON.parse(ev.data);
+                } catch {
+                    return;
+                }
+                if (msg && msg.type === 'focus-admin') this._onFocusAdminRequest();
+            };
+            ws.onclose = () => {
+                this._controlWs = null;
+                this._controlReconnectTimer = setTimeout(connect, backoff);
+                backoff = Math.min(backoff * 2, 30000);
+            };
+            ws.onerror = () => {
+                try {
+                    ws.close();
+                } catch {
+                    /* onclose handles reconnect */
+                }
+            };
+        };
+        connect();
+
+        window.addEventListener('beforeunload', () => {
+            if (this._controlReconnectTimer) clearTimeout(this._controlReconnectTimer);
+            if (this._controlWs) {
+                try {
+                    this._controlWs.close();
+                } catch {
+                    /* tab is unloading anyway */
+                }
+            }
+        });
+    },
+
+    /** Surface the admin overlay in response to a local relaunch. */
+    _onFocusAdminRequest() {
+        console.log('[MW] focus-admin requested by a new launch');
+        try {
+            window.focus();
+        } catch {
+            /* focus is best-effort; browsers may block cross-tab focus */
+        }
+        // Already on admin, or a stream is running (overlay open is blocked and
+        // must not be disrupted) — nothing to navigate.
+        if (this._nav.overlay === 'admin') return;
+        this._openOverlay('admin');
     },
 
     // =========================================================================

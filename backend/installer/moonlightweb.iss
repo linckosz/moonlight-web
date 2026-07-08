@@ -174,9 +174,14 @@ Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:Add
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-; Start-Menu group: application (embedded exe icon), admin page (.url created in
-; [Code]) and the uninstaller. The admin .url is added by CurStepChanged.
-Name: "{group}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"
+; Start-Menu group + Desktop: the application and an "Admin" entry, both .lnk
+; shortcuts that LAUNCH THE EXE (not a URL). The windowless app starts when it
+; is down or, when already running, surfaces the admin page via its
+; single-instance logic — so one click always lands on Admin, launching the app
+; first if needed. The uninstaller entry lives in the group too.
+Name: "{group}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
+Name: "{group}\{cm:AdminShortcut}"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{cm:AdminShortcut}"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 
 [Run]
@@ -522,16 +527,6 @@ begin
        '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
-// Write an admin-page .url internet shortcut (logo icon) at the given path.
-procedure WriteAdminShortcut(const path: String);
-begin
-  SaveStringToFile(path,
-    '[InternetShortcut]' + #13#10 +
-    'URL={#AdminUrl}' + #13#10 +
-    'IconFile=' + ExpandConstant('{app}\frontend\assets\favicon.ico') + #13#10 +
-    'IconIndex=0' + #13#10, False);
-end;
-
 // --- Live provisioning checklist ------------------------------------------
 function SpinChar(i: Integer): String;
 begin
@@ -718,13 +713,13 @@ begin
   lines[8] := '}';
   SaveStringsToUTF8FileWithoutBOM(ExpandConstant('{app}\provisioning.json'), lines, False);
 
-  // Start-Menu admin shortcut (in the group folder created by [Icons]).
-  WriteAdminShortcut(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
-
-  // Provisional Desktop admin shortcut. The server rewrites it on startup with
-  // the real HTTPS port / public domain.
-  if WizardIsTaskSelected('desktopicon') then
-    WriteAdminShortcut(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
+  // The Desktop / Start-Menu shortcuts are now .lnk files that launch the exe
+  // (created in [Icons]); clean up stale .url shortcuts left by pre-2026-07
+  // versions (the server used to self-heal a Desktop/Start-Menu .url pointing
+  // at the admin page, which did not start the app).
+  DeleteFile(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
+  DeleteFile(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
+  DeleteFile(ExpandConstant('{userdesktop}\MoonlightWeb Admin.url'));
 
   // Open the firewall for the server before it first binds a listener, so the
   // inbound HTTPS port (443 / parity / fallback) is reachable from the LAN and
