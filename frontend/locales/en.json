@@ -82,7 +82,9 @@
         "noHostReturned": "No host was returned from the server",
         "menuAria": "Host options",
         "offlineMessage": "This host is offline",
-        "remoteAccess": "Other computers can connect to this server at:"
+        "remoteAccess": "Other computers can connect to this server at:",
+        "internetAvailableHint": "This server can also be opened to the Internet:",
+        "enableInternetLink": "enable internet access"
     },
     "update": {
         "available": "MoonlightWeb {{version}} is available",
@@ -200,6 +202,7 @@
     },
     "admin": {
         "title": "Server Settings",
+        "hostOnly": "Server administration is only available from the machine hosting the server.",
         "closeDiscard": "Close (discards unsaved changes)",
         "accessPin": "Access PIN",
         "accessPinDesc": "Share this PIN with remote users to grant them access to this server. The PIN is valid for one session only.",

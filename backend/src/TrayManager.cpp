@@ -84,8 +84,7 @@ bool TrayManager::init()
     }
     m_TrayIcon->setIcon(icon);
 
-    quint16 port = m_Server->activeHttpsPort();
-    m_TrayIcon->setToolTip(QStringLiteral("MoonlightWeb\nhttps://localhost:%1").arg(port));
+    refreshTooltip();
 
     // Build context menu
     QAction* openAction = m_Menu->addAction(tr("&Open"));
@@ -125,8 +124,17 @@ bool TrayManager::init()
             });
 #endif
 
-    qInfo() << "[TrayManager] System tray icon created, port" << port;
+    qInfo() << "[TrayManager] System tray icon created, port" << m_Server->activeHttpsPort();
     return true;
+}
+
+void TrayManager::refreshTooltip()
+{
+    if (!m_TrayIcon) return;
+    QUrl url = localUrl(QString());
+    // Never expose the host key (?mwk=...) in the hover tooltip.
+    url.setQuery(QString());
+    m_TrayIcon->setToolTip(QStringLiteral("MoonlightWeb\n") + url.toString());
 }
 
 void TrayManager::onActivated(QSystemTrayIcon::ActivationReason reason)
@@ -137,8 +145,15 @@ void TrayManager::onActivated(QSystemTrayIcon::ActivationReason reason)
 
 // Build a localhost URL, preferring HTTPS; fall back to plain HTTP when the
 // TLS listener is down (e.g. cert generation failed) so the tray still works.
+// A provider installed by main.cpp takes precedence (public domain + host key
+// once Internet Access is live).
 QUrl TrayManager::localUrl(const QString& path) const
 {
+    if (m_UrlProvider) {
+        QUrl url = m_UrlProvider(path);
+        if (!url.isEmpty()) return url;
+    }
+
     quint16 httpsPort = m_Server->activeHttpsPort();
     if (httpsPort != 0)
         return QUrl(QStringLiteral("https://localhost:%1%2").arg(httpsPort).arg(path));

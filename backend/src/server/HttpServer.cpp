@@ -27,6 +27,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QNetworkInterface>
 #include <QProcess>
 #include <QSslCertificate>
 #include <QSslKey>
@@ -295,6 +296,8 @@ void HttpServer::applyPublicSslConfig()
 {
     if (m_HttpsServer)
         static_cast<SslServer*>(m_HttpsServer)->setPublicSslConfig(m_Certs.publicConfig());
+    if (m_SecondaryHttpsServer)
+        static_cast<SslServer*>(m_SecondaryHttpsServer)->setPublicSslConfig(m_Certs.publicConfig());
 }
 
 bool HttpServer::start(quint16 preferredHttpsPort)
@@ -369,21 +372,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
 
     // Start HTTPS with port fallback
     if (hasHttps) {
-        // Lambda to create and test an SslServer on a given port
-        auto tryHttpsPort = [this](quint16 port) -> SslServer* {
-            auto* ssl = new SslServer(
-                m_Certs.publicConfig(), m_Certs.localConfig(),
-                [this](QSslSocket* socket) {
-                    m_Buffers[socket] = QByteArray();
-                    connect(socket, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
-                    connect(socket, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
-                    if (socket->bytesAvailable() > 0) onReadyReadSocket(socket);
-                },
-                &m_ConnGuard, this);
-            if (ssl->listen(QHostAddress::Any, port)) return ssl;
-            delete ssl;
-            return nullptr;
-        };
+        auto tryHttpsPort = [this](quint16 port) -> QTcpServer* { return createHttpsServer(port); };
 
         // 1. Try the preferred port (default 443, or from settings.json)
         Logger::info("HTTPS attempting preferred port " + QString::number(preferredHttpsPort));
@@ -443,6 +432,7 @@ void HttpServer::stop()
         m_HttpsServer->deleteLater();
         m_HttpsServer = nullptr;
     }
+    removeSecondaryHttpsListener();
     m_ActiveHttpsPort = 0;
     for (QTcpSocket* socket : m_Buffers.keys()) {
         socket->disconnectFromHost();
@@ -450,6 +440,53 @@ void HttpServer::stop()
     }
     m_Buffers.clear();
     m_PendingAsyncSockets.clear();
+}
+
+QTcpServer* HttpServer::createHttpsServer(quint16 port)
+{
+    auto* ssl = new SslServer(
+        m_Certs.publicConfig(), m_Certs.localConfig(),
+        [this](QSslSocket* socket) {
+            m_Buffers[socket] = QByteArray();
+            connect(socket, &QSslSocket::readyRead, this, &HttpServer::onReadyRead);
+            connect(socket, &QSslSocket::disconnected, this, &HttpServer::onDisconnected);
+            if (socket->bytesAvailable() > 0) onReadyReadSocket(socket);
+        },
+        &m_ConnGuard, this);
+    if (ssl->listen(QHostAddress::Any, port)) return ssl;
+    delete ssl;
+    return nullptr;
+}
+
+bool HttpServer::addSecondaryHttpsListener(quint16 port)
+{
+    if (port == 0) return false;
+    // Already reachable on this port through the primary listener — nothing to do.
+    if (port == m_ActiveHttpsPort) return true;
+    if (m_SecondaryHttpsServer && m_SecondaryHttpsPort == port) return true;
+
+    // Replace any previous secondary bound to a different port.
+    removeSecondaryHttpsListener();
+
+    QTcpServer* srv = createHttpsServer(port);
+    if (!srv) {
+        Logger::error(QString("Secondary HTTPS listener failed to bind port %1").arg(port));
+        return false;
+    }
+    m_SecondaryHttpsServer = srv;
+    m_SecondaryHttpsPort = port;
+    Logger::info(QString("Secondary HTTPS listener on port %1 (public domain parity)").arg(port));
+    return true;
+}
+
+void HttpServer::removeSecondaryHttpsListener()
+{
+    if (m_SecondaryHttpsServer) {
+        m_SecondaryHttpsServer->close();
+        m_SecondaryHttpsServer->deleteLater();
+        m_SecondaryHttpsServer = nullptr;
+    }
+    m_SecondaryHttpsPort = 0;
 }
 
 bool HttpServer::changeHttpsPort(quint16 newPort)
@@ -504,28 +541,51 @@ bool HttpServer::isLanHost(const QString& host) const
 bool HttpServer::isLocalRequest(const QString& addr)
 {
     if (addr.isEmpty()) return false;
-    return addr == "127.0.0.1" || addr == "::1" || addr == "::ffff:127.0.0.1" ||
-           QHostAddress(addr).isLoopback();
+    if (addr == "127.0.0.1" || addr == "::1" || addr == "::ffff:127.0.0.1" ||
+        QHostAddress(addr).isLoopback())
+        return true;
+
+    // Same-machine access via a non-loopback address (e.g. the host opening its
+    // own LAN IP https://192.168.1.9:<port>): the connection's source IP is then
+    // one of THIS machine's own interface addresses. A remote LAN/Internet peer
+    // always presents its own distinct source IP, so matching one of our local
+    // interface addresses proves the request originated on the host itself.
+    QHostAddress peer(addr);
+    if (peer.isNull()) return false;
+    // Strip any IPv4-mapped IPv6 form (::ffff:192.168.1.9) before comparing.
+    bool mappedOk = false;
+    quint32 peer4 = peer.toIPv4Address(&mappedOk);
+    for (const QHostAddress& local : QNetworkInterface::allAddresses()) {
+        if (local.isLoopback()) continue;
+        if (local == peer) return true;
+        bool localOk = false;
+        quint32 local4 = local.toIPv4Address(&localOk);
+        if (mappedOk && localOk && local4 == peer4) return true;
+    }
+    return false;
+}
+
+QString HttpServer::sessionTokenFromRequest(const HttpRequest& req)
+{
+    QString cookie = req.headers.value("cookie");
+    if (cookie.isEmpty()) return {};
+
+    // Cookies are separated by "; " or ";"
+    QStringList cookies = cookie.split(";");
+    for (const QString& c : cookies) {
+        QString trimmed = c.trimmed();
+        if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive))
+            return trimmed.mid(QStringLiteral("mw_session=").length());
+    }
+    return {};
 }
 
 bool HttpServer::isAuthenticated(const HttpRequest& req) const
 {
     if (!m_AuthManager) return true; // No auth manager = auth disabled
 
-    // Parse Cookie header for mw_session token
-    QString cookie = req.headers.value("cookie");
-    if (cookie.isEmpty()) return false;
-
-    // Cookies are separated by "; " or ";"
-    QStringList cookies = cookie.split(";");
-    for (const QString& c : cookies) {
-        QString trimmed = c.trimmed();
-        if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
-            QString token = trimmed.mid(QStringLiteral("mw_session=").length());
-            if (m_AuthManager->validateSession(token)) return true;
-        }
-    }
-    return false;
+    QString token = sessionTokenFromRequest(req);
+    return !token.isEmpty() && m_AuthManager->validateSession(token);
 }
 
 // --- Abuse mitigation -------------------------------------------------------
@@ -632,6 +692,11 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = HttpParser::parse(requestData);
     req.clientAddress = socket->peerAddress().toString();
+    // "Local" = full admin access: a loopback peer, or a host-key session — the
+    // browser runs on the host machine but reaches us through the public domain
+    // (its peer address is then the router/NAT-hairpin address, not loopback).
+    req.isLocal = isLocalRequest(req.clientAddress) ||
+                  (m_AuthManager && m_AuthManager->isHostSession(sessionTokenFromRequest(req)));
 
     // HTTP→HTTPS redirect for plain HTTP connections.
     //

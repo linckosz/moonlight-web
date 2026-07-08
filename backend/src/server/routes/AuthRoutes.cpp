@@ -116,8 +116,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
     // POST /api/admin/pin/generate — generate a new PIN without revoking sessions (localhost only)
     server.router()->post("/api/admin/pin/generate", [&authManager](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         QString pin = authManager.generatePin();
         QJsonObject obj;
@@ -128,8 +127,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
     // POST /api/auth/regenerate — regenerate PIN (localhost only)
     server.router()->post("/api/auth/regenerate", [&authManager](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         authManager.regeneratePin();
         QJsonObject obj;
@@ -140,8 +138,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
     // POST /api/admin/pin/clear — reset PIN to "--------" (localhost only)
     server.router()->post("/api/admin/pin/clear", [&authManager](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         authManager.clearPin();
         QJsonObject obj;
@@ -155,7 +152,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject obj;
         QString authedToken; // set when a valid session cookie is found below
 
-        bool isLocal = HttpServer::isLocalRequest(req.clientAddress);
+        bool isLocal = req.isLocal;
         obj["is_localhost"] = isLocal;
 
         if (isLocal) {
@@ -218,7 +215,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     // GET /api/auth/sessions — list active sessions with metadata (localhost only)
     server.router()->get("/api/auth/sessions",
                          [&authManager, &geoIpService](const HttpRequest& req) {
-                             if (!HttpServer::isLocalRequest(req.clientAddress))
+                             if (!req.isLocal)
                                  return HttpResponse::error(403, "Only available from localhost");
 
                              QJsonArray arr;
@@ -236,8 +233,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
     // POST /api/auth/sessions/revoke — revoke a session (token in JSON body, localhost only)
     server.router()->post("/api/auth/sessions/revoke", [&authManager](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QString token = doc.object().value("token").toString();
@@ -253,8 +249,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
     // GET /api/admin/certificate/download — download certificate token (localhost only)
     server.router()->get("/api/admin/certificate/download", [&authManager](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         QString token = authManager.certificateToken();
         if (token.isEmpty()) return HttpResponse::error(500, "Certificate token not initialized");
@@ -271,7 +266,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     // POST /api/admin/certificate/regenerate — generate a new certificate token (localhost only)
     server.router()->post("/api/admin/certificate/regenerate",
                           [&authManager](const HttpRequest& req) {
-                              if (!HttpServer::isLocalRequest(req.clientAddress))
+                              if (!req.isLocal)
                                   return HttpResponse::error(403, "Only available from localhost");
 
                               QString newToken = authManager.generateCertificateToken();

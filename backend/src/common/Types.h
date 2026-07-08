@@ -33,6 +33,10 @@ struct HttpRequest
     QMap<QString, QString> pathParams;
     QByteArray body;
     QString clientAddress; // Populated by HttpServer from socket peer
+    bool isLocal = false;  // Populated by HttpServer: loopback peer OR a valid
+                           // host-key session (browser on the host machine
+                           // reaching us through the public domain). Gates all
+                           // "localhost only" admin functionality.
 };
 
 struct HttpResponse

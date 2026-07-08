@@ -64,6 +64,23 @@ cat > "$ROOT/postinst.sh" <<'EOF'
 update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
 
+# Open the server ports in the system firewall (best-effort). Unlike Windows /
+# macOS, Linux netfilter firewalls are port-based (no per-program rule), and this
+# runs before the app picks a port, so we open the defaults: 443/tcp + 80/tcp
+# (HTTPS + HTTP→HTTPS redirect) and 47999/udp (stream). A non-default or
+# per-instance parity port under an *active* firewall would need a manual rule.
+# firewalld (Fedora/RHEL — active by default) and ufw (Debian/Ubuntu) only.
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    for p in 443/tcp 80/tcp 47999/udp; do
+        firewall-cmd --permanent --add-port="$p" >/dev/null 2>&1 || true
+    done
+    firewall-cmd --reload >/dev/null 2>&1 || true
+elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+    for p in 443/tcp 80/tcp 47999/udp; do
+        ufw allow "$p" >/dev/null 2>&1 || true
+    done
+fi
+
 # Best-effort: start MoonlightWeb inside the active graphical session so the
 # first-run setup page opens right after install (postinst runs as root with no
 # display; systemd-run --user runs the app under the user's session manager,
@@ -88,6 +105,20 @@ cat > "$ROOT/prerm.sh" <<'EOF'
 #!/bin/sh
 # Stop a running instance so the package files are not held open.
 pkill -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1 || true
+
+# Remove the firewall ports opened at install (best-effort; skip on upgrade).
+if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        for p in 443/tcp 80/tcp 47999/udp; do
+            firewall-cmd --permanent --remove-port="$p" >/dev/null 2>&1 || true
+        done
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+        for p in 443/tcp 80/tcp 47999/udp; do
+            ufw delete allow "$p" >/dev/null 2>&1 || true
+        done
+    fi
+fi
 exit 0
 EOF
 

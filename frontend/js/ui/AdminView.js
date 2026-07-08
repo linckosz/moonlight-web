@@ -43,9 +43,16 @@ export class AdminView {
         'configuring_ports',
     ];
 
-    constructor(container, onClose) {
+    constructor(container, onClose, options) {
         this.container = container;
         this.onClose = onClose || (() => {});
+        this._options = options || {};
+
+        // True when the backend says this browser runs on the host machine
+        // (loopback peer OR a host-key session over the public domain).
+        this._isHostMachine = false;
+        // Host key (host machine only) for the post-activation domain redirect.
+        this._localKey = '';
 
         // Server settings state
         this._httpsPort = 443;
@@ -66,6 +73,7 @@ export class AdminView {
         this._upnpAvailable = false;
         this._pendingRegistration = false;
         this._active = false; // DNS registration actually succeeded (domain live)
+        this._hairpinReachable = false; // router reflects our public endpoint to the LAN
         this._lastError = '';
 
         // Activation loader: live step reported by the backend (statusJson.phase).
@@ -104,9 +112,17 @@ export class AdminView {
     }
 
     async start() {
+        // Host check first: the whole admin page is host-machine-only. A remote
+        // (authenticated) session gets a notice instead of the sections — and
+        // none of the host-only requests below (they would just 403).
+        await this._loadAuthStatus();
+        if (!this._isLocalhost()) {
+            this.render();
+            this.bindEvents();
+            return;
+        }
         await this._loadState();
         await this._loadInternetState();
-        await this._loadAuthStatus();
         await this._loadSessions();
         await this._loadSunshineState();
         this.render();
@@ -116,6 +132,12 @@ export class AdminView {
         // keep the loader live until the backend reaches a terminal phase.
         if (this._activating) this._startPhasePolling();
         this._startSessionsPolling();
+        // Deep link from the hosts-page banner: bring the INTERNET section into
+        // view so the user lands directly on the enable checkbox.
+        if (this._options.scrollTo === 'internet') {
+            const section = this.container.querySelector('#admin-section-internet');
+            if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     }
 
     async _loadState() {
@@ -124,6 +146,9 @@ export class AdminView {
             this._httpsPort = admin.https_port || 443;
             this._httpPort = admin.http_port || 80;
             this._certAuthEnabled = admin.cert_auth_enabled || false;
+            // Host machine only (absent otherwise): current host key, kept for
+            // the post-activation redirect to the public-domain admin URL.
+            this._localKey = admin.local_key || '';
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
@@ -143,6 +168,7 @@ export class AdminView {
             this._upnpAvailable = status.upnp_available || false;
             this._pendingRegistration = status.pending_registration || false;
             this._active = status.active || false;
+            this._hairpinReachable = status.hairpin_reachable || false;
             this._phase = status.phase || '';
             // Show the activation checklist whenever the backend is mid-activation,
             // even when it was triggered by first-run provisioning (not the toggle).
@@ -166,6 +192,7 @@ export class AdminView {
     async _loadAuthStatus() {
         try {
             const status = await BackendClient.getAuthStatus();
+            this._isHostMachine = !!status.is_localhost;
             if (status.pin) {
                 this._pin = status.pin;
             }
@@ -485,6 +512,9 @@ export class AdminView {
     }
 
     _isLocalhost() {
+        // Backend-driven: also true when the page was opened on the host machine
+        // through the public domain (host-key session), not just on loopback.
+        if (this._isHostMachine) return true;
         const hostname = window.location.hostname;
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
     }
@@ -501,6 +531,22 @@ export class AdminView {
     }
 
     render() {
+        // Host machine only: remote sessions (even authenticated) must not see
+        // the server administration sections — show a notice instead.
+        if (!this._isLocalhost()) {
+            this.container.innerHTML = `
+                <div class="admin-view" id="view-admin">
+                    <div class="admin-header">
+                        <h2>${t('admin.title')}</h2>
+                        <button class="view-close-btn" id="btn-admin-close"
+                                title="${this.esc(t('common.close'))}">&times;</button>
+                    </div>
+                    <p class="setting-desc">${t('admin.hostOnly')}</p>
+                </div>
+            `;
+            return;
+        }
+
         this._sessionPage = 0;
         const transportLabels = {
             'webrtc-media-udp': 'WebRTC MediaTrack (UDP)',
@@ -569,32 +615,6 @@ export class AdminView {
                         : ''
                 }
 
-                <!-- Active Sessions (localhost only) -->
-                ${
-                    this._isLocalhost()
-                        ? `
-                    <div class="settings-section">
-                        <h3 class="settings-section-title">${t('admin.activeSessions')}</h3>
-                        <div class="settings-field u-pt-0">
-                            <p class="setting-desc">
-                                ${t('admin.activeSessionsDesc')}
-                            </p>
-                            <p class="settings-hint" id="admin-session-count">
-                                ${
-                                    this._activeSessions > 0
-                                        ? t('admin.sessionCount', { count: this._activeSessions })
-                                        : t('admin.noActiveSessions')
-                                }
-                            </p>
-                            <div id="admin-sessions-table">
-                                ${this._buildSessionsAreaHtml()}
-                            </div>
-                        </div>
-                    </div>
-                `
-                        : ''
-                }
-
                 <!-- Certificate Authentication (localhost only) -->
                 ${
                     this._isLocalhost()
@@ -633,7 +653,7 @@ export class AdminView {
                 }
 
                 <!-- Internet -->
-                <div class="settings-section">
+                <div class="settings-section" id="admin-section-internet">
                     <h3 class="settings-section-title">${t('admin.internet')}${
                         this._internetEnabled && !this._active && !this._lastError
                             ? `<span class="cyber-loader" title="${this.esc(t('admin.internetComingUp'))}"
@@ -645,7 +665,7 @@ export class AdminView {
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="chk-internet-enable"
                                    ${this._internetEnabled ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">${t('admin.enableInternet')}</span>
+                            <span class="settings-checkbox-text consent-highlight">${t('admin.enableInternet')}</span>
                         </label>
                     </div>
 
@@ -742,6 +762,32 @@ export class AdminView {
                             : ''
                     }
                 </div>
+
+                <!-- Active Sessions (localhost only) -->
+                ${
+                    this._isLocalhost()
+                        ? `
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">${t('admin.activeSessions')}</h3>
+                        <div class="settings-field u-pt-0">
+                            <p class="setting-desc">
+                                ${t('admin.activeSessionsDesc')}
+                            </p>
+                            <p class="settings-hint" id="admin-session-count">
+                                ${
+                                    this._activeSessions > 0
+                                        ? t('admin.sessionCount', { count: this._activeSessions })
+                                        : t('admin.noActiveSessions')
+                                }
+                            </p>
+                            <div id="admin-sessions-table">
+                                ${this._buildSessionsAreaHtml()}
+                            </div>
+                        </div>
+                    </div>
+                `
+                        : ''
+                }
 
                 <!-- Local Access -->
                 ${
@@ -1413,17 +1459,29 @@ export class AdminView {
                 internet_access_enabled: true,
                 auto_ip_detection: true,
                 transport_mode: this._transportMode,
+                // Exact agreement text displayed next to the checkbox — recorded
+                // server-side in the DNS registration audit log (traceability).
+                consent_message: t('admin.internetInfo1') + ' / ' + t('admin.enableInternet'),
             });
             this._stopPhasePolling();
             this._activating = false;
             if (result.status === 'enabled') {
                 Toast.success(t('admin.internetEnabled', { domain: result.domain || '...' }));
+                // Capture the redirect target straight from the enable response —
+                // it carries the final domain, external HTTPS port and hairpin
+                // result, computed by the time start() returned. Reading them here
+                // (rather than from a follow-up request) keeps the redirect correct
+                // even if a later poll transiently fails.
+                this._domain = result.domain || this._domain;
+                this._externalHttpsPort = result.external_https_port || this._externalHttpsPort;
+                this._hairpinReachable = !!result.hairpin_reachable;
                 await this._loadInternetState();
                 this.render();
                 this.bindEvents();
                 if (this._pendingRegistration) {
                     this._startDnsPolling();
                 }
+                this._scheduleParityRedirect();
             } else {
                 Toast.error(t('admin.internetEnableFailed'));
                 this._internetEnabled = false;
@@ -1466,6 +1524,7 @@ export class AdminView {
                     this.render();
                     this.bindEvents();
                     if (this._pendingRegistration) this._startDnsPolling();
+                    if (phase === 'active') this._scheduleParityRedirect();
                 }
             } catch (_err) {
                 // Transient during activation (backend busy) — ignore and retry.
@@ -1478,6 +1537,35 @@ export class AdminView {
             clearInterval(this._phasePollTimer);
             this._phasePollTimer = null;
         }
+    }
+
+    // Once Internet Access is live the canonical origin becomes the public
+    // domain. The local listener is never moved (a dedicated listener was added
+    // for the domain), so this origin stays valid: we only switch away when the
+    // router actually reflects our public endpoint back to this host
+    // (hairpin_reachable, tested server-side — the untrusted-cert localhost page
+    // cannot probe cross-origin itself as Chrome blocks its subresources). The
+    // domain listener is already up, so no timing guesswork is needed; the host
+    // key rides along so the localhost-only admin survives the origin change.
+    // Without hairpin we simply stay on localhost, which keeps working.
+    _scheduleParityRedirect() {
+        if (window.location.protocol !== 'https:') return;
+        if (!this._hairpinReachable || !this._domain || !this._localKey) return;
+
+        const port = String(this._externalHttpsPort || 443);
+        const portPart = port === '443' ? '' : ':' + port;
+        const target =
+            'https://' +
+            this._domain +
+            portPart +
+            '/admin?mwk=' +
+            encodeURIComponent(this._localKey);
+
+        // Small delay so the success toast is seen and the fresh listener has
+        // settled before the navigation.
+        setTimeout(() => {
+            window.location.href = target;
+        }, 800);
     }
 
     async _disableInternet() {

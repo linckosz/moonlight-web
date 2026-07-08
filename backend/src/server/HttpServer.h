@@ -71,6 +71,21 @@ public:
     /// All existing connections are closed during the transition.
     bool changeHttpsPort(quint16 newPort);
 
+    /// Add a second HTTPS listener on @p port that serves the same app, without
+    /// touching the primary listener. Used for port parity: when the public
+    /// domain must be reached on a non-default external port (another instance
+    /// owns the default on the router), we listen on that port for the domain
+    /// while the primary keeps serving localhost/LAN — so the admin page never
+    /// loses the origin it is currently loaded on. Idempotent: returns true when
+    /// a listener on @p port is already up. @p port 0 is a no-op (false).
+    bool addSecondaryHttpsListener(quint16 port);
+
+    /// Tear down the secondary HTTPS listener, if any.
+    void removeSecondaryHttpsListener();
+
+    /// The port of the secondary HTTPS listener (0 when none).
+    quint16 secondaryHttpsPort() const { return m_SecondaryHttpsPort; }
+
     /// Set the cert_pem value from settings (env var name or file path).
     /// When non-empty, loadCert() tries to resolve it before auto-discovering.
     void setCertPem(const QString& value) { m_Certs.setCertPem(value); }
@@ -96,6 +111,9 @@ public:
     /// Returns true if no AuthManager is set (auth disabled).
     bool isAuthenticated(const HttpRequest& req) const;
 
+    /// Extract the raw mw_session cookie token from a request ("" if absent).
+    static QString sessionTokenFromRequest(const HttpRequest& req);
+
 signals:
     void started(quint16 port);
     void serverError(const QString& message);
@@ -106,6 +124,11 @@ private slots:
     void onDisconnected();
 
 private:
+    /// Create (and listen on) an SslServer for @p port using the shared cert
+    /// configs and socket-registration wiring. Returns nullptr if the bind
+    /// fails. Used by both the primary start() path and the secondary listener.
+    QTcpServer* createHttpsServer(quint16 port);
+
     void processRequest(QTcpSocket* socket, const QByteArray& requestData);
     void onReadyReadSocket(QTcpSocket* socket);
     void sendResponse(QTcpSocket* socket, const HttpResponse& response);
@@ -119,6 +142,11 @@ private:
 
     QTcpServer* m_HttpServer;
     QTcpServer* m_HttpsServer;
+
+    /// Optional second HTTPS listener (port parity for the public domain). Serves
+    /// the same app as the primary; the primary keeps serving localhost/LAN.
+    QTcpServer* m_SecondaryHttpsServer = nullptr;
+    quint16 m_SecondaryHttpsPort = 0;
 
     /// Owns all TLS certificate discovery / loading / renewal / self-signed
     /// generation. Produces the public + local (SNI) SSL configurations.

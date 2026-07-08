@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <functional>
+
 class HttpServer;
 class AppSettings;
 class AuthManager;
@@ -24,5 +26,9 @@ class InternetAccessManager;
 class ComputerManager;
 
 /// Register Internet-access, first-run setup, admin-settings and streaming-settings routes.
+/// @param onHostKeyRotated Invoked after a host-key redemption rotated the key
+///        (single-use), so the entry points embedding it (Desktop shortcut)
+///        are rewritten with the fresh key.
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
-                          InternetAccessManager& internetAccess, ComputerManager& computerManager);
+                          InternetAccessManager& internetAccess, ComputerManager& computerManager,
+                          std::function<void()> onHostKeyRotated = {});

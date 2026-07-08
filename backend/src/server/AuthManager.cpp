@@ -164,6 +164,7 @@ void AuthManager::loadSessions()
         info.createdAt = static_cast<qint64>(obj["created_at"].toDouble());
         info.lastSeen = obj.contains("last_seen") ? static_cast<qint64>(obj["last_seen"].toDouble())
                                                   : info.createdAt;
+        info.isHost = obj["is_host"].toBool(false);
 
         // Drop sessions that are already expired by inactivity.
         const qint64 last = info.lastSeen > 0 ? info.lastSeen : info.createdAt;
@@ -381,7 +382,7 @@ AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QS
     return {InvalidPin, remaining, lockoutSecs};
 }
 
-QString AuthManager::createSession(const QString& ip, const QString& machineName)
+QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost)
 {
     // Clean IPv4-mapped IPv6 addresses before storing
     QString cleanIp = cleanClientAddress(ip);
@@ -404,6 +405,7 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     info.machineName = machineName.isEmpty() ? QStringLiteral("Unknown") : machineName;
     info.createdAt = QDateTime::currentSecsSinceEpoch();
     info.lastSeen = info.createdAt;
+    info.isHost = isHost;
 
     m_sessions[id] = info;
     saveSessions();
@@ -425,6 +427,13 @@ bool AuthManager::validateSession(const QString& token) const
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const qint64 last = it->lastSeen > 0 ? it->lastSeen : it->createdAt;
     return now - last <= SESSION_TTL_SECS;
+}
+
+bool AuthManager::isHostSession(const QString& token) const
+{
+    if (!validateSession(token)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    return it != m_sessions.end() && it->isHost;
 }
 
 void AuthManager::touchSession(const QString& token)

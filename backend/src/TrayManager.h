@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include <QObject>
 #include <QSystemTrayIcon>
 #include <QMenu>
@@ -42,6 +44,20 @@ public:
     /// Also used by main() as the Dock/taskbar icon fallback. May be null.
     static QIcon loadAppIcon();
 
+    /// Override the URL the tray entries open. main.cpp installs a provider that
+    /// returns the public domain (with the host key) once Internet Access is
+    /// live, and https://localhost otherwise. When unset (or when the provider
+    /// returns an empty URL), the built-in localhost URL is used.
+    void setUrlProvider(std::function<QUrl(const QString& path)> provider)
+    {
+        m_UrlProvider = std::move(provider);
+    }
+
+    /// Recompute the hover tooltip from the current entry URL. Call after the
+    /// HTTPS port or the public domain changed (port parity rebind, Internet
+    /// Access becoming ready).
+    void refreshTooltip();
+
 private slots:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
     void onOpen();
@@ -55,6 +71,7 @@ private:
     QUrl localUrl(const QString& path) const;
 
     HttpServer* m_Server;
+    std::function<QUrl(const QString& path)> m_UrlProvider;
     QSystemTrayIcon* m_TrayIcon;
     QMenu* m_Menu;
     QMenu* m_DockMenu;         // macOS Dock right-click menu (null elsewhere)

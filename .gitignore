@@ -49,6 +49,9 @@ backend/.cache/
 # Agent session results
 .claude/results/
 
+# Local benchmark prompt documents (never committed)
+docs/application/
+
 # Local dev config (committed once, then ignored)
 .moonlightweb-dev
 

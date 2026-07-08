@@ -178,6 +178,10 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
     // Internet Access: just flip the persisted flag; main()'s existing
     // auto-start path brings the InternetAccessManager up after this returns.
     if (internet) {
+        // Legal traceability: the installer records the exact agreement text the
+        // user read when ticking the Internet checkbox (localized).
+        settings.setInternetConsent(obj.value(QStringLiteral("consent_message")).toString(),
+                                    QStringLiteral("installer"));
         settings.setInternetAccessEnabled(true);
         Logger::info(QStringLiteral("Provisioning: Internet Access authorized"));
     }

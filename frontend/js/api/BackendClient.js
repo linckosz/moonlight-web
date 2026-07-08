@@ -191,6 +191,11 @@ export class BackendClient {
     static async getAuthStatus() {
         return this.get('/api/auth/status');
     }
+    /** Redeem the host key (?mwk=... from the host machine's own entry points)
+     *  for a localhost-equivalent session over the public domain. */
+    static async redeemHostKey(key) {
+        return this.post('/api/auth/host-key', { key });
+    }
 
     // ── Certificate Authentication ─────────────────────────────────────────
 

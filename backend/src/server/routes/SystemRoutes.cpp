@@ -29,6 +29,7 @@
 #include "common/Logger.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QHostAddress>
 #include <QJsonArray>
@@ -41,14 +42,15 @@
 #include <QTimer>
 
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
-                          InternetAccessManager& internetAccess, ComputerManager& computerManager)
+                          InternetAccessManager& internetAccess, ComputerManager& computerManager,
+                          std::function<void()> onHostKeyRotated)
 {
     // API route: get Internet Access status
     server.router()->get("/api/internet/status", [&](const HttpRequest& req) {
         QJsonObject obj = internetAccess.statusJson();
         // The admin UI runs on localhost and needs the full payload. Remote
         // sessions must not learn the internal network topology / file layout.
-        if (!HttpServer::isLocalRequest(req.clientAddress)) {
+        if (!req.isLocal) {
             for (const char* key :
                  {"local_ip", "public_ip", "unique_id", "cert_pem", "cert_key", "last_error"})
                 obj.remove(QLatin1String(key));
@@ -59,7 +61,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // API route: enable/configure Internet Access
     server.router()->post("/api/internet/enable", [&](const HttpRequest& req) {
         // Only localhost can modify internet access settings
-        if (!HttpServer::isLocalRequest(req.clientAddress))
+        if (!req.isLocal)
             return HttpResponse::error(
                 403, "Internet access settings can only be modified from localhost");
 
@@ -89,6 +91,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         if (body.contains("upnp_enabled"))
             appSettings.setUpnpEnabled(body["upnp_enabled"].toBool());
 
+        // Legal traceability: record the exact agreement text the user read when
+        // they ticked the checkbox. Referenced by the DNS registration audit log.
+        if (body.value("internet_access_enabled").toBool(false) && body.contains("consent_message"))
+            appSettings.setInternetConsent(body["consent_message"].toString(),
+                                           QStringLiteral("admin"));
+
         bool enabled =
             body.value("internet_access_enabled").toBool(appSettings.internetAccessEnabled());
 
@@ -110,6 +118,50 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         }
     });
 
+    // POST /api/auth/host-key — prove the browser runs on the host machine.
+    // The host's own entry points (Desktop shortcut, tray, startup open) embed a
+    // persistent random key (?mwk=...) when they point at the public domain; the
+    // frontend redeems it here to obtain a localhost-equivalent session (admin
+    // access), since over the domain the peer address is the router/NAT-hairpin
+    // address, not loopback. Redemption is refused for peers that cannot
+    // plausibly be the host machine itself.
+    // onHostKeyRotated captured by value: the parameter dies when this
+    // registration function returns, but the route lambda lives on.
+    server.router()->post("/api/auth/host-key", [&, onHostKeyRotated](const HttpRequest& req) {
+        const QString key = QJsonDocument::fromJson(req.body).object().value("key").toString();
+        const QString addr = AuthManager::cleanClientAddress(req.clientAddress);
+        const bool plausiblyHost =
+            HttpServer::isLocalRequest(addr) ||
+            AuthManager::isPrivateIP(addr) == QLatin1String("Local") ||
+            (!internetAccess.publicIp().isEmpty() && addr == internetAccess.publicIp());
+        // Compare hashes: constant-time, no length leak.
+        const QByteArray given = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256);
+        const QByteArray expected =
+            QCryptographicHash::hash(appSettings.localKey().toUtf8(), QCryptographicHash::Sha256);
+        if (!plausiblyHost || key.isEmpty() || given != expected) {
+            Logger::warning(QStringLiteral("[Auth] Host key redemption refused for %1").arg(addr));
+            return HttpResponse::error(403, "Invalid host key");
+        }
+
+        QString token =
+            authManager.createSession(req.clientAddress, QStringLiteral("Host machine"), true);
+        Logger::info(QStringLiteral("[Auth] Host session created for %1 (via host key)").arg(addr));
+
+        // Single-use: burn the redeemed key and rewrite the entry points that
+        // embed it, so a leaked/history URL cannot be replayed.
+        appSettings.rotateLocalKey();
+        if (onHostKeyRotated) onHostKeyRotated();
+
+        QJsonObject obj;
+        obj["status"] = "ok";
+        obj["is_localhost"] = true;
+        HttpResponse resp = HttpResponse::json(obj);
+        resp.headers["Set-Cookie"] =
+            QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
+                .arg(token);
+        return resp;
+    });
+
     // ── First-run setup wizard (localhost only) ──────────────────────────────
     // macOS/Linux ship without a native installer, so the app hosts the wizard
     // the Windows Inno Setup installer provides: authorize Internet Access,
@@ -117,8 +169,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
     // GET /api/setup/status — what the wizard needs to render its steps.
     server.router()->get("/api/setup/status", [&](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         QJsonObject obj;
 #if defined(Q_OS_WIN)
@@ -190,8 +241,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // POST /api/setup/apply — run the wizard actions synchronously; the frontend
     // polls /api/setup/status meanwhile to animate the checklist.
     server.router()->post("/api/setup/apply", [&](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         QJsonObject body = QJsonDocument::fromJson(req.body).object();
         const bool internetAuth = body.value("internet_access_authorized").toBool(false);
@@ -245,6 +295,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // 3) Internet Access — flip the flag and bring the tunnel up.
         if (internetAuth) {
             Provisioning::setStepStatus("arecord", "running");
+            // Legal traceability: the wizard sends the exact agreement text shown.
+            appSettings.setInternetConsent(body.value("consent_message").toString(),
+                                           QStringLiteral("setup"));
             appSettings.setInternetAccessEnabled(true);
             internetAccess.start();
             const bool active = internetAccess.isActive();
@@ -273,8 +326,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // only: it acts on the host, and only someone physically at that Mac can use
     // the pane it opens.
     server.router()->post("/api/system/open-screen-recording", [&](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 #if defined(Q_OS_MACOS)
         QProcess::startDetached(
             QStringLiteral("/usr/bin/open"),
@@ -292,8 +344,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // only: it's a host-machine service action (and would kill any in-progress
     // stream), so only someone at/administering the host triggers it.
     server.router()->post("/api/system/stop-sunshine", [&](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
         const bool ok = SunshineInstaller::stop();
         QJsonObject obj;
         obj["status"] = ok ? "stopped" : "not_running";
@@ -304,8 +355,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // only (host-machine service action). Used by the admin page when Sunshine is
     // installed but not currently running.
     server.router()->post("/api/system/start-sunshine", [&](const HttpRequest& req) {
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
         const bool ok = SunshineInstaller::launch();
         QJsonObject obj;
         obj["status"] = ok ? "started" : "failed";
@@ -315,7 +365,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // API route: disable Internet Access
     server.router()->post("/api/internet/disable", [&](const HttpRequest& req) {
         // Only localhost can modify internet access settings
-        if (!HttpServer::isLocalRequest(req.clientAddress))
+        if (!req.isLocal)
             return HttpResponse::error(
                 403, "Internet access settings can only be modified from localhost");
 
@@ -331,8 +381,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     server.router()->post("/api/internet/refresh", [&](const HttpRequest& req) {
         // Localhost only: refresh re-runs DNS/ACME and must not be triggerable by
         // a remote session (avoids abusing the ACME provider's rate limits).
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         internetAccess.forceRefresh();
         return HttpResponse::json(internetAccess.statusJson());
@@ -342,8 +391,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     server.router()->post("/api/internet/renew-cert", [&](const HttpRequest& req) {
         // Localhost only: certificate issuance is subject to strict ACME rate
         // limits — never let a remote session drive it.
-        if (!HttpServer::isLocalRequest(req.clientAddress))
-            return HttpResponse::error(403, "Only available from localhost");
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         internetAccess.renewCertificate();
         QJsonObject obj;
@@ -354,18 +402,32 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // — Admin settings (localhost only, server config) —
 
     server.router()->get("/api/admin/settings",
-                         [&server, &appSettings, &authManager](const HttpRequest&) {
+                         [&server, &appSettings, &authManager](const HttpRequest& req) {
                              QJsonObject obj;
                              obj["http_port"] = static_cast<int>(server.httpPort());
-                             obj["https_port"] = static_cast<int>(server.activeHttpsPort());
+                             // Report the persisted (canonical) HTTPS port, not the
+                             // primary listener's live port: after a port-parity
+                             // rebind the host adopts the router-side port (e.g.
+                             // 44729) as its single https_port — served locally by
+                             // the secondary listener on every interface — so the
+                             // admin UI's Local Access URL and port input must show
+                             // that port, matching the public-domain URL. In the
+                             // normal case main.cpp keeps this in sync with the
+                             // active listener at startup, so they are identical.
+                             obj["https_port"] =
+                                 static_cast<int>(appSettings.httpsPort(server.activeHttpsPort()));
                              obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+                             // Host machine only: the current host key, so the
+                             // admin page can carry its session over to the
+                             // public-domain URL after Internet activation.
+                             if (req.isLocal) obj["local_key"] = appSettings.localKey();
                              return HttpResponse::json(obj);
                          });
 
     server.router()->post("/api/admin/settings", [&server, &appSettings, &authManager,
                                                   &internetAccess](const HttpRequest& req) {
         // Only localhost can modify server admin settings
-        if (!HttpServer::isLocalRequest(req.clientAddress))
+        if (!req.isLocal)
             return HttpResponse::error(403, "Admin settings can only be modified from localhost");
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
@@ -465,7 +527,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
     server.router()->post("/api/settings/streaming", [&appSettings](const HttpRequest& req) {
         // Only localhost can modify server-side streaming settings
-        if (!HttpServer::isLocalRequest(req.clientAddress))
+        if (!req.isLocal)
             return HttpResponse::error(403,
                                        "Streaming settings can only be modified from localhost");
 

@@ -290,6 +290,33 @@ public:
     QString ownerToken() const;
     void setOwnerToken(const QString& token);
 
+    // ── Internet Access consent (legal traceability) ─────────────────────────
+    //
+    // Record of the user's explicit opt-in to Internet Access: the exact
+    // agreement text displayed, when it was accepted, and through which entry
+    // point ("admin" | "setup" | "installer"). Referenced by every A-record
+    // registration entry in the dedicated audit log.
+
+    /// {"message": ..., "at": ISO-8601 UTC, "source": ...} — empty if never given.
+    QJsonObject internetConsent() const;
+    void setInternetConsent(const QString& message, const QString& source);
+
+    // ── Host key (host-machine recognition over the public domain) ──────────
+    //
+    // Long random token embedded in the host machine's own entry-point URLs
+    // (Desktop shortcut, tray, startup open) as ?mwk=..., so a browser opened
+    // on the host via the public domain can prove it runs on the host and be
+    // granted a localhost-equivalent session. Single-use: each successful
+    // redemption rotates the key (and the entry points are rewritten), so a
+    // leaked URL cannot be replayed.
+
+    /// Persistent random key; generated on first call.
+    QString localKey();
+
+    /// Replace the host key with a fresh random one (after a redemption).
+    /// Returns the new key.
+    QString rotateLocalKey();
+
     // ── Low-level access (for other one-off settings) ───────────────────────
 
     /// Read the entire settings JSON object.

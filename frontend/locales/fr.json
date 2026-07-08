@@ -82,7 +82,9 @@
         "noHostReturned": "Aucun hôte renvoyé par le serveur",
         "menuAria": "Options de l'hôte",
         "offlineMessage": "Cet hôte est hors ligne",
-        "remoteAccess": "Les autres ordinateurs peuvent se connecter à ce serveur via :"
+        "remoteAccess": "Les autres ordinateurs peuvent se connecter à ce serveur via :",
+        "internetAvailableHint": "Ce serveur peut aussi être ouvert à Internet :",
+        "enableInternetLink": "activer l'accès Internet"
     },
     "update": {
         "available": "MoonlightWeb {{version}} est disponible",
@@ -200,6 +202,7 @@
     },
     "admin": {
         "title": "Paramètres serveur",
+        "hostOnly": "L'administration du serveur n'est accessible que depuis la machine qui héberge le serveur.",
         "closeDiscard": "Fermer (abandonne les modifications non enregistrées)",
         "accessPin": "PIN d'accès",
         "accessPinDesc": "Partagez ce PIN avec les utilisateurs distants pour leur accorder l'accès à ce serveur. Le PIN est valable pour une seule session.",

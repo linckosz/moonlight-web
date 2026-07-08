@@ -46,6 +46,7 @@ DMG="$(read_val dmg)"
 INTERNET_RAW="$(read_val internet)" # 1 / 0 / empty
 if [ "$INTERNET_RAW" = "1" ] || [ "$INTERNET_RAW" = "true" ]; then
     INTERNET="true"; else INTERNET="false"; fi
+CONSENT="$(read_val consent)" # exact agreement text shown in the installer pane
 
 # ── 1) Install Sunshine (skip if already present). ──────────────────────────
 sunshine_bin() {
@@ -133,6 +134,7 @@ APPDATA="$CONSOLE_HOME/Library/Application Support/MoonlightWeb/MoonlightWeb"
 cat > "$APPDATA/provisioning.json" <<JSON
 {
   "internet_access_authorized": $INTERNET,
+  "consent_message": "$(json_escape "$CONSENT")",
   "sunshine": {
     "auto_pair": true,
     "username": "$(json_escape "$SUN_USER")",
@@ -169,6 +171,18 @@ cat > "$AGENTS/com.moonlightweb.agent.plist" <<PLIST
 PLIST
 /usr/sbin/chown "$CONSOLE_USER" "$AGENTS/com.moonlightweb.agent.plist"
 echo "wrote LaunchAgent"
+
+# ── 4b) Allow the app through the macOS application firewall. It is per-app
+#    (not per-port), so this covers every port the server ever binds — 443, a
+#    per-instance parity port (e.g. when another device already forwards 443 on
+#    the router), or a startup fallback — without a further prompt. Best-effort:
+#    a no-op when the firewall is off; harmless when already allowed.
+SOCKETFW="/usr/libexec/ApplicationFirewall/socketfilterfw"
+if [ -x "$SOCKETFW" ] && [ -x "$EXE" ]; then
+    "$SOCKETFW" --add "$EXE" >/dev/null 2>&1 || echo "WARN: firewall --add failed"
+    "$SOCKETFW" --unblockapp "$EXE" >/dev/null 2>&1 || echo "WARN: firewall --unblockapp failed"
+    echo "firewall: allowed $EXE"
+fi
 
 # ── 5) Launch the app once in the user session (no --autostart → it opens the
 #    browser so the live setup checklist shows while first-run pairing runs).

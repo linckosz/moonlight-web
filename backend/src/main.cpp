@@ -1401,17 +1401,41 @@ int main(int argc, char* argv[])
     // Sync UPnP port mapping port with the actual server port
     internetAccess.setPorts(server.httpPort(), server.activeHttpsPort());
 
-    // Admin URL for local entry points (Desktop shortcut, installer post-install
-    // page, Dock, tray): loopback over HTTPS — the admin APIs are localhost-only
-    // (the public-domain admin page would get 403s), and loopback works even when
-    // DNS/Internet Access is down. Streaming requires a trusted TLS origin, so we
-    // open HTTPS directly; the browser asks to accept the self-signed cert once.
-    // The public address is shown inside the admin UI itself.
-    auto adminUrl = [&]() -> QString {
+    // Port parity (external == internal): when the router-side default port is
+    // owned by another instance, InternetAccessManager claims a fallback port so
+    // the public URL port is exactly the port the router forwards. We ADD a
+    // second HTTPS listener on that port for the domain rather than moving the
+    // primary — the primary keeps serving localhost/LAN, so the admin page never
+    // loses the origin it is loaded on (no reload race, no stranded page).
+    internetAccess.setHttpsRebindCallback([&server](quint16 port) -> bool {
+        qInfo() << "[main] Port parity: adding HTTPS listener for the public domain on" << port;
+        return server.addSecondaryHttpsListener(port);
+    });
+
+    // URL for the host machine's own entry points (Desktop shortcut, installer
+    // post-install page, Dock, tray, startup open). Once Internet Access is live
+    // the full public domain is used (valid certificate, no warning); the
+    // appended ?mwk=<host key> lets the frontend prove to the backend that this
+    // browser runs on the host machine (over the domain the peer address is the
+    // router, not loopback), unlocking the localhost-only admin functionality.
+    // Before/without Internet Access, loopback over HTTPS is used — it works
+    // even when DNS is down; the browser asks to accept the self-signed cert
+    // once.
+    auto entryUrl = [&](const QString& path) -> QString {
+        if (internetAccess.isActive() && !internetAccess.domain().isEmpty()) {
+            quint16 p = internetAccess.externalHttpsPort();
+            if (p == 0) p = server.activeHttpsPort();
+            const QString base =
+                p == 443 ? QStringLiteral("https://%1").arg(internetAccess.domain())
+                         : QStringLiteral("https://%1:%2").arg(internetAccess.domain()).arg(p);
+            const QChar sep = path.contains(QLatin1Char('?')) ? QLatin1Char('&') : QLatin1Char('?');
+            return base + path + sep + QStringLiteral("mwk=") + appSettings.localKey();
+        }
         quint16 p = server.activeHttpsPort();
-        return p == 443 ? QStringLiteral("https://localhost/admin")
-                        : QStringLiteral("https://localhost:%1/admin").arg(p);
+        return p == 443 ? QStringLiteral("https://localhost%1").arg(path)
+                        : QStringLiteral("https://localhost:%1%2").arg(p).arg(path);
     };
+    auto adminUrl = [entryUrl]() -> QString { return entryUrl(QStringLiteral("/admin")); };
     // First-run provisioning written by the installer (authorize Internet
     // Access, pair the local Sunshine). Runs before the auto-start below so a
     // freshly authorized instance brings Internet Access up immediately. When it
@@ -1465,11 +1489,27 @@ int main(int argc, char* argv[])
 
     // — Internet Access via PowerDNS —
 
-    registerSystemRoutes(server, appSettings, authManager, internetAccess, computerManager);
+    // The host key is single-use: after each redemption the rotated key must be
+    // written back into the Desktop shortcut (tray/startup URLs read it live).
+    registerSystemRoutes(server, appSettings, authManager, internetAccess, computerManager,
+                         [adminUrl]() { writeAdminShortcut(adminUrl()); });
 
-    // Phase N: System tray icon
+    // Phase N: System tray icon. Its entries open the public domain (with the
+    // host key) once Internet Access is live, https://localhost otherwise.
     TrayManager trayManager(&server);
+    trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
     trayManager.init();
+
+    // Keep every host-side entry point current when the entry URL changes:
+    // parity rebind moves the HTTPS port, 'ready' switches links to the domain.
+    QObject::connect(&internetAccess, &InternetAccessManager::httpsPortChanged, &trayManager,
+                     [&trayManager, adminUrl](quint16) {
+                         writeAdminShortcut(adminUrl());
+                         trayManager.refreshTooltip();
+                     });
+    QObject::connect(
+        &internetAccess, &InternetAccessManager::ready, &trayManager,
+        [&trayManager](const QString&, const QString&) { trayManager.refreshTooltip(); });
 
     // The app is windowless, so on a manual launch (Apps / Start-menu click) the
     // browser IS the app surface: open it — the setup wizard on first run
@@ -1483,12 +1523,11 @@ int main(int argc, char* argv[])
         const QString path =
             appSettings.setupCompleted() ? QStringLiteral("/") : QStringLiteral("/setup");
 #endif
-        // Open HTTPS loopback directly so streaming works right away; the browser
-        // asks to accept the self-signed cert once. (If a user later reaches the
-        // hosts page over plain http://, the frontend gates it with a secure link.)
-        quint16 p = server.activeHttpsPort();
-        const QString url = p == 443 ? QStringLiteral("https://localhost%1").arg(path)
-                                     : QStringLiteral("https://localhost:%1%2").arg(p).arg(path);
+        // Public domain when Internet Access is live (valid cert + host key),
+        // HTTPS loopback otherwise; the browser asks to accept the self-signed
+        // cert once. (If a user later reaches the hosts page over plain http://,
+        // the frontend gates it with a secure link.)
+        const QString url = entryUrl(path);
         // Defer so the TLS listener is fully accepting before the browser hits it.
         QTimer::singleShot(1200, &app, [url]() {
             qInfo() << "[main] Opening web UI:" << url;

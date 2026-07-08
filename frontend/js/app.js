@@ -147,6 +147,16 @@ const MoonlightApp = {
         // They will be revealed by _initNavButtons() if authenticated.
         this._hideNavButtonsConditionally();
 
+        // ── Host key (?mwk=...) — the host machine's own entry points embed it
+        // when they open the public domain: redeem it for a localhost-equivalent
+        // session BEFORE the auth check, then strip it from the address bar.
+        await this._redeemHostKey();
+
+        // ── Canonical origin: once Internet Access is live, a page loaded (or
+        // refreshed) on https://localhost moves to the public domain, so the
+        // host machine uses the same URL as everyone else.
+        if (await this._maybeRedirectToDomain()) return; // navigating away
+
         // ── Auth check: show login if remote and not authenticated ─────────
         const authOk = await this._checkAuth();
         if (!authOk) return; // LoginView handles rendering, stop here
@@ -209,8 +219,9 @@ const MoonlightApp = {
         const path = window.location.pathname;
         let mainView, mainState, initialOverlay;
 
-        if (path === '/admin') {
-            // Admin survives refresh — shown as overlay on hosts
+        if (path === '/admin' && this._isHostLocal()) {
+            // Admin survives refresh — shown as overlay on hosts. Host machine
+            // only: a remote session landing on /admin is sent to the hosts view.
             mainView = 'hosts';
             mainState = { view: 'hosts' };
             initialOverlay = 'admin';
@@ -220,7 +231,7 @@ const MoonlightApp = {
             mainState = { view: 'hosts' };
         }
 
-        history.replaceState(mainState, '', path === '/admin' ? '/admin' : '/');
+        history.replaceState(mainState, '', initialOverlay === 'admin' ? '/admin' : '/');
 
         this._nav.mainView = mainView;
         this._nav.mainState = mainState;
@@ -331,19 +342,24 @@ const MoonlightApp = {
     },
 
     /**
-     * Requirement: on https://localhost, show an informative banner listing the
-     * HTTPS addresses other PCs can use to reach this server (LAN IP + domain).
-     * Best-effort and localhost-only; silently skipped otherwise.
+     * On the host machine, show an informative banner at the top of the hosts
+     * page telling the user how other devices reach this server:
+     *   - Internet Access active → the full public domain URL only (the local
+     *     HTTPS port equals the router-forwarded port, so one URL fits all).
+     *   - Otherwise → the LAN IP URL, plus (when UPnP is available) a discreet
+     *     "enable internet access" link that opens the admin page scrolled to
+     *     the INTERNET section.
+     * Best-effort and host-machine-only; silently skipped otherwise.
      */
     async _maybeShowRemoteAccessBanner() {
-        const hostname = window.location.hostname;
-        const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
-        if (!isLocal) return;
+        if (!this._isHostLocal()) return;
 
         let httpsPort = 443;
         let extPort = 443;
         let domain = '';
         let localIp = '';
+        let upnpAvailable = false;
+        let internetActive = false;
         try {
             const [admin, status] = await Promise.all([
                 BackendClient.getAdminSettings(),
@@ -353,35 +369,49 @@ const MoonlightApp = {
             domain = status.domain || '';
             localIp = status.local_ip || '';
             extPort = status.external_https_port || httpsPort;
+            upnpAvailable = !!status.upnp_available;
+            internetActive = !!status.active && !!status.internet_access_enabled;
         } catch (err) {
             console.warn('[MW] Could not build remote-access banner:', err);
             return;
         }
 
-        const links = [];
-        if (localIp) {
-            const p = httpsPort !== 443 ? ':' + httpsPort : '';
-            links.push('https://' + localIp + p);
-        }
-        if (domain) {
-            const p = extPort !== 443 ? ':' + extPort : '';
-            links.push('https://' + domain + p);
-        }
-        if (!links.length) return;
-
         const view = document.getElementById('view-hosts');
         if (!view || view.querySelector('.remote-access-banner')) return;
-        const linksHtml = links
-            .map(
-                (u) =>
-                    `<a href="${encodeURI(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a>`,
-            )
-            .join('');
+
+        const linkHtml = (u) =>
+            `<a href="${encodeURI(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a>`;
+
+        let bodyHtml = '';
+        if (internetActive && domain) {
+            const p = extPort !== 443 ? ':' + extPort : '';
+            bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml('https://' + domain + p)}`;
+        } else if (localIp) {
+            const p = httpsPort !== 443 ? ':' + httpsPort : '';
+            bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml('https://' + localIp + p)}`;
+            if (upnpAvailable) {
+                bodyHtml +=
+                    `<br><span class="banner-internet-hint">${t('hosts.internetAvailableHint')}` +
+                    ` <a href="#" id="banner-enable-internet" class="consent-highlight">` +
+                    `${t('hosts.enableInternetLink')}</a></span>`;
+            }
+        } else {
+            return;
+        }
+
         const banner = document.createElement('div');
         banner.className = 'remote-access-banner';
         banner.innerHTML = `<span class="remote-access-icon" aria-hidden="true">\u{1F310}</span>
-            <span>${t('hosts.remoteAccess')} ${linksHtml}</span>`;
+            <span>${bodyHtml}</span>`;
         view.insertBefore(banner, view.firstChild);
+
+        const enableLink = banner.querySelector('#banner-enable-internet');
+        if (enableLink) {
+            enableLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                this._openOverlay('admin', { scrollTo: 'internet' });
+            });
+        }
     },
 
     // =========================================================================
@@ -397,8 +427,16 @@ const MoonlightApp = {
      * replaced via replaceState so a single Back returns to the main view.
      *
      * @param {string} type - 'admin' | 'settings'
+     * @param {object} [options] - forwarded to the overlay view (e.g.
+     *                             { scrollTo: 'internet' } for AdminView)
      */
-    _openOverlay(type) {
+    _openOverlay(type, options) {
+        // Admin is host-machine-only (AdminView re-checks server-side data too).
+        if (type === 'admin' && !this._isHostLocal()) {
+            console.warn('[MW] Admin overlay blocked: not on the host machine');
+            return;
+        }
+
         // ── Streaming has absolute priority ────────────────────────────────
         // Never let admin/settings open on top of (or under) an active or
         // launching stream — it corrupts the overlay/history state and the
@@ -448,7 +486,7 @@ const MoonlightApp = {
 
         if (type === 'admin') {
             this.transition('admin');
-            this.adminView = new AdminView(main, () => history.back());
+            this.adminView = new AdminView(main, () => history.back(), options);
             this.adminView.start();
             this._updateNavHighlight('admin');
         } else {
@@ -518,6 +556,85 @@ const MoonlightApp = {
      * Shows LoginView if not authenticated and not on localhost.
      * Returns true if the app should continue initializing, false otherwise.
      */
+    /**
+     * Redeem a host key passed as ?mwk=... in the URL (added by the host
+     * machine's Desktop shortcut / tray / startup open when they point at the
+     * public domain). On success the backend sets a session cookie flagged as
+     * "host", making is_localhost true even though the peer address is the
+     * router. The key is stripped from the address bar either way.
+     */
+    async _redeemHostKey() {
+        const params = new URLSearchParams(window.location.search);
+        const key = params.get('mwk');
+        if (!key) return;
+        try {
+            await BackendClient.redeemHostKey(key);
+            console.log('[MW] Host key redeemed — host-machine session granted');
+        } catch (err) {
+            console.warn('[MW] Host key redemption failed:', err);
+        }
+        params.delete('mwk');
+        const query = params.toString();
+        history.replaceState(
+            history.state,
+            '',
+            window.location.pathname + (query ? '?' + query : '') + window.location.hash,
+        );
+    },
+
+    /**
+     * When Internet Access is live, the host machine's canonical origin is the
+     * public domain (valid certificate, the exact URL every other device uses).
+     * A page loaded or refreshed on https://localhost moves there, carrying the
+     * host key so the localhost-equivalent (admin) access survives the origin
+     * change. Routers without NAT hairpin cannot reach the domain from inside
+     * the LAN — the backend tests this from the host itself (hairpin_reachable),
+     * because the untrusted-cert localhost page cannot probe the domain (Chrome
+     * blocks its cross-origin subresources). Returns true when a navigation was
+     * started (caller must stop init).
+     */
+    async _maybeRedirectToDomain() {
+        if (window.location.protocol !== 'https:') return false;
+        const hostname = window.location.hostname;
+        const isLoopback =
+            hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+        if (!isLoopback) return false;
+
+        try {
+            const [status, admin] = await Promise.all([
+                BackendClient.getInternetStatus(),
+                BackendClient.getAdminSettings(),
+            ]);
+            if (!status.active || !status.internet_access_enabled || !status.domain) return false;
+            if (!status.hairpin_reachable) {
+                console.log('[MW] Domain unreachable from LAN (no NAT hairpin) — staying local');
+                return false;
+            }
+            const key = admin.local_key || '';
+            if (!key) return false;
+
+            const extPort = status.external_https_port || admin.https_port || 443;
+            const origin = 'https://' + status.domain + (extPort !== 443 ? ':' + extPort : '');
+            const path = window.location.pathname || '/';
+            console.log('[MW] Internet Access live — moving to the public domain:', origin);
+            window.location.replace(origin + path + '?mwk=' + encodeURIComponent(key));
+            return true;
+        } catch (err) {
+            console.warn('[MW] Domain redirect check failed:', err);
+            return false;
+        }
+    },
+
+    /**
+     * True when this browser runs on the host machine: loopback origin, or the
+     * backend confirmed it (host-key session over the public domain).
+     */
+    _isHostLocal() {
+        if (this._isHostMachine) return true;
+        const hostname = window.location.hostname;
+        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+    },
+
     async _checkAuth() {
         this.state = 'auth_check';
         console.log('[MW] Checking authentication...');
@@ -527,6 +644,7 @@ const MoonlightApp = {
 
         try {
             const status = await BackendClient.getAuthStatus();
+            this._isHostMachine = !!status.is_localhost;
 
             // Localhost or already authenticated — proceed
             if (status.is_localhost || status.authenticated) {
@@ -575,11 +693,7 @@ const MoonlightApp = {
      * init continue.
      */
     async _maybeShowSetup() {
-        const isLocal =
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '[::1]';
-        if (!isLocal) return false;
+        if (!this._isHostLocal()) return false;
 
         try {
             const status = await BackendClient.getSetupStatus();
@@ -690,10 +804,9 @@ const MoonlightApp = {
     },
 
     _initNavButtons() {
-        const isLocal =
-            window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '[::1]';
+        // Backend-driven: also true when the page was opened on the host machine
+        // through the public domain (host-key session).
+        const isLocal = this._isHostLocal();
 
         const btnAdmin = document.getElementById('btn-admin');
         if (btnAdmin) {
@@ -715,10 +828,8 @@ const MoonlightApp = {
 
         const btnSettings = document.getElementById('btn-settings');
         if (btnSettings) {
-            // On remote: show settings only after authentication
-            if (!isLocal) {
-                btnSettings.style.display = '';
-            }
+            // Authenticated (or host machine) — always available.
+            btnSettings.style.display = '';
             btnSettings.addEventListener('click', () => {
                 if (this._nav.overlay === 'settings') {
                     history.back();
@@ -972,8 +1083,7 @@ const MoonlightApp = {
      * label fits inside the narrow dialog instead of being clipped.
      */
     _showVideoCaptureHelp(host, app, detail) {
-        const hostname = window.location.hostname;
-        const onHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+        const onHost = this._isHostLocal();
         const name = (host && (host.displayName || host.name)) || '';
 
         const overlay = document.createElement('div');
