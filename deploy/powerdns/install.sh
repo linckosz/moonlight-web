@@ -282,7 +282,7 @@ else
 
     echo "  Optional TLS (blank = automatic Let's Encrypt via Caddy):"
     MW_TLS_EMAIL="$(ask MW_TLS_EMAIL 'Email for Let'\''s Encrypt notices' '')"
-    MW_TLS_CERT="$(ask MW_TLS_CERT 'Own cert path in ./certs (blank = none)' '')"
+    MW_TLS_CERT="$(ask MW_TLS_CERT 'Own cert path in ./certs (blank = Let'\''s Encrypt)' '')"
     MW_TLS_KEY=""
     [ -n "$MW_TLS_CERT" ] && MW_TLS_KEY="$(ask MW_TLS_KEY 'Own key path in ./certs' '')"
 
@@ -312,27 +312,38 @@ step "Building and starting the stack (this can take a few minutes)"
 # low-RAM VMs. Go has no native progress, so we approximate: the Dockerfile runs
 # `go build -v`, which prints each package as it compiles; --progress=plain
 # streams those lines out of BuildKit and awk counts them against a rough total
-# (Caddy + caddy-ratelimit ≈ 540 pkgs) to render a live bar. Field 2 of a plain
-# BuildKit line is the elapsed time, which we reuse for the timer.
+# (Caddy + caddy-ratelimit ≈ 540 pkgs) to render a live bar.
+#
+# The bar MUST stay short (well under an 80-col terminal): a line longer than the
+# terminal wraps to a second physical row, and then \r only rewinds to the start
+# of that last row — so every update leaves the previous wrapped remainder behind
+# and the "bar" scrolls down the screen instead of updating in place (hundreds of
+# lines). \033[K clears any leftover to end-of-line. When stdout is not a TTY
+# (piped/logged), \r does nothing useful, so we print a plain line periodically.
 build_caddy_with_progress() {
-    $COMPOSE build --progress=plain caddy 2>&1 | awk '
-        BEGIN { total = 540; el = 0 }
-        $2 ~ /^[0-9]+(\.[0-9]+)?$/ { el = $2 + 0 }
+    local is_tty=0; [ -t 1 ] && is_tty=1
+    $COMPOSE build --progress=plain caddy 2>&1 | awk -v tty="$is_tty" '
+        BEGIN { total = 540; n = 0 }
         $3 ~ /^[a-z0-9._-]+\.[a-z0-9._-]+\// {
             n++
             pct = int(n * 100 / total); if (pct > 99) pct = 99
-            sec = int(el); mm = int(sec / 60); ss = sec % 60
-            bars = int(pct / 2); bar = ""
-            for (i = 0; i < bars; i++)  bar = bar "#"
-            for (i = bars; i < 50; i++) bar = bar "-"
-            printf "\r  compiling caddy [%s] %3d%%  (%d pkgs, %dm%02ds) ", bar, pct, n, mm, ss
-            fflush()
+            if (tty) {
+                bars = int(pct / 4); bar = ""            # 25-char bar → short line
+                for (i = 0; i < bars; i++)  bar = bar "#"
+                for (i = bars; i < 25; i++) bar = bar "-"
+                printf "\r  caddy [%s] %3d%% (%d pkgs)\033[K", bar, pct, n
+                fflush()
+            } else if (n % 50 == 0) {
+                printf "  caddy compiling... %d%% (%d pkgs)\n", pct, n
+            }
         }
         END {
             if (n == 0) { print "  caddy image up to date (cached)" }
-            else {
-                bar = ""; for (i = 0; i < 50; i++) bar = bar "#"
-                printf "\r  compiling caddy [%s] 100%%  (%d pkgs) done          \n", bar, n
+            else if (tty) {
+                bar = ""; for (i = 0; i < 25; i++) bar = bar "#"
+                printf "\r  caddy [%s] 100%% (%d pkgs) done\033[K\n", bar, n
+            } else {
+                printf "  caddy compiled (%d pkgs)\n", n
             }
         }
     '
@@ -345,6 +356,9 @@ $COMPOSE ps || true
 
 # Grab the DS record for the registrar (first boot prints it in the pdns log).
 DS_RECORD="$($COMPOSE exec -T pdns pdnsutil --config-dir=/etc/powerdns export-zone-ds "$MW_DOMAIN" 2>/dev/null || true)"
+
+# Dump the zone's current records so the summary shows what already exists.
+ZONE_RECORDS="$($COMPOSE exec -T pdns pdnsutil --config-dir=/etc/powerdns list-zone "$MW_DOMAIN" 2>/dev/null || true)"
 
 # ── Final summary + persistent to-do list ────────────────────────────────────
 SUMMARY="NEXT-STEPS.txt"
@@ -359,6 +373,16 @@ echo "   dnsdist  public DNS front on :53 (UDP/TCP)"
 echo "   caddy    public API https://api.${MW_DOMAIN:-<MW_DOMAIN>} (:80/:443)"
 echo "   umami    web analytics  https://stats.${MW_DOMAIN:-<MW_DOMAIN>} (internal, via caddy)"
 echo "   umami-db Postgres for Umami (internal only)"
+echo
+echo " Current DNS records in your zone (${MW_DOMAIN:-<MW_DOMAIN>}):"
+if [ -n "$ZONE_RECORDS" ]; then
+    printf '%s\n' "$ZONE_RECORDS" | sed 's/^/     /'
+else
+    echo "     (could not read the zone — is pdns up? check: $COMPOSE ps)"
+fi
+echo
+echo "   List these again anytime with:"
+echo "     $COMPOSE exec pdns pdnsutil --config-dir=/etc/powerdns list-zone ${MW_DOMAIN:-<MW_DOMAIN>}"
 echo
 echo " Where to change things later:"
 echo "   - Variables ............ $HERE/.env   (then: $COMPOSE up -d --build)"
