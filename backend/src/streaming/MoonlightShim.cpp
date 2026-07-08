@@ -132,14 +132,54 @@ void MoonlightShim::startConnection(const InitParams& params)
         clCallbacks.connectionStatusUpdate = clConnectionStatusUpdate;
         clCallbacks.setHdrMode = clSetHdrMode;
 
-        int err = LiStartConnection(&serverInfo, &streamConfig, &clCallbacks, &drCallbacks,
-                                    &arCallbacks, nullptr, 0, nullptr, 0);
+        // Silently retry transient early-stage failures. Right after a MWServer
+        // (re)start Sunshine can reset the RTSP handshake (stage 4) or refuse the
+        // control stream (stage 8) for a second or two — commonly because it is
+        // still releasing a previous session. These recover on their own; a short
+        // wait + retry avoids bouncing the failure to the browser (which the user
+        // otherwise works around by clicking Launch several times). On failure
+        // LiStartConnection() cleans up internally, so we must NOT call
+        // LiStopConnection() between attempts — just call it again. Later stages
+        // (video/input start) are not retried here.
+        constexpr int kMaxAttempts = 4;
+        constexpr int kRetryDelayMs = 750;
+        int err = 0;
+        for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+            // The user may have quit (browser close / /quit) during the retry
+            // wait: LiInterruptConnection() was called, so don't start again.
+            if (m_Stopping.load()) break;
 
-        if (err != 0) {
-            QString msg = QString("LiStartConnection failed: error %1 (socket=%2)")
-                              .arg(err)
-                              .arg(LastSocketFail());
-            fprintf(stderr, "[MoonlightShim] %s\n", qPrintable(msg));
+            m_LastFailedStage.store(0, std::memory_order_release);
+            err = LiStartConnection(&serverInfo, &streamConfig, &clCallbacks, &drCallbacks,
+                                    &arCallbacks, nullptr, 0, nullptr, 0);
+            if (err == 0) break; // connected
+
+            int failedStage = m_LastFailedStage.load(std::memory_order_acquire);
+            bool retriable = failedStage > STAGE_NONE && failedStage <= STAGE_CONTROL_STREAM_START;
+            if (m_Stopping.load() || !retriable || attempt == kMaxAttempts) break;
+
+            fprintf(stderr,
+                    "[MoonlightShim] Stage %d failed (err=%d) — transient, retry %d/%d in %dms\n",
+                    failedStage, err, attempt, kMaxAttempts - 1, kRetryDelayMs);
+
+            // Interruptible wait: bail out at once if the user quits mid-retry.
+            for (int waited = 0; waited < kRetryDelayMs && !m_Stopping.load(); waited += 50)
+                QThread::msleep(50);
+        }
+
+        if (err != 0 && !m_Stopping.load()) {
+            int failedStage = m_LastFailedStage.load(std::memory_order_acquire);
+            // Preserve the "Stage N failed: E" wording the frontend already parses
+            // when a stage callback fired; otherwise fall back to the raw error.
+            QString msg = failedStage > STAGE_NONE
+                              ? QString("Stage %1 failed: %2")
+                                    .arg(failedStage)
+                                    .arg(m_LastFailedError.load(std::memory_order_acquire))
+                              : QString("LiStartConnection failed: error %1 (socket=%2)")
+                                    .arg(err)
+                                    .arg(LastSocketFail());
+            fprintf(stderr, "[MoonlightShim] Connection failed after %d attempt(s): %s\n",
+                    kMaxAttempts, qPrintable(msg));
             emit connectionFailed(msg);
         }
     });
@@ -485,7 +525,14 @@ void MoonlightShim::clStageFailed(int stage, int errorCode)
     fprintf(stderr, "[MoonlightShim] Stage %d failed, error=%d\n", stage, errorCode);
     MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
     if (!instance || instance->m_Stopping.load()) return;
-    emit instance->connectionFailed(QString("Stage %1 failed: %2").arg(stage).arg(errorCode));
+    // Record the failure only — do NOT emit connectionFailed here. Emitting on the
+    // first stage failure would abort the whole session before any retry: right
+    // after a MWServer (re)start Sunshine can transiently reset the RTSP handshake
+    // (stage 4) or refuse the control stream (stage 8). startConnection()'s retry
+    // loop reads these after LiStartConnection() returns and decides whether to
+    // retry silently or surface the error.
+    instance->m_LastFailedStage.store(stage, std::memory_order_release);
+    instance->m_LastFailedError.store(errorCode, std::memory_order_release);
 }
 
 void MoonlightShim::clConnectionStarted()

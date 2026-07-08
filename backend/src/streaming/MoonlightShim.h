@@ -174,6 +174,12 @@ private:
     std::atomic<bool> m_CleanupDone{false};
     static std::atomic<MoonlightShim*> s_Instance;
 
+    // Last connection-setup failure, recorded by clStageFailed and read by
+    // startConnection()'s retry loop (which decides whether to retry silently or
+    // surface the error). Stage 0 = no stageFailed callback fired.
+    std::atomic<int> m_LastFailedStage{0};
+    std::atomic<int> m_LastFailedError{0};
+
     // Metrics (written from worker thread, read from main thread)
     std::atomic<double> m_HostRttMs{0.0};
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
