@@ -205,25 +205,49 @@
   .brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono); letter-spacing:.12em; white-space:nowrap}
   .brand img{border-radius:6px}
   .brand .v{font-size:.66rem; color:var(--muted); border:1px solid var(--line); padding:.15rem .45rem; border-radius:5px; letter-spacing:.08em}
-  header nav{margin-left:auto; display:flex; gap:24px; align-items:center}
+  header nav{margin-left:auto; display:flex; gap:24px; align-items:center; min-width:0}
   header nav a{color:var(--muted); font-size:.92rem}
   header nav a:hover{color:var(--cyan); text-decoration:none}
   @media(max-width:820px){
     header nav a:not(.btn){display:none}
     .brand .v{display:none}               /* keep the brand on one clean line */
     .brand{font-size:.92rem}
+    header nav{gap:12px}                   /* tighten so the lang toggle + CTA fit */
     header nav .btn{padding:.5rem 1rem; font-size:.85rem;
       clip-path:polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px)}
   }
-  /* Language toggle — stays visible on mobile (it's a group, not a nav link) */
-  .lang{display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden}
-  .lang button{
-    appearance:none; background:transparent; color:var(--muted); cursor:pointer; border:0;
-    font:700 .74rem var(--mono); letter-spacing:.08em; padding:.32rem .6rem; transition:.15s;
+  /* Very small screens: reclaim room so the brand never overlaps the language
+     toggle (three languages now). Tighten spacing and collapse the GitHub CTA
+     to just its star. */
+  @media(max-width:520px){
+    header .wrap{gap:8px; padding:0 14px}
+    .brand{gap:7px; font-size:.82rem; letter-spacing:.06em; min-width:0}
+    .brand img{width:24px; height:24px}
+    header nav{gap:8px}
+    header nav .btn{padding:.5rem .7rem}
+    .gh-label{display:none}                /* icon-only ★ CTA (aria-label keeps it named) */
   }
-  .lang button+button{border-left:1px solid var(--line)}
-  .lang button[aria-pressed="true"]{background:rgba(25,211,255,.14); color:var(--cyan)}
-  @media(hover:hover){ .lang button:hover{color:var(--cyan)} }
+  /* Language dropdown — stays visible on mobile (it's a control, not a nav link) */
+  .lang{
+    position:relative; display:inline-flex; align-items:center; flex:none;
+    border:1px solid var(--line); border-radius:7px; background:rgba(16,26,38,.7); transition:.15s;
+  }
+  .lang select{
+    appearance:none; -webkit-appearance:none; -moz-appearance:none;
+    background:transparent; color:var(--cyan); cursor:pointer; border:0; border-radius:7px;
+    font:700 .74rem var(--mono); letter-spacing:.06em; padding:.36rem 1.7rem .36rem .7rem;
+  }
+  .lang select:focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
+  .lang option{background:var(--panel); color:var(--txt)}   /* native list (browser-styled) */
+  .lang::after{ /* chevron */
+    content:""; position:absolute; right:.62rem; top:50%; width:6px; height:6px;
+    border-right:2px solid var(--muted); border-bottom:2px solid var(--muted);
+    transform:translateY(-70%) rotate(45deg); pointer-events:none; transition:.15s;
+  }
+  @media(hover:hover){ .lang:hover{border-color:var(--line-glow)} .lang:hover::after{border-color:var(--cyan)} }
+  @media(max-width:520px){
+    .lang select{font-size:.72rem; padding:.34rem 1.5rem .34rem .55rem}
+  }
 
   /* ───── Hero ───── */
   .hero{padding:88px 0 30px; text-align:center; position:relative}
@@ -446,11 +470,14 @@
       <a href="#showcase" data-i18n="nav.showcase">Showcase</a>
       <a href="#how" data-i18n="nav.how">How it works</a>
       <a href="#download" data-i18n="nav.download">Download</a>
-      <span class="lang" role="group" aria-label="Language">
-        <button type="button" data-i18n-lang="en" aria-pressed="true">EN</button>
-        <button type="button" data-i18n-lang="fr" aria-pressed="false">FR</button>
+      <span class="lang">
+        <select id="lang-select" aria-label="Language" data-umami-event="lang">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+          <option value="zh" lang="zh">中文</option>
+        </select>
       </span>
-      <a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="nav">★ GitHub</a>
+      <a class="btn btn-primary gh-btn" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" aria-label="GitHub" data-umami-event="github" data-umami-event-loc="nav">★ <span class="gh-label">GitHub</span></a>
     </nav>
   </div>
 </header>
@@ -812,10 +839,17 @@
         mobile: 'Sur cet appareil, ouvrez simplement l’URL de votre serveur — le téléchargement se fait sur le PC gamer.',
         all: t => `${t} — tous les téléchargements sur GitHub`,
       },
+      zh: {
+        base: '⬇ 下载 MoonlightWeb',
+        os: {win:'⬇ 下载 Windows 版', mac:'⬇ 下载 macOS 版', linux:'⬇ 下载 Linux 版'},
+        latest: 'GitHub 上的最新版本',
+        mobile: '在本设备上，只需打开你服务器的 URL——下载在游戏 PC 上进行。',
+        all: t => `${t} — 全部下载见 GitHub`,
+      },
     };
     let best = null, rel = null;                       // filled once the fetch resolves
     const render = () => {
-      const L = T[document.documentElement.lang === 'fr' ? 'fr' : 'en'];
+      const L = T[document.documentElement.lang] || T.en;
       btn.textContent = (os && L.os[os]) || L.base;
       if (best && rel) meta.textContent = `${rel.tag_name} · ${best.name} · ${(best.size / 1048576).toFixed(0)} MB`;
       else if (os === 'mobile') meta.textContent = L.mobile;
@@ -863,8 +897,10 @@
   }
 
   // ─── i18n ─────────────────────────────────────────────────────────────────
-  // English is the source of truth (the HTML itself, captured on load); French
-  // comes from the dictionary below. The choice is persisted; EN is the default.
+  // English is the source of truth (the HTML itself, captured on load); the
+  // other languages come from the dictionaries below. The choice is persisted;
+  // EN is the default. Add a language: drop a dictionary here, register it in
+  // DICTS, add a data-i18n-lang button, and a T.<code> block above.
   const FR = {
     'nav.features':'Fonctionnalités', 'nav.showcase':'En images',
     'nav.how':'Comment ça marche', 'nav.download':'Télécharger',
@@ -953,25 +989,116 @@
     'cta.btn1':'⭐ Star sur GitHub', 'cta.btn2':'☕ Offrez‑moi un café',
   };
 
+  const ZH = {
+    'nav.features':'功能', 'nav.showcase':'实拍',
+    'nav.how':'工作原理', 'nav.download':'下载',
+
+    'hero.kicker':'100% 网页 · 开源 · 自托管',
+    'hero.h1':'你的游戏 PC。<br><span class="grad">串流到任意浏览器。</span>',
+    'hero.lead':'MoonlightWeb 将你的 <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> 游戏主机串流到任何带浏览器的设备<br>手机、平板、笔记本、电视。<strong>免费开源。客户端无需安装。只需一个网址。</strong>',
+    'hero.cta1':'免费下载', 'hero.cta2':'☕ 请我喝杯咖啡',
+    'hud.k1':'Wi‑Fi 延迟', 'hud.k2':'分辨率', 'hud.k3':'帧率',
+    'hud.k4':'编解码器', 'hud.k5':'客户端安装', 'hud.v3':'最高 240fps',
+
+    'feat.kicker':'功能特性',
+    'feat.h2':'像原生客户端一样打造。<br>像网页一样交付。',
+    'feat.p':'一款严肃的游戏串流客户端所应具备的一切——全部在浏览器中运行。',
+    'card1.h3':'主机级延迟',
+    'card1.p':'采用自适应拥塞控制的 WebRTC UDP 传输——Wi‑Fi 下低于 20 毫秒。畅玩快节奏射击，而非幻灯片演示。',
+    'card2.h3':'最高 4K HDR、240 fps',
+    'card2.p':'H264、HEVC 和 AV1，通过 WebCodecs 硬件解码。在 HDR 显示器上呈现真正的 HDR。',
+    'card3.h3':'视频增强',
+    'card3.p':'在 WebGPU 中进行 GPU 放大与锐化（SGSRv1 + FSR1）。串流 720p，看到接近 1440p 的画面。',
+    'card4.h3':'Opus 环绕声',
+    'card4.p':'在浏览器中解码，配备自适应抖动缓冲。即使 Wi‑Fi 不稳定也能保持同步。',
+    'card5.h3':'完整输入，完整震动',
+    'card5.p':'键盘、指针锁定鼠标、触摸触控板、虚拟键盘，以及带震动的 Xbox 和 PlayStation 手柄。',
+    'card6.h3':'零配置发现',
+    'card6.p':'Sunshine 主机通过 mDNS 自动出现。PIN 码配对、多主机、持久会话。',
+    'card7.h3':'一键联网畅玩',
+    'card7.p':'自动子域名、免费 TLS 证书和 UPnP 端口映射。分享一个链接，随处畅玩。',
+    'card8.h3':'从不掉线',
+    'card8.p':'传输自动回退（UDP → TCP → WSS），穿越恶劣网络和严格防火墙。',
+
+    'show.kicker':'实拍', 'show.h2':'亲眼见证',
+    'show.p':'同一台主机，同样的游戏——覆盖家中每块屏幕（乃至更远）。',
+    's1.kicker':'01 · 发现', 's1.h3':'你所有的主机。<br>一个网址。',
+    's1.p':'打开页面，你的 Sunshine 机器就已在此——在局域网中被发现、排序、记住。',
+    's1.li1':'<strong>mDNS 自动发现</strong> — 无需查找 IP，主机自动出现',
+    's1.li2':'<strong>PIN 码配对</strong> — 数秒内完成安全握手',
+    's1.li3':'<strong>多主机</strong> — 台式机、客厅 PC、家庭服务器',
+    's1.cap':'应用库 — 通过 mDNS 找到的主机，一键即可配对',
+    's2.kicker':'02 · 移动畅玩', 's2.h3':'一台掌上游戏机，<br>藏在你的口袋里。',
+    's2.p':'你的手机化身完整客户端：多点触控触控板、带修饰键的原生虚拟键盘、手柄支持——最高 240 fps，Wi‑Fi 延迟低于 20 毫秒。',
+    's2.li1':'<strong>触摸触控板</strong> — 1 指瞄准，2 指滚动与缩放，轻点点击',
+    's2.li2':'<strong>真实键盘输入</strong> — Win、Esc、Ctrl、方向键……应有尽有',
+    's2.li3':'<strong>无需从应用商店下载</strong> — Safari 或 Chrome 即可',
+    's3.kicker':'03 · 增强', 's3.h3':'串流轻量。<br>显示锐利。',
+    's3.p':'视频增强在你设备的 GPU 上对画面进行放大与锐化——WebGPU 运行 SGSRv1 和 FSR1 着色器。用 4G 网络串流 720p，在 1440p 屏幕上看到清晰画面。',
+    's3.li1':'<strong>更少带宽，更多细节</strong> — 在蜂窝网络和酒店 Wi‑Fi 上表现出色',
+    's3.li2':'<strong>在客户端运行</strong> — 游戏 PC 无需额外负载',
+    's3.li3':'<strong>拖动滑块</strong> — 720p 串流 vs. 增强输出 →',
+    's3.tagl':'720p 串流', 's3.tagr':'增强 ▸ 1440p',
+    's3.cap':'波斯王子 — 以 720p 串流，以 1440p 显示',
+    's4.kicker':'04 · 精调', 's4.h3':'设好即忘。<br>或随心调整。',
+    's4.p':'开箱即用的合理默认值与自动码率——需要掌控时还有完整的专业面板，桌面和移动端皆可。',
+    's4.li1':'<strong>分辨率、FPS、码率</strong> — 自动调优，随时可改',
+    's4.li2':'<strong>HDR 与 4:4:4 色度</strong> — 为像素纯粹主义者而生',
+    's4.li3':'<strong>编解码器选择</strong> — 浏览器无法解码的选项会自动灰显',
+    's4.cap':'串流设置与高级选项',
+    's5.kicker':'05 · 走向全球', 's5.h3':'今天局域网联机。<br>明天酒店房间。',
+    's5.p':'勾选一个复选框，你的主机即刻上线：MoonlightWeb 注册一个专属子域名、签发免费 TLS 证书，并通过 UPnP 映射端口。无需动态 DNS 账户，也无需配置反向代理。',
+    's5.li1':'<strong>https://you.moonlightweb.top</strong> — 你的专属地址，自动生成',
+    's5.li2':'<strong>免费自动续期的 TLS</strong> — 附带安全锁',
+    's5.li3':'<strong>自托管</strong> — 你的游戏从不经过任何人的云',
+    's5.cap':'管理页 — 一键启用互联网访问',
+
+    'how.kicker':'安装', 'how.h2':'约 60 秒即可开玩',
+    'how.p':'游戏 PC 上装一个小服务器。其他一切都用浏览器。',
+    'step1.h3':'运行服务器',
+    'step1.p':'在运行 Sunshine 的机器上。托盘中会出现一个图标——安装到此为止。',
+    'step2.h3':'打开浏览器',
+    'step2.p':'在 <code>https://localhost</code>、你的局域网 IP，或从任意设备访问你的专属域名。',
+    'step3.h3':'配对一次',
+    'step3.p':'你的主机已列出。输入 Sunshine 显示的 PIN 码——从此一劳永逸。',
+    'step4.h3':'按下开始',
+    'step4.p':'选择一款游戏或完整桌面。全屏、手柄在手，开玩。',
+    'how.under':'底层原理：一个 C++/Qt 后端内嵌 <code style="font-family:var(--mono); color:var(--cyan)">moonlight‑common‑c</code>，用 GameStream（RTSP/RTP/ENet）与 Sunshine 通信，并通过 WebRTC 将视频、音频和输入转发到浏览器——并自动回退到 WSS。解码在 WebCodecs 中完成，渲染在 WebGPU 中，音频在 AudioWorklet 中。',
+
+    'dl.kicker':'下载', 'dl.h2':'装好服务器，带上你的游戏。',
+    'dl.p':'仅在游戏 PC 上下载一次。其他所有设备只需打开浏览器。',
+    'dl.win':'向导式安装程序——Sunshine 与互联网访问已包含在向导中。',
+    'dl.mac':'Apple Silicon 安装程序，附带向导式配置。',
+    'dl.linux':'原生软件包，或适用于其他一切的便携 AppImage。',
+    'dl.foot':'用手机、平板或电视畅玩？无需下载——你的浏览器就是客户端。<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">全部版本 →</a>',
+
+    'cta.kicker':'免费 &amp; 开源', 'cta.h2':'在你自己的云上按下开始。',
+    'cta.p':'GPL‑3.0、自托管、无需账户、无需订阅。由 Moonlight 生态的长期贡献者打造。一杯咖啡有助于维持共享 DNS 域名的在线运行。☕',
+    'cta.btn1':'⭐ 在 GitHub 上加星', 'cta.btn2':'☕ 请我喝杯咖啡',
+  };
+
+  // Registered translation catalogs (EN = source HTML, so no entry needed).
+  const DICTS = { fr: FR, zh: ZH };
+
   const _orig = new Map();
   document.querySelectorAll('[data-i18n]').forEach(el => _orig.set(el, el.textContent));
   document.querySelectorAll('[data-i18n-html]').forEach(el => _orig.set(el, el.innerHTML));
   function applyLang(lang){
-    lang = lang === 'fr' ? 'fr' : 'en';
+    if (!DICTS[lang]) lang = 'en';
+    const dict = DICTS[lang];                 // undefined for EN → restore original markup
     document.documentElement.lang = lang;
     document.querySelectorAll('[data-i18n]').forEach(el => {
-      el.textContent = lang === 'fr' ? (FR[el.dataset.i18n] ?? _orig.get(el)) : _orig.get(el);
+      el.textContent = dict ? (dict[el.dataset.i18n] ?? _orig.get(el)) : _orig.get(el);
     });
     document.querySelectorAll('[data-i18n-html]').forEach(el => {
-      el.innerHTML = lang === 'fr' ? (FR[el.dataset.i18nHtml] ?? _orig.get(el)) : _orig.get(el);
+      el.innerHTML = dict ? (dict[el.dataset.i18nHtml] ?? _orig.get(el)) : _orig.get(el);
     });
-    document.querySelectorAll('[data-i18n-lang]').forEach(b =>
-      b.setAttribute('aria-pressed', String(b.dataset.i18nLang === lang)));
+    if (langSelect) langSelect.value = lang;
     try { localStorage.setItem('mw_lang', lang); } catch {}
     document.dispatchEvent(new CustomEvent('langchange', {detail: lang}));
   }
-  document.querySelectorAll('[data-i18n-lang]').forEach(b =>
-    b.addEventListener('click', () => applyLang(b.dataset.i18nLang)));
+  const langSelect = document.getElementById('lang-select');
+  if (langSelect) langSelect.addEventListener('change', () => applyLang(langSelect.value));
   let _saved = 'en';
   try { _saved = localStorage.getItem('mw_lang') || 'en'; } catch {}
   applyLang(_saved);
