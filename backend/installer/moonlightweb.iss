@@ -216,13 +216,18 @@ end;
 
 procedure InitializeWizard();
 begin
-  // Step: Internet link authorization.
+  // Step: Internet link authorization. Unchecked by default: opening the
+  // machine to the Internet (UPnP + public DNS record) requires an explicit
+  // opt-in click from the user. The option is highlighted in a positive green
+  // tint instead of being pre-ticked.
   InternetPage := CreateInputOptionPage(wpSelectTasks,
     ExpandConstant('{cm:InternetPageCaption}'), ExpandConstant('{cm:InternetPageDesc}'),
     ExpandConstant('{cm:InternetPageBody}'),
     False, False);
   InternetPage.Add(ExpandConstant('{cm:InternetPageOption}'));
-  InternetPage.Values[0] := True;
+  InternetPage.Values[0] := False;
+  // TColor is $00BBGGRR: $43A02E = RGB(46,160,67), a discreet positive green.
+  InternetPage.CheckListBox.Font.Color := $43A02E;
 
   // Step: Sunshine.
   SunshinePage := CreateCustomPage(InternetPage.ID,
@@ -465,6 +470,28 @@ begin
   StringChangeEx(Result, '"', '\"', True);
 end;
 
+// Allow the server through Windows Defender Firewall. Program-scoped (not port-
+// scoped) on purpose: the app may listen on 443, on a per-instance parity port
+// (e.g. 44729 when another device already forwards 443 on the router), or on a
+// startup fallback port — a single program rule covers every port it ever picks,
+// so the inbound listener is never silently blocked (the windowless tray/logon
+// process would otherwise never get the "allow" prompt). Idempotent: the old
+// rule (if any) is deleted first, so re-installs don't stack duplicates.
+procedure AddFirewallRule();
+var
+  rc: Integer;
+  exePath: String;
+begin
+  exePath := ExpandConstant('{app}\{#MyAppExe}');
+  Exec(ExpandConstant('{sys}\netsh.exe'),
+       'advfirewall firewall delete rule name="MoonlightWeb"',
+       '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec(ExpandConstant('{sys}\netsh.exe'),
+       'advfirewall firewall add rule name="MoonlightWeb" dir=in action=allow'
+       + ' program="' + exePath + '" enable=yes profile=any',
+       '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
 // Write an admin-page .url internet shortcut (logo icon) at the given path.
 procedure WriteAdminShortcut(const path: String);
 begin
@@ -635,23 +662,31 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  json, internet, autopair: String;
+  lines: TArrayOfString;
+  internet, consent: String;
 begin
   if CurStep <> ssPostInstall then Exit;
 
   // provisioning.json — consumed and removed by the server on first run.
+  // Written as UTF-8 (no BOM): the consent text is localized (accents) and the
+  // server parses this file with a strict UTF-8 JSON parser.
   if InternetPage.Values[0] then internet := 'true' else internet := 'false';
-  autopair := 'true';
-  json :=
-    '{' + #13#10 +
-    '  "internet_access_authorized": ' + internet + ',' + #13#10 +
-    '  "sunshine": {' + #13#10 +
-    '    "auto_pair": ' + autopair + ',' + #13#10 +
-    '    "username": "' + JsonEscape(SunshineUserEdit.Text) + '",' + #13#10 +
-    '    "password": "' + JsonEscape(SunshinePassEdit.Text) + '"' + #13#10 +
-    '  }' + #13#10 +
-    '}' + #13#10;
-  SaveStringToFile(ExpandConstant('{app}\provisioning.json'), json, False);
+  // Exact agreement text the user read on the Internet page — recorded by the
+  // server in its DNS registration audit log (legal traceability).
+  consent := ExpandConstant('{cm:InternetPageBody}') + ' / '
+           + ExpandConstant('{cm:InternetPageOption}');
+  StringChangeEx(consent, '%n', ' ', True);
+  SetArrayLength(lines, 9);
+  lines[0] := '{';
+  lines[1] := '  "internet_access_authorized": ' + internet + ',';
+  lines[2] := '  "consent_message": "' + JsonEscape(consent) + '",';
+  lines[3] := '  "sunshine": {';
+  lines[4] := '    "auto_pair": true,';
+  lines[5] := '    "username": "' + JsonEscape(SunshineUserEdit.Text) + '",';
+  lines[6] := '    "password": "' + JsonEscape(SunshinePassEdit.Text) + '"';
+  lines[7] := '  }';
+  lines[8] := '}';
+  SaveStringsToUTF8FileWithoutBOM(ExpandConstant('{app}\provisioning.json'), lines, False);
 
   // Start-Menu admin shortcut (in the group folder created by [Icons]).
   WriteAdminShortcut(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
@@ -660,6 +695,11 @@ begin
   // the real HTTPS port / public domain.
   if WizardIsTaskSelected('desktopicon') then
     WriteAdminShortcut(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
+
+  // Open the firewall for the server before it first binds a listener, so the
+  // inbound HTTPS port (443 / parity / fallback) is reachable from the LAN and
+  // the router's forwarded port — never silently dropped.
+  AddFirewallRule();
 
   // Auto-start at logon (relaunches on crash, keeps the tray icon).
   if WizardIsTaskSelected('autostart') then
@@ -683,6 +723,10 @@ begin
     Exec('schtasks.exe', '/Delete /TN "MoonlightWeb" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE,
+         ewWaitUntilTerminated, rc);
+    // Remove the firewall rule added at install time.
+    Exec(ExpandConstant('{sys}\netsh.exe'),
+         'advfirewall firewall delete rule name="MoonlightWeb"', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     DeleteFile(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
     // Both desktops: the installer wrote the provisional shortcut to the common

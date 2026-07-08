@@ -41,6 +41,9 @@ struct SessionInfo
     qint64 createdAt = 0;   // unix timestamp (secs)
     qint64 lastSeen = 0;    // unix secs; bumped on activity (sliding expiration)
     bool streaming = false; // runtime-only: true while this session has an active stream
+    bool isHost = false;    // created by redeeming the host key: this browser runs on
+                            // the host machine itself (via the public domain) and is
+                            // granted localhost-equivalent (admin) access
 
     QJsonObject toJson() const
     {
@@ -53,6 +56,7 @@ struct SessionInfo
         obj["created_at"] = createdAt;
         obj["last_seen"] = lastSeen;
         obj["streaming"] = streaming;
+        obj["is_host"] = isHost;
         return obj;
     }
 };
@@ -94,8 +98,12 @@ public:
     ValidateResult validatePin(const QString& ip, const QString& pin);
 
     // ── Session management ─────────────────────────────────────────────────
-    QString createSession(const QString& ip, const QString& machineName = QString());
+    QString createSession(const QString& ip, const QString& machineName = QString(),
+                          bool isHost = false);
     bool validateSession(const QString& token) const;
+    /** True when the raw cookie token belongs to a valid *host* session (created
+     *  by redeeming the host key — the browser runs on the host machine). */
+    bool isHostSession(const QString& token) const;
     /** Bump a session's lastSeen on activity (sliding expiration). Takes the raw
      *  cookie token. No-op for unknown/empty tokens. */
     void touchSession(const QString& token);

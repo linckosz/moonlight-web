@@ -34,6 +34,7 @@
 #include <QSslSocket>
 #include <QDirIterator>
 #include "streaming/TransportPriorities.h"
+#include <QTcpServer>
 #include <QTcpSocket>
 #include <QDateTime>
 #include <QStandardPaths>
@@ -106,6 +107,12 @@ InternetAccessManager::InternetAccessManager(AppSettings* settings, QObject* par
     connect(&m_Acme, &AcmeClient::progress, this, &InternetAccessManager::onAcmeProgress);
     connect(&m_Acme, &AcmeClient::errorOccurred, this, &InternetAccessManager::onAcmeError);
     connect(&m_Acme, &AcmeClient::finished, this, &InternetAccessManager::onAcmeFinished);
+
+    // After a parity rebind the HTTPS listener sits on the new port: re-test the
+    // hairpin against it (the test at the end of start() ran while the listener
+    // was still on the old port).
+    connect(this, &InternetAccessManager::httpsPortChanged, this,
+            &InternetAccessManager::updateHairpinStatus);
 
     // Restore persistent state
     m_UniqueId = m_Settings->uniqueId();
@@ -280,14 +287,13 @@ void InternetAccessManager::start()
     // Step 7: UPnP port mapping
     m_Phase = QStringLiteral("configuring_ports");
     if (m_Settings->upnpEnabled()) {
-        // Use the real server port if set, otherwise fall back to settings
-        quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
         if (m_Upnp.discover()) {
-            // Co-existence: never evict another device's mapping. The first
-            // instance to claim the default port keeps a clean URL; further
-            // instances behind the same NAT fall back to a deterministic port and
-            // advertise it in their URL, so all instances stay reachable.
-            m_ExternalHttpsPort = mapPortWithFallback(httpsPort, "TCP", "MoonlightWeb HTTPS");
+            // Co-existence: never evict another device's mapping. HTTPS uses
+            // strict external==internal parity: when another instance holds the
+            // default router port, this instance claims a deterministic fallback
+            // port AND moves its HTTPS listener to it (deferred rebind), so the
+            // advertised URL port is exactly the router-forwarded port.
+            m_ExternalHttpsPort = mapHttpsPortParity();
 
             // Map HTTP port too, so the HTTP→HTTPS redirect works from the internet.
             // Without this mapping, external clients cannot reach the HTTP redirect
@@ -328,6 +334,14 @@ void InternetAccessManager::start()
     m_Phase = QStringLiteral("active");
     emit ready(m_Domain, m_PublicIp);
     qInfo() << "[InternetAccess] Setup complete, domain:" << m_Domain << "public IP:" << m_PublicIp;
+
+    // Test NAT hairpin now so the enable response (and the status the admin page
+    // reads right after) already carries hairpin_reachable — the frontend cannot
+    // probe the domain itself from the untrusted-cert localhost page (Chrome
+    // blocks cross-origin subresources there). When a parity rebind is pending,
+    // the listener is not on the new port yet: httpsPortChanged re-tests once it
+    // has moved, and the periodic check / next page load self-heal regardless.
+    updateHairpinStatus();
 
     // Start periodic checks
     m_PeriodicCheckTimer->start();
@@ -409,6 +423,109 @@ quint16 InternetAccessManager::mapPortWithFallback(quint16 internalPort, const c
     return 0;
 }
 
+bool InternetAccessManager::isLocalPortBindable(quint16 port)
+{
+    QTcpServer probe;
+    const bool ok = probe.listen(QHostAddress::Any, port);
+    probe.close();
+    return ok;
+}
+
+bool InternetAccessManager::testHairpinReachable()
+{
+    if (!m_Active || m_Domain.isEmpty()) return false;
+
+    quint16 port = m_ExternalHttpsPort > 0
+                       ? m_ExternalHttpsPort
+                       : (m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443));
+
+    // A plain TCP connect to our own public endpoint is enough to know whether
+    // the router reflects it back to this LAN host (NAT hairpin). This is
+    // exactly what a browser opened on the host would attempt when following the
+    // public-domain URL. Connecting by hostname also exercises DNS resolution.
+    QTcpSocket sock;
+    sock.connectToHost(m_Domain, port);
+    const bool ok = sock.waitForConnected(2500);
+    sock.abort();
+    qInfo() << "[InternetAccess] Hairpin test" << m_Domain << ":" << port << "->"
+            << (ok ? "reachable" : "unreachable");
+    return ok;
+}
+
+void InternetAccessManager::updateHairpinStatus()
+{
+    const bool ok = testHairpinReachable();
+    if (ok != m_HairpinReachable) {
+        m_HairpinReachable = ok;
+        emit statusChanged(statusJson());
+    }
+}
+
+quint16 InternetAccessManager::mapHttpsPortParity()
+{
+    // Strict parity: the router-side external port must equal the local HTTPS
+    // listener port, so the public URL port is the one the router forwards
+    // (443→443, 48123→48123, ...). Candidates: the current port first, then the
+    // deterministic per-instance fallback range. We never evict another device's
+    // mapping; when the current port is owned elsewhere on the router, we take a
+    // fallback port AND move our own HTTPS listener to it (deferred rebind).
+    const quint16 current = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
+    const quint16 fb = fallbackExternalPort(current);
+    const quint16 candidates[] = {current, fb, static_cast<quint16>(fb + 1),
+                                  static_cast<quint16>(fb + 2), static_cast<quint16>(fb + 3)};
+
+    for (quint16 c : candidates) {
+        std::string existingClient, existingPort;
+        if (m_Upnp.getExistingPortMapping(c, "TCP", existingClient, existingPort)) {
+            if (existingClient != m_Upnp.lanAddress()) {
+                qInfo() << "[InternetAccess] External port" << c << "TCP owned by"
+                        << existingClient.c_str() << "— trying next candidate";
+                continue;
+            }
+            // Already ours — re-add below to refresh the lease.
+        }
+        // The listener must be able to move to c on this machine too.
+        if (c != current && !isLocalPortBindable(c)) {
+            qInfo() << "[InternetAccess] Port" << c << "not bindable locally — trying next";
+            continue;
+        }
+        if (!m_Upnp.addPortMapping(c, c, 3600, "MoonlightWeb HTTPS", "TCP")) continue;
+
+        if (c != current) {
+            qInfo() << "[InternetAccess] Port parity: external" << c
+                    << "claimed — adding a public-domain HTTPS listener on" << c;
+            // Adding a second listener is non-destructive (the primary keeps
+            // serving localhost/LAN), so it is safe to do synchronously inside
+            // the enable request's call stack — no deferral, no torn-down origin.
+            // Publish the external port first so entry points (shortcut, tray)
+            // that react to httpsPortChanged read the right port.
+            m_ExternalHttpsPort = c;
+            if (!m_HttpsRebindCallback) {
+                qWarning() << "[InternetAccess] No HTTPS listener callback set — the public domain"
+                           << "may be unreachable on external port" << c;
+            } else if (m_HttpsRebindCallback(c)) {
+                // Full parity: adopt c as this instance's canonical HTTPS port so
+                // the host's own local URLs (localhost, LAN IP) use the same port
+                // as the public domain — there is a single https_port for host and
+                // router, not 443 locally / c externally. The secondary listener
+                // already accepts on c across every interface, so :c works right
+                // now; persisting it makes the next boot bind the primary listener
+                // straight to c (converging onto one port).
+                m_HttpsPort = c;
+                m_Settings->setHttpsPort(c);
+                emit httpsPortChanged(c);
+            } else {
+                qWarning() << "[InternetAccess] Failed to add public-domain HTTPS listener on" << c;
+            }
+        }
+        return c;
+    }
+
+    qWarning() << "[InternetAccess] Could not map any parity port for HTTPS (current:" << current
+               << ")";
+    return 0;
+}
+
 void InternetAccessManager::forceRefresh()
 {
     qInfo() << "[InternetAccess] Force refresh triggered";
@@ -466,6 +583,9 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("cert_key")] = m_Settings->certKey();
     obj[QStringLiteral("cert_issuing")] = m_CertIssuing;
     obj[QStringLiteral("upnp_available")] = m_Upnp.isAvailable();
+    // Whether the host can reach its own public endpoint (router NAT hairpin).
+    // Drives the host-machine redirect from https://localhost to the domain.
+    obj[QStringLiteral("hairpin_reachable")] = m_HairpinReachable;
     obj[QStringLiteral("https_port")] = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
     // External (router-side) HTTPS port for the public domain URL: the mapped
     // port when known, otherwise the local HTTPS port. Differs from https_port
@@ -667,6 +787,7 @@ bool InternetAccessManager::createOrUpdateARecord()
             return false;
         }
         qInfo() << "[InternetAccess] No existing A record, creating with" << m_PublicIp;
+        logDnsRegistrationAudit(QStringLiteral("create"));
         if (!m_Pdns.createOrUpdateSubdomain(m_UniqueId, m_PublicIp, kDefaultTtl, errorMsg)) {
             m_LastError = errorMsg;
             qWarning() << "[InternetAccess] A record creation failed:" << errorMsg;
@@ -847,6 +968,35 @@ bool InternetAccessManager::detectPublicIp()
 // A record update via PowerDNS
 // ---------------------------------------------------------------------------
 
+void InternetAccessManager::logDnsRegistrationAudit(const QString& action)
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/logs");
+    QDir().mkpath(dir);
+    QFile f(dir + QStringLiteral("/internet-access-audit.log"));
+    if (!f.open(QIODevice::Append)) {
+        qWarning() << "[InternetAccess] Cannot open audit log:" << f.fileName();
+        return;
+    }
+
+    // One JSON object per line (JSONL): machine-parseable, append-only.
+    QJsonObject entry;
+    entry[QStringLiteral("datetime")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    entry[QStringLiteral("action")] = action; // "create" | "update"
+    entry[QStringLiteral("unique_id")] = m_UniqueId;
+    entry[QStringLiteral("domain")] = m_Domain;
+    entry[QStringLiteral("public_ip")] = m_PublicIp;
+    entry[QStringLiteral("local_ip")] = m_LocalIp;
+    entry[QStringLiteral("app_version")] = QCoreApplication::applicationVersion();
+    const QJsonObject consent = m_Settings->internetConsent();
+    entry[QStringLiteral("consent_message")] = consent.value(QStringLiteral("message")).toString();
+    entry[QStringLiteral("consent_at")] = consent.value(QStringLiteral("at")).toString();
+    entry[QStringLiteral("consent_source")] = consent.value(QStringLiteral("source")).toString();
+
+    f.write(QJsonDocument(entry).toJson(QJsonDocument::Compact) + "\n");
+    f.close();
+}
+
 bool InternetAccessManager::updateARecord()
 {
     if (m_Domain.isEmpty() || m_PublicIp.isEmpty()) {
@@ -856,6 +1006,7 @@ bool InternetAccessManager::updateARecord()
 
     qInfo() << "[InternetAccess] Updating A record:" << m_Domain << "->" << m_PublicIp;
 
+    logDnsRegistrationAudit(QStringLiteral("update"));
     QString errorMsg;
     if (!m_Pdns.createOrUpdateSubdomain(m_UniqueId, m_PublicIp, kDefaultTtl, errorMsg)) {
         m_LastError = errorMsg;
@@ -1341,18 +1492,21 @@ void InternetAccessManager::onPeriodicCheck()
         qInfo() << "[InternetAccess] ACME issuance in progress, skipping cert check";
     }
 
-    // 4. Re-verify UPnP mappings. mapPortWithFallback is idempotent and self-
-    // healing: if our external port was taken over since last time, it re-derives
-    // the next free candidate — no eviction, so instances never fight over a port.
+    // 4. Re-verify UPnP mappings. Idempotent and self-healing: if our external
+    // port was taken over since last time, the next free candidate is re-derived
+    // — no eviction, so instances never fight over a port. HTTPS keeps strict
+    // external==internal parity (rebinding the listener if needed).
     if (m_Settings->upnpEnabled() && m_Upnp.isAvailable()) {
-        quint16 httpsPort = m_HttpsPort > 0 ? m_HttpsPort : m_Settings->httpsPort(443);
-        m_ExternalHttpsPort = mapPortWithFallback(httpsPort, "TCP", "MoonlightWeb HTTPS (renew)");
+        m_ExternalHttpsPort = mapHttpsPortParity();
 
         quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
         m_ExternalHttpPort = mapPortWithFallback(httpPort, "TCP", "MoonlightWeb HTTP (renew)");
 
         mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream (renew)");
     }
+
+    // 5. Refresh NAT hairpin reachability (router config can change).
+    updateHairpinStatus();
 
     emit statusChanged(statusJson());
 }

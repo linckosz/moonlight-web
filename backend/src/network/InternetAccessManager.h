@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include <QObject>
 #include <QTimer>
 #include <QDateTime>
@@ -109,6 +111,14 @@ public:
     /// Must be called before start() so UPnP mappings use the correct ports.
     void setPorts(quint16 httpPort, quint16 httpsPort);
 
+    /// Callback used to move the HTTPS listener to a new port when port parity
+    /// requires it (external router port must equal the local HTTPS port).
+    /// Returns true when the rebind succeeded. Must be set before start().
+    void setHttpsRebindCallback(std::function<bool(quint16)> cb)
+    {
+        m_HttpsRebindCallback = std::move(cb);
+    }
+
 signals:
     /// Emitted when Internet Access becomes fully operational.
     void ready(const QString& domain, const QString& publicIp);
@@ -121,6 +131,11 @@ signals:
 
     /// Emitted when TLS certificate is renewed or changed.
     void certificateChanged();
+
+    /// Emitted after the HTTPS listener was successfully moved to a new port
+    /// (port parity rebind). Entry points depending on the port (Desktop
+    /// shortcut, tray tooltip) must refresh.
+    void httpsPortChanged(quint16 port);
 
 private slots:
     /// Called every 5 minutes for periodic checks.
@@ -168,6 +183,12 @@ private:
     /// Update the A record on PowerDNS with the current public IP.
     bool updateARecord();
 
+    /// Append a traceability entry to the dedicated audit log every time an
+    /// A-record registration request is sent to the PowerDNS API. Records the
+    /// timestamp, unique ID, domain, public IP and the user's consent (exact
+    /// agreement text, when and where it was accepted).
+    void logDnsRegistrationAudit(const QString& action);
+
     /// Issue a TLS certificate via the native ACME client.
     bool issueCertificate();
 
@@ -191,6 +212,28 @@ private:
     /// port when another device already owns it. Never evicts another device's
     /// mapping. Returns the external port actually mapped, or 0 on failure.
     quint16 mapPortWithFallback(quint16 internalPort, const char* protocol, const char* desc);
+
+    /// Map the HTTPS port with strict external==internal parity: the router-side
+    /// port always equals the local listener port (443→443, 48123→48123, ...).
+    /// When the preferred port is owned by another device on the router, a
+    /// deterministic fallback port is chosen and the HTTPS listener is moved to
+    /// it via m_HttpsRebindCallback (deferred, out of the current call stack).
+    /// Returns the external (== eventual internal) port, or 0 on failure.
+    quint16 mapHttpsPortParity();
+
+    /// True when the given TCP port can be bound locally (quick listen test).
+    static bool isLocalPortBindable(quint16 port);
+
+    /// Test whether the host can reach its own public endpoint (domain +
+    /// external HTTPS port) — i.e. whether the router supports NAT hairpin /
+    /// loopback. A short TCP connect from this machine to its public address is
+    /// exactly what a browser on the same host would attempt. Blocks up to a few
+    /// seconds; call only from timers, never from the HTTP request path.
+    bool testHairpinReachable();
+
+    /// Re-run the hairpin test, store the result, and emit statusChanged when it
+    /// changed so live admin pages pick it up.
+    void updateHairpinStatus();
 
     /// Resolve the domain via system DNS.
     QString resolveDomain(const QString& domain);
@@ -217,6 +260,9 @@ private:
     QString m_LastError;
     QString m_Phase; ///< Current activation step (drives the UI loader). See statusJson "phase".
     bool m_CertIssuing = false;      ///< True while ACME issuance is in progress
+    bool m_HairpinReachable = false; ///< True when the host can reach its own public
+                                     ///< endpoint (router supports NAT hairpin). Drives
+                                     ///< the host-machine redirect to the public domain.
     quint16 m_HttpPort = 0;          ///< Actual HTTP server port
     quint16 m_HttpsPort = 0;         ///< Actual HTTPS server port
     quint16 m_ExternalHttpsPort = 0; ///< Router-side external HTTPS port (443 or fallback)
@@ -224,6 +270,9 @@ private:
     bool m_ServiceManaged = false; ///< True when launched by a service supervisor (MW_SERVICE set);
                                    ///< such an instance never steals a port mapping owned by
                                    ///< another device — only a manual launch takes over.
+
+    // HTTPS listener rebind hook (port parity), set from main.cpp.
+    std::function<bool(quint16)> m_HttpsRebindCallback;
 
     // Retry state
     int m_PendingRetryCount = 0; ///< Current retry attempt (0..3) for pending registration

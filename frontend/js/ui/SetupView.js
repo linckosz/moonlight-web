@@ -44,8 +44,10 @@ export class SetupView {
         this._httpsPort = 443; // for the "Open MoonlightWeb" switch to HTTPS
         this._error = '';
 
-        // User choices (config step).
-        this._internetAuth = true;
+        // User choices (config step). Internet Access is opt-in: opening the
+        // machine to the Internet (UPnP + public DNS record) requires an
+        // explicit click — never a pre-ticked box.
+        this._internetAuth = false;
         this._installSunshine = true;
         this._autoStart = true;
 
@@ -147,7 +149,7 @@ export class SetupView {
                 <p class="setup-note">${t('setup.internetBody')}</p>
                 <label class="setup-check">
                     <input type="checkbox" id="chk-internet" ${this._internetAuth ? 'checked' : ''} />
-                    <span>${t('setup.internetOption')}</span>
+                    <span class="consent-highlight">${t('setup.internetOption')}</span>
                 </label>`;
 
         const autostartBlock = this._autostartInstalled
@@ -334,6 +336,11 @@ export class SetupView {
         try {
             const result = await BackendClient.applySetup({
                 internet_access_authorized: this._internetAuth,
+                // Exact agreement text displayed — recorded server-side in the
+                // DNS registration audit log (legal traceability).
+                consent_message: this._internetAuth
+                    ? t('setup.internetBody') + ' / ' + t('setup.internetOption')
+                    : '',
                 autostart: this._autoStart,
                 sunshine: {
                     install: willInstall,

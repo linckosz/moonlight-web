@@ -30,6 +30,14 @@ static inline NSString *MWSunshineDmgURL(void)
                                       MWSunshineArch()];
 }
 
+// The Internet opt-in checkbox label. Single source of truth: displayed in the
+// pane AND handed to the server as the consent text it records in its DNS
+// registration audit log.
+static inline NSString *MWInternetConsentText(void)
+{
+    return @"Allow a secure public Internet link (recommended)";
+}
+
 // Merge key/values into the hand-off plist (created if absent), preserving keys
 // written earlier. 0600: it carries the Sunshine password in plaintext until the
 // postinstall (root) reads and deletes it.

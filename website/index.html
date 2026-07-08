@@ -701,9 +701,9 @@
       <div class="dl-card cyb reveal">
         <svg class="os" viewBox="0 0 24 24" role="img" aria-label="Apple logo"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>
         <h3>macOS</h3>
-        <p data-i18n="dl.mac">Apple Silicon DMG with a first‑launch setup wizard.</p>
+        <p data-i18n="dl.mac">Apple Silicon installer with a guided setup wizard.</p>
         <div class="fmt">
-          <a data-asset="mac" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="mac">arm64 .dmg</a>
+          <a data-asset="mac" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="mac">arm64 .pkg</a>
         </div>
       </div>
       <div class="dl-card cyb reveal">
@@ -833,11 +833,11 @@
       // Asset names produced by .github/workflows/release.yml:
       //   MoonlightWeb-installer-win-{x64,arm64}.exe
       //   moonlightweb-linux-x64.{deb,rpm,AppImage}
-      //   moonlightweb-macos-arm64.dmg
+      //   moonlightweb-macos-arm64.pkg
       const assets = {
         'win-x64': find(/win-x64\.exe$/i),
         'win-arm64': find(/win-arm64\.exe$/i),
-        'mac': find(/\.dmg$/i),
+        'mac': find(/\.pkg$/i),
         'linux-deb': find(/\.deb$/i),
         'linux-rpm': find(/\.rpm$/i),
         'linux-appimage': find(/\.appimage$/i),
@@ -944,7 +944,7 @@
     'dl.kicker':'Télécharger', 'dl.h2':'Récupérez le serveur. Amenez les jeux.',
     'dl.p':'Un seul téléchargement, sur le PC gamer uniquement. Tous les autres appareils ouvrent juste un navigateur.',
     'dl.win':'Installeur guidé — Sunshine et accès Internet inclus dans l’assistant.',
-    'dl.mac':'DMG Apple Silicon avec un assistant de configuration au premier lancement.',
+    'dl.mac':'Installeur Apple Silicon avec un assistant de configuration guidé.',
     'dl.linux':'Paquets natifs, ou une AppImage portable pour tout le reste.',
     'dl.foot':'Vous jouez depuis un téléphone, une tablette ou une TV ? Rien à télécharger — le client, c’est votre navigateur. <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">Toutes les versions →</a>',
 

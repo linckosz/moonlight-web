@@ -18,10 +18,12 @@
 #include "AppSettings.h"
 #include "common/Logger.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QStandardPaths>
 
@@ -603,4 +605,56 @@ void AppSettings::setCertAuthEnabled(bool enabled)
     QJsonObject obj = readAll();
     obj["cert_auth_enabled"] = enabled;
     writeAll(obj);
+}
+
+// ── Internet Access consent (legal traceability) ──────────────────────────────
+
+QJsonObject AppSettings::internetConsent() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("internet_consent").toObject();
+}
+
+void AppSettings::setInternetConsent(const QString& message, const QString& source)
+{
+    QJsonObject consent;
+    consent["message"] = message;
+    consent["at"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    consent["source"] = source;
+
+    QJsonObject obj = readAll();
+    obj["internet_consent"] = consent;
+    writeAll(obj);
+}
+
+// ── Host key (host-machine recognition over the public domain) ────────────────
+
+static QString generateLocalKey()
+{
+    QByteArray raw(32, '\0');
+    for (int i = 0; i < raw.size(); ++i)
+        raw[i] = static_cast<char>(QRandomGenerator::system()->bounded(256));
+    return QString::fromLatin1(
+        raw.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+}
+
+QString AppSettings::localKey()
+{
+    QJsonObject obj = readAll();
+    QString key = obj.value("local_key").toString();
+    if (!key.isEmpty()) return key;
+
+    key = generateLocalKey();
+    obj["local_key"] = key;
+    writeAll(obj);
+    return key;
+}
+
+QString AppSettings::rotateLocalKey()
+{
+    QJsonObject obj = readAll();
+    const QString key = generateLocalKey();
+    obj["local_key"] = key;
+    writeAll(obj);
+    return key;
 }

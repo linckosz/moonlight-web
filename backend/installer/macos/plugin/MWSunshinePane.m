@@ -66,10 +66,15 @@
     _passField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0, 104, 220, 22)];
     [view addSubview:_passField];
 
+    // Unchecked by default: opening the machine to the Internet (UPnP + public
+    // DNS record) requires an explicit opt-in click. The label carries a
+    // discreet positive green tint to draw the eye instead of a pre-tick.
     _internetCheck = [[NSButton alloc] initWithFrame:NSMakeRect(0, 66, 470, 22)];
     [_internetCheck setButtonType:NSButtonTypeSwitch];
-    _internetCheck.title = @"Allow a secure public Internet link (recommended)";
-    _internetCheck.state = NSControlStateValueOn;
+    _internetCheck.attributedTitle = [[NSAttributedString alloc]
+        initWithString:MWInternetConsentText()
+            attributes:@{NSForegroundColorAttributeName : [NSColor systemGreenColor]}];
+    _internetCheck.state = NSControlStateValueOff;
     [view addSubview:_internetCheck];
 
     _statusLabel = [self labelAt:34 text:@"Preparing Sunshine…" in:view];
@@ -170,6 +175,9 @@ didFinishDownloadingToURL:(NSURL *)location
         @"username" : user,
         @"password" : pass,
         @"internet" : @(_internetCheck.state == NSControlStateValueOn),
+        // Exact agreement text displayed — recorded by the server in its DNS
+        // registration audit log (legal traceability).
+        @"consent" : MWInternetConsentText(),
     });
     return YES;
 }

@@ -130,6 +130,17 @@ h1, h2,
     color: var(--text-3);
 }
 
+/* Discreet positive tint on the "Allow Internet access" opt-in labels/links
+   (setup wizard, admin page, hosts banner) — draws the eye to the opt-in
+   without pre-ticking the box. */
+.consent-highlight {
+    color: var(--c-success);
+}
+
+a.consent-highlight {
+    text-decoration: underline;
+}
+
 /* ── Reduced motion: silence the looping spinners/pulses ───────────────── */
 @media (prefers-reduced-motion: reduce) {
     *,
