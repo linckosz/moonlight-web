@@ -360,6 +360,12 @@ export class StreamView {
          *  false initially (cursor visible, absolute mouse tracking).
          *  Set to true on first click, reset when pointer lock is lost. */
         this._mouseFocused = false;
+        // Last known pointer position in client coordinates (updated on every
+        // mousemove). Used to re-evaluate the local cursor hide/show decision
+        // when the window regains focus without the pointer moving — otherwise
+        // the local arrow stays visible over the host cursor (double cursor).
+        this._lastMouseClientX = undefined;
+        this._lastMouseClientY = undefined;
         // Per-session "closed" flags: the user can dismiss the stats and the
         // immersive exit overlay with their × button; they stay hidden after.
         this._statsClosed = false;
@@ -500,6 +506,10 @@ export class StreamView {
         this._onPaste = (e) => this.handlePaste(e);
         this._onPointerDownFlush = () => this._flushPendingClipboard();
         this._onWindowBlur = () => this._releaseAllPhysKeys();
+        // Regaining window focus (Alt-Tab back from another app) may leave the
+        // pointer over the streamed picture without a mousemove — re-apply the
+        // cursor hide so the local arrow doesn't double the host cursor.
+        this._onWindowFocus = () => this._refreshLocalCursorOnFocus();
         this._onMouseMove = (e) => this.handleMouseMove(e);
         this._onMouseDown = (e) => this.handleMouseDown(e);
         this._onMouseUp = (e) => this.handleMouseUp(e);
@@ -582,6 +592,9 @@ export class StreamView {
             // modifier stays stuck on the host.
             if (document.visibilityState === 'hidden') this._releaseAllPhysKeys();
             if (document.visibilityState === 'visible' && !this._quitting) {
+                // Coming back to the tab may leave the pointer over the picture
+                // without a mousemove — re-hide the local cursor (double cursor).
+                this._refreshLocalCursorOnFocus();
                 const header = document.querySelector('.stream-header');
                 if (header) {
                     // Toggle will-change to force layer re-compositing
@@ -3682,6 +3695,7 @@ export class StreamView {
         window.addEventListener('beforeunload', this._onBeforeUnload);
         window.addEventListener('pagehide', this._onPageHide);
         window.addEventListener('blur', this._onWindowBlur);
+        window.addEventListener('focus', this._onWindowFocus);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
         // All platforms: keep Escape inside the host while in fullscreen.
         document.addEventListener('fullscreenchange', this._onFsChangeLock);
@@ -3743,6 +3757,8 @@ export class StreamView {
             if (this._mouseFocused) {
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
+                this._lastMouseClientX = e.clientX;
+                this._lastMouseClientY = e.clientY;
                 const rect = this._mediaRect();
                 const rawX = e.clientX - rect.left;
                 const rawY = e.clientY - rect.top;
@@ -3804,6 +3820,30 @@ export class StreamView {
         this.inputEl.addEventListener('mouseup', this._onGamingMouseUp);
     }
 
+    /** Hide the local arrow cursor when a client point sits over the streamed
+     *  picture, show it over the letterbox bars. Shared by mousemove, mouseenter
+     *  and the window-focus refresh so the decision is always consistent. */
+    _updateLocalCursor(clientX, clientY) {
+        if (IS_TOUCH_DEVICE || !this.inputEl) return;
+        if (typeof clientX !== 'number' || typeof clientY !== 'number') return;
+        const rect = this._mediaRect();
+        const rawX = clientX - rect.left;
+        const rawY = clientY - rect.top;
+        const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
+        this.inputEl.style.cursor = inside ? 'none' : 'default';
+    }
+
+    /** When the tab/window regains focus, the pointer may already sit over the
+     *  streamed picture without emitting a mousemove — the local arrow would
+     *  then stay visible on top of the host cursor (double cursor). Re-apply the
+     *  hide/show decision from the last known pointer position. */
+    _refreshLocalCursorOnFocus() {
+        if (this._quitting || IS_TOUCH_DEVICE) return;
+        // Gaming mode hides the cursor via pointer lock once focused: nothing to do.
+        if (this._gamingMode && this._mouseFocused) return;
+        this._updateLocalCursor(this._lastMouseClientX, this._lastMouseClientY);
+    }
+
     _setupNormalMouse() {
         // In non-gaming mode, mouse position is sent in absolute coordinates
         // mapped to the host screen. The cursor on the host follows the client
@@ -3814,6 +3854,11 @@ export class StreamView {
         // cursor to hide (trackpad model).
 
         this._onNormalMouseMove = (e) => {
+            // Remember where the pointer is so the cursor decision can be
+            // re-applied on window focus (see _refreshLocalCursorOnFocus).
+            this._lastMouseClientX = e.clientX;
+            this._lastMouseClientY = e.clientY;
+
             const rect = this._mediaRect();
             // Absolute pixel position within the displayed image
             const rawX = e.clientX - rect.left;
@@ -3855,12 +3900,14 @@ export class StreamView {
             this.handleMouseUp(e);
         };
 
-        // Entering the area shows the default cursor; the first mousemove
-        // hides it once the pointer is confirmed over the actual image.
-        this._onNormalMouseEnter = () => {
-            if (!IS_TOUCH_DEVICE) {
-                this.inputEl.style.cursor = 'default';
-            }
+        // Entering the area: decide the cursor straight away from the pointer
+        // position (mouseenter carries client coords) instead of flashing the
+        // arrow until the first mousemove — this also fixes the double cursor
+        // when the pointer re-enters over the picture after regaining focus.
+        this._onNormalMouseEnter = (e) => {
+            this._lastMouseClientX = e.clientX;
+            this._lastMouseClientY = e.clientY;
+            this._updateLocalCursor(e.clientX, e.clientY);
         };
 
         this._onNormalMouseLeave = () => {
@@ -3890,6 +3937,7 @@ export class StreamView {
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         window.removeEventListener('pagehide', this._onPageHide);
         window.removeEventListener('blur', this._onWindowBlur);
+        window.removeEventListener('focus', this._onWindowFocus);
         document.removeEventListener('visibilitychange', this._onVisibilityChange);
         document.removeEventListener('fullscreenchange', this._onFsChangeLock);
         // Release the keyboard lock if still held (e.g. quit while fullscreen).
