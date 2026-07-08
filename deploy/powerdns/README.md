@@ -74,6 +74,7 @@ in `.env` for a manual install.
 ```
 deploy/powerdns/
 ├── install.sh               # one-shot installer (Docker, security, firewall, up)
+├── renew-certs.sh           # re-issue TLS certs once DNS delegation has propagated
 ├── docker-compose.yml       # dnsdist + pdns + caddy + umami (+ umami-db)
 ├── pdns/
 │   ├── init.sh              # zone bootstrap, then the official pdns wrapper
@@ -223,6 +224,27 @@ MW_TLS_EMAIL=admin@example.top
 MW_TLS_CERT=
 MW_TLS_KEY=
 ```
+
+> **Certificates fail on first boot? That's expected — retry after DNS is live.**
+> Let's Encrypt validates by resolving your domain over the public Internet, so
+> its very first attempt (during `install.sh`) **fails** until two things are
+> true: the registrar delegation (`ns1`/`ns2` glue → `MW_PUBLIC_IP`) has
+> propagated **and** port `53` (UDP **and** TCP) is open on your **cloud
+> firewall / NSG** — not just the host `ufw`/`firewalld`. The Caddy log then
+> shows `DNS problem: SERVFAIL … the domain's nameservers may be malfunctioning`
+> or a query timeout, and browsers get `ERR_SSL_PROTOCOL_ERROR` / TLS alert 80.
+>
+> Once `dig +short api.{MW_DOMAIN} @8.8.8.8` returns your VM's IP, reissue:
+>
+> ```bash
+> cd deploy/powerdns
+> ./renew-certs.sh          # verifies public DNS, then restarts Caddy & tails logs
+> ```
+>
+> The helper refuses to run (and won't burn Let's Encrypt's ~5 failures/hour
+> limit) until public resolution actually works. You can also just
+> `docker compose restart caddy` and watch `docker compose logs -f caddy` for
+> `certificate obtained successfully`.
 
 ### Bring your own certificate
 
