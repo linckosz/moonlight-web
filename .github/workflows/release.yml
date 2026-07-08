@@ -130,6 +130,19 @@ jobs:
       - name: Build
         run: cmake --build build -j
 
+      # Archive the debug symbols so a crash minidump (CrashHandler.cpp) from this
+      # exact build can be symbolized later. The Release build emits MoonlightWeb.pdb
+      # via /DEBUG. Kept as a workflow artifact for maintainers only — NOT attached
+      # to the public Release (symbols aid reverse engineering and are not for end
+      # users). Retained the default 90 days; download the matching arch's PDB to
+      # resolve a dump collected from that release.
+      - name: Archive debug symbols (PDB)
+        uses: actions/upload-artifact@v6
+        with:
+          name: MoonlightWeb-pdb-${{ matrix.arch }}-${{ steps.ver.outputs.version }}
+          path: build/MoonlightWeb.pdb
+          if-no-files-found: error
+
       - name: Stage bundle
         run: cmake --install build --prefix dist
 
