@@ -36,14 +36,24 @@ import { Icons } from './icons.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 
 export class HostListView {
+    // Backoff before re-attempting an app-list fetch that failed transiently
+    // (host momentarily unreachable — e.g. remote path warming up post-reboot).
+    static APP_LIST_RETRY_MS = 4000;
+
     constructor(container) {
         this.container = container;
         this.hosts = [];
         this.pollTimer = null;
         this.eventsBound = false;
         this.onLaunchApp = null; // called with (host, app) when an app card is clicked
-        // Per-host app cache: uuid -> { apps: App[] } | { error: string } | { loading: true }
+        // Per-host app cache:
+        //   { apps: App[] }              → loaded
+        //   { loading: true }            → request in flight
+        //   { error, sticky: true }      → definitive rejection (not paired / not found)
+        //   { error }                    → transient failure (unreachable) → auto-retried
         this.appsByHost = {};
+        // Pending one-shot app-list retry timers, keyed by host uuid.
+        this._appRetryTimers = {};
         this._active = false;
         this._destroyed = false;
         this.renderShell();
@@ -252,6 +262,10 @@ export class HostListView {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
         }
+        for (const uuid of Object.keys(this._appRetryTimers)) {
+            clearTimeout(this._appRetryTimers[uuid]);
+        }
+        this._appRetryTimers = {};
     }
 
     destroy() {
@@ -494,17 +508,25 @@ export class HostListView {
     _ensureAppsLoaded(host) {
         const uuid = host.uuid;
         const cont = this.container.querySelector(`.host-card[data-uuid="${uuid}"] .host-apps`);
-        if (!cont || cont.dataset.loaded === '1') return;
+        if (!cont) return;
 
         const entry = this.appsByHost[uuid];
-        if (entry && (entry.apps || entry.error)) {
-            this._paintApps(cont, entry);
-            cont.dataset.loaded = '1';
+
+        // A definitive result (apps, or a permanent "not paired" / "not found"
+        // rejection) is cached — paint it (cheap) and stop. Transient errors
+        // deliberately fall through so a recovered host reloads on its own
+        // instead of staying wedged behind a red banner until a manual reload.
+        if (entry && (entry.apps || entry.sticky)) {
+            if (cont.dataset.loaded !== '1') {
+                this._paintApps(cont, entry);
+                cont.dataset.loaded = '1';
+            }
             return;
         }
         if (entry && entry.loading) return; // request in flight, placeholder shown
 
         cont.innerHTML = `<div class="host-apps-loading">${t('apps.loading')}</div>`;
+        cont.dataset.loaded = '';
         this.appsByHost[uuid] = { loading: true };
         BackendClient.getAppList(uuid)
             .then((data) => {
@@ -513,10 +535,20 @@ export class HostListView {
                         apps: (data.apps || []).map((a) => new App(a, uuid)),
                     };
                 } else {
-                    this.appsByHost[uuid] = { error: (data && data.message) || 'load_failed' };
+                    // The backend answered with a definitive rejection (host not
+                    // paired / not found) — retrying won't change the outcome.
+                    this.appsByHost[uuid] = {
+                        error: (data && data.message) || 'load_failed',
+                        sticky: true,
+                    };
                 }
             })
             .catch((err) => {
+                // Network error / timeout / 5xx: the host is momentarily
+                // unreachable (typical right after a host reboot while the
+                // remote path warms up and the backend poll re-confirms the
+                // active address). Keep it transient and schedule an auto-retry
+                // so the card self-heals without a manual page reload.
                 console.error('[MW] Failed to load app list:', err);
                 this.appsByHost[uuid] = { error: err.message };
             })
@@ -525,11 +557,39 @@ export class HostListView {
                 const c2 = this.container.querySelector(
                     `.host-card[data-uuid="${uuid}"] .host-apps`,
                 );
-                if (c2) {
-                    this._paintApps(c2, this.appsByHost[uuid]);
+                if (!c2) return;
+                const e2 = this.appsByHost[uuid];
+                const transient = e2 && !e2.apps && !e2.sticky;
+                if (transient) {
+                    // Keep the loading spinner (not the red error) while a retry
+                    // is pending, then re-attempt shortly.
+                    c2.innerHTML = `<div class="host-apps-loading">${t('apps.loading')}</div>`;
+                    c2.dataset.loaded = '';
+                    this._scheduleAppsRetry(uuid);
+                } else {
+                    this._paintApps(c2, e2);
                     c2.dataset.loaded = '1';
                 }
             });
+    }
+
+    // Auto-retry an app-list fetch that failed transiently (unreachable host).
+    // Decoupled from the host-list poll so it fires even when nothing else about
+    // the host changes; one pending retry per host.
+    _scheduleAppsRetry(uuid) {
+        if (this._appRetryTimers[uuid]) return;
+        this._appRetryTimers[uuid] = setTimeout(() => {
+            delete this._appRetryTimers[uuid];
+            if (this._destroyed || !this._active) return;
+            const host = this.hosts.find((h) => h.uuid === uuid);
+            if (!host || !host.isAvailable) return;
+            const entry = this.appsByHost[uuid];
+            // Only retry if still stuck on a transient error.
+            if (entry && !entry.apps && !entry.sticky && !entry.loading) {
+                delete this.appsByHost[uuid]; // clear transient error → re-fetch
+                this._ensureAppsLoaded(host);
+            }
+        }, HostListView.APP_LIST_RETRY_MS);
     }
 
     _paintApps(cont, entry) {
