@@ -3838,10 +3838,20 @@ export class StreamView {
      *  then stay visible on top of the host cursor (double cursor). Re-apply the
      *  hide/show decision from the last known pointer position. */
     _refreshLocalCursorOnFocus() {
-        if (this._quitting || IS_TOUCH_DEVICE) return;
+        if (this._quitting || IS_TOUCH_DEVICE || !this.inputEl) return;
         // Gaming mode hides the cursor via pointer lock once focused: nothing to do.
         if (this._gamingMode && this._mouseFocused) return;
-        this._updateLocalCursor(this._lastMouseClientX, this._lastMouseClientY);
+        // Chrome swallows cursor changes made while the window is unfocused but
+        // still caches the value: mousemoves delivered to the unfocused window
+        // set 'none' without effect, and every later 'none' is deduplicated, so
+        // the local arrow never hides again (permanent double cursor). Force a
+        // real value transition — visible cursor now, hide decision re-applied
+        // on the next frame — so the update actually reaches the OS cursor.
+        this.inputEl.style.cursor = 'default';
+        requestAnimationFrame(() => {
+            if (this._quitting || !this.inputEl) return;
+            this._updateLocalCursor(this._lastMouseClientX, this._lastMouseClientY);
+        });
     }
 
     _setupNormalMouse() {
