@@ -141,6 +141,7 @@ add_executable(mw-server
     src/server/routes/HostRoutes.cpp
     src/server/routes/SystemRoutes.cpp
     src/common/Logger.cpp
+    src/common/CrashHandler.cpp
     src/network/UPNPClient.cpp
     src/network/PdnsClient.cpp
     src/network/StunClient.cpp
@@ -242,7 +243,7 @@ target_link_libraries(mw-server PRIVATE
 
 # ── Platform-specific link libs ────────────────────────────────────────────
 if(WIN32)
-    target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi)
+    target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp)
     # OpenSSL is linked dynamically (import libs) — ship the DLLs next to the exe.
     file(GLOB _mw_ssl_dlls "${_mw_ssl}/lib/${_mw_ssl_arch}/*-3-${_mw_ssl_arch}.dll")
     foreach(_dll ${_mw_ssl_dlls})
@@ -255,6 +256,18 @@ elseif(APPLE)
         "-framework Security" "-framework CoreFoundation")
 else() # Linux / other Unix
     target_link_libraries(mw-server PRIVATE dl)
+endif()
+
+# ── Debug symbols in Release (for crash minidump symbolization) ─────────────
+# The crash handler (CrashHandler.cpp) writes a minidump on an unhandled
+# exception, but a Release build symbolizes it only if a matching .pdb exists.
+# /Zi keeps optimizations while emitting debug info; /DEBUG writes a SEPARATE
+# .pdb (not shipped next to the exe) and /OPT:REF,/OPT:ICF restore the size
+# folding that /DEBUG would otherwise turn off. Keep the .pdb from CI builds to
+# symbolize dumps collected from released binaries.
+if(MSVC)
+    target_compile_options(mw-server PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_link_options(mw-server PRIVATE $<$<CONFIG:Release>:/DEBUG /OPT:REF /OPT:ICF>)
 endif()
 
 # ── AddressSanitizer (opt-in: -DMW_ASAN=ON) ────────────────────────────────

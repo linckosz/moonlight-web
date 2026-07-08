@@ -49,6 +49,7 @@
 #include "server/routes/HostRoutes.h"
 #include "server/routes/SystemRoutes.h"
 #include "common/Logger.h"
+#include "common/CrashHandler.h"
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
 #include "backend/SunshineInstaller.h"
@@ -287,6 +288,14 @@ int main(int argc, char* argv[])
         QDir().mkpath(logDir);
         Logger::instance()->setLogFile(logDir + "/moonlightweb.log");
     }
+
+    // Install the crash handler before anything can crash: on Windows it writes a
+    // minidump (call stacks + modules) next to the log so a hard C++ crash leaves
+    // a post-mortem the .pdb can symbolize. Free until an actual crash → safe in
+    // production. Dumps land in the per-user data dir (writable under an admin
+    // install), same rationale as the log path above.
+    CrashHandler::install(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                          "/crashes");
 
     // Load .env file before anything reads environment variables, then fall back
     // to any values baked in at build time (CI secrets) for vars still unset.
