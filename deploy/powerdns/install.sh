@@ -428,7 +428,11 @@ echo "            MW_PDNS_TOKEN=<the MW_PDNS_API_KEY value from $HERE/.env>"
 echo
 echo "  [ ] 5. Verify once DNS delegation has propagated (minutes to hours):"
 echo "            dig +short NS ${MW_DOMAIN:-<MW_DOMAIN>}"
-echo "            dig +short api.${MW_DOMAIN:-<MW_DOMAIN>}"
+echo "            dig +short api.${MW_DOMAIN:-<MW_DOMAIN>} @8.8.8.8"
+echo "         Then (re)issue the HTTPS certificates — Caddy's first attempt at"
+echo "         install time fails if DNS was not yet resolvable (ERR_SSL_PROTOCOL"
+echo "         _ERROR / TLS alert 80). This helper checks public DNS then retries:"
+echo "            $HERE/renew-certs.sh"
 echo
 echo "  [ ] 6. Turn ON website analytics (Umami):"
 echo "         a) open  https://stats.${MW_DOMAIN:-<MW_DOMAIN>}   (default login: admin / umami)"
