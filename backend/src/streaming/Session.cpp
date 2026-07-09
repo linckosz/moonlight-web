@@ -87,6 +87,21 @@ StreamSession::StreamSession(NvComputer* host, int appId, NvHTTP* http, Response
     m_Config.codec = videoCodec;
     qInfo() << "[Session] Video codec preference set to" << static_cast<int>(videoCodec);
 
+    // WebRTC MediaTrack transport carries video over a native RTP video track that
+    // libdatachannel only packetizes as H.264 (MediaTrackRelay::createTracksAndChannels
+    // uses H264RtpPacketizer, PT=96). Sunshine must therefore encode H.264, otherwise
+    // it negotiates its preferred HEVC and the browser's <video> decoder receives HEVC
+    // NAL units on an H.264-declared track — the stream never starts. Force H.264 here
+    // when the user picked HEVC/AV1/Auto and record the override so the frontend is told
+    // the original selection (onShimConnectionStarted reports codecOverridden/originalCodec).
+    if (m_Transport == "webrtc-media" && videoCodec != VideoCodec::H264) {
+        m_CodecOverridden = true;
+        m_OriginalCodec = videoCodec;
+        m_Config.codec = VideoCodec::H264;
+        qInfo() << "[Session] webrtc-media transport — forcing H.264 (original codec:"
+                << static_cast<int>(videoCodec) << ")";
+    }
+
     // YUV 4:4:4 chroma: adds the YUV444 profile flags to the negotiated formats
     // (full chroma resolution, higher bandwidth). Off by default.
     m_Config.chroma = yuv444 ? ChromaSampling::C444 : ChromaSampling::C420;
