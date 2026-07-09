@@ -205,9 +205,14 @@ void MediaTrackRelay::setupPeerConnection(const rtc::Configuration& config)
         qInfo() << "[MediaTrackRelay] PC state changed to" << static_cast<int>(state);
         if (state == rtc::PeerConnection::State::Connected) {
             qInfo() << "[MediaTrackRelay] PeerConnection connected";
-            if (m_IceCheckTimer) {
-                m_IceCheckTimer->stop();
-            }
+            // This callback runs on a libdatachannel thread; QTimer must be
+            // stopped from its owning (relay) thread.
+            QMetaObject::invokeMethod(
+                this,
+                [this]() {
+                    if (m_IceCheckTimer) m_IceCheckTimer->stop();
+                },
+                Qt::QueuedConnection);
         } else if (state == rtc::PeerConnection::State::Disconnected ||
                    state == rtc::PeerConnection::State::Failed ||
                    state == rtc::PeerConnection::State::Closed) {
@@ -335,11 +340,20 @@ void MediaTrackRelay::createTracksAndChannels()
                     ClipboardBridge::instance()->requestAnnounce();
                 }
 
-                // Start periodic stats timer
-                if (m_StatsTimer) {
-                    m_StatsTimer->start();
-                    qInfo() << "[MediaTrackRelay] Stats timer started (2s interval)";
-                }
+                // Start periodic stats timer on the relay's own thread: this
+                // callback runs on a libdatachannel thread and QTimer::start()
+                // must be invoked from the timer's owning thread (otherwise Qt
+                // warns "Timers cannot be started from another thread" and the
+                // timer never fires → no stats reach the browser).
+                QMetaObject::invokeMethod(
+                    this,
+                    [this]() {
+                        if (m_StatsTimer) {
+                            m_StatsTimer->start();
+                            qInfo() << "[MediaTrackRelay] Stats timer started (2s interval)";
+                        }
+                    },
+                    Qt::QueuedConnection);
             });
             m_InputDc->onClosed(
                 [this]() { qInfo() << "[MediaTrackRelay] Input DataChannel closed"; });
