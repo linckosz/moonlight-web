@@ -17,6 +17,8 @@
 
 #include "MoonlightShim.h"
 
+#include "common/MacActivity.h"
+
 extern "C" {
 #include "Limelight.h"
 #include "PlatformSockets.h"
@@ -57,6 +59,13 @@ void MoonlightShim::startConnection(const InitParams& params)
         qWarning() << "[MoonlightShim] Connection already in progress";
         return;
     }
+
+    // Keep macOS from App Nap'ing this windowless process while streaming —
+    // timer coalescing on a background process stalls the relay event loop
+    // past the 3-frame pending bound and turns the stream into IDR churn.
+    // Released in finishCleanup() (single guaranteed teardown point).
+    MacActivity::beginStreaming();
+    m_ActivityHeld = true;
 
     s_Instance.store(this, std::memory_order_release);
 
@@ -158,9 +167,9 @@ void MoonlightShim::startConnection(const InitParams& params)
             bool retriable = failedStage > STAGE_NONE && failedStage <= STAGE_CONTROL_STREAM_START;
             if (m_Stopping.load() || !retriable || attempt == kMaxAttempts) break;
 
-            fprintf(stderr,
-                    "[MoonlightShim] Stage %d failed (err=%d) — transient, retry %d/%d in %dms\n",
-                    failedStage, err, attempt, kMaxAttempts - 1, kRetryDelayMs);
+            qWarning() << "[MoonlightShim] Stage" << failedStage << "failed (err=" << err
+                       << ") — transient, retry" << attempt << "/" << (kMaxAttempts - 1) << "in"
+                       << kRetryDelayMs << "ms";
 
             // Interruptible wait: bail out at once if the user quits mid-retry.
             for (int waited = 0; waited < kRetryDelayMs && !m_Stopping.load(); waited += 50)
@@ -178,8 +187,8 @@ void MoonlightShim::startConnection(const InitParams& params)
                               : QString("LiStartConnection failed: error %1 (socket=%2)")
                                     .arg(err)
                                     .arg(LastSocketFail());
-            fprintf(stderr, "[MoonlightShim] Connection failed after %d attempt(s): %s\n",
-                    kMaxAttempts, qPrintable(msg));
+            qWarning() << "[MoonlightShim] Connection failed after" << kMaxAttempts
+                       << "attempt(s):" << msg;
             emit connectionFailed(msg);
         }
     });
@@ -303,6 +312,11 @@ void MoonlightShim::finishCleanup()
     LiStopConnection();
     qInfo() << "[MoonlightShim::finishCleanup] LiStopConnection() returned OK";
 
+    if (m_ActivityHeld) {
+        m_ActivityHeld = false;
+        MacActivity::endStreaming();
+    }
+
     emit connectionStopped();
 }
 
@@ -315,8 +329,8 @@ void MoonlightShim::interruptConnection()
 
 int MoonlightShim::drSetup(int videoFormat, int width, int height, int redrawRate, void*, int)
 {
-    fprintf(stderr, "[MoonlightShim] drSetup: videoFormat=0x%x %dx%d @%d\n", videoFormat, width,
-            height, redrawRate);
+    qInfo() << "[MoonlightShim] drSetup: videoFormat=" << Qt::hex << videoFormat << Qt::dec << width
+            << "x" << height << "@" << redrawRate;
 
     // Store the negotiated video format so the session can report the
     // actual codec to the frontend (not just the user preference).
@@ -325,7 +339,6 @@ int MoonlightShim::drSetup(int videoFormat, int width, int height, int redrawRat
         instance->m_NegotiatedVideoFormat.store(videoFormat, std::memory_order_release);
     }
 
-    fflush(stderr);
     return 0;
 }
 
@@ -351,12 +364,13 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     if (decodeUnit->frameType != 1 &&
         instance->m_PendingVideoFrames.load(std::memory_order_acquire) >= kMaxPendingVideoFrames) {
         instance->m_WorkerDroppedDelta.store(true, std::memory_order_release);
-        static int workerDropCount = 0;
-        workerDropCount++;
-        if (workerDropCount <= 3 || workerDropCount % 120 == 0) {
-            fprintf(stderr,
-                    "[MoonlightShim] Dropped delta worker-side (main thread backlog), total=%d\n",
-                    workerDropCount);
+        int64_t dropCount =
+            instance->m_WorkerDropCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        // qWarning (not stderr): this drop is the usual trigger of IDR churn and
+        // must be visible in the log file to diagnose it from a user capture.
+        if (dropCount <= 3 || dropCount % 120 == 0) {
+            qWarning() << "[MoonlightShim] Dropped delta worker-side (relay thread backlog),"
+                       << "total=" << dropCount;
         }
         return DR_OK;
     }

@@ -75,6 +75,10 @@ bool installLoginItem()
                                          "    <key>KeepAlive</key>\n"
                                          "    <dict><key>SuccessfulExit</key><false/></dict>\n"
                                          "    <key>ThrottleInterval</key><integer>5</integer>\n"
+                                         // Interactive: without it launchd applies background
+                                         // resource limits (timer coalescing/QoS) that stall the
+                                         // streaming pipeline. See common/MacActivity.h.
+                                         "    <key>ProcessType</key><string>Interactive</string>\n"
                                          "    <key>StandardOutPath</key><string>%3</string>\n"
                                          "    <key>StandardErrorPath</key><string>%3</string>\n"
                                          "</dict>\n"
