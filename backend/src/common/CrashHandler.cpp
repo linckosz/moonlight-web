@@ -53,12 +53,12 @@ static LONG WINAPI writeDump(EXCEPTION_POINTERS* ex)
     GetLocalTime(&st);
 
     wchar_t path[MAX_PATH];
-    wsprintfW(path, L"%s\\crash-%04u%02u%02u-%02u%02u%02u-%lu.dmp", g_CrashDir, st.wYear,
-              st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+    wsprintfW(path, L"%s\\crash-%04u%02u%02u-%02u%02u%02u-%lu.dmp", g_CrashDir, st.wYear, st.wMonth,
+              st.wDay, st.wHour, st.wMinute, st.wSecond,
               static_cast<unsigned long>(GetCurrentProcessId()));
 
-    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file =
+        CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
         MINIDUMP_EXCEPTION_INFORMATION mei;
         mei.ThreadId = GetCurrentThreadId();
@@ -102,7 +102,8 @@ void install(const QString& crashDir)
         native.toWCharArray(g_CrashDir);
         g_CrashDir[native.size()] = L'\0';
         SetUnhandledExceptionFilter(writeDump);
-        Logger::info(QString("[CrashHandler] Minidump handler installed — dumps in %1").arg(native));
+        Logger::info(
+            QString("[CrashHandler] Minidump handler installed — dumps in %1").arg(native));
     } else {
         Logger::warning("[CrashHandler] Crash dir path too long — minidump handler not installed");
     }
