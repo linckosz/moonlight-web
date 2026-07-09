@@ -94,7 +94,7 @@ en.SunshinePageCaption=Sunshine
 en.SunshinePageDesc=Sunshine streaming server
 en.SunshineInstallCheck=Install Sunshine automatically
 en.SunshineInstallCheckDone=Install Sunshine automatically (already installed)
-en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb.
+en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb automatically, or leave them blank to skip and pair later from the admin page.
 en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically, then set its credentials.
 en.SunshineUserLabel=Username
 en.SunshinePassLabel=Password
@@ -104,7 +104,6 @@ en.RunAdmin=Open the admin page
 en.SunshineDownloadCaption=Downloading and installing Sunshine...
 en.SunshineDownloadFail=Failed to download Sunshine:
 en.SunshineLaunchFail=Could not start the Sunshine installer.
-en.AdminShortcut=MoonlightWeb Admin
 en.ProvisionPageCaption=Setting up MoonlightWeb
 en.ProvisionPageDesc=Finalizing the installation
 en.ProvisionWorking=Please wait while MoonlightWeb finishes setting up...
@@ -121,7 +120,7 @@ fr.SunshinePageCaption=Sunshine
 fr.SunshinePageDesc=Serveur de streaming Sunshine
 fr.SunshineInstallCheck=Installer Sunshine automatiquement
 fr.SunshineInstallCheckDone=Installer Sunshine automatiquement (déjà installé)
-fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nEntrez ses identifiants pour appairer MoonlightWeb.
+fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nSaisissez ses identifiants pour appairer MoonlightWeb automatiquement, ou laissez-les vides pour ignorer et appairer plus tard depuis la page admin.
 fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement, puis définissez ses identifiants.
 fr.SunshineUserLabel=Identifiant
 fr.SunshinePassLabel=Mot de passe
@@ -131,7 +130,6 @@ fr.RunAdmin=Ouvrir la page admin
 fr.SunshineDownloadCaption=Téléchargement et installation de Sunshine...
 fr.SunshineDownloadFail=Échec du téléchargement de Sunshine :
 fr.SunshineLaunchFail=Impossible de lancer l'installeur Sunshine.
-fr.AdminShortcut=Administration MoonlightWeb
 fr.ProvisionPageCaption=Configuration de MoonlightWeb
 fr.ProvisionPageDesc=Finalisation de l'installation
 fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de MoonlightWeb...
@@ -148,7 +146,7 @@ zh.SunshinePageCaption=Sunshine
 zh.SunshinePageDesc=Sunshine 串流服务器
 zh.SunshineInstallCheck=自动安装 Sunshine
 zh.SunshineInstallCheckDone=自动安装 Sunshine（已安装）
-zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n请输入其凭据以配对 MoonlightWeb。
+zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n请输入其凭据以自动配对 MoonlightWeb，或留空以跳过并稍后在管理页面配对。
 zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装，然后设置其凭据。
 zh.SunshineUserLabel=用户名
 zh.SunshinePassLabel=密码
@@ -158,7 +156,6 @@ zh.RunAdmin=打开管理页面
 zh.SunshineDownloadCaption=正在下载并安装 Sunshine...
 zh.SunshineDownloadFail=下载 Sunshine 失败：
 zh.SunshineLaunchFail=无法启动 Sunshine 安装程序。
-zh.AdminShortcut=MoonlightWeb 管理
 zh.ProvisionPageCaption=正在设置 MoonlightWeb
 zh.ProvisionPageDesc=正在完成安装
 zh.ProvisionWorking=请稍候，MoonlightWeb 正在完成设置...
@@ -174,14 +171,13 @@ Name: "autostart"; Description: "{cm:AutoStartTask}"; GroupDescription: "{cm:Add
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-; Start-Menu group + Desktop: the application and an "Admin" entry, both .lnk
-; shortcuts that LAUNCH THE EXE (not a URL). The windowless app starts when it
-; is down or, when already running, surfaces the admin page via its
-; single-instance logic — so one click always lands on Admin, launching the app
-; first if needed. The uninstaller entry lives in the group too.
+; Start-Menu group + Desktop: a single "MoonlightWeb" entry, a .lnk shortcut that
+; LAUNCHES THE EXE (not a URL). The windowless app starts when it is down or, when
+; already running, surfaces the admin page via its single-instance logic — so one
+; click always lands on the admin page, launching the app first if needed. The
+; uninstaller entry lives in the group too.
 Name: "{group}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
-Name: "{group}\{cm:AdminShortcut}"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"
-Name: "{autodesktop}\{cm:AdminShortcut}"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\MoonlightWeb"; Filename: "{app}\{#MyAppExe}"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 
 [Run]
@@ -363,8 +359,9 @@ begin
       SunshineInstallCheck.Checked := True;
       SunshineInstallCheck.Enabled := False;
       // Do NOT prefill: wrong (default) credentials make the REST PIN push fail,
-      // leaving a pending pairing request and an unpaired host. Force the user
-      // to type Sunshine's real username/password.
+      // leaving a pending pairing request and an unpaired host. The user types
+      // Sunshine's real username/password to pair — or leaves them blank to skip
+      // pairing (auto_pair is then written false; see CurStepChanged).
       SunshineUserEdit.Text := '';
       SunshinePassEdit.Text := '';
     end else begin
@@ -381,16 +378,17 @@ begin
   end;
 end;
 
-// Require Sunshine credentials before leaving the page so auto-pairing can work.
+// Credentials are only MANDATORY for a fresh auto-install: the silent installer
+// sets Sunshine's username/password via --creds, so both must be provided. When
+// Sunshine is ALREADY installed the credentials only drive optional auto-pairing
+// — the user may leave them blank to skip pairing and continue (they can pair
+// later from the admin page). If Sunshine is absent and install is declined, the
+// grayed-out fields are irrelevant.
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
   if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
-    // Credentials are only required when they will actually be used: Sunshine
-    // already installed (pair with its real creds) or a fresh install requested.
-    // If Sunshine is absent and install is declined, the grayed-out fields are
-    // irrelevant — don't block.
-    if (SunshineDetected or SunshineInstallCheck.Checked)
+    if (not SunshineDetected) and SunshineInstallCheck.Checked
        and ((Trim(SunshineUserEdit.Text) = '') or (Trim(SunshinePassEdit.Text) = '')) then begin
       MsgBox(ExpandConstant('{cm:SunshineCredsRequired}'), mbError, MB_OK);
       Result := False;
@@ -688,7 +686,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   lines: TArrayOfString;
-  internet, consent: String;
+  internet, consent, autoPair: String;
 begin
   if CurStep <> ssPostInstall then Exit;
 
@@ -701,12 +699,20 @@ begin
   consent := ExpandConstant('{cm:InternetPageBody}') + ' / '
            + ExpandConstant('{cm:InternetPageOption}');
   StringChangeEx(consent, '%n', ' ', True);
+  // Only ask the server to auto-pair when the user actually supplied credentials.
+  // Blank creds mean "skip pairing" (Sunshine already installed, user chose not
+  // to pair now): pairing with empty creds would fail and leave a pending
+  // request, so mark it skipped instead.
+  if (Trim(SunshineUserEdit.Text) <> '') and (Trim(SunshinePassEdit.Text) <> '') then
+    autoPair := 'true'
+  else
+    autoPair := 'false';
   SetArrayLength(lines, 9);
   lines[0] := '{';
   lines[1] := '  "internet_access_authorized": ' + internet + ',';
   lines[2] := '  "consent_message": "' + JsonEscape(consent) + '",';
   lines[3] := '  "sunshine": {';
-  lines[4] := '    "auto_pair": true,';
+  lines[4] := '    "auto_pair": ' + autoPair + ',';
   lines[5] := '    "username": "' + JsonEscape(SunshineUserEdit.Text) + '",';
   lines[6] := '    "password": "' + JsonEscape(SunshinePassEdit.Text) + '"';
   lines[7] := '  }';
@@ -717,7 +723,7 @@ begin
   // (created in [Icons]); clean up stale .url shortcuts left by pre-2026-07
   // versions (the server used to self-heal a Desktop/Start-Menu .url pointing
   // at the admin page, which did not start the app).
-  DeleteFile(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
+  DeleteFile(ExpandConstant('{group}\MoonlightWeb Admin.url'));
   DeleteFile(ExpandConstant('{autodesktop}\MoonlightWeb Admin.url'));
   DeleteFile(ExpandConstant('{userdesktop}\MoonlightWeb Admin.url'));
 
@@ -753,7 +759,7 @@ begin
     Exec(ExpandConstant('{sys}\netsh.exe'),
          'advfirewall firewall delete rule name="MoonlightWeb"', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
-    DeleteFile(ExpandConstant('{group}\{cm:AdminShortcut}.url'));
+    DeleteFile(ExpandConstant('{group}\MoonlightWeb Admin.url'));
     // Both desktops: the installer wrote the provisional shortcut to the common
     // desktop ({autodesktop} elevated); the server self-heals one on the USER
     // desktop at every startup (see writeAdminShortcut in main.cpp).

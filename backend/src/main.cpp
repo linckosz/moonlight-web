@@ -215,10 +215,13 @@ static void writeAdminShortcut(const QString& url)
     // installer via Provisioning::setInfo above).
     Q_UNUSED(url);
     const QString exe = QCoreApplication::applicationFilePath();
-    const QString path = desktop + "/MoonlightWeb Admin.desktop";
+    // Legacy name used before 2026-07 — remove it so only the "MoonlightWeb"
+    // entry below remains on the desktop.
+    QFile::remove(desktop + "/MoonlightWeb Admin.desktop");
+    const QString path = desktop + "/MoonlightWeb.desktop";
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=MoonlightWeb Admin\n"
+    f.write(("[Desktop Entry]\nVersion=1.0\nType=Application\nName=MoonlightWeb\n"
              "Exec=\"" +
              exe + "\"\nIcon=moonlightweb\nTerminal=false\n")
                 .toUtf8());
@@ -241,8 +244,10 @@ static void writeAdminShortcut(const QString& url)
     Q_UNUSED(url);
 #else
     // macOS: the app is launched from the Dock/Applications; keep a plain .url
-    // pointer on the Desktop as a convenience.
-    QFile f(desktop + "/MoonlightWeb Admin.url");
+    // pointer on the Desktop as a convenience. Remove the legacy "MoonlightWeb
+    // Admin.url" name used before 2026-07.
+    QFile::remove(desktop + "/MoonlightWeb Admin.url");
+    QFile f(desktop + "/MoonlightWeb.url");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(("[InternetShortcut]\r\nURL=" + url + "\r\n").toUtf8());
     f.close();
