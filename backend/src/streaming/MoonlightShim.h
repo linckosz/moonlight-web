@@ -151,6 +151,10 @@ public:
         return m_WorkerDroppedDelta.exchange(false, std::memory_order_acq_rel);
     }
 
+    // Diagnostics for the relay's periodic drop-counter log line.
+    int64_t workerDropCount() const { return m_WorkerDropCount.load(std::memory_order_relaxed); }
+    int pendingVideoFrames() const { return m_PendingVideoFrames.load(std::memory_order_acquire); }
+
 signals:
     void stageChanged(int stage);
     void connectionStarted();
@@ -202,6 +206,11 @@ private:
     // processed by the relay. Deltas are dropped worker-side when it saturates.
     std::atomic<int> m_PendingVideoFrames{0};
     std::atomic<bool> m_WorkerDroppedDelta{false};
+    std::atomic<int64_t> m_WorkerDropCount{0};
+
+    // Balances MacActivity begin/end (App Nap suppression) across the
+    // startConnection → finishCleanup lifecycle, whatever teardown path runs.
+    bool m_ActivityHeld = false;
 
     void finishCleanup();
     void blockingStopConnection();

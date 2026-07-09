@@ -174,6 +174,11 @@ add_executable(mw-server
 # Ship the binary as "MoonlightWeb(.exe)" regardless of the CMake target name.
 set_target_properties(mw-server PROPERTIES OUTPUT_NAME MoonlightWeb)
 
+# App Nap suppression during streaming (Objective-C++, macOS only).
+if(APPLE)
+    target_sources(mw-server PRIVATE src/common/MacActivity.mm)
+endif()
+
 # Windows release builds run windowless (no console): logs go to a file next to
 # the exe (see main.cpp). Debug keeps the console for development. WIN32_EXECUTABLE
 # switches to /SUBSYSTEM:WINDOWS, so Qt6::EntryPoint must provide WinMain->main.
@@ -254,7 +259,7 @@ if(WIN32)
     endforeach()
 elseif(APPLE)
     target_link_libraries(mw-server PRIVATE
-        "-framework Security" "-framework CoreFoundation")
+        "-framework Security" "-framework CoreFoundation" "-framework Foundation")
 else() # Linux / other Unix
     target_link_libraries(mw-server PRIVATE dl)
 endif()
