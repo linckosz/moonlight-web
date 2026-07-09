@@ -862,9 +862,18 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     // Target socket: connects to the local WebSocket server (signaling or stream relay).
     QTcpSocket* target = new QTcpSocket(this);
 
-    // Guard flags: cleanup is called at most once, regardless of which signal
-    // fires first (client disconnect, target disconnect, target error).
-    bool* guard = new bool(false);
+    // Guard flag: cleanup is called at most once, regardless of which signal
+    // fires first (client disconnect, target disconnect, target error). A
+    // shared_ptr (not a raw new/delete) is required because the socket
+    // destructors triggered by deleteLater() below emit disconnected() again
+    // *from inside ~QAbstractSocket* — that re-entrant emission still reaches
+    // this lambda (connections are only severed later, in ~QObject). With a raw
+    // guard that had already been deleted, the re-entrant call read freed memory
+    // and then dereferenced the half-destroyed socket via state() → SIGSEGV
+    // (observed on macOS during WSS transport churn). The shared_ptr keeps the
+    // flag alive for the lifetime of every connection that captured it, so the
+    // re-entrant call sees *guard == true and returns immediately.
+    auto guard = std::make_shared<bool>(false);
 
     auto cleanup = [clientSocket, target, guard]() {
         if (*guard) return;
@@ -874,7 +883,6 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
         if (target->state() == QAbstractSocket::ConnectedState) target->disconnectFromHost();
         target->deleteLater();
         clientSocket->deleteLater();
-        delete guard;
     };
 
     // Pre-connect cleanup: if client disconnects before target connects,
