@@ -83,6 +83,13 @@ public:
     // error (stale keep-alive, 2s abort) does not flip the host offline.
     int consecutivePollFailures = 0;
 
+    // True when the machine answers at the IP level but the GameStream/Sunshine
+    // server isn't (e.g. the host is powered on but MoonlightWeb/Sunshine isn't
+    // running → the serverinfo poll gets a TCP reset, not a timeout). Lets the
+    // frontend show "Unavailable" (no Wake-on-LAN) instead of a plain "Offline"
+    // + Wake for a host that is demonstrably up. Ephemeral, not persisted.
+    bool reachable = false;
+
     // — Persisted pairing state —
     PairState pairState = PS_UNKNOWN;
     NvAddress activeAddress;

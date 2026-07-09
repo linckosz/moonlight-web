@@ -523,6 +523,10 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     background-color: var(--c-danger-soft);
     color: var(--c-danger);
 }
+.status-badge.unavailable {
+    background-color: var(--surface-3);
+    color: var(--text-3);
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    Toasts

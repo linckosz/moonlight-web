@@ -332,6 +332,7 @@ export class HostListView {
             this.hosts.map((h) => [
                 h.uuid,
                 h.state,
+                h.reachable,
                 h.pairState,
                 h.name,
                 h.activeAddress,
@@ -346,6 +347,7 @@ export class HostListView {
         return [
             host.uuid,
             host.state,
+            host.reachable,
             host.pairState,
             host.name,
             host.activeAddress,
@@ -495,6 +497,11 @@ export class HostListView {
                         <button class="btn btn-secondary btn-wol" data-uuid="${host.uuid}"
                                 title="${this.esc(t('hosts.wakeTitle'))}">${Icons.power}${t('hosts.wakeBtn')}</button>
                     </div>`;
+        }
+        // Reachable at the IP level but the GameStream server isn't running —
+        // the machine is already awake, so there's nothing to wake.
+        if (host.isUnavailable) {
+            return `<div class="host-body-center host-offline-msg">${t('hosts.unavailableMessage')}</div>`;
         }
         // Offline with no usable MAC — nothing to do but show status.
         return `<div class="host-body-center host-offline-msg">${t('hosts.offlineMessage')}</div>`;

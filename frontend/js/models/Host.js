@@ -26,6 +26,9 @@ export class Host {
         this.uuid = data.uuid || '';
         this.name = data.name || 'Unknown Host';
         this.state = data.state || 'unknown';
+        // Machine answers at the IP level but the GameStream server isn't running
+        // (host powered on, MoonlightWeb/Sunshine not started). Backend-derived.
+        this.reachable = data.reachable === true;
         this.pairState = data.pairState || 'unknown';
         this.activeAddress = data.activeAddress || '';
         this.port = data.port || 47989;
@@ -56,9 +59,22 @@ export class Host {
         return this.isOnline && this.isPaired;
     }
 
-    // Wake-on-LAN is offered for offline hosts with a known (non-zero) MAC.
+    // Offline but the machine still answers at the IP level → the host is up,
+    // it just isn't running the GameStream server. Shown as "Unavailable"
+    // (no Wake-on-LAN — the machine is already awake).
+    get isUnavailable() {
+        return !this.isOnline && this.reachable;
+    }
+
+    // Wake-on-LAN is offered for offline hosts with a known (non-zero) MAC —
+    // but only when the machine is actually down (not merely service-down).
     get canWake() {
-        return !this.isOnline && !!this.macAddress && this.macAddress !== '00:00:00:00:00:00';
+        return (
+            !this.isOnline &&
+            !this.reachable &&
+            !!this.macAddress &&
+            this.macAddress !== '00:00:00:00:00:00'
+        );
     }
 
     get displayName() {
@@ -72,18 +88,21 @@ export class Host {
     }
 
     get statusLabel() {
+        if (this.isUnavailable) return t('hosts.statusUnavailable');
         if (!this.isOnline) return t('hosts.statusOffline');
         if (this.isPaired) return t('hosts.statusReady');
         return t('hosts.statusNotPaired');
     }
 
     get statusClass() {
+        if (this.isUnavailable) return 'unavailable';
         if (!this.isOnline) return 'offline';
         if (this.isPaired) return 'ready';
         return 'locked';
     }
 
     get statusIcon() {
+        if (this.isUnavailable) return Icons.unavailable; // reachable, service down
         if (!this.isOnline) return Icons.power; // power off
         if (this.isPaired) return Icons.check; // checkmark
         return Icons.lock; // lock

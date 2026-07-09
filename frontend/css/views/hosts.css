@@ -196,6 +196,10 @@
 .host-card.offline {
     opacity: 0.6;
 }
+/* Reachable but service down — dimmed less than a fully-offline host. */
+.host-card.unavailable {
+    opacity: 0.78;
+}
 
 /* Header row: status icon · name+badge+meta · kebab menu */
 .host-card-head {
@@ -228,6 +232,10 @@
 .status-icon.offline {
     color: var(--c-danger);
     background-color: var(--c-danger-soft);
+}
+.status-icon.unavailable {
+    color: var(--text-3);
+    background-color: var(--surface-3);
 }
 
 .host-card-info {
