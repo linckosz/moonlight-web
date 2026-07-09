@@ -22,10 +22,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QTcpSocket>
 
 namespace SunshineInstaller {
 
@@ -481,8 +483,29 @@ bool launch()
 #endif
 }
 
+namespace {
+
+// Authoritative "is Sunshine usable" probe: can we open its local GameStream
+// HTTP port (47989)? This is what actually matters for the admin UI and does not
+// depend on the OS process name matching a hard-coded string. On macOS `pgrep -x
+// sunshine` proved unreliable (the running daemon was not matched, so the admin
+// page wrongly showed "Start Sunshine" while streaming/pairing worked), which is
+// why port reachability is preferred and the name check is only a fallback.
+bool gameStreamPortOpen()
+{
+    QTcpSocket probe;
+    probe.connectToHost(QHostAddress::LocalHost, 47989);
+    return probe.waitForConnected(400);
+}
+
+} // namespace
+
 bool isRunning()
 {
+    // Prefer the functional signal: if the local GameStream port answers,
+    // Sunshine is up regardless of how the process is named.
+    if (gameStreamPortOpen()) return true;
+
 #if defined(Q_OS_WIN)
     // tasklist filtered on the image name; the header line only prints when a
     // match exists, so a mention of the exe in the output means it's running.
@@ -493,6 +516,7 @@ bool isRunning()
     return out.contains(QStringLiteral("sunshine.exe"), Qt::CaseInsensitive);
 #else
     // pgrep -x matches the exact process name; exit 0 = at least one match.
+    // Fallback only — the port probe above is the primary signal.
     return run(QStringLiteral("/usr/bin/pgrep"), {"-x", "sunshine"}, 10000) == 0;
 #endif
 }
