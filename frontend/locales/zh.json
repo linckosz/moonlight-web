@@ -86,6 +86,12 @@
         "internetAvailableHint": "此服务器也可开放到互联网：",
         "enableInternetLink": "启用互联网访问"
     },
+    "selfStream": {
+        "title": "要串流你自己的电脑吗？",
+        "body": "你正准备串流你正在使用的这台电脑。「盗梦空间」式的循环很有趣，但当你从另一台设备串流这台电脑时，MoonlightWeb 才更有用。",
+        "useUrl": "请在另一台电脑上通过以下地址打开 MoonlightWeb：",
+        "streamAnyway": "仍然串流 🚀"
+    },
     "update": {
         "available": "MoonlightWeb {{version}} 已发布",
         "download": "下载",
@@ -331,7 +337,9 @@
         "sunshineStarted": "Sunshine 已启动。",
         "sunshineStartFailed": "无法启动 Sunshine：{{message}}",
         "sunshineRunning": "Sunshine 已安装并正在运行。",
-        "sunshineStopped2": "Sunshine 已安装但未运行。"
+        "sunshineStopped2": "Sunshine 已安装但未运行。",
+        "openSunshineConfig": "打开 Sunshine 配置",
+        "openSunshineConfigHint": "Sunshine 没有窗口：在 macOS 上它在后台运行（右上角菜单栏），在 Windows/Linux 上位于系统托盘。请从其网页界面进行配置。使用您设置的 Sunshine 用户名和密码登录。"
     },
     "stream": {
         "stop": "停止",

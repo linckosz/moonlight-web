@@ -763,6 +763,26 @@ export class AdminView {
                     }
                 </div>
 
+                <!-- Local Access -->
+                ${
+                    this._localIp
+                        ? `
+                <div class="settings-section">
+                    <h3 class="settings-section-title">${t('admin.localAccess')}</h3>
+                    <div class="settings-field u-pt-0">
+                        <div class="admin-url-row">
+                            <a href="${this.esc(this._buildLocalUrl())}" target="_blank" rel="noopener"
+                               class="tunnel-url-link">${this.esc(this._buildLocalUrl())}</a>
+                        </div>
+                        <p class="settings-hint">
+                            ${t('admin.localAccessHint')}
+                        </p>
+                    </div>
+                </div>
+                `
+                        : ''
+                }
+
                 <!-- Active Sessions (localhost only) -->
                 ${
                     this._isLocalhost()
@@ -785,26 +805,6 @@ export class AdminView {
                             </div>
                         </div>
                     </div>
-                `
-                        : ''
-                }
-
-                <!-- Local Access -->
-                ${
-                    this._localIp
-                        ? `
-                <div class="settings-section">
-                    <h3 class="settings-section-title">${t('admin.localAccess')}</h3>
-                    <div class="settings-field u-pt-0">
-                        <div class="admin-url-row">
-                            <a href="${this.esc(this._buildLocalUrl())}" target="_blank" rel="noopener"
-                               class="tunnel-url-link">${this.esc(this._buildLocalUrl())}</a>
-                        </div>
-                        <p class="settings-hint">
-                            ${t('admin.localAccessHint')}
-                        </p>
-                    </div>
-                </div>
                 `
                         : ''
                 }
@@ -892,8 +892,19 @@ export class AdminView {
                 : t('admin.sunshineStopped2');
             const stateCls = this._sunshineRunning ? 'setup-ok' : 'setup-warn';
             const stateMark = this._sunshineRunning ? '<span class="setup-ok-check">✓</span> ' : '';
+            // Sunshine has no desktop window (menu-bar/tray agent) — its settings
+            // live in its own web UI on the local machine (https, port 47990).
+            // Expose a link so users can reach it; this section is localhost-only,
+            // and Sunshine binds that UI to localhost, so the URL is reachable here.
+            const configLink = `
+                <a class="btn btn-neutral u-mt-2" href="https://localhost:47990"
+                   target="_blank" rel="noopener noreferrer" id="link-sunshine-config">
+                    ${t('admin.openSunshineConfig')}
+                </a>
+                <p class="settings-hint">${t('admin.openSunshineConfigHint')}</p>`;
             body = `<p class="setting-desc ${stateCls}">${stateMark}${this.esc(stateLabel)}</p>
-                    ${controlBtn}`;
+                    ${controlBtn}
+                    ${configLink}`;
         } else if (this._sunshineCanAutoInstall) {
             body = `
                 <p class="setting-desc">${t('admin.sunshineNotInstalled')}</p>

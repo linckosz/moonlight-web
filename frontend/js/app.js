@@ -436,18 +436,14 @@ const MoonlightApp = {
     },
 
     /**
-     * On the host machine, show an informative banner at the top of the hosts
-     * page telling the user how other devices reach this server:
-     *   - Internet Access active → the full public domain URL only (the local
-     *     HTTPS port equals the router-forwarded port, so one URL fits all).
-     *   - Otherwise → the LAN IP URL, plus (when UPnP is available) a discreet
-     *     "enable internet access" link that opens the admin page scrolled to
-     *     the INTERNET section.
-     * Best-effort and host-machine-only; silently skipped otherwise.
+     * Best-effort: resolve the URL other devices use to reach this server.
+     *   - Internet Access active → the public domain URL (with external port).
+     *   - Otherwise → the LAN IP URL (with local HTTPS port).
+     * Returns { url, domain, localIp, httpsPort, extPort, upnpAvailable,
+     * internetActive } or null on failure (url may be '' when nothing is known).
+     * Host-machine only in practice — callers gate on _isHostLocal().
      */
-    async _maybeShowRemoteAccessBanner() {
-        if (!this._isHostLocal()) return;
-
+    async _computeRemoteAccessUrls() {
         let httpsPort = 443;
         let extPort = 443;
         let domain = '';
@@ -466,9 +462,34 @@ const MoonlightApp = {
             upnpAvailable = !!status.upnp_available;
             internetActive = !!status.active && !!status.internet_access_enabled;
         } catch (err) {
-            console.warn('[MW] Could not build remote-access banner:', err);
-            return;
+            console.warn('[MW] Could not read remote-access info:', err);
+            return null;
         }
+
+        let url = '';
+        if (internetActive && domain) {
+            url = 'https://' + domain + (extPort !== 443 ? ':' + extPort : '');
+        } else if (localIp) {
+            url = 'https://' + localIp + (httpsPort !== 443 ? ':' + httpsPort : '');
+        }
+        return { url, domain, localIp, httpsPort, extPort, upnpAvailable, internetActive };
+    },
+
+    /**
+     * On the host machine, show an informative banner at the top of the hosts
+     * page telling the user how other devices reach this server:
+     *   - Internet Access active → the full public domain URL only (the local
+     *     HTTPS port equals the router-forwarded port, so one URL fits all).
+     *   - Otherwise → the LAN IP URL, plus (when UPnP is available) a discreet
+     *     "enable internet access" link that opens the admin page scrolled to
+     *     the INTERNET section.
+     * Best-effort and host-machine-only; silently skipped otherwise.
+     */
+    async _maybeShowRemoteAccessBanner() {
+        if (!this._isHostLocal()) return;
+
+        const info = await this._computeRemoteAccessUrls();
+        if (!info || !info.url) return;
 
         const view = document.getElementById('view-hosts');
         if (!view || view.querySelector('.remote-access-banner')) return;
@@ -476,21 +497,14 @@ const MoonlightApp = {
         const linkHtml = (u) =>
             `<a href="${encodeURI(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a>`;
 
-        let bodyHtml = '';
-        if (internetActive && domain) {
-            const p = extPort !== 443 ? ':' + extPort : '';
-            bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml('https://' + domain + p)}`;
-        } else if (localIp) {
-            const p = httpsPort !== 443 ? ':' + httpsPort : '';
-            bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml('https://' + localIp + p)}`;
-            if (upnpAvailable) {
-                bodyHtml +=
-                    `<br><span class="banner-internet-hint">${t('hosts.internetAvailableHint')}` +
-                    ` <a href="#" id="banner-enable-internet" class="consent-highlight">` +
-                    `${t('hosts.enableInternetLink')}</a></span>`;
-            }
-        } else {
-            return;
+        let bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml(info.url)}`;
+        // LAN URL (Internet Access off) + UPnP available → offer the discreet
+        // shortcut to open this server to the Internet.
+        if (!(info.internetActive && info.domain) && info.upnpAvailable) {
+            bodyHtml +=
+                `<br><span class="banner-internet-hint">${t('hosts.internetAvailableHint')}` +
+                ` <a href="#" id="banner-enable-internet" class="consent-highlight">` +
+                `${t('hosts.enableInternetLink')}</a></span>`;
         }
 
         const banner = document.createElement('div');
@@ -993,13 +1007,30 @@ const MoonlightApp = {
     // Streaming (fullscreen overlay)
     // =========================================================================
 
-    async launchApp(host, app, codecOverride, hdrOverride) {
+    async launchApp(host, app, codecOverride, hdrOverride, opts) {
         // A launch is already in flight or a stream is active — ignore. A second
         // launch here would trigger a backend take-over of the session the user
         // just started. (HostListView blocks card clicks too; this covers every
         // other entry point.)
         if (this.state === 'launching' || this.state === 'streaming') {
             console.warn(`[MW] Launch of "${app.name}" ignored: state=${this.state}`);
+            return;
+        }
+
+        // Streaming your own PC: browser + MoonlightWeb + Sunshine all on ONE
+        // machine (host flagged local AND this browser is on the host). Fun
+        // "Inception" loop, but pointless — warn once and let the user proceed
+        // ("Stream anyway") or back out. Skipped on codec/HDR fallback relaunches
+        // and when already confirmed. The dialog re-invokes launchApp from its own
+        // click so the iOS audio-unlock gesture below stays valid.
+        if (
+            !codecOverride &&
+            !(opts && opts.skipSelfStreamWarn) &&
+            host &&
+            host.isLocalHost &&
+            this._isHostLocal()
+        ) {
+            this._showSelfStreamWarning(host, app);
             return;
         }
 
@@ -1171,6 +1202,77 @@ const MoonlightApp = {
             Toast.error(msg);
             this.transition('app_list');
         }
+    },
+
+    /**
+     * Playful confirmation shown when the user is about to stream the very PC
+     * they're sitting at (the "Inception" loop). Offers the LAN/domain URL to use
+     * from another device, a "Stream anyway" escape hatch, and a Cancel. Cancel
+     * (or Escape / backdrop click) reverts the launching card and resumes polling;
+     * "Stream anyway" re-invokes launchApp with the warning suppressed — done from
+     * the button's own click so the iOS audio-unlock user gesture stays valid.
+     */
+    async _showSelfStreamWarning(host, app) {
+        // Guard against a double-open (e.g. a replayed click).
+        if (document.querySelector('.self-stream-overlay')) return;
+
+        // Fetch the "reach me from elsewhere" URL up front (best-effort).
+        const info = await this._computeRemoteAccessUrls();
+        if (document.querySelector('.self-stream-overlay')) return;
+        const url = info && info.url ? info.url : '';
+
+        const overlay = document.createElement('div');
+        overlay.className = 'pairing-overlay self-stream-overlay';
+        // Plain (non-clickable) text so the user can select and copy the URL to
+        // paste into a browser on another device.
+        const urlHtml = url
+            ? `<p class="self-stream-url">${escapeHtml(t('selfStream.useUrl'))}
+                   <span class="self-stream-url-value">${escapeHtml(url)}</span></p>`
+            : '';
+        overlay.innerHTML = `
+            <div class="pairing-dialog">
+                <h3>${escapeHtml(t('selfStream.title'))}</h3>
+                <p class="pairing-instruction">${escapeHtml(t('selfStream.body'))}</p>
+                ${urlHtml}
+                <div class="pairing-actions">
+                    <button class="btn btn-secondary self-stream-cancel">${escapeHtml(
+                        t('common.cancel'),
+                    )}</button>
+                    <button class="btn self-stream-go">${escapeHtml(
+                        t('selfStream.streamAnyway'),
+                    )}</button>
+                </div>
+            </div>
+        `;
+
+        const onKey = (e) => {
+            if (e.key === 'Escape') cancel();
+        };
+        const cleanup = () => {
+            document.removeEventListener('keydown', onKey);
+            overlay.remove();
+        };
+        const cancel = () => {
+            cleanup();
+            // Revert the app card stuck on "Launching..." and resume the host poll
+            // (both paused by HostListView before it called onLaunchApp).
+            if (this.hostListView) {
+                this.hostListView.clearLaunching();
+                this.hostListView.start();
+            }
+        };
+        const proceed = () => {
+            cleanup();
+            this.launchApp(host, app, undefined, undefined, { skipSelfStreamWarn: true });
+        };
+
+        overlay.querySelector('.self-stream-cancel').addEventListener('click', cancel);
+        overlay.querySelector('.self-stream-go').addEventListener('click', proceed);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) cancel();
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
     },
 
     /**
