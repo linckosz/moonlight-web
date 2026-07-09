@@ -357,10 +357,19 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
         return DR_OK;
     }
 
-    // Worker→main queue bound: if the Qt main thread is backed up, drop deltas
+    // Worker→relay queue bound: if the relay thread is backed up, drop deltas
     // here (before the buffer copy) so latency cannot build in the event queue.
     // Keyframes always pass; the relay arms awaiting-IDR via the dropped flag.
-    static constexpr int kMaxPendingVideoFrames = 3;
+    //
+    // 12, not 3: video arrives from the host over the network and Wi-Fi
+    // aggregation delivers frames in bursts (3-4 at once every few seconds on a
+    // MacBook backend). The relay drains the queue in well under a frame
+    // interval since it moved to a dedicated thread, so a burst is transient —
+    // but with a bound of 3 every burst dropped a delta and forced an IDR
+    // round-trip (~200 KB keyframe), i.e. a visible stutter. 12 absorbs ~200 ms
+    // of burst at 60 fps while still capping runaway latency if the relay
+    // thread genuinely stalls.
+    static constexpr int kMaxPendingVideoFrames = 12;
     if (decodeUnit->frameType != 1 &&
         instance->m_PendingVideoFrames.load(std::memory_order_acquire) >= kMaxPendingVideoFrames) {
         instance->m_WorkerDroppedDelta.store(true, std::memory_order_release);
