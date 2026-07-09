@@ -1570,22 +1570,21 @@ int main(int argc, char* argv[])
     controlChannel.start();
     server.setControlPort(controlChannel.port());
 
-    server.router()->post(
-        "/api/local/focus",
-        [&controlChannel, adminUrl](const HttpRequest& req) -> HttpResponse {
-            // Loopback only: this is the private IPC surface a second local
-            // launch uses, never something a remote peer should trigger.
-            if (!req.isLocal) return HttpResponse::error(403, "local only");
-            QJsonObject obj;
-            if (controlChannel.hasClients()) {
-                controlChannel.broadcastFocusAdmin();
-                obj["delivered"] = true;
-            } else {
-                openInBrowser(adminUrl());
-                obj["delivered"] = false;
-            }
-            return HttpResponse::json(obj, 200);
-        });
+    server.router()->post("/api/local/focus",
+                          [&controlChannel, adminUrl](const HttpRequest& req) -> HttpResponse {
+                              // Loopback only: this is the private IPC surface a second local
+                              // launch uses, never something a remote peer should trigger.
+                              if (!req.isLocal) return HttpResponse::error(403, "local only");
+                              QJsonObject obj;
+                              if (controlChannel.hasClients()) {
+                                  controlChannel.broadcastFocusAdmin();
+                                  obj["delivered"] = true;
+                              } else {
+                                  openInBrowser(adminUrl());
+                                  obj["delivered"] = false;
+                              }
+                              return HttpResponse::json(obj, 200);
+                          });
 
     // — Internet Access via PowerDNS —
 

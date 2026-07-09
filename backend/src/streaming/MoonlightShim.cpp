@@ -373,8 +373,7 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     if (decodeUnit->frameType != 1 &&
         instance->m_PendingVideoFrames.load(std::memory_order_acquire) >= kMaxPendingVideoFrames) {
         instance->m_WorkerDroppedDelta.store(true, std::memory_order_release);
-        int64_t dropCount =
-            instance->m_WorkerDropCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        int64_t dropCount = instance->m_WorkerDropCount.fetch_add(1, std::memory_order_relaxed) + 1;
         // qWarning (not stderr): this drop is the usual trigger of IDR churn and
         // must be visible in the log file to diagnose it from a user capture.
         if (dropCount <= 3 || dropCount % 120 == 0) {

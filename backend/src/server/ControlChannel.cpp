@@ -23,7 +23,10 @@
 
 #include "common/Logger.h"
 
-ControlChannel::ControlChannel(quint16 port, QObject* parent) : QObject(parent), m_Port(port) {}
+ControlChannel::ControlChannel(quint16 port, QObject* parent)
+    : QObject(parent)
+    , m_Port(port)
+{}
 
 ControlChannel::~ControlChannel()
 {
@@ -86,7 +89,8 @@ void ControlChannel::onDisconnected()
 void ControlChannel::broadcastFocusAdmin()
 {
     const QString msg = QStringLiteral("{\"type\":\"focus-admin\"}");
-    for (QWebSocket* client : m_Clients) client->sendTextMessage(msg);
+    for (QWebSocket* client : m_Clients)
+        client->sendTextMessage(msg);
     Logger::info(QStringLiteral("[ControlChannel] focus-admin broadcast to %1 tab(s)")
                      .arg(m_Clients.size()));
 }

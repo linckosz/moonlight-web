@@ -1240,8 +1240,7 @@ void DataChannelRelay::onStatsTimerTick()
     // backlog, sctp* = link saturation.
     {
         const qint64 workerDrops = m_Shim ? m_Shim->workerDropCount() : 0;
-        const qint64 senderDrops =
-            m_Sender ? static_cast<qint64>(m_Sender->queueDropCount()) : 0;
+        const qint64 senderDrops = m_Sender ? static_cast<qint64>(m_Sender->queueDropCount()) : 0;
         const qint64 snapshot =
             workerDrops + senderDrops + m_DeltaDroppedCount + m_KeyframeBackpressureWarnings;
         if (snapshot != m_LastDropSnapshot) {
