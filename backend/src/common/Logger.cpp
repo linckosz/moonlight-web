@@ -18,6 +18,7 @@
 #include "Logger.h"
 #include <QDateTime>
 #include <QDebug>
+#include <cstdio>
 #include <iostream>
 
 Logger* Logger::instance()
@@ -38,7 +39,15 @@ void Logger::setLogFile(const QString& path)
 
     m_File.setFileName(path);
     m_FileOpen = m_File.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
-    if (m_FileOpen) m_Stream.setDevice(&m_File);
+    if (m_FileOpen) {
+        m_Stream.setDevice(&m_File);
+    } else {
+        // stderr is the only place left (launchd captures it in agent.log).
+        // Seen in the wild: app-data dir created root-owned by the pkg
+        // postinstall → every log write silently vanished.
+        fprintf(stderr, "[Logger] Cannot open log file '%s': %s\n", qPrintable(path),
+                qPrintable(m_File.errorString()));
+    }
 }
 
 void Logger::log(Level level, const QString& message)
