@@ -173,6 +173,14 @@ PLIST
 /usr/sbin/chown "$CONSOLE_USER" "$AGENTS/com.moonlightweb.agent.plist"
 echo "wrote LaunchAgent"
 
+# ── 4a) Hand the app-data tree to the user. This script runs as root, so every
+#    dir/file created above (provisioning.json, logs/) is root-owned; the app
+#    runs in the user session and would silently fail to write settings.json,
+#    sessions.json and logs/moonlightweb.log (QFile::open reports nothing).
+/usr/sbin/chown -R "$CONSOLE_USER" "$CONSOLE_HOME/Library/Application Support/MoonlightWeb" \
+    || echo "WARN: chown app-data failed"
+echo "chowned app-data to $CONSOLE_USER"
+
 # ── 4b) Allow the app through the macOS application firewall. It is per-app
 #    (not per-port), so this covers every port the server ever binds — 443, a
 #    per-instance parity port (e.g. when another device already forwards 443 on
