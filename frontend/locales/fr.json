@@ -86,6 +86,12 @@
         "internetAvailableHint": "Ce serveur peut aussi être ouvert à Internet :",
         "enableInternetLink": "activer l'accès Internet"
     },
+    "selfStream": {
+        "title": "Streamer ton propre PC ?",
+        "body": "Tu t'apprêtes à streamer le PC devant lequel tu es assis. L'effet Inception est fun et rigolo, mais MoonlightWeb est bien plus utile quand tu streames ce PC depuis un autre appareil.",
+        "useUrl": "Ouvre MoonlightWeb depuis un autre ordinateur à cette adresse :",
+        "streamAnyway": "Streamer quand même 🚀"
+    },
     "update": {
         "available": "MoonlightWeb {{version}} est disponible",
         "download": "Télécharger",
@@ -331,7 +337,9 @@
         "sunshineStarted": "Sunshine démarré.",
         "sunshineStartFailed": "Impossible de démarrer Sunshine : {{message}}",
         "sunshineRunning": "Sunshine est installé et en cours d'exécution.",
-        "sunshineStopped2": "Sunshine est installé mais pas démarré."
+        "sunshineStopped2": "Sunshine est installé mais pas démarré.",
+        "openSunshineConfig": "Ouvrir la configuration de Sunshine",
+        "openSunshineConfigHint": "Sunshine n'a pas de fenêtre : sur macOS il tourne en arrière-plan (barre de menus en haut à droite), sur Windows/Linux dans la zone de notification. Configurez-le depuis son interface web. Connectez-vous avec le nom d'utilisateur et le mot de passe Sunshine que vous avez définis."
     },
     "stream": {
         "stop": "Arrêter",

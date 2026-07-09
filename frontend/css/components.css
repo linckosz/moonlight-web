@@ -649,6 +649,19 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     color: var(--text-2);
     line-height: 1.5;
 }
+/* Self-stream ("Inception") warning — the "reach me from elsewhere" URL. */
+.self-stream-url {
+    margin-bottom: var(--space-5);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    line-height: 1.5;
+}
+.self-stream-url-value {
+    color: var(--accent, #35c98f);
+    font-weight: 600;
+    word-break: break-all;
+    user-select: all;
+}
 .pairing-status-text {
     font-size: var(--fs-sm);
     margin-bottom: var(--space-3);

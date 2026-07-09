@@ -86,6 +86,12 @@
         "internetAvailableHint": "This server can also be opened to the Internet:",
         "enableInternetLink": "enable internet access"
     },
+    "selfStream": {
+        "title": "Streaming your own PC?",
+        "body": "You're about to stream the very computer you're sitting at. The Inception effect is fun and all, but MoonlightWeb is way more useful when you stream this PC from another device.",
+        "useUrl": "Open MoonlightWeb from another computer at:",
+        "streamAnyway": "Stream anyway 🚀"
+    },
     "update": {
         "available": "MoonlightWeb {{version}} is available",
         "download": "Download",
@@ -331,7 +337,9 @@
         "sunshineStarted": "Sunshine started.",
         "sunshineStartFailed": "Could not start Sunshine: {{message}}",
         "sunshineRunning": "Sunshine is installed and running.",
-        "sunshineStopped2": "Sunshine is installed but not running."
+        "sunshineStopped2": "Sunshine is installed but not running.",
+        "openSunshineConfig": "Open Sunshine configuration",
+        "openSunshineConfigHint": "Sunshine has no window: on macOS it runs in the background (top-right menu bar), on Windows/Linux in the tray. Configure it from its web interface. Sign in with the Sunshine username and password you set."
     },
     "stream": {
         "stop": "Stop",

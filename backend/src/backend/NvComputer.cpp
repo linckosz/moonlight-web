@@ -17,8 +17,10 @@
 
 #include "NvComputer.h"
 
+#include <QHostAddress>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QNetworkInterface>
 
 // --- Construction from serverInfo XML ---------------------------------------
 
@@ -215,6 +217,28 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
     return addrs;
 }
 
+// --- Local-machine detection ------------------------------------------------
+
+bool NvComputer::isLocalMachine() const
+{
+    // Same logic the setup wizard uses (SystemRoutes): a host is "us" when any of
+    // its addresses is localhost, loopback, or an address bound to one of this
+    // machine's own network interfaces (mDNS may register the local Sunshine
+    // under its LAN IP rather than 127.0.0.1).
+    const QList<QHostAddress> selfAddrs = QNetworkInterface::allAddresses();
+    for (const NvAddress& na : {activeAddress, localAddress, manualAddress}) {
+        if (na.isNull()) continue;
+        const QString addrStr = na.address();
+        if (addrStr.isEmpty()) continue;
+        if (addrStr.compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0) return true;
+        const QHostAddress ip(addrStr);
+        if (ip.isNull()) continue;
+        if (ip.isLoopback()) return true;
+        if (selfAddrs.contains(ip)) return true;
+    }
+    return false;
+}
+
 // --- JSON serialization -----------------------------------------------------
 
 QJsonObject NvComputer::toJson() const
@@ -232,6 +256,9 @@ QJsonObject NvComputer::toJson() const
     obj["currentGameId"] = currentGameId;
     obj["serverCodecModeSupport"] = serverCodecModeSupport;
     obj["maxLumaPixelsHEVC"] = maxLumaPixelsHEVC;
+
+    // Frontend uses this to warn when a user streams the very PC they're on.
+    obj["isLocalHost"] = isLocalMachine();
 
     // MAC as hex string
     obj["macAddress"] = QString::fromUtf8(macAddress.toHex(':'));

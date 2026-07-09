@@ -65,6 +65,11 @@ public:
     // Helpers for address iteration during polling
     QVector<NvAddress> uniqueAddresses() const;
 
+    // True when this host resolves to the machine MoonlightWeb runs on (loopback
+    // or one of our own interface addresses). Surfaced in toJson() so the
+    // frontend can warn about streaming your own PC ("Inception" loop).
+    bool isLocalMachine() const;
+
     // State management
     static PairState pairStateFromString(const QString& s);
     static QString pairStateToString(PairState ps);

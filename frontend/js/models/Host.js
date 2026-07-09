@@ -39,6 +39,8 @@ export class Host {
         this.manualAddress = data.manualAddress || '';
         this.serverCodecModeSupport = data.serverCodecModeSupport || 1;
         this.macAddress = data.macAddress || '';
+        // Backend flag: this host is the very machine MoonlightWeb runs on.
+        this.isLocalHost = data.isLocalHost === true;
     }
 
     get isOnline() {
