@@ -68,6 +68,15 @@ bool FrameSender::enqueue(std::shared_ptr<rtc::DataChannel> dc, const QByteArray
         m_Queue.push_back(Job{std::move(dc), data, isKeyframe, isAudio, frameId, backendTs});
     }
     m_Cv.notify_one();
+    if (droppedDelta) {
+        // Each eviction forces an IDR round-trip; must be visible in the log
+        // file to tell this drop source apart from the worker-side one.
+        uint64_t total = m_QueueDrops.load(std::memory_order_relaxed);
+        if (total <= 3 || total % 120 == 0) {
+            qWarning() << "[FrameSender] Evicted queued delta (sender thread backlog), total="
+                       << total;
+        }
+    }
     return droppedDelta;
 }
 

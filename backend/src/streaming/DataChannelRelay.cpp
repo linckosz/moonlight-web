@@ -1233,6 +1233,26 @@ void DataChannelRelay::onStatsTimerTick()
         hostRttMs = m_Shim->hostRttMs();
     }
 
+    // Drop-source counters: one log line per tick, only when a counter moved
+    // (a healthy session stays silent). The drop paths themselves are hot and
+    // mostly quiet; this is the log-file view of WHY IDR churn happens —
+    // worker = relay-thread backlog (scheduling), senderQueue = sender-thread
+    // backlog, sctp* = link saturation.
+    {
+        const qint64 workerDrops = m_Shim ? m_Shim->workerDropCount() : 0;
+        const qint64 senderDrops =
+            m_Sender ? static_cast<qint64>(m_Sender->queueDropCount()) : 0;
+        const qint64 snapshot =
+            workerDrops + senderDrops + m_DeltaDroppedCount + m_KeyframeBackpressureWarnings;
+        if (snapshot != m_LastDropSnapshot) {
+            m_LastDropSnapshot = snapshot;
+            qInfo() << "[DataChannelRelay] Drop counters — worker:" << workerDrops
+                    << "senderQueue:" << senderDrops << "sctpDelta:" << m_DeltaDroppedCount
+                    << "sctpKeyframe:" << m_KeyframeBackpressureWarnings
+                    << "pendingVideoFrames:" << (m_Shim ? m_Shim->pendingVideoFrames() : 0);
+        }
+    }
+
     QJsonObject stats;
     stats["type"] = "stats";
     stats["hostRttMs"] = hostRttMs;
