@@ -195,6 +195,7 @@ private:
     int m_DeltaDroppedCount = 0;            // Delta frames dropped due to full SCTP buffer
     int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
     int m_BackpressureDropCount = 0;        // Frames dropped in current backpressure episode
+    qint64 m_LastDropSnapshot = 0;          // Sum of all drop counters at last stats tick
     // Decode latency tracking (microseconds)
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
 
