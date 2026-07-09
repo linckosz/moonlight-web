@@ -448,6 +448,54 @@
   #lb.on{display:grid}
   #lb img{max-width:96vw; max-height:92vh; border-radius:10px; box-shadow:0 20px 60px rgba(0,0,0,.7)}
 
+  /* ───── Hero flow: PC → Internet → Laptop ───── */
+  .flow{
+    display:grid; width:max-content; margin:26px auto 0;
+    grid-template-columns:auto auto auto; grid-template-rows:auto auto;
+    align-items:center; justify-items:center;
+    column-gap:clamp(4px,1.4vw,16px); row-gap:10px;
+  }
+  .flow img{height:auto; display:block; filter:drop-shadow(0 10px 22px rgba(0,0,0,.55))}
+  .flow-pc{grid-column:1; grid-row:1; width:clamp(60px,8.5vw,92px)}
+  .flow-laptop{grid-column:3; grid-row:1; width:clamp(96px,14vw,150px)}
+  .flow-mid{
+    grid-column:2; grid-row:1; width:clamp(86px,13vw,170px);
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+  }
+  .flow-label{
+    font-weight:800; letter-spacing:.5px; color:var(--cyan);
+    font-size:clamp(.78rem,1.5vw,1.05rem); text-shadow:0 0 14px rgba(25,211,255,.45);
+  }
+  .flow-conn{display:flex; align-items:center; width:100%}
+  .flow-line{
+    flex:1 1 auto; height:6px; border-radius:4px;
+    background:repeating-linear-gradient(90deg,var(--cyan) 0 14px,transparent 14px 24px);
+    filter:drop-shadow(0 0 5px rgba(25,211,255,.5));
+  }
+  .flow-head{
+    width:0; height:0; margin-left:2px; flex:0 0 auto;
+    border-top:10px solid transparent; border-bottom:10px solid transparent;
+    border-left:14px solid var(--cyan);
+    filter:drop-shadow(0 0 5px rgba(25,211,255,.5));
+  }
+  .flow-cap{
+    margin:0; text-align:center; line-height:1.3; max-width:17ch;
+    font:600 clamp(.6rem,1.05vw,.8rem) var(--mono); letter-spacing:.02em; color:var(--muted);
+  }
+  .cap-pc{grid-column:1; grid-row:2}
+  .cap-laptop{grid-column:3; grid-row:2}
+  .flow-cap span{display:block}
+  @media(max-width:620px){
+    .flow{column-gap:3px; row-gap:7px}
+    .flow-pc{width:clamp(50px,15vw,80px)}
+    .flow-laptop{width:clamp(82px,24vw,130px)}
+    .flow-mid{width:clamp(60px,19vw,120px)}
+    .flow-label{font-size:clamp(.68rem,3vw,.95rem)}
+    .flow-line{height:5px; background:repeating-linear-gradient(90deg,var(--cyan) 0 10px,transparent 10px 18px)}
+    .flow-head{border-top:8px solid transparent; border-bottom:8px solid transparent; border-left:11px solid var(--cyan)}
+    .flow-cap{font-size:clamp(.54rem,2.3vw,.72rem); max-width:13ch}
+  }
+
   /* Scroll reveal */
   .reveal{opacity:0; transform:translateY(22px); transition:opacity .6s ease, transform .6s ease}
   .reveal.in{opacity:1; transform:none}
@@ -495,6 +543,19 @@
     <div class="cta cta-hero">
       <a class="btn btn-primary" href="#download" data-i18n="hero.cta1" data-umami-event="download-cta" data-umami-event-loc="hero">Download free</a>
       <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="hero.cta2" data-umami-event="buy-me-a-coffee" data-umami-event-loc="hero">☕ Buy me a coffee</a>
+    </div>
+
+    <div class="flow reveal" aria-label="Your gaming PC streams over the Internet to any browser">
+      <img class="flow-pc" src="assets/pc.png" width="299" height="445" loading="lazy"
+           alt="Gaming PC tower with RGB fans and a GPU">
+      <div class="flow-mid" aria-hidden="true">
+        <span class="flow-label">Internet</span>
+        <div class="flow-conn"><span class="flow-line"></span><span class="flow-head"></span></div>
+      </div>
+      <img class="flow-laptop" src="assets/laptop.png" width="379" height="378" loading="lazy"
+           alt="Laptop running a game in the browser">
+      <p class="flow-cap cap-pc" data-i18n-html="flow.pc"><span>MoonlightWeb</span></p>
+      <p class="flow-cap cap-laptop" data-i18n-html="flow.laptop"><span>Browser only</span></p>
     </div>
 
     <div class="hud reveal" aria-label="Key performance numbers">
@@ -912,6 +973,8 @@
     'hero.cta1':'Télécharger gratuitement', 'hero.cta2':'☕ Offrez‑moi un café',
     'hud.k1':'Latence Wi‑Fi', 'hud.k2':'Résolution', 'hud.k3':'Fréquence',
     'hud.k4':'Codecs', 'hud.k5':'Install. client', 'hud.v3':'jusqu’à 240fps',
+    'flow.pc':'<span>MoonlightWeb</span>',
+    'flow.laptop':'<span>Navigateur seul</span>',
 
     'feat.kicker':'Fonctionnalités',
     'feat.h2':'Conçu comme un client natif.<br>Livré comme une page web.',
@@ -1000,6 +1063,8 @@
     'hero.cta1':'免费下载', 'hero.cta2':'☕ 请我喝杯咖啡',
     'hud.k1':'Wi‑Fi 延迟', 'hud.k2':'分辨率', 'hud.k3':'帧率',
     'hud.k4':'编解码器', 'hud.k5':'客户端安装', 'hud.v3':'最高 240fps',
+    'flow.pc':'<span>MoonlightWeb</span>',
+    'flow.laptop':'<span>仅需浏览器</span>',
 
     'feat.kicker':'功能特性',
     'feat.h2':'像原生客户端一样打造。<br>像网页一样交付。',
