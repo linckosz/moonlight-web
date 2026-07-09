@@ -71,6 +71,7 @@
         "emptyHint": "Click \"Scan Network\" or add a host manually",
         "connectionLost": "Connection lost",
         "statusOffline": "Offline",
+        "statusUnavailable": "Unavailable",
         "statusReady": "Ready",
         "statusNotPaired": "Not paired",
         "wakeBtn": "Wake",
@@ -82,6 +83,7 @@
         "noHostReturned": "No host was returned from the server",
         "menuAria": "Host options",
         "offlineMessage": "This host is offline",
+        "unavailableMessage": "This host is on the network but MoonlightWeb isn't running",
         "remoteAccess": "Other computers can connect to this server at:",
         "internetAvailableHint": "This server can also be opened to the Internet:",
         "enableInternetLink": "enable internet access"

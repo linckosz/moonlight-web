@@ -247,6 +247,7 @@ QJsonObject NvComputer::toJson() const
     obj["uuid"] = uuid;
     obj["name"] = name;
     obj["state"] = computerStateToString(state);
+    obj["reachable"] = reachable;
     obj["pairState"] = pairStateToString(pairState);
     obj["activeAddress"] = activeAddress.address();
     obj["port"] = static_cast<int>(activeAddress.port());

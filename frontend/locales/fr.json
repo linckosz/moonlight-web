@@ -71,6 +71,7 @@
         "emptyHint": "Cliquez sur « Scanner le réseau » ou ajoutez un hôte manuellement",
         "connectionLost": "Connexion perdue",
         "statusOffline": "Hors ligne",
+        "statusUnavailable": "Indisponible",
         "statusReady": "Prêt",
         "statusNotPaired": "Non appairé",
         "wakeBtn": "Réveiller",
@@ -82,6 +83,7 @@
         "noHostReturned": "Aucun hôte renvoyé par le serveur",
         "menuAria": "Options de l'hôte",
         "offlineMessage": "Cet hôte est hors ligne",
+        "unavailableMessage": "Cet hôte est sur le réseau mais MoonlightWeb n'est pas démarré",
         "remoteAccess": "Les autres ordinateurs peuvent se connecter à ce serveur via :",
         "internetAvailableHint": "Ce serveur peut aussi être ouvert à Internet :",
         "enableInternetLink": "activer l'accès Internet"

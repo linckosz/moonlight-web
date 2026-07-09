@@ -71,6 +71,7 @@
         "emptyHint": "点击“扫描网络”或手动添加主机",
         "connectionLost": "连接已断开",
         "statusOffline": "离线",
+        "statusUnavailable": "不可用",
         "statusReady": "就绪",
         "statusNotPaired": "未配对",
         "wakeBtn": "唤醒",
@@ -82,6 +83,7 @@
         "noHostReturned": "服务器未返回任何主机",
         "menuAria": "主机选项",
         "offlineMessage": "此主机处于离线状态",
+        "unavailableMessage": "此主机在网络中，但 MoonlightWeb 未运行",
         "remoteAccess": "其他电脑可通过以下地址连接到此服务器：",
         "internetAvailableHint": "此服务器也可开放到互联网：",
         "enableInternetLink": "启用互联网访问"

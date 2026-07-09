@@ -394,8 +394,25 @@ void ComputerManager::onPollReplyFinished()
     };
 
     if (reply->error() != QNetworkReply::NoError) {
+        // A TCP reset (ConnectionRefused) means the machine answered at the IP
+        // level but nothing is listening on the GameStream port — the host is
+        // powered on, just not running MoonlightWeb/Sunshine. A timeout / host-
+        // unreachable error means the machine itself is down. Surface that split
+        // so the frontend can show "Unavailable" vs "Offline" + Wake-on-LAN.
+        bool refused = (reply->error() == QNetworkReply::ConnectionRefusedError);
+        if (host->reachable != refused) {
+            host->reachable = refused;
+            changed = true;
+        }
         registerFailure(reply->errorString());
     } else {
+        // The HTTP connection itself succeeded → the host is reachable, whatever
+        // the response body turns out to say.
+        if (!host->reachable) {
+            host->reachable = true;
+            changed = true;
+        }
+
         QString xml = QString::fromUtf8(reply->readAll());
 
         try {

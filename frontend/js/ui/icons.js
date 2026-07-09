@@ -32,6 +32,12 @@ export const Icons = {
     lock: svg(
         '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     ),
+    // Alert circle — host reachable at the IP level but GameStream server down
+    // ("Unavailable" status).
+    unavailable: svg(
+        '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>' +
+            '<line x1="12" y1="16" x2="12.01" y2="16"/>',
+    ),
     // Keyboard (was ⌨) — on-screen keyboard toggle
     keyboard: svg(
         '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h0M10 10h0M14 10h0M18 10h0M6 14h0M9 14h6M18 14h0"/>',
