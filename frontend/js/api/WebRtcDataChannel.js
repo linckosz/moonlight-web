@@ -16,6 +16,7 @@
  */
 
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
+import { forceOpusStereo } from '../util/SdpUtils.js';
 
 /**
  * Describe a WebSocket close code for diagnostic logging.
@@ -888,9 +889,15 @@ export class WebRtcDataChannel {
             await this.pc.setRemoteDescription(remoteDesc);
             console.log('[WebRTC] Remote description set (offer)');
 
-            // Create answer
+            // Create answer. Stereo Opus decode for the RTP audio track:
+            // without stereo=1 in the answer fmtp the browser decodes MONO
+            // and downmixes (L+R)/2 → ~-6 dB quieter.
             const answer = await this.pc.createAnswer();
-            await this.pc.setLocalDescription(answer);
+            const modifiedAnswer = new RTCSessionDescription({
+                type: 'answer',
+                sdp: forceOpusStereo(answer.sdp),
+            });
+            await this.pc.setLocalDescription(modifiedAnswer);
             console.log('[WebRTC] Local description set (answer), sending...');
 
             // Start ICE timeout: if ICE doesn't reach connected/completed

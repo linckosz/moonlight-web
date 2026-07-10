@@ -291,9 +291,12 @@ void MediaTrackRelay::createTracksAndChannels()
     // lost UDP packet is masked instead of head-of-line-blocking the whole audio
     // stream (the periodic ~0.5s dropouts). useinbandfec=1 signals the decoder to
     // use the FEC carried in the next Opus packet to reconstruct a lost one.
+    // stereo=1;sprop-stereo=1 is REQUIRED: without it libwebrtc instantiates a
+    // MONO Opus decoder and downmixes the stereo Sunshine stream (L+R)/2, which
+    // plays ~-6 dB quieter than moonlight-qt and loses the stereo image.
     {
         auto audioDesc = rtc::Description::Audio("audio", rtc::Description::Direction::SendOnly);
-        audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1");
+        audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1");
 
         m_AudioTrack = m_Pc->addTrack(audioDesc);
         if (m_AudioTrack) {

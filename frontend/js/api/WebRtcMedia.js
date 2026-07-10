@@ -16,6 +16,7 @@
  */
 
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
+import { forceOpusStereo } from '../util/SdpUtils.js';
 
 /**
  * Describe a WebSocket close code for diagnostic logging.
@@ -700,6 +701,9 @@ export class WebRtcMedia {
             // NACK retransmission is kept enabled: on an RTP track it is a good
             // quality/latency tradeoff under light loss (paired with the
             // backend RtcpNackResponder).
+            // Stereo Opus decode: without stereo=1 in the answer fmtp the
+            // browser decodes MONO and downmixes (L+R)/2 → ~-6 dB quieter.
+            answerSdp = forceOpusStereo(answerSdp);
 
             const modifiedAnswer = new RTCSessionDescription({
                 type: 'answer',
