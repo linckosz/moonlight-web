@@ -629,7 +629,7 @@ bool InternetAccessManager::isReservedSubdomain(const QString& label)
     // Labels the DNS stack itself publishes under the base domain — keep in sync
     // with deploy/powerdns/pdns/init.sh (plus "stats" for the Umami analytics host).
     static const char* const kReserved[] = {
-        "www", "api", "stats", "ns1", "ns2", "mail",
+        "www", "api", "stats", "stream", "ns1", "ns2", "mail",
     };
     for (const char* r : kReserved)
         if (l == QLatin1String(r)) return true;
@@ -642,6 +642,15 @@ bool InternetAccessManager::isReservedSubdomain(const QString& label)
 
 void InternetAccessManager::ensureIdentifiers()
 {
+    // A hand-edited settings.json can carry any unique_id; the REST route is the
+    // only other writer and already rejects reserved labels. Regenerate instead
+    // of registering a label the DNS stack owns (www/api/stats/stream/...).
+    if (!m_UniqueId.isEmpty() && isReservedSubdomain(m_UniqueId)) {
+        qWarning() << "[InternetAccess] unique_id from settings is a reserved subdomain:"
+                   << m_UniqueId << "— regenerating";
+        m_UniqueId.clear();
+    }
+
     // If unique_id is missing, try to extract from saved domain first
     if (m_UniqueId.isEmpty()) {
         QString dotBaseDomain = QStringLiteral(".") + baseDomain();

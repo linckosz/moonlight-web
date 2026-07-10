@@ -34,13 +34,15 @@ domain and `www`:
 - `https://{MW_DOMAIN}` — the canonical landing page (`website/index.html` at the
   repo root).
 - `https://www.{MW_DOMAIN}` — permanently redirected to the apex.
+- `https://stream.{MW_DOMAIN}` — vanity alias shown on the marketing site,
+  permanently redirected to the apex.
 
 Both get their own automatic Let's Encrypt certificate (independent of any
 api-only cert you may supply via `MW_TLS_CERT`). The site is plain HTML/CSS with
 the project screenshots under `website/assets/`. It is **bind-mounted** into the
 Caddy container (`../../website → /srv/site`), so edit it freely then
 `docker compose restart caddy` — no rebuild needed. The zone bootstrap adds the
-`www` A record automatically; the apex `@` A record already existed.
+`www` and `stream` A records automatically; the apex `@` A record already existed.
 
 ## Website analytics (Umami)
 

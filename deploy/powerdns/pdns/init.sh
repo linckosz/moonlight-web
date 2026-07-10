@@ -32,6 +32,7 @@ if ! $PDNSUTIL list-all-zones 2>/dev/null | grep -qx "$MW_DOMAIN"; then
     $PDNSUTIL add-record "$MW_DOMAIN" @   A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" www A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" stats A "$MW_PUBLIC_IP"
+    $PDNSUTIL add-record "$MW_DOMAIN" stream A "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" ns1 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" ns2 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" api A  "$MW_PUBLIC_IP"
@@ -62,7 +63,8 @@ NEED_RECTIFY=0
 ensure_a @     # apex  — presentation site
 ensure_a www   # www   — presentation site
 ensure_a api   # api   — PowerDNS REST API
-ensure_a stats # stats — Umami analytics dashboard
+ensure_a stats  # stats  — Umami analytics dashboard
+ensure_a stream # stream — vanity alias, redirected to the apex by Caddy
 
 # Zones created before default-soa-content was set (zz-mw.conf) carry the image
 # placeholder SOA ("a.misconfigured.dns.server.invalid"); swap in a real one.

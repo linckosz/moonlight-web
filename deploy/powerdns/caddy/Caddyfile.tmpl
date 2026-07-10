@@ -38,11 +38,12 @@ stats.@MW_DOMAIN@ {
 }
 
 # Presentation website — apex + www both serve the static ./site folder.
-@MW_DOMAIN@, www.@MW_DOMAIN@ {
+# stream.* is a vanity alias shown on the marketing site; it redirects to the apex.
+@MW_DOMAIN@, www.@MW_DOMAIN@, stream.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
-	# Redirect bare/www visitors to the canonical apex (drop the www).
-	@www host www.@MW_DOMAIN@
-	redir @www https://@MW_DOMAIN@{uri} permanent
+	# Redirect www/stream visitors to the canonical apex.
+	@alias host www.@MW_DOMAIN@ stream.@MW_DOMAIN@
+	redir @alias https://@MW_DOMAIN@{uri} permanent
 	encode zstd gzip
 	root * /srv/site
 	file_server
