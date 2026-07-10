@@ -99,7 +99,7 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
 
-      # Version from the release tag (v1.2.3 → 1.2.3); CMake default elsewhere.
+      # Version from the release tag (v1.2.3 → 1.2.3); git-describe fallback elsewhere.
       - name: Compute version
         id: ver
         shell: pwsh
@@ -223,7 +223,7 @@ jobs:
           # fpm turns the staged tree into .deb + .rpm (see make-packages.sh).
           sudo gem install --no-document fpm
 
-      # Version from the release tag (v1.2.3 → 1.2.3); CMake default elsewhere.
+      # Version from the release tag (v1.2.3 → 1.2.3); git-describe fallback elsewhere.
       - name: Compute version
         id: ver
         run: |
@@ -357,7 +357,7 @@ jobs:
           py7zrversion: ==1.1.0
           extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
 
-      # Version from the release tag (v1.2.3 → 1.2.3); CMake default elsewhere.
+      # Version from the release tag (v1.2.3 → 1.2.3); git-describe fallback elsewhere.
       - name: Compute version
         id: ver
         run: |

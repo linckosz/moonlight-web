@@ -30,6 +30,11 @@ extern "C" {
 #include <cstring>
 #include <cstdarg>
 
+#ifdef Q_OS_WIN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 std::atomic<MoonlightShim*> MoonlightShim::s_Instance{nullptr};
 
 MoonlightShim::MoonlightShim(QObject* parent)
@@ -611,6 +616,54 @@ void MoonlightShim::sendKeyEvent(short keyCode, bool down, char modifiers, char 
                          flags);
 }
 
+void MoonlightShim::captureHostLockState(bool hostIsSelf)
+{
+#ifdef Q_OS_WIN
+    if (hostIsSelf) {
+        int state = 0;
+        if (GetKeyState(VK_NUMLOCK) & 0x01) state |= 0x1;
+        if (GetKeyState(VK_CAPITAL) & 0x01) state |= 0x2;
+        if (GetKeyState(VK_SCROLL) & 0x01) state |= 0x4;
+        m_HostLockState.store(state, std::memory_order_release);
+        qInfo() << "[MoonlightShim] Host lock state captured:"
+                << "NumLock" << bool(state & 0x1) << "CapsLock" << bool(state & 0x2) << "ScrollLock"
+                << bool(state & 0x4);
+        return;
+    }
+#else
+    Q_UNUSED(hostIsSelf);
+#endif
+    m_HostLockState.store(-1, std::memory_order_release);
+}
+
+void MoonlightShim::syncLockKeys(bool numLock, bool capsLock, bool scrollLock)
+{
+    if (!m_Connected.load(std::memory_order_acquire)) return;
+    // -1 = no snapshot (remote host / unsupported platform): assume the host
+    // starts with every lock off — the common case, and all a client can do
+    // without a protocol-level lock-state field.
+    const int hostState = m_HostLockState.load(std::memory_order_acquire);
+    const struct
+    {
+        short vk;
+        int bit;
+        const char* name;
+        bool client;
+    } locks[] = {
+        {0x90, 0x1, "NumLock", numLock},       // VK_NUMLOCK
+        {0x14, 0x2, "CapsLock", capsLock},     // VK_CAPITAL
+        {0x91, 0x4, "ScrollLock", scrollLock}, // VK_SCROLL
+    };
+    for (const auto& lock : locks) {
+        const bool host = hostState > 0 && (hostState & lock.bit);
+        if (host == lock.client) continue;
+        qInfo() << "[MoonlightShim] Lock sync:" << lock.name << "host" << host << "-> client"
+                << lock.client;
+        sendKeyEvent(lock.vk, true, 0, 0);
+        sendKeyEvent(lock.vk, false, 0, 0);
+    }
+}
+
 void MoonlightShim::sendUtf8Text(const QString& text)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
@@ -707,7 +760,8 @@ double MoonlightShim::hostRttMs() const
 double MoonlightShim::takeHostProcessingLatencyMs()
 {
     const int64_t count = m_HostProcWindowCount.exchange(0, std::memory_order_acq_rel);
-    const int64_t totalTenthMs = m_HostProcWindowTotalTenthMs.exchange(0, std::memory_order_acq_rel);
+    const int64_t totalTenthMs =
+        m_HostProcWindowTotalTenthMs.exchange(0, std::memory_order_acq_rel);
     if (count <= 0) return 0.0;
     return (totalTenthMs / 10.0) / count;
 }

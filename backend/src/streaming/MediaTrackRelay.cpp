@@ -600,6 +600,11 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     } else if (type == "textinput") {
         // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
         m_Shim->sendUtf8Text(msg["text"].toString());
+    } else if (type == "locksync") {
+        // Align the host's toggle locks (Num/Caps/Scroll) with the client's,
+        // sent once per session on the browser's first real keyboard event.
+        m_Shim->syncLockKeys(msg["numLock"].toBool(false), msg["capsLock"].toBool(false),
+                             msg["scrollLock"].toBool(false));
     } else if (type == "clipboardpaste") {
         // Browser Ctrl/Cmd+V: commit the client text to the host clipboard,
         // then inject the paste chord (main-thread hop keeps that order).

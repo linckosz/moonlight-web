@@ -17,6 +17,7 @@
 
 #include "Session.h"
 #include "ClipboardBridge.h"
+#include "HostAudioSink.h"
 #include "DataChannelRelay.h"
 #include "MediaTrackRelay.h"
 #include "SignalingServer.h"
@@ -449,6 +450,18 @@ void StreamSession::onLaunchReplyFinished()
     const bool clipboardLocal = ClipboardBridge::isSelfAddress(m_Host->activeAddress.address());
     qInfo() << "[Session] Clipboard sync" << (clipboardLocal ? "enabled" : "disabled")
             << "(host address:" << m_Host->activeAddress.address() << ")";
+    // Same gate for toggle-lock sync: when the streamed host is this machine,
+    // snapshot its real NumLock/CapsLock/ScrollLock state so the browser's
+    // 'locksync' aligns instead of assuming the host starts with locks off.
+    m_Shim->captureHostLockState(clipboardLocal);
+
+    // Same gate again: Sunshine loopback-captures its virtual sink POST-volume,
+    // and that sink is the host's default output during the stream — volume
+    // keys pressed on the host mid-stream silently attenuate every client and
+    // the value persists. Normalize it back to 100% at each stream start.
+    if (clipboardLocal) {
+        HostAudioSink::ensureFullVolume();
+    }
 
     // Branch: WSS (legacy StreamRelay) or WebRTC (DataChannelRelay + SignalingServer)
     if (m_Transport == "wss") {
