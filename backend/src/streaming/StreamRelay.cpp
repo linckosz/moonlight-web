@@ -512,12 +512,9 @@ void StreamRelay::sendStats()
     stats["hostRttMs"] = hostRttMs;
     // WSS has no per-frame decode-latency tracking; report 0.
     stats["decodeLatencyUs"] = 0;
-
-    {
-        using namespace std::chrono;
-        int64_t nowMs = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-        stats["streamTimeMs"] = static_cast<double>(nowMs);
-    }
+    // Sunshine capture→encode latency (RTP extension), averaged over the frames
+    // of this stats window. 0 when the host doesn't report it.
+    stats["hostProcMs"] = m_Shim ? m_Shim->takeHostProcessingLatencyMs() : 0.0;
 
     m_WsClient->sendTextMessage(
         QString::fromUtf8(QJsonDocument(stats).toJson(QJsonDocument::Compact)));

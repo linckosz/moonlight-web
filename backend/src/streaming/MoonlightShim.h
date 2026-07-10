@@ -97,8 +97,16 @@ public:
     // Called when the browser needs a keyframe to configure its decoder.
     void requestIdrFrame();
 
-    // Metrics for stats overlay
-    double hostRttMs() const { return m_HostRttMs.load(std::memory_order_acquire); }
+    // Metrics for stats overlay.
+    // One-way backend↔Sunshine latency (ms): ENet control-stream RTT / 2 when
+    // available (continuously updated, like moonlight-qt's "network latency"),
+    // falling back to the IDR round-trip estimate for very old hosts.
+    double hostRttMs() const;
+    // Average Sunshine host processing latency (capture→encode, ms) over the
+    // frames received since the previous call — a rotating window like
+    // moonlight-qt's per-second stats windows. Returns 0 when the host doesn't
+    // report it. Read-and-reset: only one consumer (the active relay).
+    double takeHostProcessingLatencyMs();
     int64_t lastDecodeLatencyUs() const
     {
         return m_LastDecodeLatencyUs.load(std::memory_order_acquire);
@@ -194,6 +202,10 @@ private:
         0}; // steady_clock::now() at first frame arrival (us since epoch)
     std::atomic<int64_t> m_FrameHostProcessingLatencyTenthMs{
         0}; // frameHostProcessingLatency (tenths of ms)
+    // Host processing latency window accumulators (reset by
+    // takeHostProcessingLatencyMs on each stats tick).
+    std::atomic<int64_t> m_HostProcWindowTotalTenthMs{0};
+    std::atomic<int64_t> m_HostProcWindowCount{0};
 
     // Negotiated video format (set by drSetup during LiStartConnection).
     // 0 = unknown, 0x0001 = H.264, 0x0100 = HEVC, 0x0200 = AV1.

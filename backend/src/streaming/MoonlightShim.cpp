@@ -403,6 +403,11 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     // FrameHostProcessingLatency is in 1/10 ms units. Value is 0 when unknown.
     instance->m_FrameHostProcessingLatencyTenthMs.store(decodeUnit->frameHostProcessingLatency,
                                                         std::memory_order_release);
+    if (decodeUnit->frameHostProcessingLatency != 0) {
+        instance->m_HostProcWindowTotalTenthMs.fetch_add(decodeUnit->frameHostProcessingLatency,
+                                                         std::memory_order_relaxed);
+        instance->m_HostProcWindowCount.fetch_add(1, std::memory_order_relaxed);
+    }
 
     // Track the steady_clock arrival time of the first frame.
     // This serves as the reference epoch for capture time calculation:
@@ -683,4 +688,26 @@ void MoonlightShim::requestIdrFrame()
                              std::memory_order_release);
     qInfo() << "[MoonlightShim] Calling LiRequestIdrFrame() to request IDR from Sunshine";
     LiRequestIdrFrame();
+}
+
+double MoonlightShim::hostRttMs() const
+{
+    // ENet control-stream RTT (same source as moonlight-qt's "Average network
+    // latency"). Only valid between LiStartConnection and LiStopConnection.
+    if (m_Connected.load(std::memory_order_acquire)) {
+        uint32_t rttMs = 0;
+        uint32_t rttVarianceMs = 0;
+        if (LiGetEstimatedRttInfo(&rttMs, &rttVarianceMs) && rttMs > 0) {
+            return rttMs / 2.0;
+        }
+    }
+    return m_HostRttMs.load(std::memory_order_acquire);
+}
+
+double MoonlightShim::takeHostProcessingLatencyMs()
+{
+    const int64_t count = m_HostProcWindowCount.exchange(0, std::memory_order_acq_rel);
+    const int64_t totalTenthMs = m_HostProcWindowTotalTenthMs.exchange(0, std::memory_order_acq_rel);
+    if (count <= 0) return 0.0;
+    return (totalTenthMs / 10.0) / count;
 }

@@ -67,7 +67,7 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
 
     // Stats timer: sends periodic stats to the browser via Input DC.
     m_StatsTimer = new QTimer(this);
-    m_StatsTimer->setInterval(2000);
+    m_StatsTimer->setInterval(1000); // matches moonlight-qt's stats window flip
     connect(m_StatsTimer, &QTimer::timeout, this, &MediaTrackRelay::onStatsTimerTick);
 }
 
@@ -634,7 +634,7 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     }
 }
 
-// ── Stats timer (2s interval) ───────────────────────────────────────────────────
+// ── Stats timer (1s interval) ───────────────────────────────────────────────────
 
 void MediaTrackRelay::onStatsTimerTick()
 {
@@ -652,6 +652,9 @@ void MediaTrackRelay::onStatsTimerTick()
     // Media track mode: decode happens natively in the browser via RTP,
     // so backend decode latency is not meaningful here.
     stats["decodeLatencyUs"] = 0;
+    // Sunshine capture→encode latency (RTP extension), averaged over the frames
+    // of this stats window. 0 when the host doesn't report it.
+    stats["hostProcMs"] = m_Shim ? m_Shim->takeHostProcessingLatencyMs() : 0.0;
     QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);
 
     try {
