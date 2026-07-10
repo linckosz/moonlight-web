@@ -12,10 +12,41 @@
 cmake_minimum_required(VERSION 3.21)
 project(moonlightweb-backend VERSION 0.1.1 LANGUAGES C CXX)
 
-# Single source of truth for the shipped version string: defaults to the project
-# version; the release workflow overrides it from the v* tag (-DMW_VERSION=x.y.z)
-# so the binary, installers and packages all report the same version.
-set(MW_VERSION "${PROJECT_VERSION}" CACHE STRING "Application version string")
+# Single source of truth for the shipped version string. Priority:
+#   1. -DMW_VERSION=x.y.z on the command line (release CI passes the v* tag)
+#   2. `git describe` against the latest v* tag (local/dev builds; a build
+#      past the tag reports e.g. 0.1.1.3.g6f79dad — dots, not dashes, so the
+#      string stays legal for rpm and parses as newer in UpdateChecker)
+#   3. the project() version above (tarball builds without git)
+set(MW_VERSION "" CACHE STRING "Application version override (empty = derive from git tag)")
+if(NOT MW_VERSION)
+    find_package(Git QUIET)
+    if(Git_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --tags --match "v[0-9]*"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            RESULT_VARIABLE _mw_git_rc
+            OUTPUT_VARIABLE _mw_git_describe
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+    endif()
+    if(Git_FOUND AND _mw_git_rc EQUAL 0)
+        string(REGEX REPLACE "^v" "" _mw_git_describe "${_mw_git_describe}")
+        string(REPLACE "-" "." _mw_git_describe "${_mw_git_describe}")
+        set(MW_VERSION "${_mw_git_describe}")
+        # New commits/tags rewrite these files; watching them makes a plain
+        # `cmake --build` re-configure and pick up the new version.
+        foreach(_mw_git_state HEAD packed-refs)
+            if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../.git/${_mw_git_state}")
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../.git/${_mw_git_state}")
+            endif()
+        endforeach()
+    else()
+        set(MW_VERSION "${PROJECT_VERSION}")
+    endif()
+endif()
+message(STATUS "MW_VERSION: ${MW_VERSION}")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -164,6 +195,7 @@ add_executable(mw-server
     src/streaming/Session.cpp
     src/streaming/MoonlightShim.cpp
     src/streaming/ClipboardBridge.cpp
+    src/streaming/HostAudioSink.cpp
     src/streaming/StreamRelay.cpp
     src/streaming/DataChannelRelay.cpp
     src/streaming/FrameSender.cpp

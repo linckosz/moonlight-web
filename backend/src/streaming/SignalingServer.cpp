@@ -718,6 +718,11 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
     } else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
+    } else if (type == "locksync") {
+        // Align the host's toggle locks (Num/Caps/Scroll) with the client's,
+        // sent once per session on the browser's first real keyboard event.
+        m_Shim->syncLockKeys(msg["numLock"].toBool(false), msg["capsLock"].toBool(false),
+                             msg["scrollLock"].toBool(false));
     } else if (type == "requestidr") {
         qInfo() << "[SignalingServer] Fallback input: requesting IDR frame";
         m_Shim->requestIdrFrame();

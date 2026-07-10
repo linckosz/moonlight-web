@@ -74,6 +74,20 @@ public:
     bool isConnected() const { return m_Connected; }
 
     void sendKeyEvent(short keyCode, bool down, char modifiers, char flags);
+    // --- Toggle-lock sync (NumLock / CapsLock / ScrollLock) ---
+    // Snapshot the host's real lock-key state, only possible when the
+    // streamed host IS this machine (same gate as clipboard sync). Must run
+    // on the main thread (GetKeyState reads the calling thread's input
+    // state); Session calls it before the connection starts. Without a
+    // snapshot (remote host or non-Windows backend) syncLockKeys() assumes
+    // the host starts with every lock off — the pre-existing behavior.
+    void captureHostLockState(bool hostIsSelf);
+    // Align the host's toggle locks with the client's (browser 'locksync'
+    // message): tap each lock whose captured host state differs from the
+    // client's. Thread-safe, synchronous — the taps are enqueued before any
+    // input event the caller sends next, so the keydown that triggered the
+    // sync still lands after the locks are aligned.
+    void syncLockKeys(bool numLock, bool capsLock, bool scrollLock);
     // Send UTF-8 text (virtual/soft keyboard input) to the host.
     void sendUtf8Text(const QString& text);
     void sendMouseMove(short deltaX, short deltaY);
@@ -184,6 +198,11 @@ private:
     std::atomic<bool> m_Connected{false};
     std::atomic<bool> m_Stopping{false};
     std::atomic<bool> m_CleanupDone{false};
+    // Host lock-key state bitmask (1=Num, 2=Caps, 4=Scroll) captured at
+    // session start; -1 = unknown (remote host or unsupported platform).
+    // Written on the main thread before the connection, read/updated from
+    // the relay thread that performs the sync.
+    std::atomic<int> m_HostLockState{-1};
     static std::atomic<MoonlightShim*> s_Instance;
 
     // Last connection-setup failure, recorded by clStageFailed and read by

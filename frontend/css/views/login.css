@@ -29,12 +29,14 @@
     height: 64px;
     margin: 0 auto var(--space-3);
     clip-path: var(--notch-sm);
-    background: var(--accent-soft);
-    color: var(--accent-1);
-    filter: var(--glow-accent);
+    /* Professional Dark blue — first step of the theme retune, deliberately
+       hardcoded so the rest of the (still yellow) accent tokens are untouched */
+    background: rgba(59, 130, 246, 0.12);
+    color: #3b82f6;
+    filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.45));
 }
 
-/* Moonlight logo recolored to neon yellow via CSS mask (source PNG is gray) */
+/* Moonlight logo recolored via CSS mask (source PNG is gray) */
 .login-logo-img {
     display: block;
     width: 48px;

@@ -4128,27 +4128,27 @@ export class StreamView {
     }
 
     // Align the host's toggle-lock state with the client's. The Moonlight
-    // protocol has no lock-state field, so the host can't know the client
-    // booted with NumLock on. We assume the host starts with locks off (the
-    // common case) and tap each lock that is active client-side to toggle the
-    // host on. Runs once per session — subsequent presses pass through as
-    // normal toggles. getModifierState only works on a real KeyboardEvent.
+    // protocol has no lock-state field, so we send the client's lock states
+    // to the backend, which reads the host's REAL state (when the streamed
+    // host is the backend machine) and taps only the locks that differ —
+    // blindly tapping here turned locks OFF on hosts that booted with them
+    // on. Runs once per session — subsequent presses pass through as normal
+    // toggles. getModifierState only works on a real KeyboardEvent.
     _syncLockState(e) {
         this._locksSynced = true;
         if (typeof e.getModifierState !== 'function') return;
-        const locks = [
-            ['NumLock', 0x90],
-            ['CapsLock', 0x14],
-            ['ScrollLock', 0x91],
-        ];
-        for (const [name, vk] of locks) {
-            // Skip the key currently being pressed: its state is mid-toggle.
-            if (e.code === name) continue;
-            if (!e.getModifierState(name)) continue;
-            const base = { keyCode: vk, code: name, key: name };
-            this.webrtc.send({ type: 'keydown', ...base });
-            this.webrtc.send({ type: 'keyup', ...base });
-        }
+        // For the lock key being pressed right now, getModifierState already
+        // reflects the post-toggle value while the host will still receive
+        // this very keydown as a toggle — send the pre-toggle state so both
+        // sides land on the same final value.
+        const state = (name) =>
+            e.code === name ? !e.getModifierState(name) : e.getModifierState(name);
+        this.webrtc.send({
+            type: 'locksync',
+            numLock: state('NumLock'),
+            capsLock: state('CapsLock'),
+            scrollLock: state('ScrollLock'),
+        });
     }
 
     handleKeyDown(e) {
