@@ -713,9 +713,12 @@ void DataChannelRelay::createDataChannels()
     // a lost UDP packet is concealed instead of head-of-line-blocking the audio
     // (the old ordered DataChannel caused periodic ~0.5s dropouts on packet loss).
     // useinbandfec=1 tells the decoder to use the FEC carried in the next packet.
+    // stereo=1;sprop-stereo=1 is REQUIRED: without it libwebrtc instantiates a
+    // MONO Opus decoder and downmixes the stereo Sunshine stream (L+R)/2, which
+    // plays ~-6 dB quieter than moonlight-qt and loses the stereo image.
     {
         auto audioDesc = rtc::Description::Audio("audio", rtc::Description::Direction::SendOnly);
-        audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1");
+        audioDesc.addOpusCodec(111, "minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1");
 
         m_AudioTrack = m_Pc->addTrack(audioDesc);
         if (m_AudioTrack) {
