@@ -172,7 +172,7 @@ static void applyEmbeddedEnvDefaults()
 // Version string baked in by CMake (MW_VERSION cache var, overridden by the
 // release tag in CI); fallback for builds that bypass CMake.
 #ifndef MW_VERSION
-#define MW_VERSION "0.1.0"
+#define MW_VERSION "0.1.2"
 #endif
 
 // Forward Qt's qDebug/qInfo/qWarning/qCritical (emitted across modules) into the

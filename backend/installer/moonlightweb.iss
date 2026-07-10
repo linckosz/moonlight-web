@@ -27,7 +27,7 @@
   #define SourceDir "dist"
 #endif
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.2"
 #endif
 ; Latest Sunshine Windows installer (NSIS, supports /S silent). Overridable.
 ; Asset names are arch-specific: Sunshine-Windows-{AMD64,ARM64}-installer.exe.
