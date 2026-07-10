@@ -1373,6 +1373,14 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
     });
 
     connect(reply, &QNetworkReply::finished, this, [this, uuid, safeRespond, reply]() {
+        // Force-evict the pooled TLS socket — see onPairCheckFinished(). Without
+        // this, the applist socket sits Established ~120s holding Sunshine's
+        // single-threaded HTTPS server: any OTHER MoonlightWeb instance (or
+        // native client) polling the same Sunshine gets "Operation timed out"
+        // (502) for the whole window. Box-art prefetch used to clear the pool
+        // as a side effect, which masked this until the art cache filled up.
+        m_Nam->clearConnectionCache();
+
         // Re-resolve host pointer — the NvComputer may have been deleted
         // (via handleDeleteHost) since handleGetAppList was called. Capturing
         // the raw host pointer would cause a use-after-free crash if the host
