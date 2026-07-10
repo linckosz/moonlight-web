@@ -91,10 +91,10 @@ const S = {
     _idrRequested: false,
     _lastIdrRequestMs: 0,
 
-    // latency: worker-local steady→perf offset (perf.now origin differs from main,
-    // but the delta is self-consistent within the worker)
-    _steadyToPerfOffset: null,
-    _offsetFromStats: false,
+    // latency: client pipeline leg (decode() submit → render done), measured
+    // entirely on the worker's clock — no cross-clock offset involved.
+    _chunkSubmitTimes: new Map(), // chunk timestamp (µs) → performance.now() at decode()
+    _clientSamples: [], // [{ time, value }] sliding 2s window
 
     stopped: false,
 
@@ -106,8 +106,29 @@ const S = {
 
     stats: { received: 0, decoded: 0, rendered: 0, dropped: 0 },
     _lastCountersPost: 0,
-    _lastLatencyMs: 0,
 };
+
+// Record a decode() submit time; consumed in onDecodedFrame. Frames the
+// decoder never outputs would leak entries, so clear past a burst-sized bound.
+function trackChunkSubmit(timestamp) {
+    if (S._chunkSubmitTimes.size > 240) S._chunkSubmitTimes.clear();
+    S._chunkSubmitTimes.set(timestamp, performance.now());
+}
+
+// Sliding-window average of the client pipeline samples (2s, like the
+// main-thread SlidingStats used by the overlay).
+function addClientSample(ms) {
+    S._clientSamples.push({ time: performance.now(), value: ms });
+}
+
+function clientLatencyAvg() {
+    const cutoff = performance.now() - 2000;
+    S._clientSamples = S._clientSamples.filter((s) => s.time > cutoff);
+    if (S._clientSamples.length === 0) return 0;
+    let sum = 0;
+    for (const s of S._clientSamples) sum += s.value;
+    return sum / S._clientSamples.length;
+}
 
 function post(msg, transfer) {
     self.postMessage(msg, transfer || []);
@@ -136,7 +157,7 @@ function postCounters(force) {
         decoded: S.stats.decoded,
         rendered: S.stats.rendered,
         dropped: S.stats.dropped,
-        latencyMs: S._lastLatencyMs,
+        clientMs: clientLatencyAvg(),
         resolution: S._lastResolution || '',
     });
 }
@@ -510,6 +531,7 @@ function decodeFrame(data, isKeyframe, backendTs) {
 
     try {
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: avccData });
+        trackChunkSubmit(timestamp);
         S.decoder.decode(chunk);
         S.stats.received++;
         if (isKeyframe) {
@@ -596,6 +618,7 @@ function decodeAv1Frame(data, isKeyframe) {
     const obuData = stripNonEssentialObus(data);
     try {
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: obuData });
+        trackChunkSubmit(timestamp);
         S.decoder.decode(chunk);
         S.stats.received++;
     } catch (err) {
@@ -609,12 +632,13 @@ function onDecodedFrame(frame) {
     S.stats.decoded++;
     S._recoveryAttempts = 0;
 
-    if (S._steadyToPerfOffset !== null && frame.timestamp > 0) {
-        // frame.timestamp is backendTs*1000 (µs) for H.264/HEVC. Derive e2e.
-        const captureMs = frame.timestamp / 1000;
-        const capturePerf = captureMs - S._steadyToPerfOffset;
-        const latency = performance.now() - capturePerf;
-        if (latency > 0 && latency < 5000) S._lastLatencyMs = latency;
+    // Pair the decoder output with its decode() submit time (same clock). The
+    // sample completes after render in pump(), covering decode queue + decode +
+    // frame queue + render — the worker's share of the client pipeline.
+    const submitPerf = S._chunkSubmitTimes.get(frame.timestamp);
+    if (submitPerf !== undefined) {
+        S._chunkSubmitTimes.delete(frame.timestamp);
+        frame._mwSubmitPerf = submitPerf;
     }
 
     if (S.frameQueue.length >= 3) {
@@ -648,9 +672,17 @@ function pump() {
     }
     const frame = S.frameQueue.shift();
     S.rendering = true;
+    // Read the submit time before the draw — the renderer closes the VideoFrame.
+    const submitPerf = frame._mwSubmitPerf;
     drawFrame(frame)
         .then((ok) => {
-            if (ok) S.stats.rendered++;
+            if (ok) {
+                S.stats.rendered++;
+                if (submitPerf !== undefined) {
+                    const ms = performance.now() - submitPerf;
+                    if (ms >= 0 && ms < 5000) addClientSample(ms);
+                }
+            }
         })
         .finally(() => {
             S.rendering = false;
@@ -678,11 +710,6 @@ async function drawFrame(frame) {
 // onward; stale/gap/stats/overlay stay on the main thread before this point).
 function processFrame(data, isKeyframe, backendTs) {
     if (S.stopped || S._fatalDecodeError) return;
-
-    // Establish the worker-local clock offset for latency once.
-    if (backendTs !== undefined && backendTs > 0 && S._steadyToPerfOffset === null) {
-        S._steadyToPerfOffset = backendTs - performance.now() - 30; // 30ms LAN floor
-    }
 
     if (S.videoCodec === CODEC_AV1) {
         handleAv1Frame(data, isKeyframe);
@@ -757,24 +784,6 @@ self.onmessage = (e) => {
         case 'frameloss':
             S._referenceValid = false;
             break;
-        case 'stats': {
-            // Clock-offset refinement, mirroring StreamView._handleStatsMessage:
-            // streamTimeMs is the backend steady clock at send time; receipt here
-            // adds ~RTT/2 plus one postMessage hop (~ms). Replaces the crude
-            // first-frame estimate (fixed 30ms pipeline floor) that otherwise
-            // pins the worker's latency figure to a guess for the whole session.
-            if (typeof m.streamTimeMs === 'number' && m.streamTimeMs >= 0) {
-                const rtt = m.rttMs > 0 ? m.rttMs : 0;
-                const refined = m.streamTimeMs - performance.now() + rtt / 2;
-                if (!S._offsetFromStats) {
-                    S._steadyToPerfOffset = refined;
-                    S._offsetFromStats = true;
-                } else {
-                    S._steadyToPerfOffset = S._steadyToPerfOffset * 0.7 + refined * 0.3;
-                }
-            }
-            break;
-        }
         case 'resize':
             S.outW = m.outW;
             S.outH = m.outH;

@@ -422,17 +422,20 @@ export class StreamView {
         this._totalBytes = 0; // Cumulative video bytes for bitrate
         this._startTime = performance.now(); // Stream start time for bitrate calc
         this._fpsTimestamps = []; // performance.now() per decoded frame
-        this._latencySamples = []; // { time: perfNow, latency: ms }
 
         // ── Stats overlay ───────────────────────────────────────────────────
+        // Latency is the sum of independently measured legs (moonlight-qt
+        // style): each leg is timed within a single clock domain, so no
+        // cross-machine clock offset is ever needed. (The previous
+        // steady_clock→performance.now() offset approach displayed the offset
+        // estimation error as a constant — the overlay froze on a wrong value
+        // until the next offset re-blend.)
         this._hostRttStats = new SlidingStats(5000); // backend ↔ Sunshine one-way (ms)
         this._browserRttStats = new SlidingStats(5000); // browser ↔ backend RTT (ms)
         this._decodeLatencyStats = new SlidingStats(5000); // backend pipeline latency (ms)
-        this._e2eLatencyStats = new SlidingStats(5000); // Sunshine capture → canvas display (ms)
-        this._streamTimeMs = 0; // Last known steady_clock ms from backend stats
-        this._streamTimeReceiptTime = 0; // performance.now() when _streamTimeMs was received
-        this._steadyToPerfOffset = null; // perfTime = steadyTime - offset (set once)
-        this._offsetFromStats = false; // true once a stats msg refined the offset (authoritative)
+        this._hostProcStats = new SlidingStats(5000); // Sunshine capture→encode (RTP ext, ms)
+        this._clientLatencyStats = new SlidingStats(2000); // decode() submit → render done (ms)
+        this._chunkSubmitTimes = new Map(); // chunk timestamp (µs) → perf.now() at decode()
         this._pingSeq = 0;
         this._pingInterval = null;
 
@@ -443,7 +446,10 @@ export class StreamView {
         this._mediaStatsTimer = null;
         this._mediaFps = 0;
         this._mediaBitrateMbps = 0;
-        this._mediaLatencyMs = 0;
+        // Per-tick latency samples (jitter buffer + network + decode). A sliding
+        // window instead of a sticky "last good value": if the poll stops
+        // producing samples the display goes back to '--' instead of freezing.
+        this._mediaLatencyStats = new SlidingStats(3000);
         this._lastInboundBytes = 0;
         this._lastInboundFrames = 0;
         this._lastInboundStatsTime = 0;
@@ -1323,7 +1329,8 @@ export class StreamView {
                 this.stats.dropped = m.dropped;
                 if (m.resolution && m.resolution !== this._resolution)
                     this._resolution = m.resolution;
-                if (m.latencyMs > 0) this._e2eLatencyStats.addSample(m.latencyMs);
+                // Client pipeline leg measured inside the worker (its own clock).
+                if (m.clientMs > 0) this._clientLatencyStats.addSample(m.clientMs);
                 break;
             }
             case 'fatal':
@@ -2164,6 +2171,7 @@ export class StreamView {
                 duration: 16667,
                 data: avccData,
             });
+            this._trackChunkSubmit(timestamp);
             this.decoder.decode(chunk);
             this.stats.received++;
             // Keyframe successfully submitted: reference is valid again.
@@ -2179,6 +2187,17 @@ export class StreamView {
             this.stats.dropped++;
             this._handleDecoderError(err);
         }
+    }
+
+    /**
+     * Record the decode() submit time of a chunk for the client pipeline
+     * latency measurement. Entries are consumed in onDecodedFrame; frames the
+     * decoder never outputs (drops, decoder reset) would leak, so the map is
+     * cleared when it grows past a burst-sized bound.
+     */
+    _trackChunkSubmit(timestamp) {
+        if (this._chunkSubmitTimes.size > 240) this._chunkSubmitTimes.clear();
+        this._chunkSubmitTimes.set(timestamp, performance.now());
     }
 
     onDecodedFrame(frame) {
@@ -2200,29 +2219,16 @@ export class StreamView {
             if (res !== this._resolution) this._resolution = res;
         }
 
-        // ── End-to-end latency ──────────────────────────────────────────────
-        // Total time from Sunshine capture to browser decode+display.
-        // Backend sends captureSteadyMs (= firstFrameArrivalSteadyMs + presTimeUs/1000)
-        // in the steady_clock domain. The offset between steady_clock and
-        // performance.now() is established on the first video frame (fallback)
-        // and refined by periodic stats messages.
-        //   capturePerfTime = captureSteadyMs - _steadyToPerfOffset
-        //   e2eLatency = performance.now() - capturePerfTime
-        if (this._latestBackendTs !== undefined && this._steadyToPerfOffset !== null) {
-            // Use THIS frame's capture time: for H.264/HEVC the decode timestamp
-            // is backendTs (ms→µs, +µs monotonic bumps). Pairing with the newest
-            // *received* ts instead would understate latency by the decode-queue
-            // depth exactly when frames back up. AV1 uses synthetic timestamps —
-            // detected by the plausibility window — and keeps the old pairing.
-            const tsMs = frame.timestamp / 1000;
-            const captureMs =
-                Math.abs(tsMs - this._latestBackendTs) < 10000 ? tsMs : this._latestBackendTs;
-            const capturePerfTime = captureMs - this._steadyToPerfOffset;
-            const latency = performance.now() - capturePerfTime;
-            if (latency > 0 && latency < 5000) {
-                // ignore outliers
-                this._e2eLatencyStats.addSample(latency);
-            }
+        // ── Client pipeline latency ─────────────────────────────────────────
+        // Pair the decoder output with its decode() submit time (same clock,
+        // matched via the chunk timestamp — works for real backendTs-derived
+        // timestamps and AV1's synthetic ones alike). The sample completes
+        // after render in _pumpRender, so it covers decode queue + decode +
+        // frame queue + render: the browser-side leg of the total latency.
+        const submitPerf = this._chunkSubmitTimes.get(frame.timestamp);
+        if (submitPerf !== undefined) {
+            this._chunkSubmitTimes.delete(frame.timestamp);
+            frame._mwSubmitPerf = submitPerf;
         }
 
         // Limit queue depth to prevent unbounded memory growth.
@@ -2365,11 +2371,19 @@ export class StreamView {
         const frame = this.frameQueue.shift();
 
         // Fire-and-forget with guard: the renderer resizes the canvas to the frame,
-        // draws and closes it; stats stay here.
+        // draws and closes it; stats stay here. Read the submit time before the
+        // draw — the renderer closes the VideoFrame.
+        const submitPerf = frame._mwSubmitPerf;
         this._renderer
             .draw(frame)
             .then(() => {
                 this.stats.rendered++;
+                // Complete the client pipeline sample: decode() submit → render
+                // done, all on this thread's clock.
+                if (submitPerf !== undefined) {
+                    const ms = performance.now() - submitPerf;
+                    if (ms >= 0 && ms < 5000) this._clientLatencyStats.addSample(ms);
+                }
             })
             .finally(() => {
                 this._rendering = false;
@@ -2745,8 +2759,9 @@ export class StreamView {
                     }
                 }
 
-                // Latency ≈ current jitter-buffer delay + network RTT/2
-                //           + backend↔Sunshine one-way + per-frame decode time.
+                // Client-side latency ≈ current jitter-buffer delay + network
+                // RTT/2 + per-frame decode time. The Sunshine-side legs
+                // (hostProcMs, hostRttMs) are added in _updateOverlay.
                 // jitterBufferDelay/jitterBufferEmittedCount are CUMULATIVE since
                 // stream start: use interval deltas for a *current* value (the
                 // cumulative average lags jitter-buffer changes by minutes on a
@@ -2765,9 +2780,6 @@ export class StreamView {
                 if (candidatePair && candidatePair.currentRoundTripTime > 0) {
                     latency += (candidatePair.currentRoundTripTime * 1000) / 2;
                 }
-                if (this._hostRttStats.count > 0) {
-                    latency += this._hostRttStats.avg;
-                }
                 // Decode time per frame (delta) — parity with the DC estimate,
                 // which includes decode. Not exposed by all browsers (guarded).
                 const decTime = inbound.totalDecodeTime;
@@ -2784,7 +2796,7 @@ export class StreamView {
                 }
                 this._lastDecodeTime = typeof decTime === 'number' ? decTime : -1;
                 this._lastDecodedForLatency = decFrames;
-                if (latency > 0 && latency < 5000) this._mediaLatencyMs = latency;
+                if (latency > 0 && latency < 5000) this._mediaLatencyStats.addSample(latency);
             } catch (e) {
                 // getStats can throw transiently during teardown — ignore
             }
@@ -3148,42 +3160,37 @@ export class StreamView {
             '</span>' +
             '</div>';
 
-        // End-to-end latency
+        // End-to-end latency: sum of independently measured legs, each averaged
+        // over its own short sliding window (moonlight-qt composes its overlay
+        // the same way from per-second stats windows — the value therefore
+        // tracks reality every refresh instead of freezing on a stale estimate):
+        //   hostProcMs        Sunshine capture→encode (RTP extension)
+        //   hostRttMs         Sunshine↔backend one-way (ENet RTT / 2)
+        //   decodeLatencyUs   backend pipeline (frame submit → transport send)
+        //   browserRtt / 2    backend↔browser one-way (ping/pong)
+        //   client pipeline   decode queue + decode + frame queue + render
+        //                     (per-frame, browser clock) — or the jitter-buffer/
+        //                     decode getStats deltas on the native media track.
         let avgLatency = '--';
-        if (isMedia) {
-            if (this._mediaLatencyMs > 0) avgLatency = this._mediaLatencyMs.toFixed(1) + 'ms';
-        } else {
-            // Preferred: per-frame steady-clock e2e (backend arrival → browser
-            // decode output). Unlike the RTT sum below it includes what actually
-            // dominates under load — SCTP queueing, video-frame serialization
-            // (a 100KB frame is not a ping), reassembly and the decode queue.
-            // hostRttMs adds the Sunshine→backend leg that the e2e epoch hides
-            // (presentationTimeUs is anchored at first-frame arrival).
-            // Fallback: sum of measurable one-way components (understates under
-            // load, but always available):
-            //   browser↔backend one-way (ping/pong RTT / 2)
-            //   backend↔Sunshine one-way (hostRttMs, already halved server-side)
-            //   backend decode/pipeline latency (decodeLatencyUs)
-            if (this._e2eLatencyStats.count > 0) {
-                let latency = this._e2eLatencyStats.avg;
-                if (this._hostRttStats.count > 0) latency += this._hostRttStats.avg;
-                avgLatency = latency.toFixed(1) + 'ms';
-            } else {
-                let latency = 0;
-                let haveLatency = false;
-                if (this._browserRttStats.count > 0) {
-                    latency += this._browserRttStats.avg / 2;
-                    haveLatency = true;
-                }
-                if (this._hostRttStats.count > 0) {
-                    latency += this._hostRttStats.avg;
-                    haveLatency = true;
-                }
-                if (this._decodeLatencyStats.count > 0) {
-                    latency += this._decodeLatencyStats.avg;
-                }
-                if (haveLatency) avgLatency = latency.toFixed(1) + 'ms';
+        {
+            const clientStats = isMedia ? this._mediaLatencyStats : this._clientLatencyStats;
+            let latency = 0;
+            let haveLatency = false;
+            if (clientStats.count > 0) {
+                latency += clientStats.avg;
+                haveLatency = true;
             }
+            // Media mode: the getStats sample already contains the network RTT/2.
+            if (!isMedia && this._browserRttStats.count > 0) {
+                latency += this._browserRttStats.avg / 2;
+                haveLatency = true;
+            }
+            if (this._hostRttStats.count > 0) latency += this._hostRttStats.avg;
+            if (this._hostProcStats.count > 0) latency += this._hostProcStats.avg;
+            if (!isMedia && this._decodeLatencyStats.count > 0) {
+                latency += this._decodeLatencyStats.avg;
+            }
+            if (haveLatency) avgLatency = latency.toFixed(1) + 'ms';
         }
         html +=
             '<div class="stats-row stats-latency-row">' +
@@ -3235,6 +3242,12 @@ export class StreamView {
             if (msg.decodeLatencyUs !== undefined && msg.decodeLatencyUs > 0) {
                 this._decodeLatencyStats.addSample(msg.decodeLatencyUs / 1000);
             }
+            // Sunshine capture→encode latency, averaged backend-side over the
+            // frames of the last stats window (moonlight-qt's "host processing
+            // latency", from the RTP extension). 0 = not reported by the host.
+            if (msg.hostProcMs !== undefined && msg.hostProcMs > 0) {
+                this._hostProcStats.addSample(msg.hostProcMs);
+            }
             // Backend SCTP backpressure drops (cumulative). Frames dropped
             // backend-side never get a frameId, so this is the only signal the
             // frontend has of the "keyframe slideshow" congestion regime.
@@ -3245,50 +3258,6 @@ export class StreamView {
                     );
                 }
                 this._lastBpDrops = msg.bpDrops;
-            }
-            // Track steady_clock reference for end-to-end latency calculation.
-            // Refine the clock domain offset when a stats message arrives.
-            // The offset may already be estimated from the first video frame;
-            // stats provide a more accurate measurement (no pipeline guesswork).
-            if (msg.streamTimeMs !== undefined && msg.streamTimeMs >= 0) {
-                this._streamTimeMs = msg.streamTimeMs;
-                this._streamTimeReceiptTime = performance.now();
-                // Refine offset: steadyTime ≈ streamTimeMs + RTT/2 at receive
-                const rtt = this._browserRttStats.count > 0 ? this._browserRttStats.avg : 0;
-                const refinedOffset = msg.streamTimeMs - this._streamTimeReceiptTime + rtt / 2;
-                if (!this._offsetFromStats) {
-                    // First authoritative measurement: overwrite the crude
-                    // frame-based estimate (which assumed a fixed 30ms pipeline
-                    // floor and pinned the latency near that floor).
-                    this._steadyToPerfOffset = refinedOffset;
-                    this._offsetFromStats = true;
-                    console.log(
-                        '[StreamView] Clock offset (stats): steadyToPerfOffset=' +
-                            Math.round(this._steadyToPerfOffset) +
-                            ' streamTimeMs=' +
-                            msg.streamTimeMs +
-                            ' perf=' +
-                            Math.round(this._streamTimeReceiptTime) +
-                            ' rtt=' +
-                            rtt.toFixed(1),
-                    );
-                } else {
-                    // Blend new measurement with existing offset (70% old, 30% new)
-                    // to smooth out jitter while adapting to clock drift.
-                    this._steadyToPerfOffset = this._steadyToPerfOffset * 0.7 + refinedOffset * 0.3;
-                }
-                // Worker mode: forward the reference so the worker can refine its
-                // OWN offset. performance.now() origins differ between main thread
-                // and worker, so the offset value itself cannot be shared — the
-                // worker recomputes it against its clock at message receipt
-                // (adds ~a postMessage hop of error, vs. a frozen 30ms guess).
-                if (this._videoWorker) {
-                    this._videoWorker.postMessage({
-                        type: 'stats',
-                        streamTimeMs: msg.streamTimeMs,
-                        rttMs: rtt,
-                    });
-                }
             }
         }
     }
@@ -3375,29 +3344,6 @@ export class StreamView {
 
         // Track cumulative video bytes for bitrate calculation
         this._totalBytes += data.length;
-
-        // Store the most recent backend timestamp for latency calculation.
-        if (backendTs !== undefined && backendTs > 0) {
-            this._latestBackendTs = backendTs;
-
-            // Establish the steady_clock → performance.now() offset as early as
-            // possible — no need to wait for the periodic stats message.
-            // The pipeline latency from capture to browser-receive is unknown
-            // (encode + LAN + SCTP), but ~30ms is a reasonable LAN floor.
-            // This offset is refined when the first stats message arrives.
-            if (this._steadyToPerfOffset === null) {
-                const pipelineFloor = 30; // ms — conservative LAN pipeline minimum
-                this._steadyToPerfOffset = backendTs - performance.now() - pipelineFloor;
-                console.log(
-                    '[StreamView] Clock offset (frame-based): steadyToPerfOffset=' +
-                        Math.round(this._steadyToPerfOffset) +
-                        ' backendTs=' +
-                        backendTs +
-                        ' perf=' +
-                        Math.round(performance.now()),
-                );
-            }
-        }
 
         // Direct frame processing — no reordering.
         this._processVideoFrame(data, isKeyframe, backendTs);
@@ -3653,6 +3599,7 @@ export class StreamView {
                 duration: 16667,
                 data: obuData,
             });
+            this._trackChunkSubmit(timestamp);
             this.decoder.decode(chunk);
             this.stats.received++;
         } catch (err) {

@@ -477,7 +477,7 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
     // Stats timer: sends periodic stats (hostRtt, decodeLatency) to the browser.
     // Starts when Input DC opens, stops in stop().
     m_StatsTimer = new QTimer(this);
-    m_StatsTimer->setInterval(2000); // 2s interval
+    m_StatsTimer->setInterval(1000); // 1s interval — matches moonlight-qt's stats window flip
     connect(m_StatsTimer, &QTimer::timeout, this, &DataChannelRelay::onStatsTimerTick);
 }
 
@@ -1219,7 +1219,7 @@ void DataChannelRelay::sendFragmented(const QByteArray& data, bool isKeyframe,
     m_FrameCount++;
 }
 
-// --- Stats timer (2s interval) ---
+// --- Stats timer (1s interval) ---
 
 void DataChannelRelay::onStatsTimerTick()
 {
@@ -1256,20 +1256,14 @@ void DataChannelRelay::onStatsTimerTick()
     stats["type"] = "stats";
     stats["hostRttMs"] = hostRttMs;
     stats["decodeLatencyUs"] = static_cast<qint64>(decodeLatUs);
+    // Sunshine capture→encode latency (RTP extension), averaged over the frames
+    // of this stats window. 0 when the host doesn't report it.
+    stats["hostProcMs"] = m_Shim ? m_Shim->takeHostProcessingLatencyMs() : 0.0;
     // Cumulative frames dropped by SCTP backpressure (deltas + keyframes).
     // The frontend cannot see these drops (dropped frames never get a frameId),
     // so this is its only signal that the link is saturated backend-side. It
     // drives the frontend's congestion monitor (automatic bitrate degradation).
     stats["bpDrops"] = m_DeltaDroppedCount + m_KeyframeBackpressureWarnings;
-
-    // Send steady_clock reference for end-to-end latency calculation.
-    // The frontend uses this + performance.now() delta to estimate current
-    // steady time, then subtracts the frame's captureSteadyMs to get e2e latency.
-    {
-        using namespace std::chrono;
-        int64_t nowMs = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-        stats["streamTimeMs"] = static_cast<qint64>(nowMs);
-    }
 
     QByteArray statsJson = QJsonDocument(stats).toJson(QJsonDocument::Compact);
 
