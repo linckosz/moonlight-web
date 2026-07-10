@@ -11,14 +11,14 @@
 #    APP=/path/to/MoonlightWeb.app VERSION=1.2.3 OUT=moonlightweb-macos-arm64.pkg \
 #      bash backend/installer/macos/build-pkg.sh
 #
-#  Defaults: APP=./MoonlightWeb.app, VERSION=0.1.0, OUT=moonlightweb-macos-<arch>.pkg
+#  Defaults: APP=./MoonlightWeb.app, VERSION=0.1.2, OUT=moonlightweb-macos-<arch>.pkg
 # ===========================================================================
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ARCH="$(uname -m)"; [ "$ARCH" = "arm64" ] || ARCH="x86_64"
 APP="${APP:-./MoonlightWeb.app}"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.1.2}"
 OUT="${OUT:-moonlightweb-macos-${ARCH}.pkg}"
 IDENT="com.moonlightweb.server"
 
