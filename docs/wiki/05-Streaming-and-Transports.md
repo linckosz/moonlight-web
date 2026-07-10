@@ -117,6 +117,7 @@ Ordering rules that prevent whole bug classes (crashes, 504s, zombie sessions):
 | Cross-clock latency display freezes on offset error | Latency = sum of measured legs only | `StreamView` stats |
 | AV1 negotiation gaps | Forced AV1→H.264 fallback | `Session.cpp` |
 | `qWarning() << socket` on a freed QTcpSocket crashed at double-`/quit` | Never stream QObject pointers into logs after teardown; minidump handler added | `HttpServer` / `CrashHandler` |
+| Qt strips request-side `Connection: close` and pools the TLS socket ~120 s, wedging Sunshine's single-threaded HTTPS (47984) — other instances/clients get 502 timeouts | `clearConnectionCache()` after **every** Sunshine HTTPS request (applist, pair-check, box art, launch) | `ComputerManager` / `Session` |
 
 ---
 
