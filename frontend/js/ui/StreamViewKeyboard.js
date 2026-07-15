@@ -237,8 +237,8 @@ export class StreamViewKeyboard {
             ['→', 'key', 0x27],
         ];
 
-        // Arrow VKs use a press-and-hold model (see below).
-        const ARROW_VKS = new Set([0x25, 0x26, 0x27, 0x28]);
+        // Arrow + Del VKs use a press-and-hold model (see below).
+        const HOLD_REPEAT_VKS = new Set([0x25, 0x26, 0x27, 0x28, 0x2e]);
 
         for (const [label, kind, id] of items) {
             const btn = document.createElement('button');
@@ -256,11 +256,12 @@ export class StreamViewKeyboard {
                     this._refocusCapture();
                 });
                 this._modBtns[id] = btn;
-            } else if (ARROW_VKS.has(id)) {
+            } else if (HOLD_REPEAT_VKS.has(id)) {
                 // Press-and-hold: keydown while pressed, keyup on release. We send
                 // a single keydown and let the GUEST OS generate typematic repeat
                 // (one step, then continuous after ~1s) — exactly like a physical
-                // arrow key. Sending down+up on tap would only ever move one step.
+                // arrow/Del key. Sending down+up on tap would only ever move/delete
+                // one step.
                 const flags = () => ({ keyCode: id, code: '', key: '', ...this._modFlags() });
                 const release = (e) => {
                     if (e) e.preventDefault();
