@@ -49,6 +49,11 @@ backend/.cache/
 # Agent session results
 .claude/results/
 
+# Docs: keep only wiki and screenshots tracked
+docs/*
+!docs/wiki
+!docs/screenshots
+
 # Local benchmark prompt documents (never committed)
 docs/application/
 
