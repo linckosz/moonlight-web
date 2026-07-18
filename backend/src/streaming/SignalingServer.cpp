@@ -171,8 +171,8 @@ QString SignalingServer::wsUrl() const
         QString url = m_OverrideWsUrl;
         // Replace https:// with wss:// for WebSocket protocol
         if (url.startsWith("https://")) url.replace(0, 8, "wss://");
-        // Ensure /ws path for the proxy on the unified port
-        if (!url.endsWith("/ws")) url += "/ws";
+        // Ensure the proxy path for the unified port
+        if (!url.endsWith(m_WsPath)) url += m_WsPath;
         return url;
     }
 
@@ -181,7 +181,7 @@ QString SignalingServer::wsUrl() const
     // upgrade detection in HttpServer that proxies to the local signaling server.
     QString host = m_ServerHost;
     if (m_HttpsPort != 443) host += ":" + QString::number(m_HttpsPort);
-    return QString("wss://%1/ws").arg(host);
+    return QString("wss://%1%2").arg(host, m_WsPath);
 }
 
 // --- ICE configuration push to browser ---

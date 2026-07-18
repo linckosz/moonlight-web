@@ -59,8 +59,9 @@ void Logger::log(Level level, const QString& message)
 
     QMutexLocker lock(&m_Mutex);
 
-    // Always print to console
-    if (level >= Warning)
+    // Always print to console. In --stream-worker mode stdout carries the JSON
+    // event protocol, so every level is routed to stderr instead.
+    if (level >= Warning || m_ForceStderr)
         std::cerr << line.toStdString();
     else
         std::cout << line.toStdString();

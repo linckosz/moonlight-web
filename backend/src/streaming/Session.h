@@ -115,6 +115,12 @@ public:
     /// Set the port for the legacy WSS StreamRelay (separate from signaling WS port).
     void setStreamRelayPort(quint16 port) { m_StreamRelayPort = port; }
 
+    /// Proxy path prefix for this session's WebSockets ("/ws" by default;
+    /// "/ws1" for the second concurrent stream slot). Forwarded to the
+    /// SignalingServer / StreamRelay so the advertised wsUrl matches the
+    /// HttpServer path→port routing.
+    void setWsPath(const QString& path) { m_WsPath = path; }
+
 signals:
     void relayCreated(DataChannelRelay* relay);
     void mediaTrackRelayCreated(MediaTrackRelay* relay);
@@ -195,6 +201,9 @@ private:
 
     /// Port for legacy WSS StreamRelay (separate from m_WsPort used for signaling).
     quint16 m_StreamRelayPort = 48002;
+
+    /// Proxy path prefix for this session's WebSockets (see setWsPath).
+    QString m_WsPath = QStringLiteral("/ws");
 
     /// Negotiated video format from drSetup (0=unknown, 0x0001=H.264, 0x0100=HEVC, 0x0200=AV1).
     /// Written by drSetup on the worker thread, read on the main thread during

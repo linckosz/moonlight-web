@@ -44,6 +44,7 @@
 #define NOMINMAX
 #include <windows.h>
 #endif
+#include <array>
 #include <functional>
 #include "server/AppSettings.h"
 #include "server/Provisioning.h"
@@ -67,6 +68,8 @@
 #include "streaming/MediaTrackRelay.h"
 #include "streaming/StreamRelay.h"
 #include "streaming/TransportPriorities.h"
+#include "streaming/StreamWorkerHost.h"
+#include "streaming/worker/StreamWorkerMain.h"
 #include "network/InternetAccessManager.h"
 #include "network/GeoIpService.h"
 #include "network/UpdateChecker.h"
@@ -343,6 +346,12 @@ int main(int argc, char* argv[])
     //   macOS:   ~/Library/Application Support/MoonlightWeb/MoonlightWeb/logs
     //   Linux:   ~/.local/share/MoonlightWeb/MoonlightWeb/logs
     qInstallMessageHandler(mwMessageHandler);
+    // --stream-worker: stdout is the worker's JSON event protocol — route the
+    // console echo to stderr BEFORE anything logs (CrashHandler::install below
+    // logs an INFO line). The full worker branch runs after CLI parsing.
+    for (int i = 1; i < argc; ++i)
+        if (qstrcmp(argv[i], "--stream-worker") == 0)
+            Logger::instance()->setConsoleToStderr(true);
     {
         const QString logDir =
             QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
@@ -385,10 +394,33 @@ int main(int argc, char* argv[])
                                        "Started automatically at login (don't open the browser)");
     parser.addOption(autostartOption);
 
+    // Internal: run as a per-session stream worker child process (spawned by the
+    // parent server; hosts one relay graph + moonlight-common-c instance).
+    QCommandLineOption streamWorkerOption("stream-worker",
+                                          "Internal: host one streaming session as a child "
+                                          "process of the main server");
+    parser.addOption(streamWorkerOption);
+
     parser.process(app);
 
     // Configure logging
     if (parser.isSet(logOption)) Logger::instance()->setLogFile(parser.value(logOption));
+
+    // ── Stream-worker child process ─────────────────────────────────────────
+    // Branch BEFORE the single-instance lock (the worker is a deliberate second
+    // process of the same binary) and log to a separate file (two processes on
+    // one log file would interleave/rotate-race). stdout carries the worker's
+    // JSON event protocol — Logger writes to file/stderr only.
+    if (parser.isSet(streamWorkerOption)) {
+        Logger::instance()->setConsoleToStderr(true);
+        if (!parser.isSet(logOption)) {
+            const QString logDir =
+                QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
+            Logger::instance()->setLogFile(logDir + QStringLiteral("/moonlightweb-worker-%1.log")
+                                                        .arg(QCoreApplication::applicationPid()));
+        }
+        return runStreamWorker(app);
+    }
 
     Logger::info("MoonlightWeb server starting...");
     Logger::info("Version: " + QCoreApplication::applicationVersion());
@@ -529,6 +561,52 @@ int main(int argc, char* argv[])
     // that have no HTTP request to read the host from (revoked-device kill).
     QString g_ActiveHostUuid;
 
+    // ── Dual-stream worker slots ───────────────────────────────────────────
+    // With stream_worker_enabled (default), every session runs in its own
+    // `--stream-worker` child process, which is what allows TWO concurrent
+    // sessions (moonlight-common-c is process-global). Slot 0 is the primary
+    // stream (/ws, 48001/48002); slot 1 the standby used by the frontend's
+    // seamless quality switching (/ws1, 48011/48012).
+    struct StreamSlot
+    {
+        QPointer<StreamWorkerHost> worker;
+        QString clientUniqueId;
+        QString hostUuid;
+        QString sessionToken;
+    };
+    std::array<StreamSlot, 2> g_StreamSlots;
+    // Per-host result of the dual-stream capability probe (first standby
+    // launch): missing = unknown (assume yes), false = host rejected a second
+    // concurrent session → frontend falls back to the legacy relaunch.
+    QHash<QString, bool> g_DualSupport;
+    // When a standby (slot 1) launch starts: if slot 0 dies within ~3s of it,
+    // the host "took over" instead of adding a session → mark no-dual.
+    qint64 g_LastStandbyStartMs = 0;
+
+    // Detach a worker slot from session-level bookkeeping and tear the child
+    // down. Suppresses the slot's normal ended-cleanup (no Sunshine /cancel:
+    // take-over and standby-restart both want the Sunshine session kept alive
+    // for the /resume that follows). The host object self-deletes on exit.
+    auto detachWorkerSlot = [&g_StreamSlots, &authManager](int i, bool takenOver) {
+        StreamSlot& sl = g_StreamSlots[i];
+        StreamWorkerHost* old = sl.worker;
+        const QString token = sl.sessionToken;
+        sl.worker = nullptr;
+        sl.clientUniqueId.clear();
+        sl.hostUuid.clear();
+        sl.sessionToken.clear();
+        if (!old) return static_cast<StreamWorkerHost*>(nullptr);
+        QObject::disconnect(old, &StreamWorkerHost::ended, nullptr, nullptr);
+        QObject::connect(old, &StreamWorkerHost::ended, qApp, [token, &authManager]() {
+            authManager.setSessionStreaming(token, false);
+        });
+        if (takenOver)
+            old->notifyTakenOver();
+        else
+            old->requestQuit();
+        return old;
+    };
+
     // Suspend host polling whenever a relay is active, so we stop hammering
     // Sunshine's HTTP server while a stream is running (avoids wedging it and
     // making the host appear offline to native clients).
@@ -540,10 +618,11 @@ int main(int argc, char* argv[])
     // clients.
     computerManager.setStreamActivePredicate([&g_ActiveRelay, &g_ActiveMediaTrackRelay,
                                               &g_ActiveStreamRelay, &g_ActiveRelayRoot,
-                                              &g_ActiveSession]() {
+                                              &g_ActiveSession, &g_StreamSlots]() {
         return !g_ActiveRelay.isNull() || !g_ActiveMediaTrackRelay.isNull() ||
                !g_ActiveStreamRelay.isNull() || !g_ActiveRelayRoot.isNull() ||
-               !g_ActiveSession.isNull();
+               !g_ActiveSession.isNull() || !g_StreamSlots[0].worker.isNull() ||
+               !g_StreamSlots[1].worker.isNull();
     });
 
     // ── Revoked-device kill-switch ─────────────────────────────────────────────
@@ -558,9 +637,20 @@ int main(int argc, char* argv[])
     QObject::connect(
         &authManager, &AuthManager::streamingSessionRevoked, qApp,
         [&computerManager, &g_ActiveRelay, &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay,
-         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid]() {
+         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_StreamSlots]() {
             qInfo() << "[main] Streaming session revoked — tearing down active stream";
             bool relayStopped = false;
+
+            // Worker-mode sessions: notify + teardown each slot's child. The
+            // slot's normal ended handler sends the Sunshine /cancel and clears
+            // the streaming flag.
+            for (StreamSlot& sl : g_StreamSlots) {
+                if (!sl.worker) continue;
+                qInfo() << "[main] Revoke teardown: stopping stream worker (uid="
+                        << sl.clientUniqueId << ")";
+                sl.worker->notifyRevoked();
+                relayStopped = true;
+            }
 
             if (g_ActiveRelay) {
                 DataChannelRelay* relay = g_ActiveRelay;
@@ -751,7 +841,9 @@ int main(int argc, char* argv[])
                                                         &g_ActiveRelay, &g_ActiveStreamRelay,
                                                         &g_ActiveMediaTrackRelay, &g_ActiveSession,
                                                         &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                                                        &g_ActiveHostUuid, &server, &appSettings,
+                                                        &g_ActiveHostUuid, &g_StreamSlots,
+                                                        &g_DualSupport, &g_LastStandbyStartMs,
+                                                        &detachWorkerSlot, &server, &appSettings,
                                                         &authManager, effectiveUpnpEnabled,
                                                         stunServer](const HttpRequest& req,
                                                                     ResponseCallback respond) {
@@ -766,6 +858,18 @@ int main(int argc, char* argv[])
             respond(HttpResponse::error(404, "Host not found"));
             return;
         }
+
+        QJsonDocument doc = QJsonDocument::fromJson(req.body);
+        QJsonObject body = doc.object();
+
+        // ── Worker mode + slot selection ───────────────────────────────────────
+        // stream_worker_enabled (default): sessions run in --stream-worker child
+        // processes, allowing TWO concurrent sessions. A standby launch
+        // (standby:true + session_slot) is the second leg of the frontend's
+        // seamless quality switching: it must NOT take over the live stream.
+        const bool workerMode = appSettings.streamWorkerEnabled();
+        const bool standby = workerMode && body["standby"].toBool(false);
+        const int reqSlot = standby ? qBound(0, body["session_slot"].toInt(1), 1) : 0;
 
         // ── Take-over: this backend streams ONE session at a time ──────────────
         // moonlight-common-c is a process-global singleton and the signaling port
@@ -789,7 +893,23 @@ int main(int argc, char* argv[])
         // is exactly what the deferred start() below waits on. sessionEnded is
         // severed first so the auto-/cancel lambda never cancels the Sunshine
         // session the newcomer is about to /resume.
-        if (g_ActiveRelay) {
+        //
+        // Worker mode: a fresh (non-standby) launch keeps the same take-over
+        // semantics — every slot's child is torn down (no Sunshine /cancel, the
+        // newcomer /resumes). A STANDBY launch tears down only its own slot's
+        // remnant and leaves the live stream untouched.
+        StreamWorkerHost* previousWorker = nullptr;
+        if (standby) {
+            previousWorker = detachWorkerSlot(reqSlot, false);
+        } else {
+            for (int i = 0; i < 2; ++i) {
+                StreamWorkerHost* w = detachWorkerSlot(i, true);
+                // Serialize the new slot-0 worker behind whichever child still
+                // holds the slot-0 ports.
+                if (i == reqSlot) previousWorker = w;
+            }
+        }
+        if (!standby && g_ActiveRelay) {
             DataChannelRelay* old = g_ActiveRelay;
             g_ActiveRelay = nullptr;
             qInfo() << "[Session] Take-over: tearing down active DataChannelRelay" << old;
@@ -799,7 +919,7 @@ int main(int argc, char* argv[])
             old->stop();
             old->deleteLater();
         }
-        if (g_ActiveMediaTrackRelay) {
+        if (!standby && g_ActiveMediaTrackRelay) {
             MediaTrackRelay* old = g_ActiveMediaTrackRelay;
             g_ActiveMediaTrackRelay = nullptr;
             qInfo() << "[Session] Take-over: tearing down active MediaTrackRelay" << old;
@@ -809,7 +929,7 @@ int main(int argc, char* argv[])
             old->stop();
             old->deleteLater();
         }
-        if (g_ActiveStreamRelay) {
+        if (!standby && g_ActiveStreamRelay) {
             StreamRelay* old = g_ActiveStreamRelay;
             g_ActiveStreamRelay = nullptr;
             qInfo() << "[Session] Take-over: tearing down active StreamRelay" << old;
@@ -819,12 +939,12 @@ int main(int argc, char* argv[])
             old->stop();
             old->deleteLater();
         }
-        g_ActiveSession = nullptr;
-        g_ActiveClientUniqueId.clear();
-        g_ActiveHostUuid.clear();
+        if (!standby) {
+            g_ActiveSession = nullptr;
+            g_ActiveClientUniqueId.clear();
+            g_ActiveHostUuid.clear();
+        }
 
-        QJsonDocument doc = QJsonDocument::fromJson(req.body);
-        QJsonObject body = doc.object();
         int appId = body["appId"].toInt(0);
         if (appId <= 0) {
             respond(HttpResponse::error(400, "Missing or invalid appId"));
@@ -1274,6 +1394,196 @@ int main(int argc, char* argv[])
         };
 
         // ═════════════════════════════════════════════════════════════════════
+        // Worker mode: hand the whole session (Sunshine launch + relay graph +
+        // moonlight-common-c) to a --stream-worker child process bound to the
+        // requested slot. Falls back to the in-process path when the child
+        // cannot be spawned (never for a standby attempt — that one simply
+        // reports dual_unavailable and the frontend keeps the legacy relaunch).
+        // ═════════════════════════════════════════════════════════════════════
+        if (workerMode) {
+            VideoCodec effectiveCodec = reqCodec;
+            bool codecOverridden = false;
+            VideoCodec originalCodec = VideoCodec::Auto;
+            if (internalTransport == "webrtc-media" &&
+                (effectiveCodec == VideoCodec::HEVC || effectiveCodec == VideoCodec::AV1)) {
+                qInfo() << "[Session] MediaTrack attempt but codec is"
+                        << AppSettings::videoCodecToString(effectiveCodec)
+                        << "- forcing H.264 (MediaTrack only supports H.264)";
+                originalCodec = effectiveCodec;
+                effectiveCodec = VideoCodec::H264;
+                codecOverridden = true;
+            }
+
+            QJsonObject cfg;
+            cfg["hostAddress"] = host->activeAddress.address();
+            cfg["hostPort"] = static_cast<int>(host->activeAddress.port());
+            cfg["hostHttpsPort"] = static_cast<int>(host->activeHttpsPort);
+            cfg["hostName"] = host->name;
+            cfg["hostUuid"] = host->uuid;
+            cfg["appVersion"] = host->appVersion;
+            cfg["gfeVersion"] = host->gfeVersion;
+            cfg["serverCodecModeSupport"] = host->serverCodecModeSupport;
+            cfg["appId"] = appId;
+            cfg["codec"] = static_cast<int>(effectiveCodec);
+            cfg["codecOverridden"] = codecOverridden;
+            cfg["originalCodec"] = static_cast<int>(originalCodec);
+            cfg["gamingMode"] = reqGamingMode;
+            cfg["upnpEnabled"] = effectiveUpnpEnabled;
+            cfg["internalTransport"] = internalTransport;
+            cfg["transportMode"] = chainMode;
+            cfg["stunServer"] = stunServer;
+            cfg["height"] = reqHeight;
+            cfg["width"] = reqWidth;
+            cfg["fps"] = reqFps;
+            cfg["bitrateKbps"] = reqBitrate;
+            cfg["yuv444"] = reqYuv444;
+            cfg["hdr"] = reqHdr;
+            cfg["iceTcp"] = enableIceTcp;
+            cfg["lowAudio"] = reqLowAudio;
+            cfg["muteHostAudio"] = reqMuteHost;
+            cfg["clientUniqueId"] = reqClientUniqueId;
+            cfg["clientIsLocal"] = clientIsLocal;
+            cfg["autoMode"] = true;
+            cfg["serverHost"] = serverHost;
+            cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
+            // Slot 0 keeps the historical ports/path; slot 1 gets its own so
+            // both children can listen at once (HttpServer proxies /ws1).
+            cfg["signalingPort"] = static_cast<int>(reqSlot == 0 ? signalingPort
+                                                                 : quint16(signalingPort + 10));
+            cfg["streamRelayPort"] = static_cast<int>(reqSlot == 0 ? quint16(signalingPort + 1)
+                                                                   : quint16(signalingPort + 11));
+            cfg["wsPath"] = reqSlot == 0 ? QStringLiteral("/ws") : QStringLiteral("/ws1");
+            QJsonArray chainArr;
+            for (const QString& m : transportChain)
+                chainArr.append(m);
+            cfg["transportChain"] = chainArr;
+            cfg["transportIndex"] = reqTransportIndex;
+
+            auto* worker = new StreamWorkerHost(qApp);
+            // The child self-deletes only once its process is gone — destroyed()
+            // is the barrier a queued same-slot start waits on (ports are free).
+            QObject::connect(worker, &StreamWorkerHost::exited, worker, &QObject::deleteLater);
+
+            const QString hostUuidCopy = host->uuid;
+            const QString uid = reqClientUniqueId;
+            QObject::connect(
+                worker, &StreamWorkerHost::responseReady, qApp,
+                [respond, worker, &g_StreamSlots, &g_DualSupport, &authManager, reqSlot, standby,
+                 hostUuidCopy, sessionToken](int code, QJsonObject bodyObj) {
+                    const bool ok =
+                        code == 200 && bodyObj["status"].toString() == QLatin1String("streaming");
+                    if (ok) {
+                        bodyObj["slot"] = reqSlot;
+                        bodyObj["dual_supported"] = g_DualSupport.value(hostUuidCopy, true);
+                        authManager.setSessionStreaming(sessionToken, true);
+                        // A successful standby launch IS the capability probe.
+                        if (standby) g_DualSupport[hostUuidCopy] = true;
+                        respond(HttpResponse::json(bodyObj, 200));
+                        return;
+                    }
+                    if (standby) {
+                        // Probe outcome: the host refused (or failed) a second
+                        // concurrent session. Report it as a distinct status —
+                        // NOT an HTTP error — so the frontend can fall back to
+                        // the legacy relaunch without treating it as a failed
+                        // launch, and remember the answer for this host.
+                        g_DualSupport[hostUuidCopy] = false;
+                        QJsonObject r;
+                        r["status"] = QStringLiteral("dual_unavailable");
+                        r["reason"] = bodyObj.contains("error") ? bodyObj["error"].toString()
+                                                                : QStringLiteral("code %1").arg(code);
+                        StreamSlot& sl = g_StreamSlots[reqSlot];
+                        if (sl.worker == worker) {
+                            sl.worker = nullptr;
+                            sl.clientUniqueId.clear();
+                            sl.hostUuid.clear();
+                            sl.sessionToken.clear();
+                        }
+                        respond(HttpResponse::json(r, 200));
+                        return;
+                    }
+                    respond(HttpResponse::json(bodyObj, code));
+                });
+
+            QObject::connect(
+                worker, &StreamWorkerHost::ended, qApp,
+                [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs, &computerManager,
+                 &authManager, reqSlot, host, hostUuidCopy, uid, sessionToken]() {
+                    qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
+                            << ")";
+                    // Pathological probe outcome: the LIVE stream died within
+                    // ~3s of a standby launch — the host "took over" instead of
+                    // adding a session. Remember no-dual for this host.
+                    if (reqSlot == 0 && g_LastStandbyStartMs > 0 &&
+                        QDateTime::currentMSecsSinceEpoch() - g_LastStandbyStartMs < 3000) {
+                        qWarning() << "[main] Live stream died right after a standby launch — "
+                                      "marking host no-dual";
+                        g_DualSupport[hostUuidCopy] = false;
+                    }
+                    authManager.setSessionStreaming(sessionToken, false);
+                    // Best-effort Sunshine /cancel keyed by this slot's uniqueid
+                    // (mirrors the legacy sessionEnded auto-quit).
+                    auto* identity = IdentityManager::get();
+                    auto* quitReply = computerManager.http()->quitAppAsync(
+                        host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
+                        identity->getPrivateKey(), uid);
+                    QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
+                                     &QNetworkReply::deleteLater);
+                    StreamSlot& sl = g_StreamSlots[reqSlot];
+                    if (sl.worker == worker) {
+                        sl.worker = nullptr;
+                        sl.clientUniqueId.clear();
+                        sl.hostUuid.clear();
+                        sl.sessionToken.clear();
+                    }
+                });
+
+            auto startWorker = [worker, cfg, respond, standby, reqSlot, &g_StreamSlots,
+                                &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken]() {
+                if (!worker->start(cfg)) {
+                    worker->deleteLater();
+                    // Spawn failure. For a standby attempt just report
+                    // dual_unavailable; a primary launch has already torn the
+                    // old session down, so surface the error (the in-process
+                    // fallback would need the whole legacy block — the frontend
+                    // retries and the next attempt hits the same code path).
+                    QJsonObject r;
+                    if (standby) {
+                        r["status"] = QStringLiteral("dual_unavailable");
+                        r["reason"] = QStringLiteral("worker spawn failed");
+                        respond(HttpResponse::json(r, 200));
+                    } else {
+                        respond(HttpResponse::error(500, "Failed to spawn stream worker"));
+                    }
+                    return;
+                }
+                StreamSlot& sl = g_StreamSlots[reqSlot];
+                sl.worker = worker;
+                sl.clientUniqueId = uid;
+                sl.hostUuid = hostUuidCopy;
+                sl.sessionToken = sessionToken;
+                if (standby) g_LastStandbyStartMs = QDateTime::currentMSecsSinceEpoch();
+            };
+
+            // Serialize with whatever still holds this slot's ports: a previous
+            // worker child (wait for its process to die) or a legacy in-process
+            // relay (wait for its destruction) — same rationale as the deferred
+            // start below.
+            if (previousWorker) {
+                qInfo() << "[Session] Previous slot" << reqSlot
+                        << "worker still tearing down — deferring worker start";
+                QObject::connect(previousWorker, &QObject::destroyed, qApp, startWorker);
+            } else if (reqSlot == 0 && g_ActiveRelayRoot) {
+                qInfo() << "[Session] Previous in-process relay still tearing down — "
+                           "deferring worker start";
+                QObject::connect(g_ActiveRelayRoot, &QObject::destroyed, qApp, startWorker);
+            } else {
+                startWorker();
+            }
+            return;
+        }
+
+        // ═════════════════════════════════════════════════════════════════════
         // Single attempt for chainMode (transportChain[reqTransportIndex]).
         //
         // The browser owns the fallback loop: when a transport fails to connect,
@@ -1334,8 +1644,8 @@ int main(int argc, char* argv[])
     server.router()->postAsync(
         "/api/hosts/:id/quit",
         [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
-         &g_ActiveSession, &g_ActiveClientUniqueId,
-         &g_ActiveHostUuid](const HttpRequest& req, const ResponseCallback& respond) {
+         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_StreamSlots,
+         &detachWorkerSlot](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                     << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -1357,14 +1667,37 @@ int main(int argc, char* argv[])
 
             // Per-browser unique ID so the cancel targets this browser's own
             // session (must match the one used at /launch). Sanitized to hex.
+            QJsonObject qbody = QJsonDocument::fromJson(req.body).object();
             QString quitUniqueId;
-            {
-                QJsonObject qbody = QJsonDocument::fromJson(req.body).object();
-                for (const QChar& c : qbody["client_uniqueid"].toString()) {
-                    QChar u = c.toUpper();
-                    if (u.isDigit() || (u >= 'A' && u <= 'F')) quitUniqueId += u;
-                    if (quitUniqueId.size() >= 32) break;
+            for (const QChar& c : qbody["client_uniqueid"].toString()) {
+                QChar u = c.toUpper();
+                if (u.isDigit() || (u >= 'A' && u <= 'F')) quitUniqueId += u;
+                if (quitUniqueId.size() >= 32) break;
+            }
+
+            // ── Worker-mode sessions ───────────────────────────────────────
+            // session_slot present → tear down ONLY that slot's child (the
+            // frontend's seamless switcher retires one leg of the dual stream
+            // while the other keeps playing). Absent → legacy semantics: stop
+            // every slot this uniqueid owns (empty ids keep legacy behaviour).
+            const int quitSlot =
+                qbody.contains("session_slot") ? qBound(0, qbody["session_slot"].toInt(0), 1) : -1;
+            bool workerStopped = false;
+            for (int i = 0; i < 2; ++i) {
+                StreamSlot& sl = g_StreamSlots[i];
+                if (!sl.worker) continue;
+                if (quitSlot >= 0 && i != quitSlot) continue;
+                const bool slotOwned = sl.clientUniqueId.isEmpty() || quitUniqueId.isEmpty() ||
+                                       quitUniqueId == sl.clientUniqueId;
+                if (!slotOwned) {
+                    qInfo() << "[quit] Slot" << i << "owned by another uniqueid — skipping";
+                    continue;
                 }
+                qInfo() << "[quit] Stopping stream worker slot" << i;
+                // Suppressed ended-cleanup: this handler sends the Sunshine
+                // /cancel itself right below (keyed by quitUniqueId).
+                detachWorkerSlot(i, false);
+                workerStopped = true;
             }
 
             // Ownership guard: a client that was taken over by another device may
@@ -1430,7 +1763,7 @@ int main(int argc, char* argv[])
                 g_ActiveHostUuid.clear();
             }
 
-            if (!relayStopped) {
+            if (!relayStopped && !workerStopped) {
                 qInfo() << "[quit] No active relay (already stopped or never started)";
             }
 
@@ -1561,6 +1894,9 @@ int main(int argc, char* argv[])
     server.setSignalingPort(signalingPort);
     // Legacy WSS StreamRelay uses the next port for its local WS server.
     server.setStreamRelayPort(signalingPort + 1);
+    // Second concurrent stream slot (dual-stream seamless switching): its
+    // worker child listens on +10/+11, proxied at /ws1 and /ws1/stream.
+    server.setSlot1Ports(signalingPort + 10, signalingPort + 11);
 
     // Single-tab dedup control channel: every open app tab keeps a WebSocket
     // (proxied at /ws/control) open here. A second launch asks us — over

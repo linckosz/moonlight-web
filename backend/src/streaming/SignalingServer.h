@@ -56,6 +56,11 @@ public:
 
     void setServerHost(const QString& host) { m_ServerHost = host; }
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
+
+    /// Proxy path prefix for the signaling WebSocket ("/ws" default, "/ws1"
+    /// for the second concurrent stream slot). Must match HttpServer's
+    /// path->port routing.
+    void setWsPath(const QString& path) { m_WsPath = path; }
     quint16 port() const { return m_WsPort; }
 
     /// Returns the WebSocket URL for browser connections.
@@ -148,6 +153,7 @@ private:
     QWebSocket* m_WsClient = nullptr;
     quint16 m_WsPort = 0;
     quint16 m_HttpsPort = 443;
+    QString m_WsPath = QStringLiteral("/ws");
     QString m_ServerHost;
     bool m_Running = false;
     std::atomic<bool> m_Stopping{false};

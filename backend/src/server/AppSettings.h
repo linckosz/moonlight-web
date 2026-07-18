@@ -152,6 +152,10 @@ public:
 
     bool audioTimeStretch() const;
 
+    /// Host each streaming session in a --stream-worker subprocess (enables two
+    /// concurrent sessions). File-only kill switch, default true.
+    bool streamWorkerEnabled() const;
+
     // Seed documented file-only default keys into settings.json if absent, so they
     // are discoverable/editable in the file. Idempotent.
     void seedDocumentedDefaults();

@@ -201,6 +201,8 @@ add_executable(mw-server
     src/streaming/FrameSender.cpp
     src/streaming/MediaTrackRelay.cpp
     src/streaming/SignalingServer.cpp
+    src/streaming/StreamWorkerHost.cpp
+    src/streaming/worker/StreamWorkerMain.cpp
 )
 
 # Ship the binary as "MoonlightWeb(.exe)" regardless of the CMake target name.
