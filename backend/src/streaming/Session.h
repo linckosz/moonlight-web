@@ -107,6 +107,10 @@ public:
     /// over / cancel another's session. Empty → shared IdentityManager id.
     void setClientUniqueId(const QString& id) { m_ClientUniqueId = id; }
 
+    /// Client identity used for the Sunshine HTTPS calls (0 = primary,
+    /// 1 = secondary — the dual-stream standby slot on double-paired hosts).
+    void setIdentityIndex(int idx) { m_IdentityIndex = idx; }
+
     /// Set the actual HTTPS port used by HttpServer (may differ from 443
     /// due to port fallback). Used to construct the correct wsUrl() for
     /// the browser when sharing the unified port.
@@ -183,6 +187,8 @@ private:
     QString m_StunServer = "stun:stun.l.google.com:19302";
     /// Per-browser uniqueid for Sunshine launch/cancel; empty → shared id.
     QString m_ClientUniqueId;
+    /// Identity used for Sunshine HTTPS calls (see setIdentityIndex).
+    int m_IdentityIndex = 0;
     QNetworkReply* m_LaunchReply = nullptr;
     /// Track which start paths we've tried, so launch↔resume fallback (used when
     /// the registry hint is stale) terminates instead of looping.

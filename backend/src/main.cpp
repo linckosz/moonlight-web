@@ -573,6 +573,10 @@ int main(int argc, char* argv[])
         QString clientUniqueId;
         QString hostUuid;
         QString sessionToken;
+        // Client identity the slot launched with (0 = primary; 1 = secondary,
+        // used by the standby slot on double-paired hosts). The Sunshine
+        // /cancel for this slot must present the same certificate.
+        int identityIndex = 0;
     };
     std::array<StreamSlot, 2> g_StreamSlots;
     // Per-host result of the dual-stream capability probe (first standby
@@ -1444,6 +1448,13 @@ int main(int argc, char* argv[])
             cfg["clientUniqueId"] = reqClientUniqueId;
             cfg["clientIsLocal"] = clientIsLocal;
             cfg["autoMode"] = true;
+            // Standby slot: use the secondary paired identity when available
+            // (installer double pairing) so both concurrent Sunshine sessions
+            // run under their own client certificate — like two independent
+            // moonlight clients. Otherwise bet on same-cert concurrency (the
+            // standby launch doubles as the capability probe).
+            const int identityIndex = (reqSlot == 1 && host->paired2) ? 1 : 0;
+            cfg["identityIndex"] = identityIndex;
             cfg["serverHost"] = serverHost;
             cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
             // Slot 0 keeps the historical ports/path; slot 1 gets its own so
@@ -1508,7 +1519,7 @@ int main(int argc, char* argv[])
             QObject::connect(
                 worker, &StreamWorkerHost::ended, qApp,
                 [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs, &computerManager,
-                 &authManager, reqSlot, host, hostUuidCopy, uid, sessionToken]() {
+                 &authManager, reqSlot, host, hostUuidCopy, uid, sessionToken, identityIndex]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
                     // Pathological probe outcome: the LIVE stream died within
@@ -1522,8 +1533,9 @@ int main(int argc, char* argv[])
                     }
                     authManager.setSessionStreaming(sessionToken, false);
                     // Best-effort Sunshine /cancel keyed by this slot's uniqueid
-                    // (mirrors the legacy sessionEnded auto-quit).
-                    auto* identity = IdentityManager::get();
+                    // (mirrors the legacy sessionEnded auto-quit), presenting
+                    // the identity the slot launched with.
+                    auto* identity = IdentityManager::get(identityIndex);
                     auto* quitReply = computerManager.http()->quitAppAsync(
                         host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
                         identity->getPrivateKey(), uid);
@@ -1539,7 +1551,8 @@ int main(int argc, char* argv[])
                 });
 
             auto startWorker = [worker, cfg, respond, standby, reqSlot, &g_StreamSlots,
-                                &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken]() {
+                                &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken,
+                                identityIndex]() {
                 if (!worker->start(cfg)) {
                     worker->deleteLater();
                     // Spawn failure. For a standby attempt just report
@@ -1562,6 +1575,7 @@ int main(int argc, char* argv[])
                 sl.clientUniqueId = uid;
                 sl.hostUuid = hostUuidCopy;
                 sl.sessionToken = sessionToken;
+                sl.identityIndex = identityIndex;
                 if (standby) g_LastStandbyStartMs = QDateTime::currentMSecsSinceEpoch();
             };
 
@@ -1694,8 +1708,20 @@ int main(int argc, char* argv[])
                     continue;
                 }
                 qInfo() << "[quit] Stopping stream worker slot" << i;
+                if (sl.identityIndex == 1) {
+                    // The standby slot launched under the SECONDARY identity —
+                    // cancel its Sunshine session with the same certificate
+                    // (the shared /cancel below presents the primary one).
+                    auto* id2 = IdentityManager::get(1);
+                    auto* r2 = computerManager.http()->quitAppAsync(
+                        host->activeAddress, host->activeHttpsPort, id2->getCertificate(),
+                        id2->getPrivateKey(), sl.clientUniqueId);
+                    QObject::connect(r2, &QNetworkReply::finished, r2,
+                                     &QNetworkReply::deleteLater);
+                }
                 // Suppressed ended-cleanup: this handler sends the Sunshine
-                // /cancel itself right below (keyed by quitUniqueId).
+                // /cancel itself (keyed by quitUniqueId / just above for the
+                // secondary identity).
                 detachWorkerSlot(i, false);
                 workerStopped = true;
             }

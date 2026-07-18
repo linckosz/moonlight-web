@@ -114,4 +114,8 @@ public:
     // — Pairing state (persisted) —
     QByteArray serverCertPem;
     quint16 activeHttpsPort = 0;
+    /// Secondary identity (IdentityManager::get(1)) is also paired with this
+    /// host — set by the installer's double pairing. Enables the dual-stream
+    /// standby slot to launch under its own client certificate.
+    bool paired2 = false;
 };
