@@ -561,7 +561,8 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
 
     // --- Local description callback ---
     m_Pc->onLocalDescription([this](const rtc::Description& sdp) {
-        qInfo() << "[DataChannelRelay] Local SDP generated, type=" << sdp.typeString();
+        qInfo() << "[DataChannelRelay] Local SDP generated, type="
+                << QString::fromStdString(sdp.typeString());
         emit signalingSdpReady(std::string(sdp));
     });
 
