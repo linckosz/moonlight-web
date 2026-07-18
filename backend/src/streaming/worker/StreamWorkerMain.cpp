@@ -137,11 +137,14 @@ int runStreamWorker(QCoreApplication& app)
         return 1;
     }
 
-    // Static storage: the worker runs exactly one session per process, and the
-    // global g_State pointer must stay valid for the whole event loop (teardown
-    // callbacks fire through it). Static duration ties its lifetime to the
-    // process, not this stack frame.
-    static WorkerState state;
+    // Automatic storage is required: the relay callbacks below capture `state`
+    // by reference, and a lambda can only capture a variable with automatic
+    // storage duration. It lives on this frame for the whole event loop —
+    // g_State is only dereferenced from teardown callbacks that run inside
+    // app.exec() below, well before the frame unwinds — so the pointer never
+    // actually dangles.
+    WorkerState state;
+    // cppcheck-suppress danglingLifetime
     g_State = &state;
 
     // ── Reconstruct the minimal host the session needs ───────────────────────
