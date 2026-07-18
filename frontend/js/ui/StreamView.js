@@ -1302,16 +1302,11 @@ export class StreamView {
                         (m.resolution || '?'),
                 );
                 if (m.resolution) this._resolution = m.resolution;
-                this.setStatus('live', 'Live');
-                this._firstFrameRendered = true;
-                if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
-                // Always advance the overlay to step 3 + schedule hide, even if a
-                // previous path already flipped _firstFrameRendered: the overlay
-                // teardown is idempotent and must never be skipped, otherwise it
-                // stays stuck on step 2 while the stream plays.
-                this._updateStartupStep(3);
-                setTimeout(() => this._hideStartupOverlay(), 500);
-                this._showShortcutsSlide();
+                // Always run _markFirstFrame, even if a previous path already
+                // flipped _firstFrameRendered: the overlay teardown inside is
+                // idempotent and must never be skipped, otherwise it stays
+                // stuck on step 2 while the stream plays.
+                this._markFirstFrame();
                 break;
             case 'status':
                 this.setStatus(m.state, m.msg);
@@ -2251,15 +2246,34 @@ export class StreamView {
         // Update status on first frame
         if (!this._firstFrameRendered) {
             console.log('[StreamView] FIRST DECODED FRAME! Setting status to Live');
-            this.setStatus('live', 'Live');
-            this._firstFrameRendered = true;
-            // Show stats overlay (only if enabled in settings)
-            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
-            // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
-            this._updateStartupStep(3);
-            setTimeout(() => this._hideStartupOverlay(), 500);
-            // Show keyboard shortcuts slide (5s auto-hide)
-            this._showShortcutsSlide();
+            this._markFirstFrame();
+        }
+    }
+
+    /**
+     * First decoded/presented frame of this stream instance: flip the status to
+     * Live, reveal the stats overlay, tear down the startup overlay and show
+     * the shortcuts slide. The overlay work is idempotent (safe to re-run);
+     * the onFirstFrame callback fires exactly once. Used by the relaunch
+     * freeze-frame bridge (and later by the seamless stream switcher).
+     */
+    _markFirstFrame() {
+        const first = !this._firstFrameRendered;
+        this._firstFrameRendered = true;
+        this.setStatus('live', 'Live');
+        // Show stats overlay (only if enabled in settings)
+        if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+        // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
+        this._updateStartupStep(3);
+        setTimeout(() => this._hideStartupOverlay(), 500);
+        // Show keyboard shortcuts slide (5s auto-hide)
+        this._showShortcutsSlide();
+        if (first && typeof this.onFirstFrame === 'function') {
+            try {
+                this.onFirstFrame();
+            } catch (e) {
+                console.warn('[StreamView] onFirstFrame callback failed:', e);
+            }
         }
     }
 
@@ -2276,6 +2290,47 @@ export class StreamView {
             if (this.videoEl && this._transport !== 'webrtc-media')
                 this.videoEl.style.display = 'none';
             if (this.canvas) this.canvas.style.display = '';
+        }
+    }
+
+    /**
+     * Best-effort snapshot of the last presented frame, used to bridge a
+     * transport relaunch with a frozen image instead of a black loader.
+     * Returns a detached <canvas>, or null when nothing was presented yet or
+     * the surface cannot be read back (worker mode: the placeholder canvas
+     * whose control was transferred to an OffscreenCanvas is not drawable).
+     */
+    captureLastFrame() {
+        try {
+            if (!this._firstFrameRendered) return null;
+            const video = this._videoIsDisplay() ? this.videoEl : null;
+            const src = video || this.canvas;
+            if (!src) return null;
+            const w = video ? video.videoWidth : src.width;
+            const h = video ? video.videoHeight : src.height;
+            if (!(w > 0 && h > 0)) return null;
+            const c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            c.getContext('2d').drawImage(src, 0, 0, w, h);
+            return c;
+        } catch (e) {
+            console.warn('[StreamView] captureLastFrame failed:', e);
+            return null;
+        }
+    }
+
+    /** Height in pixels of the incoming video, 0 when unknown. Used by the
+     *  degradation ladder when the user setting is "Same as Host" (height 0). */
+    currentFrameHeight() {
+        try {
+            const m = /×(\d+)/.exec(this._resolution || '');
+            if (m) return parseInt(m[1], 10) || 0;
+            if (this._videoIsDisplay() || this._transport === 'webrtc-media')
+                return (this.videoEl && this.videoEl.videoHeight) || 0;
+            return (this.canvas && this.canvas.height) || 0;
+        } catch (e) {
+            return 0;
         }
     }
 
@@ -2519,18 +2574,10 @@ export class StreamView {
                 if (this.videoEl) {
                     const onMediaLive = () => {
                         if (this._firstFrameRendered) return;
-                        this._firstFrameRendered = true;
                         const w = this.videoEl.videoWidth || 0;
                         const h = this.videoEl.videoHeight || 0;
                         if (w > 0) this._resolution = w + '×' + h;
-                        this.setStatus('live', 'Live');
-                        if (this._overlayEl && this._showPerfStats)
-                            this._overlayEl.style.display = '';
-                        // Mark startup step 3 ("Stream prêt !") and hide overlay after 1.5s
-                        this._updateStartupStep(3);
-                        setTimeout(() => this._hideStartupOverlay(), 500);
-                        // Show keyboard shortcuts slide (5s auto-hide)
-                        this._showShortcutsSlide();
+                        this._markFirstFrame();
                     };
                     // The video track may already be playing by the time the
                     // DataChannels open (ontrack + play() can fire before onOpen),

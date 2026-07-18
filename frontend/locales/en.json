@@ -366,6 +366,8 @@
         "degradeBitrateFps": "Unstable network — bitrate reduced to {{mbps}} Mbps, capped at 60 fps",
         "degradeMedia": "Unstable network — switching to the native video transport",
         "degradeRestart": "Unstable network — restarting the video transport",
+        "degradeResolution": "Unstable network — resolution reduced to {{res}}p",
+        "degradeResolutionSgsr": "Unstable network — resolution reduced to {{res}}p, SGSR upscaling enabled",
         "streamEnd": "Stream end",
         "takenOverTitle": "Connection terminated",
         "takenOverBody": "This session was taken over by another device.",
