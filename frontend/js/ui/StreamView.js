@@ -1543,6 +1543,9 @@ export class StreamView {
         if (!this.onCongestion || this._quitting || this._manualQuitting) return;
         const now = performance.now();
         if (now - this._startTime < 10000) return;
+        // Every recorded signal (not just sustained detections) is reported so
+        // the app can measure quiet time for the automatic quality upgrade.
+        if (typeof this.onCongestionSignal === 'function') this.onCongestionSignal();
         this._congEvents.push(now);
         while (this._congEvents.length > 0 && now - this._congEvents[0] > 20000) {
             this._congEvents.shift();
