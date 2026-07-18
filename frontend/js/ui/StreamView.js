@@ -2357,10 +2357,7 @@ export class StreamView {
                     if (!document.pointerLockElement) tryLock();
                 };
                 document.addEventListener('pointerlockchange', onChange);
-                setTimeout(
-                    () => document.removeEventListener('pointerlockchange', onChange),
-                    3000,
-                );
+                setTimeout(() => document.removeEventListener('pointerlockchange', onChange), 3000);
             }
         }
     }

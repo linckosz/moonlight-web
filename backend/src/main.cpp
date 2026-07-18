@@ -350,8 +350,7 @@ int main(int argc, char* argv[])
     // console echo to stderr BEFORE anything logs (CrashHandler::install below
     // logs an INFO line). The full worker branch runs after CLI parsing.
     for (int i = 1; i < argc; ++i)
-        if (qstrcmp(argv[i], "--stream-worker") == 0)
-            Logger::instance()->setConsoleToStderr(true);
+        if (qstrcmp(argv[i], "--stream-worker") == 0) Logger::instance()->setConsoleToStderr(true);
     {
         const QString logDir =
             QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
@@ -849,9 +848,9 @@ int main(int argc, char* argv[])
                                                         &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
                                                         &g_ActiveHostUuid, &g_StreamSlots,
                                                         &g_DualSupport, &g_LastStandbyStartMs,
-                                                        &g_LiveSunshineUids,
-                                                        &detachWorkerSlot, &server, &appSettings,
-                                                        &authManager, effectiveUpnpEnabled,
+                                                        &g_LiveSunshineUids, &detachWorkerSlot,
+                                                        &server, &appSettings, &authManager,
+                                                        effectiveUpnpEnabled,
                                                         stunServer](const HttpRequest& req,
                                                                     ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
@@ -1460,8 +1459,8 @@ int main(int argc, char* argv[])
             cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
             // Slot 0 keeps the historical ports/path; slot 1 gets its own so
             // both children can listen at once (HttpServer proxies /ws1).
-            cfg["signalingPort"] = static_cast<int>(reqSlot == 0 ? signalingPort
-                                                                 : quint16(signalingPort + 10));
+            cfg["signalingPort"] =
+                static_cast<int>(reqSlot == 0 ? signalingPort : quint16(signalingPort + 10));
             cfg["streamRelayPort"] = static_cast<int>(reqSlot == 0 ? quint16(signalingPort + 1)
                                                                    : quint16(signalingPort + 11));
             cfg["wsPath"] = reqSlot == 0 ? QStringLiteral("/ws") : QStringLiteral("/ws1");
@@ -1503,8 +1502,9 @@ int main(int argc, char* argv[])
                         g_DualSupport[hostUuidCopy] = false;
                         QJsonObject r;
                         r["status"] = QStringLiteral("dual_unavailable");
-                        r["reason"] = bodyObj.contains("error") ? bodyObj["error"].toString()
-                                                                : QStringLiteral("code %1").arg(code);
+                        r["reason"] = bodyObj.contains("error")
+                                          ? bodyObj["error"].toString()
+                                          : QStringLiteral("code %1").arg(code);
                         StreamSlot& sl = g_StreamSlots[reqSlot];
                         if (sl.worker == worker) {
                             sl.worker = nullptr;
@@ -1520,9 +1520,8 @@ int main(int argc, char* argv[])
 
             QObject::connect(
                 worker, &StreamWorkerHost::ended, qApp,
-                [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs,
-                 &g_LiveSunshineUids, &computerManager, &authManager, reqSlot, host, hostUuidCopy,
-                 uid, sessionToken]() {
+                [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs, &g_LiveSunshineUids,
+                 &computerManager, &authManager, reqSlot, host, hostUuidCopy, uid, sessionToken]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
                     // Pathological probe outcome: the LIVE stream died within

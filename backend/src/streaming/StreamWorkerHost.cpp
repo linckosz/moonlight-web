@@ -139,15 +139,14 @@ void StreamWorkerHost::onStdout()
 
 void StreamWorkerHost::onFinished(int exitCode, QProcess::ExitStatus status)
 {
-    qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode
-            << "status=" << status;
+    qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode << "status=" << status;
     // A worker that dies without answering still owes the browser a reply, and
     // its session is over either way.
     if (!m_ResponseEmitted) {
         m_ResponseEmitted = true;
-        emit responseReady(
-            502, QJsonObject{{QStringLiteral("error"),
-                              QStringLiteral("stream worker exited before responding")}});
+        emit responseReady(502,
+                           QJsonObject{{QStringLiteral("error"),
+                                        QStringLiteral("stream worker exited before responding")}});
     }
     if (!m_EndedEmitted) {
         m_EndedEmitted = true;
