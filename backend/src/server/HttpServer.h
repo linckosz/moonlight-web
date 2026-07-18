@@ -60,6 +60,14 @@ public:
     /// The HttpServer proxies wss://host/ws/control to this local port.
     void setControlPort(quint16 port) { m_ControlPort = port; }
 
+    /// Ports for the SECOND concurrent stream slot (dual-stream seamless
+    /// switching): wss://host/ws1 → signaling, wss://host/ws1/stream → relay.
+    void setSlot1Ports(quint16 signalingPort, quint16 streamRelayPort)
+    {
+        m_Slot1SignalingPort = signalingPort;
+        m_Slot1StreamRelayPort = streamRelayPort;
+    }
+
     /// The port the HTTPS server actually bound to (0 if not started).
     quint16 activeHttpsPort() const { return m_ActiveHttpsPort; }
 
@@ -165,6 +173,9 @@ private:
     quint16 m_SignalingPort = 48001;
     quint16 m_StreamRelayPort = 48002;
     quint16 m_ControlPort = 48003;
+    // Second concurrent stream slot (dual-stream seamless switching).
+    quint16 m_Slot1SignalingPort = 48011;
+    quint16 m_Slot1StreamRelayPort = 48012;
 
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;

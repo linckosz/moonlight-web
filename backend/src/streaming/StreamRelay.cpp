@@ -200,7 +200,7 @@ QString StreamRelay::wsUrl() const
     // The proxy routes /ws/stream to this StreamRelay's local WS port.
     QString host = m_ServerHost;
     if (m_HttpsPort != 443) host += ":" + QString::number(m_HttpsPort);
-    return QString("wss://%1/ws/stream").arg(host);
+    return QString("wss://%1%2/stream").arg(host, m_WsPath);
 }
 
 // --- Fragmented send (same format as DataChannelRelay) -------------------------

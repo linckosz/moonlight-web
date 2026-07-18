@@ -40,6 +40,10 @@ public:
     void setLogFile(const QString& path);
     void log(Level level, const QString& message);
 
+    /// Route ALL console echo to stderr (worker mode: stdout is the JSON
+    /// event protocol and must stay clean).
+    void setConsoleToStderr(bool enable) { m_ForceStderr = enable; }
+
     static void debug(const QString& msg) { instance()->log(Debug, msg); }
     static void info(const QString& msg) { instance()->log(Info, msg); }
     static void warning(const QString& msg) { instance()->log(Warning, msg); }
@@ -53,4 +57,5 @@ private:
     QTextStream m_Stream;
     QMutex m_Mutex;
     bool m_FileOpen;
+    bool m_ForceStderr = false;
 };

@@ -833,13 +833,17 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     }
 
     // Parse the WebSocket path from the upgrade request to determine the target.
-    //   GET /ws          → proxy to m_SignalingPort (WebRTC signaling)
-    //   GET /ws/stream   → proxy to m_StreamRelayPort (legacy WSS StreamRelay)
+    //   GET /ws          → proxy to m_SignalingPort (WebRTC signaling, slot 0)
+    //   GET /ws/stream   → proxy to m_StreamRelayPort (legacy WSS, slot 0)
     //   GET /ws/control  → proxy to m_ControlPort (single-tab dedup channel)
+    //   GET /ws1         → proxy to m_Slot1SignalingPort (stream slot 1)
+    //   GET /ws1/stream  → proxy to m_Slot1StreamRelayPort (stream slot 1)
     QString firstLine = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n")));
     QString path = firstLine.section(' ', 1, 1);
     quint16 targetPort = (path == "/ws/stream")    ? m_StreamRelayPort
                          : (path == "/ws/control") ? m_ControlPort
+                         : (path == "/ws1")        ? m_Slot1SignalingPort
+                         : (path == "/ws1/stream") ? m_Slot1StreamRelayPort
                                                    : m_SignalingPort;
 
     qInfo() << "[HttpServer] WebSocket upgrade detected, path=" << path

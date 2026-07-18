@@ -471,6 +471,7 @@ void StreamSession::onLaunchReplyFinished()
         auto* streamRelay = new StreamRelay(m_Shim, m_StreamRelayPort, {}, nullptr);
         streamRelay->setServerHost(m_ServerHost);
         streamRelay->setHttpsPort(m_HttpsPort);
+        streamRelay->setWsPath(m_WsPath);
         streamRelay->setClipboardEnabled(clipboardLocal);
 
         connect(m_Shim, &MoonlightShim::connectionStarted, this,
@@ -523,6 +524,7 @@ void StreamSession::onLaunchReplyFinished()
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
         signaling->setHttpsPort(m_HttpsPort);
+        signaling->setWsPath(m_WsPath);
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
@@ -589,6 +591,7 @@ void StreamSession::onLaunchReplyFinished()
         // NonSecure mode: external tunnel or Cloudflare provides TLS termination.
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
         signaling->setHttpsPort(m_HttpsPort);
+        signaling->setWsPath(m_WsPath);
         signaling->setUseUPnP(m_UpnpEnabled);
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);

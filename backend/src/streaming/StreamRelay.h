@@ -48,6 +48,9 @@ public:
 
     void setServerHost(const QString& host) { m_ServerHost = host; }
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
+
+    /// Proxy path prefix ("/ws" default -> "/ws/stream"; "/ws1" -> "/ws1/stream").
+    void setWsPath(const QString& path) { m_WsPath = path; }
     quint16 wsPort() const { return m_WsPort; }
     QString wsUrl() const;
 
@@ -112,6 +115,7 @@ private:
     quint16 m_WsPort = 48001;
     QString m_ServerHost = "localhost";
     quint16 m_HttpsPort = 443;
+    QString m_WsPath = QStringLiteral("/ws");
     bool m_Running = false;
     bool m_Stopping = false;
     bool m_StreamStarted = false;

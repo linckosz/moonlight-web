@@ -171,14 +171,30 @@ bool AppSettings::audioTimeStretch() const
     return obj.value("audio_time_stretch").toBool(true);
 }
 
+// ── Stream worker (per-session child process) ─────────────────────────────────
+// Hosts each streaming session in a `--stream-worker` subprocess, enabling two
+// concurrent sessions (dual-stream seamless switching) despite the process-
+// global moonlight-common-c. File-only kill switch: set false to force the
+// legacy in-process single-session path.
+
+bool AppSettings::streamWorkerEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("stream_worker_enabled").toBool(true);
+}
+
 void AppSettings::seedDocumentedDefaults()
 {
     QJsonObject obj = readAll();
     bool changed = false;
-    // Seed the key (default true) so it is discoverable/editable in the file.
-    // Documentation lives in the README, not in the JSON (no comment keys).
+    // Seed the keys (with defaults) so they are discoverable/editable in the
+    // file. Documentation lives in the README, not in the JSON (no comment keys).
     if (!obj.contains("audio_time_stretch")) {
         obj["audio_time_stretch"] = true;
+        changed = true;
+    }
+    if (!obj.contains("stream_worker_enabled")) {
+        obj["stream_worker_enabled"] = true;
         changed = true;
     }
     if (changed) writeAll(obj);
