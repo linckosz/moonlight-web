@@ -297,7 +297,7 @@ export class StreamViewKeyboard {
             bar.appendChild(btn);
         }
 
-        document.getElementById('stream-view').appendChild(bar);
+        (this._rootEl || document.getElementById('stream-view')).appendChild(bar);
         this._kbToolbar = bar;
     }
 

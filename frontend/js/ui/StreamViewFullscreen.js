@@ -165,7 +165,7 @@ export class StreamViewFullscreen {
         this._cssFullscreen = true;
 
         // Add CSS class to the stream-view container
-        const streamView = document.getElementById('stream-view');
+        const streamView = this._rootEl || document.getElementById('stream-view');
         if (streamView) streamView.classList.add('stream-css-fs');
 
         // Hide the header fullscreen button
@@ -300,7 +300,7 @@ export class StreamViewFullscreen {
         this._cssFullscreen = false;
 
         // Remove CSS class from the stream-view container
-        const streamView = document.getElementById('stream-view');
+        const streamView = this._rootEl || document.getElementById('stream-view');
         if (streamView) streamView.classList.remove('stream-css-fs');
 
         // Restore header fullscreen button visibility (per current orientation)

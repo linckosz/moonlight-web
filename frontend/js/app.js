@@ -1070,6 +1070,11 @@ const MoonlightApp = {
             this._lastUpgradeTime = 0;
             this._upgradeStableMs = 75000;
             this._originalStreamHeight = undefined;
+            // Dual-stream state: fresh launch starts on slot 0 with an unknown
+            // (assumed possible) dual capability; any stale standby dies here.
+            this._abortStandby('fresh launch');
+            this._activeSlot = 0;
+            this._dualSupported = undefined;
         }
 
         // Store host/app for HEVC fallback re-launch
@@ -1375,6 +1380,50 @@ const MoonlightApp = {
      * Stores the backend-reported transport fallback chain + index.
      */
     _startStreamView(result, host, streamingSettings, suppressShortcuts = false) {
+        // Dual-stream bookkeeping: which backend slot this view runs on, and
+        // whether the host proved able to run two concurrent sessions.
+        const slot = typeof result.slot === 'number' ? result.slot : 0;
+        this._activeSlot = slot;
+        if (typeof result.dual_supported === 'boolean') this._dualSupported = result.dual_supported;
+
+        // Track the fallback chain reported by the backend.
+        this._transportChain = Array.isArray(result.transport_chain) ? result.transport_chain : [];
+        this._transportIndex =
+            typeof result.transport_index === 'number' ? result.transport_index : 0;
+
+        this.streamView = this._createStreamView(result, host, streamingSettings, {
+            sessionSlot: slot,
+            slotUniqueId: BackendClient.clientUniqueIdForSlot(slot),
+        });
+
+        // The keyboard/gesture help slide shows once per user-initiated launch.
+        // Suppress it on transport relaunches (congestion degradation / fallback
+        // chain / codec fallback) so it doesn't re-pop on every degrade step.
+        this.streamView._suppressShortcutsSlide = suppressShortcuts;
+
+        // ── Callbacks ──────────────────────────────────────────────────────
+        // onQuit: normal end (Stop button / mid-stream disconnect).
+        this.streamView.onQuit = () => this._onStreamingQuit();
+        // onConnectionFailed: transport never connected → try the next entry
+        // in the priority chain (or give up if the chain is exhausted).
+        this.streamView.onConnectionFailed = (reason) => this._onTransportFailed(reason);
+        // onCongestion: sustained congestion detected mid-stream → relaunch with
+        // a degraded session-only profile (bitrate −30% steps, resolution rungs,
+        // media transport, 60 fps cap). See _onStreamCongested().
+        this.streamView.onCongestion = () => this._onStreamCongested();
+        // onCongestionSignal: every individual congestion hint (IDR/PLI/drops).
+        // Tracks quiet time for the automatic quality upgrade.
+        this.streamView.onCongestionSignal = () => {
+            this._lastCongSignal = performance.now();
+        };
+        this._armUpgradeTimer();
+    },
+
+    /**
+     * Build a StreamView (active or standby) from a successful launch response.
+     * Shared by _startStreamView and the seamless dual-stream transition.
+     */
+    _createStreamView(result, host, streamingSettings, viewOpts = {}) {
         const isRemote = this._isRemoteConnection();
         const upnpEnabled = true;
         const internalTransport = result.transport || (result.signalingUrl ? 'webrtc' : 'wss');
@@ -1410,12 +1459,7 @@ const MoonlightApp = {
         // Read fresh from the launch result; defaults to on when unspecified.
         const audioTimeStretch = result.audio_time_stretch !== false;
 
-        // Track the fallback chain reported by the backend.
-        this._transportChain = Array.isArray(result.transport_chain) ? result.transport_chain : [];
-        this._transportIndex =
-            typeof result.transport_index === 'number' ? result.transport_index : 0;
-
-        this.streamView = new StreamView(
+        return new StreamView(
             document.getElementById('app'),
             this._streamWsUrl(result.signalingUrl || result.wsUrl),
             host,
@@ -1436,29 +1480,8 @@ const MoonlightApp = {
             hdrEnabled,
             touchScreen,
             audioTimeStretch,
+            viewOpts,
         );
-
-        // The keyboard/gesture help slide shows once per user-initiated launch.
-        // Suppress it on transport relaunches (congestion degradation / fallback
-        // chain / codec fallback) so it doesn't re-pop on every degrade step.
-        this.streamView._suppressShortcutsSlide = suppressShortcuts;
-
-        // ── Callbacks ──────────────────────────────────────────────────────
-        // onQuit: normal end (Stop button / mid-stream disconnect).
-        this.streamView.onQuit = () => this._onStreamingQuit();
-        // onConnectionFailed: transport never connected → try the next entry
-        // in the priority chain (or give up if the chain is exhausted).
-        this.streamView.onConnectionFailed = (reason) => this._onTransportFailed(reason);
-        // onCongestion: sustained congestion detected mid-stream → relaunch with
-        // a degraded session-only profile (bitrate −30% steps, resolution rungs,
-        // media transport, 60 fps cap). See _onStreamCongested().
-        this.streamView.onCongestion = () => this._onStreamCongested();
-        // onCongestionSignal: every individual congestion hint (IDR/PLI/drops).
-        // Tracks quiet time for the automatic quality upgrade.
-        this.streamView.onCongestionSignal = () => {
-            this._lastCongSignal = performance.now();
-        };
-        this._armUpgradeTimer();
     },
 
     /**
@@ -1506,6 +1529,9 @@ const MoonlightApp = {
     _onTransportFailed(reason) {
         // Ignore if streaming was already torn down (e.g. user pressed Back).
         if (this._nav.overlay !== 'streaming') return;
+        // The ACTIVE transport failed: any standby leg is moot (the legacy
+        // relaunch below takes over every slot anyway).
+        this._abortStandby('active transport failed');
         // Ignore if the user pressed Stop (quit animation / quit in progress) —
         // relaunching here would resurrect the session being stopped.
         if (this.streamView && (this.streamView._manualQuitting || this.streamView._quitting)) {
@@ -1623,6 +1649,9 @@ const MoonlightApp = {
             return;
         }
 
+        // A legacy relaunch takes over every slot — drop any in-flight standby.
+        this._abortStandby('legacy relaunch');
+
         // Show the bridging loader BEFORE teardown so the apps view underneath
         // is never revealed (stay on the stream initialization screen). When the
         // old stream already presented frames (congestion degradation, not a
@@ -1688,6 +1717,155 @@ const MoonlightApp = {
         }
     },
 
+    // ── Seamless dual-stream transition ───────────────────────────────────
+
+    /**
+     * Relaunch for a QUALITY transition (degrade or upgrade step): when the
+     * host can run two concurrent sessions, prepare the new stream on the
+     * OTHER slot while the current one keeps playing, and swap the display on
+     * its first decoded frame — no loader, no interruption. Otherwise (or when
+     * anything about the standby fails) fall back to the legacy relaunch.
+     */
+    _qualityRelaunch(relaunchIndex) {
+        const base = this._lastStreamingSettings || {};
+        const canSeamless =
+            this._dualSupported !== false &&
+            base.seamless_switching !== false &&
+            this.streamView &&
+            this.streamView._firstFrameRendered &&
+            !this._standbyView;
+        if (canSeamless) this._seamlessRelaunch(relaunchIndex);
+        else this._relaunchTransport(relaunchIndex);
+    },
+
+    async _seamlessRelaunch(relaunchIndex) {
+        const host = this._lastStreamHost;
+        const app = this._lastStreamApp;
+        if (!host || !app) return this._relaunchTransport(relaunchIndex);
+
+        // Ping-pong: the standby always takes the slot the live stream is NOT on.
+        const standbySlot = this._activeSlot === 0 ? 1 : 0;
+        const standbyUid = BackendClient.clientUniqueIdForSlot(standbySlot);
+        const settings = {
+            ...this._lastStreamingSettings,
+            ...(this._degradeOverrides || {}),
+            transport_index: relaunchIndex,
+            session_slot: standbySlot,
+            standby: true,
+            client_uniqueid: standbyUid,
+        };
+        console.log('[MW] Seamless transition: preparing standby stream on slot', standbySlot);
+
+        let result;
+        try {
+            result = await BackendClient.launchApp(host.uuid, app.id, settings);
+        } catch (err) {
+            console.warn('[MW] Standby launch failed — legacy relaunch:', err);
+            return this._relaunchTransport(relaunchIndex);
+        }
+        if (result.status === 'dual_unavailable') {
+            // Capability probe answered: this host cannot host a second
+            // concurrent session — remember it and use the legacy path.
+            console.warn(
+                '[MW] Host cannot run two concurrent sessions (' +
+                    (result.reason || 'unknown') +
+                    ') — legacy relaunch',
+            );
+            this._dualSupported = false;
+            return this._relaunchTransport(relaunchIndex);
+        }
+        if (result.status !== 'streaming') return this._relaunchTransport(relaunchIndex);
+        // The live stream may have died while the standby was launching.
+        if (!this.streamView) return;
+
+        const sv = this._createStreamView(result, host, settings, {
+            standby: true,
+            sessionSlot: standbySlot,
+            slotUniqueId: standbyUid,
+        });
+        sv._suppressShortcutsSlide = true;
+        this._standbyView = sv;
+        this._standbyResult = result;
+        sv.onFirstFrame = () => this._promoteStandby();
+        sv.onConnectionFailed = (reason) =>
+            this._abortStandby('connect failed: ' + reason, relaunchIndex);
+        sv.onQuit = () => this._abortStandby('standby quit', relaunchIndex);
+        // Failsafe: a standby that never produces a frame must not dangle.
+        this._standbyTimer = setTimeout(() => this._abortStandby('timeout', relaunchIndex), 25000);
+    },
+
+    /** First decoded frame on the standby: swap the display, hand over input
+     *  and audio, retire the old view. The user never sees a loader. */
+    _promoteStandby() {
+        if (this._standbyTimer) {
+            clearTimeout(this._standbyTimer);
+            this._standbyTimer = null;
+        }
+        const sv = this._standbyView;
+        const result = this._standbyResult || {};
+        this._standbyView = null;
+        this._standbyResult = null;
+        if (!sv) return;
+        const oldView = this.streamView;
+
+        console.log('[MW] Seamless transition: first frame on standby — switching display');
+        this._transportChain = Array.isArray(result.transport_chain)
+            ? result.transport_chain
+            : this._transportChain;
+        this._transportIndex =
+            typeof result.transport_index === 'number' ? result.transport_index : 0;
+        this._activeSlot =
+            typeof result.slot === 'number' ? result.slot : this._activeSlot === 0 ? 1 : 0;
+        if (typeof result.dual_supported === 'boolean') this._dualSupported = result.dual_supported;
+
+        this.streamView = sv;
+        sv.onFirstFrame = null;
+        sv.onQuit = () => this._onStreamingQuit();
+        sv.onConnectionFailed = (reason) => this._onTransportFailed(reason);
+        sv.onCongestion = () => this._onStreamCongested();
+        sv.onCongestionSignal = () => {
+            this._lastCongSignal = performance.now();
+        };
+        sv.activate();
+        this._armUpgradeTimer();
+
+        // Retire the old view quietly: its slot-scoped /quit only touches its
+        // own leg, and `retire` preserves the display state (fullscreen) for
+        // the successor.
+        if (oldView) {
+            oldView.onQuit = null;
+            oldView.onConnectionFailed = null;
+            oldView.onCongestion = null;
+            oldView.onCongestionSignal = null;
+            oldView.quit({ silent: true, retire: true }).catch(() => {});
+        }
+    },
+
+    /** Tear down a failed/stale standby. When a relaunch index is provided the
+     *  quality transition still happens via the legacy path. */
+    _abortStandby(reason, relaunchIndex) {
+        if (this._standbyTimer) {
+            clearTimeout(this._standbyTimer);
+            this._standbyTimer = null;
+        }
+        const sv = this._standbyView;
+        this._standbyView = null;
+        this._standbyResult = null;
+        if (!sv) return;
+        console.warn('[MW] Standby stream aborted (' + reason + ')');
+        sv.onQuit = null;
+        sv.onConnectionFailed = null;
+        sv.onFirstFrame = null;
+        try {
+            sv.quit({ silent: true, retire: true }).catch(() => {});
+        } catch (e) {
+            /* ignore */
+        }
+        if (this.streamView && typeof relaunchIndex === 'number') {
+            this._relaunchTransport(relaunchIndex);
+        }
+    },
+
     /** Effective stream height (px) for the degradation ladder. stream_height 0
      *  means "Same as Host": probe the live stream's real frame height, and
      *  assume the 1080p reference when that is unknown too. */
@@ -1716,6 +1894,8 @@ const MoonlightApp = {
      */
     _onStreamCongested() {
         if (this._nav.overlay !== 'streaming') return;
+        // A seamless transition is already in flight — let it finish first.
+        if (this._standbyView) return;
         const now = performance.now();
         if (this._lastDegradeTime && now - this._lastDegradeTime < 25000) return;
         this._lastDegradeTime = now;
@@ -1817,7 +1997,7 @@ const MoonlightApp = {
             JSON.stringify(o),
         );
         Toast.warning(t(toastKey, toastParams));
-        this._relaunchTransport(relaunchIndex);
+        this._qualityRelaunch(relaunchIndex);
     },
 
     // ── Automatic quality upgrade ─────────────────────────────────────────
@@ -1847,6 +2027,8 @@ const MoonlightApp = {
      */
     _maybeUpgradeQuality() {
         if (this._nav.overlay !== 'streaming') return;
+        // A seamless transition is already in flight — let it finish first.
+        if (this._standbyView) return;
         const sv = this.streamView;
         if (!sv || !sv._firstFrameRendered || sv._quitting || sv._manualQuitting) return;
         const o = this._degradeOverrides;
@@ -1917,7 +2099,7 @@ const MoonlightApp = {
             JSON.stringify(o),
         );
         Toast.info(t(toastKey, toastParams));
-        this._relaunchTransport(relaunchIndex);
+        this._qualityRelaunch(relaunchIndex);
     },
 
     /**
@@ -1930,9 +2112,11 @@ const MoonlightApp = {
      * infinite loops if H.264 also fails.
      */
     _onStreamingQuit() {
-        // Drop any lingering transport-relaunch loader and the upgrade poll.
+        // Drop any lingering transport-relaunch loader and the upgrade poll,
+        // and any standby leg of a seamless transition (the live stream ended).
         this._hideRelaunchLoader();
         this._stopUpgradeTimer();
+        this._abortStandby('active stream ended');
         // Guard: if popstate already handled cleanup, skip.
         // This prevents double-navigation when:
         //   a) User presses Back → popstate fires quit() + navigates
