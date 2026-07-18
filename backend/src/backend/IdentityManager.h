@@ -40,13 +40,10 @@ public:
     X509* getCertStruct();
     EVP_PKEY* getKeyStruct();
 
-    /// index 0 = the primary identity (default); index 1 = the secondary
-    /// identity used by the dual-stream standby slot when the host has been
-    /// double-paired (installer flow). Each has its own cert/key/uniqueid.
-    static IdentityManager* get(int index = 0);
+    static IdentityManager* get();
 
 private:
-    explicit IdentityManager(int index);
+    IdentityManager();
     ~IdentityManager();
 
     void createCredentials();
@@ -59,7 +56,6 @@ private:
     X509* m_Cert = nullptr;
     EVP_PKEY* m_Key = nullptr;
     bool m_CredentialsLoaded = false;
-    int m_Index = 0;
 
-    static IdentityManager* s_Instances[2];
+    static IdentityManager* s_Instance;
 };

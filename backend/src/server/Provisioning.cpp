@@ -110,35 +110,15 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     const quint16 restPort = basePort + 1;
     auto* rest = new SunshineRestClient(&computers);
 
-    // Pair the SECONDARY identity (the dual-stream standby slot's own client
-    // certificate). Same chain, PIN auto-fed through the REST API too.
-    auto pairSecondary = [&computers, uuid, rest, user, pass, restPort]() -> bool {
-        NvComputer* h = computers.getHost(uuid);
-        if (h && h->paired2) {
-            Logger::info(QStringLiteral("Provisioning: secondary identity already paired"));
-            return true;
-        }
-        auto [st2, res2] = computers.handleStartPairingSecondary(uuid);
-        if (res2.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
-            Logger::warning(QStringLiteral("Provisioning: secondary pairing could not start: %1")
-                                .arg(res2.value(QStringLiteral("message")).toString()));
-            return false;
-        }
-        const QString pin2 = res2.value(QStringLiteral("pin")).toString();
-        QTimer::singleShot(800, rest, [rest, pin2, user, pass, restPort]() {
-            rest->sendPin(pin2, user, pass, QStringLiteral("MoonlightWeb"), restPort);
-        });
-        const bool ok = computers.pairHostBlocking(uuid, 65000);
-        Logger::info(QStringLiteral("Provisioning: secondary pairing -> %1")
-                         .arg(ok ? QStringLiteral("paired") : QStringLiteral("failed")));
-        return ok;
-    };
+    // Dual-stream seamless switching needs Sunshine to accept at least TWO
+    // concurrent sessions ("Maximum Connected Clients", config key `channels`,
+    // default 1). Raise it to 2 when lower; leave any higher value untouched.
+    // Best-effort — a refusal only means the runtime probe reports
+    // dual_unavailable and streaming falls back to the legacy relaunch.
+    rest->ensureMinChannels(2, user, pass, restPort);
 
     if (host && host->pairState == NvComputer::PS_PAIRED) {
         Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
-        // Double pairing for existing installs (updates): the standby identity
-        // may still be unpaired — best-effort, the primary pairing stands.
-        pairSecondary();
         return true;
     }
 
@@ -164,12 +144,6 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     const bool paired = computers.pairHostBlocking(uuid, 65000);
     Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1")
                      .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
-
-    // Double pairing (installer flow): pair the standby identity right after
-    // the primary. Best-effort — dual-stream falls back to the shared
-    // certificate (probe-gated) when it fails.
-    if (paired) pairSecondary();
-
     return paired;
 }
 

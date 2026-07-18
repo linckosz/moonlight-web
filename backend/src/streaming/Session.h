@@ -107,10 +107,6 @@ public:
     /// over / cancel another's session. Empty → shared IdentityManager id.
     void setClientUniqueId(const QString& id) { m_ClientUniqueId = id; }
 
-    /// Client identity used for the Sunshine HTTPS calls (0 = primary,
-    /// 1 = secondary — the dual-stream standby slot on double-paired hosts).
-    void setIdentityIndex(int idx) { m_IdentityIndex = idx; }
-
     /// Go straight to /resume instead of /launch. Sunshine rejects /launch
     /// while an app is running ("An app is already running on this host"), so
     /// a standby stream — which by definition joins the LIVE app session —
@@ -195,8 +191,6 @@ private:
     QString m_StunServer = "stun:stun.l.google.com:19302";
     /// Per-browser uniqueid for Sunshine launch/cancel; empty → shared id.
     QString m_ClientUniqueId;
-    /// Identity used for Sunshine HTTPS calls (see setIdentityIndex).
-    int m_IdentityIndex = 0;
     /// Resume directly instead of launching (see setPreferResume).
     bool m_PreferResume = false;
     QNetworkReply* m_LaunchReply = nullptr;
