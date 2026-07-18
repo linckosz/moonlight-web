@@ -111,6 +111,14 @@ public:
     /// 1 = secondary — the dual-stream standby slot on double-paired hosts).
     void setIdentityIndex(int idx) { m_IdentityIndex = idx; }
 
+    /// Go straight to /resume instead of /launch. Sunshine rejects /launch
+    /// while an app is running ("An app is already running on this host"), so
+    /// a standby stream — which by definition joins the LIVE app session —
+    /// must resume directly (each /resume gets its own session_t with its own
+    /// resolution/bitrate). The launch↔resume self-heal still covers a stale
+    /// hint (e.g. the app just exited).
+    void setPreferResume(bool prefer) { m_PreferResume = prefer; }
+
     /// Set the actual HTTPS port used by HttpServer (may differ from 443
     /// due to port fallback). Used to construct the correct wsUrl() for
     /// the browser when sharing the unified port.
@@ -189,6 +197,8 @@ private:
     QString m_ClientUniqueId;
     /// Identity used for Sunshine HTTPS calls (see setIdentityIndex).
     int m_IdentityIndex = 0;
+    /// Resume directly instead of launching (see setPreferResume).
+    bool m_PreferResume = false;
     QNetworkReply* m_LaunchReply = nullptr;
     /// Track which start paths we've tried, so launch↔resume fallback (used when
     /// the registry hint is stale) terminates instead of looping.

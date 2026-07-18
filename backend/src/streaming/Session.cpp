@@ -164,8 +164,8 @@ void StreamSession::start()
     // that didn't /quit cleanly), /resume reconnects to OUR own session instead
     // of /launch (which would be rejected with "app already running"). /resume
     // is keyed by uniqueid, so it never touches another client's session.
-    if (s_ActiveUniqueIds.contains(effectiveUniqueId())) {
-        qInfo() << "[Session] uniqueid already has a session — resuming" << m_Host->name
+    if (m_PreferResume || s_ActiveUniqueIds.contains(effectiveUniqueId())) {
+        qInfo() << "[Session] Resuming (preferResume=" << m_PreferResume << ") on" << m_Host->name
                 << m_Host->activeAddress.address();
         doResumeApp(clientCert, clientKey);
     } else {
