@@ -586,6 +586,12 @@ int main(int argc, char* argv[])
     // When a standby (slot 1) launch starts: if slot 0 dies within ~3s of it,
     // the host "took over" instead of adding a session → mark no-dual.
     qint64 g_LastStandbyStartMs = 0;
+    // Uniqueids whose Sunshine app session is (likely) still alive: set when a
+    // worker reports streaming, cleared when a /cancel is actually sent.
+    // Workers are fresh processes (their in-process resume hint is empty), so
+    // the parent carries the hint: a launch for a live uid goes straight to
+    // /resume — Sunshine rejects /launch while an app is running.
+    QSet<QString> g_LiveSunshineUids;
 
     // Detach a worker slot from session-level bookkeeping and tear the child
     // down. Suppresses the slot's normal ended-cleanup (no Sunshine /cancel:
@@ -847,6 +853,7 @@ int main(int argc, char* argv[])
                                                         &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
                                                         &g_ActiveHostUuid, &g_StreamSlots,
                                                         &g_DualSupport, &g_LastStandbyStartMs,
+                                                        &g_LiveSunshineUids,
                                                         &detachWorkerSlot, &server, &appSettings,
                                                         &authManager, effectiveUpnpEnabled,
                                                         stunServer](const HttpRequest& req,
@@ -1455,6 +1462,11 @@ int main(int argc, char* argv[])
             // standby launch doubles as the capability probe).
             const int identityIndex = (reqSlot == 1 && host->paired2) ? 1 : 0;
             cfg["identityIndex"] = identityIndex;
+            // Straight to /resume when joining a live app session: every
+            // standby joins the running app by definition, and any uid we know
+            // to be live resumes its own session (Sunshine rejects /launch
+            // while an app runs; the launch↔resume self-heal stays as backup).
+            cfg["preferResume"] = standby || g_LiveSunshineUids.contains(reqClientUniqueId);
             cfg["serverHost"] = serverHost;
             cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
             // Slot 0 keeps the historical ports/path; slot 1 gets its own so
@@ -1479,14 +1491,15 @@ int main(int argc, char* argv[])
             const QString uid = reqClientUniqueId;
             QObject::connect(
                 worker, &StreamWorkerHost::responseReady, qApp,
-                [respond, worker, &g_StreamSlots, &g_DualSupport, &authManager, reqSlot, standby,
-                 hostUuidCopy, sessionToken](int code, QJsonObject bodyObj) {
+                [respond, worker, &g_StreamSlots, &g_DualSupport, &g_LiveSunshineUids, &authManager,
+                 reqSlot, standby, hostUuidCopy, uid, sessionToken](int code, QJsonObject bodyObj) {
                     const bool ok =
                         code == 200 && bodyObj["status"].toString() == QLatin1String("streaming");
                     if (ok) {
                         bodyObj["slot"] = reqSlot;
                         bodyObj["dual_supported"] = g_DualSupport.value(hostUuidCopy, true);
                         authManager.setSessionStreaming(sessionToken, true);
+                        g_LiveSunshineUids.insert(uid);
                         // A successful standby launch IS the capability probe.
                         if (standby) g_DualSupport[hostUuidCopy] = true;
                         respond(HttpResponse::json(bodyObj, 200));
@@ -1518,8 +1531,9 @@ int main(int argc, char* argv[])
 
             QObject::connect(
                 worker, &StreamWorkerHost::ended, qApp,
-                [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs, &computerManager,
-                 &authManager, reqSlot, host, hostUuidCopy, uid, sessionToken, identityIndex]() {
+                [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs,
+                 &g_LiveSunshineUids, &computerManager, &authManager, reqSlot, host, hostUuidCopy,
+                 uid, sessionToken, identityIndex]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
                     // Pathological probe outcome: the LIVE stream died within
@@ -1532,15 +1546,23 @@ int main(int argc, char* argv[])
                         g_DualSupport[hostUuidCopy] = false;
                     }
                     authManager.setSessionStreaming(sessionToken, false);
-                    // Best-effort Sunshine /cancel keyed by this slot's uniqueid
-                    // (mirrors the legacy sessionEnded auto-quit), presenting
-                    // the identity the slot launched with.
-                    auto* identity = IdentityManager::get(identityIndex);
-                    auto* quitReply = computerManager.http()->quitAppAsync(
-                        host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                        identity->getPrivateKey(), uid);
-                    QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
-                                     &QNetworkReply::deleteLater);
+                    // Best-effort Sunshine /cancel (mirrors the legacy
+                    // sessionEnded auto-quit) — but ONLY when no sibling slot
+                    // is still streaming: Sunshine sessions share the running
+                    // app, and a /cancel would terminate it for the survivor.
+                    const bool siblingLive = !g_StreamSlots[1 - reqSlot].worker.isNull();
+                    if (!siblingLive) {
+                        auto* identity = IdentityManager::get(identityIndex);
+                        auto* quitReply = computerManager.http()->quitAppAsync(
+                            host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
+                            identity->getPrivateKey(), uid);
+                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
+                                         &QNetworkReply::deleteLater);
+                        g_LiveSunshineUids.remove(uid);
+                    } else {
+                        qInfo() << "[main] Sibling slot still streaming — skipping Sunshine "
+                                   "/cancel (shared app session)";
+                    }
                     StreamSlot& sl = g_StreamSlots[reqSlot];
                     if (sl.worker == worker) {
                         sl.worker = nullptr;
@@ -1659,6 +1681,7 @@ int main(int argc, char* argv[])
         "/api/hosts/:id/quit",
         [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
          &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_StreamSlots,
+         &g_LiveSunshineUids,
          &detachWorkerSlot](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
@@ -1694,8 +1717,12 @@ int main(int argc, char* argv[])
             // frontend's seamless switcher retires one leg of the dual stream
             // while the other keeps playing). Absent → legacy semantics: stop
             // every slot this uniqueid owns (empty ids keep legacy behaviour).
+            // keep_host_session: retire = disconnect only, NO Sunshine /cancel
+            // — sessions share the running app, a /cancel would kill the
+            // surviving leg's stream too.
             const int quitSlot =
                 qbody.contains("session_slot") ? qBound(0, qbody["session_slot"].toInt(0), 1) : -1;
+            const bool keepHostSession = qbody["keep_host_session"].toBool(false);
             bool workerStopped = false;
             for (int i = 0; i < 2; ++i) {
                 StreamSlot& sl = g_StreamSlots[i];
@@ -1707,8 +1734,9 @@ int main(int argc, char* argv[])
                     qInfo() << "[quit] Slot" << i << "owned by another uniqueid — skipping";
                     continue;
                 }
-                qInfo() << "[quit] Stopping stream worker slot" << i;
-                if (sl.identityIndex == 1) {
+                qInfo() << "[quit] Stopping stream worker slot" << i
+                        << (keepHostSession ? "(keeping host session)" : "");
+                if (!keepHostSession && sl.identityIndex == 1) {
                     // The standby slot launched under the SECONDARY identity —
                     // cancel its Sunshine session with the same certificate
                     // (the shared /cancel below presents the primary one).
@@ -1718,10 +1746,11 @@ int main(int argc, char* argv[])
                         id2->getPrivateKey(), sl.clientUniqueId);
                     QObject::connect(r2, &QNetworkReply::finished, r2,
                                      &QNetworkReply::deleteLater);
+                    g_LiveSunshineUids.remove(sl.clientUniqueId);
                 }
-                // Suppressed ended-cleanup: this handler sends the Sunshine
-                // /cancel itself (keyed by quitUniqueId / just above for the
-                // secondary identity).
+                // Suppressed ended-cleanup: this handler owns the Sunshine
+                // /cancel decision (keyed by quitUniqueId / just above for the
+                // secondary identity; none at all when retiring).
                 detachWorkerSlot(i, false);
                 workerStopped = true;
             }
@@ -1793,7 +1822,16 @@ int main(int argc, char* argv[])
                 qInfo() << "[quit] No active relay (already stopped or never started)";
             }
 
+            // Retire (keep_host_session): the transport is closed, the Sunshine
+            // app session stays alive for the surviving leg — respond directly.
+            if (keepHostSession) {
+                qInfo() << "[quit] EXIT — retired without Sunshine /cancel";
+                respond(HttpResponse::json(QJsonObject{{"status", "quit"}}));
+                return;
+            }
+
             qInfo() << "[quit] Sending quitAppAsync to Sunshine ...";
+            g_LiveSunshineUids.remove(quitUniqueId);
             auto* identity = IdentityManager::get();
             QNetworkReply* reply = computerManager.http()->quitAppAsync(
                 host->activeAddress, host->activeHttpsPort, identity->getCertificate(),

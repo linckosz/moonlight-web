@@ -5376,9 +5376,12 @@ export class StreamView {
         } else {
             try {
                 // Scope the backend /quit to THIS view's slot + uniqueid so a
-                // dual-stream sibling keeps streaming untouched.
+                // dual-stream sibling keeps streaming untouched. Retiring also
+                // keeps the Sunshine app session alive (sessions share the
+                // running app — a /cancel would kill the successor's stream).
                 const quitExtras = { session_slot: this._sessionSlot };
                 if (this._slotUniqueId) quitExtras.client_uniqueid = this._slotUniqueId;
+                if (retire) quitExtras.keep_host_session = true;
                 await BackendClient.quitApp(this.host.uuid, quitExtras);
                 this.webrtc.close();
                 if (!silent) {
