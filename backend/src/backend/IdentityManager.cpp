@@ -31,24 +31,15 @@
 #define SER_CERT "certificate"
 #define SER_KEY "key"
 
-IdentityManager* IdentityManager::s_Instances[2] = {nullptr, nullptr};
+IdentityManager* IdentityManager::s_Instance = nullptr;
 
-IdentityManager* IdentityManager::get(int index)
+IdentityManager* IdentityManager::get()
 {
-    if (index < 0 || index > 1) index = 0;
-    if (!s_Instances[index]) s_Instances[index] = new IdentityManager(index);
-    return s_Instances[index];
+    if (!s_Instance) s_Instance = new IdentityManager();
+    return s_Instance;
 }
 
-// Storage-key suffix: the primary identity keeps the historical unsuffixed
-// keys; the secondary (dual-stream standby) appends "2".
-static QString keyFor(const char* base, int index)
-{
-    return index == 0 ? QString::fromLatin1(base) : QString::fromLatin1(base) + QLatin1Char('2');
-}
-
-IdentityManager::IdentityManager(int index)
-    : m_Index(index)
+IdentityManager::IdentityManager()
 {
     loadOrGenerate();
 }
@@ -63,9 +54,9 @@ void IdentityManager::loadOrGenerate()
 {
     QSettings settings;
 
-    m_CachedPemCert = settings.value(keyFor(SER_CERT, m_Index)).toByteArray();
-    m_CachedPrivateKey = settings.value(keyFor(SER_KEY, m_Index)).toByteArray();
-    m_CachedUniqueId = settings.value(keyFor(SER_UNIQUEID, m_Index)).toString();
+    m_CachedPemCert = settings.value(SER_CERT).toByteArray();
+    m_CachedPrivateKey = settings.value(SER_KEY).toByteArray();
+    m_CachedUniqueId = settings.value(SER_UNIQUEID).toString();
 
     if (m_CachedPemCert.isEmpty() || m_CachedPrivateKey.isEmpty()) {
         Logger::info("No existing credentials found, generating new identity...");
@@ -99,15 +90,11 @@ void IdentityManager::loadOrGenerate()
     m_CredentialsLoaded = true;
     Logger::info("Identity credentials loaded from settings");
 
-    // Always use the fixed unique ID, even if previously migrated. The primary
-    // identity uses the Moonlight common ID; the secondary uses its own fixed
-    // ID so the two never collide in Sunshine's per-uniqueid session keying.
-    const QString fixedId =
-        m_Index == 0 ? QStringLiteral("0123456789ABCDEF") : QStringLiteral("0123456789ABCDF1");
-    if (m_CachedUniqueId != fixedId) {
-        m_CachedUniqueId = fixedId;
-        settings.setValue(keyFor(SER_UNIQUEID, m_Index), m_CachedUniqueId);
-        Logger::info("Using fixed unique ID: " + m_CachedUniqueId);
+    // Always use the fixed Moonlight common unique ID, even if previously migrated
+    if (m_CachedUniqueId != "0123456789ABCDEF") {
+        m_CachedUniqueId = "0123456789ABCDEF";
+        settings.setValue(SER_UNIQUEID, m_CachedUniqueId);
+        Logger::info("Using Moonlight common unique ID: " + m_CachedUniqueId);
     }
 }
 
@@ -161,16 +148,15 @@ void IdentityManager::createCredentials()
     X509_free(cert);
     EVP_PKEY_free(pk);
 
-    // Fixed unique IDs: Moonlight common ID for the primary identity (enables
-    // cross-client session management), a distinct fixed ID for the secondary.
-    m_CachedUniqueId =
-        m_Index == 0 ? QStringLiteral("0123456789ABCDEF") : QStringLiteral("0123456789ABCDF1");
+    // Use fixed Moonlight common unique ID to enable cross-client session management
+    // (quit games launched by other Moonlight clients on the same host)
+    m_CachedUniqueId = "0123456789ABCDEF";
 
     // Persist
     QSettings settings;
-    settings.setValue(keyFor(SER_CERT, m_Index), m_CachedPemCert);
-    settings.setValue(keyFor(SER_KEY, m_Index), m_CachedPrivateKey);
-    settings.setValue(keyFor(SER_UNIQUEID, m_Index), m_CachedUniqueId);
+    settings.setValue(SER_CERT, m_CachedPemCert);
+    settings.setValue(SER_KEY, m_CachedPrivateKey);
+    settings.setValue(SER_UNIQUEID, m_CachedUniqueId);
 
     m_CredentialsLoaded = true;
     Logger::info("New identity credentials generated and persisted");

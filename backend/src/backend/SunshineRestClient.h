@@ -45,6 +45,15 @@ public:
     void sendPin(const QString& pin, const QString& user, const QString& pass,
                  const QString& deviceName = QStringLiteral("moonlightweb"), quint16 port = 47990);
 
+    /// Ensure Sunshine's "Maximum Connected Clients" (config key `channels`)
+    /// is at least `minChannels` — required for the dual-stream seamless
+    /// switching (two concurrent sessions on the shared app). Reads
+    /// GET /api/config; if the current value is already >= min, does nothing.
+    /// Otherwise saves the updated config (POST /api/config) and asks Sunshine
+    /// to restart (POST /api/restart) so the new limit applies. Fire-and-forget.
+    void ensureMinChannels(int minChannels, const QString& user, const QString& pass,
+                           quint16 port = 47990);
+
 private:
     QNetworkAccessManager* m_Nam = nullptr;
 };

@@ -106,7 +106,6 @@ NvComputer::NvComputer(QSettings& settings)
     activeHttpsPort = static_cast<quint16>(settings.value("httpsPort", MW_HTTPS_PORT).toUInt());
 
     pairState = pairStateFromString(settings.value("pairState").toString());
-    paired2 = settings.value("paired2", false).toBool();
 }
 
 // --- Serialization ----------------------------------------------------------
@@ -125,7 +124,6 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("serverCert", serverCertPem);
     settings.setValue("httpsPort", static_cast<quint32>(activeHttpsPort));
     settings.setValue("pairState", pairStateToString(pairState));
-    settings.setValue("paired2", paired2);
 }
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
@@ -133,7 +131,7 @@ bool NvComputer::isEqualSerialized(const NvComputer& that) const
     return name == that.name && uuid == that.uuid && macAddress == that.macAddress &&
            localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
            manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
-           activeHttpsPort == that.activeHttpsPort && paired2 == that.paired2;
+           activeHttpsPort == that.activeHttpsPort;
 }
 
 // --- Merge polling data -----------------------------------------------------

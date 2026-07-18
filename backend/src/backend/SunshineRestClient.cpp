@@ -71,3 +71,93 @@ void SunshineRestClient::sendPin(const QString& pin, const QString& user, const 
         reply->deleteLater();
     });
 }
+
+void SunshineRestClient::ensureMinChannels(int minChannels, const QString& user,
+                                           const QString& pass, quint16 port)
+{
+    QUrl url;
+    url.setScheme(QStringLiteral("https"));
+    url.setHost(QStringLiteral("127.0.0.1"));
+    url.setPort(port);
+    url.setPath(QStringLiteral("/api/config"));
+
+    QNetworkRequest req(url);
+    const QByteArray creds = (user + ':' + pass).toUtf8().toBase64();
+    req.setRawHeader("Authorization", "Basic " + creds);
+    req.setTransferTimeout(10000);
+
+    QNetworkReply* reply = m_Nam->get(req);
+    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+                     [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
+
+    QObject::connect(reply, &QNetworkReply::finished, this,
+                     [this, reply, minChannels, creds, url]() {
+                         reply->deleteLater();
+                         if (reply->error() != QNetworkReply::NoError) {
+                             Logger::warning(QStringLiteral("Sunshine GET /api/config failed: %1")
+                                                 .arg(reply->errorString()));
+                             return;
+                         }
+                         QJsonObject cfg = QJsonDocument::fromJson(reply->readAll()).object();
+                         // `channels` is stored as a string; missing = default 1.
+                         const int current = cfg.value(QStringLiteral("channels"))
+                                                 .toVariant()
+                                                 .toString()
+                                                 .toInt();
+                         if (current >= minChannels) {
+                             Logger::info(QStringLiteral("Sunshine channels already %1 (>= %2) — "
+                                                         "leaving as is")
+                                              .arg(current)
+                                              .arg(minChannels));
+                             return;
+                         }
+                         // GET /api/config returns metadata keys alongside the
+                         // config — strip them before saving the config back.
+                         cfg.remove(QStringLiteral("platform"));
+                         cfg.remove(QStringLiteral("version"));
+                         cfg[QStringLiteral("channels")] = QString::number(minChannels);
+
+                         QNetworkRequest post(url);
+                         post.setHeader(QNetworkRequest::ContentTypeHeader,
+                                        QStringLiteral("application/json"));
+                         post.setRawHeader("Authorization", "Basic " + creds);
+                         post.setTransferTimeout(10000);
+                         QNetworkReply* save = m_Nam->post(
+                             post, QJsonDocument(cfg).toJson(QJsonDocument::Compact));
+                         QObject::connect(save, &QNetworkReply::sslErrors, save,
+                                          [save](const QList<QSslError>&) {
+                                              save->ignoreSslErrors();
+                                          });
+                         QObject::connect(
+                             save, &QNetworkReply::finished, this,
+                             [this, save, minChannels, creds, url]() {
+                                 save->deleteLater();
+                                 if (save->error() != QNetworkReply::NoError) {
+                                     Logger::warning(
+                                         QStringLiteral("Sunshine POST /api/config failed: %1")
+                                             .arg(save->errorString()));
+                                     return;
+                                 }
+                                 Logger::info(
+                                     QStringLiteral("Sunshine channels raised to %1 — restarting "
+                                                    "Sunshine to apply")
+                                         .arg(minChannels));
+                                 // Apply the new limit: Sunshine only reads the
+                                 // config at startup.
+                                 QUrl restartUrl(url);
+                                 restartUrl.setPath(QStringLiteral("/api/restart"));
+                                 QNetworkRequest r(restartUrl);
+                                 r.setHeader(QNetworkRequest::ContentTypeHeader,
+                                             QStringLiteral("application/json"));
+                                 r.setRawHeader("Authorization", "Basic " + creds);
+                                 r.setTransferTimeout(10000);
+                                 QNetworkReply* rr = m_Nam->post(r, QByteArray("{}"));
+                                 QObject::connect(rr, &QNetworkReply::sslErrors, rr,
+                                                  [rr](const QList<QSslError>&) {
+                                                      rr->ignoreSslErrors();
+                                                  });
+                                 QObject::connect(rr, &QNetworkReply::finished, rr,
+                                                  &QNetworkReply::deleteLater);
+                             });
+                     });
+}

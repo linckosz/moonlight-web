@@ -932,7 +932,6 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
         new NvPairingManager(host->appVersion, addr.address(), addr.port(),
                              host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT);
     m_ActivePairings[uuid] = pm;
-    m_PairingIdentityIndex[uuid] = 0;
 
     Logger::info(QString("Pairing initiated for %1, PIN: %2").arg(uuid, pin));
 
@@ -941,52 +940,6 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
     obj["pin"] = pin;
     obj["message"] = "Enter this PIN in Sunshine (Web UI or stdin)";
     return {200, obj};
-}
-
-std::pair<int, QJsonObject> ComputerManager::handleStartPairingSecondary(const QString& uuid)
-{
-    NvComputer* host = findHostByUuid(uuid);
-    if (!host) {
-        return {404, QJsonObject{{"status", "error"}, {"message", "Host not found"}}};
-    }
-    if (host->pairState != NvComputer::PS_PAIRED) {
-        return {400, QJsonObject{{"status", "error"}, {"message", "Pair the host first"}}};
-    }
-    if (host->paired2) {
-        return {400, QJsonObject{{"status", "error"}, {"message", "Already double-paired"}}};
-    }
-    if (m_ActivePairings.contains(uuid)) {
-        if (m_SubmitInFlight.contains(uuid)) {
-            return {200, QJsonObject{{"status", "initiated"},
-                                     {"pin", m_PairingPins.value(uuid)},
-                                     {"message", "Enter this PIN in Sunshine (Web UI or stdin)"}}};
-        }
-        delete m_ActivePairings.take(uuid);
-        m_PairingPins.remove(uuid);
-        m_PairingIdentityIndex.remove(uuid);
-    }
-    m_PairingError.remove(uuid);
-
-    QVector<NvAddress> addrs = host->uniqueAddresses();
-    if (addrs.isEmpty()) {
-        return {400, QJsonObject{{"status", "error"}, {"message", "Host has no reachable address"}}};
-    }
-    const NvAddress& addr = addrs.first();
-
-    QString pin = generatePairingPin();
-    m_PairingPins[uuid] = pin;
-    auto* pm = new NvPairingManager(host->appVersion, addr.address(), addr.port(),
-                                    host->activeHttpsPort > 0 ? host->activeHttpsPort
-                                                              : MW_HTTPS_PORT,
-                                    /*identityIndex=*/1);
-    m_ActivePairings[uuid] = pm;
-    m_PairingIdentityIndex[uuid] = 1;
-
-    Logger::info(QString("Secondary pairing initiated for %1, PIN: %2").arg(uuid, pin));
-
-    return {200, QJsonObject{{"status", "initiated"},
-                             {"pin", pin},
-                             {"message", "Enter this PIN in Sunshine (Web UI or stdin)"}}};
 }
 
 void ComputerManager::handleSubmitPin(const QString& uuid, ResponseCallback respond)
@@ -1064,7 +1017,6 @@ void ComputerManager::startPairingChain(const QString& uuid)
         if (initResult == NvPairingManager::INIT_ALREADY_IN_PROGRESS) {
             m_ActivePairings.erase(it);
             m_PairingPins.remove(uuid);
-            m_PairingIdentityIndex.remove(uuid);
             delete pm;
             m_PairingError[uuid] = "Pairing already in progress on host.";
             m_SubmitInFlight.remove(uuid);
@@ -1094,22 +1046,14 @@ void ComputerManager::startPairingChain(const QString& uuid)
                 case NvPairingManager::PAIRED: {
                     NvComputer* host = findHostByUuid(uuid);
                     if (host) {
-                        if (m_PairingIdentityIndex.value(uuid, 0) == 1) {
-                            // Secondary identity (dual-stream standby slot).
-                            // The primary pairing already stored the server
-                            // cert and PS_PAIRED — only flag the double pair.
-                            host->paired2 = true;
-                        } else {
-                            host->serverCertPem = serverCertPem;
-                            host->pairState = NvComputer::PS_PAIRED;
-                            host->state = NvComputer::CS_ONLINE;
-                        }
+                        host->serverCertPem = serverCertPem;
+                        host->pairState = NvComputer::PS_PAIRED;
+                        host->state = NvComputer::CS_ONLINE;
                         saveHosts();
                         emit hostsChanged();
                     }
                     m_ActivePairings.erase(it);
                     m_PairingPins.remove(uuid);
-                    m_PairingIdentityIndex.remove(uuid);
                     delete pm;
                     break;
                 }
@@ -1122,7 +1066,6 @@ void ComputerManager::startPairingChain(const QString& uuid)
                 default:
                     m_ActivePairings.erase(it);
                     m_PairingPins.remove(uuid);
-                    m_PairingIdentityIndex.remove(uuid);
                     delete pm;
                     m_PairingError[uuid] =
                         "Pairing failed. Close any running games on the host and try again.";
@@ -1138,14 +1081,9 @@ bool ComputerManager::pairHostBlocking(const QString& uuid, int timeoutMs)
 {
     if (!m_ActivePairings.contains(uuid)) return false;
 
-    // Identity-aware terminal state: the primary chain flips pairState, the
-    // secondary chain (double pairing) flips paired2 while pairState is
-    // already PS_PAIRED.
-    const int idIdx = m_PairingIdentityIndex.value(uuid, 0);
-    auto pairedNow = [this, uuid, idIdx]() {
+    auto pairedNow = [this, uuid]() {
         NvComputer* host = findHostByUuid(uuid);
-        if (!host) return false;
-        return idIdx == 1 ? host->paired2 : host->pairState == NvComputer::PS_PAIRED;
+        return host && host->pairState == NvComputer::PS_PAIRED;
     };
 
     QEventLoop loop;

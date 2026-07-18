@@ -54,10 +54,8 @@ public:
         INIT_ALREADY_IN_PROGRESS
     };
 
-    /// identityIndex selects the client identity to pair (0 = primary,
-    /// 1 = secondary for the dual-stream standby slot).
     NvPairingManager(const QString& appVersion, const QString& host, quint16 httpPort,
-                     quint16 httpsPort, int identityIndex = 0);
+                     quint16 httpsPort);
     ~NvPairingManager();
 
     // Owns raw OpenSSL handles (X509*/EVP_PKEY*) and a QNetworkAccessManager*
@@ -113,5 +111,4 @@ private:
 
     int m_HashLength = 32;
     int m_ServerMajorVersion = 7;
-    int m_IdentityIndex = 0;
 };
