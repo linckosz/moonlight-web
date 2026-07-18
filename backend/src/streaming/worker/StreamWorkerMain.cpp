@@ -188,6 +188,7 @@ int runStreamWorker(QCoreApplication& app)
     session->setLowAudio(cfg["lowAudio"].toBool());
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
     session->setClientUniqueId(cfg["clientUniqueId"].toString());
+    session->setIdentityIndex(cfg["identityIndex"].toInt(0));
     session->setClientIsLocal(cfg["clientIsLocal"].toBool());
     session->setAutoMode(cfg["autoMode"].toBool(true));
     session->setWsPath(cfg["wsPath"].toString(QStringLiteral("/ws")));

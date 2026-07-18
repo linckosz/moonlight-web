@@ -100,8 +100,45 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     if (uuid.isEmpty()) return false;
 
     NvComputer* host = computers.getHost(uuid);
+
+    // Sunshine's REST config API ("/api/pin", HTTP basic-auth web UI) listens on
+    // the base port + 1 (47990 by default). This is NOT the GameStream HTTPS port
+    // kept in activeHttpsPort, which does not serve /api/pin and drops the
+    // connection ("Connection closed"). Derive it from the host's base HTTP port.
+    quint16 basePort = MW_HTTP_PORT;
+    if (host && host->manualAddress.port() > 0) basePort = host->manualAddress.port();
+    const quint16 restPort = basePort + 1;
+    auto* rest = new SunshineRestClient(&computers);
+
+    // Pair the SECONDARY identity (the dual-stream standby slot's own client
+    // certificate). Same chain, PIN auto-fed through the REST API too.
+    auto pairSecondary = [&computers, uuid, rest, user, pass, restPort]() -> bool {
+        NvComputer* h = computers.getHost(uuid);
+        if (h && h->paired2) {
+            Logger::info(QStringLiteral("Provisioning: secondary identity already paired"));
+            return true;
+        }
+        auto [st2, res2] = computers.handleStartPairingSecondary(uuid);
+        if (res2.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
+            Logger::warning(QStringLiteral("Provisioning: secondary pairing could not start: %1")
+                                .arg(res2.value(QStringLiteral("message")).toString()));
+            return false;
+        }
+        const QString pin2 = res2.value(QStringLiteral("pin")).toString();
+        QTimer::singleShot(800, rest, [rest, pin2, user, pass, restPort]() {
+            rest->sendPin(pin2, user, pass, QStringLiteral("MoonlightWeb"), restPort);
+        });
+        const bool ok = computers.pairHostBlocking(uuid, 65000);
+        Logger::info(QStringLiteral("Provisioning: secondary pairing -> %1")
+                         .arg(ok ? QStringLiteral("paired") : QStringLiteral("failed")));
+        return ok;
+    };
+
     if (host && host->pairState == NvComputer::PS_PAIRED) {
         Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
+        // Double pairing for existing installs (updates): the standby identity
+        // may still be unpaired — best-effort, the primary pairing stands.
+        pairSecondary();
         return true;
     }
 
@@ -112,19 +149,11 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
         return false;
     }
     const QString pin = startResult.value(QStringLiteral("pin")).toString();
-    // Sunshine's REST config API ("/api/pin", HTTP basic-auth web UI) listens on
-    // the base port + 1 (47990 by default). This is NOT the GameStream HTTPS port
-    // kept in activeHttpsPort, which does not serve /api/pin and drops the
-    // connection ("Connection closed"). Derive it from the host's base HTTP port.
-    quint16 basePort = MW_HTTP_PORT;
-    if (host && host->manualAddress.port() > 0) basePort = host->manualAddress.port();
-    const quint16 restPort = basePort + 1;
 
     // Pairing stage 1 (getservercert) stays in flight until Sunshine receives
     // the PIN. Schedule the REST push so it fires *after* the chain has started
     // and getservercert is already in flight, letting Sunshine attach the PIN to
     // the pending request.
-    auto* rest = new SunshineRestClient(&computers);
     QTimer::singleShot(800, rest, [rest, pin, user, pass, restPort]() {
         rest->sendPin(pin, user, pass, QStringLiteral("MoonlightWeb"), restPort);
     });
@@ -135,6 +164,12 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     const bool paired = computers.pairHostBlocking(uuid, 65000);
     Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1")
                      .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
+
+    // Double pairing (installer flow): pair the standby identity right after
+    // the primary. Best-effort — dual-stream falls back to the shared
+    // certificate (probe-gated) when it fails.
+    if (paired) pairSecondary();
+
     return paired;
 }
 

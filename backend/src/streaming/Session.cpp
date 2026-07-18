@@ -148,7 +148,7 @@ void StreamSession::start()
     // Generate per-session encryption keys
     m_Config.generateKeys();
 
-    auto* identity = IdentityManager::get();
+    auto* identity = IdentityManager::get(m_IdentityIndex);
     QByteArray clientCert = identity->getCertificate();
     QByteArray clientKey = identity->getPrivateKey();
 
@@ -175,7 +175,8 @@ void StreamSession::start()
 
 QString StreamSession::effectiveUniqueId() const
 {
-    return m_ClientUniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : m_ClientUniqueId;
+    return m_ClientUniqueId.isEmpty() ? IdentityManager::get(m_IdentityIndex)->getUniqueId()
+                                      : m_ClientUniqueId;
 }
 
 void StreamSession::doResumeApp(const QByteArray& clientCert, const QByteArray& clientKey)
@@ -344,7 +345,7 @@ void StreamSession::onLaunchReplyFinished()
         // restart, or a cleared entry whose Sunshine session is gone). Self-heal
         // by trying the other path once. Both are keyed by our uniqueid, so a
         // /resume can only reconnect to OUR session, never another client's.
-        auto* identity = IdentityManager::get();
+        auto* identity = IdentityManager::get(m_IdentityIndex);
         if (!m_ResumeAttempted) {
             qWarning() << "[Session] Launch rejected (" << e.what()
                        << ") — falling back to /resume for our uniqueid";

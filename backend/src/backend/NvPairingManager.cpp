@@ -44,21 +44,22 @@
 #define PAIRING_PIN_WAIT_MS 60000 // Stage 1 blocks until user enters PIN in Sunshine
 
 NvPairingManager::NvPairingManager(const QString& appVersion, const QString& host, quint16 httpPort,
-                                   quint16 httpsPort)
+                                   quint16 httpsPort, int identityIndex)
     : m_ServerVersion(appVersion.toUtf8())
     , m_Host(host)
     , m_HttpPort(httpPort)
     , m_HttpsPort(httpsPort)
+    , m_IdentityIndex(identityIndex)
 {
     // Load client cert
-    QByteArray certPem = IdentityManager::get()->getCertificate();
+    QByteArray certPem = IdentityManager::get(identityIndex)->getCertificate();
     BIO* bio = BIO_new_mem_buf(certPem.data(), certPem.size());
     m_Cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
     if (!m_Cert) throw std::runtime_error("Unable to load client certificate");
 
     // Load private key
-    QByteArray keyPem = IdentityManager::get()->getPrivateKey();
+    QByteArray keyPem = IdentityManager::get(identityIndex)->getPrivateKey();
     bio = BIO_new_mem_buf(keyPem.data(), keyPem.size());
     m_PrivateKey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
@@ -98,7 +99,7 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
     url.setPort(scheme == "https" ? m_HttpsPort : m_HttpPort);
     url.setPath("/" + command);
 
-    QString query = "uniqueid=" + IdentityManager::get()->getUniqueId() +
+    QString query = "uniqueid=" + IdentityManager::get(m_IdentityIndex)->getUniqueId() +
                     "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     if (!arguments.isEmpty()) query += "&" + arguments;
     url.setQuery(query);
@@ -114,7 +115,7 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
 
     if (scheme == "https") {
         // Mutual TLS: present client certificate as expected by Sunshine
-        auto* identity = IdentityManager::get();
+        auto* identity = IdentityManager::get(m_IdentityIndex);
         QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
         ssl.setLocalCertificate(QSslCertificate(identity->getCertificate(), QSsl::Pem));
         ssl.setPrivateKey(QSslKey(identity->getPrivateKey(), QSsl::Rsa, QSsl::Pem));
@@ -278,7 +279,7 @@ void NvPairingManager::initiatePairing(std::function<void(InitResult)> cb)
     m_Salt = generateRandomBytes(16);
 
     QString args = "devicename=roth&updateState=1&phrase=getservercert&salt=" + m_Salt.toHex() +
-                   "&clientcert=" + IdentityManager::get()->getCertificate().toHex();
+                   "&clientcert=" + IdentityManager::get(m_IdentityIndex)->getCertificate().toHex();
 
     openConnection(
         "http", "pair", args, PAIRING_PIN_WAIT_MS,
