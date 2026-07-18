@@ -127,8 +127,7 @@ int runStreamWorker(QCoreApplication& app)
         qWarning() << "[StreamWorker] No config on stdin — exiting";
         return 1;
     }
-    const QJsonObject cfg =
-        QJsonDocument::fromJson(QByteArray::fromStdString(configLine)).object();
+    const QJsonObject cfg = QJsonDocument::fromJson(QByteArray::fromStdString(configLine)).object();
     if (cfg.isEmpty()) {
         qWarning() << "[StreamWorker] Invalid config JSON — exiting";
         emitEvent({{QStringLiteral("event"), QStringLiteral("response")},
@@ -138,7 +137,11 @@ int runStreamWorker(QCoreApplication& app)
         return 1;
     }
 
-    WorkerState state;
+    // Static storage: the worker runs exactly one session per process, and the
+    // global g_State pointer must stay valid for the whole event loop (teardown
+    // callbacks fire through it). Static duration ties its lifetime to the
+    // process, not this stack frame.
+    static WorkerState state;
     g_State = &state;
 
     // ── Reconstruct the minimal host the session needs ───────────────────────
@@ -207,21 +210,17 @@ int runStreamWorker(QCoreApplication& app)
     // (The parent owns the Sunshine /cancel, keyed by this session's uniqueid.)
     QObject::connect(session, &StreamSession::relayCreated, qApp, [&state](DataChannelRelay* r) {
         state.relay = r;
-        QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
-                         []() { teardownAndExit(0); });
+        QObject::connect(r, &DataChannelRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
     });
-    QObject::connect(session, &StreamSession::mediaTrackRelayCreated, qApp,
-                     [&state](MediaTrackRelay* r) {
-                         state.mediaRelay = r;
-                         QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
-                                          []() { teardownAndExit(0); });
-                     });
-    QObject::connect(session, &StreamSession::streamRelayCreated, qApp,
-                     [&state](StreamRelay* r) {
-                         state.streamRelay = r;
-                         QObject::connect(r, &StreamRelay::sessionEnded, qApp,
-                                          []() { teardownAndExit(0); });
-                     });
+    QObject::connect(
+        session, &StreamSession::mediaTrackRelayCreated, qApp, [&state](MediaTrackRelay* r) {
+            state.mediaRelay = r;
+            QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
+        });
+    QObject::connect(session, &StreamSession::streamRelayCreated, qApp, [&state](StreamRelay* r) {
+        state.streamRelay = r;
+        QObject::connect(r, &StreamRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
+    });
     // Session failed before any relay existed (Sunshine rejection, bind failure):
     // the response event already carried the error — just exit.
     QObject::connect(session, &StreamSession::sessionFailed, qApp, [](const QString& err) {
@@ -237,14 +236,11 @@ int runStreamWorker(QCoreApplication& app)
                 QJsonDocument::fromJson(QByteArray::fromStdString(line)).object();
             const QString cmd = msg["cmd"].toString();
             if (cmd == QLatin1String("quit")) {
-                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(0); },
-                                          Qt::QueuedConnection);
+                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(0); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("takenOver")) {
-                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(1); },
-                                          Qt::QueuedConnection);
+                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(1); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("revoked")) {
-                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); },
-                                          Qt::QueuedConnection);
+                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); }, Qt::QueuedConnection);
             }
         }
         // EOF: the parent is gone — never stream without a supervisor.

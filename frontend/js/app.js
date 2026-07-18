@@ -2094,10 +2094,7 @@ const MoonlightApp = {
         if (Object.keys(o).length === 0) this._degradeLevel = 0;
         if (!toastKey) return; // nothing user-visible changed — no relaunch
 
-        console.log(
-            '[MW] Network stable — upgrade step, remaining overrides:',
-            JSON.stringify(o),
-        );
+        console.log('[MW] Network stable — upgrade step, remaining overrides:', JSON.stringify(o));
         Toast.info(t(toastKey, toastParams));
         this._qualityRelaunch(relaunchIndex);
     },
