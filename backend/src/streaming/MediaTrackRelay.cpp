@@ -148,7 +148,8 @@ void MediaTrackRelay::setupPeerConnection(const rtc::Configuration& config)
 
     // --- Local description callback ---
     m_Pc->onLocalDescription([this](const rtc::Description& sdp) {
-        qInfo() << "[MediaTrackRelay] Local SDP generated, type=" << sdp.typeString()
+        qInfo() << "[MediaTrackRelay] Local SDP generated, type="
+                << QString::fromStdString(sdp.typeString())
                 << "hasAudioOrVideo=" << sdp.hasAudioOrVideo()
                 << "hasApplication=" << sdp.hasApplication();
         emit signalingSdpReady(std::string(sdp));

@@ -243,9 +243,17 @@ void SignalingServer::onNewWsConnection()
     connect(m_WsClient, &QWebSocket::textMessageReceived, this, &SignalingServer::onWsTextMessage);
     connect(m_WsClient, &QWebSocket::disconnected, this, &SignalingServer::onWsDisconnected);
 
+    // QWebSocket::errorOccurred exists only since Qt 6.5.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(m_WsClient, &QWebSocket::errorOccurred, [](QAbstractSocket::SocketError err) {
         qWarning() << "[SignalingServer] WS error:" << err;
     });
+#else
+    connect(m_WsClient, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+            [](QAbstractSocket::SocketError err) {
+                qWarning() << "[SignalingServer] WS error:" << err;
+            });
+#endif
 
     // Send ICE server configuration to the browser first, so the frontend
     // knows which STUN server to use before creating its RTCPeerConnection.

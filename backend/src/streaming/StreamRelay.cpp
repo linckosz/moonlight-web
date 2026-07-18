@@ -463,10 +463,17 @@ void StreamRelay::onNewWsConnection()
     connect(m_WsClient, &QWebSocket::textMessageReceived, this, &StreamRelay::onWsTextMessage);
     connect(m_WsClient, &QWebSocket::disconnected, this, &StreamRelay::onWsDisconnected);
 
-    // Log WS errors
+    // Log WS errors (QWebSocket::errorOccurred exists only since Qt 6.5)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(m_WsClient, &QWebSocket::errorOccurred, [](QAbstractSocket::SocketError err) {
         qWarning() << "[StreamRelay] WebSocket error:" << err;
     });
+#else
+    connect(m_WsClient, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+            [](QAbstractSocket::SocketError err) {
+                qWarning() << "[StreamRelay] WebSocket error:" << err;
+            });
+#endif
 
     qInfo() << "[StreamRelay] WebSocket client connected OK, m_StreamStarted=" << m_StreamStarted
             << "pending video=" << m_PendingVideoFrames.size();
