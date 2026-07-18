@@ -1065,6 +1065,11 @@ const MoonlightApp = {
             this._degradeOverrides = {};
             this._lastDegradeTime = 0;
             this._enhancementAutoForced = false;
+            // Automatic quality-upgrade state (see _maybeUpgradeQuality).
+            this._lastCongSignal = 0;
+            this._lastUpgradeTime = 0;
+            this._upgradeStableMs = 75000;
+            this._originalStreamHeight = undefined;
         }
 
         // Store host/app for HEVC fallback re-launch
@@ -1445,9 +1450,15 @@ const MoonlightApp = {
         // in the priority chain (or give up if the chain is exhausted).
         this.streamView.onConnectionFailed = (reason) => this._onTransportFailed(reason);
         // onCongestion: sustained congestion detected mid-stream → relaunch with
-        // a degraded session-only profile (bitrate −30% steps, media transport,
-        // 60 fps cap). See _onStreamCongested().
+        // a degraded session-only profile (bitrate −30% steps, resolution rungs,
+        // media transport, 60 fps cap). See _onStreamCongested().
         this.streamView.onCongestion = () => this._onStreamCongested();
+        // onCongestionSignal: every individual congestion hint (IDR/PLI/drops).
+        // Tracks quiet time for the automatic quality upgrade.
+        this.streamView.onCongestionSignal = () => {
+            this._lastCongSignal = performance.now();
+        };
+        this._armUpgradeTimer();
     },
 
     /**
@@ -1709,6 +1720,18 @@ const MoonlightApp = {
         if (this._lastDegradeTime && now - this._lastDegradeTime < 25000) return;
         this._lastDegradeTime = now;
 
+        // Flap guard: congestion soon after an automatic upgrade means the
+        // network hadn't really recovered — require a longer stable period
+        // before the next upgrade attempt (backoff, capped at 10 min).
+        if (this._lastUpgradeTime && now - this._lastUpgradeTime < 60000) {
+            this._upgradeStableMs = Math.min(600000, (this._upgradeStableMs || 75000) * 2);
+            console.warn(
+                '[MW] Congestion right after an upgrade — stable period now ' +
+                    Math.round(this._upgradeStableMs / 1000) +
+                    's',
+            );
+        }
+
         this._degradeOverrides = this._degradeOverrides || {};
         const o = this._degradeOverrides;
         const effective = { ...this._lastStreamingSettings, ...o };
@@ -1732,6 +1755,9 @@ const MoonlightApp = {
         };
         const stepDownResolution = () => {
             const next = [2160, 1440, 1080, 720].find((r) => r < curHeight);
+            // Remember the pre-degradation height so the automatic upgrade can
+            // restore a "Same as Host" (height 0) setting to its real value.
+            if (this._originalStreamHeight === undefined) this._originalStreamHeight = curHeight;
             o.stream_height = next;
             // Resolution alone barely shrinks the encoded bandwidth unless the
             // bitrate follows: align it with the recommendation for the new
@@ -1794,6 +1820,106 @@ const MoonlightApp = {
         this._relaunchTransport(relaunchIndex);
     },
 
+    // ── Automatic quality upgrade ─────────────────────────────────────────
+
+    /** Poll timer driving _maybeUpgradeQuality while a degraded profile is
+     *  active. Armed on every StreamView creation, stopped on quit. */
+    _armUpgradeTimer() {
+        this._stopUpgradeTimer();
+        this._upgradeTimer = setInterval(() => this._maybeUpgradeQuality(), 5000);
+    },
+
+    _stopUpgradeTimer() {
+        if (this._upgradeTimer) {
+            clearInterval(this._upgradeTimer);
+            this._upgradeTimer = null;
+        }
+    },
+
+    /**
+     * Step the degraded session-only profile back toward the user's settings
+     * once the network has been quiet long enough (no congestion signal for
+     * _upgradeStableMs, default 75s — doubled every time an upgrade flaps,
+     * see _onStreamCongested). One knob per step, reverse of the degradation
+     * ladder: fps → preferred transport → resolution (one rung up, restoring
+     * the user's enhancement setting with the final rung) → bitrate.
+     * Disabled with the seamless_switching setting (default on).
+     */
+    _maybeUpgradeQuality() {
+        if (this._nav.overlay !== 'streaming') return;
+        const sv = this.streamView;
+        if (!sv || !sv._firstFrameRendered || sv._quitting || sv._manualQuitting) return;
+        const o = this._degradeOverrides;
+        if (!o || Object.keys(o).length === 0) return;
+        const base = this._lastStreamingSettings || {};
+        if (base.seamless_switching === false) return;
+
+        const now = performance.now();
+        const quietSince = Math.max(
+            this._lastCongSignal || 0,
+            this._lastDegradeTime || 0,
+            this._lastUpgradeTime || 0,
+        );
+        if (!quietSince || now - quietSince < (this._upgradeStableMs || 75000)) return;
+
+        let relaunchIndex = this._transportIndex || 0;
+        let toastKey;
+        const toastParams = {};
+
+        if (o.stream_fps !== undefined) {
+            delete o.stream_fps;
+            toastKey = 'stream.upgradeFps';
+        } else if (o.transport_mode !== undefined) {
+            delete o.transport_mode;
+            relaunchIndex = 0; // back to the preferred entry of the natural chain
+            toastKey = 'stream.upgradeTransport';
+        } else if (o.stream_height !== undefined) {
+            const userHeight = base.stream_height > 0 ? base.stream_height : 0;
+            const target = userHeight > 0 ? userHeight : this._originalStreamHeight || 1080;
+            const next = [1080, 1440, 2160].find((r) => r > o.stream_height);
+            if (!next || next >= target) {
+                delete o.stream_height;
+                toastParams.res = String(target);
+                // The reduced resolution goes away — the auto-forced SGSR
+                // override goes with it (the user's own setting applies again).
+                if (this._enhancementAutoForced) {
+                    delete o.video_enhancement;
+                    delete o.video_enhancement_algo;
+                    this._enhancementAutoForced = false;
+                }
+            } else {
+                o.stream_height = next;
+                toastParams.res = String(next);
+            }
+            toastKey = 'stream.upgradeResolution';
+        } else if (o.stream_bitrate !== undefined) {
+            const userBitrate = base.stream_bitrate > 0 ? base.stream_bitrate : 20000;
+            const next = Math.round(o.stream_bitrate / 0.7);
+            if (next >= userBitrate) {
+                delete o.stream_bitrate;
+                toastParams.mbps = (userBitrate / 1000).toFixed(1);
+            } else {
+                o.stream_bitrate = next;
+                toastParams.mbps = (next / 1000).toFixed(1);
+            }
+            toastKey = 'stream.upgradeBitrate';
+        } else {
+            // Leftover overrides only (no user-visible knob) — clear them.
+            for (const k of Object.keys(o)) delete o[k];
+        }
+
+        this._lastUpgradeTime = now;
+        if (Object.keys(o).length === 0) this._degradeLevel = 0;
+        if (!toastKey) return; // nothing user-visible changed — no relaunch
+
+        console.log(
+            '[MW] Network stable — upgrade step, remaining overrides:',
+            JSON.stringify(o),
+        );
+        Toast.info(t(toastKey, toastParams));
+        this._relaunchTransport(relaunchIndex);
+    },
+
     /**
      * Called when streaming ends (Stop button, disconnect, or HEVC fallback).
      * Popstate handler may have already cleaned up (if Back was pressed).
@@ -1804,8 +1930,9 @@ const MoonlightApp = {
      * infinite loops if H.264 also fails.
      */
     _onStreamingQuit() {
-        // Drop any lingering transport-relaunch loader.
+        // Drop any lingering transport-relaunch loader and the upgrade poll.
         this._hideRelaunchLoader();
+        this._stopUpgradeTimer();
         // Guard: if popstate already handled cleanup, skip.
         // This prevents double-navigation when:
         //   a) User presses Back → popstate fires quit() + navigates
