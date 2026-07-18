@@ -135,6 +135,19 @@ export class BackendClient {
         return id;
     }
 
+    /**
+     * Uniqueid for a dual-stream slot. Slot 0 is the browser's regular ID;
+     * slot 1 derives a STABLE second ID (last byte XOR 0xFF) so the standby
+     * session coexists with the primary in Sunshine's per-uniqueid keying and
+     * survives reloads (a reload can /resume its own standby session).
+     */
+    static clientUniqueIdForSlot(slot) {
+        const id = this.clientUniqueId();
+        if (!slot) return id;
+        const last = parseInt(id.slice(14, 16), 16) ^ 0xff;
+        return id.slice(0, 14) + last.toString(16).padStart(2, '0').toUpperCase();
+    }
+
     static async launchApp(hostId, appId, streamingSettings = {}) {
         return this.post(
             `/api/hosts/${hostId}/start`,
@@ -148,12 +161,14 @@ export class BackendClient {
             { timeoutMs: 15000 },
         );
     }
-    static async quitApp(hostId) {
+    static async quitApp(hostId, extra = {}) {
         // Fail fast if the backend is dead — don't wait 30s for a /quit that'll
         // never arrive while the UI is stuck in the quit animation.
+        // extra: dual-stream scoping — { session_slot, client_uniqueid } quits
+        // one slot only (the caller passes the slot's own uniqueid).
         return this.post(
             `/api/hosts/${hostId}/quit`,
-            { client_uniqueid: this.clientUniqueId() },
+            { client_uniqueid: this.clientUniqueId(), ...extra },
             { timeoutMs: 5000 },
         );
     }

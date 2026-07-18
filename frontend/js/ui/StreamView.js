@@ -156,8 +156,19 @@ export class StreamView {
         hdrEnabled = false,
         touchScreen = false,
         audioTimeStretch = true,
+        opts = {},
     ) {
         this.container = container;
+        // ── Standby mode (seamless quality switching) ───────────────────────
+        // A standby view connects, decodes and renders HIDDEN and MUTED next to
+        // the live one; input/wake-lock/overlays stay off until activate() flips
+        // it to the visible, controlling view (called on its first frame).
+        this._standby = opts.standby === true;
+        // Backend stream slot this view runs on (0 = /ws ports, 1 = /ws1) and
+        // the uniqueid it launched with — quit() scopes its /quit with them so
+        // retiring one leg of a dual stream never cancels the other.
+        this._sessionSlot = typeof opts.sessionSlot === 'number' ? opts.sessionSlot : 0;
+        this._slotUniqueId = opts.slotUniqueId || null;
         // Audio time-stretch (WSOLA) — server-controlled kill switch.
         this._audioTimeStretch = audioTimeStretch !== false;
         // Mobile only: direct touch-screen input (absolute finger position) in
@@ -718,7 +729,9 @@ export class StreamView {
         this._logPlatformInfo();
 
         this.setupWebRtc();
-        this.bindEvents();
+        // Standby: no input until promote — a hidden view must never swallow
+        // the keyboard/mouse of the live one. bindEvents() runs in activate().
+        if (!this._standby) this.bindEvents();
         this.startRenderLoop();
         // Native-audio transports decode via the browser <audio> element; only
         // WSS needs the AudioPipeline.
@@ -881,7 +894,9 @@ export class StreamView {
         }
 
         // Write to AudioPipeline (init may not be complete yet — safe to drop)
-        if (this.audioPipeline && this.audioPipeline.ready) {
+        // Standby: swallow samples — the live view owns the speakers until
+        // promote (AudioPipeline has no gain control; not feeding it mutes it).
+        if (this.audioPipeline && this.audioPipeline.ready && !this._standby) {
             this.audioPipeline.write(sample);
         }
     }
@@ -897,11 +912,24 @@ export class StreamView {
         // #stream-startup-overlay, and getElementById('stream-view') below would
         // resolve to the OLD one — leaving a step-2-stuck overlay visible on top
         // while the live overlay (this._startupOverlay) advances unseen.
-        document.querySelectorAll('#stream-view').forEach((stale) => stale.remove());
+        // A STANDBY view must NOT sweep: the live view it will replace is still
+        // playing — the two coexist until promote.
+        if (!this._standby) {
+            document.querySelectorAll('#stream-view').forEach((stale) => stale.remove());
+        }
 
         const el = document.createElement('div');
         el.id = 'stream-view';
         el.className = 'stream-overlay';
+        // Every element lookup below is scoped to this root (el.querySelector),
+        // so a hidden standby view resolves its OWN children even while the
+        // live view's identically-id'd elements are still in the document.
+        this._rootEl = el;
+        if (this._standby) {
+            // Hidden, not display:none — decode/render must keep presenting so
+            // the promote can swap on an already-flowing surface.
+            el.style.visibility = 'hidden';
+        }
         el.innerHTML = `
             <div class="stream-header">
                 <button class="btn stream-quit-btn" id="btn-stream-quit">${IS_MOBILE_OR_TABLET ? t('stream.stop') : t('stream.stopStreaming')}</button>
@@ -924,14 +952,15 @@ export class StreamView {
 
         // Keep the device awake while streaming (prevents iPhone screen lock /
         // PC sleep after the idle timeout). Re-acquired on visibility change.
-        this._acquireWakeLock();
+        // Standby: the live view already holds one — acquired on activate().
+        if (!this._standby) this._acquireWakeLock();
 
         // Whole-surface input element: touch events are captured on the full
         // overlay (trackpad model), not just the canvas/video rectangle.
         this.streamEl = el;
 
         this.canvasArea = el.querySelector('.stream-canvas-area');
-        this.canvas = document.getElementById('stream-canvas');
+        this.canvas = el.querySelector('#stream-canvas');
         // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
         // Mac Chrome handles NV12→RGBA correctly via Metal; Windows Chrome
         // should do the same via D3D11.
@@ -949,7 +978,7 @@ export class StreamView {
         // worker has no DOM, so the size is forwarded as a 'resize' message).
         this._setupOutputSizeObserver();
         // Video element for native RTP media track mode (webrtc-media)
-        this.videoEl = document.getElementById('stream-video');
+        this.videoEl = el.querySelector('#stream-video');
         // The video never receives pointer/touch events directly: input is
         // handled by the overlay (touch) and canvas (mouse). This also blocks
         // iOS gestures that would drag or zoom the <video> element.
@@ -972,9 +1001,11 @@ export class StreamView {
         // decodes Opus (jitter buffer + FEC + PLC) and plays it through this
         // <audio> element. Wired before setupWebRtc() → connect() so ontrack finds
         // it. Unused on WSS (which decodes via the AudioPipeline).
-        this.audioEl = document.getElementById('stream-audio');
+        this.audioEl = el.querySelector('#stream-audio');
         if (this.audioEl) {
             this.audioEl.style.display = 'none';
+            // Standby: muted until promote (no double audio with the live view).
+            if (this._standby) this.audioEl.muted = true;
             if (this._nativeAudio && this.webrtc) this.webrtc.audioElement = this.audioEl;
         }
 
@@ -984,14 +1015,14 @@ export class StreamView {
         // has pointer-events:none, so without this layer the mouse was dead.
         // Sitting on top of <video> also fixes iOS Safari swallowing touches
         // over the video element.
-        this.inputEl = document.getElementById('stream-input-layer');
+        this.inputEl = el.querySelector('#stream-input-layer');
         this.inputEl.style.touchAction = 'none';
 
         // statusEl kept for backward compatibility — setStatus() is now a no-op
         this.statusEl = null;
-        this.hintEl = document.getElementById('stream-hint');
+        this.hintEl = el.querySelector('#stream-hint');
 
-        document.getElementById('btn-stream-quit').onclick = () => this._handleManualQuit();
+        el.querySelector('#btn-stream-quit').onclick = () => this._handleManualQuit();
 
         // ── Streaming stats overlay (top-center card, elegant styling) ─────
         this._overlayEl = document.createElement('div');
@@ -999,7 +1030,7 @@ export class StreamView {
         this._overlayEl.className = 'stream-stats-overlay';
         this._overlayEl.innerHTML =
             '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
-        document.getElementById('stream-view').appendChild(this._overlayEl);
+        this._rootEl.appendChild(this._overlayEl);
 
         // The stats card can sit over the game; let the user drag it out of the
         // way. Position is intentionally not persisted so it resets to the
@@ -1023,7 +1054,7 @@ export class StreamView {
             this._immersiveOverlay.id = 'stream-immersive-overlay';
             this._immersiveOverlay.className = 'stream-immersive-overlay';
             this._buildImmersiveOverlayContent();
-            document.getElementById('stream-view').appendChild(this._immersiveOverlay);
+            this._rootEl.appendChild(this._immersiveOverlay);
             this._makeStatsDraggable(this._immersiveOverlay);
             // × hides the reminder for the rest of the session.
             this._immersiveOverlay.addEventListener('click', (e) => {
@@ -1080,7 +1111,7 @@ export class StreamView {
         };
         this._shortcutsSlide.addEventListener('pointerdown', dismiss);
         this._shortcutsSlide.addEventListener('touchstart', dismiss, { passive: false });
-        document.getElementById('stream-view').appendChild(this._shortcutsSlide);
+        this._rootEl.appendChild(this._shortcutsSlide);
 
         // ── Startup overlay (centered 3-step status) ───────────────────────
         this._startupOverlay = document.createElement('div');
@@ -1103,7 +1134,7 @@ export class StreamView {
             '  <span class="startup-step-label">' + t('stream.streamReady') + '</span>',
             '</div>',
         ].join('');
-        document.getElementById('stream-view').appendChild(this._startupOverlay);
+        this._rootEl.appendChild(this._startupOverlay);
 
         // ── Header fullscreen button (desktop: always; mobile: landscape) ──
         this._mobileFsBtn = document.createElement('button');
@@ -1154,7 +1185,7 @@ export class StreamView {
             // chevrons from the keyboard accessory bar (still programmatically
             // focusable via .focus()).
             this._kbdCapture.setAttribute('tabindex', '-1');
-            document.getElementById('stream-view').appendChild(this._kbdCapture);
+            this._rootEl.appendChild(this._kbdCapture);
             this._setupKeyboardCapture();
 
             // Header toggle button: keyboard glyph + tiny up arrow.
@@ -2264,18 +2295,72 @@ export class StreamView {
         const first = !this._firstFrameRendered;
         this._firstFrameRendered = true;
         this.setStatus('live', 'Live');
-        // Show stats overlay (only if enabled in settings)
-        if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
-        // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
-        this._updateStartupStep(3);
-        setTimeout(() => this._hideStartupOverlay(), 500);
-        // Show keyboard shortcuts slide (5s auto-hide)
-        this._showShortcutsSlide();
+        if (!this._standby) {
+            // Show stats overlay (only if enabled in settings)
+            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+            // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
+            this._updateStartupStep(3);
+            setTimeout(() => this._hideStartupOverlay(), 500);
+            // Show keyboard shortcuts slide (5s auto-hide)
+            this._showShortcutsSlide();
+        }
         if (first && typeof this.onFirstFrame === 'function') {
             try {
                 this.onFirstFrame();
             } catch (e) {
                 console.warn('[StreamView] onFirstFrame callback failed:', e);
+            }
+        }
+    }
+
+    /**
+     * Promote a standby view to the live, controlling one (seamless quality
+     * switching): reveal the root, attach input, unmute audio, start gamepad
+     * polling and take the wake lock. The caller (MoonlightApp) swaps
+     * visibility/ownership and retires the previous view.
+     */
+    activate() {
+        if (!this._standby) return;
+        this._standby = false;
+        if (this._rootEl) this._rootEl.style.visibility = '';
+        this._acquireWakeLock();
+        this.bindEvents();
+        if (this._gamepadManager) this._gamepadManager.start();
+        if (this.audioEl) this.audioEl.muted = false;
+        // Startup overlay was never shown on a standby view — drop it outright.
+        this._hideStartupOverlay();
+        if (this._firstFrameRendered) {
+            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+        }
+        // Desktop gaming mode: best-effort pointer-lock re-acquisition. The
+        // retiring view still holds the lock at promote time and loses it when
+        // its input layer is removed; grab it the moment it is released.
+        // Chromium usually honors the relock (sticky activation from earlier
+        // gameplay clicks); if it refuses, the "click to capture" hint covers.
+        if (this._gamingMode && this.inputEl) {
+            const tryLock = () => {
+                try {
+                    const p = this.inputEl.requestPointerLock();
+                    if (p && typeof p.catch === 'function')
+                        p.catch(() => {
+                            /* hint flow covers it */
+                        });
+                } catch (e) {
+                    /* hint flow covers it */
+                }
+            };
+            if (!document.pointerLockElement) {
+                tryLock();
+            } else {
+                const onChange = () => {
+                    document.removeEventListener('pointerlockchange', onChange);
+                    if (!document.pointerLockElement) tryLock();
+                };
+                document.addEventListener('pointerlockchange', onChange);
+                setTimeout(
+                    () => document.removeEventListener('pointerlockchange', onChange),
+                    3000,
+                );
             }
         }
     }
@@ -2568,7 +2653,8 @@ export class StreamView {
                     if (!this._quitting) this.webrtc.send(msg);
                 });
             }
-            if (this._gamepadManager) this._gamepadManager.start();
+            // Standby: created but not polling — started in activate().
+            if (this._gamepadManager && !this._standby) this._gamepadManager.start();
 
             if (this._transport === 'webrtc-media') {
                 // Media track mode: video arrives natively via <video> element.
@@ -4986,7 +5072,7 @@ export class StreamView {
             '</div>' +
             '<div class="takeover-bar"><span></span></div>' +
             '</div>';
-        const root = document.getElementById('stream-view') || document.body;
+        const root = this._rootEl || document.body;
         root.appendChild(el);
         // Trigger the close-in animation on the next frame.
         requestAnimationFrame(() => el.classList.add('is-active'));
@@ -5035,7 +5121,7 @@ export class StreamView {
             '</div>' +
             '<div class="takeover-bar"><span></span></div>' +
             '</div>';
-        const root = document.getElementById('stream-view') || document.body;
+        const root = this._rootEl || document.body;
         root.appendChild(el);
         requestAnimationFrame(() => el.classList.add('is-active'));
 
@@ -5074,7 +5160,7 @@ export class StreamView {
         if (area) {
             area.appendChild(crt);
         } else {
-            (document.getElementById('stream-view') || document.body).appendChild(crt);
+            (this._rootEl || document.body).appendChild(crt);
         }
 
         crt.addEventListener('animationend', finish, { once: true });
@@ -5094,6 +5180,10 @@ export class StreamView {
         // device — do NOT call the backend /quit (it acts on the GLOBAL active
         // relay, which is now the new owner's session: quitting would kill it).
         const takenOver = opts.takenOver === true;
+        // retire: seamless quality switching promoted ANOTHER live view — this
+        // one steps down quietly: keep the display state (fullscreen) for the
+        // successor and never touch the successor's backend slot.
+        const retire = opts.retire === true;
         // Guard: prevent re-entrant calls (e.g. from WS onClose -> setTimeout)
         if (this._quitting) return;
         this._quitting = true;
@@ -5101,10 +5191,12 @@ export class StreamView {
         // Exit fullscreen if active (before unbinding events).
         // Covers both standard Fullscreen API and iOS webkitExitFullscreen.
         // Also exit CSS fallback fullscreen if active.
-        this._exitCssFallbackFullscreen();
-        this._exitMobileFullscreen();
-        if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {});
+        if (!retire) {
+            this._exitCssFallbackFullscreen();
+            this._exitMobileFullscreen();
+            if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+            }
         }
 
         this.stopRenderLoop();
@@ -5283,7 +5375,11 @@ export class StreamView {
             this.webrtc.close();
         } else {
             try {
-                await BackendClient.quitApp(this.host.uuid);
+                // Scope the backend /quit to THIS view's slot + uniqueid so a
+                // dual-stream sibling keeps streaming untouched.
+                const quitExtras = { session_slot: this._sessionSlot };
+                if (this._slotUniqueId) quitExtras.client_uniqueid = this._slotUniqueId;
+                await BackendClient.quitApp(this.host.uuid, quitExtras);
                 this.webrtc.close();
                 if (!silent) {
                     await Toast.dismissAll();
@@ -5410,7 +5506,7 @@ export class StreamView {
         this.frameQueue = [];
         this.pendingFrames = [];
 
-        const el = document.getElementById('stream-view');
+        const el = this._rootEl;
         if (el) el.remove();
 
         // Restore the underlying app now that the stream overlay is gone.
