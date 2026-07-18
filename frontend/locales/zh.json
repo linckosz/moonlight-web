@@ -366,6 +366,8 @@
         "degradeBitrateFps": "网络不稳定——码率已降至 {{mbps}} Mbps，帧率限制为 60 fps",
         "degradeMedia": "网络不稳定——正在切换到原生视频传输",
         "degradeRestart": "网络不稳定——正在重启视频传输",
+        "degradeResolution": "网络不稳定——分辨率已降至 {{res}}p",
+        "degradeResolutionSgsr": "网络不稳定——分辨率已降至 {{res}}p，已启用 SGSR 超分",
         "streamEnd": "串流结束",
         "takenOverTitle": "连接已终止",
         "takenOverBody": "此会话已被另一台设备接管。",

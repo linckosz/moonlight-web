@@ -55,6 +55,7 @@ import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
 import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
+import { computeAutoBitrate } from './util/AutoBitrate.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
@@ -1063,6 +1064,7 @@ const MoonlightApp = {
             this._degradeLevel = 0;
             this._degradeOverrides = {};
             this._lastDegradeTime = 0;
+            this._enhancementAutoForced = false;
         }
 
         // Store host/app for HEVC fallback re-launch
@@ -1547,8 +1549,10 @@ const MoonlightApp = {
 
     /** Full-screen loader shown during a transport relaunch so the apps view is
      *  never revealed between tearing down the old StreamView and rendering the
-     *  new one. Reuses the StreamView startup-loader visuals. */
-    _showRelaunchLoader() {
+     *  new one. Reuses the StreamView startup-loader visuals. When a frozen
+     *  last frame of the outgoing stream is provided, it is shown (dimmed)
+     *  behind the steps so the transition reads as a brief pause, not a cut. */
+    _showRelaunchLoader(freezeFrame) {
         if (document.getElementById('stream-relaunch-loader')) return;
         const el = document.createElement('div');
         el.id = 'stream-relaunch-loader';
@@ -1569,6 +1573,11 @@ const MoonlightApp = {
             '<span class="startup-step-label">' +
             t('stream.streamReady') +
             '</span></div>';
+        if (freezeFrame) {
+            freezeFrame.className = 'relaunch-freeze-frame';
+            el.classList.add('has-freeze-frame');
+            el.insertBefore(freezeFrame, el.firstChild);
+        }
         document.getElementById('app').appendChild(el);
     },
 
@@ -1604,11 +1613,15 @@ const MoonlightApp = {
         }
 
         // Show the bridging loader BEFORE teardown so the apps view underneath
-        // is never revealed (stay on the stream initialization screen).
-        this._showRelaunchLoader();
+        // is never revealed (stay on the stream initialization screen). When the
+        // old stream already presented frames (congestion degradation, not a
+        // failed connect), bridge with its frozen last image instead of a black
+        // loader so the interruption stays discreet.
+        const sv = this.streamView;
+        const freezeFrame = sv ? sv.captureLastFrame() : null;
+        this._showRelaunchLoader(freezeFrame);
 
         // Quietly tear down the failed StreamView (no navigation, no toast).
-        const sv = this.streamView;
         this.streamView = null;
         if (sv) {
             sv.onQuit = null;
@@ -1636,10 +1649,23 @@ const MoonlightApp = {
             if (result.status === 'streaming') {
                 // Transport relaunch (fallback chain / congestion degradation) —
                 // suppress the shortcuts slide so it doesn't re-pop each step.
-                this._startStreamView(result, host, this._lastStreamingSettings, true);
-                // New StreamView rendered its own #stream-view on top — drop the
-                // bridging loader.
-                this._hideRelaunchLoader();
+                // Pass the merged settings so the degradation overrides (reduced
+                // height, auto-SGSR enhancement) reach the new StreamView.
+                this._startStreamView(result, host, settings, true);
+                if (freezeFrame && this.streamView) {
+                    // Hold the frozen frame until the new stream presents its
+                    // first frame (bounded — the failure paths hide the loader
+                    // themselves, this timer only covers a silent stall).
+                    const failsafe = setTimeout(() => this._hideRelaunchLoader(), 15000);
+                    this.streamView.onFirstFrame = () => {
+                        clearTimeout(failsafe);
+                        this._hideRelaunchLoader();
+                    };
+                } else {
+                    // New StreamView rendered its own #stream-view on top — drop
+                    // the bridging loader.
+                    this._hideRelaunchLoader();
+                }
             } else {
                 this._onTransportFailed('launch status ' + result.status);
             }
@@ -1651,16 +1677,29 @@ const MoonlightApp = {
         }
     },
 
+    /** Effective stream height (px) for the degradation ladder. stream_height 0
+     *  means "Same as Host": probe the live stream's real frame height, and
+     *  assume the 1080p reference when that is unknown too. */
+    _effectiveStreamHeight(effective) {
+        if (effective.stream_height > 0) return effective.stream_height;
+        const live = this.streamView ? this.streamView.currentFrameHeight() : 0;
+        return live > 0 ? live : 1080;
+    },
+
     /**
      * Sustained congestion reported by StreamView: relaunch the CURRENT stream
      * with a degraded, session-only profile. The user's settings in the UI are
      * never touched — a fresh launch starts from them again.
      *
-     * Escalation ladder, one step per congestion event:
+     * Escalation ladder — one knob per congestion event, in order (state-based,
+     * so a knob that is already at its floor is skipped naturally):
      *   1. bitrate −30%
-     *   2. switch to the native media transport (RTP: no SCTP queueing/cwnd)
-     *   3. bitrate −30% + cap at 60 fps
-     *   4+ bitrate −30% … floor at 2 Mbps
+     *   2. resolution one rung down (2160→1440→1080→720), bitrate aligned to
+     *      the new height; SGSR upscaling is auto-enabled when the user streams
+     *      without video enhancement so the drop stays visually discreet
+     *   3. switch to the native media transport (RTP: no SCTP queueing/cwnd)
+     *   4. cap at 60 fps (+ bitrate −30%)
+     *   5+ bitrate −30% … floor at 2 Mbps, then remaining resolution rungs
      * Once every knob is at its floor, keep restarting the transport — a fresh
      * SCTP/ICE state is exactly what a manual stop/start fixes.
      */
@@ -1675,37 +1714,76 @@ const MoonlightApp = {
         const effective = { ...this._lastStreamingSettings, ...o };
         const curBitrate = effective.stream_bitrate > 0 ? effective.stream_bitrate : 20000;
         const curFps = effective.stream_fps > 0 ? effective.stream_fps : 60;
+        const curHeight = this._effectiveStreamHeight(effective);
         const chain = this._transportChain || [];
         const curTransport = chain[this._transportIndex || 0] || '';
         const onMedia = curTransport.startsWith('webrtc-media');
 
         this._degradeLevel = (this._degradeLevel || 0) + 1;
 
-        // Step 2 switches to the media transport; every other step reduces bitrate.
-        const switchToMedia = this._degradeLevel === 2 && !onMedia;
         let relaunchIndex = this._transportIndex || 0;
         let toastKey;
         const toastParams = {};
 
-        if (switchToMedia) {
+        const cutBitrate = () => {
+            o.stream_bitrate = Math.max(2000, Math.round(curBitrate * 0.7));
+            toastKey = 'stream.degradeBitrate';
+            toastParams.mbps = (o.stream_bitrate / 1000).toFixed(1);
+        };
+        const stepDownResolution = () => {
+            const next = [2160, 1440, 1080, 720].find((r) => r < curHeight);
+            o.stream_height = next;
+            // Resolution alone barely shrinks the encoded bandwidth unless the
+            // bitrate follows: align it with the recommendation for the new
+            // height (never raise it, keep the 2 Mbps floor).
+            const autoKbps =
+                computeAutoBitrate(
+                    next,
+                    curFps,
+                    effective.stream_aspect,
+                    effective.chroma_444_enabled === true,
+                    effective.hdr_enabled === true,
+                ) * 1000;
+            o.stream_bitrate = Math.max(2000, Math.min(curBitrate, autoKbps));
+            toastKey = 'stream.degradeResolution';
+            toastParams.res = String(next);
+            // SGSR auto-enable: upscale the reduced stream back to the display
+            // size so the drop stays visually discreet. Session-only override —
+            // the user's Settings checkbox is never touched. Not applicable on
+            // the media transport (<video> element, no canvas for WebGPU).
+            if (effective.video_enhancement !== 'on' && !onMedia && !o.transport_mode) {
+                o.video_enhancement = 'on';
+                o.video_enhancement_algo = 'sgsr';
+                this._enhancementAutoForced = true;
+                toastKey = 'stream.degradeResolutionSgsr';
+            }
+        };
+
+        if (o.stream_bitrate === undefined && curBitrate > 2000) {
+            cutBitrate();
+        } else if (o.stream_height === undefined && curHeight > 720) {
+            stepDownResolution();
+        } else if (!onMedia && !o.transport_mode) {
             o.transport_mode = 'webrtc-media-udp';
             relaunchIndex = 0; // forced mode is first in the recomputed chain
             toastKey = 'stream.degradeMedia';
-        } else {
+        } else if (o.stream_fps === undefined && curFps > 60) {
+            o.stream_fps = 60;
             if (curBitrate > 2000) {
-                o.stream_bitrate = Math.max(2000, Math.round(curBitrate * 0.7));
-                toastKey = 'stream.degradeBitrate';
+                cutBitrate();
                 toastParams.mbps = (o.stream_bitrate / 1000).toFixed(1);
             } else {
-                // Every knob at its floor: plain transport restart (fresh
-                // SCTP/ICE state, same effect as a manual stop/start).
-                toastKey = 'stream.degradeRestart';
+                toastParams.mbps = (curBitrate / 1000).toFixed(1);
             }
-            if (this._degradeLevel >= 3 && curFps > 60) {
-                o.stream_fps = 60;
-                toastKey = 'stream.degradeBitrateFps';
-                toastParams.mbps = ((o.stream_bitrate || curBitrate) / 1000).toFixed(1);
-            }
+            toastKey = 'stream.degradeBitrateFps';
+        } else if (curBitrate > 2000) {
+            cutBitrate();
+        } else if (curHeight > 720) {
+            stepDownResolution();
+        } else {
+            // Every knob at its floor: plain transport restart (fresh
+            // SCTP/ICE state, same effect as a manual stop/start).
+            toastKey = 'stream.degradeRestart';
         }
 
         console.warn(

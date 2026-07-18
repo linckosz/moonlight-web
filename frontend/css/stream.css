@@ -526,6 +526,24 @@ body.streaming-active .app-footer {
     gap: 11px;
 }
 
+/* Frozen last frame of the outgoing stream (congestion degradation): shown
+   dimmed behind the startup steps so the transition reads as a brief pause
+   instead of a cut to black. */
+#stream-relaunch-loader .relaunch-freeze-frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: brightness(0.55);
+}
+
+#stream-relaunch-loader.has-freeze-frame .startup-loader,
+#stream-relaunch-loader.has-freeze-frame .startup-step {
+    position: relative;
+    z-index: 1;
+}
+
 .startup-step {
     display: flex;
     align-items: center;

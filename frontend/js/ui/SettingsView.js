@@ -32,6 +32,7 @@ import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { SUPPORTS_CANVAS_TEARING } from '../util/BrowserDetect.js';
+import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
 const IS_TOUCH_DEVICE =
@@ -170,36 +171,13 @@ export class SettingsView {
                 : null;
     }
 
-    /**
-     * Recommended bitrate derived from the 1080p@60 SDR reference (20 Mbps):
-     *   × pixel-count ratio vs 1080p (e.g. 1440p → 1.78)
-     *   × framerate ratio vs 60 fps (e.g. 120 fps → 2.00)
-     *   × 1.5 when HDR and/or YUV 4:4:4 is enabled (not cumulative — single 1.5×)
-     * Clamped to the slider range [5, 150] Mbps.
-     * "Same as Host" (height 0) uses the 1080p reference.
-     */
-    /** Parse a "W:H" aspect string into a numeric ratio. "auto" / unknown → 16:9
-     *  (baseline for the bitrate estimate; the real width is derived from the
-     *  host's screen format on the backend at launch). */
+    /** See util/AutoBitrate.js (shared with the congestion-degradation ladder). */
     _aspectToNumber(aspect) {
-        const m = /^(\d+):(\d+)$/.exec(aspect || '');
-        if (m && +m[2] > 0) return +m[1] / +m[2];
-        return 16 / 9;
+        return aspectToNumber(aspect);
     }
 
     _computeAutoBitrate(height, fps, aspect, chroma444, hdr) {
-        const REF_BITRATE = 20; // Mbps at 1920×1080 / 60fps / SDR
-        const h = height > 0 ? height : 1080;
-        // Pixel count = (h × aspectRatio) × h, normalised to the 1920×1080 ref.
-        // Ultrawide (21:9, 32:9) therefore scales the bitrate up accordingly.
-        const aspRatio = this._aspectToNumber(aspect);
-        const pixelRatio = (h * h * aspRatio) / (1080 * 1080 * (16 / 9));
-        const fpsRatio = (fps > 0 ? fps : 60) / 60;
-        // HDR (10-bit) and 4:4:4 (4× chroma samples) each justify ~1.5× bitrate;
-        // not cumulative — a single 1.5× when either is enabled.
-        const richRatio = chroma444 || hdr ? 1.5 : 1.0;
-        const mbps = Math.round(REF_BITRATE * pixelRatio * fpsRatio * richRatio);
-        return Math.max(1, Math.min(150, mbps));
+        return computeAutoBitrate(height, fps, aspect, chroma444, hdr);
     }
 
     /** Recompute the bitrate from current selects and sync the slider UI. */

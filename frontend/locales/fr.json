@@ -366,6 +366,8 @@
         "degradeBitrateFps": "Réseau instable — débit réduit à {{mbps}} Mbps, limité à 60 fps",
         "degradeMedia": "Réseau instable — bascule sur le transport vidéo natif",
         "degradeRestart": "Réseau instable — redémarrage du transport vidéo",
+        "degradeResolution": "Réseau instable — résolution réduite à {{res}}p",
+        "degradeResolutionSgsr": "Réseau instable — résolution réduite à {{res}}p, upscaling SGSR activé",
         "streamEnd": "Fin du flux",
         "takenOverTitle": "Connexion terminée",
         "takenOverBody": "Cette session a été interrompue par un autre appareil.",
