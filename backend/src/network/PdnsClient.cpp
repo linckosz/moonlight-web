@@ -36,13 +36,23 @@ PdnsClient::PdnsClient(QObject* parent)
     m_Nam = new QNetworkAccessManager(this);
 }
 
+// Qt sends no User-Agent by default and some HTTP front-ends (nginx/Caddy on
+// the DNS box, ZeroSSL's LB) intermittently reject UA-less requests, so every
+// API request identifies itself.
+static QNetworkRequest makeRequest(const QUrl& url)
+{
+    QNetworkRequest req{url};
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("MoonlightWeb/" MW_VERSION));
+    return req;
+}
+
 // ---------------------------------------------------------------------------
 // Internal: synchronous helpers
 // ---------------------------------------------------------------------------
 
 QNetworkReply* PdnsClient::sendGet(const QString& url, int timeoutMs)
 {
-    QNetworkRequest request{QUrl(url)};
+    QNetworkRequest request = makeRequest(QUrl(url));
     request.setRawHeader("X-API-Key", m_Token.toUtf8());
     request.setRawHeader("Accept", "application/json");
 
@@ -70,7 +80,7 @@ QNetworkReply* PdnsClient::sendGet(const QString& url, int timeoutMs)
 
 QNetworkReply* PdnsClient::sendPatch(const QString& url, const QByteArray& body, int timeoutMs)
 {
-    QNetworkRequest request{QUrl(url)};
+    QNetworkRequest request = makeRequest(QUrl(url));
     request.setRawHeader("X-API-Key", m_Token.toUtf8());
     request.setRawHeader("Accept", "application/json");
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
