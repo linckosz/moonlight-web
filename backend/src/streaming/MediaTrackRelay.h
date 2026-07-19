@@ -175,6 +175,14 @@ private:
     // Buffered keyframe: if the first IDR arrives before the Video Track is open
     QByteArray m_BufferedKeyframe;
     bool m_HaveBufferedKeyframe = false;
+    // True when a delta frame was dropped after the buffered keyframe (track
+    // still closed): the buffer is stale — sending it followed by live deltas
+    // yields an undecodable stream with no RTP gap (no NACK/PLI recovery).
+    bool m_DeltaAfterBufferedKeyframe = false;
+    // Delta gate: no delta is sent on the track before a keyframe has been
+    // sent (session start, or after a worker-side delta drop broke the
+    // reference chain). Guarded by m_VideoMutex.
+    bool m_SentKeyframeOnTrack = false;
 
     // ── UPnP NAT traversal ──────────────────────────────────────────────────
     std::string m_PublicIP;

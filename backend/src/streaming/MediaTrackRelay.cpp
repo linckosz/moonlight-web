@@ -380,11 +380,14 @@ void MediaTrackRelay::createTracksAndChannels()
 void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
 {
     // Balance the worker→main pending counter (incremented before each emit).
-    // Consume the worker-drop flag: recovery on this transport relies on the
-    // browser's proactive periodic IDR requests (no PLI API available).
+    // A worker-side delta drop breaks the reference chain: every delta until
+    // the next keyframe is undecodable, yet RTP-wise nothing is missing (the
+    // dropped frame was never packetized), so the browser sees no loss and
+    // sends no NACK/PLI. Re-arm the keyframe gate and ask Sunshine for an IDR.
+    bool workerDroppedDelta = false;
     if (m_Shim) {
         m_Shim->videoFrameDelivered();
-        m_Shim->takeWorkerDroppedDelta();
+        workerDroppedDelta = m_Shim->takeWorkerDroppedDelta();
     }
 
     if (m_Stopping.load()) {
@@ -403,19 +406,41 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
     // Re-check after acquiring the lock: stop() may have run while we waited.
     if (m_Stopping.load()) return;
 
+    if (workerDroppedDelta && !isKeyframe) {
+        m_SentKeyframeOnTrack = false;
+    }
+
     // Buffer keyframes arriving before the Video Track is ready
     if (isKeyframe && (!m_VideoTrack || !m_VideoTrack->isOpen())) {
         m_BufferedKeyframe = data;
         m_HaveBufferedKeyframe = true;
+        m_DeltaAfterBufferedKeyframe = false;
         qInfo() << "[MediaTrackRelay] Buffered keyframe size=" << data.size()
                 << "(Track ready=" << (m_VideoTrack && m_VideoTrack->isOpen()) << ")";
         return;
     }
 
     if (!m_VideoTrack || !m_VideoTrack->isOpen()) {
+        // A delta dropped after the buffered keyframe invalidates it: the
+        // deltas sent after track-open would reference this dropped frame.
+        if (m_HaveBufferedKeyframe) m_DeltaAfterBufferedKeyframe = true;
         static int noTrackCount = 0;
         if (++noTrackCount <= 5)
             qInfo() << "[MediaTrackRelay] onVideoFrame dropped — Video Track not ready";
+        return;
+    }
+
+    // Keyframe gate: never send deltas whose reference frames were not sent on
+    // this track (before the first keyframe, or after a worker-side delta
+    // drop). The browser cannot detect them as loss — no NACK/PLI fires — so
+    // its decoder would wait for a keyframe forever (stream frozen at 0 fps).
+    // The throttled IDR request retries on every gated delta until Sunshine
+    // delivers a keyframe.
+    if (!isKeyframe && !m_SentKeyframeOnTrack) {
+        static int gatedCount = 0;
+        if (++gatedCount <= 5)
+            qInfo() << "[MediaTrackRelay] Delta gated — waiting for a fresh keyframe";
+        sendIdrRequestThrottled();
         return;
     }
 
@@ -440,6 +465,19 @@ void MediaTrackRelay::onVideoFrame(const QByteArray& data, int frameType, int)
             qWarning() << "[MediaTrackRelay] sendFrame error:" << e.what();
         }
         return;
+    }
+
+    if (isKeyframe) {
+        // Keyframe on the wire: open the delta gate and reset the IDR request
+        // backoff (recovery completed). Any still-buffered keyframe is older
+        // than this one — drop it so a queued sendBufferedKeyframe() cannot
+        // send it out of order behind us.
+        m_SentKeyframeOnTrack = true;
+        m_BufferedKeyframe.clear();
+        m_HaveBufferedKeyframe = false;
+        m_DeltaAfterBufferedKeyframe = false;
+        m_IdrOutstanding.store(false, std::memory_order_release);
+        m_IdrCooldownMs.store(kIdrCooldownBaseMs, std::memory_order_release);
     }
 
     m_FrameCount++;
@@ -468,7 +506,19 @@ void MediaTrackRelay::sendBufferedKeyframe()
     if (!m_HaveBufferedKeyframe) return;
     if (m_Stopping.load() || !m_VideoTrack || !m_VideoTrack->isOpen()) return;
 
-    qInfo() << "[MediaTrackRelay] Sending buffered keyframe, size=" << m_BufferedKeyframe.size();
+    // Stale references: deltas were dropped after this keyframe was buffered
+    // (track still closed), so the live deltas that follow reference frames
+    // the browser will never receive — undecodable, and invisible to NACK/PLI
+    // (no RTP gap). Send the keyframe anyway: it is the freshest displayable
+    // image, and Sunshine only encodes on screen damage — on a static host
+    // screen the requested fresh IDR may never come (the IDR flag applies to
+    // the NEXT encoded frame), so discarding this one means showing black
+    // until the host screen changes (2026-07-19 16:07 incident). The delta
+    // gate simply stays closed until a genuinely fresh keyframe lands.
+    const bool staleReferences = m_DeltaAfterBufferedKeyframe;
+
+    qInfo() << "[MediaTrackRelay] Sending buffered keyframe, size=" << m_BufferedKeyframe.size()
+            << (staleReferences ? "(stale references — delta gate stays closed)" : "");
 
     auto frameInfo = std::make_shared<rtc::FrameInfo>(computeRtpTimestamp());
     frameInfo->isKeyFrame = true;
@@ -481,15 +531,24 @@ void MediaTrackRelay::sendBufferedKeyframe()
 
     try {
         m_VideoTrack->sendFrame(std::move(bin), *frameInfo);
-        // Keyframe sent: reset the IDR request backoff (recovery completed).
-        m_IdrOutstanding.store(false, std::memory_order_release);
-        m_IdrCooldownMs.store(kIdrCooldownBaseMs, std::memory_order_release);
+        if (staleReferences) {
+            // Recovery still pending: a fresh IDR must land before any delta
+            // may flow (the gate keeps re-requesting on every gated delta).
+            sendIdrRequestThrottled();
+        } else {
+            // Keyframe sent: open the delta gate, reset the IDR request
+            // backoff.
+            m_SentKeyframeOnTrack = true;
+            m_IdrOutstanding.store(false, std::memory_order_release);
+            m_IdrCooldownMs.store(kIdrCooldownBaseMs, std::memory_order_release);
+        }
     } catch (const std::exception& e) {
         qWarning() << "[MediaTrackRelay] sendBufferedKeyframe error:" << e.what();
     }
 
     m_BufferedKeyframe.clear();
     m_HaveBufferedKeyframe = false;
+    m_DeltaAfterBufferedKeyframe = false;
 }
 
 // ── Audio forwarding (native RTP Opus track) ───────────────────────────────────
@@ -746,6 +805,8 @@ void MediaTrackRelay::stop()
         std::lock_guard<std::mutex> lk(m_VideoMutex);
         m_BufferedKeyframe.clear();
         m_HaveBufferedKeyframe = false;
+        m_DeltaAfterBufferedKeyframe = false;
+        m_SentKeyframeOnTrack = false;
     }
 
     // Reset IDR throttle state for the next session
