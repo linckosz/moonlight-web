@@ -168,8 +168,6 @@
         "tearingDesc": "Disables VSync for slightly lower latency; may cause image tearing.",
         "muteHost": "Mute host audio",
         "muteHostDesc": "Mute the host PC speakers while streaming. Audio is still sent to this device.",
-        "seamlessSwitching": "Seamless quality switching",
-        "seamlessSwitchingDesc": "Automatically restore quality (frame rate, transport, resolution, bitrate) once the network recovers after an automatic reduction, switching streams transparently when possible.",
         "bitrate": "Bitrate:",
         "bitrateUnit": "Mbps",
         "bitrateDesc": "Auto-adjusted from resolution, frame rate and HDR.",

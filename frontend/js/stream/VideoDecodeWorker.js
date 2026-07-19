@@ -789,6 +789,15 @@ self.onmessage = (e) => {
             S.outH = m.outH;
             if (S.renderer) S.renderer.setOutputSize(S.outW, S.outH);
             break;
+        case 'capture':
+            // Snapshot of the last presented frame, for the relaunch
+            // freeze-frame bridge. Best-effort: some contexts read back blank
+            // after presenting — the receiver detects that and drops it.
+            createImageBitmap(S.canvas).then(
+                (bmp) => post({ type: 'freezeframe', bitmap: bmp }, [bmp]),
+                () => post({ type: 'freezeframe' }),
+            );
+            break;
         case 'stop':
             S.stopped = true;
             if (S.decoder) {

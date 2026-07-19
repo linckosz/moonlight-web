@@ -56,9 +56,6 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
-        // Seamless quality switching (default on): automatic congestion
-        // degradation/upgrade steps + transparent stream transitions.
-        this._seamlessSwitching = true;
         this._touchSensitivity = 2.2;
         // Mobile only: direct touch-screen input (absolute) instead of the
         // relative trackpad model. Off by default.
@@ -147,7 +144,6 @@ export class SettingsView {
         this._hdrEnabled = data.hdr_enabled === true;
         this._chroma444 = data.chroma_444_enabled === true;
         this._muteHostAudio = data.mute_host_audio !== false;
-        this._seamlessSwitching = data.seamless_switching !== false;
         this._touchSensitivity =
             typeof data.touch_sensitivity === 'number' && data.touch_sensitivity > 0
                 ? data.touch_sensitivity
@@ -221,7 +217,7 @@ export class SettingsView {
             hdr_enabled: this._hdrEnabled,
             chroma_444_enabled: this._chroma444,
             mute_host_audio: this._muteHostAudio,
-            seamless_switching: this._seamlessSwitching,
+            seamless_switching: true,
             touch_sensitivity: this._touchSensitivity,
             touch_screen: this._touchScreen,
             tearing_enabled: this._tearing,
@@ -451,7 +447,6 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
-        this._seamlessSwitching = true;
         this._touchSensitivity = 2.2;
         this._touchScreen = false;
         this._tearing = false;
@@ -772,17 +767,6 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.muteHostDesc')}</span>
                     </div>
 
-                    <div class="settings-field">
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="settings-seamless-switching"
-                                ${this._seamlessSwitching ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">
-                                <strong>${t('settings.seamlessSwitching')}</strong>
-                            </span>
-                        </label>
-                        <span class="setting-desc">${t('settings.seamlessSwitchingDesc')}</span>
-                    </div>
-
                     <!-- Allow tearing: disables VSync pacing + desynchronized
                          canvas. Dimmed + locked "(unavailable)" outside Chromium
                          desktop — Safari/Firefox ignore the flag and mobile
@@ -1005,13 +989,6 @@ export class SettingsView {
         if (muteHostCheck)
             muteHostCheck.addEventListener('change', () => {
                 this._muteHostAudio = muteHostCheck.checked;
-                this._autoSave();
-            });
-
-        const seamlessCheck = this.container.querySelector('#settings-seamless-switching');
-        if (seamlessCheck)
-            seamlessCheck.addEventListener('change', () => {
-                this._seamlessSwitching = seamlessCheck.checked;
                 this._autoSave();
             });
 
