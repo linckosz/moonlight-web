@@ -10,7 +10,7 @@
 # OpenSSL: system package on Linux/macOS, prebuilt under libs/windows on Windows.
 # ============================================================================
 cmake_minimum_required(VERSION 3.21)
-project(moonlightweb-backend VERSION 0.1.2 LANGUAGES C CXX)
+project(moonlightweb-backend VERSION 0.1.3 LANGUAGES C CXX)
 
 # Single source of truth for the shipped version string. Priority:
 #   1. -DMW_VERSION=x.y.z on the command line (release CI passes the v* tag)

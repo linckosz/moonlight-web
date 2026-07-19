@@ -8,6 +8,8 @@
 A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream client\
 Nothing to install on the client, just a URL.
 
+**🌐 Website: [moonlightweb.top](https://moonlightweb.top/)** — screenshots, [install guides](https://moonlightweb.top/guides/windows.html) & [FAQ](https://moonlightweb.top/faq.html)
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 ![Qt](https://img.shields.io/badge/Qt-6.11-41CD52?logo=qt&logoColor=white)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
