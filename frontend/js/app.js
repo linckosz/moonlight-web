@@ -1587,33 +1587,38 @@ const MoonlightApp = {
     /** Full-screen loader shown during a transport relaunch so the apps view is
      *  never revealed between tearing down the old StreamView and rendering the
      *  new one. Reuses the StreamView startup-loader visuals. When a frozen
-     *  last frame of the outgoing stream is provided, it is shown (dimmed)
-     *  behind the steps so the transition reads as a brief pause, not a cut. */
+     *  last frame of the outgoing stream is provided (quality transition on a
+     *  live stream), the connection steps are NOT shown: just the frame with a
+     *  small corner spinner, so the switch reads as a brief pause, not a
+     *  reconnection. */
     _showRelaunchLoader(freezeFrame) {
         if (document.getElementById('stream-relaunch-loader')) return;
         const el = document.createElement('div');
         el.id = 'stream-relaunch-loader';
-        // Mirror the StreamView startup overlay (3 steps, step 1 active) so a
-        // transport retry never flickers from 3 steps down to a single line and
-        // back — common on macOS where the first ICE attempt often retries once.
-        el.innerHTML =
-            '<div class="startup-loader" aria-hidden="true"><div class="startup-loader-ring"></div></div>' +
-            '<div class="startup-step active" data-step="1"><span class="startup-step-dot"></span>' +
-            '<span class="startup-step-label">' +
-            t('stream.connecting') +
-            '</span></div>' +
-            '<div class="startup-step" data-step="2"><span class="startup-step-dot"></span>' +
-            '<span class="startup-step-label">' +
-            t('stream.startingVideo') +
-            '</span></div>' +
-            '<div class="startup-step" data-step="3"><span class="startup-step-dot"></span>' +
-            '<span class="startup-step-label">' +
-            t('stream.streamReady') +
-            '</span></div>';
         if (freezeFrame) {
-            freezeFrame.className = 'relaunch-freeze-frame';
             el.classList.add('has-freeze-frame');
+            el.innerHTML =
+                '<div class="startup-loader" aria-hidden="true"><div class="startup-loader-ring"></div></div>';
+            freezeFrame.className = 'relaunch-freeze-frame';
             el.insertBefore(freezeFrame, el.firstChild);
+        } else {
+            // Mirror the StreamView startup overlay (3 steps, step 1 active) so a
+            // transport retry never flickers from 3 steps down to a single line and
+            // back — common on macOS where the first ICE attempt often retries once.
+            el.innerHTML =
+                '<div class="startup-loader" aria-hidden="true"><div class="startup-loader-ring"></div></div>' +
+                '<div class="startup-step active" data-step="1"><span class="startup-step-dot"></span>' +
+                '<span class="startup-step-label">' +
+                t('stream.connecting') +
+                '</span></div>' +
+                '<div class="startup-step" data-step="2"><span class="startup-step-dot"></span>' +
+                '<span class="startup-step-label">' +
+                t('stream.startingVideo') +
+                '</span></div>' +
+                '<div class="startup-step" data-step="3"><span class="startup-step-dot"></span>' +
+                '<span class="startup-step-label">' +
+                t('stream.streamReady') +
+                '</span></div>';
         }
         document.getElementById('app').appendChild(el);
     },
@@ -1649,26 +1654,67 @@ const MoonlightApp = {
             return;
         }
 
+        // One relaunch at a time: a stale event from the outgoing view (its
+        // deferred connection-failure callback, a late congestion signal)
+        // landing during the awaits below must not start a second concurrent
+        // teardown+launch on the same slot — the two launches would race and
+        // the loser's session kills the winner's stream.
+        if (this._relaunching) return;
+        this._relaunching = true;
+        let failReason = null;
+        try {
+            failReason = await this._doRelaunchTransport(nextIndex, host, app);
+        } finally {
+            this._relaunching = false;
+        }
+        // Chain advance runs outside the guard so its own relaunch is not
+        // swallowed by the in-flight check.
+        if (failReason) this._onTransportFailed(failReason);
+    },
+
+    /** Guarded body of _relaunchTransport. Returns a failure reason for the
+     *  transport chain (null on success). */
+    async _doRelaunchTransport(nextIndex, host, app) {
         // A legacy relaunch takes over every slot — drop any in-flight standby.
         this._abortStandby('legacy relaunch');
 
-        // Show the bridging loader BEFORE teardown so the apps view underneath
-        // is never revealed (stay on the stream initialization screen). When the
-        // old stream already presented frames (congestion degradation, not a
-        // failed connect), bridge with its frozen last image instead of a black
-        // loader so the interruption stays discreet.
+        // Claim and silence the outgoing view BEFORE the first await: from here
+        // on, none of its events may re-enter the relaunch machinery or surface
+        // disconnect/error toasts while the frame capture is in flight.
+        // (_manualQuitting mutes its onError/onClose handlers; quit() below
+        // only guards on _quitting, so the teardown still runs.)
         const sv = this.streamView;
-        const freezeFrame = sv ? sv.captureLastFrame() : null;
-        this._showRelaunchLoader(freezeFrame);
-
-        // Quietly tear down the failed StreamView (no navigation, no toast).
         this.streamView = null;
         if (sv) {
             sv.onQuit = null;
             sv.onConnectionFailed = null;
             sv.onCongestion = null;
+            sv.onCongestionSignal = null;
+            sv._manualQuitting = true;
+        }
+
+        // Bridge the relaunch with the outgoing stream's frozen last image when
+        // it presented frames (congestion degradation, not a failed connect), so
+        // the interruption stays discreet. Async capture: also works in
+        // video-worker mode (OffscreenCanvas snapshot round-trip, bounded at
+        // 400ms) — the sync path returns null there, which used to force the
+        // black steps-loader on every quality fallback for desktop users.
+        const freezeFrame = sv ? await sv.captureLastFrameAsync() : null;
+        // Loader up BEFORE teardown so the apps view underneath is never
+        // revealed (stay on the stream initialization screen).
+        this._showRelaunchLoader(freezeFrame);
+
+        // Quietly tear down the outgoing StreamView (no navigation, no toast).
+        // retire: keep the Sunshine host app session alive — we relaunch the
+        // same app right below. A non-retire quit cancels it, and that cancel
+        // is exactly what wrecked the transport chain in the 2026-07-19 logs:
+        // Sunshine spends ~12s tearing the app down (the next /resume stalls
+        // then 503s), the frontend connect timeout fires mid-RTSP-handshake,
+        // and the killed handshake leaves a stale session key that makes every
+        // later attempt die with "Failed to decrypt RTSP response".
+        if (sv) {
             try {
-                await sv.quit({ silent: true });
+                await sv.quit({ silent: true, retire: true });
             } catch (e) {
                 /* ignore */
             }
@@ -1707,14 +1753,15 @@ const MoonlightApp = {
                     this._hideRelaunchLoader();
                 }
             } else {
-                this._onTransportFailed('launch status ' + result.status);
+                return 'launch status ' + result.status;
             }
         } catch (err) {
             // HTTP error on this transport (e.g. backend 502 chain exhausted) →
             // advance the chain / final error.
             console.warn('[MW] Relaunch failed for index', nextIndex, err);
-            this._onTransportFailed('launch error');
+            return 'launch error';
         }
+        return null;
     },
 
     // ── Seamless dual-stream transition ───────────────────────────────────
@@ -1727,10 +1774,8 @@ const MoonlightApp = {
      * anything about the standby fails) fall back to the legacy relaunch.
      */
     _qualityRelaunch(relaunchIndex) {
-        const base = this._lastStreamingSettings || {};
         const canSeamless =
             this._dualSupported !== false &&
-            base.seamless_switching !== false &&
             this.streamView &&
             this.streamView._firstFrameRendered &&
             !this._standbyView;
@@ -1897,7 +1942,10 @@ const MoonlightApp = {
         // A seamless transition is already in flight — let it finish first.
         if (this._standbyView) return;
         const now = performance.now();
-        if (this._lastDegradeTime && now - this._lastDegradeTime < 25000) return;
+        // 15s floor between two ladder steps: enough for the relaunched stream
+        // to show whether the previous step fixed the congestion, short enough
+        // that a still-choppy stream keeps escalating instead of lingering.
+        if (this._lastDegradeTime && now - this._lastDegradeTime < 15000) return;
         this._lastDegradeTime = now;
 
         // Flap guard: congestion soon after an automatic upgrade means the
@@ -1928,20 +1976,22 @@ const MoonlightApp = {
         let toastKey;
         const toastParams = {};
 
-        const cutBitrate = () => {
-            o.stream_bitrate = Math.max(2000, Math.round(curBitrate * 0.7));
-            toastKey = 'stream.degradeBitrate';
-            toastParams.mbps = (o.stream_bitrate / 1000).toFixed(1);
-        };
-        const stepDownResolution = () => {
+        // Every rung cuts the bitrate — dropping resolution without the
+        // bitrate following barely shrinks the encoded bandwidth. First rung
+        // −50% (bite hard while the network is actively hurting), following
+        // rungs −30%. Floor at 2 Mbps.
+        const factor = this._degradeLevel === 1 ? 0.5 : 0.7;
+        let newBitrate = Math.max(2000, Math.round(curBitrate * factor));
+
+        if (curHeight > 720) {
+            // Resolution one rung down alongside the bitrate cut, never below
+            // 720p (the bitrate alone keeps descending once 720p is reached).
             const next = [2160, 1440, 1080, 720].find((r) => r < curHeight);
             // Remember the pre-degradation height so the automatic upgrade can
             // restore a "Same as Host" (height 0) setting to its real value.
             if (this._originalStreamHeight === undefined) this._originalStreamHeight = curHeight;
             o.stream_height = next;
-            // Resolution alone barely shrinks the encoded bandwidth unless the
-            // bitrate follows: align it with the recommendation for the new
-            // height (never raise it, keep the 2 Mbps floor).
+            // Cap at the recommendation for the new height (never raise).
             const autoKbps =
                 computeAutoBitrate(
                     next,
@@ -1950,7 +2000,7 @@ const MoonlightApp = {
                     effective.chroma_444_enabled === true,
                     effective.hdr_enabled === true,
                 ) * 1000;
-            o.stream_bitrate = Math.max(2000, Math.min(curBitrate, autoKbps));
+            newBitrate = Math.max(2000, Math.min(newBitrate, autoKbps));
             toastKey = 'stream.degradeResolution';
             toastParams.res = String(next);
             // SGSR auto-enable: upscale the reduced stream back to the display
@@ -1963,34 +2013,23 @@ const MoonlightApp = {
                 this._enhancementAutoForced = true;
                 toastKey = 'stream.degradeResolutionSgsr';
             }
-        };
-
-        if (o.stream_bitrate === undefined && curBitrate > 2000) {
-            cutBitrate();
-        } else if (o.stream_height === undefined && curHeight > 720) {
-            stepDownResolution();
         } else if (!onMedia && !o.transport_mode) {
             o.transport_mode = 'webrtc-media-udp';
             relaunchIndex = 0; // forced mode is first in the recomputed chain
             toastKey = 'stream.degradeMedia';
         } else if (o.stream_fps === undefined && curFps > 60) {
             o.stream_fps = 60;
-            if (curBitrate > 2000) {
-                cutBitrate();
-                toastParams.mbps = (o.stream_bitrate / 1000).toFixed(1);
-            } else {
-                toastParams.mbps = (curBitrate / 1000).toFixed(1);
-            }
+            toastParams.mbps = (newBitrate / 1000).toFixed(1);
             toastKey = 'stream.degradeBitrateFps';
-        } else if (curBitrate > 2000) {
-            cutBitrate();
-        } else if (curHeight > 720) {
-            stepDownResolution();
+        } else if (newBitrate < curBitrate) {
+            toastKey = 'stream.degradeBitrate';
+            toastParams.mbps = (newBitrate / 1000).toFixed(1);
         } else {
             // Every knob at its floor: plain transport restart (fresh
             // SCTP/ICE state, same effect as a manual stop/start).
             toastKey = 'stream.degradeRestart';
         }
+        if (newBitrate < curBitrate) o.stream_bitrate = newBitrate;
 
         console.warn(
             '[MW] Sustained congestion — degrade step ' + this._degradeLevel + ':',
@@ -2023,7 +2062,6 @@ const MoonlightApp = {
      * see _onStreamCongested). One knob per step, reverse of the degradation
      * ladder: fps → preferred transport → resolution (one rung up, restoring
      * the user's enhancement setting with the final rung) → bitrate.
-     * Disabled with the seamless_switching setting (default on).
      */
     _maybeUpgradeQuality() {
         if (this._nav.overlay !== 'streaming') return;
@@ -2034,7 +2072,6 @@ const MoonlightApp = {
         const o = this._degradeOverrides;
         if (!o || Object.keys(o).length === 0) return;
         const base = this._lastStreamingSettings || {};
-        if (base.seamless_switching === false) return;
 
         const now = performance.now();
         const quietSince = Math.max(

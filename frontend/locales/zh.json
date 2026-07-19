@@ -168,8 +168,6 @@
         "tearingDesc": "关闭垂直同步以略微降低延迟；可能导致画面撕裂。",
         "muteHost": "静音主机音频",
         "muteHostDesc": "串流时静音主机电脑扬声器。音频仍会发送到本设备。",
-        "seamlessSwitching": "无缝画质切换",
-        "seamlessSwitchingDesc": "自动降低画质后，待网络恢复时自动逐步恢复（帧率、传输方式、分辨率、码率），并在可能时无缝切换串流。",
         "bitrate": "码率：",
         "bitrateUnit": "Mbps",
         "bitrateDesc": "根据分辨率、帧率和 HDR 自动调整。",

@@ -1363,6 +1363,10 @@ export class StreamView {
                 this._fatalDecodeError = true;
                 this.setStatus('error', m.msg);
                 break;
+            case 'freezeframe':
+                if (this._onFreezeFrame) this._onFreezeFrame(m.bitmap || null);
+                else if (m.bitmap) m.bitmap.close();
+                break;
         }
     }
 
@@ -1565,10 +1569,11 @@ export class StreamView {
     /**
      * Congestion monitor. Records one congestion signal — an IDR request
      * actually sent, a batch of backend backpressure drops, or receiver PLIs —
-     * and fires onCongestion() when signals are SUSTAINED: ≥5 events within a
+     * and fires onCongestion() when signals are SUSTAINED: ≥4 events within a
      * 20s window. The first 10s of the stream are ignored (startup recovery
-     * traffic), and a 30s cooldown separates two detections so the relaunched
-     * degraded stream has time to prove itself.
+     * traffic), and a 15s cooldown separates two detections — long enough for
+     * the relaunched degraded stream to prove itself, short enough that a
+     * still-congested stream escalates to the next ladder step quickly.
      */
     _recordCongestionEvent(reason) {
         if (!this.onCongestion || this._quitting || this._manualQuitting) return;
@@ -1581,7 +1586,7 @@ export class StreamView {
         while (this._congEvents.length > 0 && now - this._congEvents[0] > 20000) {
             this._congEvents.shift();
         }
-        if (this._congEvents.length >= 5 && now - this._congFiredAt > 30000) {
+        if (this._congEvents.length >= 4 && now - this._congFiredAt > 15000) {
             this._congFiredAt = now;
             this._congEvents.length = 0;
             console.warn('[StreamView] Sustained congestion detected (last: ' + reason + ')');
@@ -2405,6 +2410,59 @@ export class StreamView {
         }
     }
 
+    /**
+     * Async variant of captureLastFrame that also works in video-worker mode
+     * by asking the worker to snapshot its OffscreenCanvas. Bounded at 400ms
+     * so a wedged worker never delays a relaunch; resolves null when nothing
+     * usable can be read back (including an all-black snapshot, which some
+     * contexts return after presenting).
+     */
+    async captureLastFrameAsync() {
+        const sync = this.captureLastFrame();
+        if (sync || !this._useWorker || !this._videoWorker || !this._firstFrameRendered) {
+            return sync;
+        }
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                this._onFreezeFrame = null;
+                resolve(null);
+            }, 400);
+            this._onFreezeFrame = (bitmap) => {
+                clearTimeout(timer);
+                this._onFreezeFrame = null;
+                if (!bitmap) return resolve(null);
+                try {
+                    const c = document.createElement('canvas');
+                    c.width = bitmap.width;
+                    c.height = bitmap.height;
+                    const ctx = c.getContext('2d');
+                    ctx.drawImage(bitmap, 0, 0);
+                    bitmap.close();
+                    // Blank-snapshot detection on a coarse downsample: an
+                    // all-black bridge frame would read as a broken stream —
+                    // fall back to the regular loader instead.
+                    const probe = document.createElement('canvas');
+                    probe.width = 16;
+                    probe.height = 9;
+                    const pctx = probe.getContext('2d', { willReadFrequently: true });
+                    pctx.drawImage(c, 0, 0, 16, 9);
+                    const px = pctx.getImageData(0, 0, 16, 9).data;
+                    let lit = false;
+                    for (let i = 0; i < px.length; i += 4) {
+                        if (px[i + 3] > 0 && px[i] + px[i + 1] + px[i + 2] > 24) {
+                            lit = true;
+                            break;
+                        }
+                    }
+                    resolve(lit ? c : null);
+                } catch (e) {
+                    resolve(null);
+                }
+            };
+            this._videoWorker.postMessage({ type: 'capture' });
+        });
+    }
+
     /** Height in pixels of the incoming video, 0 when unknown. Used by the
      *  degradation ladder when the user setting is "Same as Host" (height 0). */
     currentFrameHeight() {
@@ -2746,6 +2804,15 @@ export class StreamView {
             if (this._quitting || this._manualQuitting) return;
             // Taken over by another device — _handleTakeover() drives the exit.
             if (this._takenOver) return;
+            // Standby leg (not promoted yet) — even one that already opened its
+            // DCs: route to the failure handler (→ _abortStandby → retire-quit,
+            // keeps the shared host session). The live-disconnect flow below
+            // would toast and later quit() WITHOUT retire, cancelling the host
+            // app session and killing the live sibling stream.
+            if (this._standby) {
+                this._reportConnectionFailed('standby transport closed');
+                return;
+            }
             // Never connected → connection failure, let the chain try the next
             // transport instead of showing a disconnect error.
             if (!this._everConnected && this._reportConnectionFailed('closed before connect'))
@@ -2758,6 +2825,12 @@ export class StreamView {
         this.webrtc.onError = (err) => {
             if (this._quitting || this._manualQuitting) return;
             console.error('[StreamView] WebRTC error:', err.message);
+            // Standby leg: same routing as onClose — a hidden leg never toasts
+            // and never reaches the live-disconnect flow.
+            if (this._standby) {
+                this._reportConnectionFailed(err.message);
+                return;
+            }
             // Never connected → connection failure, defer to the transport chain.
             if (!this._everConnected && this._reportConnectionFailed(err.message)) return;
             Toast.error(t('stream.webrtcError'));
@@ -2843,6 +2916,32 @@ export class StreamView {
                         this._mediaBitrateMbps = (dBytes * 8) / dt / 1e6;
                     }
                 }
+                // Decode-stall watchdog: video bytes keep arriving but nothing
+                // gets decoded — the decoder is waiting for a keyframe it will
+                // never be sent (reference break with no RTP loss, so neither
+                // NACK nor PLI ever fires). Re-request an IDR after 2 stalled
+                // ticks, then every tick until decode progresses (the backend
+                // throttles). A static screen stalls bytes AND frames together,
+                // so it never trips this.
+                if (typeof inbound.framesDecoded === 'number') {
+                    const bytesAdvanced = (inbound.bytesReceived || 0) > this._lastInboundBytes;
+                    const framesAdvanced = inbound.framesDecoded > this._lastInboundFrames;
+                    if (this._lastInboundStatsTime > 0 && bytesAdvanced && !framesAdvanced) {
+                        this._decodeStallTicks = (this._decodeStallTicks || 0) + 1;
+                        if (this._decodeStallTicks >= 2) {
+                            if (this._decodeStallTicks === 2) {
+                                console.warn(
+                                    '[StreamView] Video decode stalled (bytes flowing, ' +
+                                        'framesDecoded stuck) — requesting IDR',
+                                );
+                            }
+                            this.webrtc.send({ type: 'request_idr' });
+                        }
+                    } else if (framesAdvanced) {
+                        this._decodeStallTicks = 0;
+                    }
+                }
+
                 this._lastInboundBytes = inbound.bytesReceived || 0;
                 this._lastInboundFrames = inbound.framesDecoded || 0;
                 this._lastInboundStatsTime = now;

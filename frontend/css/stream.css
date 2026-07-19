@@ -526,22 +526,27 @@ body.streaming-active .app-footer {
     gap: 11px;
 }
 
-/* Frozen last frame of the outgoing stream (congestion degradation): shown
-   dimmed behind the startup steps so the transition reads as a brief pause
-   instead of a cut to black. */
+/* Frozen last frame of the outgoing stream (quality transition on a live
+   stream): shown near-full brightness with only a small corner spinner — no
+   connection steps — so the switch reads as a brief pause, not a reconnect. */
 #stream-relaunch-loader .relaunch-freeze-frame {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     object-fit: contain;
-    filter: brightness(0.55);
+    filter: brightness(0.85);
 }
 
-#stream-relaunch-loader.has-freeze-frame .startup-loader,
-#stream-relaunch-loader.has-freeze-frame .startup-step {
-    position: relative;
+#stream-relaunch-loader.has-freeze-frame .startup-loader {
+    position: absolute;
+    right: 22px;
+    bottom: 22px;
+    width: 26px;
+    height: 26px;
+    margin-bottom: 0;
     z-index: 1;
+    opacity: 0.8;
 }
 
 .startup-step {
