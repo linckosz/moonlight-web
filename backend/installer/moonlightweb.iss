@@ -245,18 +245,42 @@ begin
   UpdateSunshineFieldsEnabled();
 end;
 
+// Reads a top-level boolean from the server's settings.json. Returns True only
+// when the key is present with the JSON value `true`. The file is written by
+// QJsonDocument (indented) as `"key": true`, so we locate `"key":` and test the
+// short token that follows the colon. Missing file / missing key → False.
+function SettingsBoolEnabled(const key: String): Boolean;
+var
+  raw: AnsiString; // LoadStringFromFile requires an AnsiString out-param.
+  content, seg: String;
+  p: Integer;
+begin
+  Result := False;
+  if not LoadStringFromFile(
+       ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\settings.json'), raw) then
+    Exit;
+  content := raw;
+  p := Pos('"' + key + '":', content);
+  if p = 0 then Exit;
+  p := p + Length(key) + 3; // skip the opening quote, key, closing quote and ':'
+  seg := Lowercase(Copy(content, p, 8)); // e.g. ' true,' / ' false'
+  Result := Pos('true', seg) > 0;
+end;
+
 procedure InitializeWizard();
 begin
-  // Step: Internet link authorization. Unchecked by default: opening the
-  // machine to the Internet (UPnP + public DNS record) requires an explicit
-  // opt-in click from the user. The option is highlighted in a positive green
-  // tint instead of being pre-ticked.
+  // Step: Internet link authorization. Highlighted in a positive green tint.
+  // Pre-ticked only when a previous install already authorized Internet access
+  // (settings.json persists internet_access_enabled) — a re-install / upgrade
+  // must not silently forget the user's prior opt-in. On a first install it
+  // stays unchecked: opening the machine to the Internet (UPnP + public DNS
+  // record) requires an explicit opt-in click.
   InternetPage := CreateInputOptionPage(wpSelectTasks,
     ExpandConstant('{cm:InternetPageCaption}'), ExpandConstant('{cm:InternetPageDesc}'),
     ExpandConstant('{cm:InternetPageBody}'),
     False, False);
   InternetPage.Add(ExpandConstant('{cm:InternetPageOption}'));
-  InternetPage.Values[0] := False;
+  InternetPage.Values[0] := SettingsBoolEnabled('internet_access_enabled');
   // TColor is $00BBGGRR: $43A02E = RGB(46,160,67), a discreet positive green.
   InternetPage.CheckListBox.Font.Color := $43A02E;
 
