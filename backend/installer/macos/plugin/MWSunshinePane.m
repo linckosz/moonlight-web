@@ -66,15 +66,18 @@
     _passField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(0, 104, 220, 22)];
     [view addSubview:_passField];
 
-    // Unchecked by default: opening the machine to the Internet (UPnP + public
-    // DNS record) requires an explicit opt-in click. The label carries a
-    // discreet positive green tint to draw the eye instead of a pre-tick.
+    // Pre-ticked only when a previous install already authorized Internet access
+    // (settings.json) — a re-install must not silently forget the prior opt-in.
+    // First install stays unchecked: opening the machine to the Internet (UPnP +
+    // public DNS record) requires an explicit opt-in click. The label carries a
+    // discreet positive green tint to draw the eye.
     _internetCheck = [[NSButton alloc] initWithFrame:NSMakeRect(0, 66, 470, 22)];
     [_internetCheck setButtonType:NSButtonTypeSwitch];
     _internetCheck.attributedTitle = [[NSAttributedString alloc]
         initWithString:MWInternetConsentText()
             attributes:@{NSForegroundColorAttributeName : [NSColor systemGreenColor]}];
-    _internetCheck.state = NSControlStateValueOff;
+    _internetCheck.state =
+        MWInternetAlreadyAuthorized() ? NSControlStateValueOn : NSControlStateValueOff;
     [view addSubview:_internetCheck];
 
     _statusLabel = [self labelAt:34 text:@"Preparing Sunshine…" in:view];
