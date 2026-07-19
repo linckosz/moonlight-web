@@ -54,6 +54,17 @@ static constexpr int kMaxPollRetries = 36; // 36 x 5s = 3 min
 static constexpr int kChallengeTtl = 60;   // TXT record TTL
 // PowerDNS endpoint and zone come from PdnsClient (env-driven, single source).
 
+// Qt sends no User-Agent by default, and ZeroSSL's front-end intermittently
+// answers UA-less requests with 502 (no Replay-Nonce, HTML instead of the
+// directory JSON). RFC 8555 §6.1 also asks ACME clients to identify
+// themselves, so every request goes through this factory.
+static QNetworkRequest makeRequest(const QUrl& url)
+{
+    QNetworkRequest req{url};
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("MoonlightWeb/" MW_VERSION));
+    return req;
+}
+
 // ---------------------------------------------------------------------------
 // Construction / Destruction
 // ---------------------------------------------------------------------------
@@ -420,7 +431,7 @@ void AcmeClient::fetchNonce(const std::function<void(bool)>& callback)
         return;
     }
 
-    QNetworkRequest req{QUrl(url)};
+    QNetworkRequest req = makeRequest(QUrl(url));
     QNetworkReply* reply = m_Nam->head(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
         reply->deleteLater();
@@ -465,7 +476,7 @@ void AcmeClient::acmePost(
 
     QByteArray jwsBody = buildJws(payload, url, useKid);
 
-    QNetworkRequest req{QUrl(url)};
+    QNetworkRequest req = makeRequest(QUrl(url));
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/jose+json"));
 
     QNetworkReply* reply = m_Nam->post(req, jwsBody);
@@ -628,7 +639,7 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
     QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
 
     QUrl url(PdnsClient::apiBaseUrl() + QStringLiteral("/zones/") + PdnsClient::zoneName());
-    QNetworkRequest req{url};
+    QNetworkRequest req = makeRequest(url);
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
@@ -689,7 +700,7 @@ bool AcmeClient::deleteChallengeTxtRecord()
     QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
 
     QUrl url(PdnsClient::apiBaseUrl() + QStringLiteral("/zones/") + PdnsClient::zoneName());
-    QNetworkRequest req{url};
+    QNetworkRequest req = makeRequest(url);
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
@@ -818,7 +829,7 @@ void AcmeClient::stepGetDirectory()
 
     emit progress(QStringLiteral("Fetching ACME directory..."));
 
-    QNetworkRequest req{QUrl(m_DirectoryUrl)};
+    QNetworkRequest req = makeRequest(QUrl(m_DirectoryUrl));
     QNetworkReply* reply = m_Nam->get(req);
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
