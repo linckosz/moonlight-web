@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install MoonlightWeb on Linux — stream your PC to any browser</title>
+<meta name="description" content="Step-by-step guide: install the MoonlightWeb server on your Linux gaming PC (.deb, .rpm or portable AppImage) and stream your Sunshine games to any device with a browser. Nothing to install on the client.">
+<meta name="author" content="Bruno Martin">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#05080d">
+<meta property="og:site_name" content="MoonlightWeb">
+<meta property="og:title" content="Install MoonlightWeb on Linux">
+<meta property="og:description" content="Stream your Linux gaming PC to any browser — native .deb and .rpm packages, or a portable AppImage.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://moonlightweb.top/guides/linux.html">
+<meta property="og:image" content="https://moonlightweb.top/assets/desktop.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Install MoonlightWeb on Linux">
+<meta name="twitter:description" content="Stream your Linux gaming PC to any browser — .deb, .rpm or AppImage.">
+<meta name="twitter:image" content="https://moonlightweb.top/assets/desktop.jpg">
+<link rel="canonical" href="https://moonlightweb.top/guides/linux.html">
+<link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png">
+<link rel="stylesheet" href="/assets/pages.css">
+<script defer src="https://stats.moonlightweb.top/script.js"
+        data-website-id="6b952a24-dc15-4be8-a595-ae9d835fbc6a"
+        data-domains="moonlightweb.top,www.moonlightweb.top"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://moonlightweb.top/"},
+        {"@type": "ListItem", "position": 2, "name": "Install on Linux", "item": "https://moonlightweb.top/guides/linux.html"}
+      ]
+    },
+    {
+      "@type": "HowTo",
+      "name": "Install MoonlightWeb on Linux and stream your PC to any browser",
+      "description": "Install the MoonlightWeb server on a Linux gaming PC running Sunshine, and play from any device with a browser.",
+      "totalTime": "PT5M",
+      "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"},
+      "supply": [{"@type": "HowToSupply", "name": "Linux gaming PC (x64) running Sunshine"}],
+      "tool": [{"@type": "HowToTool", "name": "A modern browser on any client device (Chrome, Edge, Safari, Firefox)"}],
+      "step": [
+        {"@type": "HowToStep", "name": "Download a package", "text": "Download the .deb, .rpm or portable AppImage from the MoonlightWeb releases page.", "url": "https://moonlightweb.top/guides/linux.html#step-download"},
+        {"@type": "HowToStep", "name": "Install and launch the server", "text": "Install the package with your package manager, or make the AppImage executable and run it, on the machine that runs Sunshine.", "url": "https://moonlightweb.top/guides/linux.html#step-install"},
+        {"@type": "HowToStep", "name": "Open a browser on any device", "text": "Go to https://localhost on the PC itself, your LAN IP from another device, or your personal sub-domain from anywhere.", "url": "https://moonlightweb.top/guides/linux.html#step-open"},
+        {"@type": "HowToStep", "name": "Pair once with a PIN", "text": "Your Sunshine hosts are auto-discovered. Enter the PIN Sunshine shows — pairing is remembered forever.", "url": "https://moonlightweb.top/guides/linux.html#step-pair"},
+        {"@type": "HowToStep", "name": "Press play", "text": "Pick a game or the full desktop and play from any browser in the house — or anywhere.", "url": "https://moonlightweb.top/guides/linux.html#step-play"}
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="/">
+      <img src="/assets/icon-192.png" alt="MoonlightWeb logo" width="28" height="28">
+      MOONLIGHTWEB
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="/">Home</a>
+      <a href="/guides/windows.html">Guides</a>
+      <a href="/faq.html">FAQ</a>
+      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/guides/windows.html">Guides</a> / Linux</nav>
+  <span class="kicker">Install guide · Linux</span>
+  <h1>Stream your Linux gaming PC to any browser</h1>
+  <p class="lead">MoonlightWeb is a free, open-source (GPL-3.0) server that streams your
+    <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig to any
+    device with a browser. <strong>One package on the gaming PC.
+    Every other device just opens a URL.</strong></p>
+
+  <h2>What you need</h2>
+  <ul>
+    <li>A Linux gaming PC (x64) with a GPU capable of hardware encoding — the machine that runs your games.</li>
+    <li><strong>Sunshine</strong> installed on that machine as the streaming host.</li>
+    <li>Any device with a modern browser as the client: Chrome, Edge, Safari or Firefox. No app, no account.</li>
+  </ul>
+
+  <h2>Installation, step by step</h2>
+  <div class="gsteps">
+    <div class="gstep cyb" id="step-download">
+      <h3>Download a package</h3>
+      <p>From the <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">releases page</a>:
+         <code>.deb</code> for Debian/Ubuntu, <code>.rpm</code> for Fedora/openSUSE, or a portable
+         <code>.AppImage</code> that runs on everything else.</p>
+    </div>
+    <div class="gstep cyb" id="step-install">
+      <h3>Install and launch — on the machine that runs Sunshine</h3>
+      <pre><code># Debian / Ubuntu
+sudo apt install ./moonlightweb-*-linux-x64.deb
+
+# Fedora / openSUSE
+sudo dnf install ./moonlightweb-*-linux-x64.rpm
+
+# Portable AppImage
+chmod +x moonlightweb-*-linux-x64.AppImage
+./moonlightweb-*-linux-x64.AppImage</code></pre>
+    </div>
+    <div class="gstep cyb" id="step-open">
+      <h3>Open a browser on any device</h3>
+      <p>On the PC itself: <code>https://localhost</code>. From another device on your network: your LAN IP.
+         From anywhere: your personal sub-domain (<code>https://you.moonlightweb.top</code>) once you enable
+         one-click Internet access in the admin page.</p>
+    </div>
+    <div class="gstep cyb" id="step-pair">
+      <h3>Pair once with a PIN</h3>
+      <p>Your Sunshine hosts are already listed — discovered automatically on the LAN via mDNS.
+         Enter the PIN Sunshine displays, and the pairing is remembered forever.</p>
+    </div>
+    <div class="gstep cyb" id="step-play">
+      <h3>Press play</h3>
+      <p>Pick a game or the full desktop. Fullscreen, gamepad in hand — up to 4K HDR at 240 fps,
+         with under 20 ms latency over Wi-Fi.</p>
+    </div>
+  </div>
+
+  <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-linux">⬇ Download for Linux</a></p>
+
+  <h2>Troubleshooting</h2>
+  <h3>The host doesn't appear in the browser</h3>
+  <p>Make sure the client device is on the same network as the gaming PC and that your firewall
+     allows MoonlightWeb's ports. You can also add a host manually by IP.</p>
+  <h3>HEVC or AV1 is greyed out</h3>
+  <p>Codec options your browser can't hardware-decode are automatically disabled — that's expected.
+     H264 works everywhere; HEVC and AV1 availability depends on the client device's browser and GPU.</p>
+  <h3>Stream feels choppy on a weak connection</h3>
+  <p>Lower the streamed resolution and enable <strong>Video Enhancement</strong>: the stream is upscaled and
+     sharpened on the client's GPU (WebGPU running SGSRv1 + FSR1), so a 720p stream looks close to 1440p.</p>
+
+  <div class="note"><strong>Restrictive network?</strong> MoonlightWeb falls back automatically
+    (UDP → TCP → WSS), so it keeps working through strict firewalls and hostile hotel Wi-Fi.</div>
+
+  <h2>Keep reading</h2>
+  <div class="xlinks">
+    <a class="cyb" href="/faq.html"><strong>FAQ</strong><span>Latency, codecs, security, Internet play — all the common questions.</span></a>
+    <a class="cyb" href="/guides/windows.html"><strong>Install on Windows</strong><span>Guided installer — Sunshine included in the wizard.</span></a>
+    <a class="cyb" href="/guides/macos.html"><strong>Install on macOS</strong><span>Apple Silicon guide with the .pkg installer.</span></a>
+  </div>
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL-3.0</span>
+    <span>
+      <a href="/">Home</a> ·
+      <a href="/faq.html">FAQ</a> ·
+      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">Support</a>
+    </span>
+  </div>
+</footer>
+</body>
+</html>

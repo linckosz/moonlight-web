@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install MoonlightWeb on Windows — stream your PC to any browser</title>
+<meta name="description" content="Step-by-step guide: install the MoonlightWeb server on your Windows gaming PC and stream your games to any device with a browser — phone, tablet, laptop, TV. Sunshine setup and one-click Internet access included in the wizard.">
+<meta name="author" content="Bruno Martin">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#05080d">
+<meta property="og:site_name" content="MoonlightWeb">
+<meta property="og:title" content="Install MoonlightWeb on Windows">
+<meta property="og:description" content="Stream your Windows gaming PC to any browser in about 60 seconds — guided installer, Sunshine included, one-click Internet access.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://moonlightweb.top/guides/windows.html">
+<meta property="og:image" content="https://moonlightweb.top/assets/desktop.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Install MoonlightWeb on Windows">
+<meta name="twitter:description" content="Stream your Windows gaming PC to any browser in about 60 seconds.">
+<meta name="twitter:image" content="https://moonlightweb.top/assets/desktop.jpg">
+<link rel="canonical" href="https://moonlightweb.top/guides/windows.html">
+<link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png">
+<link rel="stylesheet" href="/assets/pages.css">
+<script defer src="https://stats.moonlightweb.top/script.js"
+        data-website-id="6b952a24-dc15-4be8-a595-ae9d835fbc6a"
+        data-domains="moonlightweb.top,www.moonlightweb.top"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://moonlightweb.top/"},
+        {"@type": "ListItem", "position": 2, "name": "Install on Windows", "item": "https://moonlightweb.top/guides/windows.html"}
+      ]
+    },
+    {
+      "@type": "HowTo",
+      "name": "Install MoonlightWeb on Windows and stream your PC to any browser",
+      "description": "Install the MoonlightWeb server on a Windows gaming PC, pair it with Sunshine, and play from any device with a browser.",
+      "totalTime": "PT5M",
+      "estimatedCost": {"@type": "MonetaryAmount", "currency": "USD", "value": "0"},
+      "supply": [{"@type": "HowToSupply", "name": "Windows gaming PC (x64 or arm64)"}],
+      "tool": [{"@type": "HowToTool", "name": "A modern browser on any client device (Chrome, Edge, Safari, Firefox)"}],
+      "step": [
+        {"@type": "HowToStep", "name": "Download the installer", "text": "Download the Windows installer (x64 or arm64 .exe) from the MoonlightWeb releases page.", "url": "https://moonlightweb.top/guides/windows.html#step-download"},
+        {"@type": "HowToStep", "name": "Run the guided installer", "text": "Run the wizard on the gaming PC. It can install Sunshine for you and set up one-click Internet access. A tray icon appears when the server is running.", "url": "https://moonlightweb.top/guides/windows.html#step-install"},
+        {"@type": "HowToStep", "name": "Open a browser on any device", "text": "Go to https://localhost on the PC itself, your LAN IP from another device, or your personal sub-domain from anywhere.", "url": "https://moonlightweb.top/guides/windows.html#step-open"},
+        {"@type": "HowToStep", "name": "Pair once with a PIN", "text": "Your Sunshine hosts are auto-discovered. Enter the PIN Sunshine shows — pairing is remembered forever.", "url": "https://moonlightweb.top/guides/windows.html#step-pair"},
+        {"@type": "HowToStep", "name": "Press play", "text": "Pick a game or the full desktop and play — up to 4K HDR, 240 fps, under 20 ms Wi-Fi latency.", "url": "https://moonlightweb.top/guides/windows.html#step-play"}
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="/">
+      <img src="/assets/icon-192.png" alt="MoonlightWeb logo" width="28" height="28">
+      MOONLIGHTWEB
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="/">Home</a>
+      <a href="/guides/windows.html" aria-current="page">Guides</a>
+      <a href="/faq.html">FAQ</a>
+      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/guides/windows.html">Guides</a> / Windows</nav>
+  <span class="kicker">Install guide · Windows</span>
+  <h1>Stream your Windows gaming PC to any browser</h1>
+  <p class="lead">MoonlightWeb is a free, open-source (GPL-3.0) server that streams your
+    <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig to any
+    device with a browser — phone, tablet, laptop, TV. <strong>One download on the gaming PC.
+    Nothing to install on any other device — just a URL.</strong></p>
+
+  <h2>What you need</h2>
+  <ul>
+    <li>A Windows gaming PC (x64 or arm64) with a GPU capable of hardware encoding — the machine that runs your games.</li>
+    <li><strong>Sunshine</strong> as the streaming host. Don't have it yet? The MoonlightWeb installer can set it up for you.</li>
+    <li>Any device with a modern browser as the client: Chrome, Edge, Safari or Firefox. No app, no download, no account.</li>
+  </ul>
+
+  <h2>Installation, step by step</h2>
+  <div class="gsteps">
+    <div class="gstep cyb" id="step-download">
+      <h3>Download the installer</h3>
+      <p>Grab the Windows installer from the <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">releases page</a> —
+         <code>x64 .exe</code> for most PCs, <code>arm64 .exe</code> for Windows-on-ARM machines.</p>
+    </div>
+    <div class="gstep cyb" id="step-install">
+      <h3>Run the guided installer — on the gaming PC</h3>
+      <p>The wizard walks you through everything: it can install Sunshine if it's missing, and offers
+         one-click Internet access (personal sub-domain, free TLS certificate, UPnP port mapping).</p>
+      <p>When it finishes, a tray icon appears — the server is running. That's the whole install.</p>
+    </div>
+    <div class="gstep cyb" id="step-open">
+      <h3>Open a browser on any device</h3>
+      <p>On the PC itself: <code>https://localhost</code>. From another device on your network: your LAN IP.
+         From anywhere in the world: your personal sub-domain (<code>https://you.moonlightweb.top</code>) if you enabled Internet access.</p>
+    </div>
+    <div class="gstep cyb" id="step-pair">
+      <h3>Pair once with a PIN</h3>
+      <p>Your Sunshine hosts are already listed — discovered automatically on the LAN via mDNS.
+         Enter the PIN Sunshine displays, and the pairing is remembered forever.</p>
+    </div>
+    <div class="gstep cyb" id="step-play">
+      <h3>Press play</h3>
+      <p>Pick a game or the full desktop. Fullscreen, gamepad in hand — up to 4K HDR at 240 fps,
+         with under 20 ms latency over Wi-Fi.</p>
+    </div>
+  </div>
+
+  <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-windows">⬇ Download for Windows</a></p>
+
+  <h2>Troubleshooting</h2>
+  <h3>The host doesn't appear in the browser</h3>
+  <p>Make sure the client device is on the same network as the gaming PC, and that Windows Firewall
+     allowed MoonlightWeb when prompted during the first launch. You can also add a host manually by IP.</p>
+  <h3>HEVC or AV1 is greyed out</h3>
+  <p>Codec options your browser can't hardware-decode are automatically disabled — that's expected.
+     H264 works everywhere; HEVC and AV1 availability depends on the client device's browser and GPU.</p>
+  <h3>Stream feels choppy on a weak connection</h3>
+  <p>Lower the streamed resolution and enable <strong>Video Enhancement</strong>: the stream is upscaled and
+     sharpened on the client's GPU (WebGPU running SGSRv1 + FSR1), so a 720p stream looks close to 1440p.</p>
+
+  <div class="note"><strong>Restrictive network?</strong> MoonlightWeb falls back automatically
+    (UDP → TCP → WSS), so it keeps working through strict firewalls and hostile hotel Wi-Fi.</div>
+
+  <h2>Keep reading</h2>
+  <div class="xlinks">
+    <a class="cyb" href="/faq.html"><strong>FAQ</strong><span>Latency, codecs, security, Internet play — all the common questions.</span></a>
+    <a class="cyb" href="/guides/macos.html"><strong>Install on macOS</strong><span>Apple Silicon guide with the .pkg installer.</span></a>
+    <a class="cyb" href="/guides/linux.html"><strong>Install on Linux</strong><span>.deb, .rpm or portable AppImage.</span></a>
+  </div>
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL-3.0</span>
+    <span>
+      <a href="/">Home</a> ·
+      <a href="/faq.html">FAQ</a> ·
+      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">GitHub</a> ·
+      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">Support</a>
+    </span>
+  </div>
+</footer>
+</body>
+</html>

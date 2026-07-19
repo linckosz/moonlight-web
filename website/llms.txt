@@ -39,6 +39,10 @@ The client requires no install: any modern browser (Chrome, Edge, Safari, Firefo
 ## Links
 
 - Website: https://moonlightweb.top/
+- FAQ: https://moonlightweb.top/faq.html
+- Install on Windows: https://moonlightweb.top/guides/windows.html
+- Install on macOS: https://moonlightweb.top/guides/macos.html
+- Install on Linux: https://moonlightweb.top/guides/linux.html
 - Source code & downloads: https://github.com/linckosz/moonlight-web
 - Latest releases: https://github.com/linckosz/moonlight-web/releases
 - Sunshine (host software): https://github.com/LizardByte/Sunshine
