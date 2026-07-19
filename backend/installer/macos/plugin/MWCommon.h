@@ -38,6 +38,28 @@ static inline NSString *MWInternetConsentText(void)
     return @"Allow a secure public Internet link (recommended)";
 }
 
+// True when a prior install already authorized the public Internet link: the
+// server persists internet_access_enabled in its settings.json, so a re-install
+// pre-ticks the opt-in instead of silently forgetting it. Qt's
+// QStandardPaths::AppDataLocation → ~/Library/Application Support/<org>/<app>,
+// both "MoonlightWeb". Absent file / key → NO (first install stays unchecked).
+static inline BOOL MWInternetAlreadyAuthorized(void)
+{
+    NSArray<NSString *> *base =
+        NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+    if (base.count == 0)
+        return NO;
+    NSString *path =
+        [base.firstObject stringByAppendingPathComponent:@"MoonlightWeb/MoonlightWeb/settings.json"];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data)
+        return NO;
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![json isKindOfClass:[NSDictionary class]])
+        return NO;
+    return [[(NSDictionary *)json objectForKey:@"internet_access_enabled"] boolValue];
+}
+
 // Merge key/values into the hand-off plist (created if absent), preserving keys
 // written earlier. 0600: it carries the Sunshine password in plaintext until the
 // postinstall (root) reads and deletes it.
