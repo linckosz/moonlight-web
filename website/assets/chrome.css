@@ -1,0 +1,84 @@
+/* ============================================================================
+   Shared site chrome — header + footer. ONE source of truth for every page.
+   Loaded by index.html AND every sub-page (guides, FAQ). The markup itself is
+   injected by assets/chrome.js, so a nav / footer change is a single edit and
+   the two headers can never drift apart again.
+
+   Relies on the design tokens declared in each page's :root
+   (--line, --txt, --muted, --cyan, --mono, --panel, --line-glow) — keep those
+   in sync between website/index.html :root and website/assets/pages.css :root.
+   ============================================================================ */
+
+/* Buttons — shared base. The header ★ CTA is .btn.btn-primary; the landing page
+   builds .btn-ghost / .btn-yellow on top of this base in its own inline style. */
+.btn{
+  display:inline-flex; align-items:center; gap:.5em; padding:.78rem 1.5rem;
+  font-weight:700; font-size:.98rem; border:1px solid transparent; cursor:pointer;
+  transition:.18s; position:relative;
+  clip-path:polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.btn-primary{background:linear-gradient(100deg,var(--cyan),#0fa8d6); color:#031017}
+@media(hover:hover){
+  .btn-primary:hover{filter:brightness(1.12); text-decoration:none; transform:translateY(-1px)}
+}
+
+/* ───── Header ───── */
+header{
+  position:sticky; top:0; z-index:20; backdrop-filter:blur(12px);
+  background:rgba(5,8,13,.78); border-bottom:1px solid var(--line);
+}
+/* Reserve the header height while chrome.js is injecting the markup, so the
+   empty placeholder never triggers a layout shift before the script runs. */
+#site-header:empty{min-height:65px}
+/* min-height (not a hard height) + flex-wrap so that when the brand + links +
+   ★ CTA no longer fit on one line (tablets / landscape phones above the 640px
+   breakpoint) the nav drops to its own row BELOW the brand instead of the box
+   staying 64px tall and the wrapped row spilling up off the top of the screen. */
+header .wrap{display:flex; align-items:center; flex-wrap:wrap; gap:14px; row-gap:9px; min-height:64px; padding-top:8px; padding-bottom:8px; max-width:1160px}
+.brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono); letter-spacing:.12em; white-space:nowrap; color:var(--txt)}
+.brand:hover{text-decoration:none}
+.brand img{border-radius:6px}
+header nav{margin-left:auto; display:flex; gap:20px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
+header nav a{color:var(--muted); font-size:.92rem}
+header nav a:hover{color:var(--cyan); text-decoration:none}
+header nav a[aria-current="page"]{color:var(--cyan)}
+
+/* Language dropdown — a control, not a nav link, so it stays visible on mobile. */
+.lang{
+  position:relative; display:inline-flex; align-items:center; flex:none;
+  border:1px solid var(--line); border-radius:7px; background:rgba(16,26,38,.7); transition:.15s;
+}
+.lang select{
+  appearance:none; -webkit-appearance:none; -moz-appearance:none;
+  background:transparent; color:var(--cyan); cursor:pointer; border:0; border-radius:7px;
+  font:700 .74rem var(--mono); letter-spacing:.06em; padding:.36rem 1.7rem .36rem .7rem;
+}
+.lang select:focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
+.lang option{background:var(--panel); color:var(--txt)}   /* native list (browser-styled) */
+.lang::after{ /* chevron */
+  content:""; position:absolute; right:.62rem; top:50%; width:6px; height:6px;
+  border-right:2px solid var(--muted); border-bottom:2px solid var(--muted);
+  transform:translateY(-70%) rotate(45deg); pointer-events:none; transition:.15s;
+}
+@media(hover:hover){ .lang:hover{border-color:var(--line-glow)} .lang:hover::after{border-color:var(--cyan)} }
+
+/* Mobile: the nav (incl. the language selector) drops to its own row under the
+   brand, so a long brand + links + the language toggle never overlap. */
+@media(max-width:640px){
+  header .wrap{flex-wrap:wrap; height:auto; min-height:56px; padding-top:9px; padding-bottom:9px; row-gap:9px; gap:8px}
+  #site-header:empty{min-height:56px}
+  .brand{gap:7px; font-size:.9rem; letter-spacing:.06em; min-width:0}
+  .brand img{width:24px; height:24px}
+  header nav{width:100%; margin-left:0; gap:14px; justify-content:flex-start}
+  header nav a{font-size:.85rem}
+  header nav .gh-btn{margin-left:auto; padding:.5rem .8rem}  /* keep the ★ CTA on the right */
+  .gh-label{display:none}                /* icon-only ★ CTA (aria-label keeps it named) */
+}
+@media(max-width:380px){
+  header nav{gap:11px}
+  .lang select{font-size:.72rem; padding:.34rem 1.5rem .34rem .55rem}
+}
+
+/* ───── Footer ───── */
+footer{border-top:1px solid var(--line); padding:36px 0; color:var(--muted); font-size:.9rem}
+footer .wrap{display:flex; gap:16px; flex-wrap:wrap; align-items:center; justify-content:space-between; max-width:1160px}

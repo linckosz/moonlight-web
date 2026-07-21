@@ -58,6 +58,8 @@
   ]
 }
 </script>
+<!-- Shared header/footer chrome (markup injected by assets/chrome.js) -->
+<link rel="stylesheet" href="assets/chrome.css">
 <style>
   :root{
     --bg:#05080d;
@@ -179,74 +181,16 @@
   .kicker.yellow{color:var(--yellow)}
   .kicker.yellow::before{background:linear-gradient(90deg,var(--yellow),transparent)}
 
-  /* Buttons */
-  .btn{
-    display:inline-flex; align-items:center; gap:.5em; padding:.78rem 1.5rem;
-    font-weight:700; font-size:.98rem; border:1px solid transparent; cursor:pointer;
-    transition:.18s; position:relative;
-    clip-path:polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-  }
-  .btn-primary{background:linear-gradient(100deg,var(--cyan),#0fa8d6); color:#031017}
+  /* Buttons — base .btn + .btn-primary live in assets/chrome.css (shared with
+     the header CTA and the sub-pages). These two variants are landing-only. */
   .btn-ghost{border-color:var(--line); color:var(--txt); background:rgba(16,26,38,.7)}
   .btn-yellow{background:var(--yellow); color:#171303}
   @media(hover:hover){
-    .btn-primary:hover{filter:brightness(1.12); text-decoration:none; transform:translateY(-1px)}
     .btn-ghost:hover{border-color:var(--line-glow); color:var(--cyan); text-decoration:none; transform:translateY(-1px)}
     .btn-yellow:hover{filter:brightness(1.08); text-decoration:none; transform:translateY(-1px)}
   }
 
-  /* Header */
-  header{
-    position:sticky; top:0; z-index:20;
-    backdrop-filter:blur(12px);
-    background:rgba(5,8,13,.78); border-bottom:1px solid var(--line);
-  }
-  /* min-height (not a hard height) + flex-wrap so that when the brand + links +
-     ★ CTA no longer fit on one line (tablets / landscape phones above the 640px
-     breakpoint) the nav drops to its own row BELOW the brand instead of the box
-     staying 64px tall and the wrapped row spilling up off the top of the screen. */
-  header .wrap{display:flex; align-items:center; flex-wrap:wrap; gap:14px; row-gap:9px; min-height:64px; padding-top:8px; padding-bottom:8px}
-  .brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono); letter-spacing:.12em; white-space:nowrap; color:var(--txt)}
-  .brand:hover{text-decoration:none}
-  .brand img{border-radius:6px}
-  header nav{margin-left:auto; display:flex; gap:20px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
-  header nav a{color:var(--muted); font-size:.92rem}
-  header nav a:hover{color:var(--cyan); text-decoration:none}
-  header nav a[aria-current="page"]{color:var(--cyan)}
-  /* Mobile: the nav (incl. the language selector) drops to its own row under the
-     brand — same behaviour as the sub-pages (assets/pages.css) — so a long brand
-     + four links + the language toggle never overlap. */
-  @media(max-width:640px){
-    header .wrap{flex-wrap:wrap; height:auto; min-height:56px; padding-top:9px; padding-bottom:9px; row-gap:9px; gap:8px}
-    .brand{gap:7px; font-size:.9rem; letter-spacing:.06em; min-width:0}
-    .brand img{width:24px; height:24px}
-    header nav{width:100%; margin-left:0; gap:14px; justify-content:flex-start}
-    header nav a{font-size:.85rem}
-    header nav .gh-btn{margin-left:auto; padding:.5rem .8rem}  /* keep the ★ CTA on the right */
-    .gh-label{display:none}                /* icon-only ★ CTA (aria-label keeps it named) */
-  }
-  @media(max-width:380px){
-    header nav{gap:11px}
-    .lang select{font-size:.72rem; padding:.34rem 1.5rem .34rem .55rem}
-  }
-  /* Language dropdown — stays visible on mobile (it's a control, not a nav link) */
-  .lang{
-    position:relative; display:inline-flex; align-items:center; flex:none;
-    border:1px solid var(--line); border-radius:7px; background:rgba(16,26,38,.7); transition:.15s;
-  }
-  .lang select{
-    appearance:none; -webkit-appearance:none; -moz-appearance:none;
-    background:transparent; color:var(--cyan); cursor:pointer; border:0; border-radius:7px;
-    font:700 .74rem var(--mono); letter-spacing:.06em; padding:.36rem 1.7rem .36rem .7rem;
-  }
-  .lang select:focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
-  .lang option{background:var(--panel); color:var(--txt)}   /* native list (browser-styled) */
-  .lang::after{ /* chevron */
-    content:""; position:absolute; right:.62rem; top:50%; width:6px; height:6px;
-    border-right:2px solid var(--muted); border-bottom:2px solid var(--muted);
-    transform:translateY(-70%) rotate(45deg); pointer-events:none; transition:.15s;
-  }
-  @media(hover:hover){ .lang:hover{border-color:var(--line-glow)} .lang:hover::after{border-color:var(--cyan)} }
+  /* Header + footer chrome now live in assets/chrome.css (shared, single source). */
 
   /* ───── Hero ───── */
   .hero{padding:88px 0 30px; text-align:center; position:relative}
@@ -439,9 +383,6 @@
     background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent}
   .band p{color:var(--muted); max-width:560px; margin:0 auto 1.8rem}
 
-  footer{border-top:1px solid var(--line); padding:36px 0; color:var(--muted); font-size:.9rem}
-  footer .wrap{display:flex; gap:16px; flex-wrap:wrap; align-items:center; justify-content:space-between}
-
   /* Lightbox */
   #lb{position:fixed; inset:0; background:rgba(3,5,9,.94); display:none; place-items:center; z-index:100; cursor:zoom-out; padding:20px}
   #lb.on{display:grid}
@@ -506,27 +447,8 @@
 </head>
 <body>
 
-<header>
-  <div class="wrap">
-    <a class="brand" href="/">
-      <img src="assets/icon-192.png" alt="MoonlightWeb logo" width="28" height="28">
-      MOONLIGHTWEB
-    </a>
-    <nav aria-label="Main navigation">
-      <a href="/" aria-current="page" data-i18n="nav.home">Home</a>
-      <a href="/guides/windows.html" data-i18n="nav.guides">Guides</a>
-      <a href="/faq.html" data-i18n="nav.faq">FAQ</a>
-      <span class="lang">
-        <select id="lang-select" aria-label="Language" data-umami-event="lang">
-          <option value="en">English</option>
-          <option value="fr">Français</option>
-          <option value="zh" lang="zh">中文</option>
-        </select>
-      </span>
-      <a class="btn btn-primary gh-btn" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" aria-label="GitHub" data-umami-event="github" data-umami-event-loc="nav">★ <span class="gh-label">GitHub</span></a>
-    </nav>
-  </div>
-</header>
+<!-- Header markup injected by assets/chrome.js (shared across every page) -->
+<header id="site-header"></header>
 
 <div id="scroll">
 <main>
@@ -827,23 +749,14 @@
 </section>
 </main>
 
-<footer>
-  <div class="wrap">
-    <span><img src="assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL‑3.0</span>
-    <span>
-      <a href="/guides/windows.html">Windows</a> ·
-      <a href="/guides/macos.html">macOS</a> ·
-      <a href="/guides/linux.html">Linux</a> ·
-      <a href="/faq.html">FAQ</a> ·
-      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> ·
-      <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> ·
-      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer">Support</a>
-    </span>
-  </div>
-</footer>
+<!-- Footer markup injected by assets/chrome.js (shared across every page) -->
+<footer id="site-footer"></footer>
 </div><!-- /#scroll -->
 
 <div id="lb"><img alt=""></div>
+<!-- Inject the shared header/footer BEFORE the i18n block below snapshots
+     [data-i18n] and wires up #lang-select. -->
+<script src="assets/chrome.js"></script>
 <script>
   // Lightbox for screenshots.
   const lb = document.getElementById('lb'), lbImg = lb.querySelector('img');
@@ -966,7 +879,7 @@
   // EN is the default. Add a language: drop a dictionary here, register it in
   // DICTS, add a data-i18n-lang button, and a T.<code> block above.
   const FR = {
-    'nav.home':'Accueil', 'nav.guides':'Guides', 'nav.faq':'FAQ',
+    'nav.home':'Accueil', 'nav.guides':'Guides', 'nav.faq':'FAQ', 'nav.support':'Soutenir',
     'nav.features':'Fonctionnalités', 'nav.showcase':'En images',
     'nav.how':'Comment ça marche', 'nav.download':'Télécharger',
 
@@ -1057,7 +970,7 @@
   };
 
   const ZH = {
-    'nav.home':'首页', 'nav.guides':'指南', 'nav.faq':'常见问题',
+    'nav.home':'首页', 'nav.guides':'指南', 'nav.faq':'常见问题', 'nav.support':'支持',
     'nav.features':'功能', 'nav.showcase':'实拍',
     'nav.how':'工作原理', 'nav.download':'下载',
 
