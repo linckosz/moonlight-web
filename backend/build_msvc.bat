@@ -46,13 +46,15 @@ if not defined VSINSTALLDIR (
     )
 )
 
-REM ---- Locate Qt (QTDIR / CMAKE_PREFIX_PATH override, else default kit) ----
+REM ---- Locate Qt (QTDIR / CMAKE_PREFIX_PATH override, else newest C:\Qt kit) ----
 if not defined QTDIR (
     if defined CMAKE_PREFIX_PATH (
         set "QTDIR=%CMAKE_PREFIX_PATH%"
     ) else (
-        for %%v in (6.11.0 6.11.1 6.11.2 6.11.3) do (
-            if exist "C:\Qt\%%v\msvc2022_64\lib\cmake\Qt6\Qt6Config.cmake" set "QTDIR=C:\Qt\%%v\msvc2022_64"
+        REM 6.11 is the documented baseline, but any Qt 6.x MSVC kit with the
+        REM required modules works; take the highest version present under C:\Qt.
+        for /d %%d in ("C:\Qt\6.*") do (
+            if exist "%%d\msvc2022_64\lib\cmake\Qt6\Qt6Config.cmake" set "QTDIR=%%d\msvc2022_64"
         )
     )
 )
@@ -64,7 +66,13 @@ if not defined QTDIR (
 )
 echo [INFO] Qt kit : %QTDIR%
 
-REM ---- Make sure Ninja is on PATH (use the copy bundled with VS if needed) ----
+REM ---- Make sure CMake + Ninja are on PATH (use the copies bundled with VS) ----
+where cmake >nul 2>&1 || set "PATH=%VSINSTALLDIR%Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin;%PATH%"
+where cmake >nul 2>&1 || (
+    echo [ERROR] CMake was not found. Install the "C++ CMake tools for Windows"
+    echo         Visual Studio component ^(or add cmake to PATH^).
+    exit /b 1
+)
 where ninja >nul 2>&1 || set "PATH=%VSINSTALLDIR%Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;%PATH%"
 where ninja >nul 2>&1 || (
     echo [ERROR] Ninja was not found. Install the "C++ CMake tools for Windows"
