@@ -201,7 +201,11 @@
     backdrop-filter:blur(12px);
     background:rgba(5,8,13,.78); border-bottom:1px solid var(--line);
   }
-  header .wrap{display:flex; align-items:center; gap:14px; height:64px}
+  /* min-height (not a hard height) + flex-wrap so that when the brand + links +
+     ★ CTA no longer fit on one line (tablets / landscape phones above the 640px
+     breakpoint) the nav drops to its own row BELOW the brand instead of the box
+     staying 64px tall and the wrapped row spilling up off the top of the screen. */
+  header .wrap{display:flex; align-items:center; flex-wrap:wrap; gap:14px; row-gap:9px; min-height:64px; padding-top:8px; padding-bottom:8px}
   .brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono); letter-spacing:.12em; white-space:nowrap}
   .brand img{border-radius:6px}
   .brand .v{font-size:.66rem; color:var(--muted); border:1px solid var(--line); padding:.15rem .45rem; border-radius:5px; letter-spacing:.08em}
