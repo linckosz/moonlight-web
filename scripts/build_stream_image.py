@@ -108,5 +108,5 @@ out.save(OUT_WEBP, lossless=True)
 # dark-bg preview copy
 prev = Image.new("RGBA", out.size, (8, 12, 17, 255))
 prev = Image.alpha_composite(prev, out)
-prev.convert("RGB").save(r"D:\Code\moonlight-web-deepseek\website\assets\_screen.png")
+prev.convert("RGB").save(r"D:\Code\moonlight-web\website\assets\_screen.png")
 print("done", out.size)

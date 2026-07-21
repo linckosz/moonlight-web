@@ -39,7 +39,7 @@ a coffee helps keep the shared DNS domain server online and the domain running �
 
 Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, phone, TV) into a streaming client for your Sunshine‑powered gaming PC — **with nothing to install**.
 
-- 🎮 **Low‑latency streaming** up to 4K HDR, 120+ FPS, **H.264 / HEVC / AV1** codecs.
+- 🎮 **Low‑latency streaming** up to 4K HDR, 240 FPS, **H.264 / HEVC / AV1** codecs.
 - 🌐 **WebRTC transport** (DataChannels + RTP media tracks), automatic WSS fallback.
 - 🔊 **Opus audio** decoded in the browser (adaptive jitter buffer, surround).
 - ⌨️🖱️🎮 **Full input**: keyboard, mouse (pointer‑lock), touch trackpad, **Xbox/PS gamepads** with rumble.
@@ -130,7 +130,7 @@ It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transpo
 Enabling **Internet Access** makes the server automatically:
 
 1. **Detect your public IP** (STUN, HTTPS fallback).
-2. **Create a sub‑domain** `「id」.yourdomain` via the PowerDNS API (A record + TXT ownership token).
+2. **Create a sub‑domain** `「id」.moonlightweb.top` via the PowerDNS API (A record + TXT ownership token).
 3. **Obtain a TLS certificate** automatically (ACME DNS‑01).
 4. **Open ports** via **UPnP** (TCP 80/443 + UDP 47999).
 
@@ -204,17 +204,22 @@ Cross‑platform build via **CMake** — the single, canonical build system (qma
 CMake also generates `compile_commands.json` for clangd / IDEs.
 
 ```bash
-git clone <this-repo>
-cd moonlight-web-deepseek
+git clone https://github.com/linckosz/moonlight-web.git
+cd moonlight-web
 git submodule update --init --recursive   # moonlight-common-c, qmdnsengine, libdatachannel...
 
 # Windows (MSVC) — detects VS 2022 + Qt, configures Ninja, builds Release:
 cmd //c backend/build_msvc.bat
-# Linux / macOS (CMake):
-cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
+# Linux / macOS — same, via CMake (Ninja if available):
+./backend/build.sh
+#   …or the raw CMake call the scripts wrap:
+#   cmake -S backend -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
-cd backend/build/release && ./MoonlightWeb   # Windows: MoonlightWeb.exe → open https://localhost
+./build/MoonlightWeb   # Windows: build\MoonlightWeb.exe → open https://localhost
 ```
+
+> Both scripts auto‑init the git submodules on first run and drop the binary in `build/`.
+> If CMake can't find Qt, pass `-DCMAKE_PREFIX_PATH=<Qt kit>` (or set `QTDIR`), e.g. `C:/Qt/6.11.0/msvc2022_64`.
 
 👉 **Full developer setup** — required tools (with links), Qt installer components,
 **Qt Creator** kit configuration, frontend tests and the PR workflow — is in

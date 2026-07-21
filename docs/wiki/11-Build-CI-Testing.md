@@ -9,22 +9,26 @@
 CMake is the **single canonical build system** (qmake was removed 2026-06-28). Prerequisites and Qt-Creator setup are in `CONTRIBUTING.md`; the short version:
 
 ```bash
-git clone <repo> && cd <repo>
+git clone https://github.com/linckosz/moonlight-web.git && cd moonlight-web
 git submodule update --init --recursive     # moonlight-common-c, qmdnsengine, libdatachannel, miniupnp
 
 # Windows (MSVC): detects VS 2022 + Qt, configures Ninja, builds Release
 cmd //c backend/build_msvc.bat
-# Linux / macOS
-cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
+# Linux / macOS: same, via CMake (Ninja if available)
+./backend/build.sh
+#   …or the raw call the scripts wrap:
+#   cmake -S backend -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
-backend/build/release/MoonlightWeb          # → open https://localhost
+build/MoonlightWeb          # Windows: build\MoonlightWeb.exe → open https://localhost
 ```
+
+Both convenience scripts (`backend/build_msvc.bat`, `backend/build.sh`) auto-init the submodules on first run, locate Qt (override with `QTDIR` / `CMAKE_PREFIX_PATH`) and drop the binary in `build/` — the same layout CI uses.
 
 Toolchain: CMake ≥ 3.21, Ninja, **Qt 6.11** (Core, Network, **WebSockets**), C++17, Node.js 22 (frontend tooling only). Windows: VS 2022 (MSVC v143); OpenSSL 3 is **vendored** in `backend/libs/windows/`. `-DCMAKE_PREFIX_PATH=<Qt kit>` if Qt isn't found. CMake emits `compile_commands.json` for clangd.
 
 `backend/CMakeLists.txt` also:
 
-- builds the submodules (`build_libdatachannel.bat` / `build_miniupnpc.bat` helpers on Windows),
+- builds the native submodules statically via `add_subdirectory` (libdatachannel, miniupnpc, moonlight-common-c, qmdnsengine) — no manual per-dep step,
 - bakes `MW_VERSION` (overridden by the release tag in CI) and the **embedded env defaults** (`MW_DOMAIN`, `MW_PDNS_*`, `MW_ZEROSSL_*` from CI secrets) as compile definitions,
 - can embed a fallback cert (`MW_CERT_PEM`/`MW_CERT_KEY` read from `.env` at build time),
 - installs the frontend next to the binary and generates the app icon resource (`app_icon.rc.in`).
