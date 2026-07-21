@@ -1,406 +1,682 @@
-# Graph Report - .  (2026-07-03)
+# Graph Report - moonlight-web  (2026-07-21)
 
 ## Corpus Check
-- 181 files · ~3,733,433 words
+- 215 files · ~636,267 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1947 nodes · 3789 edges · 114 communities (76 shown, 38 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 65 edges (avg confidence: 0.84)
-- Token cost: 235,884 input · 0 output
+- 3123 nodes · 6545 edges · 157 communities (124 shown, 33 thin omitted)
+- Extraction: 92% EXTRACTED · 8% INFERRED · 0% AMBIGUOUS · INFERRED: 526 edges (avg confidence: 0.8)
+- Token cost: 0 input · 0 output
+
+## Graph Freshness
+- Built from commit: `e20899b4`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- [[_COMMUNITY_HTTPS Server & Certificates|HTTPS Server & Certificates]]
-- [[_COMMUNITY_App Settings Store|App Settings Store]]
-- [[_COMMUNITY_DataChannel Video Relay|DataChannel Video Relay]]
-- [[_COMMUNITY_REST Routes & Test Framework|REST Routes & Test Framework]]
-- [[_COMMUNITY_Frontend Renderer Backends|Frontend Renderer Backends]]
-- [[_COMMUNITY_GameStream Pairing & Identity|GameStream Pairing & Identity]]
-- [[_COMMUNITY_Browser Detect & Media Glue|Browser Detect & Media Glue]]
-- [[_COMMUNITY_Computer Manager & Discovery|Computer Manager & Discovery]]
-- [[_COMMUNITY_Auth Sessions & PIN|Auth Sessions & PIN]]
-- [[_COMMUNITY_WebRTC Signaling Server|WebRTC Signaling Server]]
-- [[_COMMUNITY_Backend HTTP Client (JS)|Backend HTTP Client (JS)]]
-- [[_COMMUNITY_ACME Certificate Client|ACME Certificate Client]]
-- [[_COMMUNITY_Admin View UI|Admin View UI]]
-- [[_COMMUNITY_NvHTTP Data Model|NvHTTP Data Model]]
-- [[_COMMUNITY_Opus Audio Pipeline|Opus Audio Pipeline]]
-- [[_COMMUNITY_Internet Access Manager|Internet Access Manager]]
-- [[_COMMUNITY_RTSP & STUN Clients|RTSP & STUN Clients]]
-- [[_COMMUNITY_Moonlight Shim Bridge|Moonlight Shim Bridge]]
-- [[_COMMUNITY_App Shell & i18n Runtime|App Shell & i18n Runtime]]
-- [[_COMMUNITY_PowerDNS API Client|PowerDNS API Client]]
-- [[_COMMUNITY_MP4 Muxer & Codec Strings|MP4 Muxer & Codec Strings]]
-- [[_COMMUNITY_WebRTC DataChannel Client|WebRTC DataChannel Client]]
-- [[_COMMUNITY_StreamView Core|StreamView Core]]
-- [[_COMMUNITY_NvHTTP Async API|NvHTTP Async API]]
-- [[_COMMUNITY_REST Router Dispatch|REST Router Dispatch]]
-- [[_COMMUNITY_Streaming Session Lifecycle|Streaming Session Lifecycle]]
-- [[_COMMUNITY_Frontend Package Config|Frontend Package Config]]
-- [[_COMMUNITY_Host & App Models|Host & App Models]]
-- [[_COMMUNITY_Host List View|Host List View]]
-- [[_COMMUNITY_Architecture & Dev Plan Docs|Architecture & Dev Plan Docs]]
-- [[_COMMUNITY_WebSocket Stream Relay|WebSocket Stream Relay]]
-- [[_COMMUNITY_AV1 Bitstream Utils|AV1 Bitstream Utils]]
-- [[_COMMUNITY_Login View|Login View]]
-- [[_COMMUNITY_Settings View|Settings View]]
-- [[_COMMUNITY_Setup Wizard View|Setup Wizard View]]
-- [[_COMMUNITY_Video Decode Worker|Video Decode Worker]]
-- [[_COMMUNITY_Connection Guard Anti-DDoS|Connection Guard Anti-DDoS]]
-- [[_COMMUNITY_MoonlightWeb Plan & Relays|MoonlightWeb Plan & Relays]]
-- [[_COMMUNITY_Gamepad Manager|Gamepad Manager]]
-- [[_COMMUNITY_Project Overview & DNS Stack|Project Overview & DNS Stack]]
-- [[_COMMUNITY_Streaming Keyboard Input|Streaming Keyboard Input]]
-- [[_COMMUNITY_WebRTC HEVC Audit|WebRTC HEVC Audit]]
-- [[_COMMUNITY_NvComputer State Model|NvComputer State Model]]
-- [[_COMMUNITY_TypeScript Config|TypeScript Config]]
-- [[_COMMUNITY_Backend Core Headers|Backend Core Headers]]
-- [[_COMMUNITY_Media Track Relay|Media Track Relay]]
-- [[_COMMUNITY_Tray Manager|Tray Manager]]
-- [[_COMMUNITY_Fullscreen Handling|Fullscreen Handling]]
-- [[_COMMUNITY_ENet Control Stream|ENet Control Stream]]
-- [[_COMMUNITY_Audio Time-Stretch Processor|Audio Time-Stretch Processor]]
-- [[_COMMUNITY_Internet P2P Plan Concepts|Internet P2P Plan Concepts]]
-- [[_COMMUNITY_CI & Release Pipeline|CI & Release Pipeline]]
-- [[_COMMUNITY_Touch Trackpad Input|Touch Trackpad Input]]
-- [[_COMMUNITY_UPnP Client|UPnP Client]]
-- [[_COMMUNITY_Toast Notifications|Toast Notifications]]
-- [[_COMMUNITY_App List View|App List View]]
-- [[_COMMUNITY_Pairing Dialog|Pairing Dialog]]
-- [[_COMMUNITY_Frame Sender Thread|Frame Sender Thread]]
-- [[_COMMUNITY_Prettier Config|Prettier Config]]
-- [[_COMMUNITY_Tolgee Config|Tolgee Config]]
-- [[_COMMUNITY_Jitter Buffer Controller|Jitter Buffer Controller]]
-- [[_COMMUNITY_UPnP Client Tests|UPnP Client Tests]]
-- [[_COMMUNITY_Stats & Congestion Tracking|Stats & Congestion Tracking]]
-- [[_COMMUNITY_Input Encoder|Input Encoder]]
-- [[_COMMUNITY_Cert Manager Header|Cert Manager Header]]
-- [[_COMMUNITY_UI Audit & i18n Decision|UI Audit & i18n Decision]]
-- [[_COMMUNITY_WSS Stream Channel|WSS Stream Channel]]
-- [[_COMMUNITY_Autostart Service|Autostart Service]]
-- [[_COMMUNITY_Static File Handler|Static File Handler]]
-- [[_COMMUNITY_Media Track Setup|Media Track Setup]]
-- [[_COMMUNITY_WebSocket Client|WebSocket Client]]
-- [[_COMMUNITY_Audio Fragment Send|Audio Fragment Send]]
-- [[_COMMUNITY_Sunshine Installer|Sunshine Installer]]
-- [[_COMMUNITY_Input Crypto|Input Crypto]]
-- [[_COMMUNITY_Signaling Server Header|Signaling Server Header]]
-- [[_COMMUNITY_HEVC SPS Parser|HEVC SPS Parser]]
-- [[_COMMUNITY_Logo & Branding 512px|Logo & Branding 512px]]
-- [[_COMMUNITY_Stats Overlay Refactor Mission|Stats Overlay Refactor Mission]]
-- [[_COMMUNITY_Logo Brand Motif|Logo Brand Motif]]
-- [[_COMMUNITY_Autostart Header|Autostart Header]]
-- [[_COMMUNITY_Identity Manager Header|Identity Manager Header]]
-- [[_COMMUNITY_Sunshine Installer Header|Sunshine Installer Header]]
-- [[_COMMUNITY_Sunshine REST Header|Sunshine REST Header]]
-- [[_COMMUNITY_Logger Header|Logger Header]]
-- [[_COMMUNITY_STUN Client Header|STUN Client Header]]
-- [[_COMMUNITY_UPnP Client Header|UPnP Client Header]]
-- [[_COMMUNITY_App Settings Header|App Settings Header]]
-- [[_COMMUNITY_HTTP Parser Header|HTTP Parser Header]]
-- [[_COMMUNITY_Provisioning Header|Provisioning Header]]
-- [[_COMMUNITY_ENet Stream Header|ENet Stream Header]]
-- [[_COMMUNITY_Input Crypto Header|Input Crypto Header]]
-- [[_COMMUNITY_Input Encoder Header|Input Encoder Header]]
-- [[_COMMUNITY_Stream Relay Header|Stream Relay Header]]
-- [[_COMMUNITY_Tray Manager Header|Tray Manager Header]]
-- [[_COMMUNITY_List Files Script|List Files Script]]
-- [[_COMMUNITY_Two-Renderer Pipeline Pattern|Two-Renderer Pipeline Pattern]]
-- [[_COMMUNITY_PCM Audio Decision|PCM Audio Decision]]
+- AppSettings.cpp
+- StreamSession
+- AuthManager
+- DataChannelRelay
+- StreamRelay
+- AdminView
+- HttpServer
+- WebGpuRenderer
+- NvComputer
+- MediaTrackRelay
+- ComputerManager
+- InternetAccessManager
+- SignalingServer
+- Self-hosted DNS stack for MoonlightWeb (Docker)
+- MoonlightShim.cpp
+- BackendClient
+- .info
+- app.js
+- StreamView.js
+- NvPairingManager
+- AcmeClient
+- QJsonObject
+- EnetControlStream
+- ComputerManager.cpp
+- scripts
+- t
+- TrayManager
+- PdnsClient
+- RestRouter
+- InstallerPane
+- NvHTTP
+- WebRtcDataChannel
+- UpdateChecker
+- UPNPClient
+- QFile
+- IdentityManager
+- InternetAccessManager.cpp
+- StreamConfig
+- AudioPipeline
+- ControlChannel
+- AcmeClient.cpp
+- MediaTrackRelay.cpp
+- MoonlightShim.h
+- HttpResponse
+- ConnectionGuard
+- HttpServer.cpp
+- FrameSender
+- StreamWorkerHost
+- .constructor
+- compilerOptions
+- StreamWorkerMain.cpp
+- Logger
+- StreamView
+- src/main.cpp
+- VideoDecodeWorker.js
+- DataChannelRelay.h
+- .warning
+- GeoIpService
+- DataChannelRelay.cpp
+- SetupView
+- WebRtcMedia
+- GamepadManager
+- LoginView
+- Av1Utils.js
+- ClipboardBridge
+- RelayBase
+- Host
+- SettingsView
+- StunClient
+- SignalingServer.cpp
+- test_framework.h
+- NvAddress
+- StreamViewKeyboard
+- onLaunchReplyFinished
+- SessionInfo
+- QByteArray
+- MoonlightShim
+- BrowserDetect.js
+- e
+- StreamViewFullscreen
+- SslServer
+- Home.md
+- QByteArray
+- StaticFileHandler
+- iosAudioUnlock.js
+- NvApp
+- UPNP NAT Traversal — Plan de Test (Phase 7)
+- install.sh
+- AudioProcessor
+- PairDialog
+- Changements demandés
+- check-i18n.cjs
+- InputCrypto
+- encodeFromJson
+- WebRtcDataChannel.js
+- 7.2 Key reference
+- StreamViewTouch
+- test_upnpclient.cpp
+- 1.1 The User's journey
+- 5. Streaming & Transports
+- JitterController
+- r
+- .prettierrc.json
+- .tolgeerc.json
+- 2. Architecture
+- 6. Security
+- 10. PowerDNS Stack (`deploy/powerdns/`)
+- 11. Build, CI & Testing
+- SystemRoutes.cpp
+- 4. Frontend (Vanilla JS)
+- 12. Agentic Coding — AI-assisted development on this repo
+- SlidingStats
+- mapHttpsPortParity
+- StreamSession::StreamSession
+- 3. Backend (C++ / Qt)
+- 8. REST API & WebSocket surfaces
+- onMdnsResolved
+- .~AuthManager
+- SystemRoutes.h
+- QString
+- run_input_encoder_tests
+- 9. Installers & Packaging
+- postinstall
+- registerAuthRoutes
+- NalLocation
+- ComPtr
+- StreamRelay::StreamRelay
+- test_static_files.cpp
+- renew-certs.sh
+- MoonlightWeb — Technical Wiki
+- build_stream_image.py
+- InternetAccessManager::InternetAccessManager
+- SignalingServer::SignalingServer
+- test_http_parser.cpp
+- 13. Roadmap, Constraints & Improvement Leads
+- NvHTTP::NvHTTP
+- AcmeClient::AcmeClient
+- .peerConnection
+- onLocalIceCandidate
+- quint16
+- init.sh
+- build.sh
+- build-pkg.sh
+- make-packages.sh
+- run_clang_tidy.sh
+- statusJson
+- cleanupUPnP
+- entrypoint.sh
+- run-tests.sh
 
 ## God Nodes (most connected - your core abstractions)
-1. `StreamView` - 100 edges
-2. `t()` - 70 edges
-3. `readAll()` - 68 edges
-4. `BackendClient` - 49 edges
-5. `AdminView` - 40 edges
-6. `writeAll()` - 35 edges
-7. `WebRtcDataChannel` - 32 edges
-8. `QString` - 31 edges
-9. `QString` - 28 edges
-10. `QString` - 26 edges
+1. `StreamView` - 124 edges
+2. `DataChannelRelay` - 91 edges
+3. `t()` - 88 edges
+4. `StreamSession` - 87 edges
+5. `ComputerManager` - 86 edges
+6. `InternetAccessManager` - 84 edges
+7. `AppSettings` - 80 edges
+8. `SignalingServer` - 77 edges
+9. `readAll` - 74 edges
+10. `HttpServer` - 74 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `MoonlightWeb presentation website (static landing page)` --semantically_similar_to--> `MoonlightWeb — 100% web Sunshine/GameStream client`  [INFERRED] [semantically similar]
-  website/index.html → README.md
-- `UPnP NAT Traversal test plan (Phase 7)` --references--> `WebRTC HEVC audit — deliverable 1: pipeline cartography`  [AMBIGUOUS]
-  backend/tests/UPNP_TEST_PLAN.md → docs/audit-webrtc-hevc-2026-06-11/01-cartographie-pipeline.md
-- `Problem A: Latency Accumulation (buffer bloat on Android)` --references--> `DataChannelRelay()`  [EXTRACTED]
-  docs/audit-webrtc-hevc-2026-06-11/02-rapport-audit.md → backend/src/streaming/DataChannelRelay.cpp
-- `Audit Mission: WebRTC DataChannel HEVC Pipeline (Android latency + pixelation)` --references--> `DataChannelRelay()`  [EXTRACTED]
-  docs/prompt-engineering-manager-webrtc-hevc-audit.md → backend/src/streaming/DataChannelRelay.cpp
-- `Audit Mission: WebRTC DataChannel HEVC Pipeline (Android latency + pixelation)` --references--> `MoonlightShim()`  [EXTRACTED]
-  docs/prompt-engineering-manager-webrtc-hevc-audit.md → backend/src/streaming/MoonlightShim.cpp
+- `main()` --calls--> `init`  [INFERRED]
+  backend/src/main.cpp → backend/src/TrayManager.h
+- `main()` --calls--> `refreshTooltip`  [INFERRED]
+  backend/src/main.cpp → backend/src/TrayManager.h
+- `handleGetAppList` --calls--> `getCertificate`  [INFERRED]
+  backend/src/backend/ComputerManager.h → backend/src/backend/IdentityManager.h
+- `handleGetAppList` --calls--> `getPrivateKey`  [INFERRED]
+  backend/src/backend/ComputerManager.h → backend/src/backend/IdentityManager.h
+- `resolveMacFromArp` --references--> `NvAddress`  [INFERRED]
+  backend/src/backend/ComputerManager.h → backend/src/backend/NvAddress.h
 
 ## Import Cycles
 - None detected.
 
-## Hyperedges (group relationships)
-- **Gated CI pipeline stages (quality+tests block the build matrix)** — workflows_ci_frontend_job, workflows_ci_quality_cpp, workflows_ci_test_backend, workflows_ci_build_matrix [EXTRACTED 1.00]
-- **Self-hosted DNS stack (dnsdist :53 / pdns internal / caddy :80-:443)** — powerdns_docker_compose_dnsdist, powerdns_docker_compose_pdns, powerdns_docker_compose_caddy [EXTRACTED 1.00]
-- **WebRTC HEVC audit session 2026-06-11 (mission + 4 deliverables)** — docs_prompt_engineering_manager_webrtc_hevc_audit_mission, audit_webrtc_hevc_2026_06_11_00_resume_session_doc, audit_webrtc_hevc_2026_06_11_01_cartographie_pipeline_doc, audit_webrtc_hevc_2026_06_11_02_rapport_audit_doc, audit_webrtc_hevc_2026_06_11_03_plan_optimisation_doc [EXTRACTED 1.00]
+## Communities (157 total, 33 thin omitted)
 
-## Communities (114 total, 38 thin omitted)
+### Community 0 - "AppSettings.cpp"
+Cohesion: 0.08
+Nodes (85): AppSettings, audioTimeStretch, autoIpDetection, certAuthEnabled, certificateToken, certKey, certPem, chroma444Enabled (+77 more)
 
-### Community 0 - "HTTPS Server & Certificates"
-Cohesion: 0.06
-Nodes (80): QByteArray, QHostAddress, QList, QString, QStringList, HttpRequest, QByteArray, HttpRequest (+72 more)
+### Community 1 - "StreamSession"
+Cohesion: 0.03
+Nodes (63): DataChannelRelay, Q_OBJECT, QNetworkReply, QObject, QSet, QString, QStringList, quint16 (+55 more)
 
-### Community 1 - "App Settings Store"
-Cohesion: 0.07
-Nodes (76): QByteArray, QJsonObject, QString, quint16, VideoCodec, audioTimeStretch(), autoIpDetection(), certAuthEnabled() (+68 more)
+### Community 2 - "AuthManager"
+Cohesion: 0.08
+Nodes (63): AppSettings, AuthManager, autoRegeneratePin, certAuthEnabled, certificateToken, cleanClientAddress, cleanupExpired, clearPin (+55 more)
 
-### Community 2 - "DataChannel Video Relay"
-Cohesion: 0.07
-Nodes (61): WebRtcDataChannel._assembleFrame, Audit WebRTC HEVC - Session Summary, Audit Deliverable 1: Pipeline Cartography (frame-by-frame), Problem B: Persistent Blocky Pixelation (lost reference frames), Audit Deliverable 2: Findings Report (F1-F20, F1.x-F4.x), OPT-0b: Backend IDR Request Coalescing (cooldown 250-500ms + relaunch), OPT-3: Sticky m_AwaitingIdr Flag (backend), OPT-4 — Frontend referenceValid state + frameId gap detection (+53 more)
+### Community 3 - "DataChannelRelay"
+Cohesion: 0.03
+Nodes (58): DataChannel, DataChannelRelay, handleKeyEvent, handleMouseButton, handleMouseMove, handleMouseScroll, kFragHeaderSize, kHighWatermark (+50 more)
 
-### Community 3 - "REST Routes & Test Framework"
+### Community 4 - "StreamRelay"
 Cohesion: 0.05
-Nodes (46): QString, AuthManager, HttpServer, ComputerManager, HttpServer, AppSettings, AuthManager, ComputerManager (+38 more)
+Nodes (50): QByteArray, QString, Q_OBJECT, QByteArray, QElapsedTimer, QList, QObject, QString (+42 more)
 
-### Community 4 - "Frontend Renderer Backends"
+### Community 6 - "HttpServer"
+Cohesion: 0.05
+Nodes (40): QList, AuthManager, Q_OBJECT, QByteArray, QMap, QObject, QSet, QSslConfiguration (+32 more)
+
+### Community 7 - "WebGpuRenderer"
 Cohesion: 0.06
 Nodes (6): Canvas2DRenderer, createVideoRenderer(), VideoElementRenderer, VideoRenderer, WebGpuRenderer, canvas
 
-### Community 5 - "GameStream Pairing & Identity"
-Cohesion: 0.06
-Nodes (48): createCredentials(), get(), getCertificate(), getCertStruct(), getKeyStruct(), getPrivateKey(), getUniqueId(), loadOrGenerate() (+40 more)
+### Community 8 - "NvComputer"
+Cohesion: 0.05
+Nodes (50): ComputerState, NvComputer, PairState, QJsonObject, QSettings, QString, QVector, ComputerState (+42 more)
 
-### Community 6 - "Browser Detect & Media Glue"
-Cohesion: 0.06
-Nodes (17): WebRtcMedia, ensureEl(), makeSilentWavUrl(), makeUnlockedCtx(), playEl(), playStream(), prepareForLaunch(), prime() (+9 more)
+### Community 9 - "MediaTrackRelay"
+Cohesion: 0.04
+Nodes (47): DataChannel, atomic, mutex, Q_OBJECT, QByteArray, QTimer, RelayBase, shared_ptr (+39 more)
 
-### Community 7 - "Computer Manager & Discovery"
-Cohesion: 0.11
-Nodes (48): addOrUpdateHost(), chooseBestMdnsAddress(), clientUniqueId(), enqueueBoxArtFetch(), fetchNextBoxArtInBackground(), findHostByUuid(), generatePairingPin(), getHost() (+40 more)
+### Community 10 - "ComputerManager"
+Cohesion: 0.05
+Nodes (45): Browser, ComputerManager, getHostsJson, hostAddCompleted, hostsChanged, init, loadHosts, m_ActiveBoxArtFetches (+37 more)
 
-### Community 8 - "Auth Sessions & PIN"
-Cohesion: 0.11
-Nodes (43): AppSettings, QByteArray, QList, QObject, QString, AuthManager(), autoRegeneratePin(), certificateToken() (+35 more)
+### Community 11 - "InternetAccessManager"
+Cohesion: 0.05
+Nodes (39): AppSettings, function, Q_OBJECT, QDateTime, QObject, QString, QTimer, quint16 (+31 more)
 
-### Community 9 - "WebRTC Signaling Server"
-Cohesion: 0.06
-Nodes (34): namespace, namespace, class, namespace, Configuration, QByteArray, QObject, QString (+26 more)
+### Community 12 - "SignalingServer"
+Cohesion: 0.04
+Nodes (41): atomic, Q_OBJECT, QObject, QTimer, MoonlightShim, RelayBase, SignalingServer, clientConnected (+33 more)
 
-### Community 11 - "ACME Certificate Client"
+### Community 13 - "Self-hosted DNS stack for MoonlightWeb (Docker)"
+Cohesion: 0.04
+Nodes (44): 1. Install the toolchain, 2. Clone & build, 3. Build in Qt Creator (optional), 4. Frontend tooling & tests, 5. Open a pull request, Code style, Contributing to Moonlight‑Web, DNS stack (Internet access) (+36 more)
+
+### Community 14 - "MoonlightShim.cpp"
+Cohesion: 0.05
+Nodes (10): QObject, QString, MoonlightShim::arInit(), MoonlightShim::drSubmitDecodeUnit(), MoonlightShim::MoonlightShim(), MoonlightShim::sendUtf8Text(), MoonlightShim::startConnection(), InitParams (+2 more)
+
+### Community 16 - ".info"
 Cohesion: 0.14
-Nodes (40): AcmeClient(), QByteArray, QJsonObject, QObject, QString, function, accountKeyJwk(), accountKeyThumbprint() (+32 more)
+Nodes (31): QString, CertManager, ensureLocalSslConfig, extractCertCN, findCertByDomain, findCertDir, generateSelfSignedCert, loadCert (+23 more)
 
-### Community 13 - "NvHTTP Data Model"
-Cohesion: 0.06
-Nodes (26): NvAddress(), NvApp(), serialize(), QObject(), class, class, QSettings, NvComputer() (+18 more)
+### Community 17 - "app.js"
+Cohesion: 0.12
+Nodes (17): MoonlightApp, applyDOM(), AVAILABLE_LANGUAGES, detectLanguage(), fetchLocale(), getLanguage(), init(), interpolate() (+9 more)
 
-### Community 14 - "Opus Audio Pipeline"
-Cohesion: 0.08
-Nodes (8): decodeOpus(), decodeWasm(), onDecoded(), onError(), postPCM(), setupDecoder(), AudioPipeline, r
-
-### Community 15 - "Internet Access Manager"
-Cohesion: 0.15
-Nodes (35): AppSettings, InternetAccessManager(), QJsonObject, QObject, QString, quint16, baseDomain(), buildDomain() (+27 more)
-
-### Community 16 - "RTSP & STUN Clients"
+### Community 18 - "StreamView.js"
 Cohesion: 0.10
-Nodes (33): StunClient(), QByteArray, QList, QObject, QString, QByteArray, QMap, QObject (+25 more)
+Nodes (26): IMPORTANT: The VK codes here do NOT include the 0x8000 modifier bit, buildAvccDescription(), buildDescription(), buildHvcCDescription(), detectCodec(), getCodecString(), getH264CodecString(), getHevcCodecString() (+18 more)
 
-### Community 17 - "Moonlight Shim Bridge"
-Cohesion: 0.06
-Nodes (10): QString, InitParams, POPUS_MULTISTREAM_CONFIGURATION, arInit(), blockingStopConnection(), clStageFailed(), finishCleanup(), sendUtf8Text() (+2 more)
-
-### Community 18 - "App Shell & i18n Runtime"
-Cohesion: 0.13
-Nodes (16): applyDOM(), AVAILABLE_LANGUAGES, detectLanguage(), fetchLocale(), getLanguage(), init(), interpolate(), resolve() (+8 more)
-
-### Community 19 - "PowerDNS API Client"
-Cohesion: 0.16
-Nodes (28): getHostsJson(), PdnsClient(), QByteArray, QNetworkReply, QObject, QString, class, AuthManager() (+20 more)
-
-### Community 20 - "MP4 Muxer & Codec Strings"
-Cohesion: 0.14
-Nodes (22): H264_IDR, H264_PPS, H264_SPS, HEVC_PPS, HEVC_SPS, HEVC_VPS, SC4, buildAvccDescription() (+14 more)
-
-### Community 23 - "NvHTTP Async API"
-Cohesion: 0.20
-Nodes (24): buildUrl(), getAppListAsync(), getCurrentGame(), getDisplayModeList(), getServerInfoAsync(), getServerInfoAsyncHttps(), getXmlString(), getXmlStringFromHex() (+16 more)
-
-### Community 24 - "REST Router Dispatch"
-Cohesion: 0.16
-Nodes (24): AsyncRouteHandler, HttpRequest, HttpResponse, QJsonObject, QMap, QObject, QString, QStringList (+16 more)
-
-### Community 25 - "Streaming Session Lifecycle"
-Cohesion: 0.15
-Nodes (21): NvComputer, QByteArray, QObject, QString, quint16, ResponseCallback, StreamSession(), VideoCodec (+13 more)
-
-### Community 26 - "Frontend Package Config"
-Cohesion: 0.08
-Nodes (24): description, devDependencies, eslint, @eslint/js, globals, jsdom, prettier, typescript (+16 more)
-
-### Community 27 - "Host & App Models"
+### Community 19 - "NvPairingManager"
 Cohesion: 0.11
-Nodes (3): App, Host, Icons
+Nodes (36): function, QByteArray, QString, quint16, X509, EVP_PKEY, QByteArray, QNetworkAccessManager (+28 more)
 
-### Community 29 - "Architecture & Dev Plan Docs"
-Cohesion: 0.13
-Nodes (22): NvHTTP(), NvPairingManager (challenge-response pairing), QObject, QObject, Agent Orchestration Architecture (Engineering Manager dispatcher), Moonlight-Qt Architecture Reference Document, Limelight C Library (moonlight-common-c protocol core), STREAM_CONFIGURATION struct (width/height/fps/bitrate/formats/keys) (+14 more)
+### Community 20 - "AcmeClient"
+Cohesion: 0.06
+Nodes (35): AcmeClient, errorOccurred, finished, m_AccountKeyPath, m_AccountUrl, m_AuthorizationUrl, m_BaseDomain, m_Cancelled (+27 more)
 
-### Community 30 - "WebSocket Stream Relay"
+### Community 21 - "QJsonObject"
 Cohesion: 0.14
-Nodes (16): MoonlightShim, QByteArray, QObject, QSslConfiguration, QString, quint16, StreamRelay(), onNewWsConnection() (+8 more)
+Nodes (13): QDateTime, QHash, QMap, QNetworkAccessManager, QNetworkReply, QString, QTimer, QHostAddress (+5 more)
 
-### Community 31 - "AV1 Bitstream Utils"
-Cohesion: 0.17
-Nodes (13): BitWriter, buildSeqHeaderObu(), AV1_FALLBACK_CODEC_STRINGS, BitReader, buildAv1DecoderConfigs(), codecStringFromSeqInfo(), findSequenceHeader(), getObuType() (+5 more)
+### Community 22 - "EnetControlStream"
+Cohesion: 0.07
+Nodes (34): QByteArray, QObject, QString, quint16, EnetControlStream, connected, connectionFailed, disconnected (+26 more)
 
-### Community 35 - "Video Decode Worker"
-Cohesion: 0.22
-Nodes (18): configureAv1Decoder(), configureDecoder(), decodeAv1Frame(), decodeFrame(), drawFrame(), flushPendingFrames(), handleAv1Frame(), handleDecoderError() (+10 more)
-
-### Community 36 - "Connection Guard Anti-DDoS"
-Cohesion: 0.18
-Nodes (16): qint64, QString, class, class, namespace, FrameSender(), deque, allowConnection() (+8 more)
-
-### Community 37 - "MoonlightWeb Plan & Relays"
+### Community 23 - "ComputerManager.cpp"
 Cohesion: 0.15
-Nodes (19): Latency audit — webrtc-media transport (RTP track + native <video>), MediaTrackRelay (backend RTP H.264 track relay), P1-A — playoutDelayHint set on the wrong object (video element vs RTCRtpReceiver), P1-B — RTP timestamp frozen at synthetic 60 fps, WebRtcMedia.js (frontend media-track client, <video> sink), Transport auto-selection priority chain (media/DC × UDP/TCP → WSS), Limelight C API (LiStartConnection, callbacks, Limelight.h), Sync/async REST routes with ResponseCallback (+11 more)
+Nodes (33): ComputerManager::ComputerManager(), enqueueBoxArtFetch, fetchNextBoxArtInBackground, findHostByUuid, getHost, handleDeleteHost, handleGetAppList, handleGetBoxArt (+25 more)
 
-### Community 38 - "Gamepad Manager"
+### Community 24 - "scripts"
+Cohesion: 0.06
+Nodes (32): eslint, @eslint/js, description, devDependencies, eslint, @eslint/js, globals, jsdom (+24 more)
+
+### Community 25 - "t"
+Cohesion: 0.16
+Nodes (3): resolve(), t(), HostListView
+
+### Community 27 - "TrayManager"
+Cohesion: 0.11
+Nodes (29): ActivationReason, HttpServer, QObject, QString, QUrl, function, Q_OBJECT, HttpServer (+21 more)
+
+### Community 28 - "PdnsClient"
+Cohesion: 0.17
+Nodes (28): QByteArray, QNetworkReply, QNetworkRequest, QObject, QString, QUrl, Q_OBJECT, QNetworkAccessManager (+20 more)
+
+### Community 29 - "RestRouter"
+Cohesion: 0.12
+Nodes (31): AsyncRouteHandler, ParamRoute, QMap, QObject, QString, QStringList, ResponseCallback, AsyncRouteHandler (+23 more)
+
+### Community 30 - "InstallerPane"
+Cohesion: 0.07
+Nodes (27): InstallerPane, -contentView, -didEnterPane, -initWithSection, -section, -setContentView, -setNextEnabled, -shouldExitPane (+19 more)
+
+### Community 31 - "NvHTTP"
+Cohesion: 0.17
+Nodes (30): get, QByteArray, QNetworkReply, QString, quint16, QUrl, QVector, Q_OBJECT (+22 more)
+
+### Community 33 - "UpdateChecker"
+Cohesion: 0.11
+Nodes (28): QJsonArray, QJsonObject, QObject, QString, Q_OBJECT, QDateTime, QJsonObject, QObject (+20 more)
+
+### Community 34 - "UPNPClient"
+Cohesion: 0.10
+Nodes (25): QObject, string, Q_OBJECT, QHostAddress, QObject, IGDdatas, UPNPClient, addPortMapping (+17 more)
+
+### Community 35 - "QFile"
+Cohesion: 0.10
+Nodes (21): QString, entryPath(), installLoginItem(), isLoginItemInstalled(), plistPath(), xmlEscape(), QString, QStringList (+13 more)
+
+### Community 36 - "IdentityManager"
+Cohesion: 0.11
+Nodes (27): handleScanRequest, m_StreamActivePredicate, onPollTick, EVP_PKEY, QByteArray, QString, X509, EVP_PKEY (+19 more)
+
+### Community 37 - "InternetAccessManager.cpp"
+Cohesion: 0.20
+Nodes (27): baseDomain(), QString, buildDomain, checkCertificate, claimOrVerifyOwnership, createOrUpdateARecord, ensureIdentifiers, forceRefresh (+19 more)
+
+### Community 38 - "StreamConfig"
+Cohesion: 0.08
+Nodes (26): QByteArray, VideoCodec, StreamConfig, chroma, codec, computeColorSpace, computeVideoFormats, generateKeys (+18 more)
+
+### Community 39 - "AudioPipeline"
+Cohesion: 0.14
+Nodes (7): decodeOpus(), decodeWasm(), onDecoded(), onError(), postPCM(), setupDecoder(), AudioPipeline
+
+### Community 40 - "ControlChannel"
+Cohesion: 0.11
+Nodes (21): QSet, ControlChannel, broadcastFocusAdmin, ControlChannel::ControlChannel(), m_Clients, m_Port, m_Server, onDisconnected (+13 more)
+
+### Community 41 - "AcmeClient.cpp"
+Cohesion: 0.19
+Nodes (26): acmePost, acmePostAsGet, createChallengeTxtRecord, deleteChallengeTxtRecord, fetchNonce, generateRsaKey, setAccountKeyPath, setBaseDomain (+18 more)
+
+### Community 42 - "MediaTrackRelay.cpp"
+Cohesion: 0.11
+Nodes (26): Configuration, MoonlightShim, QByteArray, QObject, string, addRemoteCandidate, computeRtpTimestamp, createTracksAndChannels (+18 more)
+
+### Community 43 - "MoonlightShim.h"
+Cohesion: 0.08
+Nodes (8): MoonlightShim, HostAudioSink::ensureFullVolume(), _DECODE_UNIT, _OPUS_MULTISTREAM_CONFIGURATION, _SERVER_INFORMATION, _STREAM_CONFIGURATION, spawnRelayThread(), QThread
+
+### Community 44 - "HttpResponse"
+Cohesion: 0.10
+Nodes (24): QByteArray, QMap, QString, HttpRequest, body, clientAddress, headers, isLocal (+16 more)
+
+### Community 45 - "ConnectionGuard"
+Cohesion: 0.14
+Nodes (22): ConnectionGuard, allowConnection, AUTHFAIL_MAX, AUTHFAIL_WINDOW_MS, BAN_MS, banSecondsRemaining, CONN_MAX_PER_WINDOW, CONN_WINDOW_MS (+14 more)
+
+### Community 46 - "HttpServer.cpp"
+Cohesion: 0.20
+Nodes (24): QByteArray, QObject, QString, QTcpSocket, quint16, addSecondaryHttpsListener, changeHttpsPort, createHttpsServer (+16 more)
+
+### Community 47 - "FrameSender"
+Cohesion: 0.10
+Nodes (23): DataChannel, Job, QByteArray, shared_ptr, FrameSender, enqueue, FrameSender::FrameSender(), kFragHeaderSize (+15 more)
+
+### Community 48 - "StreamWorkerHost"
+Cohesion: 0.13
+Nodes (24): QJsonObject, QObject, Q_OBJECT, QByteArray, QObject, signals, StreamWorkerHost, ended (+16 more)
+
+### Community 50 - "compilerOptions"
+Cohesion: 0.08
+Nodes (24): compilerOptions, allowJs, checkJs, forceConsistentCasingInFileNames, lib, module, moduleResolution, noEmit (+16 more)
+
+### Community 51 - "StreamWorkerMain.cpp"
+Cohesion: 0.11
+Nodes (20): evp_pkey_st, x509_st, ClipboardBridge::ClipboardBridge(), QObject, QJsonObject, emitEvent(), runStreamWorker(), teardownAndExit() (+12 more)
+
+### Community 52 - "Logger"
+Cohesion: 0.12
+Nodes (21): QObject, QString, Q_OBJECT, QObject, Logger, instance, levelString, log (+13 more)
+
+### Community 54 - "src/main.cpp"
+Cohesion: 0.14
+Nodes (16): applyEmbeddedEnvDefaults(), QString, hasGuiSession(), loadEnvFile(), main(), openInBrowser(), requestFocusAdmin(), writeAdminShortcut() (+8 more)
+
+### Community 55 - "VideoDecodeWorker.js"
+Cohesion: 0.23
+Nodes (22): addClientSample(), clientLatencyAvg(), configureAv1Decoder(), configureDecoder(), decodeAv1Frame(), decodeFrame(), drawFrame(), flushPendingFrames() (+14 more)
+
+### Community 56 - "DataChannelRelay.h"
+Cohesion: 0.13
+Nodes (12): QByteArray, evp_pkey_st, x509_st, string, atomic, mutex, DataChannel, deque (+4 more)
+
+### Community 57 - ".warning"
+Cohesion: 0.13
+Nodes (21): QString, quint16, Q_OBJECT, QObject, QNetworkAccessManager, SunshineRestClient, ensureMinChannels, m_Nam (+13 more)
+
+### Community 58 - "GeoIpService"
+Cohesion: 0.10
+Nodes (21): GeoCallback, QObject, QPair, QString, GeoIpService, CACHE_TTL_MS, cachedLocation, clearCache (+13 more)
+
+### Community 59 - "DataChannelRelay.cpp"
+Cohesion: 0.12
+Nodes (21): Configuration, MoonlightShim, QObject, string, addRemoteCandidate, DataChannelRelay::DataChannelRelay(), notifyClientRevoked, notifyClientTakenOver (+13 more)
+
+### Community 62 - "GamepadManager"
 Cohesion: 0.16
 Nodes (6): axisToShort(), BTN, BUTTON_MAP, CTYPE, detectType(), GamepadManager
 
-### Community 39 - "Project Overview & DNS Stack"
+### Community 64 - "Av1Utils.js"
 Cohesion: 0.17
-Nodes (18): CMake as single canonical build system, Contributing guide (toolchain, build, tests, PR workflow), ACME TLS certificate via DNS-01 challenge, Internet Access plan (PowerDNS + ACME + UPnP + WebRTC direct), Unique-ID subdomain registration via PowerDNS API, caddy container (HTTPS API proxy + presentation website), dnsdist container (public :53 front, anti-amplification), pdns container (PowerDNS authoritative + REST API, internal-only) (+10 more)
+Nodes (13): AV1_FALLBACK_CODEC_STRINGS, BitReader, buildAv1DecoderConfigs(), codecStringFromSeqInfo(), findSequenceHeader(), getObuType(), isAv1Buffer(), isAv1HdrFromSeq() (+5 more)
 
-### Community 41 - "WebRTC HEVC Audit"
+### Community 65 - "ClipboardBridge"
+Cohesion: 0.14
+Nodes (20): ClipboardBridge, instance, isSelfAddress, m_LastText, onClipboardChanged, pasteFromClient, public, requestAnnounce (+12 more)
+
+### Community 66 - "RelayBase"
+Cohesion: 0.10
+Nodes (18): Q_OBJECT, QObject, signals, RelayBase, addRemoteCandidate, dataChannelsOpen, isConnected, moonlightShim (+10 more)
+
+### Community 69 - "StunClient"
 Cohesion: 0.19
-Nodes (17): WebRTC HEVC audit — session summary (Engineering Manager), WebRTC HEVC audit — deliverable 1: pipeline cartography, WebRTC HEVC audit — deliverable 2: findings report (F1-F20, F1.x-F4.x), Problem A: Latency Accumulation (buffer bloat on Android), WebRTC HEVC audit — deliverable 3: prioritized optimization plan (OPT-0..20), OPT-1: maxRetransmits=0 on Video DataChannel (both sides), OPT-2 — Decoder backpressure: consult decodeQueueSize before decode(), OPT-5: Bound the Qt Worker-to-Main Signal Queue (m_PendingFrames) (+9 more)
+Nodes (17): detectPublicIp, detectPublicIpViaHttp, QByteArray, QList, QObject, QString, Q_OBJECT, QObject (+9 more)
 
-### Community 42 - "NvComputer State Model"
+### Community 70 - "SignalingServer.cpp"
+Cohesion: 0.19
+Nodes (18): Configuration, QByteArray, QString, buildIceConfig, forwardAudioViaWs, forwardVideoViaWs, handleWsFallbackInput, isPrivateAddress (+10 more)
+
+### Community 71 - "test_framework.h"
+Cohesion: 0.14
+Nodes (12): A, B, main(), main(), run_app_settings_tests(), run_auth_manager_tests(), run_connection_guard_tests(), mw_check() (+4 more)
+
+### Community 72 - "NvAddress"
 Cohesion: 0.21
-Nodes (16): computerStateToString(), isEqualSerialized(), pairStateFromString(), pairStateToString(), serialize(), toJson(), uniqueAddresses(), update() (+8 more)
+Nodes (10): addOrUpdateHost, clientUniqueId, handleAddManualHost, onBackupPollTick, tryAddHostFromAddress, QString, quint16, NvAddress (+2 more)
 
-### Community 43 - "TypeScript Config"
-Cohesion: 0.12
-Nodes (16): compilerOptions, allowJs, checkJs, forceConsistentCasingInFileNames, lib, module, moduleResolution, noEmit (+8 more)
-
-### Community 44 - "Backend Core Headers"
-Cohesion: 0.13
-Nodes (11): QMdnsEngine(), ComputerManager(), class, namespace, class, RestRouter(), class, StaticFileHandler() (+3 more)
-
-### Community 45 - "Media Track Relay"
+### Community 74 - "onLaunchReplyFinished"
 Cohesion: 0.24
-Nodes (13): string, addRemoteCandidate(), computeRtpTimestamp(), createTracksAndChannels(), notifyClientTakenOver(), onInputMessage(), onStatsTimerTick(), onVideoFrame() (+5 more)
+Nodes (16): error, json, ComputerManager, HttpServer, registerHostRoutes(), QByteArray, QString, doLaunchApp (+8 more)
 
-### Community 46 - "Tray Manager"
+### Community 75 - "SessionInfo"
+Cohesion: 0.12
+Nodes (15): sessions, QList, qint64, QJsonObject, QString, SessionInfo, city, country (+7 more)
+
+### Community 76 - "QByteArray"
+Cohesion: 0.22
+Nodes (17): addHvcEp(), DataChannel, QByteArray, qint64, QString, QVector, shared_ptr, onVideoFrame (+9 more)
+
+### Community 77 - "MoonlightShim"
+Cohesion: 0.12
+Nodes (17): Q_OBJECT, QByteArray, QObject, MoonlightShim, aesKey, audioConfiguration, bitrateKbps, colorRange (+9 more)
+
+### Community 78 - "BrowserDetect.js"
+Cohesion: 0.17
+Nodes (12): TODO: implement resampling later (WSOLA or offline converter), IMPORTANT: moonlight-common-c delivers ENCODED Opus packets (see Limelight.h, NOTE: `sample` is typically a sub-view of a larger transport buffer; we, NOTE: the iOS playback-session hold (iosAudioUnlock) is intentionally, IMPORTANT: never use webkitEnterFullscreen() (iOS native video player)., detectPlatform(), IS_IOS, isIphone() (+4 more)
+
+### Community 81 - "SslServer"
+Cohesion: 0.17
+Nodes (11): QSslConfiguration, QTcpServer, applyPublicSslConfig, reloadTls, SslServer, m_Guard, m_LocalSslConfig, m_OnSslReady (+3 more)
+
+### Community 83 - "QByteArray"
+Cohesion: 0.25
+Nodes (14): accountKeyJwk, accountKeyThumbprint, b64urlDecode, b64urlEncode, buildEabJws, buildJws, generateCsr, parseRsaExponent (+6 more)
+
+### Community 84 - "StaticFileHandler"
+Cohesion: 0.19
+Nodes (13): QObject, QString, Q_OBJECT, QMap, QObject, QString, StaticFileHandler, m_RootDir (+5 more)
+
+### Community 85 - "iosAudioUnlock.js"
+Cohesion: 0.25
+Nodes (10): armOutputRetry(), ensureEl(), makeSilentWavUrl(), makeUnlockedCtx(), playEl(), playStream(), prepareForLaunch(), prime() (+2 more)
+
+### Community 86 - "NvApp"
 Cohesion: 0.18
-Nodes (11): ActivationReason, HttpServer, QObject, QString, QUrl, TrayManager(), HttpServer, localUrl() (+3 more)
+Nodes (5): QString, NvApp, m_HdrSupported, m_Id, m_Name
 
-### Community 48 - "ENet Control Stream"
-Cohesion: 0.23
-Nodes (13): QByteArray, QObject, QString, quint16, EnetControlStream(), quint8, sendAndWaitReply(), sendInput() (+5 more)
+### Community 87 - "UPNP NAT Traversal — Plan de Test (Phase 7)"
+Cohesion: 0.15
+Nodes (12): 1. Tests unitaires (backend), 1a. Fallback sans miniupnpc, 1b. E2E avec miniupnpc (necessite routeur UPnP sur le LAN), 2. Tests API REST, 2a. Settings streaming (upnp_enabled), 2b. Reponse /start, 2c. Frontend verification, 3. Test de regression LAN (+4 more)
 
-### Community 51 - "Internet P2P Plan Concepts"
+### Community 89 - "install.sh"
+Cohesion: 0.30
+Nodes (9): build_caddy_with_progress(), die(), ensure_env(), ok(), pm_install(), pm_refresh(), install.sh script, step() (+1 more)
+
+### Community 93 - "Changements demandés"
+Cohesion: 0.17
+Nodes (11): 1) Header simplifié — supprimer le codec badge ET le status dot, 2) Stats overlay — déplacer en haut-centre, avec responsive mobile, 3) Stats content — utiliser innerHTML avec structure riche, 4) CSS — style élégant pour la stats card, 5) Ajustement : premier affichage de l'overlay, 6) Ne pas casser le reste, Changements demandés, Contexte (+3 more)
+
+### Community 94 - "check-i18n.cjs"
+Cohesion: 0.17
+Nodes (8): catalogs, enKeys, fs, JS, localeFiles, LOCALES, path, ROOT
+
+### Community 95 - "InputCrypto"
+Cohesion: 0.29
+Nodes (8): QByteArray, InputCrypto, encrypt, InputCrypto::InputCrypto(), m_Iv, m_Key, wrapAndEncrypt, run_input_crypto_tests()
+
+### Community 96 - "encodeFromJson"
+Cohesion: 0.58
+Nodes (9): QByteArray, QJsonObject, InputEncoder, encodeFromJson, encodeKeyEvent, encodeMouseButton, encodeMouseMove, encodeMouseScroll (+1 more)
+
+### Community 97 - "WebRtcDataChannel.js"
+Cohesion: 0.24
+Nodes (7): RFC-7587, NOTE: no audio DataChannel — audio is a native RTP Opus track now (id=1, wsCloseDescription(), NOTE: no audio DataChannel — audio is a native RTP Opus track now., wsCloseDescription(), forceOpusStereo(), CHROME_ANSWER
+
+### Community 98 - "7.2 Key reference"
 Cohesion: 0.18
-Nodes (12): deSEC API Endpoint Reference, deSEC Dynamic DNS Registration (moonlightweb-{uniqueId}.dedyn.io), GDPR Consent Step for Internet Access, Public IP Detection via STUN Fallback Chain, Let's Encrypt TLS via DNS-01 Challenge (deSEC), Transport Protocol Auto-Selection Priority (MediaTrack UDP > DC UDP > MediaTrack TCP > DC TCP > WSS), UPnP Port Mapping with CGNAT Detection, ENET UDP P2P Streaming after Hole Punching (zrok plan) (+4 more)
+Nodes (11): 7.1 `settings.json` location, 7.2 Key reference, 7.3 `.env` — environment configuration, 7.4 Browser-side preferences (`localStorage`), 7. Settings Reference, Build-time embedded fallbacks, Internet Access, Lifecycle (+3 more)
 
-### Community 52 - "CI & Release Pipeline"
-Cohesion: 0.21
-Nodes (12): 70% coverage gate scoped to pure-logic units only, Testing & non-regression guide (two-layer TNR gate), aqtinstall commit pin + py7zr 1.1.0 workaround, CI multi-platform build (Windows x64/ARM64, Linux x64, macOS arm64), CI Frontend job (Prettier + ESLint + Vitest, 70% gate), MW_* build-time secrets embedding (DNS/ACME config), CI Pipeline (gated quality → tests → build), CI C++ quality jobs (clang-format 19.1.7 + cppcheck) (+4 more)
-
-### Community 55 - "UPnP Client"
-Cohesion: 0.27
-Nodes (9): UPNPClient(), QObject, string, addPortMapping(), cleanup(), discover(), getExistingPortMapping(), getExternalIPAddress() (+1 more)
-
-### Community 60 - "Frame Sender Thread"
-Cohesion: 0.27
-Nodes (9): DataChannel, QByteArray, shared_ptr, FrameSender(), Job, enqueue(), run(), sendJob() (+1 more)
-
-### Community 61 - "Prettier Config"
-Cohesion: 0.20
-Nodes (9): arrowParens, bracketSpacing, endOfLine, printWidth, semi, singleQuote, tabWidth, trailingComma (+1 more)
-
-### Community 62 - "Tolgee Config"
-Cohesion: 0.20
-Nodes (9): apiUrl, format, projectId, pull, path, push, files, forceMode (+1 more)
-
-### Community 64 - "UPnP Client Tests"
+### Community 100 - "test_upnpclient.cpp"
 Cohesion: 0.38
 Nodes (9): main(), test_add_mapping_fallback(), test_construction(), test_discover_fallback(), test_discover_with_upnp(), test_double_cleanup(), test_external_ip_fallback(), test_remove_mapping_fallback() (+1 more)
 
-### Community 66 - "Input Encoder"
-Cohesion: 0.69
-Nodes (8): QByteArray, QJsonObject, encodeFromJson(), encodeKeyEvent(), encodeMouseButton(), encodeMouseMove(), encodeMouseScroll(), packPacket()
+### Community 101 - "1.1 The User's journey"
+Cohesion: 0.20
+Nodes (10): 1.1 The User's journey, 1.2 The Administrator's journey, 1.3 What runs where, 1. Overview — MoonlightWeb from the outside, Day-2 operations, Discover, pair, stream, First-run setup, Internet access (+2 more)
 
-### Community 68 - "Cert Manager Header"
-Cohesion: 0.36
-Nodes (7): class, QSslConfiguration, QString, CertManager(), setCertKey(), setCertPem(), setPublicConfig()
+### Community 102 - "5. Streaming & Transports"
+Cohesion: 0.20
+Nodes (10): 5.1 The five transport modes, 5.2 Video path, 5.3 HDR — support and limitations, 5.4 Audio path, 5.5 Input path, 5.6 Session lifecycle & teardown discipline, 5.7 Notable workarounds catalog, 5. Streaming & Transports (+2 more)
 
-### Community 69 - "UI Audit & i18n Decision"
-Cohesion: 0.36
-Nodes (8): UI audit 2026-06-17 (look & feel, file architecture, i18n), Design-system refonte (tokens + component grammar + split CSS), i18n stack decision: i18next engine + Tolgee self-hosted editor, i18n documentation (runtime + Tolgee workflow), Homemade i18n runtime (frontend/js/i18n/i18n.js), Tolgee self-hosted (translation management editor), frontend/index.html (app shell: header + main + footer, PWA meta), Tolgee Docker service (all-in-one, port 8085)
+### Community 105 - ".prettierrc.json"
+Cohesion: 0.20
+Nodes (9): arrowParens, bracketSpacing, endOfLine, printWidth, semi, singleQuote, tabWidth, trailingComma (+1 more)
 
-### Community 71 - "Autostart Service"
-Cohesion: 0.62
-Nodes (6): QString, entryPath(), installLoginItem(), isLoginItemInstalled(), plistPath(), xmlEscape()
+### Community 106 - ".tolgeerc.json"
+Cohesion: 0.20
+Nodes (9): apiUrl, format, projectId, pull, path, push, files, forceMode (+1 more)
 
-### Community 72 - "Static File Handler"
+### Community 107 - "2. Architecture"
+Cohesion: 0.22
+Nodes (9): 2.1 System diagram, 2.2 The three-party exchange in detail, 2.3 Technology stack & rationale, 2.4 Repository layout, 2.5 Code architecture principles, 2. Architecture, Browser ↔ MoonlightWeb, End-to-end launch sequence (+1 more)
+
+### Community 108 - "6. Security"
+Cohesion: 0.22
+Nodes (9): 6.1 Threat model in one paragraph, 6.2 Authentication, 6.3 Sessions, 6.4 Brute-force & flood mitigation, 6.5 TLS, 6.6 DNS subdomain ownership, 6.7 Internet-access consent & audit, 6.8 Other hardening (+1 more)
+
+### Community 109 - "10. PowerDNS Stack (`deploy/powerdns/`)"
+Cohesion: 0.22
+Nodes (9): 10.1 Topology, 10.2 PowerDNS configuration, 10.3 dnsdist configuration (`dnsdist/dnsdist.conf`), 10.4 Caddy (`caddy/`), 10.5 The installer (`install.sh`), 10.6 Manual steps (VM / cloud / registrar), 10.7 Hardening & limits, 10.8 Operations cheat-sheet (+1 more)
+
+### Community 110 - "11. Build, CI & Testing"
+Cohesion: 0.22
+Nodes (9): 11.1 Building from source, 11.2 CI (`.github/workflows/ci.yml`), 11.3 Release (`.github/workflows/release.yml`), 11.4 Testing, 11.5 Code quality conventions, 11. Build, CI & Testing, Backend — Qt Test (`backend/tests/`), Frontend — Vitest (`frontend/test/`, jsdom) (+1 more)
+
+### Community 111 - "SystemRoutes.cpp"
 Cohesion: 0.43
-Nodes (6): HttpResponse, QObject, QString, StaticFileHandler(), mimeType(), serveFile()
+Nodes (7): AppSettings, AuthManager, ComputerManager, function, HttpServer, registerSystemRoutes(), InternetAccessManager
 
-### Community 73 - "Media Track Setup"
+### Community 112 - "4. Frontend (Vanilla JS)"
+Cohesion: 0.25
+Nodes (8): 4.1 File architecture, 4.2 Navigation model, 4.3 StreamView — the streaming overlay, 4.4 Renderers — why canvas *and* video, 4.5 Audio pipeline, 4.6 i18n, 4.7 Quality tooling, 4. Frontend (Vanilla JS)
+
+### Community 113 - "12. Agentic Coding — AI-assisted development on this repo"
+Cohesion: 0.25
+Nodes (8): 12.1 Ground rules for any agent, 12.2 Recommended architecture: one master agent + on-demand skills + scoped sub-agents, 12.3 Claude Code configuration, 12.4 GitHub Copilot configuration, 12.5 Formatting this repo for AI ingestion (why the wiki looks like this), 12. Agentic Coding — AI-assisted development on this repo, Suggested skills (playbooks the master loads on demand), When the master should spawn a sub-agent
+
+### Community 115 - "mapHttpsPortParity"
+Cohesion: 0.43
+Nodes (7): quint16, fallbackExternalPort, isLocalPortBindable, m_HttpsRebindCallback, mapHttpsPortParity, mapPortWithFallback, setPorts
+
+### Community 116 - "StreamSession::StreamSession"
+Cohesion: 0.29
+Nodes (7): NvComputer, NvHTTP, QObject, quint16, ResponseCallback, VideoCodec, StreamSession::StreamSession()
+
+### Community 117 - "3. Backend (C++ / Qt)"
+Cohesion: 0.29
+Nodes (7): 3.1 Module map, 3.2 HTTP server, 3.3 Streaming layer, 3.4 Internet access, 3.5 Startup sequence (`main.cpp`), 3.6 Data on disk, 3. Backend (C++ / Qt)
+
+### Community 118 - "8. REST API & WebSocket surfaces"
+Cohesion: 0.29
+Nodes (7): 8.1 Health & server info, 8.2 Authentication (`AuthRoutes.cpp`), 8.3 Hosts & streaming (`HostRoutes.cpp` + `main.cpp`), 8.4 Admin, settings, internet, setup, system (`SystemRoutes.cpp`), 8.5 WebSocket surfaces, 8.6 Static file serving, 8. REST API & WebSocket surfaces
+
+### Community 119 - "onMdnsResolved"
+Cohesion: 0.47
+Nodes (6): chooseBestMdnsAddress(), onMdnsResolved, QHostAddress, QVector, handleResolvedAddress(), MdnsPendingComputer
+
+### Community 120 - ".~AuthManager"
 Cohesion: 0.33
-Nodes (7): Configuration, MoonlightShim, QObject, stop(), MediaTrackRelay(), prepare(), setupPeerConnection()
+Nodes (5): generateRandomKey, loadSessions, AppSettings, QByteArray, QObject
 
-### Community 77 - "Audio Fragment Send"
-Cohesion: 0.40
-Nodes (6): DataChannel, QByteArray, shared_ptr, onAudioSample(), sendAudioFragmented(), onAudioSample()
+### Community 121 - "SystemRoutes.h"
+Cohesion: 0.33
+Nodes (5): AppSettings, AuthManager, ComputerManager, HttpServer, InternetAccessManager
 
-### Community 78 - "Sunshine Installer"
+### Community 123 - "run_input_encoder_tests"
 Cohesion: 0.60
-Nodes (4): QString, QStringList, run(), which()
+Nodes (5): beU32(), QByteArray, leU32(), run_input_encoder_tests(), quint32
 
-### Community 79 - "Input Crypto"
+### Community 124 - "9. Installers & Packaging"
+Cohesion: 0.33
+Nodes (6): 9.1 Windows — Inno Setup (`backend/installer/moonlightweb.iss`), 9.2 macOS — interactive `.pkg` (`backend/installer/macos/`), 9.3 Linux — `.deb` / `.rpm` / AppImage (`backend/packaging/linux/make-packages.sh`), 9.4 Shared runtime behaviors, 9.5 Workarounds catalog (installers), 9. Installers & Packaging
+
+### Community 126 - "registerAuthRoutes"
 Cohesion: 0.70
-Nodes (4): QByteArray, InputCrypto(), encrypt(), wrapAndEncrypt()
+Nodes (4): AuthManager, HttpServer, registerAuthRoutes(), GeoIpService
 
-### Community 80 - "Signaling Server Header"
+### Community 127 - "NalLocation"
 Cohesion: 0.40
-Nodes (4): class, namespace, SignalingServer(), rtc()
+Nodes (5): NalLocation, nalLen, nalOffset, startLen, startOffset
 
-### Community 82 - "Logo & Branding 512px"
-Cohesion: 0.67
-Nodes (4): Frontend App Icon / PWA Icon Usage, Moonlight-Web Logo (512px), Moonlight-Web Branding, Orbital Moon Motif
-
-### Community 84 - "Stats Overlay Refactor Mission"
+### Community 128 - "ComPtr"
 Cohesion: 0.50
-Nodes (4): Mission: Stats Overlay Refactor (StreamView), StreamView.render, StreamView.setStatus, StreamView._updateOverlay
+Nodes (3): ComPtr, p, T
 
-### Community 86 - "Logo Brand Motif"
-Cohesion: 1.00
-Nodes (3): Moonlight-Web Logo (Ringed Planet / Spoked Sphere), Moonlight-Web Brand Identity, Planet-with-Orbital-Ring Motif (Saturn-like sphere with 8-spoke wheel pattern, flat slate-gray monochrome style)
+### Community 129 - "StreamRelay::StreamRelay"
+Cohesion: 0.40
+Nodes (5): MoonlightShim, QObject, QSslConfiguration, quint16, StreamRelay::StreamRelay()
 
-## Ambiguous Edges - Review These
-- `UPnP NAT Traversal test plan (Phase 7)` → `WebRTC HEVC audit — deliverable 1: pipeline cartography`  [AMBIGUOUS]
-  backend/tests/UPNP_TEST_PLAN.md · relation: references
+### Community 130 - "test_static_files.cpp"
+Cohesion: 0.50
+Nodes (4): QByteArray, QString, run_static_files_tests(), writeFile()
+
+### Community 131 - "renew-certs.sh"
+Cohesion: 0.70
+Nodes (4): die(), ok(), renew-certs.sh script, warn()
+
+### Community 132 - "MoonlightWeb — Technical Wiki"
+Cohesion: 0.40
+Nodes (5): Conventions used throughout, How to read this wiki, MoonlightWeb — Technical Wiki, Project at a glance, Table of contents
+
+### Community 133 - "build_stream_image.py"
+Cohesion: 0.40
+Nodes (3): find_coeffs(), Build the marketing 'stream' illustration from blf.ai source.  - remove white/c, coeffs mapping OUTPUT coords (pa) -> INPUT coords (pb) for Image.PERSPECTIVE.
+
+### Community 134 - "InternetAccessManager::InternetAccessManager"
+Cohesion: 0.50
+Nodes (4): AppSettings, QObject, InternetAccessManager::InternetAccessManager(), stop
+
+### Community 135 - "SignalingServer::SignalingServer"
+Cohesion: 0.50
+Nodes (4): QObject, quint16, RelayBase, SignalingServer::SignalingServer()
+
+### Community 136 - "test_http_parser.cpp"
+Cohesion: 0.67
+Nodes (3): QByteArray, raw(), run_http_parser_tests()
+
+### Community 137 - "13. Roadmap, Constraints & Improvement Leads"
+Cohesion: 0.50
+Nodes (4): 13.1 Known remaining work, 13.2 Structural constraints (accept, don't fight), 13.3 Improvement leads, 13. Roadmap, Constraints & Improvement Leads
+
+### Community 138 - "NvHTTP::NvHTTP"
+Cohesion: 0.67
+Nodes (3): QNetworkAccessManager, QObject, NvHTTP::NvHTTP()
+
+### Community 139 - "AcmeClient::AcmeClient"
+Cohesion: 0.67
+Nodes (3): AcmeClient::AcmeClient(), cancel, QObject
+
+### Community 141 - "onLocalIceCandidate"
+Cohesion: 0.67
+Nodes (3): string, onLocalIceCandidate, onLocalSdp
 
 ## Knowledge Gaps
-- **240 isolated node(s):** `HttpServer`, `QObject`, `ActivationReason`, `class`, `quint16` (+235 more)
+- **816 isolated node(s):** `build.sh script`, `build-pkg.sh script`, `-initWithSection`, `-section`, `-contentView` (+811 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **38 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **33 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **What is the exact relationship between `UPnP NAT Traversal test plan (Phase 7)` and `WebRTC HEVC audit — deliverable 1: pipeline cartography`?**
-  _Edge tagged AMBIGUOUS (relation: references) - confidence is low._
-- **Why does `Audit Mission: WebRTC DataChannel HEVC Pipeline (Android latency + pixelation)` connect `WebRTC HEVC Audit` to `DataChannel Video Relay`, `Architecture & Dev Plan Docs`, `WebRTC DataChannel Client`, `StreamView Core`?**
-  _High betweenness centrality (0.275) - this node is a cross-community bridge._
-- **Why does `QJsonArray` connect `PowerDNS API Client` to `REST Routes & Test Framework`, `Auth Sessions & PIN`, `WebRTC Signaling Server`, `NvComputer State Model`, `ACME Certificate Client`, `Backend Core Headers`, `NvHTTP Data Model`, `Internet Access Manager`, `Streaming Session Lifecycle`?**
-  _High betweenness centrality (0.254) - this node is a cross-community bridge._
-- **Why does `StreamView` connect `StreamView Core` to `Stats & Congestion Tracking`, `DataChannel Video Relay`, `Video Frame Decode Path`, `WebRTC HEVC Audit`, `Immersive Overlay UI`, `Help & Stats Overlay UI`, `StreamView Teardown & Keys`, `App Shell & i18n Runtime`, `MP4 Muxer & Codec Strings`, `Mouse Mode Input`, `Display Fit Helpers`, `Decoder Error Fallback`?**
-  _High betweenness centrality (0.214) - this node is a cross-community bridge._
-- **What connects `HttpServer`, `QObject`, `ActivationReason` to the rest of the system?**
-  _247 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `HTTPS Server & Certificates` be split into smaller, more focused modules?**
-  _Cohesion score 0.05860805860805861 - nodes in this community are weakly interconnected._
-- **Should `App Settings Store` be split into smaller, more focused modules?**
-  _Cohesion score 0.07259407259407259 - nodes in this community are weakly interconnected._
+- **Why does `ComputerManager` connect `ComputerManager` to `IdentityManager`, `HttpServer`, `NvAddress`, `ControlChannel`, `ComputerManager.cpp`, `QJsonObject`, `onMdnsResolved`, `DataChannelRelay.h`?**
+  _High betweenness centrality (0.033) - this node is a cross-community bridge._
+- **Why does `MediaTrackRelay` connect `MediaTrackRelay` to `DataChannelRelay.h`, `ClipboardBridge`, `MediaTrackRelay.cpp`?**
+  _High betweenness centrality (0.033) - this node is a cross-community bridge._
+- **Why does `HttpServer` connect `HttpServer` to `.info`, `SslServer`, `ConnectionGuard`, `HttpServer.cpp`?**
+  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+- **What connects `build.sh script`, `build-pkg.sh script`, `-initWithSection` to the rest of the system?**
+  _816 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `AppSettings.cpp` be split into smaller, more focused modules?**
+  _Cohesion score 0.08333333333333333 - nodes in this community are weakly interconnected._
+- **Should `StreamSession` be split into smaller, more focused modules?**
+  _Cohesion score 0.030969030969030968 - nodes in this community are weakly interconnected._
+- **Should `AuthManager` be split into smaller, more focused modules?**
+  _Cohesion score 0.075990675990676 - nodes in this community are weakly interconnected._

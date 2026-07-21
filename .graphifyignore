@@ -1,0 +1,9 @@
+# Scope the graphify dependency graph to the project's OWN code.
+# Vendored / prebuilt third-party sources (git submodules + committed OpenSSL)
+# are not part of our architecture graph and would balloon it past the HTML
+# viz limit. .gitignore already excludes build/, node_modules/, etc.
+backend/third_party/
+backend/libs/
+
+# Don't graph graphify's own output.
+graphify-out/
