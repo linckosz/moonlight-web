@@ -219,6 +219,8 @@
     .brand img{width:24px; height:24px}
     header nav{width:100%; margin-left:0; gap:14px; justify-content:flex-start}
     header nav a{font-size:.85rem}
+    header nav .gh-btn{margin-left:auto; padding:.5rem .8rem}  /* keep the ★ CTA on the right */
+    .gh-label{display:none}                /* icon-only ★ CTA (aria-label keeps it named) */
   }
   @media(max-width:380px){
     header nav{gap:11px}
@@ -513,7 +515,6 @@
       <a href="/" aria-current="page" data-i18n="nav.home">Home</a>
       <a href="/guides/windows.html" data-i18n="nav.guides">Guides</a>
       <a href="/faq.html" data-i18n="nav.faq">FAQ</a>
-      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="nav">GitHub</a>
       <span class="lang">
         <select id="lang-select" aria-label="Language" data-umami-event="lang">
           <option value="en">English</option>
@@ -521,6 +522,7 @@
           <option value="zh" lang="zh">中文</option>
         </select>
       </span>
+      <a class="btn btn-primary gh-btn" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" aria-label="GitHub" data-umami-event="github" data-umami-event-loc="nav">★ <span class="gh-label">GitHub</span></a>
     </nav>
   </div>
 </header>
