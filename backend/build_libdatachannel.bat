@@ -49,7 +49,7 @@ cmake .. ^
     -DNO_MEDIA=OFF ^
     -DNO_EXAMPLES=ON ^
     -DNO_TESTS=ON ^
-    -DOPENSSL_ROOT_DIR="D:/Code/moonlight-web-deepseek/backend/libs/windows"
+    -DOPENSSL_ROOT_DIR="%~dp0libs\windows"
 
 if errorlevel 1 (
     echo [ERROR] CMake configuration failed

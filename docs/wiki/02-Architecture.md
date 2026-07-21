@@ -89,7 +89,7 @@ Key invariants (hard-won, do not regress):
 |---|---|
 | **C++17 + Qt 6.11** (backend) | `moonlight-common-c` is C; Qt provides the cross-platform event loop, networking (QSslSocket), JSON, tray icon, and mature TLS handling on all three OSes with a single codebase. Qt 6.11 is the tested baseline; the **OpenSSL TLS backend is forced** on Windows (Schannel cannot load ACME PEM keys). |
 | **`moonlight-common-c`** (submodule) | The canonical, battle-tested GameStream protocol core used by every Moonlight client. Reimplementing RTSP/RTP/ENet/FEC would be folly. |
-| **`libdatachannel`** (submodule) | Lightweight C++ WebRTC implementation (DataChannels *and* RTP media tracks) without pulling the enormous libwebrtc. Built via `build_libdatachannel.bat`/CMake. |
+| **`libdatachannel`** (submodule) | Lightweight C++ WebRTC implementation (DataChannels *and* RTP media tracks) without pulling the enormous libwebrtc. Built statically via CMake `add_subdirectory`. |
 | **`qmdnsengine`**, **`miniupnpc`** (submodules) | mDNS discovery and UPnP port mapping, both small and embeddable. |
 | **OpenSSL 3** | Pairing crypto (AES/RSA per GameStream), input encryption (AES-128-GCM), ACME JOSE signing. Bundled on Windows (`backend/libs/windows/`). |
 | **Vanilla JS, no framework, no build step** (frontend) | The app is served by an embedded C++ web server: zero build tooling means the server ships plain files and contributors need only a browser. ES6 modules give structure; Prettier+ESLint+Vitest+tsc(advisory) give quality without a bundler. |
@@ -102,7 +102,7 @@ Key invariants (hard-won, do not regress):
 ## 2.4 Repository layout
 
 ```
-moonlight-web-deepseek/
+moonlight-web/
 ├── backend/                    # C++/Qt server
 │   ├── CMakeLists.txt          # single canonical build (also embeds MW_* CI secrets)
 │   ├── src/

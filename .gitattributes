@@ -12,3 +12,8 @@ frontend/js/vendor/** linguist-vendored
 
 # Generated Qt MOC output should never be diffed if it slips in.
 *.moc linguist-generated
+
+# Line endings for build scripts: shell must stay LF (runs on Linux/macOS),
+# batch stays CRLF, regardless of the checkout platform.
+*.sh  text eol=lf
+*.bat text eol=crlf

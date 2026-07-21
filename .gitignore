@@ -27,7 +27,6 @@ release/
 debug/
 backend/release/
 backend/debug/
-backend/build_msvc.bat
 
 # IDE
 .vs/
@@ -106,6 +105,8 @@ backend/*.ps1
 backend/*.sh
 !backend/build_libdatachannel.bat
 !backend/build_miniupnpc.bat
+!backend/build_msvc.bat
+!backend/build.sh
 !backend/patch_makefile.ps1
 backend/scripts/*.ps1
 backend/build_output.txt

@@ -40,19 +40,23 @@ the build script: `C:\Qt\6.11.0\msvc2022_64` (override with the `QTDIR` env var)
 ## 2. Clone & build
 
 ```bash
-git clone <this-repo>
-cd moonlight-web-deepseek
+git clone https://github.com/linckosz/moonlight-web.git
+cd moonlight-web
 git submodule update --init --recursive   # moonlight-common-c, qmdnsengine, libdatachannel...
 
 # Windows (MSVC) — detects VS 2022 + Qt, configures Ninja, builds Release:
 cmd //c backend/build_msvc.bat
-# Linux / macOS (CMake):
-cmake -S backend -B backend/build -DCMAKE_BUILD_TYPE=Release && cmake --build backend/build -j
+# Linux / macOS — same, via CMake (Ninja if available):
+./backend/build.sh
+#   …or the raw CMake call the scripts wrap:
+#   cmake -S backend -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
-cd backend/build/release && ./MoonlightWeb   # Windows: MoonlightWeb.exe → open https://localhost
+./build/MoonlightWeb   # Windows: build\MoonlightWeb.exe → open https://localhost
 ```
 
-> If CMake can't find Qt, pass `-DCMAKE_PREFIX_PATH=<your Qt kit path>` (e.g. `C:/Qt/6.11.0/msvc2022_64`).
+Both scripts auto‑init the git submodules on first run and put the binary in `build/`.
+
+> If CMake can't find Qt, pass `-DCMAKE_PREFIX_PATH=<your Qt kit path>` (or set `QTDIR`), e.g. `C:/Qt/6.11.0/msvc2022_64`.
 
 ---
 
