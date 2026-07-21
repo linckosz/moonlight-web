@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 150" width="260" height="150" role="img" aria-label="Game controller">
+  <defs>
+    <linearGradient id="pad-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#24384a"/>
+      <stop offset=".55" stop-color="#132030"/>
+      <stop offset="1" stop-color="#0a121b"/>
+    </linearGradient>
+  </defs>
+  <!-- body -->
+  <path d="M65 25 C85 15 175 15 195 25 C220 33 236 62 240 92 C243 117 231 132 216 129 C200 126 194 106 184 97 C174 88 86 88 76 97 C66 106 60 126 44 129 C29 132 17 117 20 92 C24 62 40 33 65 25 Z"
+        fill="url(#pad-body)" stroke="#0a121b" stroke-width="2.5"/>
+  <!-- top rim light -->
+  <path d="M66 24 C86 14.5 174 14.5 194 24" fill="none" stroke="#5f7f9c" stroke-width="2.4" stroke-linecap="round" opacity=".6"/>
+  <!-- guide button -->
+  <circle cx="130" cy="33" r="8.5" fill="rgba(25,211,255,.16)" stroke="#19d3ff" stroke-width="1.6"/>
+  <circle cx="130" cy="33" r="3.2" fill="#19d3ff"/>
+  <!-- view / menu -->
+  <circle cx="112" cy="54" r="3.6" fill="#2a3f52"/>
+  <circle cx="148" cy="54" r="3.6" fill="#2a3f52"/>
+  <!-- left stick -->
+  <circle cx="78" cy="52" r="15" fill="#0c1620" stroke="#19d3ff" stroke-width="2" stroke-opacity=".55"/>
+  <circle cx="78" cy="52" r="8.5" fill="#12212f" stroke="#19d3ff" stroke-width="1.6" stroke-opacity=".9"/>
+  <!-- d-pad -->
+  <path d="M97 68 H109 V78 H119 V90 H109 V100 H97 V90 H87 V78 H97 Z"
+        fill="#12212f" stroke="#19d3ff" stroke-width="1.6" stroke-opacity=".6"/>
+  <!-- right stick -->
+  <circle cx="152" cy="84" r="14" fill="#0c1620" stroke="#19d3ff" stroke-width="2" stroke-opacity=".55"/>
+  <circle cx="152" cy="84" r="8" fill="#12212f" stroke="#19d3ff" stroke-width="1.6" stroke-opacity=".9"/>
+  <!-- ABXY -->
+  <circle cx="182" cy="38" r="7" fill="#f5d90a"/>
+  <circle cx="167" cy="52" r="7" fill="#19d3ff"/>
+  <circle cx="197" cy="52" r="7" fill="#ff2e88"/>
+  <circle cx="182" cy="66" r="7" fill="#41cd52"/>
+</svg>
