@@ -7893,20 +7893,6 @@
       "id": "streaming_list_files"
     },
     {
-      "label": "list_files.sh script",
-      "file_type": "code",
-      "source_file": "backend/src/streaming/list_files.sh",
-      "source_location": "L1",
-      "metadata": {
-        "language": "bash",
-        "kind": "bash_entrypoint"
-      },
-      "_origin": "ast",
-      "community": 102,
-      "norm_label": "list_files.sh script",
-      "id": "d_code_moonlight_web_deepseek_backend_src_streaming_list_files_sh__entry"
-    },
-    {
       "label": "BackendClient.js",
       "file_type": "code",
       "source_file": "frontend/js/api/BackendClient.js",
@@ -38976,16 +38962,6 @@
       "confidence_score": 1.0,
       "source": "backend_src_streaming_streamrelay_h_streaming_streamrelay_streamrelay",
       "target": "backend_src_streaming_streamrelay_h_class"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "backend/src/streaming/list_files.sh",
-      "source_location": "L1",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "streaming_list_files",
-      "target": "d_code_moonlight_web_deepseek_backend_src_streaming_list_files_sh__entry"
     },
     {
       "relation": "contains",
