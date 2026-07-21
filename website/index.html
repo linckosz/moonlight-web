@@ -227,6 +227,7 @@
   }
   @media(max-width:380px){
     header nav{gap:11px}
+    .lang select{font-size:.72rem; padding:.34rem 1.5rem .34rem .55rem}
   }
   /* Language dropdown — stays visible on mobile (it's a control, not a nav link) */
   .lang{
@@ -246,9 +247,6 @@
     transform:translateY(-70%) rotate(45deg); pointer-events:none; transition:.15s;
   }
   @media(hover:hover){ .lang:hover{border-color:var(--line-glow)} .lang:hover::after{border-color:var(--cyan)} }
-  @media(max-width:520px){
-    .lang select{font-size:.72rem; padding:.34rem 1.5rem .34rem .55rem}
-  }
 
   /* ───── Hero ───── */
   .hero{padding:88px 0 30px; text-align:center; position:relative}
