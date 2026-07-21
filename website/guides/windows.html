@@ -65,82 +65,89 @@
       MOONLIGHTWEB
     </a>
     <nav aria-label="Main navigation">
-      <a href="/">Home</a>
-      <a href="/guides/windows.html" aria-current="page">Guides</a>
-      <a href="/faq.html">FAQ</a>
+      <a href="/" data-i18n="nav.home">Home</a>
+      <a href="/guides/windows.html" aria-current="page" data-i18n="nav.guides">Guides</a>
+      <a href="/faq.html" data-i18n="nav.faq">FAQ</a>
       <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">GitHub</a>
+      <span class="lang">
+        <select id="lang-select" aria-label="Language">
+          <option value="en">English</option>
+          <option value="fr">Français</option>
+          <option value="zh" lang="zh">中文</option>
+        </select>
+      </span>
     </nav>
   </div>
 </header>
 
 <main>
 <div class="wrap">
-  <nav class="crumbs" aria-label="Breadcrumb"><a href="/">Home</a> / <a href="/guides/windows.html">Guides</a> / Windows</nav>
-  <span class="kicker">Install guide · Windows</span>
-  <h1>Stream your Windows gaming PC to any browser</h1>
-  <p class="lead">MoonlightWeb is a free, open-source (GPL-3.0) server that streams your
+  <nav class="crumbs" aria-label="Breadcrumb" data-i18n-html="crumbs"><a href="/">Home</a> / <a href="/guides/windows.html">Guides</a> / Windows</nav>
+  <span class="kicker" data-i18n="kicker">Install guide · Windows</span>
+  <h1 data-i18n="h1">Stream your Windows gaming PC to any browser</h1>
+  <p class="lead" data-i18n-html="lead">MoonlightWeb is a free, open-source (GPL-3.0) server that streams your
     <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> gaming rig to any
     device with a browser — phone, tablet, laptop, TV. <strong>One download on the gaming PC.
     Nothing to install on any other device — just a URL.</strong></p>
 
-  <h2>What you need</h2>
+  <h2 data-i18n="need.h">What you need</h2>
   <ul>
-    <li>A Windows gaming PC (x64 or arm64) with a GPU capable of hardware encoding — the machine that runs your games.</li>
-    <li><strong>Sunshine</strong> as the streaming host. Don't have it yet? The MoonlightWeb installer can set it up for you.</li>
-    <li>Any device with a modern browser as the client: Chrome, Edge, Safari or Firefox. No app, no download, no account.</li>
+    <li data-i18n="need.1">A Windows gaming PC (x64 or arm64) with a GPU capable of hardware encoding — the machine that runs your games.</li>
+    <li data-i18n-html="need.2"><strong>Sunshine</strong> as the streaming host. Don't have it yet? The MoonlightWeb installer can set it up for you.</li>
+    <li data-i18n="need.3">Any device with a modern browser as the client: Chrome, Edge, Safari or Firefox. No app, no download, no account.</li>
   </ul>
 
-  <h2>Installation, step by step</h2>
+  <h2 data-i18n="steps.h">Installation, step by step</h2>
   <div class="gsteps">
     <div class="gstep cyb" id="step-download">
-      <h3>Download the installer</h3>
-      <p>Grab the Windows installer from the <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">releases page</a> —
+      <h3 data-i18n="step1.h">Download the installer</h3>
+      <p data-i18n-html="step1.p">Grab the Windows installer from the <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">releases page</a> —
          <code>x64 .exe</code> for most PCs, <code>arm64 .exe</code> for Windows-on-ARM machines.</p>
     </div>
     <div class="gstep cyb" id="step-install">
-      <h3>Run the guided installer — on the gaming PC</h3>
-      <p>The wizard walks you through everything: it can install Sunshine if it's missing, and offers
+      <h3 data-i18n="step2.h">Run the guided installer — on the gaming PC</h3>
+      <p data-i18n="step2.p1">The wizard walks you through everything: it can install Sunshine if it's missing, and offers
          one-click Internet access (personal sub-domain, free TLS certificate, UPnP port mapping).</p>
-      <p>When it finishes, a tray icon appears — the server is running. That's the whole install.</p>
+      <p data-i18n="step2.p2">When it finishes, a tray icon appears — the server is running. That's the whole install.</p>
     </div>
     <div class="gstep cyb" id="step-open">
-      <h3>Open a browser on any device</h3>
-      <p>On the PC itself: <code>https://localhost</code>. From another device on your network: your LAN IP.
+      <h3 data-i18n="step3.h">Open a browser on any device</h3>
+      <p data-i18n-html="step3.p">On the PC itself: <code>https://localhost</code>. From another device on your network: your LAN IP.
          From anywhere in the world: your personal sub-domain (<code>https://you.moonlightweb.top</code>) if you enabled Internet access.</p>
     </div>
     <div class="gstep cyb" id="step-pair">
-      <h3>Pair once with a PIN</h3>
-      <p>Your Sunshine hosts are already listed — discovered automatically on the LAN via mDNS.
+      <h3 data-i18n="step4.h">Pair once with a PIN</h3>
+      <p data-i18n="step4.p">Your Sunshine hosts are already listed — discovered automatically on the LAN via mDNS.
          Enter the PIN Sunshine displays, and the pairing is remembered forever.</p>
     </div>
     <div class="gstep cyb" id="step-play">
-      <h3>Press play</h3>
-      <p>Pick a game or the full desktop. Fullscreen, gamepad in hand — up to 4K HDR at 240 fps,
+      <h3 data-i18n="step5.h">Press play</h3>
+      <p data-i18n="step5.p">Pick a game or the full desktop. Fullscreen, gamepad in hand — up to 4K HDR at 240 fps,
          with under 20 ms latency over Wi-Fi.</p>
     </div>
   </div>
 
-  <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-windows">⬇ Download for Windows</a></p>
+  <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-windows" data-i18n="dl.btn">⬇ Download for Windows</a></p>
 
-  <h2>Troubleshooting</h2>
-  <h3>The host doesn't appear in the browser</h3>
-  <p>Make sure the client device is on the same network as the gaming PC, and that Windows Firewall
+  <h2 data-i18n="tr.h">Troubleshooting</h2>
+  <h3 data-i18n="tr1.h">The host doesn't appear in the browser</h3>
+  <p data-i18n="tr1.p">Make sure the client device is on the same network as the gaming PC, and that Windows Firewall
      allowed MoonlightWeb when prompted during the first launch. You can also add a host manually by IP.</p>
-  <h3>HEVC or AV1 is greyed out</h3>
-  <p>Codec options your browser can't hardware-decode are automatically disabled — that's expected.
+  <h3 data-i18n="tr2.h">HEVC or AV1 is greyed out</h3>
+  <p data-i18n="tr2.p">Codec options your browser can't hardware-decode are automatically disabled — that's expected.
      H264 works everywhere; HEVC and AV1 availability depends on the client device's browser and GPU.</p>
-  <h3>Stream feels choppy on a weak connection</h3>
-  <p>Lower the streamed resolution and enable <strong>Video Enhancement</strong>: the stream is upscaled and
+  <h3 data-i18n="tr3.h">Stream feels choppy on a weak connection</h3>
+  <p data-i18n-html="tr3.p">Lower the streamed resolution and enable <strong>Video Enhancement</strong>: the stream is upscaled and
      sharpened on the client's GPU (WebGPU running SGSRv1 + FSR1), so a 720p stream looks close to 1440p.</p>
 
-  <div class="note"><strong>Restrictive network?</strong> MoonlightWeb falls back automatically
+  <div class="note" data-i18n-html="note"><strong>Restrictive network?</strong> MoonlightWeb falls back automatically
     (UDP → TCP → WSS), so it keeps working through strict firewalls and hostile hotel Wi-Fi.</div>
 
-  <h2>Keep reading</h2>
+  <h2 data-i18n="read.h">Keep reading</h2>
   <div class="xlinks">
-    <a class="cyb" href="/faq.html"><strong>FAQ</strong><span>Latency, codecs, security, Internet play — all the common questions.</span></a>
-    <a class="cyb" href="/guides/macos.html"><strong>Install on macOS</strong><span>Apple Silicon guide with the .pkg installer.</span></a>
-    <a class="cyb" href="/guides/linux.html"><strong>Install on Linux</strong><span>.deb, .rpm or portable AppImage.</span></a>
+    <a class="cyb" href="/faq.html"><strong data-i18n="x.faq.t">FAQ</strong><span data-i18n="x.faq.d">Latency, codecs, security, Internet play — all the common questions.</span></a>
+    <a class="cyb" href="/guides/macos.html"><strong data-i18n="x.mac.t">Install on macOS</strong><span data-i18n="x.mac.d">Apple Silicon guide with the .pkg installer.</span></a>
+    <a class="cyb" href="/guides/linux.html"><strong data-i18n="x.lin.t">Install on Linux</strong><span data-i18n="x.lin.d">.deb, .rpm or portable AppImage.</span></a>
   </div>
 </div>
 </main>
@@ -149,12 +156,92 @@
   <div class="wrap">
     <span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL-3.0</span>
     <span>
-      <a href="/">Home</a> ·
-      <a href="/faq.html">FAQ</a> ·
+      <a href="/" data-i18n="nav.home">Home</a> ·
+      <a href="/faq.html" data-i18n="nav.faq">FAQ</a> ·
       <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener">GitHub</a> ·
-      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener">Support</a>
+      <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-i18n="nav.support">Support</a>
     </span>
   </div>
 </footer>
+
+<script>
+/* French + Chinese catalogs for this page. EN is the HTML above (source of
+   truth). Keys map via data-i18n (textContent) / data-i18n-html (innerHTML). */
+window.MW_DICTS = {
+  fr: {
+    'nav.home':'Accueil', 'nav.guides':'Guides', 'nav.faq':'FAQ', 'nav.support':'Soutenir',
+    'crumbs':'<a href="/">Accueil</a> / <a href="/guides/windows.html">Guides</a> / Windows',
+    'kicker':'Guide d’installation · Windows',
+    'h1':'Streamez votre PC gamer Windows vers n’importe quel navigateur',
+    'lead':'MoonlightWeb est un serveur gratuit et open source (GPL-3.0) qui streame votre PC <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> vers n’importe quel appareil doté d’un navigateur — téléphone, tablette, ordinateur, TV. <strong>Un seul téléchargement sur le PC gamer. Rien à installer sur les autres appareils — juste une URL.</strong>',
+    'need.h':'Ce qu’il vous faut',
+    'need.1':'Un PC gamer Windows (x64 ou arm64) avec un GPU capable d’encodage matériel — la machine qui fait tourner vos jeux.',
+    'need.2':'<strong>Sunshine</strong> comme hôte de streaming. Vous ne l’avez pas encore ? L’installateur MoonlightWeb peut le configurer pour vous.',
+    'need.3':'N’importe quel appareil avec un navigateur moderne comme client : Chrome, Edge, Safari ou Firefox. Pas d’application, pas de téléchargement, pas de compte.',
+    'steps.h':'Installation, étape par étape',
+    'step1.h':'Téléchargez l’installateur',
+    'step1.p':'Récupérez l’installateur Windows depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a> — <code>x64 .exe</code> pour la plupart des PC, <code>arm64 .exe</code> pour les machines Windows-on-ARM.',
+    'step2.h':'Lancez l’installateur guidé — sur le PC gamer',
+    'step2.p1':'L’assistant vous guide de bout en bout : il peut installer Sunshine s’il manque, et propose l’accès Internet en un clic (sous-domaine personnel, certificat TLS gratuit, mappage de ports UPnP).',
+    'step2.p2':'À la fin, une icône apparaît dans la barre des tâches — le serveur tourne. C’est toute l’installation.',
+    'step3.h':'Ouvrez un navigateur sur n’importe quel appareil',
+    'step3.p':'Sur le PC lui-même : <code>https://localhost</code>. Depuis un autre appareil de votre réseau : votre IP locale. Depuis n’importe où dans le monde : votre sous-domaine personnel (<code>https://vous.moonlightweb.top</code>) si vous avez activé l’accès Internet.',
+    'step4.h':'Appairez une fois avec un code PIN',
+    'step4.p':'Vos hôtes Sunshine sont déjà listés — découverts automatiquement sur le réseau local via mDNS. Saisissez le code PIN affiché par Sunshine, et l’appairage est mémorisé pour toujours.',
+    'step5.h':'Appuyez sur play',
+    'step5.p':'Choisissez un jeu ou le bureau complet. Plein écran, manette en main — jusqu’à 4K HDR à 240 fps, avec moins de 20 ms de latence en Wi-Fi.',
+    'dl.btn':'⬇ Télécharger pour Windows',
+    'tr.h':'Dépannage',
+    'tr1.h':'L’hôte n’apparaît pas dans le navigateur',
+    'tr1.p':'Assurez-vous que l’appareil client est sur le même réseau que le PC gamer, et que le pare-feu Windows a bien autorisé MoonlightWeb lors de l’invite au premier lancement. Vous pouvez aussi ajouter un hôte manuellement par son IP.',
+    'tr2.h':'HEVC ou AV1 est grisé',
+    'tr2.p':'Les codecs que votre navigateur ne peut pas décoder matériellement sont automatiquement désactivés — c’est normal. H264 fonctionne partout ; la disponibilité de HEVC et AV1 dépend du navigateur et du GPU de l’appareil client.',
+    'tr3.h':'Le stream saccade sur une connexion faible',
+    'tr3.p':'Baissez la résolution streamée et activez le <strong>Video Enhancement</strong> : le stream est upscalé et accentué sur le GPU du client (WebGPU avec SGSRv1 + FSR1), si bien qu’un stream 720p paraît proche du 1440p.',
+    'note':'<strong>Réseau restrictif ?</strong> MoonlightWeb bascule automatiquement (UDP → TCP → WSS), et continue donc de fonctionner à travers les pare-feu stricts et le Wi-Fi d’hôtel hostile.',
+    'read.h':'À lire ensuite',
+    'x.faq.t':'FAQ', 'x.faq.d':'Latence, codecs, sécurité, jeu sur Internet — toutes les questions fréquentes.',
+    'x.mac.t':'Installer sur macOS', 'x.mac.d':'Guide Apple Silicon avec l’installateur .pkg.',
+    'x.lin.t':'Installer sur Linux', 'x.lin.d':'.deb, .rpm ou AppImage portable.',
+  },
+  zh: {
+    'nav.home':'首页', 'nav.guides':'指南', 'nav.faq':'常见问题', 'nav.support':'支持',
+    'crumbs':'<a href="/">首页</a> / <a href="/guides/windows.html">指南</a> / Windows',
+    'kicker':'安装指南 · Windows',
+    'h1':'把你的 Windows 游戏 PC 串流到任何浏览器',
+    'lead':'MoonlightWeb 是一个免费、开源（GPL-3.0）的服务器，把你的 <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> 游戏主机串流到任何带浏览器的设备——手机、平板、笔记本、电视。<strong>在游戏 PC 上下载一次。其他任何设备都无需安装——只要一个网址。</strong>',
+    'need.h':'你需要什么',
+    'need.1':'一台 Windows 游戏 PC（x64 或 arm64），配备支持硬件编码的 GPU——也就是运行你游戏的那台机器。',
+    'need.2':'<strong>Sunshine</strong> 作为串流主机。还没有？MoonlightWeb 安装程序可以帮你装好。',
+    'need.3':'任何带现代浏览器的设备都可作客户端：Chrome、Edge、Safari 或 Firefox。无需应用、无需下载、无需账户。',
+    'steps.h':'逐步安装',
+    'step1.h':'下载安装程序',
+    'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>获取 Windows 安装程序——大多数 PC 用 <code>x64 .exe</code>，Windows-on-ARM 机器用 <code>arm64 .exe</code>。',
+    'step2.h':'运行向导式安装程序——在游戏 PC 上',
+    'step2.p1':'向导会带你走完全部流程：缺少 Sunshine 时它可以帮你安装，并提供一键互联网访问（专属子域名、免费 TLS 证书、UPnP 端口映射）。',
+    'step2.p2':'完成后，托盘中会出现一个图标——服务器已在运行。安装到此为止。',
+    'step3.h':'在任何设备上打开浏览器',
+    'step3.p':'在 PC 本机上：<code>https://localhost</code>。从你网络上的其他设备：你的局域网 IP。从世界任何地方：如果你启用了互联网访问，就用你的专属子域名（<code>https://you.moonlightweb.top</code>）。',
+    'step4.h':'用 PIN 码配对一次',
+    'step4.p':'你的 Sunshine 主机已经列出——通过 mDNS 在局域网自动发现。输入 Sunshine 显示的 PIN 码，配对将被永久记住。',
+    'step5.h':'按下开始',
+    'step5.p':'选择一款游戏或完整桌面。全屏、手柄在手——最高 4K HDR、240 fps，Wi-Fi 下延迟低于 20 毫秒。',
+    'dl.btn':'⬇ 下载 Windows 版',
+    'tr.h':'疑难解答',
+    'tr1.h':'主机没有出现在浏览器里',
+    'tr1.p':'请确保客户端设备与游戏 PC 处于同一网络，并且首次启动时 Windows 防火墙的提示中允许了 MoonlightWeb。你也可以通过 IP 手动添加主机。',
+    'tr2.h':'HEVC 或 AV1 被置灰',
+    'tr2.p':'你的浏览器无法硬件解码的编解码器选项会被自动禁用——这是正常的。H264 到处都能用；HEVC 和 AV1 是否可用取决于客户端设备的浏览器和 GPU。',
+    'tr3.h':'弱网络下串流卡顿',
+    'tr3.p':'降低串流分辨率并启用 <strong>Video Enhancement（视频增强）</strong>：串流会在客户端 GPU 上放大并锐化（WebGPU 运行 SGSRv1 + FSR1），于是 720p 串流看起来接近 1440p。',
+    'note':'<strong>网络受限？</strong>MoonlightWeb 会自动回退（UDP → TCP → WSS），因此在严格防火墙和恶劣的酒店 Wi-Fi 下也能继续工作。',
+    'read.h':'继续阅读',
+    'x.faq.t':'常见问题', 'x.faq.d':'延迟、编解码器、安全、互联网远程游玩——所有常见问题。',
+    'x.mac.t':'在 macOS 上安装', 'x.mac.d':'Apple Silicon 指南，附 .pkg 安装程序。',
+    'x.lin.t':'在 Linux 上安装', 'x.lin.d':'.deb、.rpm 或便携 AppImage。',
+  },
+};
+</script>
+<script src="/assets/i18n.js"></script>
 </body>
 </html>

@@ -205,27 +205,23 @@
   .brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono); letter-spacing:.12em; white-space:nowrap}
   .brand img{border-radius:6px}
   .brand .v{font-size:.66rem; color:var(--muted); border:1px solid var(--line); padding:.15rem .45rem; border-radius:5px; letter-spacing:.08em}
-  header nav{margin-left:auto; display:flex; gap:24px; align-items:center; min-width:0}
+  header nav{margin-left:auto; display:flex; gap:20px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
   header nav a{color:var(--muted); font-size:.92rem}
   header nav a:hover{color:var(--cyan); text-decoration:none}
-  @media(max-width:820px){
-    header nav a:not(.btn){display:none}
+  header nav a[aria-current="page"]{color:var(--cyan)}
+  /* Mobile: the nav (incl. the language selector) drops to its own row under the
+     brand — same behaviour as the sub-pages (assets/pages.css) — so a long brand
+     + four links + the language toggle never overlap. */
+  @media(max-width:640px){
+    header .wrap{flex-wrap:wrap; height:auto; min-height:56px; padding-top:9px; padding-bottom:9px; row-gap:9px; gap:8px}
     .brand .v{display:none}               /* keep the brand on one clean line */
-    .brand{font-size:.92rem}
-    header nav{gap:12px}                   /* tighten so the lang toggle + CTA fit */
-    header nav .btn{padding:.5rem 1rem; font-size:.85rem;
-      clip-path:polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px)}
-  }
-  /* Very small screens: reclaim room so the brand never overlaps the language
-     toggle (three languages now). Tighten spacing and collapse the GitHub CTA
-     to just its star. */
-  @media(max-width:520px){
-    header .wrap{gap:8px; padding:0 14px}
-    .brand{gap:7px; font-size:.82rem; letter-spacing:.06em; min-width:0}
+    .brand{gap:7px; font-size:.9rem; letter-spacing:.06em; min-width:0}
     .brand img{width:24px; height:24px}
-    header nav{gap:8px}
-    header nav .btn{padding:.5rem .7rem}
-    .gh-label{display:none}                /* icon-only ★ CTA (aria-label keeps it named) */
+    header nav{width:100%; margin-left:0; gap:14px; justify-content:flex-start}
+    header nav a{font-size:.85rem}
+  }
+  @media(max-width:380px){
+    header nav{gap:11px}
   }
   /* Language dropdown — stays visible on mobile (it's a control, not a nav link) */
   .lang{
@@ -514,11 +510,10 @@
       MOONLIGHTWEB <span class="v">GPL‑3.0</span>
     </span>
     <nav aria-label="Main navigation">
-      <a href="#features" data-i18n="nav.features">Features</a>
-      <a href="#showcase" data-i18n="nav.showcase">Showcase</a>
-      <a href="#how" data-i18n="nav.how">How it works</a>
-      <a href="#download" data-i18n="nav.download">Download</a>
-      <a href="/faq.html">FAQ</a>
+      <a href="/" aria-current="page" data-i18n="nav.home">Home</a>
+      <a href="/guides/windows.html" data-i18n="nav.guides">Guides</a>
+      <a href="/faq.html" data-i18n="nav.faq">FAQ</a>
+      <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="nav">GitHub</a>
       <span class="lang">
         <select id="lang-select" aria-label="Language" data-umami-event="lang">
           <option value="en">English</option>
@@ -526,7 +521,6 @@
           <option value="zh" lang="zh">中文</option>
         </select>
       </span>
-      <a class="btn btn-primary gh-btn" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" aria-label="GitHub" data-umami-event="github" data-umami-event-loc="nav">★ <span class="gh-label">GitHub</span></a>
     </nav>
   </div>
 </header>
@@ -662,8 +656,8 @@
       </div>
       <figure class="media reveal">
         <div class="glow" style="background:radial-gradient(50% 50% at 50% 50%, rgba(255,46,136,.14), transparent 70%)"></div>
-        <div class="phone"><img src="assets/mobile.jpg" width="1170" height="2532" alt="iPhone streaming a PC game in Safari with the virtual keyboard open" loading="lazy"></div>
-        <figcaption>iPhone · Safari</figcaption>
+        <div class="phone"><img src="assets/mobile.jpg" width="1170" height="2532" alt="iPhone streaming a PC game in Chrome with the virtual keyboard open" loading="lazy"></div>
+        <figcaption>iPhone · Chrome</figcaption>
       </figure>
     </div>
 
@@ -969,6 +963,7 @@
   // EN is the default. Add a language: drop a dictionary here, register it in
   // DICTS, add a data-i18n-lang button, and a T.<code> block above.
   const FR = {
+    'nav.home':'Accueil', 'nav.guides':'Guides', 'nav.faq':'FAQ',
     'nav.features':'Fonctionnalités', 'nav.showcase':'En images',
     'nav.how':'Comment ça marche', 'nav.download':'Télécharger',
 
@@ -1026,7 +1021,7 @@
     's4.li1':'<strong>Résolution, FPS, bitrate</strong> — auto‑réglés, toujours modifiables',
     's4.li2':'<strong>HDR &amp; chroma 4:4:4</strong> — pour les puristes du pixel',
     's4.li3':'<strong>Choix du codec</strong> — les options que votre navigateur ne peut pas décoder sont simplement grisées',
-    's4.cap':'Réglages de streaming &amp; options avancées',
+    's4.cap':'Réglages de streaming & options avancées',
     's5.kicker':'05 · Passer en ligne', 's5.h3':'LAN party aujourd’hui.<br>Chambre d’hôtel demain.',
     's5.p':'Cochez une case et votre PC passe en ligne : MoonlightWeb enregistre un sous‑domaine personnel, émet un certificat TLS gratuit et redirige les ports via UPnP. Aucun compte DNS dynamique, aucun reverse‑proxy à configurer.',
     's5.li1':'<strong>https://vous.moonlightweb.top</strong> — votre propre adresse, automatiquement',
@@ -1053,12 +1048,13 @@
     'dl.linux':'Paquets natifs, ou une AppImage portable pour tout le reste.',
     'dl.foot':'Vous jouez depuis un téléphone, une tablette ou une TV ? Rien à télécharger — le client, c’est votre navigateur. <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">Toutes les versions →</a>',
 
-    'cta.kicker':'Gratuit &amp; open source', 'cta.h2':'Appuyez sur play sur votre propre cloud.',
+    'cta.kicker':'Gratuit & open source', 'cta.h2':'Appuyez sur play sur votre propre cloud.',
     'cta.p':'GPL‑3.0, auto‑hébergé, sans compte, sans abonnement. Développé par un contributeur de longue date de l’écosystème Moonlight. Un café aide à garder le domaine DNS partagé en ligne. ☕',
     'cta.btn1':'⭐ Star sur GitHub', 'cta.btn2':'☕ Offrez‑moi un café',
   };
 
   const ZH = {
+    'nav.home':'首页', 'nav.guides':'指南', 'nav.faq':'常见问题',
     'nav.features':'功能', 'nav.showcase':'实拍',
     'nav.how':'工作原理', 'nav.download':'下载',
 
@@ -1143,7 +1139,7 @@
     'dl.linux':'原生软件包，或适用于其他一切的便携 AppImage。',
     'dl.foot':'用手机、平板或电视畅玩？无需下载——你的浏览器就是客户端。<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">全部版本 →</a>',
 
-    'cta.kicker':'免费 &amp; 开源', 'cta.h2':'在你自己的云上按下开始。',
+    'cta.kicker':'免费 & 开源', 'cta.h2':'在你自己的云上按下开始。',
     'cta.p':'GPL‑3.0、自托管、无需账户、无需订阅。由 Moonlight 生态的长期贡献者打造。一杯咖啡有助于维持共享 DNS 域名的在线运行。☕',
     'cta.btn1':'⭐ 在 GitHub 上加星', 'cta.btn2':'☕ 请我喝杯咖啡',
   };
