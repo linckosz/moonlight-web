@@ -1,16 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 150" width="260" height="150" role="img" aria-label="Game controller">
   <defs>
     <linearGradient id="pad-body" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#eef3f8"/>
-      <stop offset=".5" stop-color="#c4d0dc"/>
-      <stop offset="1" stop-color="#8b9aab"/>
+      <stop offset="0" stop-color="#9fb0c0"/>
+      <stop offset=".5" stop-color="#70808f"/>
+      <stop offset="1" stop-color="#4c5a68"/>
     </linearGradient>
   </defs>
-  <!-- body (light silver so it reads on the dark page background) -->
+  <!-- body (mid gunmetal grey: reads on the dark page without being too bright) -->
   <path d="M65 25 C85 15 175 15 195 25 C220 33 236 62 240 92 C243 117 231 132 216 129 C200 126 194 106 184 97 C174 88 86 88 76 97 C66 106 60 126 44 129 C29 132 17 117 20 92 C24 62 40 33 65 25 Z"
-        fill="url(#pad-body)" stroke="#41566a" stroke-width="2.5"/>
+        fill="url(#pad-body)" stroke="#2e3e4e" stroke-width="2.5"/>
   <!-- top rim highlight -->
-  <path d="M66 24 C86 14.5 174 14.5 194 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" opacity=".55"/>
+  <path d="M66 24 C86 14.5 174 14.5 194 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" opacity=".4"/>
   <!-- guide button -->
   <circle cx="130" cy="33" r="8.5" fill="rgba(25,211,255,.22)" stroke="#128fb3" stroke-width="1.8"/>
   <circle cx="130" cy="33" r="3.2" fill="#0f9ec4"/>
