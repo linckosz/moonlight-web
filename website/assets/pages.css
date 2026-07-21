@@ -46,71 +46,8 @@ a:hover{text-decoration:underline}
 img{max-width:100%; height:auto}
 .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px}
 
-/* Header — same chrome as the landing page */
-header{
-  position:sticky; top:0; z-index:20; backdrop-filter:blur(12px);
-  background:rgba(5,8,13,.78); border-bottom:1px solid var(--line);
-}
-/* min-height (not a hard height) + flex-wrap so that when the brand + links + ★ CTA
-   no longer fit on one line (tablets / landscape phones above the 640px breakpoint)
-   the nav drops to its own row BELOW the brand instead of the box staying 64px tall
-   and the wrapped row spilling up off the top of the screen. */
-header .wrap{display:flex; align-items:center; flex-wrap:wrap; gap:14px; row-gap:9px; min-height:64px; padding-top:8px; padding-bottom:8px; max-width:1160px}
-.brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono);
-  letter-spacing:.12em; white-space:nowrap; color:var(--txt)}
-.brand:hover{text-decoration:none}
-.brand img{border-radius:6px}
-header nav{margin-left:auto; display:flex; gap:20px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
-header nav a{color:var(--muted); font-size:.92rem}
-header nav a:hover{color:var(--cyan); text-decoration:none}
-header nav a[aria-current="page"]{color:var(--cyan)}
-
-/* Language dropdown — a control, not a nav link, so it stays visible on mobile.
-   Kept in sync with the landing page (website/index.html .lang). */
-.lang{
-  position:relative; display:inline-flex; align-items:center; flex:none;
-  border:1px solid var(--line); border-radius:7px; background:rgba(16,26,38,.7); transition:.15s;
-}
-.lang select{
-  appearance:none; -webkit-appearance:none; -moz-appearance:none;
-  background:transparent; color:var(--cyan); cursor:pointer; border:0; border-radius:7px;
-  font:700 .74rem var(--mono); letter-spacing:.06em; padding:.36rem 1.7rem .36rem .7rem;
-}
-.lang select:focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
-.lang option{background:var(--panel); color:var(--txt)}
-.lang::after{
-  content:""; position:absolute; right:.62rem; top:50%; width:6px; height:6px;
-  border-right:2px solid var(--muted); border-bottom:2px solid var(--muted);
-  transform:translateY(-70%) rotate(45deg); pointer-events:none; transition:.15s;
-}
-@media(hover:hover){ .lang:hover{border-color:var(--line-glow)} .lang:hover::after{border-color:var(--cyan)} }
-
-/* Mobile: the nav (incl. the language selector) drops to its own row under the
-   brand, so a long brand + four links + the language toggle never overlap. */
-@media(max-width:640px){
-  header .wrap{flex-wrap:wrap; height:auto; min-height:56px; padding-top:9px; padding-bottom:9px; row-gap:9px}
-  .brand{font-size:.9rem}
-  header nav{width:100%; margin-left:0; gap:14px; justify-content:flex-start}
-  header nav a{font-size:.85rem}
-  header nav .gh-btn{margin-left:auto; padding:.5rem .8rem}  /* keep the ★ CTA on the right */
-  .gh-label{display:none}                /* icon-only ★ CTA (aria-label keeps it named) */
-}
-@media(max-width:380px){
-  header nav{gap:11px}
-  .lang select{font-size:.72rem; padding:.34rem 1.5rem .34rem .55rem}
-}
-
-/* Buttons */
-.btn{
-  display:inline-flex; align-items:center; gap:.5em; padding:.78rem 1.5rem;
-  font-weight:700; font-size:.98rem; border:1px solid transparent; cursor:pointer;
-  transition:.18s;
-  clip-path:polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-}
-.btn-primary{background:linear-gradient(100deg,var(--cyan),#0fa8d6); color:#031017}
-@media(hover:hover){
-  .btn-primary:hover{filter:brightness(1.12); text-decoration:none; transform:translateY(-1px)}
-}
+/* Header, footer, buttons and the language dropdown now live in the shared
+   assets/chrome.css (single source of truth, loaded by every page). */
 
 /* Article layout */
 main{padding:56px 0 80px}
@@ -205,5 +142,3 @@ details .a p:last-child{margin-bottom:0}
 .xlinks a strong{display:block; margin-bottom:.2rem}
 .xlinks a span{color:var(--muted); font-size:.87rem}
 
-footer{border-top:1px solid var(--line); padding:36px 0; color:var(--muted); font-size:.9rem}
-footer .wrap{display:flex; gap:16px; flex-wrap:wrap; align-items:center; justify-content:space-between; max-width:1160px}
