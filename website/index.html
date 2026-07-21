@@ -206,9 +206,9 @@
      breakpoint) the nav drops to its own row BELOW the brand instead of the box
      staying 64px tall and the wrapped row spilling up off the top of the screen. */
   header .wrap{display:flex; align-items:center; flex-wrap:wrap; gap:14px; row-gap:9px; min-height:64px; padding-top:8px; padding-bottom:8px}
-  .brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono); letter-spacing:.12em; white-space:nowrap}
+  .brand{display:flex; align-items:center; gap:10px; font:700 1.02rem var(--mono); letter-spacing:.12em; white-space:nowrap; color:var(--txt)}
+  .brand:hover{text-decoration:none}
   .brand img{border-radius:6px}
-  .brand .v{font-size:.66rem; color:var(--muted); border:1px solid var(--line); padding:.15rem .45rem; border-radius:5px; letter-spacing:.08em}
   header nav{margin-left:auto; display:flex; gap:20px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
   header nav a{color:var(--muted); font-size:.92rem}
   header nav a:hover{color:var(--cyan); text-decoration:none}
@@ -218,7 +218,6 @@
      + four links + the language toggle never overlap. */
   @media(max-width:640px){
     header .wrap{flex-wrap:wrap; height:auto; min-height:56px; padding-top:9px; padding-bottom:9px; row-gap:9px; gap:8px}
-    .brand .v{display:none}               /* keep the brand on one clean line */
     .brand{gap:7px; font-size:.9rem; letter-spacing:.06em; min-width:0}
     .brand img{width:24px; height:24px}
     header nav{width:100%; margin-left:0; gap:14px; justify-content:flex-start}
@@ -511,10 +510,10 @@
 
 <header>
   <div class="wrap">
-    <span class="brand">
+    <a class="brand" href="/">
       <img src="assets/icon-192.png" alt="MoonlightWeb logo" width="28" height="28">
-      MOONLIGHTWEB <span class="v">GPL‑3.0</span>
-    </span>
+      MOONLIGHTWEB
+    </a>
     <nav aria-label="Main navigation">
       <a href="/" aria-current="page" data-i18n="nav.home">Home</a>
       <a href="/guides/windows.html" data-i18n="nav.guides">Guides</a>
