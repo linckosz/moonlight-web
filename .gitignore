@@ -79,7 +79,13 @@ Thumbs.db
 desktop.ini
 
 # Claude Code / AI agent files (kept on disk, never pushed)
-.claude/
+# Exception: the SessionStart hook that sets the git commit identity is versioned
+# so it survives fresh session reclones on Claude Code on the web.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 CLAUDE.md
 
 # Graphify (share graph outputs, keep local cache/state out)
