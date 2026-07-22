@@ -22,7 +22,12 @@
 <meta name="twitter:description" content="A 100% web Sunshine / GameStream client. Nothing to install on the client, just a URL.">
 <meta name="twitter:image" content="https://moonlightweb.top/assets/desktop.jpg">
 <link rel="canonical" href="https://moonlightweb.top/">
-<link rel="icon" href="assets/favicon.ico" type="image/x-icon">
+<!-- Favicon shown in Google Search: a square icon that is a multiple of 48px
+     (Google's requirement). favicon.ico now carries a 48px layer, and icon-48
+     is the exact recommended size. -->
+<link rel="icon" href="assets/favicon.ico" sizes="48x48">
+<link rel="icon" type="image/png" sizes="48x48" href="assets/icon-48.png">
+<link rel="icon" type="image/png" sizes="96x96" href="assets/icon-96.png">
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
 <link rel="apple-touch-icon" sizes="180x180" href="assets/icon-180.png">
 <!-- Privacy-friendly, cookieless analytics (self-hosted Umami on stats.{domain}).
@@ -32,6 +37,18 @@
 <script defer src="https://stats.moonlightweb.top/script.js"
         data-website-id="6b952a24-dc15-4be8-a595-ae9d835fbc6a"
         data-domains="moonlightweb.top,www.moonlightweb.top"></script>
+<!-- WebSite structured data: tells Google the site name to show above the
+     result (the line next to the favicon) — "MoonlightWeb" instead of the
+     bare domain. https://developers.google.com/search/docs/appearance/site-names -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "MoonlightWeb",
+  "alternateName": "MoonlightWeb — Your gaming PC, in any browser",
+  "url": "https://moonlightweb.top/"
+}
+</script>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
