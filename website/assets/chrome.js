@@ -24,6 +24,7 @@
         '<a href="/" data-nav="home" data-i18n="nav.home">Home</a>' +
         '<a href="/guides/windows.html" data-nav="guides" data-i18n="nav.guides">Guides</a>' +
         '<a href="/faq.html" data-nav="faq" data-i18n="nav.faq">FAQ</a>' +
+        '<a href="/contact.html" data-nav="contact" data-i18n="nav.contact">Contact</a>' +
         '<span class="lang">' +
           '<select id="lang-select" aria-label="Language" data-umami-event="lang">' +
             '<option value="en">English</option>' +
@@ -42,6 +43,7 @@
         '<a href="/" data-i18n="nav.home">Home</a> · ' +
         '<a href="/guides/windows.html" data-i18n="nav.guides">Guides</a> · ' +
         '<a href="/faq.html" data-i18n="nav.faq">FAQ</a> · ' +
+        '<a href="/contact.html" data-i18n="nav.contact">Contact</a> · ' +
         '<a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> · ' +
         '<a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> · ' +
         '<a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer" data-i18n="nav.support">Support</a>' +
@@ -60,6 +62,7 @@
   var active = path === '/' ? 'home'
              : path.indexOf('/guides/') === 0 ? 'guides'
              : /\/faq\.html$/.test(path) ? 'faq'
+             : /\/contact\.html$/.test(path) ? 'contact'
              : null;
   if (active && h) {
     var link = h.querySelector('nav a[data-nav="' + active + '"]');
