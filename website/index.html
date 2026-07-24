@@ -76,7 +76,7 @@
 }
 </script>
 <!-- Shared header/footer chrome (markup injected by assets/chrome.js) -->
-<link rel="stylesheet" href="assets/chrome.css?v=2">
+<link rel="stylesheet" href="assets/chrome.css?v={{(fileStat `/assets/chrome.css`).ModTime.Unix}}">
 <style>
   :root{
     --bg:#05080d;
@@ -782,7 +782,7 @@
 <div id="lb"><img alt=""></div>
 <!-- Inject the shared header/footer BEFORE the i18n block below snapshots
      [data-i18n] and wires up #lang-select. -->
-<script src="assets/chrome.js?v=2"></script>
+<script src="assets/chrome.js?v={{(fileStat `/assets/chrome.js`).ModTime.Unix}}"></script>
 <script>
   // Lightbox for screenshots.
   const lb = document.getElementById('lb'), lbImg = lb.querySelector('img');

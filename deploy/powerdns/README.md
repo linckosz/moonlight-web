@@ -44,6 +44,22 @@ Caddy container (`../../website → /srv/site`), so edit it freely then
 `docker compose restart caddy` — no rebuild needed. The zone bootstrap adds the
 `www` and `stream` A records automatically; the apex `@` A record already existed.
 
+**Cache-busting.** The shared assets (`assets/chrome.js`, `chrome.css`,
+`pages.css`, `i18n.js`) are referenced with a `?v=…` query stamped from each
+file's modified time:
+
+```
+<script src="/assets/chrome.js?v={{(fileStat `/assets/chrome.js`).ModTime.Unix}}"></script>
+```
+
+Caddy's `templates` directive (scoped to `text/html`) evaluates this on every
+HTML request, so when a shared asset changes on disk its version changes and
+browsers fetch the fresh copy — no manual bump. Because of this, `{{ … }}` is
+now **significant inside the HTML pages**: if you add inline JS that needs literal
+double braces, wrap it so Caddy doesn't try to evaluate it (see the Caddy
+`templates` docs). Plain-text files (`robots.txt`, `llms.txt`, the verification
+token) are not templated.
+
 ## Website analytics (Umami)
 
 The stack ships a self-hosted **Umami** instance — privacy-friendly, cookieless

@@ -46,5 +46,15 @@ stats.@MW_DOMAIN@ {
 	redir @alias https://@MW_DOMAIN@{uri} permanent
 	encode zstd gzip
 	root * /srv/site
+	# Evaluate Go templates in the HTML pages so cache-busting asset URLs can be
+	# stamped from each file's real modified time — e.g.
+	#   /assets/chrome.js?v={{(fileStat `/assets/chrome.js`).ModTime.Unix}}
+	# When a shared asset (chrome.js/.css, pages.css, i18n.js) changes on disk its
+	# mtime changes, the query string changes, and browsers fetch the fresh copy —
+	# no manual version bump. Scoped to text/html so the plain-text files (robots,
+	# llms.txt, the ACME/domain-verification token) are served verbatim.
+	templates {
+		mime_types text/html
+	}
 	file_server
 }
