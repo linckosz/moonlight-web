@@ -22,7 +22,7 @@
       '</a>' +
       '<nav aria-label="Main navigation">' +
         '<a href="/" data-nav="home" data-i18n="nav.home">Home</a>' +
-        '<a href="/guides/windows.html" data-nav="guides" data-i18n="nav.guides">Guides</a>' +
+        '<a href="/guides/" data-nav="guides" data-i18n="nav.guides">Guides</a>' +
         '<a href="/faq.html" data-nav="faq" data-i18n="nav.faq">FAQ</a>' +
         '<a href="/contact.html" data-nav="contact" data-i18n="nav.contact">Contact</a>' +
         '<span class="lang">' +
@@ -41,7 +41,7 @@
       '<span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL‑3.0</span>' +
       '<span>' +
         '<a href="/" data-i18n="nav.home">Home</a> · ' +
-        '<a href="/guides/windows.html" data-i18n="nav.guides">Guides</a> · ' +
+        '<a href="/guides/" data-i18n="nav.guides">Guides</a> · ' +
         '<a href="/faq.html" data-i18n="nav.faq">FAQ</a> · ' +
         '<a href="/contact.html" data-i18n="nav.contact">Contact</a> · ' +
         '<a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> · ' +

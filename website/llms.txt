@@ -41,6 +41,7 @@ The client requires no install: any modern browser (Chrome, Edge, Safari, Firefo
 - Website: https://moonlightweb.top/
 - FAQ: https://moonlightweb.top/faq.html
 - Contact: https://moonlightweb.top/contact.html
+- Install guides (pick your platform): https://moonlightweb.top/guides/
 - Install on Windows: https://moonlightweb.top/guides/windows.html
 - Install on macOS: https://moonlightweb.top/guides/macos.html
 - Install on Linux: https://moonlightweb.top/guides/linux.html
