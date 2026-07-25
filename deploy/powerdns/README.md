@@ -4,7 +4,7 @@ Three dedicated containers (one process each — the idiomatic Docker layout):
 
 ```
 Internet ─:53──────> [dnsdist] ──> pdns:5300         anti-amplification + DNS rate-limit
-Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:8081        LEGACY full-access API (0.1.x)
+Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:8081        direct PowerDNS API (compatibility)
                              ├─ dnsapi.{domain} ───> mw-proxy:8080 ─> pdns:8081   restricted API (0.2.0+)
                              └─ stats.{domain} ────> umami:3000      analytics dashboard
                      [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
@@ -22,7 +22,7 @@ Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:80
   with a **restricted** key. Never published; Caddy fronts it as
   `https://dnsapi.{MW_DOMAIN}`. See [Least-privilege API key](#least-privilege-api-key-mw-proxy).
 - **caddy** — official Caddy + the `caddy-ratelimit` plugin (built via xcaddy).
-  Exposes the APIs (`api.{MW_DOMAIN}` legacy, `dnsapi.{MW_DOMAIN}` restricted)
+  Exposes the APIs (`api.{MW_DOMAIN}` compatibility, `dnsapi.{MW_DOMAIN}` restricted)
   with automatic TLS and request rate limiting, **and serves the static
   presentation website** at `https://{MW_DOMAIN}` / `https://www.{MW_DOMAIN}`
   (repo-root `website/`, bind-mounted into the container).
@@ -160,9 +160,6 @@ MW_DOMAIN=example.top
 MW_PDNS_URL=https://dnsapi.example.top/api/v1/servers/localhost
 MW_PDNS_TOKEN=<the MW_PDNS_PROXY_KEY value from deploy/powerdns/.env>
 ```
-
-> Legacy 0.1.x builds keep using `https://api.example.top/...` with the full
-> `MW_PDNS_API_KEY`; that direct path is retired in a future release.
 
 ### Manual install (without the script)
 
@@ -337,13 +334,11 @@ To make your zone authoritative on the public Internet, configure this at your
 
 ## Least-privilege API key (mw-proxy)
 
-PowerDNS API keys are **all-or-nothing**: the key gives full control of every
-zone (delete zones, rewrite NS/SOA, disable DNSSEC, dump records…). Since the
-key is baked into distributed MoonlightWeb binaries, a single extracted key
-would mean full DNS compromise.
-
-`mw-proxy` closes that gap. It is a tiny Go gateway that keeps the **real**
-PowerDNS key server-side and exposes a **restricted** key to the app:
+MoonlightWeb instances get DNS access on a least-privilege basis and never hold
+full PowerDNS credentials. `mw-proxy` is a tiny Go gateway that keeps the
+**real** PowerDNS key server-side and exposes a **restricted** key to the app —
+by design it cannot delete zones, rewrite NS/SOA, disable DNSSEC, dump records,
+or reach any other zone:
 
 - **Only this zone, only GET/PATCH.** Zone deletion, `/config`, `/cryptokeys`
   (DNSSEC), `/metadata` and every other zone are refused.
@@ -374,11 +369,9 @@ The ownership store persists in the `mwproxy_data` volume
 (`/data/owners.json`). It holds only `uid → HMAC(token)` pairs — a leak reveals
 no usable credential. Rebuilding the stack keeps it.
 
-> **Migration.** During this phase both endpoints are live: 0.1.x → `api.` with
-> the full key, 0.2.0+ → `dnsapi.` with the restricted key. A later release
-> retires the `api.` → pdns route and rotates `MW_PDNS_API_KEY`, after which
-> 0.1.x can no longer register (they surface the retirement message returned by
-> the endpoint) and must upgrade.
+> **Endpoints.** MoonlightWeb registers through the restricted `dnsapi.`
+> gateway. A direct `api.` → pdns route is also present for backward
+> compatibility and is retired in a later release.
 
 ## Attack-surface hardening (built into this stack)
 
