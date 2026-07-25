@@ -84,7 +84,7 @@ Loaded at startup by `loadEnvFile()` (`.env` next to the executable, else the pr
 | Variable | Required for | Description |
 |---|---|---|
 | `MW_DOMAIN` | Internet Access | Parent domain hosted on the PowerDNS box. Fallback default: `moonlightweb.top`. |
-| `MW_PDNS_URL` | Internet Access | DNS-registration API base URL. 0.2.0+ points at the restricted gateway: `https://dnsapi.{MW_DOMAIN}/api/v1/servers/localhost`. Defaults to `https://api.{MW_DOMAIN}/api/v1/servers/localhost` (legacy direct PowerDNS) when unset. |
+| `MW_PDNS_URL` | Internet Access | DNS-registration API base URL. 2.0.0+ points at the restricted gateway: `https://dnsapi.{MW_DOMAIN}/api/v1/servers/localhost`. Defaults to `https://api.{MW_DOMAIN}/api/v1/servers/localhost` (legacy direct PowerDNS) when unset. |
 | `MW_PDNS_TOKEN` | Internet Access | API key (`X-API-Key`). With the `dnsapi.` gateway, use the **restricted** `MW_PDNS_PROXY_KEY` (manages only this instance's own records); with the legacy `api.` URL, the full PowerDNS key. **Secret.** |
 | `MW_ACME_DIRECTORY` | optional | ACME directory URL. Defaults to Let's Encrypt, or ZeroSSL DV90 when EAB creds are set. |
 | `MW_ZEROSSL_EAB_KID` / `MW_ZEROSSL_EAB_HMAC` | optional | ZeroSSL External Account Binding. **Secrets.** |
