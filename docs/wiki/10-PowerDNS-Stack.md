@@ -11,7 +11,7 @@ The DNS stack is the infrastructure side of **Internet Access**: an authoritativ
 ```
 Internet ─:53──────► [dnsdist] ──► pdns:5300          anti-amplification + DNS rate-limit
 Internet ─:80/:443─► [caddy] ┬─ api.{domain} ───────► pdns:8081         direct PowerDNS API (compatibility)
-                             ├─ dnsapi.{domain} ────► mw-proxy:8080 ──► pdns:8081  restricted API (2.0.0+)
+                             ├─ dnsapi.{domain} ────► mw-proxy:8080 ──► pdns:8081  restricted API (0.2.0+)
                              └─ stats.{domain} ─────► umami:3000       analytics dashboard
                      [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
                      [mw-proxy] (internal)            least-privilege filtering gateway
@@ -41,7 +41,7 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
   - **backfills** missing records on pre-existing zones (`ensure_a` guards — note: a bare re-`add-record` would duplicate, hence the greps);
   - replaces the image's placeholder SOA when found.
 
-`MW_PDNS_API_KEY` from `.env` maps to `PDNS_AUTH_API_KEY`, so the key reaches the official mechanism unchanged. This **full** key now stays server-side: pdns uses it, and `mw-proxy` injects it toward pdns. MoonlightWeb 2.0.0+ instead holds the **restricted** `MW_PDNS_PROXY_KEY` (§10.8). Per-instance subdomains (`{uid}` A records, `_acme-challenge.*` TXT) are managed at runtime by MoonlightWeb through the API — the stack never touches them.
+`MW_PDNS_API_KEY` from `.env` maps to `PDNS_AUTH_API_KEY`, so the key reaches the official mechanism unchanged. This **full** key now stays server-side: pdns uses it, and `mw-proxy` injects it toward pdns. MoonlightWeb 0.2.0+ instead holds the **restricted** `MW_PDNS_PROXY_KEY` (§10.8). Per-instance subdomains (`{uid}` A records, `_acme-challenge.*` TXT) are managed at runtime by MoonlightWeb through the API — the stack never touches them.
 
 ## 10.3 dnsdist configuration (`dnsdist/dnsdist.conf`)
 
@@ -92,7 +92,7 @@ The stack cannot do these for you:
 
 **Umami one-time setup**: log into `https://stats.{domain}` (`admin`/`umami`), change the password, create the website entry, paste the generated UUID into `website/index.html`'s `data-website-id`, `docker compose restart caddy`.
 
-**MoonlightWeb side (2.0.0+)**: set `MW_DOMAIN`, `MW_PDNS_URL=https://dnsapi.{domain}/api/v1/servers/localhost`, and `MW_PDNS_TOKEN=`*the restricted `MW_PDNS_PROXY_KEY`* in the server's `.env` (or CI secrets for release builds).
+**MoonlightWeb side (0.2.0+)**: set `MW_DOMAIN`, `MW_PDNS_URL=https://dnsapi.{domain}/api/v1/servers/localhost`, and `MW_PDNS_TOKEN=`*the restricted `MW_PDNS_PROXY_KEY`* in the server's `.env` (or CI secrets for release builds).
 
 ## 10.7 Least-privilege API key (`mw-proxy`)
 

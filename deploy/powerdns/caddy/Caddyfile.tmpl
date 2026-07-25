@@ -26,12 +26,12 @@ api.@MW_DOMAIN@ {
 		}
 	}
 	# pdns = the PowerDNS service on the compose network (API on :8081).
-	# Compatibility path: direct PowerDNS API. New clients (2.0.0+) use the
+	# Compatibility path: direct PowerDNS API. New clients (0.2.0+) use the
 	# restricted dnsapi.* gateway below. This block is retired in a later release.
 	reverse_proxy pdns:8081
 }
 
-# Restricted DNS-registration API (2.0.0+). Fronts the mw-proxy filtering
+# Restricted DNS-registration API (0.2.0+). Fronts the mw-proxy filtering
 # gateway, which holds the real PowerDNS key and only lets a client
 # create/update/delete its own A record (+ _owner / _acme-challenge TXT).
 # Gets its own certificate (never the api-only user cert): @SITE_TLS_LINE@.
