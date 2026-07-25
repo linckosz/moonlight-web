@@ -84,6 +84,9 @@ QNetworkReply* PdnsClient::sendPatch(const QString& url, const QByteArray& body,
     request.setRawHeader("X-API-Key", m_Token.toUtf8());
     request.setRawHeader("Accept", "application/json");
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    // Prove subdomain ownership to the mw-proxy middleware (never published).
+    if (!m_OwnerToken.isEmpty())
+        request.setRawHeader("X-MW-Owner", m_OwnerToken.toUtf8());
 
     QBuffer* buf = new QBuffer;
     buf->setData(body);

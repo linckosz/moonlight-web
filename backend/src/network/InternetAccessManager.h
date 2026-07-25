@@ -164,8 +164,16 @@ private:
     /// Create or verify the A record under the existing parent domain.
     bool createOrUpdateARecord();
 
-    /// Claim (if unowned) or verify ownership of this instance's subdomain via a
-    /// _owner.<uid> TXT record. Returns false only when another instance owns it.
+    /// Ensure the per-instance ownership token exists (generate + persist on
+    /// first call) and push it to the PowerDNS client so every write carries the
+    /// X-MW-Owner header. Returns the token. Idempotent.
+    QString ensureOwnerToken();
+
+    /// Claim (if unowned) or verify ownership of this instance's subdomain.
+    /// Ownership is now enforced server-side by the mw-proxy middleware via the
+    /// X-MW-Owner header (see ensureOwnerToken); the token is never published in
+    /// a public TXT. Kept as the single entry point that guarantees the token is
+    /// ready before the A record is written.
     bool claimOrVerifyOwnership(QString& errorMsg);
 
     /// Release the previously registered subdomain when unique_id changed, so an

@@ -42,6 +42,36 @@ services:
     pids_limit: 200
     mem_limit: 512m
 
+  # ── mw-proxy: least-privilege filtering gateway for the PowerDNS API ───────
+  # Holds the real PowerDNS key internally; clients authenticate with the
+  # restricted MW_PDNS_PROXY_KEY and may only create/update/delete their own
+  # A record (+ _owner / _acme-challenge TXT) on this zone. Never published:
+  # Caddy exposes it as https://dnsapi.${MW_DOMAIN}. See mw-proxy/main.go.
+  mw-proxy:
+    build: ./mw-proxy
+    image: moonlight-mw-proxy:latest
+    container_name: moonlight-mw-proxy
+    restart: unless-stopped
+    depends_on: [pdns]
+    environment:
+      MW_DOMAIN: ${MW_DOMAIN}
+      MW_PDNS_UPSTREAM: http://pdns:8081
+      # The REAL PowerDNS key — stays server-side, injected toward pdns only.
+      MW_PDNS_API_KEY: ${MW_PDNS_API_KEY}
+      # The RESTRICTED key clients present (baked into the app as MW_PDNS_TOKEN).
+      MW_PDNS_PROXY_KEY: ${MW_PDNS_PROXY_KEY}
+      # HMAC key used to store owner fingerprints — SECRET, server-side only.
+      MW_PDNS_OWNER_SECRET: ${MW_PDNS_OWNER_SECRET}
+      # New-subdomain rate limit per client IP per hour (0 = unlimited).
+      MW_PROXY_MAX_NEW_PER_HOUR: ${MW_PROXY_MAX_NEW_PER_HOUR:-20}
+    volumes:
+      - mwproxy_data:/data                          # ownership store persists
+    networks: [mwnet]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]                               # high port :8080, no caps
+    pids_limit: 100
+    mem_limit: 128m
+
   # ── dnsdist: public DNS front (DoS / amplification protection) ─────────────
   dnsdist:
     image: powerdns/dnsdist-19:latest
@@ -70,7 +100,7 @@ services:
     image: moonlight-caddy:latest
     container_name: moonlight-caddy
     restart: unless-stopped
-    depends_on: [pdns]
+    depends_on: [pdns, mw-proxy]
     environment:
       MW_DOMAIN: ${MW_DOMAIN}
       # Optional user-supplied TLS cert (takes priority over Let's Encrypt).
@@ -136,6 +166,7 @@ services:
 
 volumes:
   pdns_data:
+  mwproxy_data:
   caddy_data:
   caddy_config:
   umami_db:

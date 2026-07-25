@@ -26,7 +26,27 @@ api.@MW_DOMAIN@ {
 		}
 	}
 	# pdns = the PowerDNS service on the compose network (API on :8081).
+	# LEGACY, full-access path (unchanged): MoonlightWeb 0.1.x holds the real
+	# PowerDNS key and talks here directly. New clients (0.2.0+) use dnsapi.*
+	# below with a restricted key. This block is retired in the next phase.
 	reverse_proxy pdns:8081
+}
+
+# Restricted DNS-registration API (0.2.0+). Fronts the mw-proxy filtering
+# gateway, which holds the real PowerDNS key and only lets a client
+# create/update/delete its own A record (+ _owner / _acme-challenge TXT).
+# Gets its own certificate (never the api-only user cert): @SITE_TLS_LINE@.
+dnsapi.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	rate_limit {
+		zone mw_dnsapi {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
+	# mw-proxy = the filtering gateway on the compose network (HTTP on :8080).
+	reverse_proxy mw-proxy:8080
 }
 
 # Analytics dashboard — self-hosted Umami (privacy-friendly, cookieless).

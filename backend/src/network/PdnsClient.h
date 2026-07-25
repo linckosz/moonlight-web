@@ -46,6 +46,13 @@ public:
     void setToken(const QString& token) { m_Token = token; }
     QString token() const { return m_Token; }
 
+    /// Set the per-instance ownership token. When non-empty it is sent as the
+    /// X-MW-Owner header on every write (PATCH), so the mw-proxy middleware can
+    /// prove this instance owns the subdomain before allowing the change. The
+    /// token is NEVER written to a public record. Ignored by a plain PowerDNS
+    /// endpoint (legacy/direct), which just doesn't read the header.
+    void setOwnerToken(const QString& token) { m_OwnerToken = token; }
+
     /// Parent domain (e.g. "moonlightweb.top"), from the MW_DOMAIN env var
     /// (fallback "moonlightweb.top"). Single source of truth for a fork.
     static QString baseDomain();
@@ -154,4 +161,5 @@ private:
 
     QNetworkAccessManager* m_Nam = nullptr;
     QString m_Token;
+    QString m_OwnerToken;
 };

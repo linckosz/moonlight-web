@@ -52,11 +52,13 @@ Two cooperating layers:
 
 ## 6.6 DNS subdomain ownership
 
-Two instances (or a malicious actor) must never overwrite each other's A record:
+Two instances (or a malicious actor) must never overwrite each other's A record. Ownership is enforced **server-side** by the `mw-proxy` gateway (0.2.0+; see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)) rather than cooperatively:
 
-- Each instance holds a random `owner_token`; a **`_owner.<uid>` TXT record** on the DNS zone must match (or be absent, then claimed) before the A record is created/updated.
-- Reserved labels (`www`, `api`, `stats`, `stream`, `ns1/ns2`, `mail`, apex, anything starting `_`) are rejected as `unique_id` values — both backend-side (`isReservedSubdomain`) and by a boot-time guard against `settings.json` edits.
-- Changing `unique_id` releases the previous subdomain (delete A + `_owner` TXT, only after verifying ownership) so one owner never holds two live subdomains.
+- Each instance holds a random per-instance `owner_token`, sent as the **`X-MW-Owner` header** on every write (`PdnsClient`/`AcmeClient`). It is **never published in DNS**, so it cannot be read via `dig` and replayed.
+- The first writer of a `uid` claims it (Trust-On-First-Use); `mw-proxy` stores `HMAC(owner_token)` keyed by `uid` and rejects (`403`) any later write whose header does not match. **One subdomain per owner** is enforced, and the restricted key can only touch `{uid}` A / `_owner` / `_acme-challenge` records (never NS/SOA/DNSSEC/other zones).
+- Reserved labels (`www`, `api`, `dnsapi`, `stats`, `stream`, `ns1/ns2`, `mail`, apex, anything starting `_`) are rejected as `unique_id` values — backend-side (`isReservedSubdomain`), by a boot-time guard against `settings.json` edits, and again by mw-proxy's 8-hex `uid` rule.
+- Changing `unique_id` releases the previous subdomain (deleting its A record frees the ownership entry) so one owner never holds two live subdomains.
+- The legacy cooperative `_owner.<uid>` TXT record is no longer written (the token now lives only in the header). Older 0.1.x builds still use it against the legacy `api.` endpoint during the migration window.
 
 ## 6.7 Internet-access consent & audit
 

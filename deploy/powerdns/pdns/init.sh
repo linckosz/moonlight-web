@@ -36,6 +36,7 @@ if ! $PDNSUTIL list-all-zones 2>/dev/null | grep -qx "$MW_DOMAIN"; then
     $PDNSUTIL add-record "$MW_DOMAIN" ns1 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" ns2 A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" api A  "$MW_PUBLIC_IP"
+    $PDNSUTIL add-record "$MW_DOMAIN" dnsapi A "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" @   NS "ns1.${MW_DOMAIN}."
     $PDNSUTIL add-record "$MW_DOMAIN" @   NS "ns2.${MW_DOMAIN}."
     $PDNSUTIL secure-zone "$MW_DOMAIN"
@@ -60,9 +61,10 @@ ensure_a() {  # ensure_a <name>  — add an A record to MW_PUBLIC_IP if absent
     fi
 }
 NEED_RECTIFY=0
-ensure_a @     # apex  — presentation site
-ensure_a www   # www   — presentation site
-ensure_a api   # api   — PowerDNS REST API
+ensure_a @      # apex   — presentation site
+ensure_a www    # www    — presentation site
+ensure_a api    # api    — PowerDNS REST API (legacy, full-access, 0.1.x)
+ensure_a dnsapi # dnsapi — restricted DNS-registration API (mw-proxy, 0.2.0+)
 ensure_a stats  # stats  — Umami analytics dashboard
 ensure_a stream # stream — vanity alias, redirected to the apex by Caddy
 
