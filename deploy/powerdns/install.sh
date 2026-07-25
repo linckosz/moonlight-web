@@ -256,6 +256,10 @@ if [ -f .env ]; then
     }
     ensure_env MW_UMAMI_DB_PASSWORD "$(gen_secret)"
     ensure_env MW_UMAMI_SECRET      "$(gen_secret)"
+    # mw-proxy: restricted client key + server-side ownership HMAC (0.2.0+).
+    ensure_env MW_PDNS_PROXY_KEY        "$(gen_secret)"
+    ensure_env MW_PDNS_OWNER_SECRET     "$(gen_secret)"
+    ensure_env MW_PROXY_MAX_NEW_PER_HOUR "20"
 else
     detected_ip="$(curl -fsS https://api.ipify.org 2>/dev/null || true)"
 
@@ -280,6 +284,11 @@ else
     MW_UMAMI_DB_PASSWORD="$(gen_secret)"
     MW_UMAMI_SECRET="$(gen_secret)"
 
+    # mw-proxy secrets — generated silently. The proxy key is the RESTRICTED key
+    # MoonlightWeb 0.2.0+ uses; the owner secret is a server-side HMAC key.
+    MW_PDNS_PROXY_KEY="$(gen_secret)"
+    MW_PDNS_OWNER_SECRET="$(gen_secret)"
+
     echo "  Optional TLS (blank = automatic Let's Encrypt via Caddy):"
     MW_TLS_EMAIL="$(ask MW_TLS_EMAIL 'Email for Let'\''s Encrypt notices' '')"
     MW_TLS_CERT="$(ask MW_TLS_CERT 'Own cert path in ./certs (blank = Let'\''s Encrypt)' '')"
@@ -292,6 +301,9 @@ else
 MW_DOMAIN=${MW_DOMAIN}
 MW_PUBLIC_IP=${MW_PUBLIC_IP}
 MW_PDNS_API_KEY=${MW_PDNS_API_KEY}
+MW_PDNS_PROXY_KEY=${MW_PDNS_PROXY_KEY}
+MW_PDNS_OWNER_SECRET=${MW_PDNS_OWNER_SECRET}
+MW_PROXY_MAX_NEW_PER_HOUR=20
 MW_TLS_EMAIL=${MW_TLS_EMAIL}
 MW_TLS_CERT=${MW_TLS_CERT}
 MW_TLS_KEY=${MW_TLS_KEY}
@@ -369,6 +381,7 @@ echo "============================================================"
 echo
 echo " Your VM is up and running. Containers:"
 echo "   pdns     PowerDNS authoritative + REST API (internal only)"
+echo "   mw-proxy restricted DNS API https://dnsapi.${MW_DOMAIN:-<MW_DOMAIN>} (internal, via caddy)"
 echo "   dnsdist  public DNS front on :53 (UDP/TCP)"
 echo "   caddy    public API https://api.${MW_DOMAIN:-<MW_DOMAIN>} (:80/:443)"
 echo "   umami    web analytics  https://stats.${MW_DOMAIN:-<MW_DOMAIN>} (internal, via caddy)"
@@ -421,10 +434,14 @@ else
     echo "                   --config-dir=/etc/powerdns export-zone-ds ${MW_DOMAIN:-<MW_DOMAIN>} )"
 fi
 echo
-echo "  [ ] 4. On your MoonlightWeb server, set in its own .env:"
+echo "  [ ] 4. On your MoonlightWeb server (0.2.0+), set in its own .env the"
+echo "         RESTRICTED key (least privilege — cannot delete zones or touch"
+echo "         DNSSEC, only manages its own A record):"
 echo "            MW_DOMAIN=${MW_DOMAIN:-<MW_DOMAIN>}"
-echo "            MW_PDNS_URL=https://api.${MW_DOMAIN:-<MW_DOMAIN>}/api/v1/servers/localhost"
-echo "            MW_PDNS_TOKEN=<the MW_PDNS_API_KEY value from $HERE/.env>"
+echo "            MW_PDNS_URL=https://dnsapi.${MW_DOMAIN:-<MW_DOMAIN>}/api/v1/servers/localhost"
+echo "            MW_PDNS_TOKEN=<the MW_PDNS_PROXY_KEY value from $HERE/.env>"
+echo "         (Legacy 0.1.x keeps using api.${MW_DOMAIN:-<MW_DOMAIN>} with the full"
+echo "         MW_PDNS_API_KEY; that path is retired in a future release.)"
 echo
 echo "  [ ] 5. Verify once DNS delegation has propagated (minutes to hours):"
 echo "            dig +short NS ${MW_DOMAIN:-<MW_DOMAIN>}"

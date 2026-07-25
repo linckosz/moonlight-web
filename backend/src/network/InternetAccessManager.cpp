@@ -629,7 +629,7 @@ bool InternetAccessManager::isReservedSubdomain(const QString& label)
     // Labels the DNS stack itself publishes under the base domain — keep in sync
     // with deploy/powerdns/pdns/init.sh (plus "stats" for the Umami analytics host).
     static const char* const kReserved[] = {
-        "www", "api", "stats", "stream", "ns1", "ns2", "mail",
+        "www", "api", "dnsapi", "stats", "stream", "ns1", "ns2", "mail",
     };
     for (const char* r : kReserved)
         if (l == QLatin1String(r)) return true;
@@ -682,15 +682,21 @@ void InternetAccessManager::ensureIdentifiers()
     // A custom FQDN (different from the computed one) would be stored by other paths.
     m_Domain = buildDomain();
     m_Settings->setDomain(QStringLiteral("MW_DOMAIN"));
+
+    // Make the ownership token available on the PowerDNS client before any write
+    // (release/claim/create), so every PATCH carries the X-MW-Owner header.
+    ensureOwnerToken();
 }
 
 // ---------------------------------------------------------------------------
 // A record management (subdomain under kBaseDomain)
 // ---------------------------------------------------------------------------
 
-bool InternetAccessManager::claimOrVerifyOwnership(QString& errorMsg)
+QString InternetAccessManager::ensureOwnerToken()
 {
-    // Per-instance random token, generated once and persisted.
+    // Per-instance random token, generated once and persisted. It is presented
+    // as the X-MW-Owner header on every write and enforced server-side by the
+    // mw-proxy middleware, so it is NEVER written to a public TXT record.
     QString myToken = m_Settings->ownerToken();
     if (myToken.isEmpty()) {
         QByteArray raw(32, '\0');
@@ -699,37 +705,20 @@ bool InternetAccessManager::claimOrVerifyOwnership(QString& errorMsg)
         myToken = QString::fromLatin1(raw.toBase64(QByteArray::OmitTrailingEquals));
         m_Settings->setOwnerToken(myToken);
     }
+    m_Pdns.setOwnerToken(myToken);
+    return myToken;
+}
 
-    const QString ownerFqdn =
-        QStringLiteral("_owner.") + m_UniqueId + QLatin1Char('.') + baseDomain() + QLatin1Char('.');
-
-    QString existing;
-    if (!m_Pdns.getTxtRecord(ownerFqdn, existing, errorMsg)) {
-        // Network/HTTP error: don't brick the user's own registration over a
-        // transient DNS API issue — proceed (best-effort cooperative ownership).
-        qWarning() << "[InternetAccess] Ownership check failed (proceeding):" << errorMsg;
-        return true;
-    }
-
-    if (existing.isEmpty()) {
-        // Unclaimed → claim it now.
-        QString claimErr;
-        if (!m_Pdns.createTxtRecord(ownerFqdn, myToken, kDefaultTtl, claimErr))
-            qWarning() << "[InternetAccess] Failed to write ownership TXT:" << claimErr;
-        else
-            qInfo() << "[InternetAccess] Claimed subdomain ownership:" << m_UniqueId;
-        return true;
-    }
-
-    if (existing == myToken) return true; // we already own it
-
-    // Owned by a different instance — refuse to touch the A record.
-    errorMsg =
-        QStringLiteral("Subdomain %1 is already registered by another MoonlightWeb instance. "
-                       "Pick a different subdomain (unique_id) for this machine.")
-            .arg(m_Domain);
-    qWarning() << "[InternetAccess]" << errorMsg;
-    return false;
+bool InternetAccessManager::claimOrVerifyOwnership(QString& errorMsg)
+{
+    Q_UNUSED(errorMsg);
+    // Ownership is enforced by mw-proxy: the first writer of a subdomain claims
+    // it (Trust-On-First-Use), and every later write must carry the matching
+    // X-MW-Owner token. We only need to make sure the token is ready; if this
+    // instance does not own the subdomain, the middleware rejects the A-record
+    // write with an explicit error surfaced through PdnsClient.
+    ensureOwnerToken();
+    return true;
 }
 
 void InternetAccessManager::releaseOldSubdomain()
@@ -1064,6 +1053,8 @@ bool InternetAccessManager::issueCertificate()
     m_Acme.setHost(m_Domain);
     m_Acme.setBaseDomain(baseDomain());
     m_Acme.setPdnsToken(QString::fromUtf8(qgetenv("MW_PDNS_TOKEN")));
+    // Prove subdomain ownership to mw-proxy for the _acme-challenge TXT writes.
+    m_Acme.setOwnerToken(ensureOwnerToken());
 
     // ACME CA selection. When ZeroSSL EAB credentials are present, issue from
     // ZeroSSL (USERTrust/Sectigo root — same trust as PositiveSSL) so corporate

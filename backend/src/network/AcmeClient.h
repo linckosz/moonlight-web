@@ -72,6 +72,11 @@ public:
     /// PowerDNS API key for DNS-01 TXT record creation/deletion.
     void setPdnsToken(const QString& token);
 
+    /// Per-instance ownership token, sent as X-MW-Owner on the DNS-01 TXT writes
+    /// so the mw-proxy middleware allows this instance to manage its own
+    /// _acme-challenge record. Never published; ignored by a plain PowerDNS.
+    void setOwnerToken(const QString& token) { m_OwnerToken = token; }
+
     /// ACME directory URL (default: Let's Encrypt production).
     void setDirectoryUrl(const QString& url) { m_DirectoryUrl = url; }
 
@@ -205,6 +210,7 @@ private:
     QString m_Host;       // FQDN: "92b8d127.moonlightweb.top"
     QString m_BaseDomain; // PowerDNS zone (e.g. "moonlightweb.top")
     QString m_PdnsToken;
+    QString m_OwnerToken; // per-instance ownership proof (X-MW-Owner header)
 
     QString m_DirectoryUrl;
     QString m_EabKid;     // External Account Binding key identifier

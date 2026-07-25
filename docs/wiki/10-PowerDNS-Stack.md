@@ -9,20 +9,23 @@ The DNS stack is the infrastructure side of **Internet Access**: an authoritativ
 ## 10.1 Topology
 
 ```
-Internet ─:53──────► [dnsdist] ──► pdns:5300        anti-amplification + DNS rate-limit
-Internet ─:80/:443─► [caddy]   ──► pdns:8081        HTTPS API, API rate-limit, auto-TLS
-                              └──► umami:3000        stats.{domain} analytics dashboard
-                     [pdns]     (internal, non-root) PowerDNS authoritative + REST API
-                     [umami+db] (internal)           privacy-friendly web analytics
+Internet ─:53──────► [dnsdist] ──► pdns:5300          anti-amplification + DNS rate-limit
+Internet ─:80/:443─► [caddy] ┬─ api.{domain} ───────► pdns:8081         LEGACY full-access API (0.1.x)
+                             ├─ dnsapi.{domain} ────► mw-proxy:8080 ──► pdns:8081  restricted API (0.2.0+)
+                             └─ stats.{domain} ─────► umami:3000       analytics dashboard
+                     [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
+                     [mw-proxy] (internal)            least-privilege filtering gateway
+                     [umami+db] (internal)            privacy-friendly web analytics
 ```
 
-Five containers (one process each — the idiomatic Docker layout), defined in `docker-compose.yml`:
+Six containers (one process each — the idiomatic Docker layout), defined in `docker-compose.yml`:
 
 | Container | Image | Exposure | Role |
 |---|---|---|---|
 | `pdns` | official `powerdns/pdns-auth-49`, **unmodified** | internal only (DNS :5300, API :8081, fixed IP 172.28.0.10) | Authoritative zone (SQLite in the `pdns_data` volume) + REST API. Runs non-root, `cap_drop: ALL`. |
+| `mw-proxy` | custom build: small Go gateway (stdlib only) | internal only (:8080) | Least-privilege filter in front of the pdns API: holds the full key, exposes a restricted key that can only manage a client's own A/TXT records. Store in `mwproxy_data`. See §10.8. |
 | `dnsdist` | official `powerdns/dnsdist-19` | public :53 UDP+TCP | DNS front: per-client rate limit, ANY→TCP, forwards to pdns. |
-| `caddy` | custom build: Caddy + `caddy-ratelimit` (xcaddy) | public :80/:443 | `api.{domain}` → pdns API (rate-limited); apex/`www`/`stream` → static `website/`; `stats.` → Umami. Auto Let's Encrypt. |
+| `caddy` | custom build: Caddy + `caddy-ratelimit` (xcaddy) | public :80/:443 | `api.{domain}` → pdns API (legacy); `dnsapi.{domain}` → mw-proxy (restricted); apex/`www`/`stream` → static `website/`; `stats.` → Umami. Auto Let's Encrypt. |
 | `umami` | official Umami (postgres flavor) | internal (via caddy) | Cookieless analytics for the landing page. |
 | `umami-db` | postgres 16-alpine | internal | Umami storage (`umami_db` volume). |
 
@@ -34,11 +37,11 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
 
 - **`pdns/zz-mw.conf`** — hardening snippet merged via include-dir: `disable-axfr`, `version-string=anonymous`, default SOA content, internal ports.
 - **`pdns/init.sh`** — idempotent zone bootstrap run as entrypoint (then `exec`s the official wrapper):
-  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `ns1`, `ns2`, `api` → `MW_PUBLIC_IP`, NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
+  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `ns1`, `ns2`, `api`, `dnsapi` → `MW_PUBLIC_IP`, NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
   - **backfills** missing records on pre-existing zones (`ensure_a` guards — note: a bare re-`add-record` would duplicate, hence the greps);
   - replaces the image's placeholder SOA when found.
 
-`MW_PDNS_API_KEY` from `.env` maps to `PDNS_AUTH_API_KEY`, so the key reaches the official mechanism unchanged. **The same value must be `MW_PDNS_TOKEN` on every MoonlightWeb server.** Per-instance subdomains (`{uid}` A records, `_owner.{uid}` TXT, `_acme-challenge.*`) are managed at runtime by MoonlightWeb through the API — the stack never touches them.
+`MW_PDNS_API_KEY` from `.env` maps to `PDNS_AUTH_API_KEY`, so the key reaches the official mechanism unchanged. This **full** key now stays server-side: pdns uses it, and `mw-proxy` injects it toward pdns. MoonlightWeb 0.2.0+ instead holds the **restricted** `MW_PDNS_PROXY_KEY` (§10.8). Per-instance subdomains (`{uid}` A records, `_acme-challenge.*` TXT) are managed at runtime by MoonlightWeb through the API — the stack never touches them.
 
 ## 10.3 dnsdist configuration (`dnsdist/dnsdist.conf`)
 
@@ -51,7 +54,7 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
 
 - **Dockerfile**: xcaddy build adding the `caddy-ratelimit` plugin (this Go build is why the installer adds swap on 1 GiB VMs).
 - **`entrypoint.sh`** renders `Caddyfile.tmpl` from env at boot: `@MW_DOMAIN@`, `@TLS_LINE@` (api vhost: empty = auto Let's Encrypt, or `tls /certs/...` when `MW_TLS_CERT`+`MW_TLS_KEY` are both set — user files take priority), `@SITE_TLS_LINE@` (site vhosts always get their own ACME cert, never the api-only files).
-- Vhosts: `api.` → `reverse_proxy pdns:8081` behind a **60 req/min/IP** rate limit; `stats.` → Umami; apex+`www`+`stream` → static site with `www`/`stream` 301-redirected to the apex (`stream.` is a marketing vanity alias).
+- Vhosts: `api.` → `reverse_proxy pdns:8081` (legacy full-access, 60 req/min/IP); `dnsapi.` → `reverse_proxy mw-proxy:8080` (restricted, 60 req/min/IP — §10.7); `stats.` → Umami; apex+`www`+`stream` → static site with `www`/`stream` 301-redirected to the apex (`stream.` is a marketing vanity alias).
 - Certificates persist in the `caddy_data` volume.
 
 ## 10.5 The installer (`install.sh`)
@@ -63,7 +66,7 @@ One idempotent script (`sudo ./install.sh`, re-runnable, keeps an existing `.env
 3. Configures the **host firewall** (ufw/firewalld/nftables best-effort): 53 UDP+TCP, 80, 443, SSH.
 4. **Frees port 53** — Ubuntu's `systemd-resolved` stub listener holds it.
 5. Adds a **swap file on low-RAM hosts** (the xcaddy Go build can OOM at 1 GiB).
-6. Interactive `.env`: required `MW_DOMAIN` + `MW_PUBLIC_IP` (auto-detected default); generates `MW_PDNS_API_KEY`, `MW_UMAMI_DB_PASSWORD`, `MW_UMAMI_SECRET`; optional ACME email and own-cert paths.
+6. Interactive `.env`: required `MW_DOMAIN` + `MW_PUBLIC_IP` (auto-detected default); generates `MW_PDNS_API_KEY`, `MW_PDNS_PROXY_KEY`, `MW_PDNS_OWNER_SECRET`, `MW_UMAMI_DB_PASSWORD`, `MW_UMAMI_SECRET`; optional ACME email and own-cert paths.
 7. `docker compose up -d --build` (with progress for the slow caddy build).
 8. Prints — and saves to **`NEXT-STEPS.txt`** — the checklist of things only the operator can do (§10.6).
 
@@ -89,25 +92,41 @@ The stack cannot do these for you:
 
 **Umami one-time setup**: log into `https://stats.{domain}` (`admin`/`umami`), change the password, create the website entry, paste the generated UUID into `website/index.html`'s `data-website-id`, `docker compose restart caddy`.
 
-**MoonlightWeb side**: set `MW_DOMAIN`, `MW_PDNS_URL=https://api.{domain}/api/v1/servers/localhost`, `MW_PDNS_TOKEN` in the server's `.env` (or CI secrets for release builds).
+**MoonlightWeb side (0.2.0+)**: set `MW_DOMAIN`, `MW_PDNS_URL=https://dnsapi.{domain}/api/v1/servers/localhost`, and `MW_PDNS_TOKEN=`*the restricted `MW_PDNS_PROXY_KEY`* in the server's `.env` (or CI secrets for release builds). Legacy 0.1.x uses `api.{domain}` with the full key.
 
-## 10.7 Hardening & limits
+## 10.7 Least-privilege API key (`mw-proxy`)
 
-Built-in: DNS rate-limit + ANY→TCP (dnsdist), API key + 60 req/min/IP (Caddy), non-root/no-caps containers, resource limits, API port never published, `disable-axfr`, anonymous version string, host fail2ban + auto-updates.
+PowerDNS API keys are **all-or-nothing** — the key controls every zone (delete zones, rewrite NS/SOA, disable DNSSEC, dump records). Because the key is baked into distributed binaries, one extracted key would mean full DNS compromise. `mw-proxy` (`deploy/powerdns/mw-proxy/`, ~300 lines of Go, stdlib only) keeps the **full** key server-side and hands the app a **restricted** key that can only manage its own records.
+
+Enforcement, per request (everything else → `403`):
+
+- **Zone + method**: only `GET`/`PATCH` on the one configured zone. Zone create/delete, `/config`, `/cryptokeys`, `/metadata`, other zones — refused.
+- **Name + type**: only `{uid}.{zone}` A, `_owner.{uid}.{zone}` TXT, `_acme-challenge.{uid}.{zone}` TXT, where `uid` is 8 hex chars (mirrors `generateUniqueId()`, auto-excludes reserved labels). A disguised NS/SOA rewrite is rejected on type.
+- **No zone dumps**: `GET` must carry a valid `rrset_name` filter — no listing the whole zone to harvest subdomains.
+- **Server-side ownership (TOFU)**: the first writer of a subdomain presents a per-instance token in the `X-MW-Owner` header; mw-proxy stores `HMAC_S(token)` keyed by `uid` (`mwproxy_data:/data/owners.json`) and requires the matching token on every later write. The token is **never** published in DNS, so it cannot be read (via `dig` or a GET) and replayed. **One subdomain per owner** is enforced; deleting the A record releases it.
+- **Bulk-creation limit**: new subdomains are rate-limited per client IP (`MW_PROXY_MAX_NEW_PER_HOUR`, default 20), on top of Caddy's 60 req/min.
+
+Secrets (`.env`, generated by `install.sh`): `MW_PDNS_API_KEY` (full, server-side only), `MW_PDNS_PROXY_KEY` (restricted, = the app's `MW_PDNS_TOKEN`), `MW_PDNS_OWNER_SECRET` (HMAC key for the store — keep stable). App side: `PdnsClient`/`AcmeClient` send `X-MW-Owner` = the persisted per-instance `owner_token`; the legacy public `_owner` TXT is no longer written.
+
+**Migration (two phases).** *Phase 1 (0.2.0)* — both endpoints live: 0.1.x → `api.` (full key), 0.2.0+ → `dnsapi.` (restricted key). *Phase 2 (later)* — the `api.` → pdns route is retired (returns a "please upgrade" message that 0.1.x surfaces via `PdnsClient`'s error path) and `MW_PDNS_API_KEY` is rotated, killing keys baked into old binaries.
+
+## 10.8 Hardening & limits
+
+Built-in: DNS rate-limit + ANY→TCP (dnsdist), API key + 60 req/min/IP (Caddy), least-privilege restricted key (mw-proxy, §10.7), non-root/no-caps containers, resource limits, API port never published, `disable-axfr`, anonymous version string, host fail2ban + auto-updates.
 
 Explicit non-goals: **volumetric DDoS** absorption (needs upstream scrubbing/anycast/managed secondary DNS) and in-container IP banning (fail2ban belongs on the Docker host, watching Caddy's access log; the in-container mitigation is the HTTP 429 rate limit).
 
-## 10.8 Operations cheat-sheet
+## 10.9 Operations cheat-sheet
 
 ```bash
-docker compose logs -f pdns|caddy|dnsdist        # logs
+docker compose logs -f pdns|mw-proxy|caddy|dnsdist   # logs
 docker compose exec pdns pdnsutil --config-dir=/etc/powerdns list-zone <domain>
 docker compose restart caddy                      # after editing website/ (bind-mounted)
 docker compose up -d --build                      # after editing .env
 ./renew-certs.sh                                  # reissue certs once DNS is live
 ```
 
-Persistence: zone DB in `pdns_data`, certs in `caddy_data`, analytics in `umami_db` — rebuilding keeps all three; remove the volumes to start fresh. `pdns/init.sh` is idempotent, restarts are safe.
+Persistence: zone DB in `pdns_data`, ownership store in `mwproxy_data`, certs in `caddy_data`, analytics in `umami_db` — rebuilding keeps them; remove the volumes to start fresh. `pdns/init.sh` is idempotent, restarts are safe.
 
 ---
 

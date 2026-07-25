@@ -643,6 +643,8 @@ bool AcmeClient::createChallengeTxtRecord(const QString& dnsValue)
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    if (!m_OwnerToken.isEmpty())
+        req.setRawHeader("X-MW-Owner", m_OwnerToken.toUtf8());
 
     QBuffer* buf = new QBuffer;
     buf->setData(payload);
@@ -704,6 +706,8 @@ bool AcmeClient::deleteChallengeTxtRecord()
     req.setRawHeader("X-API-Key", m_PdnsToken.toUtf8());
     req.setRawHeader("Accept", "application/json");
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    if (!m_OwnerToken.isEmpty())
+        req.setRawHeader("X-MW-Owner", m_OwnerToken.toUtf8());
 
     QBuffer* buf2 = new QBuffer;
     buf2->setData(payload);
