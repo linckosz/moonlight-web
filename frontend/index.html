@@ -23,17 +23,20 @@
             rel="stylesheet"
             href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap"
         />
-        <!-- Design system: tokens → base → layout → components → views → stream -->
-        <link rel="stylesheet" href="css/tokens.css?v=20260618b" />
-        <link rel="stylesheet" href="css/base.css?v=20260618b" />
-        <link rel="stylesheet" href="css/layout.css?v=20260618b" />
-        <link rel="stylesheet" href="css/components.css?v=20260703a" />
-        <link rel="stylesheet" href="css/views/hosts.css?v=20260629a" />
-        <link rel="stylesheet" href="css/views/apps.css?v=20260619a" />
-        <link rel="stylesheet" href="css/views/settings.css?v=20260618b" />
-        <link rel="stylesheet" href="css/views/login.css?v=20260710a" />
-        <link rel="stylesheet" href="css/views/admin.css?v=20260618b" />
-        <link rel="stylesheet" href="css/stream.css?v=20260618b" />
+        <!-- Design system: tokens → base → layout → components → views → stream.
+             ?v=__MW_VERSION__ is replaced by the running app version server-side
+             (StaticFileHandler), so every release busts the stylesheet cache with
+             no manual bump. -->
+        <link rel="stylesheet" href="css/tokens.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/base.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/layout.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/components.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/views/hosts.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/views/apps.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/views/settings.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/views/login.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/views/admin.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="css/stream.css?v=__MW_VERSION__" />
         <link rel="icon" href="assets/favicon.ico" type="image/x-icon" />
     </head>
     <body>
@@ -95,6 +98,6 @@
             </footer>
         </div>
 
-        <script type="module" src="js/app.js"></script>
+        <script type="module" src="js/app.js?v=__MW_VERSION__"></script>
     </body>
 </html>

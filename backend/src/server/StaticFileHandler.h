@@ -26,13 +26,18 @@ class StaticFileHandler : public QObject
     Q_OBJECT
 
 public:
-    explicit StaticFileHandler(const QString& rootDir, QObject* parent = nullptr);
+    explicit StaticFileHandler(const QString& rootDir, const QString& version = QString(),
+                               QObject* parent = nullptr);
 
-    HttpResponse serveFile(const QString& requestPath) const;
+    // ifNoneMatch: the request's If-None-Match header value; when it matches the
+    // asset's current ETag, a bodyless 304 Not Modified is returned so the
+    // browser reuses its cached copy without re-downloading.
+    HttpResponse serveFile(const QString& requestPath, const QString& ifNoneMatch = QString()) const;
 
 private:
     QString mimeType(const QString& path) const;
     static QMap<QString, QString> s_MimeTypes;
 
     QString m_RootDir;
+    QString m_Version; // app version, stamped into asset URLs and ETags
 };

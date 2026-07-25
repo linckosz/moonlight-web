@@ -19,10 +19,12 @@
  * Version guard — forces a reload when a new build is deployed while the PWA
  * is still open, so the app never keeps running stale code/CSS after an update.
  *
- * Single source of truth: /version.json ({ "version": "..." }). Bump it on each
- * deploy — nothing else to maintain. No service worker needed: combined with the
- * server's `Cache-Control: no-cache` on text assets, location.reload() pulls a
- * fully fresh app (HTML/CSS/JS revalidated).
+ * Single source of truth: /version.json ({ "version": "..." }). The backend
+ * synthesises this from the running app version (MW_VERSION, baked in from the
+ * git tag at build) — nothing to bump by hand. No service worker needed:
+ * combined with the server's `Cache-Control: no-cache` + ETag revalidation on
+ * text assets, location.reload() pulls a fully fresh app (HTML/CSS/JS
+ * revalidated, and the version-stamped stylesheet URLs change per release).
  *
  * The version is captured at boot and compared on a timer and whenever the PWA
  * returns to the foreground (the common iOS resume case). A reload is never

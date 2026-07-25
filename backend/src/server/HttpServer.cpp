@@ -271,7 +271,7 @@ HttpServer::HttpServer(quint16 httpPort, quint16 httpsPort, QObject* parent)
         frontendDir = QCoreApplication::applicationDirPath() + "/frontend/";
     if (!QDir(frontendDir).exists())
         frontendDir = QCoreApplication::applicationDirPath() + "/../Resources/frontend/";
-    m_StaticFiles = new StaticFileHandler(frontendDir, this);
+    m_StaticFiles = new StaticFileHandler(frontendDir, QCoreApplication::applicationVersion(), this);
 }
 
 HttpServer::~HttpServer()
@@ -743,11 +743,26 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     }
 
     if (!req.path.startsWith("/api/")) {
-        HttpResponse resp = m_StaticFiles->serveFile(req.path);
+        // /version.json is synthesised from the running app version (single
+        // source of truth: MW_VERSION, baked in at build from the git tag) so
+        // it never needs hand-bumping. The frontend's VersionGuard polls it and
+        // reloads when it changes, pulling a fresh app after every update.
+        if (req.path == "/version.json") {
+            HttpResponse resp;
+            resp.statusCode = 200;
+            resp.contentType = "application/json";
+            resp.body = "{\"version\":\"" + QCoreApplication::applicationVersion().toUtf8() + "\"}\n";
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate";
+            sendResponse(socket, resp);
+            return;
+        }
+
+        const QString ifNoneMatch = req.headers.value("if-none-match");
+        HttpResponse resp = m_StaticFiles->serveFile(req.path, ifNoneMatch);
         // SPA fallback: for any non-API path that doesn't match a real file,
         // serve index.html so the frontend can handle its own routing via
         // the History API (e.g. /admin, /settings).
-        if (resp.statusCode == 404) resp = m_StaticFiles->serveFile("/");
+        if (resp.statusCode == 404) resp = m_StaticFiles->serveFile("/", ifNoneMatch);
         sendResponse(socket, resp);
         return;
     }
@@ -941,6 +956,7 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     case 200: statusText = "OK"; break;
     case 201: statusText = "Created"; break;
     case 204: statusText = "No Content"; break;
+    case 304: statusText = "Not Modified"; break;
     case 400: statusText = "Bad Request"; break;
     case 403: statusText = "Forbidden"; break;
     case 404: statusText = "Not Found"; break;
@@ -950,7 +966,10 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
 
     respData.append("HTTP/1.1 " + QByteArray::number(response.statusCode) + " " +
                     statusText.toUtf8() + "\r\n");
-    respData.append("Content-Type: " + response.contentType.toUtf8() + "\r\n");
+    // 304 Not Modified carries no body and no content type (the browser reuses
+    // its cached representation); other responses always describe their body.
+    if (!response.contentType.isEmpty())
+        respData.append("Content-Type: " + response.contentType.toUtf8() + "\r\n");
     respData.append("Content-Length: " + QByteArray::number(response.body.size()) + "\r\n");
     // No Access-Control-Allow-Origin: the frontend is served same-origin by this
     // server, so CORS is never needed. Omitting it prevents any cross-origin page
