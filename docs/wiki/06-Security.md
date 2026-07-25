@@ -58,7 +58,6 @@ Two instances (or a malicious actor) must never overwrite each other's A record.
 - The first writer of a `uid` claims it (Trust-On-First-Use); `mw-proxy` stores `HMAC(owner_token)` keyed by `uid` and rejects (`403`) any later write whose header does not match. **One subdomain per owner** is enforced, and the restricted key can only touch `{uid}` A / `_owner` / `_acme-challenge` records (never NS/SOA/DNSSEC/other zones).
 - Reserved labels (`www`, `api`, `dnsapi`, `stats`, `stream`, `ns1/ns2`, `mail`, apex, anything starting `_`) are rejected as `unique_id` values — backend-side (`isReservedSubdomain`), by a boot-time guard against `settings.json` edits, and again by mw-proxy's 8-hex `uid` rule.
 - Changing `unique_id` releases the previous subdomain (deleting its A record frees the ownership entry) so one owner never holds two live subdomains.
-- The legacy cooperative `_owner.<uid>` TXT record is no longer written (the token now lives only in the header). Older 0.1.x builds still use it against the legacy `api.` endpoint during the migration window.
 
 ## 6.7 Internet-access consent & audit
 
