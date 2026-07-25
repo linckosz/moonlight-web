@@ -3,12 +3,11 @@
 //
 // Why this exists
 // ---------------
-// The PowerDNS API key is all-or-nothing: whoever holds it can delete zones,
-// rewrite NS/SOA, disable DNSSEC, touch any zone, etc. MoonlightWeb instances
-// only ever need to create/update/delete their own A record plus two TXT records
-// (_owner ownership marker — legacy — and _acme-challenge for DNS-01). Shipping
-// the full key inside every distributed binary means a single extracted key =
-// full DNS compromise.
+// A PowerDNS API key grants broad control (delete zones, rewrite NS/SOA, disable
+// DNSSEC, touch any zone). MoonlightWeb instances only ever need to
+// create/update/delete their own A record plus two TXT records (_owner ownership
+// marker and _acme-challenge for DNS-01), so they are granted DNS access on a
+// least-privilege basis and never hold full PowerDNS credentials.
 //
 // mw-proxy holds the real PowerDNS key server-side only. Clients authenticate
 // with a SEPARATE restricted key (MW_PDNS_PROXY_KEY) and mw-proxy:

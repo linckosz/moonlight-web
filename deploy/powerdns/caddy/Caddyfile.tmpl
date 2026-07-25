@@ -26,9 +26,8 @@ api.@MW_DOMAIN@ {
 		}
 	}
 	# pdns = the PowerDNS service on the compose network (API on :8081).
-	# LEGACY, full-access path (unchanged): MoonlightWeb 0.1.x holds the real
-	# PowerDNS key and talks here directly. New clients (2.0.0+) use dnsapi.*
-	# below with a restricted key. This block is retired in the next phase.
+	# Compatibility path: direct PowerDNS API. New clients (2.0.0+) use the
+	# restricted dnsapi.* gateway below. This block is retired in a later release.
 	reverse_proxy pdns:8081
 }
 
