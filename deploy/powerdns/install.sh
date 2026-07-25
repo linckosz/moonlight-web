@@ -440,8 +440,6 @@ echo "         DNSSEC, only manages its own A record):"
 echo "            MW_DOMAIN=${MW_DOMAIN:-<MW_DOMAIN>}"
 echo "            MW_PDNS_URL=https://dnsapi.${MW_DOMAIN:-<MW_DOMAIN>}/api/v1/servers/localhost"
 echo "            MW_PDNS_TOKEN=<the MW_PDNS_PROXY_KEY value from $HERE/.env>"
-echo "         (Legacy 0.1.x keeps using api.${MW_DOMAIN:-<MW_DOMAIN>} with the full"
-echo "         MW_PDNS_API_KEY; that path is retired in a future release.)"
 echo
 echo "  [ ] 5. Verify once DNS delegation has propagated (minutes to hours):"
 echo "            dig +short NS ${MW_DOMAIN:-<MW_DOMAIN>}"

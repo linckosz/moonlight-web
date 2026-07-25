@@ -63,7 +63,7 @@ ensure_a() {  # ensure_a <name>  — add an A record to MW_PUBLIC_IP if absent
 NEED_RECTIFY=0
 ensure_a @      # apex   — presentation site
 ensure_a www    # www    — presentation site
-ensure_a api    # api    — PowerDNS REST API (legacy, full-access, 0.1.x)
+ensure_a api    # api    — PowerDNS REST API (direct, compatibility)
 ensure_a dnsapi # dnsapi — restricted DNS-registration API (mw-proxy, 0.2.0+)
 ensure_a stats  # stats  — Umami analytics dashboard
 ensure_a stream # stream — vanity alias, redirected to the apex by Caddy
