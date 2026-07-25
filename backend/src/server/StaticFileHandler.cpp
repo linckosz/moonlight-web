@@ -54,7 +54,8 @@ QMap<QString, QString> StaticFileHandler::s_MimeTypes = {
     {"map", "application/json"},
 };
 
-StaticFileHandler::StaticFileHandler(const QString& rootDir, const QString& version, QObject* parent)
+StaticFileHandler::StaticFileHandler(const QString& rootDir, const QString& version,
+                                     QObject* parent)
     : QObject(parent)
     , m_RootDir(QDir::cleanPath(rootDir))
     , m_Version(version.isEmpty() ? QStringLiteral(MW_VERSION) : version)
@@ -62,7 +63,8 @@ StaticFileHandler::StaticFileHandler(const QString& rootDir, const QString& vers
     if (!m_RootDir.endsWith('/')) m_RootDir += '/';
 }
 
-HttpResponse StaticFileHandler::serveFile(const QString& requestPath, const QString& ifNoneMatch) const
+HttpResponse StaticFileHandler::serveFile(const QString& requestPath,
+                                          const QString& ifNoneMatch) const
 {
     // Prevent directory traversal
     QString safePath = requestPath;
@@ -119,8 +121,7 @@ HttpResponse StaticFileHandler::serveFile(const QString& requestPath, const QStr
     // so <link>/<script> URLs like `css/base.css?v=__MW_VERSION__` become
     // `?v=1.2.3`. The query string changes with every release, guaranteeing a
     // fresh fetch of each stylesheet even where ETag revalidation is skipped.
-    if (ext == "html")
-        resp.body.replace("__MW_VERSION__", m_Version.toUtf8());
+    if (ext == "html") resp.body.replace("__MW_VERSION__", m_Version.toUtf8());
 
     resp.headers["ETag"] = etag;
     resp.headers["Last-Modified"] = httpDate(lastModified);

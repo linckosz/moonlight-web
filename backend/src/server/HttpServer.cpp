@@ -271,7 +271,8 @@ HttpServer::HttpServer(quint16 httpPort, quint16 httpsPort, QObject* parent)
         frontendDir = QCoreApplication::applicationDirPath() + "/frontend/";
     if (!QDir(frontendDir).exists())
         frontendDir = QCoreApplication::applicationDirPath() + "/../Resources/frontend/";
-    m_StaticFiles = new StaticFileHandler(frontendDir, QCoreApplication::applicationVersion(), this);
+    m_StaticFiles =
+        new StaticFileHandler(frontendDir, QCoreApplication::applicationVersion(), this);
 }
 
 HttpServer::~HttpServer()
@@ -751,7 +752,8 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             HttpResponse resp;
             resp.statusCode = 200;
             resp.contentType = "application/json";
-            resp.body = "{\"version\":\"" + QCoreApplication::applicationVersion().toUtf8() + "\"}\n";
+            resp.body =
+                "{\"version\":\"" + QCoreApplication::applicationVersion().toUtf8() + "\"}\n";
             resp.headers["Cache-Control"] = "no-cache, must-revalidate";
             sendResponse(socket, resp);
             return;

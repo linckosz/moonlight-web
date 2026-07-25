@@ -32,7 +32,8 @@ public:
     // ifNoneMatch: the request's If-None-Match header value; when it matches the
     // asset's current ETag, a bodyless 304 Not Modified is returned so the
     // browser reuses its cached copy without re-downloading.
-    HttpResponse serveFile(const QString& requestPath, const QString& ifNoneMatch = QString()) const;
+    HttpResponse serveFile(const QString& requestPath,
+                           const QString& ifNoneMatch = QString()) const;
 
 private:
     QString mimeType(const QString& path) const;
