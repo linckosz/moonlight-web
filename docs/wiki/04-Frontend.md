@@ -12,7 +12,8 @@ The frontend is a **framework-less, build-less** web app served directly by the 
 frontend/
 ├── index.html                  # single page shell: header + #main-content + footer, PWA meta
 ├── manifest.webmanifest        # PWA manifest (installable, icons)
-├── version.json                # deploy version — VersionGuard polls it to force-reload stale PWAs
+│                               # /version.json is synthesised by the backend from
+│                               # the app version — VersionGuard polls it to force-reload stale PWAs
 ├── css/
 │   ├── tokens.css              # design tokens (Cyberpunk-2077-inspired theme)
 │   ├── base.css / layout.css / components.css / stream.css

@@ -76,4 +76,34 @@ void run_static_files_tests()
     // Text assets are marked no-cache (iOS WebKit staleness fix); html/js/css.
     CHECK(h.serveFile("/index.html").headers.value("Cache-Control").contains("no-cache"));
     CHECK(h.serveFile("/app.js").headers.value("Cache-Control").contains("no-cache"));
+
+    // ── Conditional requests: ETag / Last-Modified / 304 ──────────────────────
+    // A 200 carries validators, and replaying the ETag yields a bodyless 304 so
+    // an up-to-date browser skips re-downloading the asset after an app update.
+    HttpResponse full = h.serveFile("/app.js");
+    const QString etag = full.headers.value("ETag");
+    CHECK(!etag.isEmpty());
+    CHECK(!full.headers.value("Last-Modified").isEmpty());
+
+    HttpResponse notMod = h.serveFile("/app.js", etag);
+    CHECK_EQ(notMod.statusCode, 304);
+    CHECK(notMod.body.isEmpty());
+    CHECK_EQ(notMod.headers.value("ETag"), etag);
+
+    // A stale/absent validator still gets the full body (200).
+    CHECK_EQ(h.serveFile("/app.js", "\"stale\"").statusCode, 200);
+
+    // ── Version stamping: __MW_VERSION__ in HTML → running version ────────────
+    // The token is resolved only in HTML (so `css/x.css?v=__MW_VERSION__`
+    // becomes a per-release cache-bust); non-HTML bytes are served verbatim.
+    writeFile(root + "/stamped.html", "<link href=\"a.css?v=__MW_VERSION__\">");
+    writeFile(root + "/stamped.js", "const v='__MW_VERSION__';");
+    StaticFileHandler hv(root, "9.9.9");
+    HttpResponse stampedHtml = hv.serveFile("/stamped.html");
+    CHECK(stampedHtml.body.contains("a.css?v=9.9.9"));
+    CHECK(!stampedHtml.body.contains("__MW_VERSION__"));
+    // The version is part of the ETag, so a different build busts the cache.
+    CHECK(stampedHtml.headers.value("ETag").contains("9.9.9"));
+    // JS is not rewritten — only HTML carries the stamp.
+    CHECK(hv.serveFile("/stamped.js").body.contains("__MW_VERSION__"));
 }
