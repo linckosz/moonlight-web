@@ -256,7 +256,7 @@ if [ -f .env ]; then
     }
     ensure_env MW_UMAMI_DB_PASSWORD "$(gen_secret)"
     ensure_env MW_UMAMI_SECRET      "$(gen_secret)"
-    # mw-proxy: restricted client key + server-side ownership HMAC (2.0.0+).
+    # mw-proxy: restricted client key + server-side ownership HMAC (0.2.0+).
     ensure_env MW_PDNS_PROXY_KEY        "$(gen_secret)"
     ensure_env MW_PDNS_OWNER_SECRET     "$(gen_secret)"
     ensure_env MW_PROXY_MAX_NEW_PER_HOUR "20"
@@ -285,7 +285,7 @@ else
     MW_UMAMI_SECRET="$(gen_secret)"
 
     # mw-proxy secrets — generated silently. The proxy key is the RESTRICTED key
-    # MoonlightWeb 2.0.0+ uses; the owner secret is a server-side HMAC key.
+    # MoonlightWeb 0.2.0+ uses; the owner secret is a server-side HMAC key.
     MW_PDNS_PROXY_KEY="$(gen_secret)"
     MW_PDNS_OWNER_SECRET="$(gen_secret)"
 
@@ -434,7 +434,7 @@ else
     echo "                   --config-dir=/etc/powerdns export-zone-ds ${MW_DOMAIN:-<MW_DOMAIN>} )"
 fi
 echo
-echo "  [ ] 4. On your MoonlightWeb server (2.0.0+), set in its own .env the"
+echo "  [ ] 4. On your MoonlightWeb server (0.2.0+), set in its own .env the"
 echo "         RESTRICTED key (least privilege — cannot delete zones or touch"
 echo "         DNSSEC, only manages its own A record):"
 echo "            MW_DOMAIN=${MW_DOMAIN:-<MW_DOMAIN>}"

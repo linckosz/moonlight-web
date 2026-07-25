@@ -52,7 +52,7 @@ Two cooperating layers:
 
 ## 6.6 DNS subdomain ownership
 
-Two instances (or a malicious actor) must never overwrite each other's A record. Ownership is enforced **server-side** by the `mw-proxy` gateway (2.0.0+; see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)) rather than cooperatively:
+Two instances (or a malicious actor) must never overwrite each other's A record. Ownership is enforced **server-side** by the `mw-proxy` gateway (0.2.0+; see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)) rather than cooperatively:
 
 - Each instance holds a random per-instance `owner_token`, sent as the **`X-MW-Owner` header** on every write (`PdnsClient`/`AcmeClient`). It is **never published in DNS**, so it cannot be read via `dig` and replayed.
 - The first writer of a `uid` claims it (Trust-On-First-Use); `mw-proxy` stores `HMAC(owner_token)` keyed by `uid` and rejects (`403`) any later write whose header does not match. **One subdomain per owner** is enforced, and the restricted key can only touch `{uid}` A / `_owner` / `_acme-challenge` records (never NS/SOA/DNSSEC/other zones).
