@@ -1156,7 +1156,14 @@ export class StreamView {
             // fullscreen of the stream (header hidden via :fullscreen CSS).
             this.toggleFullscreen();
         });
-        const header = document.querySelector('.stream-header');
+        // Scope to THIS view's own header (this._rootEl), never the global first
+        // match: a hidden standby view is appended after the live one, so
+        // document.querySelector('.stream-header') would resolve to the LIVE
+        // view's header and inject this view's buttons there. On promote the old
+        // view's teardown removes its whole #stream-view root — carrying the
+        // now-active view's misplaced keyboard/fullscreen buttons away with it
+        // (two keyboards during the swap, then none until a manual restart).
+        const header = this._rootEl.querySelector('.stream-header');
         if (header) {
             // Insert before the quit button (first child)
             header.insertBefore(this._mobileFsBtn, header.firstChild);
