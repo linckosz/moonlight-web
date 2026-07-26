@@ -26,6 +26,10 @@ typedef NS_ENUM(NSInteger, InstallerSectionDirection) {
 - (void)setContentView:(NSView *)view;
 - (NSString *)title;
 - (void)setNextEnabled:(BOOL)enabled;
+// Installer.app's chrome only offers Go Back / Continue / Cancel and cannot be
+// extended, so the "Skip" affordance lives inside the pane and advances the
+// wizard through this.
+- (void)gotoNextPane;
 - (BOOL)shouldExitPane:(InstallerSectionDirection)dir;
 - (void)willEnterPane:(InstallerSectionDirection)dir;
 - (void)didEnterPane:(InstallerSectionDirection)dir;

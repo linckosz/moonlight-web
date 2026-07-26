@@ -40,13 +40,25 @@ echo "console user=$CONSOLE_USER uid=$CONSOLE_UID home=$CONSOLE_HOME"
 
 # ── Read the plugin hand-off (best-effort defaults; no jq/python on stock macOS).
 read_val() { /usr/bin/defaults read "$HANDOFF" "$1" 2>/dev/null; }
+# Absent key → the default, so a plain `installer` CLI run (no plugin pane, no
+# hand-off) keeps the historical behaviour: install Sunshine, pair with
+# admin/admin. The pane writes 0 for both when the user clicks Skip, and for
+# autopair when Sunshine is already paired.
+read_flag() { # <key> <default:true|false>
+    case "$(read_val "$1")" in
+        1|true) echo "true" ;;
+        0|false) echo "false" ;;
+        *) echo "$2" ;;
+    esac
+}
 SUN_USER="$(read_val username)"; [ -z "$SUN_USER" ] && SUN_USER="admin"
 SUN_PASS="$(read_val password)"; [ -z "$SUN_PASS" ] && SUN_PASS="admin"
 DMG="$(read_val dmg)"
-INTERNET_RAW="$(read_val internet)" # 1 / 0 / empty
-if [ "$INTERNET_RAW" = "1" ] || [ "$INTERNET_RAW" = "true" ]; then
-    INTERNET="true"; else INTERNET="false"; fi
+INTERNET="$(read_flag internet false)"
+DO_INSTALL="$(read_flag install true)"
+AUTO_PAIR="$(read_flag autopair true)"
 CONSENT="$(read_val consent)" # exact agreement text shown in the installer pane
+echo "handoff: install=$DO_INSTALL autopair=$AUTO_PAIR internet=$INTERNET"
 
 # ── 1) Install Sunshine (skip if already present). ──────────────────────────
 sunshine_bin() {
@@ -57,7 +69,10 @@ sunshine_bin() {
     return 1
 }
 
-if ! sunshine_bin >/dev/null; then
+SUNSHINE_WAS_PRESENT="false"
+sunshine_bin >/dev/null && SUNSHINE_WAS_PRESENT="true"
+
+if [ "$SUNSHINE_WAS_PRESENT" = "false" ] && [ "$DO_INSTALL" = "true" ]; then
     # Fetch the DMG if the plugin didn't (no network in the pane, or CLI install).
     if [ -z "$DMG" ] || [ ! -f "$DMG" ]; then
         ARCH="$(/usr/bin/uname -m)" # arm64 | x86_64
@@ -92,15 +107,22 @@ if ! sunshine_bin >/dev/null; then
             echo "WARN: could not mount the Sunshine DMG"
         fi
     fi
-else
+elif [ "$SUNSHINE_WAS_PRESENT" = "true" ]; then
     echo "Sunshine already present at $(sunshine_bin), skipping install"
+else
+    echo "Sunshine install skipped by the user"
 fi
 
-# ── 2) Apply Sunshine web-UI credentials (best-effort). Unlike Windows
-#    (global %PROGRAMDATA% config), Sunshine on macOS stores its state per-user
-#    (~/.config/sunshine): run --creds as the console user, not root, or the
-#    credentials land in /var/root and the user's Sunshine keeps its defaults.
-SUN_BIN="$(sunshine_bin || true)"
+# ── 2) Apply Sunshine web-UI credentials (best-effort) — ONLY for a Sunshine we
+#    just installed. An existing install already has credentials the user knows
+#    (they typed them in the pane just to enable pairing); overwriting them would
+#    silently change the password of a server they configured themselves.
+#    Unlike Windows (global %PROGRAMDATA% config), Sunshine on macOS stores its
+#    state per-user (~/.config/sunshine): run --creds as the console user, not
+#    root, or the credentials land in /var/root and the user's Sunshine keeps its
+#    defaults.
+SUN_BIN=""
+[ "$SUNSHINE_WAS_PRESENT" = "false" ] && SUN_BIN="$(sunshine_bin || true)"
 if [ -n "$SUN_BIN" ]; then
     if [ "$CONSOLE_UID" != "0" ]; then
         /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" \
@@ -136,7 +158,7 @@ cat > "$APPDATA/provisioning.json" <<JSON
   "internet_access_authorized": $INTERNET,
   "consent_message": "$(json_escape "$CONSENT")",
   "sunshine": {
-    "auto_pair": true,
+    "auto_pair": $AUTO_PAIR,
     "username": "$(json_escape "$SUN_USER")",
     "password": "$(json_escape "$SUN_PASS")"
   }
