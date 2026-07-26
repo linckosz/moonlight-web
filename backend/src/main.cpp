@@ -72,6 +72,7 @@
 #include "streaming/worker/StreamWorkerMain.h"
 #include "network/InternetAccessManager.h"
 #include "network/GeoIpService.h"
+#include "network/SelfUpdater.h"
 #include "network/UpdateChecker.h"
 #include "TrayManager.h"
 
@@ -714,6 +715,7 @@ int main(int argc, char* argv[])
     InternetAccessManager internetAccess(&appSettings);
     GeoIpService geoIpService;
     UpdateChecker updateChecker(QCoreApplication::applicationVersion());
+    SelfUpdater selfUpdater(&updateChecker);
 
     // Re-sync domain on HttpServer — ensureIdentifiers() (called in
     // the InternetAccessManager constructor) may have just generated a
@@ -795,9 +797,29 @@ int main(int argc, char* argv[])
     // GET /api/update/check — is a newer MoonlightWeb release available? Returns
     // the cached GitHub Releases result (current/latest/update_available plus the
     // exact installer download URL for this OS/arch); a stale cache refreshes in
-    // the background without blocking this handler.
-    server.router()->get("/api/update/check", [&updateChecker](const HttpRequest&) {
-        return HttpResponse::json(updateChecker.statusJson());
+    // the background without blocking this handler. `self_update` describes what
+    // this host can do about it, so the web app can offer a one-click update (or
+    // explain that the host must be updated by hand) without a second round-trip.
+    server.router()->get("/api/update/check", [&updateChecker, &selfUpdater](const HttpRequest&) {
+        QJsonObject obj = updateChecker.statusJson();
+        obj["self_update"] = selfUpdater.capabilityJson();
+        return HttpResponse::json(obj);
+    });
+
+    // POST /api/update/start — download and apply the update on the host, then
+    // relaunch. Session-authenticated but deliberately NOT localhost-gated: the
+    // point is to update the host from wherever the user happens to be.
+    server.router()->post("/api/update/start", [&selfUpdater](const HttpRequest&) {
+        const QString err = selfUpdater.start();
+        if (!err.isEmpty()) return HttpResponse::error(409, err);
+        return HttpResponse::json(selfUpdater.statusJson(), 202);
+    });
+
+    // GET /api/update/status — progress of the update started above. Polling
+    // stops answering once the installer takes this process down; the client
+    // then waits for the new build on /api/health (see HostListView).
+    server.router()->get("/api/update/status", [&selfUpdater](const HttpRequest&) {
+        return HttpResponse::json(selfUpdater.statusJson());
     });
 
     // GET /api/server/hostname — returns the server's hostname and OS info

@@ -181,6 +181,7 @@ add_executable(mw-server
     src/network/InternetAccessManager.cpp
     src/network/GeoIpService.cpp
     src/network/UpdateChecker.cpp
+    src/network/SelfUpdater.cpp
     src/TrayManager.cpp
     src/Autostart.cpp
     src/backend/NvHTTP.cpp

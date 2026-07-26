@@ -96,7 +96,14 @@
     },
     "update": {
         "available": "MoonlightWeb {{version}} est disponible",
-        "download": "Télécharger",
+        "availableManual": "MoonlightWeb {{version}} est disponible — mettez à jour le PC hôte pour l'installer",
+        "updateNow": "Mettre à jour",
+        "downloading": "Téléchargement de la mise à jour sur l'hôte…",
+        "installing": "Installation de la mise à jour sur l'hôte…",
+        "restarting": "Redémarrage de MoonlightWeb…",
+        "confirmOnHost": "En attente d'une confirmation sur le PC hôte…",
+        "failed": "La mise à jour a échoué",
+        "timeout": "L'hôte n'est pas revenu à temps — vérifiez-le directement",
         "releaseNotes": "Nouveautés",
         "dismiss": "Masquer l'avis de mise à jour"
     },

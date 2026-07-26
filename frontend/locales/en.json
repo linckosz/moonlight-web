@@ -96,7 +96,14 @@
     },
     "update": {
         "available": "MoonlightWeb {{version}} is available",
-        "download": "Download",
+        "availableManual": "MoonlightWeb {{version}} is available — update the host PC to install it",
+        "updateNow": "Update",
+        "downloading": "Downloading the update on the host…",
+        "installing": "Installing the update on the host…",
+        "restarting": "Restarting MoonlightWeb…",
+        "confirmOnHost": "Waiting for a confirmation on the host PC…",
+        "failed": "The update failed",
+        "timeout": "The host did not come back in time — check it directly",
         "releaseNotes": "What's new",
         "dismiss": "Dismiss update notice"
     },
