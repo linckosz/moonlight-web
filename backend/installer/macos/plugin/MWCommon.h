@@ -60,6 +60,104 @@ static inline BOOL MWInternetAlreadyAuthorized(void)
     return [[(NSDictionary *)json objectForKey:@"internet_access_enabled"] boolValue];
 }
 
+// Path of the Sunshine binary already installed on this machine, or nil. Same
+// lookup order as the .pkg postinstall's sunshine_bin().
+static inline NSString *MWSunshineInstalledPath(void)
+{
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *p in @[
+             @"/Applications/Sunshine.app/Contents/MacOS/sunshine",
+             @"/opt/homebrew/bin/sunshine",
+             @"/usr/local/bin/sunshine",
+         ]) {
+        if ([fm isExecutableFileAtPath:p])
+            return p;
+    }
+    return nil;
+}
+
+// This Mac's short host name ("MacBook-Pro"), the name Sunshine advertises by
+// default and the one the server stores for a locally discovered host.
+static inline NSString *MWLocalHostName(void)
+{
+    NSString *name = [[NSProcessInfo processInfo] hostName] ?: @"";
+    if ([name hasSuffix:@".local"])
+        name = [name substringToIndex:name.length - 6];
+    return name;
+}
+
+// Does this settings dictionary hold a host entry that is (a) paired and (b) the
+// Sunshine on THIS machine? Qt flattens/nests its persisted host array
+// differently per platform, so match on the key SUFFIX and recurse: that covers
+// both a flat "hosts.1.pairState" key and a nested hosts → 1 → pairState tree.
+static inline BOOL MWDictHasPairedLocalHost(NSDictionary *d, NSString *localName)
+{
+    static NSString *const kPairState = @"pairState";
+    for (NSString *key in d) {
+        id value = d[key];
+        if ([value isKindOfClass:[NSDictionary class]]) {
+            if (MWDictHasPairedLocalHost((NSDictionary *)value, localName))
+                return YES;
+            continue;
+        }
+        if ([value isKindOfClass:[NSArray class]]) {
+            for (id item in (NSArray *)value)
+                if ([item isKindOfClass:[NSDictionary class]] &&
+                    MWDictHasPairedLocalHost((NSDictionary *)item, localName))
+                    return YES;
+            continue;
+        }
+        if (![key hasSuffix:kPairState] || ![value isKindOfClass:[NSString class]] ||
+            ![(NSString *)value isEqualToString:@"paired"])
+            continue;
+
+        // Sibling keys share this entry's prefix ("" when nested, "hosts.1."
+        // when flattened).
+        NSString *prefix = [key substringToIndex:key.length - kPairState.length];
+        id manual = d[[prefix stringByAppendingString:@"manualaddress"]];
+        if ([manual isKindOfClass:[NSString class]] &&
+            ([manual isEqualToString:@"127.0.0.1"] || [manual isEqualToString:@"::1"] ||
+             [[manual lowercaseString] isEqualToString:@"localhost"]))
+            return YES;
+        id host = d[[prefix stringByAppendingString:@"hostname"]];
+        if (localName.length > 0 && [host isKindOfClass:[NSString class]] &&
+            [(NSString *)host caseInsensitiveCompare:localName] == NSOrderedSame)
+            return YES;
+    }
+    return NO;
+}
+
+// True when a previous MoonlightWeb run already paired with the local Sunshine.
+// The server persists its host list through QSettings (ComputerManager::
+// saveHosts / NvComputer::serialize); on macOS that lands in a CFPreferences
+// plist under ~/Library/Preferences whose name carries the application name —
+// the exact domain Qt derives from the organization is an implementation detail,
+// so match the file name instead of hardcoding it. Nothing readable → NO, which
+// simply falls back to the normal "ask for credentials" pane.
+static inline BOOL MWLocalSunshinePaired(void)
+{
+    NSArray<NSString *> *base =
+        NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES);
+    if (base.count == 0)
+        return NO;
+    NSString *prefs = [base.firstObject stringByAppendingPathComponent:@"Preferences"];
+    NSArray<NSString *> *entries =
+        [[NSFileManager defaultManager] contentsOfDirectoryAtPath:prefs error:nil];
+    NSString *localName = MWLocalHostName();
+
+    for (NSString *entry in entries) {
+        if (![entry.pathExtension isEqualToString:@"plist"] ||
+            [entry rangeOfString:@"MoonlightWeb" options:NSCaseInsensitiveSearch].location ==
+                NSNotFound)
+            continue;
+        NSDictionary *d = [NSDictionary
+            dictionaryWithContentsOfFile:[prefs stringByAppendingPathComponent:entry]];
+        if (d && MWDictHasPairedLocalHost(d, localName))
+            return YES;
+    }
+    return NO;
+}
+
 // Merge key/values into the hand-off plist (created if absent), preserving keys
 // written earlier. 0600: it carries the Sunshine password in plaintext until the
 // postinstall (root) reads and deletes it.

@@ -4,8 +4,10 @@
 ;  Produces a stepped wizard (MoonlightWeb-installer-<version>-win-<arch>.exe) that:
 ;    1. installs the app + Start-Menu shortcuts (app, admin page, uninstaller),
 ;    2. asks the user to authorize the Internet link (named public domain),
-;    3. detects Sunshine and optionally installs it silently, collecting the
-;       Sunshine username/password (default admin/admin),
+;    3. detects Sunshine and adapts a Skip/Next/Cancel page to what it finds —
+;       absent (install it silently with the prefilled admin/admin credentials),
+;       installed but unpaired (ask for its real credentials), or already paired
+;       (nothing to ask, no Skip button),
 ;    4. drops a provisioning.json the server consumes on first run (enable
 ;       Internet Access, auto-pair the local Sunshine via its REST API),
 ;    5. creates a Desktop shortcut to the admin page and opens it at the end.
@@ -94,8 +96,10 @@ en.SunshinePageCaption=Sunshine
 en.SunshinePageDesc=Sunshine streaming server
 en.SunshineInstallCheck=Install Sunshine automatically
 en.SunshineInstallCheckDone=Install Sunshine automatically (already installed)
-en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb automatically, or leave them blank to skip and pair later from the admin page.
-en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically, then set its credentials.
+en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb automatically, or click Skip to pair later from the admin page.
+en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically. The credentials below are the ones it will be created with — change them if you prefer.
+en.SunshineAlreadyPaired=Sunshine is already installed on this machine and already paired with MoonlightWeb.%n%nThere is nothing to set up here — click Next to continue.
+en.ButtonSkip=&Skip
 en.SunshineUserLabel=Username
 en.SunshinePassLabel=Password
 en.SunshineCredsRequired=Please enter the Sunshine username and password so MoonlightWeb can pair automatically.
@@ -120,8 +124,10 @@ fr.SunshinePageCaption=Sunshine
 fr.SunshinePageDesc=Serveur de streaming Sunshine
 fr.SunshineInstallCheck=Installer Sunshine automatiquement
 fr.SunshineInstallCheckDone=Installer Sunshine automatiquement (déjà installé)
-fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nSaisissez ses identifiants pour appairer MoonlightWeb automatiquement, ou laissez-les vides pour ignorer et appairer plus tard depuis la page admin.
-fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement, puis définissez ses identifiants.
+fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nSaisissez ses identifiants pour appairer MoonlightWeb automatiquement, ou cliquez sur Ignorer pour appairer plus tard depuis la page admin.
+fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement. Les identifiants ci-dessous sont ceux qui lui seront attribués — modifiez-les si vous le souhaitez.
+fr.SunshineAlreadyPaired=Sunshine est déjà installé sur cette machine et déjà appairé avec MoonlightWeb.%n%nIl n'y a rien à configurer ici — cliquez sur Suivant pour continuer.
+fr.ButtonSkip=&Ignorer
 fr.SunshineUserLabel=Identifiant
 fr.SunshinePassLabel=Mot de passe
 fr.SunshineCredsRequired=Veuillez saisir l'identifiant et le mot de passe Sunshine pour que MoonlightWeb puisse appairer automatiquement.
@@ -146,8 +152,10 @@ zh.SunshinePageCaption=Sunshine
 zh.SunshinePageDesc=Sunshine 串流服务器
 zh.SunshineInstallCheck=自动安装 Sunshine
 zh.SunshineInstallCheckDone=自动安装 Sunshine（已安装）
-zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n请输入其凭据以自动配对 MoonlightWeb，或留空以跳过并稍后在管理页面配对。
-zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装，然后设置其凭据。
+zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n请输入其凭据以自动配对 MoonlightWeb，或点击“跳过”以稍后在管理页面配对。
+zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装。下方的凭据即为将要设置的凭据 — 如需更改请自行修改。
+zh.SunshineAlreadyPaired=此计算机上已安装 Sunshine，并且已与 MoonlightWeb 配对。%n%n此处无需任何设置 — 点击“下一步”继续。
+zh.ButtonSkip=跳过(&S)
 zh.SunshineUserLabel=用户名
 zh.SunshinePassLabel=密码
 zh.SunshineCredsRequired=请输入 Sunshine 的用户名和密码，以便 MoonlightWeb 自动配对。
@@ -188,6 +196,18 @@ Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 Filename: "{code:GetAdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
 
 [Code]
+// The Sunshine page has three mutually exclusive shapes (see CurPageChanged):
+//   scAbsent — Sunshine not installed: offer to install it, credentials
+//              prefilled with admin/admin (the ones it will be created with).
+//   scUnpaired — Sunshine installed but MoonlightWeb never paired with it: ask
+//              for its real credentials so first-run pairing can push the PIN.
+//   scPaired — Sunshine installed AND already paired: nothing to ask, the page
+//              is a plain confirmation (no Skip button either).
+const
+  scAbsent = 0;
+  scUnpaired = 1;
+  scPaired = 2;
+
 var
   InternetPage: TInputOptionWizardPage;
   SunshinePage: TWizardPage;
@@ -199,6 +219,17 @@ var
   SunshineStatusLabel: TNewStaticText;
   SunshineDetected: Boolean;
   SunshineExePath: String;
+  SunshineCase: Integer;
+  SunshinePagePrepared: Boolean;
+  // The Sunshine page swaps Back for a Skip button; these track that swap and
+  // the user's choice to walk past the page without installing/pairing.
+  SkipButton: TNewButton;
+  BackButtonHidden: Boolean;
+  SunshineSkipped: Boolean;
+  // The password starts visible (prefilled "admin") and masks itself as soon as
+  // the user edits it. SettingPass suppresses the OnChange we cause ourselves.
+  SunshinePassMasked: Boolean;
+  SettingPass: Boolean;
   // Live post-install checklist (Sunshine / pairing / A-record).
   ProgressPage: TOutputProgressWizardPage;
   LblSunshine: TNewStaticText;
@@ -225,6 +256,49 @@ begin
   end;
 end;
 
+// True when the registry entry describes the Sunshine running on THIS machine:
+// either the host was added by loopback address (what the installer's own
+// auto-pairing does) or its advertised hostname matches the local computer name
+// (what an mDNS-discovered local host looks like).
+function IsLocalHostEntry(const key: String): Boolean;
+var
+  v: String;
+begin
+  Result := False;
+  if RegQueryStringValue(HKCU, key, 'manualaddress', v)
+     and ((v = '127.0.0.1') or (v = '::1') or (Lowercase(v) = 'localhost')) then begin
+    Result := True;
+    Exit;
+  end;
+  if RegQueryStringValue(HKCU, key, 'hostname', v) and (v <> '')
+     and (CompareText(v, GetComputerNameString()) = 0) then
+    Result := True;
+end;
+
+// True when a previous MoonlightWeb run already paired with the local Sunshine.
+// The server persists its host list through QSettings, which on Windows is the
+// registry (HKCU\Software\<org>\<app>\hosts\<n>\...; see ComputerManager::
+// saveHosts / NvComputer::serialize). Absent key / no local paired host → False,
+// so an unreadable hive degrades to the normal "ask for credentials" page.
+function LocalSunshinePaired(): Boolean;
+var
+  root, key, state: String;
+  names: TArrayOfString;
+  i: Integer;
+begin
+  Result := False;
+  root := 'Software\MoonlightWeb\MoonlightWeb\hosts';
+  if not RegGetSubkeyNames(HKCU, root, names) then Exit;
+  for i := 0 to GetArrayLength(names) - 1 do begin
+    key := root + '\' + names[i];
+    if RegQueryStringValue(HKCU, key, 'pairState', state)
+       and (Lowercase(state) = 'paired') and IsLocalHostEntry(key) then begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
 // Gray out the credential fields unless they are actually needed: when Sunshine
 // is already installed (user must supply its real creds) or the "install"
 // checkbox is ticked (creds for the fresh install). Disabled when Sunshine is
@@ -243,6 +317,38 @@ end;
 procedure SunshineInstallCheckClick(Sender: TObject);
 begin
   UpdateSunshineFieldsEnabled();
+end;
+
+// The prefilled default ("admin") is shown in clear so the user can read what
+// will be applied; the field turns into a real password box on the first edit.
+procedure SunshinePassChange(Sender: TObject);
+begin
+  if SettingPass or SunshinePassMasked then Exit;
+  SunshinePassMasked := True;
+  SunshinePassEdit.PasswordChar := '*';
+end;
+
+procedure SetSunshinePassword(const value: String; masked: Boolean);
+begin
+  SettingPass := True;
+  SunshinePassEdit.Text := value;
+  SettingPass := False;
+  SunshinePassMasked := masked;
+  if masked then SunshinePassEdit.PasswordChar := '*'
+  else SunshinePassEdit.PasswordChar := #0;
+end;
+
+// "Skip": walk past the Sunshine page without installing or pairing anything.
+// Clearing both fields is what makes CurStepChanged write auto_pair=false, and
+// SunshineSkipped keeps PrepareToInstall from downloading Sunshine. The user can
+// still install/pair later from the admin page.
+procedure SkipButtonClick(Sender: TObject);
+begin
+  SunshineSkipped := True;
+  SunshineUserEdit.Text := '';
+  SetSunshinePassword('', True);
+  // Simulate a click on Next — Inno has no API to advance the wizard directly.
+  WizardForm.NextButton.OnClick(WizardForm.NextButton);
 end;
 
 // Reads a top-level boolean from the server's settings.json. Returns True only
@@ -326,6 +432,20 @@ begin
   SunshinePassEdit.Left := ScaleX(200);
   SunshinePassEdit.Width := ScaleX(180);
   SunshinePassEdit.PasswordChar := '*';
+  SunshinePassEdit.OnChange := @SunshinePassChange;
+  SunshinePassMasked := True;
+
+  // "Skip" — shown only on the Sunshine page, in the slot the Back button
+  // occupies (which is hidden there): the page must offer Skip / Next / Cancel.
+  SkipButton := TNewButton.Create(WizardForm);
+  SkipButton.Parent := WizardForm.BackButton.Parent;
+  SkipButton.Left := WizardForm.BackButton.Left;
+  SkipButton.Top := WizardForm.BackButton.Top;
+  SkipButton.Width := WizardForm.BackButton.Width;
+  SkipButton.Height := WizardForm.BackButton.Height;
+  SkipButton.Caption := ExpandConstant('{cm:ButtonSkip}');
+  SkipButton.OnClick := @SkipButtonClick;
+  SkipButton.Visible := False;
 
   // Live checklist shown during post-install (driven in RunProvisionChecklist).
   // Default each task to "skipped"; PrepareToInstall / the backend status file
@@ -370,49 +490,115 @@ begin
   ProgressPage.Msg2Label.Top := ScaleY(150);
 end;
 
-procedure CurPageChanged(CurPageID: Integer);
+// Build the Sunshine page for the case detected on this machine. Runs once (the
+// page is entered once — Back is hidden there) so a user who edited the fields
+// and came back through another route never sees their input reset.
+procedure PrepareSunshinePage();
+var
+  showFields: Boolean;
 begin
-  if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
-    SunshineDetected := DetectSunshine();
-    if SunshineDetected then begin
-      SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineDetected}');
-      // Already installed: show the box ticked + "(already installed)" and keep
-      // it disabled. PrepareToInstall skips the download when SunshineDetected,
-      // so a ticked box here never triggers a reinstall.
-      SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheckDone}');
-      SunshineInstallCheck.Checked := True;
-      SunshineInstallCheck.Enabled := False;
-      // Do NOT prefill: wrong (default) credentials make the REST PIN push fail,
-      // leaving a pending pairing request and an unpaired host. The user types
-      // Sunshine's real username/password to pair — or leaves them blank to skip
-      // pairing (auto_pair is then written false; see CurStepChanged).
-      SunshineUserEdit.Text := '';
-      SunshinePassEdit.Text := '';
-    end else begin
+  if SunshinePagePrepared then Exit;
+  SunshinePagePrepared := True;
+
+  SunshineDetected := DetectSunshine();
+  if not SunshineDetected then SunshineCase := scAbsent
+  else if LocalSunshinePaired() then SunshineCase := scPaired
+  else SunshineCase := scUnpaired;
+
+  showFields := SunshineCase <> scPaired;
+  SunshineInstallCheck.Visible := showFields;
+  SunshineUserLabel.Visible := showFields;
+  SunshinePassLabel.Visible := showFields;
+  SunshineUserEdit.Visible := showFields;
+  SunshinePassEdit.Visible := showFields;
+
+  case SunshineCase of
+    scPaired:
+      begin
+        // Nothing to install, nothing to pair: a plain confirmation. The empty
+        // credentials make CurStepChanged write auto_pair=false, and the message
+        // gets the whole surface since no control sits under it.
+        SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineAlreadyPaired}');
+        SunshineStatusLabel.Height := SunshinePage.SurfaceHeight;
+        SunshineUserEdit.Text := '';
+        SetSunshinePassword('', True);
+      end;
+    scUnpaired:
+      begin
+        SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineDetected}');
+        // Already installed: show the box ticked + "(already installed)" and keep
+        // it disabled. PrepareToInstall skips the download when SunshineDetected,
+        // so a ticked box here never triggers a reinstall.
+        SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheckDone}');
+        SunshineInstallCheck.Checked := True;
+        SunshineInstallCheck.Enabled := False;
+        // Do NOT prefill: wrong (default) credentials make the REST PIN push fail,
+        // leaving a pending pairing request and an unpaired host. The user types
+        // Sunshine's real username/password to pair — or clicks Skip to pair later
+        // (auto_pair is then written false; see CurStepChanged).
+        SunshineUserEdit.Text := '';
+        SetSunshinePassword('', True);
+        UpdateSunshineFieldsEnabled();
+      end;
+  else
+    begin
       SunshineStatusLabel.Caption := ExpandConstant('{cm:SunshineNotDetected}');
       SunshineInstallCheck.Caption := ExpandConstant('{cm:SunshineInstallCheck}');
       SunshineInstallCheck.Enabled := True;
       SunshineInstallCheck.Checked := True;
-      // Fresh install: prefill the username (the silent installer sets it via
-      // --creds) but leave the password blank so the user picks one they know.
-      if SunshineUserEdit.Text = '' then SunshineUserEdit.Text := 'admin';
-      SunshinePassEdit.Text := '';
+      // Fresh install: the silent installer applies these via --creds, so both
+      // default to "admin". The password shows in clear until the user edits it
+      // (SunshinePassChange) — it is a value to read, not a secret to hide, until
+      // it becomes one.
+      SunshineUserEdit.Text := 'admin';
+      SetSunshinePassword('admin', False);
+      UpdateSunshineFieldsEnabled();
     end;
-    UpdateSunshineFieldsEnabled();
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
+    PrepareSunshinePage();
+    // Re-entering the page (Back from the "ready to install" page) cancels an
+    // earlier Skip: whatever the user leaves in the fields now is what counts,
+    // so a skipped fresh install gets its admin/admin defaults back.
+    if SunshineSkipped then begin
+      SunshineSkipped := False;
+      if SunshineCase = scAbsent then begin
+        SunshineUserEdit.Text := 'admin';
+        SetSunshinePassword('admin', False);
+      end;
+    end;
+    // Skip / Next / Cancel: the Back button gives up its slot to Skip. When
+    // Sunshine is already paired there is nothing to skip, so the page keeps
+    // just Next / Cancel.
+    WizardForm.BackButton.Visible := False;
+    BackButtonHidden := True;
+    SkipButton.Visible := SunshineCase <> scPaired;
+  end else begin
+    SkipButton.Visible := False;
+    // Only ever restore what we hid: other pages manage Back themselves.
+    if BackButtonHidden then begin
+      WizardForm.BackButton.Visible := True;
+      BackButtonHidden := False;
+    end;
   end;
 end;
 
 // Credentials are only MANDATORY for a fresh auto-install: the silent installer
-// sets Sunshine's username/password via --creds, so both must be provided. When
-// Sunshine is ALREADY installed the credentials only drive optional auto-pairing
-// — the user may leave them blank to skip pairing and continue (they can pair
-// later from the admin page). If Sunshine is absent and install is declined, the
-// grayed-out fields are irrelevant.
+// sets Sunshine's username/password via --creds, so both must be provided (they
+// come prefilled with admin/admin, so this only fires if the user empties them).
+// When Sunshine is ALREADY installed the credentials only drive optional
+// auto-pairing — Skip walks past the page and pairs later from the admin page.
+// If Sunshine is absent and install is declined, the grayed-out fields are
+// irrelevant.
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
   if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
-    if (not SunshineDetected) and SunshineInstallCheck.Checked
+    if (not SunshineSkipped) and (not SunshineDetected) and SunshineInstallCheck.Checked
        and ((Trim(SunshineUserEdit.Text) = '') or (Trim(SunshinePassEdit.Text) = '')) then begin
       MsgBox(ExpandConstant('{cm:SunshineCredsRequired}'), mbError, MB_OK);
       Result := False;
@@ -429,9 +615,11 @@ var
 begin
   Result := '';
   // Skip the download when Sunshine is already present (the box is ticked but
-  // disabled purely as an "already installed" indicator) or the user declined
-  // it. Only a ticked box on a machine WITHOUT Sunshine triggers a real install.
-  if (SunshinePage = nil) or SunshineDetected or (not SunshineInstallCheck.Checked) then begin
+  // disabled purely as an "already installed" indicator), when the user clicked
+  // Skip, or when they declined it. Only a ticked box on a machine WITHOUT
+  // Sunshine triggers a real install.
+  if (SunshinePage = nil) or SunshineDetected or SunshineSkipped
+     or (not SunshineInstallCheck.Checked) then begin
     if SunshineDetected then SunshineStepState := 'done';
     Exit;
   end;
@@ -724,9 +912,10 @@ begin
            + ExpandConstant('{cm:InternetPageOption}');
   StringChangeEx(consent, '%n', ' ', True);
   // Only ask the server to auto-pair when the user actually supplied credentials.
-  // Blank creds mean "skip pairing" (Sunshine already installed, user chose not
-  // to pair now): pairing with empty creds would fail and leave a pending
-  // request, so mark it skipped instead.
+  // Blank creds mean "no pairing to do": the user clicked Skip, or MoonlightWeb
+  // is already paired with the local Sunshine (scPaired clears both fields).
+  // Pairing with empty creds would fail and leave a pending request, so mark it
+  // skipped instead.
   if (Trim(SunshineUserEdit.Text) <> '') and (Trim(SunshinePassEdit.Text) <> '') then
     autoPair := 'true'
   else
