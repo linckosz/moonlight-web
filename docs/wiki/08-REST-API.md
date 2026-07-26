@@ -20,7 +20,9 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 | `GET /api/health` | 🌐 | `{status, version}` liveness probe. |
 | `GET /api/server/hostname` | 🌐 | Server hostname + OS (used for display and self-stream detection). |
 | `GET /api/server/status` | 🔑 | Version + actual HTTP/HTTPS ports. |
-| `GET /api/update/check` | 🔑 | Cached GitHub-Releases check: `{current, latest, update_available, download_url}` for this OS/arch; stale cache refreshes in background. |
+| `GET /api/update/check` | 🔑 | Cached GitHub-Releases check: `{current, latest, update_available, download_url}` for this OS/arch; stale cache refreshes in background. Plus `self_update: {supported, method, requires_host_confirmation}` — what this host can do about it unattended. |
+| `POST /api/update/start` | 🔑 | Download + apply the update on the host, then relaunch. 409 when no update is available or one is already running. Deliberately **not** localhost-gated: the point is to update the host from wherever the user is. |
+| `GET /api/update/status` | 🔑 | `{state, percent, version, requires_host_confirmation, error}`, `state ∈ idle\|downloading\|installing\|restarting\|failed`. Stops answering once the installer takes the server down — the client then waits for the new build on `/api/health`. |
 | `POST /api/local/focus` | 🔒 | Second-launch IPC: redirect a connected tab to `/admin` via the control channel, else report `delivered:false` (caller opens a browser). |
 
 ## 8.2 Authentication (`AuthRoutes.cpp`)

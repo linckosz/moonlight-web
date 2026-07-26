@@ -114,6 +114,11 @@ en.ProvisionWorking=Please wait while MoonlightWeb finishes setting up...
 en.TaskSunshine=Install the Sunshine streaming server
 en.TaskPairing=Pair the local Sunshine
 en.TaskArecord=Publish the secure Internet address
+en.ButtonUpdate=&Update
+en.UpdatePageCaption=Update MoonlightWeb
+en.UpdatePageDesc=A newer version will replace the installed one
+en.UpdateReadyMemo=MoonlightWeb %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are — there is nothing to configure.
+en.UpdateReadyMemoFresh=MoonlightWeb will be updated to %1.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are — there is nothing to configure.
 ; --- French ---
 fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
@@ -142,6 +147,11 @@ fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de Moo
 fr.TaskSunshine=Installer le serveur de streaming Sunshine
 fr.TaskPairing=Appairer le Sunshine local
 fr.TaskArecord=Publier l'adresse Internet sécurisée
+fr.ButtonUpdate=&Mettre à jour
+fr.UpdatePageCaption=Mise à jour de MoonlightWeb
+fr.UpdatePageDesc=Une version plus récente va remplacer celle installée
+fr.UpdateReadyMemo=MoonlightWeb %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels — il n'y a rien à configurer.
+fr.UpdateReadyMemoFresh=MoonlightWeb va être mis à jour vers %1.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels — il n'y a rien à configurer.
 ; --- Simplified Chinese ---
 zh.AutoStartTask=登录时启动 MoonlightWeb
 zh.InternetPageCaption=互联网链接
@@ -170,6 +180,11 @@ zh.ProvisionWorking=请稍候，MoonlightWeb 正在完成设置...
 zh.TaskSunshine=安装 Sunshine 串流服务器
 zh.TaskPairing=配对本地 Sunshine
 zh.TaskArecord=发布安全的互联网地址
+zh.ButtonUpdate=更新(&U)
+zh.UpdatePageCaption=更新 MoonlightWeb
+zh.UpdatePageDesc=较新的版本将替换已安装的版本
+zh.UpdateReadyMemo=已安装 MoonlightWeb %1，将更新到 %2。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变 — 无需任何配置。
+zh.UpdateReadyMemoFresh=MoonlightWeb 将更新到 %1。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变 — 无需任何配置。
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -207,6 +222,16 @@ const
   scAbsent = 0;
   scUnpaired = 1;
   scPaired = 2;
+  // Inno files its uninstall entry under "<AppId>_is1" and exposes no constant
+  // for it to [Code] — KEEP THIS IN SYNC WITH [Setup] AppId above.
+  UninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}_is1';
+  // Trigger-less, elevated task the running (unprivileged) app starts with
+  // `schtasks /Run` to apply an update without a UAC prompt nobody could answer
+  // from a remote browser. Its action is the fixed staging path SelfUpdater
+  // downloads to — the two MUST agree or the task runs nothing.
+  UpdateTaskName = 'MoonlightWeb Update';
+  UpdateStagedExe = '%LocalAppData%\MoonlightWeb\update\MoonlightWeb-update.exe';
+  UpdateSilentArgs = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-';
 
 var
   InternetPage: TInputOptionWizardPage;
@@ -236,8 +261,63 @@ var
   LblPairing: TNewStaticText;
   LblArecord: TNewStaticText;
   SunshineStepState: String;
+  // Update mode: a MoonlightWeb is already installed, so this run only swaps the
+  // payload. Every question was answered by the previous install — the wizard
+  // collapses to a single "Update" confirmation (see ShouldSkipPage).
+  UpdateMode: Boolean;
+  PrevVersion: String;
+  // The server runs as an NSSM service (session 0): stop/start it around the file
+  // copy instead of killing and relaunching a tray process.
+  ServiceInstalled: Boolean;
 
 // --- Detection ------------------------------------------------------------
+
+// Version of the MoonlightWeb already installed, '' when this is a first install.
+function InstalledVersion(): String;
+var
+  v: String;
+begin
+  if RegQueryStringValue(HKLM, UninstallKey, 'DisplayVersion', v) then Result := v
+  else Result := '';
+end;
+
+// True when a previous install is present. The registry entry is the reliable
+// signal (and the one that told Inno to prefill {app} with the previous
+// location); a leftover exe there is the fallback for a half-removed install,
+// which still has to be stopped before the file copy.
+function PreviousInstallExists(): Boolean;
+begin
+  Result := True;
+  if RegKeyExists(HKLM, UninstallKey) then Exit;
+  if FileExists(ExpandConstant('{app}\{#MyAppExe}')) then Exit;
+  Result := False;
+end;
+
+// True when the server is registered as a Windows service (install-service.bat).
+function DetectService(): Boolean;
+var
+  rc: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\sc.exe'), 'query MoonlightWeb', '', SW_HIDE,
+                 ewWaitUntilTerminated, rc) and (rc = 0);
+end;
+
+// True when the logon task created by a previous install is still registered.
+function LogonTaskExists(): Boolean;
+var
+  rc: Integer;
+begin
+  Result := Exec('schtasks.exe', '/Query /TN "MoonlightWeb"', '', SW_HIDE,
+                 ewWaitUntilTerminated, rc) and (rc = 0);
+end;
+
+// True when a Desktop shortcut created by a previous install is still there.
+function DesktopIconExists(): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{autodesktop}\MoonlightWeb.lnk'))
+         or FileExists(ExpandConstant('{userdesktop}\MoonlightWeb.lnk'));
+end;
+
 function DetectSunshine(): Boolean;
 var
   p: String;
@@ -373,8 +453,32 @@ begin
   Result := Pos('true', seg) > 0;
 end;
 
-procedure InitializeWizard();
+// Whether the server ever recorded a value for `key`. This is what makes a
+// wizard page "already answered" in update mode: a page whose setting is absent
+// is a NEW question and must still be shown, everything else is skipped. Any
+// page added in a future version follows the same rule for free.
+function SettingsHasKey(const key: String): Boolean;
+var
+  raw: AnsiString;
+  content: String;
 begin
+  Result := False;
+  if not LoadStringFromFile(
+       ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\settings.json'), raw) then
+    Exit;
+  content := raw;
+  Result := Pos('"' + key + '":', content) > 0;
+end;
+
+procedure InitializeWizard();
+var
+  tasks: String;
+begin
+  // Decide the wizard's shape before any page is built: an existing install
+  // turns this into an update.
+  PrevVersion := InstalledVersion();
+  UpdateMode := PreviousInstallExists();
+
   // Step: Internet link authorization. Highlighted in a positive green tint.
   // Pre-ticked only when a previous install already authorized Internet access
   // (settings.json persists internet_access_enabled) — a re-install / upgrade
@@ -488,6 +592,66 @@ begin
   ProgressPage.ProgressBar.Top := ScaleY(124);
   ProgressPage.ProgressBar.Width := ProgressPage.SurfaceWidth;
   ProgressPage.Msg2Label.Top := ScaleY(150);
+
+  // The tasks page is hidden in update mode, so its checkboxes would fall back
+  // to their defaults (both ticked) and silently re-add a Desktop icon or an
+  // autostart the user had removed. Mirror what is actually on the machine.
+  // One call with the complete list: WizardSelectTasks deselects everything the
+  // list does not name, so two calls would undo each other.
+  if UpdateMode then begin
+    tasks := '';
+    if DesktopIconExists() then tasks := 'desktopicon';
+    if LogonTaskExists() then begin
+      if tasks <> '' then tasks := tasks + ',';
+      tasks := tasks + 'autostart';
+    end;
+    WizardSelectTasks(tasks);
+  end;
+end;
+
+// Update mode collapses the wizard to the Ready page: the destination, the
+// shortcuts and Sunshine were all settled by the previous install, and re-asking
+// is exactly what makes updates feel heavy. Only a question that was never
+// answered still deserves a page.
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if not UpdateMode then Exit;
+  if (PageID = wpSelectDir) or (PageID = wpSelectProgramGroup) or (PageID = wpSelectTasks) then
+    Result := True
+  else if (SunshinePage <> nil) and (PageID = SunshinePage.ID) then
+    // Nothing to install or pair on an update: the admin page owns pairing from
+    // here on, and asking for credentials again would be pure noise.
+    Result := True
+  else if (InternetPage <> nil) and (PageID = InternetPage.ID) then
+    Result := SettingsHasKey('internet_access_enabled');
+end;
+
+// Content of the Ready page's memo. In update mode it says what is about to
+// happen in one sentence; otherwise it reproduces Inno's own composition (there
+// is no way to fall through to the default once this function is defined).
+function UpdateReadyMemo(const Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
+  MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+var
+  s: String;
+begin
+  if UpdateMode then begin
+    if PrevVersion <> '' then
+      Result := FmtMessage(ExpandConstant('{cm:UpdateReadyMemo}'),
+                           [PrevVersion, '{#MyAppVersion}'])
+    else
+      Result := FmtMessage(ExpandConstant('{cm:UpdateReadyMemoFresh}'), ['{#MyAppVersion}']);
+    Exit;
+  end;
+
+  s := '';
+  if MemoUserInfoInfo <> '' then s := s + MemoUserInfoInfo + NewLine + NewLine;
+  if MemoDirInfo <> '' then s := s + MemoDirInfo + NewLine + NewLine;
+  if MemoTypeInfo <> '' then s := s + MemoTypeInfo + NewLine + NewLine;
+  if MemoComponentsInfo <> '' then s := s + MemoComponentsInfo + NewLine + NewLine;
+  if MemoGroupInfo <> '' then s := s + MemoGroupInfo + NewLine + NewLine;
+  if MemoTasksInfo <> '' then s := s + MemoTasksInfo + NewLine + NewLine;
+  Result := s;
 end;
 
 // Build the Sunshine page for the case detected on this machine. Runs once (the
@@ -559,6 +723,16 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  // In update mode every other page is skipped, so this IS the whole wizard: an
+  // "Update" button instead of "Install" (the memo itself is built by
+  // UpdateReadyMemo, the only supported way to rewrite that page's content).
+  if (CurPageID = wpReady) and UpdateMode then begin
+    WizardForm.PageNameLabel.Caption := ExpandConstant('{cm:UpdatePageCaption}');
+    WizardForm.PageDescriptionLabel.Caption := ExpandConstant('{cm:UpdatePageDesc}');
+    WizardForm.ReadyLabel.Caption := '';
+    WizardForm.NextButton.Caption := ExpandConstant('{cm:ButtonUpdate}');
+  end;
+
   if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
     PrepareSunshinePage();
     // Re-entering the page (Back from the "ready to install" page) cancels an
@@ -616,9 +790,9 @@ begin
   Result := '';
   // Skip the download when Sunshine is already present (the box is ticked but
   // disabled purely as an "already installed" indicator), when the user clicked
-  // Skip, or when they declined it. Only a ticked box on a machine WITHOUT
-  // Sunshine triggers a real install.
-  if (SunshinePage = nil) or SunshineDetected or SunshineSkipped
+  // Skip, when they declined it, or on an update (the Sunshine page never ran).
+  // Only a ticked box on a machine WITHOUT Sunshine triggers a real install.
+  if (SunshinePage = nil) or UpdateMode or SunshineDetected or SunshineSkipped
      or (not SunshineInstallCheck.Checked) then begin
     if SunshineDetected then SunshineStepState := 'done';
     Exit;
@@ -705,6 +879,68 @@ begin
   if SaveStringToFile(xmlPath, xml, False) then
     Exec('schtasks.exe', '/Create /TN "MoonlightWeb" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
+// --- One-click update from the web app: the elevated launcher --------------
+//
+// The server runs unprivileged, so launching an installer from it would raise a
+// UAC consent dialog on the host's physical desktop — unanswerable when the
+// update was triggered from a phone on the other side of the planet. This
+// installer runs elevated, so it registers a trigger-less task with
+// RunLevel=HighestAvailable: `schtasks /Run` on it later elevates silently.
+//
+// The task's action is a FIXED path under %LocalAppData% (expanded by Task
+// Scheduler in the user's own context) that SelfUpdater downloads the new
+// installer to. Per-user on purpose: a machine-wide staging directory would let
+// any local account drop an executable that we then run elevated.
+procedure RegisterUpdateTask();
+var
+  user, xml, xmlPath: String;
+  rc: Integer;
+begin
+  user := TaskXmlEscape(GetEnv('USERDOMAIN') + '\' + GetEnv('USERNAME'));
+  // No <?xml?> declaration and pure ASCII, for the same reason as the logon task.
+  xml :=
+    '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">' + #13#10 +
+    '  <RegistrationInfo><Author>MoonlightWeb</Author></RegistrationInfo>' + #13#10 +
+    '  <Principals><Principal id="Author">' +
+    '<UserId>' + user + '</UserId><LogonType>InteractiveToken</LogonType>' +
+    '<RunLevel>HighestAvailable</RunLevel>' +
+    '</Principal></Principals>' + #13#10 +
+    // Element order follows the Task Scheduler schema (schtasks /XML is strict).
+    '  <Settings>' +
+    '<AllowStartOnDemand>true</AllowStartOnDemand>' +
+    '<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>' +
+    '<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>' +
+    '<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>' +
+    '<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>' +
+    '</Settings>' + #13#10 +
+    // No <Triggers>: the task exists purely to be started on demand.
+    '  <Actions Context="Author"><Exec>' +
+    '<Command>' + UpdateStagedExe + '</Command>' +
+    '<Arguments>' + UpdateSilentArgs + '</Arguments>' +
+    '</Exec></Actions>' + #13#10 +
+    '</Task>' + #13#10;
+  xmlPath := ExpandConstant('{tmp}\mw-update-task.xml');
+  if SaveStringToFile(xmlPath, xml, False) then
+    Exec('schtasks.exe', '/Create /TN "' + UpdateTaskName + '" /XML "' + xmlPath + '" /F',
+         '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
+// Release the files under {app} before the copy: a running server holds its exe
+// and Qt DLLs open and Inno would fail (or defer to a reboot) on every one.
+procedure StopRunningInstance();
+var
+  rc: Integer;
+begin
+  if ServiceInstalled then
+    Exec(ExpandConstant('{sys}\net.exe'), 'stop MoonlightWeb', '', SW_HIDE,
+         ewWaitUntilTerminated, rc);
+  // End the logon task first so its supervisor cannot relaunch what we kill.
+  Exec('schtasks.exe', '/End /TN "MoonlightWeb"', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  // taskkill returns before Windows has actually torn the process down.
+  Sleep(2000);
 end;
 
 // --- Provisioning + shortcuts ---------------------------------------------
@@ -827,16 +1063,29 @@ var
   prevSun, prevPair, prevAr: String;
   holdDone: Boolean;
 begin
-  // Start the windowless tray server now so provisioning.json is consumed and
-  // pairing + A-record run. ewNoWait: it keeps running after setup exits.
-  // --autostart: an automatic launch must not open the browser itself — the
-  // [Run] "open the admin page" checkbox owns that.
-  Exec(ExpandConstant('{app}\{#MyAppExe}'), '--autostart', ExpandConstant('{app}'),
-       SW_HIDE, ewNoWait, rc);
+  // Bring the server back up. A service install owns its own lifecycle (session
+  // 0, no tray) — restarting it is what StopRunningInstance stopped.
+  if ServiceInstalled then
+    Exec(ExpandConstant('{sys}\net.exe'), 'start MoonlightWeb', '', SW_HIDE,
+         ewWaitUntilTerminated, rc)
+  // On an update this setup is itself running elevated (started by the app
+  // through the "MoonlightWeb Update" task), so Exec'ing the exe here would
+  // leave the server running as administrator until the next logon. Going
+  // through the logon task instead brings it back at its normal, least
+  // privileged level.
+  else if UpdateMode and LogonTaskExists() then
+    Exec('schtasks.exe', '/Run /TN "MoonlightWeb"', '', SW_HIDE, ewWaitUntilTerminated, rc)
+  else
+    // Start the windowless tray server now so provisioning.json is consumed and
+    // pairing + A-record run. ewNoWait: it keeps running after setup exits.
+    // --autostart: an automatic launch must not open the browser itself — the
+    // [Run] "open the admin page" checkbox owns that.
+    Exec(ExpandConstant('{app}\{#MyAppExe}'), '--autostart', ExpandConstant('{app}'),
+         SW_HIDE, ewNoWait, rc);
 
-  // Silent installs have no UI to drive; the server still provisions in the
-  // background.
-  if WizardSilent then Exit;
+  // Silent installs have no UI to drive; an update has nothing to provision.
+  // Either way the server just restarted with the settings it already had.
+  if WizardSilent or UpdateMode then Exit;
 
   // Qt AppDataLocation on Windows: %AppData%\<Org>\<App> = MoonlightWeb\MoonlightWeb.
   statusPath := ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json');
@@ -900,37 +1149,56 @@ var
   lines: TArrayOfString;
   internet, consent, autoPair: String;
 begin
+  // Before the file copy: nothing under {app} can be replaced while the server
+  // is holding it open.
+  if CurStep = ssInstall then begin
+    ServiceInstalled := DetectService();
+    if UpdateMode or ServiceInstalled then StopRunningInstance();
+    Exit;
+  end;
+
   if CurStep <> ssPostInstall then Exit;
 
+  // Register the elevated on-demand task that lets the (unprivileged) server
+  // apply the next update by itself, with no UAC prompt. Refreshed on every
+  // install so the action always matches the current staging convention.
+  RegisterUpdateTask();
+
   // provisioning.json — consumed and removed by the server on first run.
-  // Written as UTF-8 (no BOM): the consent text is localized (accents) and the
-  // server parses this file with a strict UTF-8 JSON parser.
-  if InternetPage.Values[0] then internet := 'true' else internet := 'false';
-  // Exact agreement text the user read on the Internet page — recorded by the
-  // server in its DNS registration audit log (legal traceability).
-  consent := ExpandConstant('{cm:InternetPageBody}') + ' / '
-           + ExpandConstant('{cm:InternetPageOption}');
-  StringChangeEx(consent, '%n', ' ', True);
-  // Only ask the server to auto-pair when the user actually supplied credentials.
-  // Blank creds mean "no pairing to do": the user clicked Skip, or MoonlightWeb
-  // is already paired with the local Sunshine (scPaired clears both fields).
-  // Pairing with empty creds would fail and leave a pending request, so mark it
-  // skipped instead.
-  if (Trim(SunshineUserEdit.Text) <> '') and (Trim(SunshinePassEdit.Text) <> '') then
-    autoPair := 'true'
-  else
-    autoPair := 'false';
-  SetArrayLength(lines, 9);
-  lines[0] := '{';
-  lines[1] := '  "internet_access_authorized": ' + internet + ',';
-  lines[2] := '  "consent_message": "' + JsonEscape(consent) + '",';
-  lines[3] := '  "sunshine": {';
-  lines[4] := '    "auto_pair": ' + autoPair + ',';
-  lines[5] := '    "username": "' + JsonEscape(SunshineUserEdit.Text) + '",';
-  lines[6] := '    "password": "' + JsonEscape(SunshinePassEdit.Text) + '"';
-  lines[7] := '  }';
-  lines[8] := '}';
-  SaveStringsToUTF8FileWithoutBOM(ExpandConstant('{app}\provisioning.json'), lines, False);
+  // An update skips it: the server is already provisioned, and replaying a
+  // first-run provisioning would re-answer settled questions. The exception is a
+  // question this build asks for the FIRST time — ShouldSkipPage let its page
+  // through, so its answer still has to reach the server.
+  if (not UpdateMode) or (not SettingsHasKey('internet_access_enabled')) then begin
+    // Written as UTF-8 (no BOM): the consent text is localized (accents) and the
+    // server parses this file with a strict UTF-8 JSON parser.
+    if InternetPage.Values[0] then internet := 'true' else internet := 'false';
+    // Exact agreement text the user read on the Internet page — recorded by the
+    // server in its DNS registration audit log (legal traceability).
+    consent := ExpandConstant('{cm:InternetPageBody}') + ' / '
+             + ExpandConstant('{cm:InternetPageOption}');
+    StringChangeEx(consent, '%n', ' ', True);
+    // Only ask the server to auto-pair when the user actually supplied credentials.
+    // Blank creds mean "no pairing to do": the user clicked Skip, or MoonlightWeb
+    // is already paired with the local Sunshine (scPaired clears both fields).
+    // Pairing with empty creds would fail and leave a pending request, so mark it
+    // skipped instead.
+    if (Trim(SunshineUserEdit.Text) <> '') and (Trim(SunshinePassEdit.Text) <> '') then
+      autoPair := 'true'
+    else
+      autoPair := 'false';
+    SetArrayLength(lines, 9);
+    lines[0] := '{';
+    lines[1] := '  "internet_access_authorized": ' + internet + ',';
+    lines[2] := '  "consent_message": "' + JsonEscape(consent) + '",';
+    lines[3] := '  "sunshine": {';
+    lines[4] := '    "auto_pair": ' + autoPair + ',';
+    lines[5] := '    "username": "' + JsonEscape(SunshineUserEdit.Text) + '",';
+    lines[6] := '    "password": "' + JsonEscape(SunshinePassEdit.Text) + '"';
+    lines[7] := '  }';
+    lines[8] := '}';
+    SaveStringsToUTF8FileWithoutBOM(ExpandConstant('{app}\provisioning.json'), lines, False);
+  end;
 
   // The Desktop / Start-Menu shortcuts are now .lnk files that launch the exe
   // (created in [Icons]); clean up stale .url shortcuts left by pre-2026-07
@@ -966,6 +1234,11 @@ begin
          ewWaitUntilTerminated, rc);
     Exec('schtasks.exe', '/Delete /TN "MoonlightWeb" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
+    // The elevated on-demand update launcher goes too — leaving it behind would
+    // keep an elevated task pointing at a path the user can still write to.
+    Exec('schtasks.exe', '/Delete /TN "' + UpdateTaskName + '" /F', '', SW_HIDE,
+         ewWaitUntilTerminated, rc);
+    DelTree(ExpandConstant('{localappdata}\MoonlightWeb\update'), True, True, True);
     Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     // Remove the firewall rule added at install time.

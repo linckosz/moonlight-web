@@ -96,7 +96,14 @@
     },
     "update": {
         "available": "MoonlightWeb {{version}} 已发布",
-        "download": "下载",
+        "availableManual": "MoonlightWeb {{version}} 已发布 — 请在主机上进行更新",
+        "updateNow": "更新",
+        "downloading": "正在主机上下载更新…",
+        "installing": "正在主机上安装更新…",
+        "restarting": "正在重启 MoonlightWeb…",
+        "confirmOnHost": "等待在主机上确认…",
+        "failed": "更新失败",
+        "timeout": "主机未能及时恢复 — 请直接检查",
         "releaseNotes": "更新内容",
         "dismiss": "忽略更新提示"
     },

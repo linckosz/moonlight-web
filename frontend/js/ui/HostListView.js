@@ -56,6 +56,12 @@ export class HostListView {
         this._appRetryTimers = {};
         this._active = false;
         this._destroyed = false;
+        // Update banner: the cached GitHub-Releases result, and whether an update
+        // is currently being applied on the host (which then owns the banner).
+        this._updateChecked = false;
+        this._updateInfo = null;
+        this._updateBusy = false;
+        this._hostsLoaded = false;
         this.renderShell();
 
         // Auto-scan when page gains focus
@@ -75,11 +81,20 @@ export class HostListView {
         this._clickHandler = (e) => {
             if (this._destroyed) return;
 
+            // ── Update banner: apply on the host ───────────────────────────
+            if (e.target.closest('.update-banner-apply')) {
+                this._startUpdate();
+                return;
+            }
+
             // ── Update banner dismiss ──────────────────────────────────────
             const dismissBtn = e.target.closest('.update-banner-dismiss');
             if (dismissBtn) {
                 // Remember the dismissed version so only a newer release re-shows.
                 localStorage.setItem('mw_update_dismissed', dismissBtn.dataset.version || '');
+                // Drop the cached result too, or the next host refresh would
+                // repaint the banner we were just asked to hide.
+                this._updateInfo = null;
                 const banner = this.container.querySelector('#update-banner');
                 if (banner) {
                     banner.hidden = true;
@@ -216,22 +231,54 @@ export class HostListView {
         // Respect a prior dismissal — but only for that exact version, so a newer
         // release re-surfaces the banner.
         if (localStorage.getItem('mw_update_dismissed') === info.latest) return;
-        this._renderUpdateBanner(info);
+        this._updateInfo = info;
+        this._renderUpdateBanner();
     }
 
-    _renderUpdateBanner(info) {
+    /**
+     * Whether this browser can have the update applied for it.
+     *
+     * The installer runs on the HOST, never here — offering a download link to a
+     * phone streaming from the other side of the house would be a dead end. So
+     * the banner only ever offers an action when the host can carry it out
+     * itself, which needs two things:
+     *   - the machine running MoonlightWeb is paired with its local Sunshine.
+     *     That is the "already set up" marker: the installer has nothing left to
+     *     ask (no credentials, no pairing), so it can run unattended.
+     *   - the platform has an unattended elevation path at all (self_update.
+     *     supported — see SelfUpdater).
+     * Anything else degrades to "go update the host PC".
+     */
+    _canSelfUpdate() {
+        const cap = this._updateInfo && this._updateInfo.self_update;
+        if (!cap || !cap.supported) return false;
+        return this.hosts.some((h) => h.isLocalHost && h.isPaired);
+    }
+
+    _renderUpdateBanner() {
+        // An update in flight owns the banner (progress bar); never repaint over it.
+        if (this._updateBusy) return;
+        // Wait for the host list: painting "update the host PC by hand" and then
+        // flipping it to a one-click button a second later reads as a glitch.
+        if (!this._hostsLoaded) return;
+        const info = this._updateInfo;
         const banner = this.container.querySelector('#update-banner');
-        if (!banner) return;
-        const url = info.download_url || info.release_url || '';
+        if (!banner || !info) return;
+
+        const version = this.esc(info.latest);
         const notes = info.release_url || '';
+        const canUpdate = this._canSelfUpdate();
         banner.innerHTML = `
             <span class="update-banner-icon" aria-hidden="true">${Icons.power}</span>
-            <span class="update-banner-text">${t('update.available', { version: this.esc(info.latest) })}</span>
+            <span class="update-banner-text">${
+                canUpdate
+                    ? t('update.available', { version })
+                    : t('update.availableManual', { version })
+            }</span>
             <span class="update-banner-actions">
                 ${
-                    url
-                        ? `<a class="btn btn-secondary update-banner-download" href="${this.esc(url)}"
-                              target="_blank" rel="noopener noreferrer">${t('update.download')}</a>`
+                    canUpdate
+                        ? `<button class="btn btn-secondary update-banner-apply">${t('update.updateNow')}</button>`
                         : ''
                 }
                 ${
@@ -241,10 +288,130 @@ export class HostListView {
                         : ''
                 }
             </span>
-            <button class="update-banner-dismiss" data-version="${this.esc(info.latest)}"
+            <button class="update-banner-dismiss" data-version="${version}"
                     aria-label="${this.esc(t('update.dismiss'))}">${Icons.close || '✕'}</button>
         `;
         banner.hidden = false;
+    }
+
+    // --- Applying the update (host-side, watched from here) ---
+
+    // Repaint the banner as a progress row. No dismiss button: the host is being
+    // replaced under us, hiding the bar would only lose the user.
+    _renderUpdateProgress(status) {
+        const banner = this.container.querySelector('#update-banner');
+        if (!banner) return;
+        const pct = Math.max(0, Math.min(100, status.percent || 0));
+        let label;
+        if (status.requires_host_confirmation && status.state !== 'downloading')
+            label = t('update.confirmOnHost');
+        else if (status.state === 'downloading') label = t('update.downloading');
+        else if (status.state === 'installing') label = t('update.installing');
+        else label = t('update.restarting');
+
+        banner.innerHTML = `
+            <span class="update-banner-icon" aria-hidden="true">${Icons.power}</span>
+            <span class="update-banner-text">${label}</span>
+            <span class="update-banner-progress" role="progressbar"
+                  aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+                <span class="update-banner-progress-fill" style="width:${pct}%"></span>
+            </span>
+        `;
+        banner.hidden = false;
+    }
+
+    _renderUpdateFailed(message) {
+        this._updateBusy = false;
+        const banner = this.container.querySelector('#update-banner');
+        if (!banner) return;
+        banner.innerHTML = `
+            <span class="update-banner-icon" aria-hidden="true">${Icons.power}</span>
+            <span class="update-banner-text">${t('update.failed')}${
+                message ? ` — ${this.esc(message)}` : ''
+            }</span>
+            <button class="update-banner-dismiss"
+                    data-version="${this.esc((this._updateInfo && this._updateInfo.latest) || '')}"
+                    aria-label="${this.esc(t('update.dismiss'))}">${Icons.close || '✕'}</button>
+        `;
+        banner.hidden = false;
+    }
+
+    async _startUpdate() {
+        if (this._updateBusy) return;
+        this._updateBusy = true;
+        this._renderUpdateProgress({ state: 'downloading', percent: 0 });
+        try {
+            await BackendClient.startUpdate();
+        } catch (err) {
+            this._renderUpdateFailed(err.message);
+            return;
+        }
+        this._watchUpdate();
+    }
+
+    /**
+     * Follow the update to its end, across the moment the server disappears.
+     *
+     * Phase 1 polls /api/update/status for real progress. The installer then
+     * replaces (and on Windows kills) that very server, so the polling failing is
+     * the expected transition, not an error. Phase 2 waits for the new build to
+     * answer /api/health and reloads the app on it.
+     */
+    async _watchUpdate() {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const info = this._updateInfo || {};
+
+        // Phase 1 — the host is still answering. Bounded: on the platforms whose
+        // installer needs a prompt on the host desktop, nothing kills this server
+        // and an unanswered dialog would keep us polling forever.
+        let alive = true;
+        for (let i = 0; i < 600 && !this._destroyed && alive; i++) {
+            await sleep(900);
+            let status;
+            try {
+                status = await BackendClient.getUpdateStatus();
+            } catch (_) {
+                alive = false; // server gone: the installer took it down
+                break;
+            }
+            if (status.state === 'failed') {
+                this._renderUpdateFailed(status.error);
+                return;
+            }
+            // `idle` from a server that we told to update means we are already
+            // talking to its freshly started replacement — phase 2's version
+            // check is what settles that.
+            if (status.state === 'idle') {
+                alive = false;
+                break;
+            }
+            this._renderUpdateProgress(status);
+        }
+        if (this._destroyed) return;
+        if (alive) {
+            // Still up after the whole budget — the install never went through.
+            this._renderUpdateFailed(t('update.timeout'));
+            return;
+        }
+
+        // Phase 2 — wait for the new build. Generous budget: a Windows install
+        // plus the server rebinding its ports can take a couple of minutes, and
+        // an elevation prompt on the host desktop may be waiting for someone.
+        this._renderUpdateProgress({ state: 'restarting', percent: 98 });
+        for (let i = 0; i < 200 && !this._destroyed; i++) {
+            await sleep(3000);
+            const health = await BackendClient.probeHealth();
+            // Wait for a version that is no longer the one we started from. The
+            // old server can keep answering for a few seconds (or phase 1 may
+            // have broken on a transient error), and reloading onto it would
+            // silently look like the update did nothing.
+            if (health && health.version && health.version !== info.current) {
+                localStorage.removeItem('mw_update_dismissed');
+                location.reload();
+                return;
+            }
+        }
+        if (!this._destroyed) this._renderUpdateFailed(t('update.timeout'));
     }
 
     async _autoScan() {
@@ -317,8 +484,14 @@ export class HostListView {
                 if (idx >= 0) this.hosts[idx] = host;
                 else this.hosts.push(host);
             }
+            const firstLoad = !this._hostsLoaded;
+            this._hostsLoaded = true;
             const after = this._fingerprint();
             if (before !== after) this.renderList();
+            // The update banner's shape depends on the local host's pair state,
+            // so it can only be decided once the list is known — including the
+            // "no hosts at all" case, which no fingerprint change signals.
+            if (firstLoad || before !== after) this._renderUpdateBanner();
         } catch (err) {
             console.error('[MW] Failed to refresh hosts:', err);
             // Show error only on first load; keep existing data on refresh

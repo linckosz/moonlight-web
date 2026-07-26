@@ -20,6 +20,10 @@ Each platform gets a native, double-clickable installer with the same goal: a no
 
 An optional logon task (`--autostart`) starts the server at login without opening a browser. **No DNS/ACME secrets ship in the installer** — they are compiled into the exe by CI.
 
+**Update mode**: when a MoonlightWeb is already installed (uninstall key or a leftover exe under `{app}`), the wizard collapses to a single confirmation page — button **Update**, a one-line "x.y.z → a.b.c" memo, everything else skipped (`ShouldSkipPage`). The rule for skipping is *"was this question already answered?"*, read from `settings.json`, so a page added by a future version still shows up on an update for free. The Sunshine page is always skipped (pairing lives on the admin page from then on), the shortcut/autostart tasks are re-derived from what is actually on the machine instead of falling back to their defaults, `provisioning.json` is not rewritten, and the post-install checklist does not run. The running server is stopped before the file copy (service `net stop`, else logon task `/End` + `taskkill`) and restarted after.
+
+**Elevated update launcher**: every install registers a trigger-less scheduled task `MoonlightWeb Update` (`RunLevel=HighestAvailable`) whose action is `%LocalAppData%\MoonlightWeb\update\MoonlightWeb-update.exe /VERYSILENT …`. The server runs unprivileged, so this is what lets it apply an update with **no UAC prompt** — one that a browser on another continent could never answer (see §9.4).
+
 **Service option**: `backend/packaging/windows/install-service.bat` / `uninstall-service.bat` wrap NSSM for a session-0 service install (sets `MW_SERVICE`).
 
 ## 9.2 macOS — interactive `.pkg` (`backend/installer/macos/`)
@@ -50,7 +54,8 @@ Autostart uses an XDG autostart entry; a systemd unit (`backend/packaging/system
 | Single instance | `QLockFile`; a second launch focuses/opens the admin page then exits 0. |
 | Auto-restart on crash | systemd `Restart=on-failure` / launchd KeepAlive / NSSM; **exit 0 = voluntary quit, never restarted**. |
 | Self-healing shortcuts | The server rewrites the Desktop entry on startup and whenever the entry URL changes (port parity rebind, Internet Access ready) — the installer can't know the runtime port/domain. |
-| Auto-update discovery | `UpdateChecker` → GitHub Releases (`/api/update/check`), a discreet banner on the hosts page links the per-platform artifact by its release naming convention. |
+| Auto-update discovery | `UpdateChecker` → GitHub Releases (`/api/update/check`), a discreet banner on the hosts page. It never offers a download: the installer must run on the **host**, not on the phone reading the banner. |
+| Auto-update application | `SelfUpdater` (`/api/update/start`) downloads the resolved asset and runs it unattended. The banner only offers the one-click path when the host machine is **paired with its local Sunshine** — the marker that the installer has nothing left to ask — otherwise it just says "update the host PC". |
 | Browser auto-open | Manual GUI launches open `/setup` (first run, macOS/Linux) or `/admin`; `--autostart`/headless launches stay silent. |
 
 ## 9.5 Workarounds catalog (installers)
@@ -63,6 +68,8 @@ Autostart uses an XDG autostart entry; a systemd unit (`backend/packaging/system
 | xcaddy/Go OOM, small VMs (DNS box) | (See PowerDNS chapter — swap added by its installer.) |
 | macOS Installer plugin API removed from SDK headers | Self-declared headers + link-only framework (see §9.2). |
 | Windows service session 0 has no desktop | `MW_SERVICE` suppresses tray/shortcut/browser behaviors. |
+| A remote browser cannot answer a UAC / polkit / `osascript` prompt on the host desktop | Windows: elevated trigger-less scheduled task started with `schtasks /Run` (§9.1). Linux AppImage: in-place file replacement, no root at all. Service/root installs: already elevated. Everything else reports `requires_host_confirmation` so the UI says "confirmation required on the host PC" instead of hanging on an invisible dialog. |
+| An elevated task running an exe from a writable directory is a privilege-escalation hole | Staging lives under per-user `%LocalAppData%` (expanded by Task Scheduler in the task's own user context), never `%ProgramData%`. |
 | Inno Setup can't know the final admin URL | Server publishes `admin_url` via `Provisioning::setInfo`; installer reads it post-install with a provisional fallback. |
 
 ---

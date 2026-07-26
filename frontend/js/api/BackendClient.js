@@ -254,11 +254,38 @@ export class BackendClient {
 
     /** Check whether a newer MoonlightWeb release is available for this host.
      *  Returns { current, latest, update_available, download_url, release_url,
-     *  asset_name }. Best-effort — resolves null on any failure so callers can
-     *  stay silent when offline / rate-limited. */
+     *  asset_name, self_update: { supported, method, requires_host_confirmation } }.
+     *  Best-effort — resolves null on any failure so callers can stay silent when
+     *  offline / rate-limited. */
     static async checkForUpdate() {
         try {
             return await this.get('/api/update/check');
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /** Ask the host to download and apply the update, unattended. Rejects with
+     *  409 when no update is available or one is already running. */
+    static async startUpdate() {
+        return this.post('/api/update/start');
+    }
+
+    /** Progress of the running update: { state, percent, version, error,
+     *  requires_host_confirmation }. Stops answering once the installer takes the
+     *  server down — that is the expected end of the polling loop. */
+    static async getUpdateStatus() {
+        return this.get('/api/update/status');
+    }
+
+    /** Liveness + version probe, used to detect the host coming back up after an
+     *  update. Raw fetch on purpose: the shared error path would reload the page
+     *  on the 401/connection failures that are normal while the server restarts. */
+    static async probeHealth() {
+        try {
+            const resp = await fetch('/api/health', { cache: 'no-store' });
+            if (!resp.ok) return null;
+            return await resp.json();
         } catch (_) {
             return null;
         }
