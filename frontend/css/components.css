@@ -533,7 +533,11 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
    ════════════════════════════════════════════════════════════════════════ */
 #toast-container {
     position: fixed;
-    bottom: var(--space-5);
+    /* --kbd-inset lifts the stack over the on-screen keyboard and the stream's
+       special-keys bar; it is 0 whenever no keyboard is up. A toast the user
+       cannot read (e.g. the quality-switch warning typed mid-game) is worse
+       than no toast at all. */
+    bottom: calc(var(--space-5) + var(--kbd-inset, 0px));
     right: var(--space-5);
     z-index: 2000;
     display: flex;
@@ -600,7 +604,7 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 
 @media (max-width: 600px) {
     #toast-container {
-        bottom: var(--space-3);
+        bottom: calc(var(--space-3) + var(--kbd-inset, 0px));
         right: var(--space-3);
         left: var(--space-3);
         max-width: none;

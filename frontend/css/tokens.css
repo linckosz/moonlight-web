@@ -69,6 +69,13 @@
     --space-6: 32px;
     --space-8: 48px;
 
+    /* Height of the bottom strip the on-screen keyboard (plus the stream's
+       special-keys bar) hides, published by StreamView while it is open — 0
+       otherwise. iOS anchors position:fixed to the layout viewport, which the
+       keyboard does not shrink, so bottom-anchored UI must offset itself by
+       this or it renders behind the keys. */
+    --kbd-inset: 0px;
+
     /* ── Typography ────────────────────────────────────────────────────── */
     --fs-xs: 0.75rem;
     --fs-sm: 0.875rem;

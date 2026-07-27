@@ -15,6 +15,27 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+/** How much of the bottom of the layout viewport the soft keyboard hides
+ *  before we consider it open (an accessory bar alone is smaller than this). */
+const KB_OPEN_THRESHOLD = 120;
+
+/**
+ * Publish the height of the bottom strip covered by the soft keyboard and the
+ * special-keys bar as --kbd-inset on <html>. Bottom-anchored fixed UI (the
+ * toast stack) offsets itself by it: iOS anchors position:fixed to the layout
+ * viewport, which the keyboard does not shrink, so a toast at bottom:12px
+ * renders behind the keys — unreadable exactly when it matters (the
+ * quality-switch warning fires while the user is typing).
+ * Document-scoped on purpose: it survives the StreamView swap of a quality
+ * switch, so the successor republishes it instead of the toast dropping back
+ * behind the keyboard mid-transition.
+ */
+function publishKbdInset(px) {
+    const root = document.documentElement;
+    if (px > 0) root.style.setProperty('--kbd-inset', Math.round(px) + 'px');
+    else root.style.removeProperty('--kbd-inset');
+}
+
 /**
  * Virtual-keyboard / physical-keyboard capture subsystem for StreamView.
  *
@@ -425,7 +446,7 @@ export class StreamViewKeyboard {
         if (!vv || !this.streamEl) return;
         // In real fullscreen the keyboard rarely opens; skip to avoid fighting it.
         const kbHeight = window.innerHeight - vv.height - vv.offsetTop;
-        if (kbHeight > 120) {
+        if (kbHeight > KB_OPEN_THRESHOLD) {
             // Release `bottom` (set by inset:0) so `height` actually applies.
             this.streamEl.style.bottom = 'auto';
             this.streamEl.style.top = vv.offsetTop + 'px';
@@ -439,12 +460,36 @@ export class StreamViewKeyboard {
                 tbHeight = this._kbToolbar.offsetHeight;
             }
             this.streamEl.style.height = Math.max(0, vv.height - tbHeight) + 'px';
+            // A hidden standby leg measures the same viewport as the live one;
+            // let the visible view own the document-wide inset.
+            if (!this._standby) publishKbdInset(kbHeight + tbHeight);
         } else {
             this.streamEl.style.bottom = '';
             this.streamEl.style.top = '';
             this.streamEl.style.height = '';
             this._hideKbToolbar();
+            if (!this._standby) publishKbdInset(0);
         }
+    }
+
+    /**
+     * Teardown counterpart: drop the inset this view published — unless the
+     * soft keyboard is still up. A quality switch tears the view down while a
+     * bridge element holds the keyboard open (see StreamView.bridgeSoftKeyboard),
+     * and the successor only republishes on its first frame; clearing here would
+     * drop the toast stack behind the keys for the whole transition. This
+     * view's own bar is already gone by now; a bar still standing belongs to
+     * the successor, which the inset must keep clearing.
+     */
+    _releaseKbdInset() {
+        const vv = window.visualViewport;
+        const kbHeight = vv ? window.innerHeight - vv.height - vv.offsetTop : 0;
+        if (kbHeight <= KB_OPEN_THRESHOLD) {
+            publishKbdInset(0);
+            return;
+        }
+        const bar = document.querySelector('.stream-kbd-toolbar.visible');
+        publishKbdInset(kbHeight + (bar ? bar.offsetHeight : 0));
     }
 
     /** Hide the special-keys bar and release any latched modifiers. */
