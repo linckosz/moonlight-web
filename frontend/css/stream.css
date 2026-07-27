@@ -10,19 +10,38 @@ body.streaming-active .app-footer {
     display: none !important;
 }
 
+/* ── Stream surround: the signature grid instead of dead black ──────────── */
+/* The letterbox bars around the picture, and the strip the soft keyboard
+   leaves under the shrunk overlay, read as MoonlightWeb rather than as a gap.
+   One rule for every layer the stream can paint — the overlay, the CSS
+   fallback fullscreen area that covers it, the relaunch cover, and the page
+   BEHIND it, which is what shows in that keyboard strip.
+   background-attachment: fixed anchors each layer's grid to the viewport
+   instead of to its own box, so the lines run straight across the seams
+   between them however JS resizes the overlay.
+   Opaque base color under the pattern (the overlay must hide the app whatever
+   the pattern does), and no neon bloom unlike --app-bg: a tinted surround
+   sitting right next to the video would skew how its colors read. */
+body.streaming-active,
+.stream-overlay,
+.stream-css-fs .stream-canvas-area,
+#stream-relaunch-loader {
+    background-color: var(--surface-0);
+    background-image: var(--bg-grid);
+    background-size: var(--bg-grid-size);
+    background-attachment: fixed;
+}
+/* Page atmosphere off while streaming: its grid is masked to fade out towards
+   the bottom and its bloom is tinted — both would break the seam. */
+body.streaming-active::before,
+body.streaming-active::after {
+    display: none;
+}
+
 .stream-overlay {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    /* Signature grid rather than dead black: the letterbox bars around the
-       picture read as MoonlightWeb instead of as a gap. The opaque base color
-       comes first — the overlay must hide the app behind it whatever the
-       pattern on top does. No neon bloom here (unlike --app-bg): a tinted
-       surround would sit right next to the video and skew how its colors
-       read. */
-    background-color: var(--surface-0);
-    background-image: var(--bg-grid);
-    background-size: var(--bg-grid-size);
     display: flex;
     flex-direction: column;
     font-family: inherit;
@@ -557,11 +576,8 @@ body.streaming-active .app-footer {
     position: fixed;
     inset: 0;
     z-index: 9999;
-    /* Matches the stream surround so the relaunch cover is a continuation of
-       the overlay, not a black flash on top of it. */
-    background-color: var(--surface-0);
-    background-image: var(--bg-grid);
-    background-size: var(--bg-grid-size);
+    /* Surround inherited from the shared rule above: the relaunch cover is a
+       continuation of the overlay, not a black flash on top of it. */
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -883,11 +899,9 @@ body.streaming-active .app-footer {
     position: fixed !important;
     inset: 0 !important;
     z-index: 9999 !important;
-    /* Same surround as the overlay — this covers it in CSS-fallback
-       fullscreen, so a plain black here would drop the grid. */
-    background-color: var(--surface-0);
-    background-image: var(--bg-grid);
-    background-size: var(--bg-grid-size);
+    /* Surround inherited from the shared rule above — this layer covers the
+       overlay in CSS-fallback fullscreen, so a plain black here would drop
+       the grid. */
 }
 .stream-css-fs .stream-canvas,
 .stream-css-fs .stream-video {
