@@ -43,7 +43,10 @@ Gated pipeline — quality and tests **block** the build matrix:
 | `quality-cpp-format` | ubuntu | `clang-format` **19.1.7** check (house style in `backend/.clang-format`) |
 | `quality-cppcheck` | ubuntu | cppcheck static analysis |
 | `test-backend` | windows | Qt Test suites + OpenCppCoverage, 70% gate |
-| `build` matrix | windows/ubuntu/macos | CMake builds: Windows x64 & ARM64, Linux x64, macOS arm64 |
+| `build` matrix | windows/ubuntu/macos | CMake builds: Windows x64 & ARM64, Linux x64, macOS arm64 — **pull requests only** |
+| `package` | (reusable) | **Push to main / manual dispatch only**: calls `release.yml` and uploads the real installers as run artifacts |
+
+The two build stages are mutually exclusive, so main never compiles twice. To test a build before tagging, open the run for the commit on main and download the `MoonlightWeb-windows-<arch>-v<version>` / `moonlightweb-linux-x64-v<version>` / `moonlightweb-macos-arm64-v<version>` artifact (GitHub serves each as a zip). Untagged versions read `<last v* tag>-<3-char sha>`, e.g. `0.2.0-a71`.
 
 CI-specific workarounds baked into the workflows: `aqtinstall` pinned to a master commit (Qt 6.11 layout change) + `py7zr 1.1.0`; macOS uses `clang_64`; Windows builds with **Ninja** (VS 18 generator issues); `gh` path fixes. `build-asan.yml` provides an AddressSanitizer build on demand.
 
@@ -51,12 +54,13 @@ CI-specific workarounds baked into the workflows: `aqtinstall` pinned to a maste
 
 ## 11.3 Release (`.github/workflows/release.yml`)
 
-Tag push (or manual dispatch) → per-platform packaging:
+Tag push, manual dispatch, or a `workflow_call` from CI → per-platform packaging:
 
-- **setup** job computes the version from the tag (feeds `MW_VERSION`).
+- **setup** job computes the version (feeds `MW_VERSION`): the tag on a `v*` push, otherwise `<last v* tag>-<3-char sha>`. It also exports `pkg_version`, the same string with `-` → `.`, because rpm rejects dashes in `Version` — the Linux job uses that one throughout.
+- Publishing to the GitHub Release only happens on a `refs/tags/` ref; every other run stops at the workflow artifacts.
 - **windows** (x64 + arm64): build → archive **PDB symbols** as an artifact → stage bundle → `windeployqt` + Qt OpenSSL TLS plugin + OpenSSL DLLs (vcpkg on arm64) → **Inno Setup** installer.
-- **linux**: build → linuxdeploy **AppDir** (+ Wayland plugins best-effort) → **AppImage** → `make-packages.sh` → **.deb + .rpm**.
-- **macos** (arm64, macos-15): build → assemble `.app` → `macdeployqt` + ad-hoc sign → **interactive `.pkg`** via `build-pkg.sh`.
+- **linux**: build → security TNR (`ctest`) → linuxdeploy **AppDir** (+ Wayland plugins best-effort) → **AppImage** → `make-packages.sh` → **.deb + .rpm**.
+- **macos** (arm64, macos-15): build → security TNR (`ctest`) → assemble `.app` → `macdeployqt` + ad-hoc sign → **interactive `.pkg`** via `build-pkg.sh`.
 
 Artifact naming is what `UpdateChecker` matches per-platform (`MoonlightWeb-installer-<v>-win-<arch>.exe`, `moonlightweb-<v>-linux-x64.{deb,rpm}`, AppImage, `moonlightweb-macos-arm64.pkg`).
 
