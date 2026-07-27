@@ -109,6 +109,15 @@
     --edge-cyan: inset 0 0 0 1px var(--border-2);
     --edge-accent: inset 0 0 0 1px var(--accent-ring);
 
+    /* Tech grid — MoonlightWeb's signature texture. Shared by the page
+       atmosphere (body::before) and the streaming letterbox surround, so the
+       two never drift apart. */
+    --grid-line: rgba(0, 229, 255, 0.04);
+    --bg-grid:
+        linear-gradient(var(--grid-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    --bg-grid-size: 44px 44px;
+
     /* ── Page background — neon bloom + faint grid base ────────────────── */
     --app-bg:
         radial-gradient(1100px 760px at 85% -12%, rgba(252, 238, 10, 0.1) 0%, transparent 52%),
