@@ -20,7 +20,7 @@ Nothing to install on the client, just a URL.
 
 ---
 
-## ❤️ Support
+## Support
 
 If MoonlightWeb is useful to you,\
 a coffee helps keep the shared DNS domain server online and the domain running 🙏
@@ -35,7 +35,7 @@ a coffee helps keep the shared DNS domain server online and the domain running �
 
 ---
 
-## ✨ What it does
+## What it does
 
 Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, phone, TV) into a streaming client for your Sunshine‑powered gaming PC — **with nothing to install**.
 
@@ -60,7 +60,7 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 
 ---
 
-## 🚀 How it works
+## How it works
 
 1. **Run the server** on any machine on the same LAN as Sunshine (the Sunshine PC itself is ideal, but not required).
 2. **Open a browser** at `https://localhost` (or the PC's LAN IP, or your domain if Internet access is on).
@@ -70,7 +70,7 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 The C++/Qt backend embeds `moonlight-common-c`: it speaks GameStream (RTSP/RTP/ENet) to Sunshine and relays video/audio/input to the browser over WebRTC, with a WSS fallback.\
 Video decodes in **WebCodecs + WebGPU/canvas**, audio in **AudioWorklet**.
 
-### ⚙️ Stream settings
+### Stream settings
 
 From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (720p–2160p),\
 **FPS** (15–240), **codec** (auto / H.264 / HEVC / AV1, unsupported options greyed out),\
@@ -84,7 +84,7 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 
 </div>
 
-### 🪄 Video Enhancement (bonus)
+### Video Enhancement (bonus)
 
 Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1)** + **sharpening**, to gain sharpness when the stream resolution differs from the display resolution.
 
@@ -96,14 +96,14 @@ Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1
 
 ---
 
-## 📦 Install
+## Install
 
 > ✅ Moonlight‑Web runs on **any machine on the same LAN as Sunshine** — it doesn't have
 > to be the Sunshine PC. **Installing it on the Sunshine machine is ideal** (minimal latency
 > via localhost, instant mDNS discovery, simpler port forwarding), but not required.
 
 1. **Prerequisite**: a PC with **Sunshine** installed and working.
-2. **Grab** the latest release binary, **or** build from source (see [Fork & build](#-fork--build)).
+2. **Grab** the latest release binary, **or** build from source (see [Fork & build](#fork--build)).
 3. **Run** `MoonlightWeb` (Windows: `MoonlightWeb.exe`). A **tray icon** appears.
 4. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
    - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
@@ -112,7 +112,7 @@ Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1
 
 ---
 
-## 🛠️ Admin page
+## Admin page
 
 The **Admin** page configures the server itself and is reachable **only from the local machine** (`https://localhost/admin`, or tray icon → *Server Settings*).\
 All `/api/admin/*` routes return **403** for non‑localhost requests.
@@ -125,7 +125,7 @@ It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transpo
 
 </div>
 
-### 🌍 Internet access
+### Internet access
 
 Enabling **Internet Access** makes the server automatically:
 
@@ -140,11 +140,11 @@ Enabling **Internet Access** makes the server automatically:
 
 </div>
 
-**Possible limitations:** UPnP disabled (forward TCP 80/443 + UDP 47999 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), port already mapped, or restrictive corporate networks (see [SSL](#-ssl--your-own-domain--certificate)).
+**Possible limitations:** UPnP disabled (forward TCP 80/443 + UDP 47999 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), port already mapped, or restrictive corporate networks (see [SSL](#ssl--your-own-domain--certificate)).
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
    BROWSER (any device)                  MoonlightWeb SERVER (C++/Qt)            Sunshine HOST
@@ -164,11 +164,11 @@ Enabling **Internet Access** makes the server automatically:
 ```
 
 The server is a **web server** (frontend + REST API), a **proxy** to Sunshine's API, and a **streaming bridge** embedding `moonlight-common-c`. Video (H.264/HEVC/AV1) and Opus audio are relayed over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback.\
-Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled** and can run on a dedicated machine — that's the server your donations help keep alive, but you can host your own (see [Fork & build](#-fork--build)).
+Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled** and can run on a dedicated machine — that's the server your donations help keep alive, but you can host your own (see [Fork & build](#fork--build)).
 
 ---
 
-## 🔧 Advanced config — `settings.json`
+## Advanced config — `settings.json`
 
 Most settings live in the UI and are stored **server‑side** in `settings.json`:
 
@@ -181,7 +181,7 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`.\
 Restart the server after a manual edit.
 
-### 🔐 SSL — your own domain & certificate
+### SSL — your own domain & certificate
 
 By default Moonlight‑Web obtains a free cert automatically via **ZeroSSL** (or Let's Encrypt), with auto‑renewal. Some restrictive corporate networks distrust certain CAs — in that case, use your own domain and certificate in `settings.json`:
 
@@ -198,7 +198,7 @@ Point your DNS (`A`/`CNAME`) to your IP.
 
 ---
 
-## 🍴 Fork & build
+## Fork & build
 
 Cross‑platform build via **CMake** — the single, canonical build system (qmake removed).
 CMake also generates `compile_commands.json` for clangd / IDEs.
@@ -230,7 +230,7 @@ Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 8
 
 ---
 
-## 👤 About the author
+## About the author
 
 I'm an experienced web developer with **15+ years** in the industry, and a long‑time contributor to the **Moonlight** ecosystem: I built and upstreamed **Video Super Resolution** (real‑time GPU upscaling) across *every* major Moonlight client. Moonlight‑Web is the natural next step — that same low‑latency,
 high‑quality streaming on *any* device with a browser, no native app, just a URL.
@@ -244,7 +244,7 @@ high‑quality streaming on *any* device with a browser, no native app, just a U
 
 ---
 
-## 📜 License
+## License
 
 GNU **GPL‑3.0**. Free to use, study, modify, fork and redistribute, provided it stays open‑source under the same license and **keeps the copyright notice and credits the original author**.
 
@@ -256,6 +256,6 @@ See [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT) for third‑party component li
 
 <div align="center">
 
-**Like this project?** Leave a ⭐ and [buy the DNS server a coffee](#-support) ☕
+**Like this project?** Leave a ⭐ and [buy the DNS server a coffee](#support) ☕
 
 </div>
