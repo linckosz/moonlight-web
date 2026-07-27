@@ -1889,8 +1889,16 @@ int main(int argc, char* argv[])
     // Before/without Internet Access, loopback over HTTPS is used — it works
     // even when DNS is down; the browser asks to accept the self-signed cert
     // once.
+    // The domain is only worth handing to a browser once it is BOTH published
+    // and covered by a real certificate: ready() fires as soon as the A-record
+    // resolves, while the ACME order finishes seconds to minutes later. In that
+    // window the domain is still served with the self-signed fallback and the
+    // browser shows ERR_CERT_AUTHORITY_INVALID, so stay on loopback — checking
+    // certPem() as well as certificateIssuing() keeps us there when issuance
+    // finished by failing. Every caller re-reads this on certificateChanged.
     auto entryUrl = [&](const QString& path) -> QString {
-        if (internetAccess.isActive() && !internetAccess.domain().isEmpty()) {
+        if (internetAccess.isActive() && !internetAccess.domain().isEmpty() &&
+            !internetAccess.certificateIssuing() && !appSettings.certPem().isEmpty()) {
             quint16 p = internetAccess.externalHttpsPort();
             if (p == 0) p = server.activeHttpsPort();
             const QString base =
@@ -1914,10 +1922,26 @@ int main(int argc, char* argv[])
 
     // Refresh the shortcut to the valid-certificate domain link once it is ready,
     // and (during a fresh install) mark the A-record checklist step done.
+    //
+    // "done" means the address is usable in a browser, which takes BOTH the
+    // A-record and the certificate. ready() only covers the former, so when an
+    // ACME order is still in flight the step stays "running" and is closed by
+    // the certificateChanged handler below — otherwise the installer declares
+    // success and opens the admin page on the still-self-signed domain.
     QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
-                     [&adminUrl, provisioned](const QString&, const QString&) {
+                     [&adminUrl, &internetAccess, provisioned](const QString&, const QString&) {
                          // adminUrl() folds in the active HTTPS port (fallback port
                          // for a co-existing instance behind the same NAT).
+                         writeAdminShortcut(adminUrl());
+                         if (provisioned && !internetAccess.certificateIssuing())
+                             Provisioning::setStepStatus(QStringLiteral("arecord"),
+                                                         QStringLiteral("done"));
+                     });
+    // The certificate landed (and the TLS reload connected earlier already
+    // swapped it in): the domain URL is now trusted, so republish it and close
+    // the checklist step.
+    QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged, &app,
+                     [&adminUrl, provisioned]() {
                          writeAdminShortcut(adminUrl());
                          if (provisioned)
                              Provisioning::setStepStatus(QStringLiteral("arecord"),
@@ -1939,8 +1963,10 @@ int main(int argc, char* argv[])
                 << "domain:" << st.value("domain").toString()
                 << "lastError:" << st.value("last_error").toString();
         // start() may resolve synchronously (no 'ready' signal emitted): reflect
-        // the final A-record state into the installer checklist either way.
-        if (provisioned)
+        // the final A-record state into the installer checklist either way. An
+        // ACME order still in flight keeps the step running — certificateChanged
+        // (or the installer's own timeout) closes it.
+        if (provisioned && !internetAccess.certificateIssuing())
             Provisioning::setStepStatus(QStringLiteral("arecord"), internetAccess.isActive()
                                                                        ? QStringLiteral("done")
                                                                        : QStringLiteral("failed"));

@@ -1434,6 +1434,12 @@ void InternetAccessManager::onAcmeFinished(bool success)
     } else {
         qWarning() << "[InternetAccess] ACME issuance failed — cert_pem/cert_key remain empty, "
                       "check previous ACME errors";
+        // Surface it: the domain stays on the self-signed fallback, and callers
+        // waiting on the certificate (the installer checklist, the entry URL)
+        // would otherwise wait out their whole budget for a signal never coming.
+        m_LastError = QStringLiteral("TLS certificate issuance failed — the public address "
+                                     "falls back to an untrusted certificate.");
+        emit error(m_LastError);
     }
 
     emit statusChanged(statusJson());

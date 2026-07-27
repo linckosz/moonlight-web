@@ -79,6 +79,13 @@ public:
     /// Whether the manager is currently active (Internet Access enabled).
     bool isActive() const { return m_Active; }
 
+    /// True while an ACME issuance is in flight. start() emits ready() as soon
+    /// as the A-record resolves, but issuance runs asynchronously and finishes
+    /// later (certificateChanged): until then the domain is still served with
+    /// the self-signed fallback and a browser shows a certificate error, so
+    /// callers that hand a URL to a browser must wait for this to clear.
+    bool certificateIssuing() const { return m_CertIssuing; }
+
     /// True when @p label collides with a subdomain the PowerDNS stack owns
     /// (apex, www, api, stats, stream, ns1/ns2, mail) or an internal token label
     /// (anything starting with '_', e.g. _owner / _acme-challenge). A
