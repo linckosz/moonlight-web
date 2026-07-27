@@ -48,4 +48,4 @@ The client requires no install: any modern browser (Chrome, Edge, Safari, Firefo
 - Source code & downloads: https://github.com/linckosz/moonlight-web
 - Latest releases: https://github.com/linckosz/moonlight-web/releases
 - Sunshine (host software): https://github.com/LizardByte/Sunshine
-- Author: Bruno Martin — support: https://buymeacoffee.com/brunoocto
+- Author: Bruno Martin — tip the project: https://buymeacoffee.com/brunoocto
