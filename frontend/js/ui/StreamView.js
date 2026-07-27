@@ -5786,8 +5786,16 @@ export class StreamView {
         const el = this._rootEl;
         if (el) el.remove();
 
-        // Restore the underlying app now that the stream overlay is gone.
-        document.body.classList.remove('streaming-active');
+        // Restore the underlying app now that the stream overlay is gone — but
+        // ONLY if no sibling overlay is still streaming. Dual-stream (seamless
+        // quality step, transport/network switch) retires the old view while
+        // the successor plays: dropping the class there un-hides the hosts page
+        // behind the live overlay, which then shows through every gap the
+        // overlay does not paint — the strip the soft keyboard leaves between
+        // the shrunk stream and the special-keys bar, or a rotation reflow.
+        if (!document.querySelector('.stream-overlay')) {
+            document.body.classList.remove('streaming-active');
+        }
     }
 }
 
