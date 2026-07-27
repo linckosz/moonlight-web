@@ -433,6 +433,9 @@ export class StreamView {
         // Overlay stats
         this._overlayEl = null;
         this._overlayInterval = null;
+        // Latency breakdown: hidden until the card is hovered (mouse) or
+        // tapped (touch).
+        this._latencyDetail = false;
         // Immersive-mode exit reminder (discreet, draggable, top-center).
         this._immersiveOverlay = null;
         this._resolution = ''; // "1920x1080" — set once on first frame
@@ -453,7 +456,12 @@ export class StreamView {
         this._browserRttStats = new SlidingStats(5000); // browser ↔ backend RTT (ms)
         this._decodeLatencyStats = new SlidingStats(5000); // backend pipeline latency (ms)
         this._hostProcStats = new SlidingStats(5000); // Sunshine capture→encode (RTP ext, ms)
-        this._clientLatencyStats = new SlidingStats(2000); // decode() submit → render done (ms)
+        // Browser-side pipeline, split into its three stages so the breakdown
+        // says *where* the client time goes (a slow GPU draw and a saturated
+        // decode queue are the same number otherwise).
+        this._clientDecodeStats = new SlidingStats(2000); // decode() submit → decoder output
+        this._clientQueueStats = new SlidingStats(2000); // decoder output → draw start
+        this._clientRenderStats = new SlidingStats(2000); // draw start → draw done
         this._chunkSubmitTimes = new Map(); // chunk timestamp (µs) → perf.now() at decode()
         this._pingSeq = 0;
         this._pingInterval = null;
@@ -465,10 +473,14 @@ export class StreamView {
         this._mediaStatsTimer = null;
         this._mediaFps = 0;
         this._mediaBitrateMbps = 0;
-        // Per-tick latency samples (jitter buffer + network + decode). A sliding
-        // window instead of a sticky "last good value": if the poll stops
-        // producing samples the display goes back to '--' instead of freezing.
-        this._mediaLatencyStats = new SlidingStats(3000);
+        // Per-tick latency samples, one window per stage (network RTT/2, jitter
+        // buffer, decode) so the browser-side legs are broken down like the
+        // WebCodecs path. A sliding window instead of a sticky "last good
+        // value": if the poll stops producing samples the display goes back to
+        // '--' instead of freezing.
+        this._mediaNetStats = new SlidingStats(3000);
+        this._mediaJitterStats = new SlidingStats(3000);
+        this._mediaDecodeStats = new SlidingStats(3000);
         this._lastInboundBytes = 0;
         this._lastInboundFrames = 0;
         this._lastInboundStatsTime = 0;
@@ -1055,6 +1067,7 @@ export class StreamView {
             e.preventDefault();
             this._closeOverlayEl(this._overlayEl);
         });
+        this._bindLatencyDetailReveal(this._overlayEl);
 
         // ── Immersive-mode exit reminder (top-center, draggable) ───────────
         // Discreet card that only appears once immersive mode has captured the
@@ -1374,8 +1387,11 @@ export class StreamView {
                 this.stats.dropped = m.dropped;
                 if (m.resolution && m.resolution !== this._resolution)
                     this._resolution = m.resolution;
-                // Client pipeline leg measured inside the worker (its own clock).
-                if (m.clientMs > 0) this._clientLatencyStats.addSample(m.clientMs);
+                // Client pipeline stages measured inside the worker (its own
+                // clock), already averaged over its 2s window.
+                if (m.clientDecodeMs > 0) this._clientDecodeStats.addSample(m.clientDecodeMs);
+                if (m.clientQueueMs > 0) this._clientQueueStats.addSample(m.clientQueueMs);
+                if (m.clientRenderMs > 0) this._clientRenderStats.addSample(m.clientRenderMs);
                 break;
             }
             case 'fatal':
@@ -2275,13 +2291,16 @@ export class StreamView {
         // ── Client pipeline latency ─────────────────────────────────────────
         // Pair the decoder output with its decode() submit time (same clock,
         // matched via the chunk timestamp — works for real backendTs-derived
-        // timestamps and AV1's synthetic ones alike). The sample completes
-        // after render in _pumpRender, so it covers decode queue + decode +
-        // frame queue + render: the browser-side leg of the total latency.
+        // timestamps and AV1's synthetic ones alike). This closes the first
+        // stage (decode queue + decode); the frame carries its output time so
+        // _pumpRender can close the queue and render stages too.
         const submitPerf = this._chunkSubmitTimes.get(frame.timestamp);
         if (submitPerf !== undefined) {
             this._chunkSubmitTimes.delete(frame.timestamp);
-            frame._mwSubmitPerf = submitPerf;
+            const outPerf = performance.now();
+            const decodeMs = outPerf - submitPerf;
+            if (decodeMs >= 0 && decodeMs < 5000) this._clientDecodeStats.addSample(decodeMs);
+            frame._mwDecodedPerf = outPerf;
         }
 
         // Limit queue depth to prevent unbounded memory growth.
@@ -2714,19 +2733,23 @@ export class StreamView {
         const frame = this.frameQueue.shift();
 
         // Fire-and-forget with guard: the renderer resizes the canvas to the frame,
-        // draws and closes it; stats stay here. Read the submit time before the
+        // draws and closes it; stats stay here. Read the decode time before the
         // draw — the renderer closes the VideoFrame.
-        const submitPerf = frame._mwSubmitPerf;
+        const decodedPerf = frame._mwDecodedPerf;
+        const drawStart = performance.now();
+        // Queue stage: how long the decoded frame waited for its turn to draw
+        // (vsync pacing in rAF mode, renderer busy in immediate mode).
+        if (decodedPerf !== undefined) {
+            const queueMs = drawStart - decodedPerf;
+            if (queueMs >= 0 && queueMs < 5000) this._clientQueueStats.addSample(queueMs);
+        }
         this._renderer
             .draw(frame)
             .then(() => {
                 this.stats.rendered++;
-                // Complete the client pipeline sample: decode() submit → render
-                // done, all on this thread's clock.
-                if (submitPerf !== undefined) {
-                    const ms = performance.now() - submitPerf;
-                    if (ms >= 0 && ms < 5000) this._clientLatencyStats.addSample(ms);
-                }
+                // Render stage: the GPU/canvas draw itself, same clock.
+                const renderMs = performance.now() - drawStart;
+                if (renderMs >= 0 && renderMs < 5000) this._clientRenderStats.addSample(renderMs);
             })
             .finally(() => {
                 this._rendering = false;
@@ -3143,19 +3166,21 @@ export class StreamView {
                 // stream start: use interval deltas for a *current* value (the
                 // cumulative average lags jitter-buffer changes by minutes on a
                 // long session). First tick falls back to the cumulative average.
-                let latency = 0;
+                let jitterMs = 0;
                 const jbDelay = inbound.jitterBufferDelay || 0;
                 const jbEmitted = inbound.jitterBufferEmittedCount || 0;
                 if (jbEmitted > this._lastJbEmitted) {
-                    latency +=
+                    jitterMs =
                         ((jbDelay - this._lastJbDelay) / (jbEmitted - this._lastJbEmitted)) * 1000;
                 } else if (jbDelay > 0 && jbEmitted > 0) {
-                    latency += (jbDelay / jbEmitted) * 1000;
+                    jitterMs = (jbDelay / jbEmitted) * 1000;
                 }
                 this._lastJbDelay = jbDelay;
                 this._lastJbEmitted = jbEmitted;
+                if (jitterMs > 0 && jitterMs < 5000) this._mediaJitterStats.addSample(jitterMs);
                 if (candidatePair && candidatePair.currentRoundTripTime > 0) {
-                    latency += (candidatePair.currentRoundTripTime * 1000) / 2;
+                    const netMs = (candidatePair.currentRoundTripTime * 1000) / 2;
+                    if (netMs < 5000) this._mediaNetStats.addSample(netMs);
                 }
                 // Decode time per frame (delta) — parity with the DC estimate,
                 // which includes decode. Not exposed by all browsers (guarded).
@@ -3166,14 +3191,14 @@ export class StreamView {
                     this._lastDecodeTime >= 0 &&
                     decFrames > this._lastDecodedForLatency
                 ) {
-                    latency +=
+                    const decMs =
                         ((decTime - this._lastDecodeTime) /
                             (decFrames - this._lastDecodedForLatency)) *
                         1000;
+                    if (decMs >= 0 && decMs < 5000) this._mediaDecodeStats.addSample(decMs);
                 }
                 this._lastDecodeTime = typeof decTime === 'number' ? decTime : -1;
                 this._lastDecodedForLatency = decFrames;
-                if (latency > 0 && latency < 5000) this._mediaLatencyStats.addSample(latency);
             } catch (e) {
                 // getStats can throw transiently during teardown — ignore
             }
@@ -3185,6 +3210,51 @@ export class StreamView {
             clearInterval(this._mediaStatsTimer);
             this._mediaStatsTimer = null;
         }
+    }
+
+    // ── Latency breakdown reveal ─────────────────────────────────────────
+    /**
+     * Reveal the per-leg latency breakdown while the stats card is hovered
+     * (mouse) or after it is tapped (touch, which has no hover at all).
+     *
+     * The listeners live on the card itself, never on the rows: the card's
+     * innerHTML is rebuilt on every stats tick, so anything bound inside it —
+     * including a native title tooltip, which never survives long enough to be
+     * shown — dies twice a second.
+     */
+    _bindLatencyDetailReveal(el) {
+        el.addEventListener('pointerenter', (e) => {
+            if (e.pointerType !== 'touch') this._setLatencyDetail(true);
+        });
+        el.addEventListener('pointerleave', (e) => {
+            if (e.pointerType !== 'touch') this._setLatencyDetail(false);
+        });
+        // Touch: toggle on tap. Not a click listener — the drag handler
+        // preventDefault()s the pointer sequence, so a synthetic click is not
+        // guaranteed; and a real drag must not be mistaken for a tap.
+        let downX = 0;
+        let downY = 0;
+        let downT = 0;
+        el.addEventListener('pointerdown', (e) => {
+            downX = e.clientX;
+            downY = e.clientY;
+            downT = performance.now();
+        });
+        el.addEventListener('pointerup', (e) => {
+            if (e.pointerType !== 'touch') return;
+            if (e.target.closest && e.target.closest('.overlay-close-btn')) return;
+            if (performance.now() - downT > 600) return;
+            if (Math.abs(e.clientX - downX) > 8 || Math.abs(e.clientY - downY) > 8) return;
+            this._setLatencyDetail(!this._latencyDetail);
+        });
+    }
+
+    _setLatencyDetail(on) {
+        if (this._latencyDetail === on) return;
+        this._latencyDetail = on;
+        // Repaint now instead of waiting for the next 500ms tick, so the panel
+        // tracks the pointer without a visible lag.
+        this._updateOverlay();
     }
 
     // ── Draggable stats overlay ──────────────────────────────────────────
@@ -3545,27 +3615,43 @@ export class StreamView {
         //   hostRttMs         Sunshine↔backend one-way (ENet RTT / 2)
         //   decodeLatencyUs   backend pipeline (frame submit → transport send)
         //   browserRtt / 2    backend↔browser one-way (ping/pong)
-        //   client pipeline   decode queue + decode + frame queue + render
-        //                     (per-frame, browser clock) — or the jitter-buffer/
-        //                     decode getStats deltas on the native media track.
-        // The total is followed by its per-leg breakdown, in pipeline order:
-        // "42.3ms (8, 3, 2, 11, 18)". A leg with no sample in its window shows
-        // "–" so the positions stay stable instead of shifting.
+        //   client pipeline   split per stage: decode queue + decode, wait for
+        //                     the draw, then the draw itself (browser clock) —
+        //                     or the getStats network/jitter/decode deltas on
+        //                     the native media track.
+        // Only the total shows by default; the per-leg breakdown is revealed on
+        // hover (or tap on touch) — see _setLatencyDetail. A leg with no sample
+        // in its window shows "–" so the positions stay stable.
         let avgLatency = '--';
         let latencyParts = '';
-        let latencyTitle = '';
+        let latencyDetail = '';
         {
-            const clientStats = isMedia ? this._mediaLatencyStats : this._clientLatencyStats;
             // Sunshine is a single leg: capture→encode is all the host reports.
             // Everything downstream is measured separately, so it is split.
+            //   sub    browser-side stage, indented under the network leg
+            //   counts its presence is what makes the total meaningful (the
+            //          host-side legs alone are not an end-to-end latency)
             const legs = [
                 { key: 'statLegHost', stats: this._hostProcStats },
                 { key: 'statLegHostNet', stats: this._hostRttStats },
             ];
             if (isMedia) {
-                // Native media track: the getStats sample lumps the network
-                // RTT/2, the jitter buffer and the decode into one leg.
-                legs.push({ key: 'statLegClientMedia', stats: clientStats, counts: true });
+                // Native media track: no WebCodecs pipeline to time, so the
+                // browser-side stages come from getStats deltas instead. The
+                // <video> element does its own presentation — no render leg.
+                legs.push({ key: 'statLegNet', stats: this._mediaNetStats, counts: true });
+                legs.push({
+                    key: 'statLegJitter',
+                    stats: this._mediaJitterStats,
+                    sub: true,
+                    counts: true,
+                });
+                legs.push({
+                    key: 'statLegDecode',
+                    stats: this._mediaDecodeStats,
+                    sub: true,
+                    counts: true,
+                });
             } else {
                 legs.push({ key: 'statLegServer', stats: this._decodeLatencyStats });
                 legs.push({
@@ -3574,43 +3660,64 @@ export class StreamView {
                     scale: 0.5,
                     counts: true,
                 });
-                legs.push({ key: 'statLegClient', stats: clientStats, counts: true });
+                legs.push({
+                    key: 'statLegDecode',
+                    stats: this._clientDecodeStats,
+                    sub: true,
+                    counts: true,
+                });
+                legs.push({ key: 'statLegQueue', stats: this._clientQueueStats, sub: true });
+                legs.push({ key: 'statLegRender', stats: this._clientRenderStats, sub: true });
             }
             let latency = 0;
             let haveLatency = false;
             const parts = [];
-            const titles = [];
+            const rows = [];
             for (const leg of legs) {
-                const label = t('stream.' + leg.key);
+                const label = escapeHtml(t('stream.' + leg.key));
+                let value = '–';
                 if (leg.stats.count > 0) {
                     const ms = leg.stats.avg * (leg.scale || 1);
                     latency += ms;
                     if (leg.counts) haveLatency = true;
                     parts.push(String(Math.round(ms)));
-                    titles.push(label + ' ' + ms.toFixed(1) + 'ms');
+                    value = ms.toFixed(1) + 'ms';
                 } else {
                     parts.push('–');
-                    titles.push(label + ' –');
                 }
+                rows.push(
+                    '<div class="stats-row stats-leg-row' +
+                        (leg.sub ? ' stats-leg-sub' : '') +
+                        '">' +
+                        '<span class="stats-label">' +
+                        label +
+                        '</span>' +
+                        '<span class="stats-value">' +
+                        value +
+                        '</span>' +
+                        '</div>',
+                );
             }
             if (haveLatency) {
                 avgLatency = latency.toFixed(1) + 'ms';
                 latencyParts = '(' + parts.join(', ') + ')';
-                latencyTitle = titles.join(' · ');
+                latencyDetail = rows.join('');
             }
         }
+        const showDetail = this._latencyDetail && latencyDetail !== '';
         html +=
-            '<div class="stats-row stats-latency-row"' +
-            (latencyTitle ? ' title="' + escapeHtml(latencyTitle) + '"' : '') +
-            '>' +
+            '<div class="stats-row stats-latency-row">' +
             '<span class="stats-label">' +
             t('stream.statLatency') +
             '</span>' +
             '<span class="stats-value stats-latency">' +
             avgLatency +
-            (latencyParts ? ' <span class="stats-latency-parts">' + latencyParts + '</span>' : '') +
+            (showDetail ? ' <span class="stats-latency-parts">' + latencyParts + '</span>' : '') +
             '</span>' +
             '</div>';
+        if (showDetail) {
+            html += '<div class="stats-latency-detail">' + latencyDetail + '</div>';
+        }
 
         html += '</div>';
         html += this._overlayCloseBtnHtml();

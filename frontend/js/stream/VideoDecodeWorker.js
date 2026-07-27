@@ -91,10 +91,13 @@ const S = {
     _idrRequested: false,
     _lastIdrRequestMs: 0,
 
-    // latency: client pipeline leg (decode() submit → render done), measured
-    // entirely on the worker's clock — no cross-clock offset involved.
+    // latency: client pipeline leg, measured entirely on the worker's clock —
+    // no cross-clock offset involved. Split into its three stages so the
+    // overlay breakdown can name where the browser time goes.
     _chunkSubmitTimes: new Map(), // chunk timestamp (µs) → performance.now() at decode()
-    _clientSamples: [], // [{ time, value }] sliding 2s window
+    _decodeSamples: [], // [{ time, value }] decode() submit → decoder output
+    _queueSamples: [], // [{ time, value }] decoder output → draw start
+    _renderSamples: [], // [{ time, value }] draw start → draw done
 
     stopped: false,
 
@@ -115,19 +118,24 @@ function trackChunkSubmit(timestamp) {
     S._chunkSubmitTimes.set(timestamp, performance.now());
 }
 
-// Sliding-window average of the client pipeline samples (2s, like the
-// main-thread SlidingStats used by the overlay).
-function addClientSample(ms) {
-    S._clientSamples.push({ time: performance.now(), value: ms });
+// Sliding-window average of a client pipeline stage (2s, like the main-thread
+// SlidingStats used by the overlay).
+function addStageSample(samples, ms) {
+    if (ms >= 0 && ms < 5000) samples.push({ time: performance.now(), value: ms });
 }
 
-function clientLatencyAvg() {
+function stageAvg(samples) {
     const cutoff = performance.now() - 2000;
-    S._clientSamples = S._clientSamples.filter((s) => s.time > cutoff);
-    if (S._clientSamples.length === 0) return 0;
     let sum = 0;
-    for (const s of S._clientSamples) sum += s.value;
-    return sum / S._clientSamples.length;
+    let n = 0;
+    for (const s of samples) {
+        if (s.time > cutoff) {
+            sum += s.value;
+            n++;
+        }
+    }
+    if (n !== samples.length) samples.splice(0, samples.length - n);
+    return n === 0 ? 0 : sum / n;
 }
 
 function post(msg, transfer) {
@@ -157,7 +165,9 @@ function postCounters(force) {
         decoded: S.stats.decoded,
         rendered: S.stats.rendered,
         dropped: S.stats.dropped,
-        clientMs: clientLatencyAvg(),
+        clientDecodeMs: stageAvg(S._decodeSamples),
+        clientQueueMs: stageAvg(S._queueSamples),
+        clientRenderMs: stageAvg(S._renderSamples),
         resolution: S._lastResolution || '',
     });
 }
@@ -632,13 +642,15 @@ function onDecodedFrame(frame) {
     S.stats.decoded++;
     S._recoveryAttempts = 0;
 
-    // Pair the decoder output with its decode() submit time (same clock). The
-    // sample completes after render in pump(), covering decode queue + decode +
-    // frame queue + render — the worker's share of the client pipeline.
+    // Pair the decoder output with its decode() submit time (same clock): this
+    // closes the decode stage (decode queue + decode). The frame carries its
+    // output time so pump() can close the queue and render stages too.
     const submitPerf = S._chunkSubmitTimes.get(frame.timestamp);
     if (submitPerf !== undefined) {
         S._chunkSubmitTimes.delete(frame.timestamp);
-        frame._mwSubmitPerf = submitPerf;
+        const outPerf = performance.now();
+        addStageSample(S._decodeSamples, outPerf - submitPerf);
+        frame._mwDecodedPerf = outPerf;
     }
 
     if (S.frameQueue.length >= 3) {
@@ -672,16 +684,15 @@ function pump() {
     }
     const frame = S.frameQueue.shift();
     S.rendering = true;
-    // Read the submit time before the draw — the renderer closes the VideoFrame.
-    const submitPerf = frame._mwSubmitPerf;
+    // Read the decode time before the draw — the renderer closes the VideoFrame.
+    const decodedPerf = frame._mwDecodedPerf;
+    const drawStart = performance.now();
+    if (decodedPerf !== undefined) addStageSample(S._queueSamples, drawStart - decodedPerf);
     drawFrame(frame)
         .then((ok) => {
             if (ok) {
                 S.stats.rendered++;
-                if (submitPerf !== undefined) {
-                    const ms = performance.now() - submitPerf;
-                    if (ms >= 0 && ms < 5000) addClientSample(ms);
-                }
+                addStageSample(S._renderSamples, performance.now() - drawStart);
             }
         })
         .finally(() => {
