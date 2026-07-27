@@ -24,6 +24,8 @@ An optional logon task (`--autostart`) starts the server at login without openin
 
 **Elevated update launcher**: every install registers a trigger-less scheduled task `MoonlightWeb Update` (`RunLevel=HighestAvailable`) whose action is `%LocalAppData%\MoonlightWeb\update\MoonlightWeb-update.exe /VERYSILENT …`. The server runs unprivileged, so this is what lets it apply an update with **no UAC prompt** — one that a browser on another continent could never answer (see §9.4).
 
+**Uninstall**: stops the server (logon task `/End` + `/Delete`, `taskkill`), drops the `MoonlightWeb Update` task and its staging dir, the firewall rule, the shortcuts and `provisioning*.json`. Everything the user configured lives outside `{app}` and is **kept by default**; a modal shown at `usUninstall` offers an **unchecked** "also delete my configuration" box which, when ticked, wipes `%AppData%\MoonlightWeb\MoonlightWeb` (settings, sessions, ACME certificate, logs, crash dumps) and `HKCU\Software\MoonlightWeb` (paired hosts + Moonlight client identity). A silent uninstall never asks and never deletes.
+
 **Service option**: `backend/packaging/windows/install-service.bat` / `uninstall-service.bat` wrap NSSM for a session-0 service install (sets `MW_SERVICE`).
 
 ## 9.2 macOS — interactive `.pkg` (`backend/installer/macos/`)

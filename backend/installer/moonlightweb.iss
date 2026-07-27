@@ -22,6 +22,13 @@
 ;  output of `cmake --install` + windeployqt, see .github/workflows/release.yml).
 ; ===========================================================================
 
+; Inno Setup 6.6 gave CreateCustomForm its width/height arguments (the uninstall
+; "delete my configuration" dialog uses them). An older compiler would fail deep
+; in [Code] with "Invalid number of parameters" — say why instead.
+#if VER < EncodeVer(6,6,0)
+  #error Inno Setup 6.6 or newer is required to compile this script.
+#endif
+
 #ifndef MyArch
   #define MyArch "x64"
 #endif
@@ -121,6 +128,10 @@ en.UpdatePageCaption=Update MoonlightWeb
 en.UpdatePageDesc=A newer version will replace the installed one
 en.UpdateReadyMemo=MoonlightWeb %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are — there is nothing to configure.
 en.UpdateReadyMemoFresh=MoonlightWeb will be updated to %1.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are — there is nothing to configure.
+en.UninstConfigTitle=Uninstall MoonlightWeb
+en.UninstConfigBody=Your configuration is kept by default: if you install MoonlightWeb again, it starts up exactly as you left it.
+en.UninstConfigOption=Also delete my configuration
+en.UninstConfigDetail=Settings, accounts, certificates and Sunshine pairings are erased for good.
 ; --- French ---
 fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
@@ -156,6 +167,10 @@ fr.UpdatePageCaption=Mise à jour de MoonlightWeb
 fr.UpdatePageDesc=Une version plus récente va remplacer celle installée
 fr.UpdateReadyMemo=MoonlightWeb %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels — il n'y a rien à configurer.
 fr.UpdateReadyMemoFresh=MoonlightWeb va être mis à jour vers %1.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels — il n'y a rien à configurer.
+fr.UninstConfigTitle=Désinstallation de MoonlightWeb
+fr.UninstConfigBody=Votre configuration est conservée par défaut : si vous réinstallez MoonlightWeb, il redémarrera exactement dans l'état où vous l'avez laissé.
+fr.UninstConfigOption=Supprimer aussi ma configuration
+fr.UninstConfigDetail=Les réglages, comptes, certificats et appairages Sunshine seront définitivement effacés.
 ; --- Simplified Chinese ---
 zh.AutoStartTask=登录时启动 MoonlightWeb
 zh.InternetPageCaption=互联网链接
@@ -191,6 +206,10 @@ zh.UpdatePageCaption=更新 MoonlightWeb
 zh.UpdatePageDesc=较新的版本将替换已安装的版本
 zh.UpdateReadyMemo=已安装 MoonlightWeb %1，将更新到 %2。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变 — 无需任何配置。
 zh.UpdateReadyMemoFresh=MoonlightWeb 将更新到 %1。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变 — 无需任何配置。
+zh.UninstConfigTitle=卸载 MoonlightWeb
+zh.UninstConfigBody=默认保留您的配置：如果您再次安装 MoonlightWeb，它将完全按照您离开时的状态启动。
+zh.UninstConfigOption=同时删除我的配置
+zh.UninstConfigDetail=设置、账户、证书和 Sunshine 配对将被永久删除。
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -1276,11 +1295,100 @@ begin
   RunProvisionChecklist();
 end;
 
+// --- Uninstall: optional removal of the user's configuration ---------------
+//
+// Everything MoonlightWeb persists lives OUTSIDE {app}, so a plain uninstall
+// leaves it all behind on purpose — reinstalling then finds the machine exactly
+// as the user left it (that is also what the one-click update relies on). This
+// dialog is the opt-in that wipes it instead:
+//   %AppData%\MoonlightWeb\MoonlightWeb  settings.json, sessions.json, the ACME
+//                                        certificate, logs and crash dumps
+//   HKCU\Software\MoonlightWeb           the QSettings hive: paired Sunshine
+//                                        hosts and the Moonlight client identity
+// Unchecked by default: losing the pairing certificate means re-pairing every
+// host, which must never happen by accident.
+function AskRemoveConfig(): Boolean;
+var
+  frm: TSetupForm;
+  lbl, detail: TNewStaticText;
+  chk: TNewCheckBox;
+  btn: TNewButton;
+begin
+  Result := False;
+  // A silent uninstall has nobody to ask — keep the configuration.
+  if UninstallSilent then Exit;
+
+  // Fixed size: nothing on this form can grow, so let it keep the size we give
+  // it (last two arguments) instead of being resized around its controls.
+  frm := CreateCustomForm(ScaleX(420), ScaleY(150), True, True);
+  try
+    frm.Caption := ExpandConstant('{cm:UninstConfigTitle}');
+
+    lbl := TNewStaticText.Create(frm);
+    lbl.Parent := frm;
+    lbl.Left := ScaleX(12);
+    lbl.Top := ScaleY(12);
+    lbl.Width := frm.ClientWidth - ScaleX(24);
+    lbl.AutoSize := False;
+    lbl.Height := ScaleY(36);
+    lbl.WordWrap := True;
+    lbl.Caption := ExpandConstant('{cm:UninstConfigBody}');
+
+    // TNewCheckBox cannot wrap its caption, so the box gets a short label and
+    // the consequences go in the static line below it.
+    chk := TNewCheckBox.Create(frm);
+    chk.Parent := frm;
+    chk.Left := ScaleX(12);
+    chk.Top := ScaleY(56);
+    chk.Width := frm.ClientWidth - ScaleX(24);
+    chk.Height := ScaleY(17);
+    chk.Checked := False;
+    chk.Caption := ExpandConstant('{cm:UninstConfigOption}');
+
+    detail := TNewStaticText.Create(frm);
+    detail.Parent := frm;
+    // Indented under the checkbox caption, past the box itself.
+    detail.Left := ScaleX(28);
+    detail.Top := ScaleY(78);
+    detail.Width := frm.ClientWidth - ScaleX(40);
+    detail.AutoSize := False;
+    detail.Height := ScaleY(30);
+    detail.WordWrap := True;
+    detail.Caption := ExpandConstant('{cm:UninstConfigDetail}');
+
+    btn := TNewButton.Create(frm);
+    btn.Parent := frm;
+    btn.Height := ScaleY(23);
+    btn.Caption := SetupMessage(msgButtonOK);
+    // Localized captions differ in length; size the button for the one in use.
+    btn.Width := frm.CalculateButtonWidth([btn.Caption]);
+    btn.Left := frm.ClientWidth - btn.Width - ScaleX(12);
+    btn.Top := frm.ClientHeight - ScaleY(23 + 12);
+    btn.ModalResult := mrOk;
+    btn.Default := True;
+
+    // Focus the button, not the checkbox: Enter/Space on an unfocused checkbox
+    // cannot tick it by accident, and the safe answer is one keypress away.
+    frm.ActiveControl := btn;
+    frm.FlipAndCenterIfNeeded(True, UninstallProgressForm, False);
+    // Closing the window (mrCancel) means "keep it" — same as leaving the box
+    // unticked. The uninstall itself is already confirmed and goes ahead.
+    if frm.ShowModal() = mrOk then Result := chk.Checked;
+  finally
+    frm.Free();
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   rc: Integer;
+  removeConfig: Boolean;
 begin
   if CurUninstallStep = usUninstall then begin
+    // Asked before anything is torn down, so the wizard is not left idling on a
+    // half-removed install while the dialog waits for an answer.
+    removeConfig := AskRemoveConfig();
+
     // Stop the running server first: remove the logon task (so it cannot be
     // relaunched), end any task-started instance, then force-kill the tray
     // process. Otherwise MoonlightWeb.exe keeps running and locks {app} files.
@@ -1308,5 +1416,16 @@ begin
     DeleteFile(ExpandConstant('{app}\provisioning.json'));
     DeleteFile(ExpandConstant('{app}\provisioning.consumed.json'));
     DeleteFile(ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json'));
+
+    // Opt-in wipe. Runs after the server has been killed above: its lock file,
+    // logs and settings are only closed once the process is really gone.
+    if removeConfig then begin
+      DelTree(ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb'), True, True, True);
+      // Leave the parent MoonlightWeb\ behind only if something else lives in it.
+      RemoveDir(ExpandConstant('{userappdata}\MoonlightWeb'));
+      // QSettings' hive: hosts\<n>\pairState, the client certificate/key, window
+      // state. Org key and app subkey go together.
+      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\MoonlightWeb');
+    end;
   end;
 end;
