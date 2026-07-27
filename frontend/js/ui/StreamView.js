@@ -577,6 +577,7 @@ export class StreamView {
         this._touchMaxFingers = 0; // max simultaneous fingers in the current sequence (1/2/3)
         this._touchMoved = false; // true once the primary finger moved past the tap threshold
         this._touchDragging = false; // true while a long-press drag holds the left button down
+        this._touchScrollAnchored = false; // touch-screen scroll: cursor already posted under the finger
         this._touchLongPressTimer = null; // timer that engages drag after a still hold
         this._touchLongPressMs = 450; // ms hold (still) before a drag engages
         this._uiTouchX = 0; // start position of a tap on stream UI (buttons / stats card)

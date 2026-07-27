@@ -70,6 +70,7 @@ export class StreamViewTouch {
             this._touchHadTwoFingers = false;
             this._scrollAccum = 0;
             this._scrollAccumX = 0;
+            this._touchScrollAnchored = false;
             this._scrollSamples.length = 0;
             const t = e.touches[0];
             this._touchStartX = t.clientX;
@@ -85,14 +86,15 @@ export class StreamViewTouch {
         if (newCount >= 2) this._touchHadTwoFingers = true;
 
         if (newCount === 1) {
-            // Arm long-press → drag: hold still to grab the left button
-            // (lets you move windows / select text without a physical button).
+            // Arm long-press → drag: hold still to grab the left button, the
+            // only way to keep it down without a physical button (move a window
+            // by its title bar, drag a file, select text, pull a slider).
+            // Native Windows touch puts the context menu on a long press; we
+            // follow the remote-desktop convention instead — right click is the
+            // two-finger tap, which frees the long press for the drag. A finger
+            // that moves before the delay scrolls instead, so the two never
+            // compete.
             this._clearLongPress();
-            // Touch-screen mode: put the cursor under the finger right away, so
-            // a tap clicks there and a drag scrolls the window being touched.
-            if (this._touchScreen && this._touchMaxFingers === 1) {
-                this._sendAbsTouch(this._touchStartX, this._touchStartY);
-            }
             this._touchLongPressTimer = setTimeout(() => {
                 if (
                     this._touchActive &&
@@ -327,9 +329,19 @@ export class StreamViewTouch {
                         this._sendAbsTouch(touch.clientX, touch.clientY);
                     } else {
                         // Real touchscreen feel: the finger scrolls the content
-                        // in any direction. The cursor was already placed under
-                        // it on touch start, so the scroll lands in the window
-                        // being touched.
+                        // in any direction. Windows routes the wheel to the
+                        // window under the cursor, so anchor it once on the
+                        // spot the finger landed on — the scroll then lands in
+                        // the window being touched, without clicking (and
+                        // without focusing) it. Deliberately NOT done on touch
+                        // start: a tap, a two-finger tap or a pinch begins the
+                        // same way and must never drag the host cursor along.
+                        // Anchored once, not per frame: a scroll that wanders
+                        // over a neighbouring window keeps feeding the first one.
+                        if (!this._touchScrollAnchored) {
+                            this._touchScrollAnchored = true;
+                            this._sendAbsTouch(this._touchStartX, this._touchStartY);
+                        }
                         this._emitScroll(
                             touch.clientX - this._touchLastX,
                             touch.clientY - this._touchLastY,
@@ -558,6 +570,7 @@ export class StreamViewTouch {
         this._touchMaxFingers = 0;
         this._scrollAccum = 0;
         this._scrollAccumX = 0;
+        this._touchScrollAnchored = false;
         this._scrollSamples.length = 0;
         this._pinchPrevDist = 0;
         this._pinchPrevCx = null;
