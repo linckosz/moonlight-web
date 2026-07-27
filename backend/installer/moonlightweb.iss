@@ -112,7 +112,9 @@ en.ProvisionPageCaption=Setting up MoonlightWeb
 en.ProvisionPageDesc=Finalizing the installation
 en.ProvisionWorking=Please wait while MoonlightWeb finishes setting up...
 en.TaskSunshine=Install the Sunshine streaming server
+en.TaskSunshineDone=Sunshine is already installed
 en.TaskPairing=Pair the local Sunshine
+en.TaskPairingDone=Sunshine is already paired
 en.TaskArecord=Publish the secure Internet address
 en.ButtonUpdate=&Update
 en.UpdatePageCaption=Update MoonlightWeb
@@ -145,7 +147,9 @@ fr.ProvisionPageCaption=Configuration de MoonlightWeb
 fr.ProvisionPageDesc=Finalisation de l'installation
 fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de MoonlightWeb...
 fr.TaskSunshine=Installer le serveur de streaming Sunshine
+fr.TaskSunshineDone=Sunshine est déjà installé
 fr.TaskPairing=Appairer le Sunshine local
+fr.TaskPairingDone=Sunshine est déjà appairé
 fr.TaskArecord=Publier l'adresse Internet sécurisée
 fr.ButtonUpdate=&Mettre à jour
 fr.UpdatePageCaption=Mise à jour de MoonlightWeb
@@ -178,7 +182,9 @@ zh.ProvisionPageCaption=正在设置 MoonlightWeb
 zh.ProvisionPageDesc=正在完成安装
 zh.ProvisionWorking=请稍候，MoonlightWeb 正在完成设置...
 zh.TaskSunshine=安装 Sunshine 串流服务器
+zh.TaskSunshineDone=Sunshine 已安装
 zh.TaskPairing=配对本地 Sunshine
+zh.TaskPairingDone=Sunshine 已配对
 zh.TaskArecord=发布安全的互联网地址
 zh.ButtonUpdate=更新(&U)
 zh.UpdatePageCaption=更新 MoonlightWeb
@@ -1066,12 +1072,13 @@ end;
 // driving the on-screen checklist until every task is terminal or it times out.
 procedure RunProvisionChecklist();
 var
-  statusPath, content, ps, ar, spin: String;
+  statusPath, content, ps, psDisp, ar, spin: String;
+  sunLabel, pairLabel: String;
   raw: AnsiString; // LoadStringFromFile requires an AnsiString out-param.
   i, rc: Integer;
   pctSun, pctPair, pctAr, itSun, itPair, itAr: Integer;
   prevSun, prevPair, prevAr: String;
-  holdDone: Boolean;
+  holdDone, alreadyPaired: Boolean;
 begin
   // Bring the server back up. A service install owns its own lifecycle (session
   // 0, no tray) — restarting it is what StopRunningInstance stopped.
@@ -1100,6 +1107,22 @@ begin
   // Qt AppDataLocation on Windows: %AppData%\<Org>\<App> = MoonlightWeb\MoonlightWeb.
   statusPath := ExpandConstant('{userappdata}\MoonlightWeb\MoonlightWeb\provisioning.status.json');
 
+  // A step the installer had nothing to do for must read as a statement of fact
+  // ("Sunshine is already installed"), not as an instruction it never carried
+  // out — the latter reads as a lie next to a 100% bar.
+  sunLabel := ExpandConstant('{cm:TaskSunshine}');
+  if SunshineDetected then sunLabel := ExpandConstant('{cm:TaskSunshineDone}');
+
+  // scPaired: a previous MoonlightWeb already paired this machine, so the wizard
+  // asked for no credentials and provisioning.json carries auto_pair=false — the
+  // backend reports the step as "skipped". Note that wiping %AppData% does NOT
+  // undo that pairing: the client identity and the host list are QSettings, i.e.
+  // HKCU\Software\MoonlightWeb on Windows. The step really is complete, so show
+  // it complete rather than with the "[--]" that means "not done".
+  alreadyPaired := SunshinePagePrepared and (SunshineCase = scPaired);
+  pairLabel := ExpandConstant('{cm:TaskPairing}');
+  if alreadyPaired then pairLabel := ExpandConstant('{cm:TaskPairingDone}');
+
   ProgressPage.SetText(ExpandConstant('{cm:ProvisionWorking}'), '');
   ProgressPage.Show;
   itSun := 0; itPair := 0; itAr := 0;
@@ -1117,6 +1140,8 @@ begin
         ar := StatusValue(content, 'arecord');
       end;
       spin := SpinChar(i);
+      psDisp := ps;
+      if alreadyPaired and (psDisp = 'skipped') then psDisp := 'done';
 
       // Pseudo-progress: climb towards 95 while a task runs, then snap to 100 on
       // done. Gives a long step visible movement instead of a spinner that looks
@@ -1129,32 +1154,32 @@ begin
       else if IsTerminal(SunshineStepState) then pctSun := 0
       else begin itSun := itSun + 1; pctSun := itSun; if pctSun > 95 then pctSun := 95; end;
 
-      if ps = 'done' then pctPair := 100
-      else if IsTerminal(ps) then pctPair := 0
+      if psDisp = 'done' then pctPair := 100
+      else if IsTerminal(psDisp) then pctPair := 0
       else begin itPair := itPair + 1; pctPair := itPair div 2; if pctPair > 95 then pctPair := 95; end;
 
       if ar = 'done' then pctAr := 100
       else if IsTerminal(ar) then pctAr := 0
       else begin itAr := itAr + 1; pctAr := itAr div 5; if pctAr > 95 then pctAr := 95; end;
 
-      LblSunshine.Caption := StepGlyph(SunshineStepState, spin) + ' ' + PadRight(StepPercent(SunshineStepState, pctSun), 6) + ExpandConstant('{cm:TaskSunshine}');
-      LblPairing.Caption  := StepGlyph(ps, spin) + ' ' + PadRight(StepPercent(ps, pctPair), 6) + ExpandConstant('{cm:TaskPairing}');
+      LblSunshine.Caption := StepGlyph(SunshineStepState, spin) + ' ' + PadRight(StepPercent(SunshineStepState, pctSun), 6) + sunLabel;
+      LblPairing.Caption  := StepGlyph(psDisp, spin) + ' ' + PadRight(StepPercent(psDisp, pctPair), 6) + pairLabel;
       LblArecord.Caption  := StepGlyph(ar, spin) + ' ' + PadRight(StepPercent(ar, pctAr), 6) + ExpandConstant('{cm:TaskArecord}');
 
       // Smooth overall bar driven by the three pseudo-percentages (max 300). A
       // skipped/failed step counts as complete here (its label already says so):
       // it is finished, and scoring it 0 would both drag the bar backwards when
       // it resolves and stop it ever reaching 100%.
-      ProgressPage.SetProgress(BarPercent(SunshineStepState, pctSun) + BarPercent(ps, pctPair)
+      ProgressPage.SetProgress(BarPercent(SunshineStepState, pctSun) + BarPercent(psDisp, pctPair)
                                + BarPercent(ar, pctAr), 300);
 
       // When a task has just turned [OK], pause 1s so the user registers it.
       holdDone := ((SunshineStepState = 'done') and (prevSun <> 'done'))
-               or ((ps = 'done') and (prevPair <> 'done'))
+               or ((psDisp = 'done') and (prevPair <> 'done'))
                or ((ar = 'done') and (prevAr <> 'done'));
-      prevSun := SunshineStepState; prevPair := ps; prevAr := ar;
+      prevSun := SunshineStepState; prevPair := psDisp; prevAr := ar;
 
-      if IsTerminal(SunshineStepState) and IsTerminal(ps) and IsTerminal(ar) then begin
+      if IsTerminal(SunshineStepState) and IsTerminal(psDisp) and IsTerminal(ar) then begin
         // Everything settled. SetProgress above already pumped the message queue,
         // so the full bar and the final [OK] lines are on screen: hold them long
         // enough to be read instead of blinking straight to the next page.
