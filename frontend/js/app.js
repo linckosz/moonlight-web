@@ -1693,6 +1693,16 @@ const MoonlightApp = {
             sv._manualQuitting = true;
         }
 
+        // A relaunch is a transport change, not a new session: the successor
+        // inherits the zoom/pan the user set and the open soft keyboard. The
+        // keyboard bridge must go up BEFORE the teardown below blurs and removes
+        // the outgoing capture element, or the keyboard closes for good.
+        // _carryViewState keeps the snapshot alive when a launch fails and the
+        // chain advances — by then there is no live view left to read it from.
+        const viewState = sv ? sv.captureViewState() : this._carryViewState;
+        this._carryViewState = viewState;
+        if (viewState && viewState.kbdVisible) StreamView.bridgeSoftKeyboard();
+
         // Bridge the relaunch with the outgoing stream's frozen last image when
         // it presented frames (congestion degradation, not a failed connect), so
         // the interruption stays discreet. Async capture: also works in
@@ -1738,6 +1748,12 @@ const MoonlightApp = {
                 // Pass the merged settings so the degradation overrides (reduced
                 // height, auto-SGSR enhancement) reach the new StreamView.
                 this._startStreamView(result, host, settings, true);
+                // Deferred to the new view's first frame (the pan clamp needs
+                // its frame size) — the bridge holds the keyboard until then.
+                if (this.streamView) {
+                    this.streamView.restoreViewState(viewState);
+                    this._carryViewState = null;
+                }
                 if (freezeFrame && this.streamView) {
                     // Hold the frozen frame until the new stream presents its
                     // first frame (bounded — the failure paths hide the loader
@@ -1852,6 +1868,9 @@ const MoonlightApp = {
         this._standbyResult = null;
         if (!sv) return;
         const oldView = this.streamView;
+        // Zoom/pan and the soft-keyboard state belong to the user, not to the
+        // stream leg — read them off the outgoing view before it is retired.
+        const viewState = oldView ? oldView.captureViewState() : null;
 
         console.log('[MW] Seamless transition: first frame on standby — switching display');
         this._transportChain = Array.isArray(result.transport_chain)
@@ -1872,6 +1891,11 @@ const MoonlightApp = {
             this._lastCongSignal = performance.now();
         };
         sv.activate();
+        // Before the retirement below: the successor's capture element takes the
+        // focus over while the outgoing one still holds it, so the OS keyboard
+        // never sees a gap and stays up. (The standby already has a frame, so
+        // this applies the zoom straight away.)
+        sv.restoreViewState(viewState);
         this._armUpgradeTimer();
 
         // Retire the old view quietly: its slot-scoped /quit only touches its
@@ -2151,6 +2175,10 @@ const MoonlightApp = {
         this._hideRelaunchLoader();
         this._stopUpgradeTimer();
         this._abortStandby('active stream ended');
+        // The session is over — no successor will claim the inherited display
+        // state, and a bridged soft keyboard must not outlive the stream.
+        this._carryViewState = null;
+        StreamView.releaseSoftKeyboard();
         // Guard: if popstate already handled cleanup, skip.
         // This prevents double-navigation when:
         //   a) User presses Back → popstate fires quit() + navigates

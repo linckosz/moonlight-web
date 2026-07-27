@@ -79,6 +79,13 @@ import { StreamViewFullscreen } from './StreamViewFullscreen.js';
  * it's a compositor/driver initialization issue, not a decode problem.
  */
 
+// Detached capture element that keeps the OS soft keyboard open while the view
+// owning the focused one is torn down and replaced. Module-scoped: it belongs
+// to no StreamView, which is exactly what makes it survive the swap.
+// See StreamView.bridgeSoftKeyboard().
+let kbdBridgeEl = null;
+let kbdBridgeTimer = null;
+
 /**
  * Sliding window statistics tracker.
  * Maintains a fixed-duration window of samples and provides min/max/avg.
@@ -564,6 +571,10 @@ export class StreamView {
         this._zoom = 1; // current display scale (1..8)
         this._panX = 0; // pan offset in CSS px (applied before scale)
         this._panY = 0;
+        // Display state inherited from the view this one replaces (quality /
+        // transport switch). Applied on the first decoded frame — the pan clamp
+        // needs the real frame size. See restoreViewState().
+        this._pendingViewState = null;
         this._pinchPrevDist = 0; // previous finger spacing during a multi-finger gesture
         this._pinchPrevCx = null; // previous centroid (of all touches)
         this._pinchPrevCy = null;
@@ -2308,6 +2319,13 @@ export class StreamView {
         const first = !this._firstFrameRendered;
         this._firstFrameRendered = true;
         this.setStatus('live', 'Live');
+        // Zoom/pan inherited from the replaced view: apply before the frame is
+        // revealed, now that its real size is known.
+        if (this._pendingViewState) {
+            const pending = this._pendingViewState;
+            this._pendingViewState = null;
+            this._applyViewState(pending);
+        }
         if (!this._standby) {
             // Show stats overlay (only if enabled in settings)
             if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
@@ -2372,6 +2390,125 @@ export class StreamView {
                 document.addEventListener('pointerlockchange', onChange);
                 setTimeout(() => document.removeEventListener('pointerlockchange', onChange), 3000);
             }
+        }
+    }
+
+    // ── Display state carried across a stream replacement ──────────────────
+
+    /**
+     * Snapshot of the purely local display state a quality/transport switch
+     * must not throw away: pinch zoom + its pan offset, and whether the soft
+     * keyboard was open. Nothing here is negotiated with the host, so the
+     * successor can adopt it verbatim.
+     */
+    captureViewState() {
+        return {
+            zoom: this._zoom,
+            panX: this._panX,
+            panY: this._panY,
+            kbdVisible: this._kbdVisible === true,
+        };
+    }
+
+    /**
+     * Adopt a captureViewState() snapshot from the view being replaced. The pan
+     * clamp reads the decoded frame size, so on a view that has not presented
+     * anything yet the restore is deferred to its first frame.
+     */
+    restoreViewState(state) {
+        if (!state) return;
+        if (!this._firstFrameRendered) {
+            this._pendingViewState = state;
+            return;
+        }
+        this._pendingViewState = null;
+        this._applyViewState(state);
+    }
+
+    _applyViewState(s) {
+        this._zoom = Math.min(8, Math.max(1, Number(s.zoom) || 1));
+        this._panX = Number(s.panX) || 0;
+        this._panY = Number(s.panY) || 0;
+        if (this._zoom <= 1.001) {
+            this._zoom = 1;
+            this._panX = 0;
+            this._panY = 0;
+        }
+        // Keyboard first: it shrinks the stream area, and the pan clamp below
+        // measures that area.
+        if (s.kbdVisible && this._kbdCapture) {
+            // Claims the focus back from the bridge (see bridgeSoftKeyboard), so
+            // the OS keyboard never sees a moment without a focused editable.
+            this._showVirtualKeyboard();
+            // No visualViewport resize fires when the keyboard never actually
+            // closed, so this view has yet to make room for it.
+            this._handleViewportResize();
+        }
+        StreamView.releaseSoftKeyboard();
+
+        // Re-clamps the pan against THIS stream's frame size — a degradation
+        // step often lands on a lower resolution than the outgoing stream.
+        this._applyZoomTransform();
+        if (this._outputZoomScale() !== this._lastOutputZoomScale) this._applyOutputSize();
+    }
+
+    /**
+     * Keep the OS soft keyboard open across a stream replacement.
+     *
+     * The keyboard closes the instant focus leaves an editable element, and a
+     * relaunch blurs + removes the outgoing view's capture long before the
+     * successor exists. Park the focus on a standalone contenteditable owned by
+     * no view; the successor claims it back in _applyViewState(). Best effort —
+     * a browser that refuses the programmatic focus just closes the keyboard,
+     * exactly as it did before.
+     */
+    static bridgeSoftKeyboard() {
+        if (!IS_TOUCH_DEVICE) return;
+        // Already bridged (a relaunch that failed and advanced the transport
+        // chain): keep the SAME element — tearing it down to build another one
+        // is the one moment where focus would leave an editable.
+        if (kbdBridgeEl) {
+            StreamView._armBridgeTimer();
+            return;
+        }
+        const el = document.createElement('div');
+        el.id = 'stream-kbd-bridge';
+        el.className = 'stream-kbd-capture';
+        el.setAttribute('contenteditable', 'true');
+        el.setAttribute('inputmode', 'text');
+        el.setAttribute('autocorrect', 'off');
+        el.setAttribute('autocapitalize', 'off');
+        el.setAttribute('spellcheck', 'false');
+        el.setAttribute('aria-hidden', 'true');
+        el.setAttribute('tabindex', '-1');
+        (document.getElementById('app') || document.body).appendChild(el);
+        try {
+            el.focus({ preventScroll: true });
+        } catch (e) {
+            el.focus();
+        }
+        kbdBridgeEl = el;
+        StreamView._armBridgeTimer();
+    }
+
+    /** Failsafe: a bridge nobody claims (relaunch failed, user quit) must not
+     *  hold the keyboard open over the apps view forever. */
+    static _armBridgeTimer() {
+        if (kbdBridgeTimer) clearTimeout(kbdBridgeTimer);
+        kbdBridgeTimer = setTimeout(() => StreamView.releaseSoftKeyboard(), 20000);
+    }
+
+    /** Drop the keyboard bridge. A no-op when none is up; blurring an element
+     *  that already handed its focus over does not close the keyboard. */
+    static releaseSoftKeyboard() {
+        if (kbdBridgeTimer) {
+            clearTimeout(kbdBridgeTimer);
+            kbdBridgeTimer = null;
+        }
+        if (kbdBridgeEl) {
+            kbdBridgeEl.blur();
+            kbdBridgeEl.remove();
+            kbdBridgeEl = null;
         }
     }
 
