@@ -55,6 +55,7 @@ QByteArray InputEncoder::encodeFromJson(const QJsonObject& msg)
     if (type == "mousedown") return encodeMouseButton(msg, true);
     if (type == "mouseup") return encodeMouseButton(msg, false);
     if (type == "mousewheel") return encodeMouseScroll(msg);
+    if (type == "mousehwheel") return encodeMouseHScroll(msg);
 
     qWarning() << "[InputEncoder] Unknown event type:" << type;
     return {};
@@ -132,4 +133,18 @@ QByteArray InputEncoder::encodeMouseScroll(const QJsonObject& msg)
     qToBigEndian(amount, payload.data() + 2); // scrollAmt2 (mirror)
 
     return packPacket(0x0Au, payload);
+}
+
+// --- Mouse scroll (horizontal) ---------------------------------------------
+// SS_HSCROLL_PACKET — Sunshine protocol extension (ignored by GFE hosts):
+//   header: size=BE(6), magic=LE(0x55000001)
+//   payload: scrollAmount(short BE), in WHEEL_DELTA units (120 per notch)
+
+QByteArray InputEncoder::encodeMouseHScroll(const QJsonObject& msg)
+{
+    QByteArray payload(2, '\0');
+
+    qToBigEndian(static_cast<short>(msg["delta"].toInt(0)), payload.data());
+
+    return packPacket(0x55000001u, payload);
 }

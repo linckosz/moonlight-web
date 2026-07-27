@@ -198,7 +198,7 @@
         "gamingMode": "Immersive Mode",
         "gamingModeDesc": "Captures the mouse and every keystroke — even the Windows key — for a native-like experience. Only the exit shortcut stays on this device.",
         "touchScreen": "Touch Screen Mode",
-        "touchScreenDesc": "Tap directly where you want on the picture (absolute) instead of the relative trackpad model.",
+        "touchScreenDesc": "Tap directly where you want on the picture (absolute) instead of the relative trackpad model. A 1-finger drag then scrolls, in any direction.",
         "pointerSensitivity": "Pointer Sensitivity:",
         "pointerSensitivityDesc": "Trackpad/touch cursor speed (higher = faster pointer movement).",
         "resetDefaults": "Reset Default Parameters",
@@ -435,7 +435,8 @@
         "touchScreenTitle": "Touch screen",
         "tsMoveCursorVal": "Touch the picture",
         "tsLeftClickVal": "Tap where you want",
-        "tsDragVal": "Long press, then move"
+        "tsDragVal": "Long press, then move",
+        "tsScrollVal": "1 finger drag"
     },
     "transport": {
         "webrtcDcUdp": "WebRTC DataChannel (UDP)",

@@ -69,6 +69,7 @@ export class StreamViewTouch {
             this._touchDragging = false;
             this._touchHadTwoFingers = false;
             this._scrollAccum = 0;
+            this._scrollAccumX = 0;
             this._scrollSamples.length = 0;
             const t = e.touches[0];
             this._touchStartX = t.clientX;
@@ -87,6 +88,11 @@ export class StreamViewTouch {
             // Arm long-press → drag: hold still to grab the left button
             // (lets you move windows / select text without a physical button).
             this._clearLongPress();
+            // Touch-screen mode: put the cursor under the finger right away, so
+            // a tap clicks there and a drag scrolls the window being touched.
+            if (this._touchScreen && this._touchMaxFingers === 1) {
+                this._sendAbsTouch(this._touchStartX, this._touchStartY);
+            }
             this._touchLongPressTimer = setTimeout(() => {
                 if (
                     this._touchActive &&
@@ -150,6 +156,46 @@ export class StreamViewTouch {
                 ? Math.abs(dist - this._multiOriginDist)
                 : 0;
         return movedC > tol || movedD > tol;
+    }
+
+    /** Finger px → wheel units for the gesture in progress: trackpad-style
+     *  amplification for a two-finger drag, near 1:1 for a single finger on a
+     *  touch screen (where the finger is meant to *be* the content). */
+    _curScrollScale() {
+        return this._touchScreen && this._touchMaxFingers === 1
+            ? this._touchScrollScale
+            : this._scrollScale;
+    }
+
+    /** Send one frame of scrolling to the host from a finger/centroid travel,
+     *  on BOTH axes. The content follows the finger (natural direction): the
+     *  vertical wheel is positive when the finger goes down, the horizontal one
+     *  is negative when it goes right (positive hwheel = view scrolls right).
+     *  Deltas are amplified and carried as fractions so slow drags still
+     *  register, and the centroid is sampled for the release flick. */
+    _emitScroll(dCx, dCy, sampleX, sampleY) {
+        const scale = this._curScrollScale();
+
+        this._scrollAccum += dCy * scale;
+        const whole = Math.trunc(this._scrollAccum);
+        if (whole !== 0) {
+            this.webrtc.send({ type: 'mousewheel', delta: whole });
+            this._scrollAccum -= whole;
+        }
+
+        this._scrollAccumX += -dCx * scale;
+        const wholeX = Math.trunc(this._scrollAccumX);
+        if (wholeX !== 0) {
+            this.webrtc.send({ type: 'mousehwheel', delta: wholeX });
+            this._scrollAccumX -= wholeX;
+        }
+
+        const now = performance.now();
+        this._scrollSamples.push({ t: now, x: sampleX, y: sampleY });
+        // Keep only the last ~120 ms of samples.
+        while (this._scrollSamples.length > 2 && now - this._scrollSamples[0].t > 120) {
+            this._scrollSamples.shift();
+        }
     }
 
     /** Touch-screen mode: map a finger's client position to the host's absolute
@@ -224,10 +270,14 @@ export class StreamViewTouch {
     /**
      * Handle touch move (drag).
      *
-     * 1 finger  → RELATIVE cursor movement (trackpad), like a laptop touchpad:
-     *             the finger moves the host cursor by deltas, wherever it is.
+     * 1 finger  → trackpad mode: RELATIVE cursor movement, like a laptop
+     *             touchpad — the finger moves the host cursor by deltas.
+     *             Touch-screen mode: scroll wheel on both axes instead (the
+     *             content follows the finger, as on a real touchscreen); the
+     *             cursor only follows the finger once a long-press drag holds
+     *             the left button down.
      * 2 fingers → pinch = zoom the local display (focal recenter), otherwise
-     *             vertical scroll wheel to the host (works zoomed in too).
+     *             scroll wheel on both axes to the host (works zoomed in too).
      * 3 fingers → pan the zoomed display (no scroll/zoom side effects).
      */
     handleTouchMove(e) {
@@ -268,11 +318,25 @@ export class StreamViewTouch {
             }
 
             if (this._touchScreen) {
-                // Absolute: the cursor follows the finger 1:1 over the picture,
-                // but ONLY for a genuine single-finger gesture — a 2/3-finger
-                // gesture (or its leftover finger) must never move the cursor.
+                // Only for a genuine single-finger gesture — a 2/3-finger gesture
+                // (or its leftover finger) must never move the cursor or scroll.
                 if (this._touchMaxFingers === 1) {
-                    this._sendAbsTouch(touch.clientX, touch.clientY);
+                    if (this._touchDragging) {
+                        // Long-press grab in progress: the cursor follows the
+                        // finger 1:1 over the picture (drag & hold).
+                        this._sendAbsTouch(touch.clientX, touch.clientY);
+                    } else {
+                        // Real touchscreen feel: the finger scrolls the content
+                        // in any direction. The cursor was already placed under
+                        // it on touch start, so the scroll lands in the window
+                        // being touched.
+                        this._emitScroll(
+                            touch.clientX - this._touchLastX,
+                            touch.clientY - this._touchLastY,
+                            touch.clientX,
+                            touch.clientY,
+                        );
+                    }
                 }
             } else {
                 // Slow the cursor proportionally to zoom (linear: -0.1 per step,
@@ -308,19 +372,21 @@ export class StreamViewTouch {
             if (this._multiMovedBeyondTol(cx, cy, dist, 12)) this._touchMoved = true;
 
             const dDist = this._pinchPrevDist > 0 ? dist - this._pinchPrevDist : 0;
+            const dCx = this._pinchPrevCx != null ? cx - this._pinchPrevCx : 0;
             const dCy = this._pinchPrevCy != null ? cy - this._pinchPrevCy : 0;
+            const drag = Math.hypot(dCx, dCy);
 
             // Lock the gesture to zoom OR scroll for the whole 2-finger sequence,
             // so a scroll never zooms (and vice versa). The mode is decided on the
             // first frame with clear intent: a change in finger spacing → zoom,
             // a parallel drag → scroll. Ambiguous tiny frames wait until it's clear.
             // Bias toward scroll: zoom only locks when the finger-spacing change
-            // clearly dominates the vertical drag (1.6x), so a slightly uneven
-            // two-finger swipe scrolls instead of zooming by accident.
+            // clearly dominates the drag (1.6x), so a slightly uneven two-finger
+            // swipe scrolls instead of zooming by accident.
             if (this._twoFingerMode == null) {
-                if (Math.abs(dDist) > 3 && Math.abs(dDist) >= Math.abs(dCy) * 1.6) {
+                if (Math.abs(dDist) > 3 && Math.abs(dDist) >= drag * 1.6) {
                     this._twoFingerMode = 'zoom';
-                } else if (Math.abs(dCy) > 1.5) {
+                } else if (drag > 1.5) {
                     this._twoFingerMode = 'scroll';
                 }
             }
@@ -344,23 +410,9 @@ export class StreamViewTouch {
                 // Re-render the enhancer backing at the new zoom step (crisp pinch-zoom).
                 if (this._outputZoomScale() !== this._lastOutputZoomScale) this._applyOutputSize();
                 this._scrollSamples.length = 0; // pinching cancels pending inertia
-            } else if (this._twoFingerMode === 'scroll' && Math.abs(dCy) > 0.1) {
-                // Parallel two-finger drag → vertical scroll wheel, amplified and
-                // with fractional carry so slow drags still register. Record
-                // centroid samples to derive the flick velocity at release.
-                const scaled = dCy * this._scrollScale;
-                this._scrollAccum += scaled;
-                const whole = Math.trunc(this._scrollAccum);
-                if (whole !== 0) {
-                    this.webrtc.send({ type: 'mousewheel', delta: whole });
-                    this._scrollAccum -= whole;
-                }
-                const now = performance.now();
-                this._scrollSamples.push({ t: now, y: cy });
-                // Keep only the last ~120 ms of samples.
-                while (this._scrollSamples.length > 2 && now - this._scrollSamples[0].t > 120) {
-                    this._scrollSamples.shift();
-                }
+            } else if (this._twoFingerMode === 'scroll' && drag > 0.1) {
+                // Parallel two-finger drag → scroll wheel on both axes.
+                this._emitScroll(dCx, dCy, cx, cy);
             }
 
             this._pinchPrevDist = dist;
@@ -487,10 +539,13 @@ export class StreamViewTouch {
             }
         }
 
-        // Inertial scroll: if the gesture ended on a flicking two-finger drag,
-        // keep gliding with a decaying velocity (phone-like momentum). Velocity
-        // is derived from the recent centroid samples (px/frame → wheel units).
-        if (!isTap && !this._touchDragging && this._touchMaxFingers === 2) {
+        // Inertial scroll: if the gesture ended on a flicking scroll drag — two
+        // fingers, or one in touch-screen mode — keep gliding with a decaying
+        // velocity (phone-like momentum). Velocity is derived from the recent
+        // centroid samples (px/frame → wheel units).
+        const wasScrollDrag =
+            this._touchMaxFingers === 2 || (this._touchScreen && this._touchMaxFingers === 1);
+        if (!isTap && !this._touchDragging && wasScrollDrag) {
             this._startScrollMomentum();
         }
 
@@ -502,6 +557,7 @@ export class StreamViewTouch {
         this._touchFingerCount = 0;
         this._touchMaxFingers = 0;
         this._scrollAccum = 0;
+        this._scrollAccumX = 0;
         this._scrollSamples.length = 0;
         this._pinchPrevDist = 0;
         this._pinchPrevCx = null;
@@ -524,15 +580,19 @@ export class StreamViewTouch {
         const dt = b.t - a.t;
         // Only glide on a fresh flick (last sample very recent, real movement).
         if (dt <= 0 || performance.now() - b.t > 80) return;
-        let v = ((b.y - a.y) / dt) * 16.67 * this._scrollScale; // wheel units/frame
-        v = Math.max(-400, Math.min(400, v)); // clamp wild flicks
-        if (Math.abs(v) < 1.5) return; // too slow → no glide
+        const scale = this._curScrollScale();
+        const clamp = (v) => Math.max(-400, Math.min(400, v)); // clamp wild flicks
+        let v = clamp(((b.y - a.y) / dt) * 16.67 * scale); // wheel units/frame
+        let vx = clamp(((a.x - b.x) / dt) * 16.67 * scale); // hwheel: right = negative
+        if (Math.hypot(v, vx) < 1.5) return; // too slow → no glide
 
         let acc = this._scrollAccum; // carry leftover fractional delta
+        let accX = this._scrollAccumX;
         const friction = 0.95; // per-frame decay (higher = longer glide)
         const step = () => {
             v *= friction;
-            if (Math.abs(v) < 0.4) {
+            vx *= friction;
+            if (Math.hypot(v, vx) < 0.4) {
                 this._scrollMomentumRaf = null;
                 return;
             }
@@ -541,6 +601,12 @@ export class StreamViewTouch {
             if (whole !== 0) {
                 this.webrtc.send({ type: 'mousewheel', delta: whole });
                 acc -= whole;
+            }
+            accX += vx;
+            const wholeX = Math.trunc(accX);
+            if (wholeX !== 0) {
+                this.webrtc.send({ type: 'mousehwheel', delta: wholeX });
+                accX -= wholeX;
             }
             this._scrollMomentumRaf = requestAnimationFrame(step);
         };

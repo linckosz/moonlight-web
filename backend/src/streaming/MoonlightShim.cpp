@@ -697,6 +697,14 @@ void MoonlightShim::sendMouseScroll(short scrollAmount)
     LiSendHighResScrollEvent(scrollAmount);
 }
 
+void MoonlightShim::sendMouseHScroll(short scrollAmount)
+{
+    if (!m_Connected.load(std::memory_order_acquire)) return;
+    // Sunshine-only extension: returns LI_ERR_UNSUPPORTED on other hosts, which
+    // is fine — vertical scrolling keeps working either way.
+    LiSendHighResHScrollEvent(scrollAmount);
+}
+
 // Standard gamepad button set exposed by the browser Gamepad API
 // ("standard mapping"): A/B/X/Y, dpad, bumpers, start/back, stick clicks, guide.
 static constexpr int kStandardGamepadButtons =

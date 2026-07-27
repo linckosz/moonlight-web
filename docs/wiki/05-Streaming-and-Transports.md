@@ -83,7 +83,7 @@ Browser events (kbd/mouse/touch/gamepad/clipboard)
   ─InputCrypto AES-128-GCM─► EnetControlStream ─ENet─► Sunshine
 ```
 
-- Mouse: relative (pointer-lock) or absolute; scroll, buttons. Touch: trackpad translation (1/2/3-finger gestures). Keyboard: raw key events, Escape is a normal key. Gamepads: `gamepadconnect`/`gamepad`/`gamepaddisconnect` snapshots + rumble back-channel.
+- Mouse: relative (pointer-lock) or absolute; scroll (vertical + horizontal — the latter is a Sunshine-only extension, silently ignored by GFE hosts), buttons. Touch: trackpad translation (1/2/3-finger gestures), or absolute touch-screen mapping when `touch_screen` is on. Keyboard: raw key events, Escape is a normal key. Gamepads: `gamepadconnect`/`gamepad`/`gamepaddisconnect` snapshots + rumble back-channel.
 - **Lock-key sync is host-authoritative**: on the first keydown the client sends `locksync`; the backend reads the *real* host state (`GetKeyState`, gated to host==backend) and reconciles — never a blind NumLock tap. The sync runs synchronously on the relay thread to preserve input ordering.
 - Clipboard: bidirectional text via `paste` events + `ClipboardBridge` (host==backend only).
 

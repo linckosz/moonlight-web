@@ -69,4 +69,14 @@ void run_input_encoder_tests()
         CHECK_EQ(qFromBigEndian<qint16>(p.constData() + 8), static_cast<qint16>(120));
         CHECK_EQ(qFromBigEndian<qint16>(p.constData() + 10), static_cast<qint16>(120));
     }
+
+    // mousehwheel: 2-byte payload, magic 0x55000001 (Sunshine extension).
+    {
+        QByteArray p = InputEncoder::encodeFromJson(
+            QJsonObject{{"type", "mousehwheel"}, {"delta", -120}});
+        CHECK_EQ(p.size(), 10);
+        CHECK_EQ(beU32(p, 0), 6u);
+        CHECK_EQ(leU32(p, 4), 0x55000001u);
+        CHECK_EQ(qFromBigEndian<qint16>(p.constData() + 8), static_cast<qint16>(-120));
+    }
 }

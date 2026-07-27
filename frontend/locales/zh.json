@@ -198,7 +198,7 @@
         "gamingMode": "沉浸模式",
         "gamingModeDesc": "捕获鼠标和所有按键——包括 Windows 键——以获得接近原生的体验。只有退出快捷键仍保留在本设备上。",
         "touchScreen": "触屏模式",
-        "touchScreenDesc": "直接点按画面中你想要的位置（绝对定位），而非相对触控板模式。",
+        "touchScreenDesc": "直接点按画面中你想要的位置（绝对定位），而非相对触控板模式。此时单指拖动即可向任意方向滚动。",
         "pointerSensitivity": "指针灵敏度：",
         "pointerSensitivityDesc": "触控板/触摸光标速度（越高指针移动越快）。",
         "resetDefaults": "恢复默认参数",
@@ -435,7 +435,8 @@
         "touchScreenTitle": "触摸屏",
         "tsMoveCursorVal": "触摸画面",
         "tsLeftClickVal": "轻点你想要的位置",
-        "tsDragVal": "长按，然后移动"
+        "tsDragVal": "长按，然后移动",
+        "tsScrollVal": "单指拖动"
     },
     "transport": {
         "webrtcDcUdp": "WebRTC 数据通道（UDP）",

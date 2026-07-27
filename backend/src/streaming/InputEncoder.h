@@ -34,4 +34,5 @@ private:
     static QByteArray encodeMouseMove(const QJsonObject& msg);
     static QByteArray encodeMouseButton(const QJsonObject& msg, bool down);
     static QByteArray encodeMouseScroll(const QJsonObject& msg);
+    static QByteArray encodeMouseHScroll(const QJsonObject& msg);
 };

@@ -198,7 +198,7 @@
         "gamingMode": "Mode immersif",
         "gamingModeDesc": "Capture la souris et toutes les touches — même la touche Windows — pour une expérience native. Seul le raccourci de sortie reste sur cet appareil.",
         "touchScreen": "Mode écran tactile",
-        "touchScreenDesc": "Touchez directement l'endroit voulu sur l'image (absolu) au lieu du modèle trackpad relatif.",
+        "touchScreenDesc": "Touchez directement l'endroit voulu sur l'image (absolu) au lieu du modèle trackpad relatif. Le glisser à 1 doigt fait alors défiler, dans toutes les directions.",
         "pointerSensitivity": "Sensibilité du pointeur :",
         "pointerSensitivityDesc": "Vitesse du curseur trackpad/tactile (plus élevé = déplacement plus rapide).",
         "resetDefaults": "Réinitialiser les paramètres",
@@ -435,7 +435,8 @@
         "touchScreenTitle": "Écran tactile",
         "tsMoveCursorVal": "Toucher l'image",
         "tsLeftClickVal": "Tap à l'endroit voulu",
-        "tsDragVal": "Appui long, puis glisser"
+        "tsDragVal": "Appui long, puis glisser",
+        "tsScrollVal": "Glisser à 1 doigt"
     },
     "transport": {
         "webrtcDcUdp": "WebRTC DataChannel (UDP)",
