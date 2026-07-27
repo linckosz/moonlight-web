@@ -4,31 +4,37 @@
 #   1. quality + frontend tests — frontend job (Prettier+ESLint then Vitest, one
 #      npm install) plus C++ quality (clang-format + cppcheck).
 #   2. backend tests — Qt Test + OpenCppCoverage (70% gate), after C++ quality.
-#   3. build — Windows x64, Windows ARM64, Linux x64, macOS arm64 (CMake), only
-#      once the frontend job and backend tests are green. On a pull request this
-#      is a plain compile check; on main it is the full release packaging
-#      (release.yml, reused as a workflow) so every commit produces installable
-#      artifacts. The two are mutually exclusive — main never builds twice.
+#   3. installers — the full release packaging (release.yml, reused as a
+#      workflow) for Windows x64/ARM64, Linux x64 and macOS arm64, once the
+#      frontend job and backend tests are green. Every branch push produces
+#      installable artifacts; there is no separate compile-only build stage,
+#      because packaging compiles the same four targets and then exercises what
+#      a bare build never touches (staging, windeployqt, the Inno Setup script,
+#      linuxdeploy, macdeployqt + signing).
 #
-# Builds never run on a broken commit, so the (expensive) multi-platform matrix
-# is only spent on validated code.
+# Packaging never runs on a broken commit, so the (expensive) multi-platform
+# matrix is only spent on validated code.
 name: CI
 
 on:
   pull_request:
   push:
-    branches: [main]
+    # Every branch, so a feature branch yields testable installers — but NOT
+    # tags: an unfiltered `push` fires on those too, and a v* tag would then run
+    # the packaging twice (here and from release.yml's own tag trigger), with
+    # both runs racing to upload the same GitHub Release assets.
+    branches: ["**"]
   workflow_dispatch:
 
 # Least-privilege token: this pipeline only reads the repo and writes artifacts.
 permissions:
   contents: read
 
-# Cancel superseded PR runs to save CI minutes, but never cancel a push on main
-# (those feed releases and must run to completion).
+# Cancel superseded runs on a branch or PR to save CI minutes, but never cancel
+# a push on main (those feed releases and must run to completion).
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # ──────────────────── 1. QUALITY + FRONTEND TESTS ────────────────────
@@ -189,200 +195,18 @@ jobs:
           path: backend/tests/build/covhtml
           if-no-files-found: ignore
 
-  # ────────────────────────────── 3. BUILD ──────────────────────────────
-  # Pull requests get the cheap compile check below; pushes to main (and manual
-  # dispatches) skip it and run the `package` job at the bottom instead, which
-  # compiles the same four targets and turns them into real installers.
-  build-windows-x64:
-    name: Build · Windows x64 (CMake/MSVC)
-    needs: [frontend, test-backend]
-    if: github.event_name == 'pull_request'
-    runs-on: windows-latest
-    # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
-    environment: MoonlightWeb
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-      - name: Install Qt 6.11
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: 6.11.0
-          arch: win64_msvc2022_64
-          modules: qtwebsockets
-          # aqt 3.3.0 doesn't know the new Qt 6.11 per-arch repo layout (404s on
-          # Updates.xml); pin the commit that added it. py7zr 1.1.0 avoids the 7z
-          # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
-          aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
-          py7zrversion: ==1.1.0
-          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
-      # Ninja + MSVC env: the runner's Visual Studio major version changes over
-      # time, so avoid the version-pinned "Visual Studio NN" generator.
-      - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - name: Configure
-        # Internet-Access config embedded at build time from repo secrets (no
-        # .env shipped). Empty when a secret is unset → LAN-only fallback.
-        env:
-          MW_DOMAIN: ${{ secrets.MW_DOMAIN }}
-          MW_PDNS_URL: ${{ secrets.MW_PDNS_URL }}
-          MW_PDNS_TOKEN: ${{ secrets.MW_PDNS_TOKEN }}
-          MW_ZEROSSL_EAB_KID: ${{ secrets.MW_ZEROSSL_EAB_KID }}
-          MW_ZEROSSL_EAB_HMAC: ${{ secrets.MW_ZEROSSL_EAB_HMAC }}
-        run: cmake -S backend -B backend/build/win -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build backend/build/win -j
-      # Stage a clean, relocatable bundle: exe + frontend + OpenSSL DLLs
-      # (libssl-3-x64 / libcrypto-3-x64), as laid out by the install() rules.
-      - name: Install bundle
-        run: cmake --install backend/build/win --prefix backend/build/win/dist
-      # windeployqt adds the Qt runtime DLLs (Qt6Core/Network/WebSockets/Widgets)
-      # + plugins next to the exe inside the bundle.
-      - name: Deploy Qt runtime
-        run: windeployqt --release backend/build/win/dist/MoonlightWeb.exe
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: moonlightweb-windows-x64
-          path: backend/build/win/dist
-          if-no-files-found: warn
-
-  build-windows-arm64:
-    name: Build · Windows ARM64 (CMake/MSVC)
-    needs: [frontend, test-backend]
-    if: github.event_name == 'pull_request'
-    runs-on: windows-11-arm
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-      - name: Install OpenSSL (vcpkg, arm64)
-        shell: pwsh
-        run: vcpkg install openssl:arm64-windows
-      - name: Install Qt 6.11 (arm64)
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: 6.11.0
-          arch: win64_msvc2022_arm64
-          modules: qtwebsockets
-          # aqt 3.3.0 doesn't know the new Qt 6.11 per-arch repo layout (404s on
-          # Updates.xml); pin the commit that added it. py7zr 1.1.0 avoids the 7z
-          # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
-          aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
-          py7zrversion: ==1.1.0
-          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
-      - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: arm64
-      - name: Configure
-        shell: pwsh
-        run: >
-          cmake -S backend -B backend/build/win-arm64 -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
-          -DVCPKG_TARGET_TRIPLET=arm64-windows
-      - name: Build
-        run: cmake --build backend/build/win-arm64 -j
-      - name: Deploy Qt runtime
-        run: windeployqt --release backend/build/win-arm64/MoonlightWeb.exe
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: moonlightweb-windows-arm64
-          path: backend/build/win-arm64/MoonlightWeb.exe
-          if-no-files-found: warn
-
-  build-linux-x64:
-    name: Build · Linux x64 (CMake)
-    needs: [frontend, test-backend]
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake ninja-build pkg-config \
-            libssl-dev
-      - name: Install Qt 6.11
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: 6.11.0
-          modules: qtwebsockets
-          # aqt 3.3.0 doesn't know the new Qt 6.11 per-arch repo layout (404s on
-          # Updates.xml); pin the commit that added it. py7zr 1.1.0 avoids the 7z
-          # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
-          aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
-          py7zrversion: ==1.1.0
-          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
-      - name: Configure
-        run: cmake -S backend -B backend/build/linux -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build backend/build/linux -j
-      - name: Security TNR (ctest)
-        run: ctest --test-dir backend/build/linux --output-on-failure
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: moonlightweb-linux-x64
-          path: backend/build/linux/MoonlightWeb
-          if-no-files-found: warn
-
-  build-macos-arm64:
-    name: Build · macOS arm64 (CMake)
-    needs: [frontend, test-backend]
-    if: github.event_name == 'pull_request'
-    # Pinned (not macos-latest) so the June 2026 migration to macOS 26 can't
-    # silently change the runner under us; both macos-15 and 14 are arm64.
-    runs-on: macos-15
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          submodules: recursive
-      - name: Install build dependencies
-        run: brew install cmake ninja openssl@3 pkg-config
-      - name: Install Qt 6.11
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: 6.11.0
-          host: mac
-          arch: clang_64 # Qt 6.11 mac desktop is a universal (arm64+x64) binary
-          modules: qtwebsockets
-          # aqt 3.3.0 doesn't know the new Qt 6.11 per-arch repo layout (404s on
-          # Updates.xml); pin the commit that added it. py7zr 1.1.0 avoids the 7z
-          # path-sanitization bug (aqtinstall#995) that breaks SBOM extraction.
-          aqtsource: git+https://github.com/miurahr/aqtinstall.git@8c3695d4a4e1ceabf6a74dc6c79681656dc6b74b
-          py7zrversion: ==1.1.0
-          extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
-      - name: Configure
-        run: cmake -S backend -B backend/build/mac -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build backend/build/mac -j
-      - name: Security TNR (ctest)
-        run: ctest --test-dir backend/build/mac --output-on-failure
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: moonlightweb-macos-arm64
-          path: backend/build/mac/MoonlightWeb
-          if-no-files-found: warn
-
-  # ──────────────────── 3'. INSTALLERS (main only) ─────────────────────
+  # ─────────────────────────── 3. INSTALLERS ───────────────────────────
   # Reuses release.yml verbatim, so what lands in this run's artifacts is the
   # exact installer a v* tag would publish — Inno Setup .exe (Windows x64 +
   # ARM64), .deb/.rpm/.AppImage (Linux) and the guided .pkg (macOS), each
   # wrapped in a zip by upload-artifact. Untagged runs stamp
   # <last tag>-<3-char sha> (e.g. 0.2.0-b7c) and publish nothing: the
   # gh-release steps in release.yml are gated on refs/tags.
+  #
+  # Skipped on pull_request: a same-repo branch already got its installers from
+  # its own push, and a fork's PR token is read-only, so requesting the
+  # contents:write below would fail the job outright. Fork PRs still get the
+  # quality and test stages above.
   package:
     name: Installers
     needs: [frontend, test-backend]

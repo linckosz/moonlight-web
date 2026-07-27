@@ -35,7 +35,7 @@ Toolchain: CMake ≥ 3.21, Ninja, **Qt 6.11** (Core, Network, **WebSockets**), C
 
 ## 11.2 CI (`.github/workflows/ci.yml`)
 
-Gated pipeline — quality and tests **block** the build matrix:
+Gated pipeline — quality and tests **block** the packaging stage. Runs on every branch push (never on tags: `release.yml` owns those), on pull requests, and on manual dispatch.
 
 | Job | Runner | What |
 |---|---|---|
@@ -43,10 +43,11 @@ Gated pipeline — quality and tests **block** the build matrix:
 | `quality-cpp-format` | ubuntu | `clang-format` **19.1.7** check (house style in `backend/.clang-format`) |
 | `quality-cppcheck` | ubuntu | cppcheck static analysis |
 | `test-backend` | windows | Qt Test suites + OpenCppCoverage, 70% gate |
-| `build` matrix | windows/ubuntu/macos | CMake builds: Windows x64 & ARM64, Linux x64, macOS arm64 — **pull requests only** |
-| `package` | (reusable) | **Push to main / manual dispatch only**: calls `release.yml` and uploads the real installers as run artifacts |
+| `package` | (reusable) | Calls `release.yml`: builds Windows x64 & ARM64, Linux x64, macOS arm64 **and** packages them into the real installers, uploaded as run artifacts. Skipped on `pull_request` |
 
-The two build stages are mutually exclusive, so main never compiles twice. To test a build before tagging, open the run for the commit on main and download the `MoonlightWeb-windows-<arch>-v<version>` / `moonlightweb-linux-x64-v<version>` / `moonlightweb-macos-arm64-v<version>` artifact (GitHub serves each as a zip). Untagged versions read `<last v* tag>-<3-char sha>`, e.g. `0.2.0-a71`.
+There is **no compile-only build stage**: packaging compiles the same four targets and additionally exercises `cmake --install`, `windeployqt`, the Inno Setup script, linuxdeploy and `macdeployqt` — the parts a bare build never touches, and where breakage actually happens. To test any commit, open its run and download the `MoonlightWeb-windows-<arch>-v<version>` / `moonlightweb-linux-x64-v<version>` / `moonlightweb-macos-arm64-v<version>` artifact (GitHub serves each as a zip). Untagged versions read `<last v* tag>-<3-char sha>`, e.g. `0.2.0-a71`.
+
+`package` is skipped on `pull_request` for two reasons: a same-repo branch already got its installers from its own push, and a fork's PR token is read-only so the job's `contents: write` request would fail. Fork PRs still run quality + tests.
 
 CI-specific workarounds baked into the workflows: `aqtinstall` pinned to a master commit (Qt 6.11 layout change) + `py7zr 1.1.0`; macOS uses `clang_64`; Windows builds with **Ninja** (VS 18 generator issues); `gh` path fixes. `build-asan.yml` provides an AddressSanitizer build on demand.
 
