@@ -3628,17 +3628,17 @@ export class StreamView {
         //                     or the getStats network/jitter/decode deltas on
         //                     the native media track.
         // Only the total shows by default; the per-leg breakdown is revealed on
-        // hover (or tap on touch) — see _setLatencyDetail. A leg with no sample
-        // in its window shows "–" so the positions stay stable.
+        // hover (or tap on touch) — see _setLatencyDetail. It updates live with
+        // the rest of the card, and a leg with no sample in its window shows
+        // "–" rather than dropping out of the list.
         let avgLatency = '--';
-        let latencyParts = '';
         let latencyDetail = '';
         {
             // Sunshine is a single leg: capture→encode is all the host reports.
             // Everything downstream is measured separately, so it is split.
-            //   sub    browser-side stage, indented under the network leg
-            //   counts its presence is what makes the total meaningful (the
-            //          host-side legs alone are not an end-to-end latency)
+            // "counts" marks a leg whose presence is what makes the total
+            // meaningful — the host-side legs alone are not an end-to-end
+            // latency.
             const legs = [
                 { key: 'statLegHost', stats: this._hostProcStats },
                 { key: 'statLegHostNet', stats: this._hostRttStats },
@@ -3648,18 +3648,8 @@ export class StreamView {
                 // browser-side stages come from getStats deltas instead. The
                 // <video> element does its own presentation — no render leg.
                 legs.push({ key: 'statLegNet', stats: this._mediaNetStats, counts: true });
-                legs.push({
-                    key: 'statLegJitter',
-                    stats: this._mediaJitterStats,
-                    sub: true,
-                    counts: true,
-                });
-                legs.push({
-                    key: 'statLegDecode',
-                    stats: this._mediaDecodeStats,
-                    sub: true,
-                    counts: true,
-                });
+                legs.push({ key: 'statLegJitter', stats: this._mediaJitterStats, counts: true });
+                legs.push({ key: 'statLegDecode', stats: this._mediaDecodeStats, counts: true });
             } else {
                 legs.push({ key: 'statLegServer', stats: this._decodeLatencyStats });
                 legs.push({
@@ -3668,18 +3658,12 @@ export class StreamView {
                     scale: 0.5,
                     counts: true,
                 });
-                legs.push({
-                    key: 'statLegDecode',
-                    stats: this._clientDecodeStats,
-                    sub: true,
-                    counts: true,
-                });
-                legs.push({ key: 'statLegQueue', stats: this._clientQueueStats, sub: true });
-                legs.push({ key: 'statLegRender', stats: this._clientRenderStats, sub: true });
+                legs.push({ key: 'statLegDecode', stats: this._clientDecodeStats, counts: true });
+                legs.push({ key: 'statLegQueue', stats: this._clientQueueStats });
+                legs.push({ key: 'statLegRender', stats: this._clientRenderStats });
             }
             let latency = 0;
             let haveLatency = false;
-            const parts = [];
             const rows = [];
             for (const leg of legs) {
                 const label = escapeHtml(t('stream.' + leg.key));
@@ -3688,15 +3672,10 @@ export class StreamView {
                     const ms = leg.stats.avg * (leg.scale || 1);
                     latency += ms;
                     if (leg.counts) haveLatency = true;
-                    parts.push(String(Math.round(ms)));
                     value = ms.toFixed(1) + 'ms';
-                } else {
-                    parts.push('–');
                 }
                 rows.push(
-                    '<div class="stats-row stats-leg-row' +
-                        (leg.sub ? ' stats-leg-sub' : '') +
-                        '">' +
+                    '<div class="stats-leg-row">' +
                         '<span class="stats-label">' +
                         label +
                         '</span>' +
@@ -3708,7 +3687,6 @@ export class StreamView {
             }
             if (haveLatency) {
                 avgLatency = latency.toFixed(1) + 'ms';
-                latencyParts = '(' + parts.join(', ') + ')';
                 latencyDetail = rows.join('');
             }
         }
@@ -3720,7 +3698,6 @@ export class StreamView {
             '</span>' +
             '<span class="stats-value stats-latency">' +
             avgLatency +
-            (showDetail ? ' <span class="stats-latency-parts">' + latencyParts + '</span>' : '') +
             '</span>' +
             '</div>';
         if (showDetail) {
