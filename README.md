@@ -164,7 +164,7 @@ Enabling **Internet Access** makes the server automatically:
 ```
 
 The server is a **web server** (frontend + REST API), a **proxy** to Sunshine's API, and a **streaming bridge** embedding `moonlight-common-c`. Video (H.264/HEVC/AV1) and Opus audio are relayed over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback.\
-Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled** and can run on a dedicated machine — that's the server your donations help keep alive, but you can host your own (see [Fork & build](#fork--build)).
+Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled** and can run on a dedicated machine — that's the server your tips help keep alive, but you can host your own (see [Fork & build](#fork--build)).
 
 ---
 
