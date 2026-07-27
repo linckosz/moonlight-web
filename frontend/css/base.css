@@ -43,10 +43,8 @@ body::before {
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    background-image:
-        linear-gradient(rgba(0, 229, 255, 0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 229, 255, 0.04) 1px, transparent 1px);
-    background-size: 44px 44px;
+    background-image: var(--bg-grid);
+    background-size: var(--bg-grid-size);
     mask-image: radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
     -webkit-mask-image: radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
 }

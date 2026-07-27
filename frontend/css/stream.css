@@ -14,7 +14,15 @@ body.streaming-active .app-footer {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: #000;
+    /* Signature grid rather than dead black: the letterbox bars around the
+       picture read as MoonlightWeb instead of as a gap. The opaque base color
+       comes first — the overlay must hide the app behind it whatever the
+       pattern on top does. No neon bloom here (unlike --app-bg): a tinted
+       surround would sit right next to the video and skew how its colors
+       read. */
+    background-color: var(--surface-0);
+    background-image: var(--bg-grid);
+    background-size: var(--bg-grid-size);
     display: flex;
     flex-direction: column;
     font-family: inherit;
@@ -525,7 +533,11 @@ body.streaming-active .app-footer {
     position: fixed;
     inset: 0;
     z-index: 9999;
-    background: #000;
+    /* Matches the stream surround so the relaunch cover is a continuation of
+       the overlay, not a black flash on top of it. */
+    background-color: var(--surface-0);
+    background-image: var(--bg-grid);
+    background-size: var(--bg-grid-size);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -847,7 +859,11 @@ body.streaming-active .app-footer {
     position: fixed !important;
     inset: 0 !important;
     z-index: 9999 !important;
-    background: #000;
+    /* Same surround as the overlay — this covers it in CSS-fallback
+       fullscreen, so a plain black here would drop the grid. */
+    background-color: var(--surface-0);
+    background-image: var(--bg-grid);
+    background-size: var(--bg-grid-size);
 }
 .stream-css-fs .stream-canvas,
 .stream-css-fs .stream-video {
