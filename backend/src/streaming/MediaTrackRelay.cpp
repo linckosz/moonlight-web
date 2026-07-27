@@ -657,6 +657,9 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     } else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);
+    } else if (type == "mousehwheel") {
+        short delta = static_cast<short>(msg["delta"].toInt(0));
+        m_Shim->sendMouseHScroll(delta);
     } else if (type == "textinput") {
         // Virtual/soft keyboard text (UTF-8) — forwarded as a text event.
         m_Shim->sendUtf8Text(msg["text"].toString());

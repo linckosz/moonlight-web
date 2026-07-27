@@ -94,6 +94,8 @@ public:
     void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
     void sendMouseButton(bool down, int button);
     void sendMouseScroll(short scrollAmount);
+    // Horizontal wheel — Sunshine protocol extension (no-op on GeForce Experience hosts).
+    void sendMouseHScroll(short scrollAmount);
 
     // --- Game controller (gamepad) ---
     // Announce a newly connected controller (preferred over an empty state event):

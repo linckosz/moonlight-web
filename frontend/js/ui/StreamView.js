@@ -562,6 +562,8 @@ export class StreamView {
         // Touch state — laptop-trackpad model: relative cursor deltas,
         // tap = left click, two-finger tap = right click, two-finger drag =
         // scroll (or pinch = zoom), three-finger drag = pan the zoomed view.
+        // Touch-screen mode swaps the one-finger drag for a real touchscreen
+        // scroll (see StreamViewTouch.handleTouchMove).
         this._touchActive = false;
         this._touchStartX = 0;
         this._touchStartY = 0;
@@ -592,10 +594,15 @@ export class StreamView {
         this._pinchPrevCy = null;
         this._twoFingerMode = null; // locked gesture for the current 2-finger sequence: 'zoom' | 'scroll'
         this._lastMoveFingerCount = 0; // finger count of the last touchmove (reseed trackers on change)
-        // Two-finger scroll: amplification + inertial (momentum) glide after release.
+        // Scroll (two-finger drag, or one finger in touch-screen mode): both axes,
+        // amplified, with an inertial (momentum) glide after release.
         this._scrollScale = 4; // finger px → wheel delta units (faster scroll)
-        this._scrollAccum = 0; // fractional wheel-delta carry between frames
-        this._scrollSamples = []; // recent {t, y} centroid samples (flick velocity)
+        // One finger on a touch screen is the content itself: amplifying it like
+        // a trackpad would fling the page. ~1.5 keeps it near 1:1 with the finger.
+        this._touchScrollScale = 1.5;
+        this._scrollAccum = 0; // fractional vertical wheel-delta carry between frames
+        this._scrollAccumX = 0; // same, horizontal
+        this._scrollSamples = []; // recent {t, x, y} centroid samples (flick velocity)
         this._scrollMomentumRaf = null; // rAF id for the inertial glide loop
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
         this._touchSensitivity =
@@ -5001,7 +5008,10 @@ export class StreamView {
         // Browser deltaY is positive scrolling down; LiSendHighResScrollEvent
         // expects positive = up. Negate so standard wheels scroll the right way
         // (macOS "natural scrolling" already flips the sign at the OS level).
-        this.webrtc.send({ type: 'mousewheel', delta: -e.deltaY });
+        if (e.deltaY) this.webrtc.send({ type: 'mousewheel', delta: -e.deltaY });
+        // Horizontal wheel (trackpad swipe, tilt wheel): browser deltaX is
+        // positive scrolling right, same sign as the host's hscroll event.
+        if (e.deltaX) this.webrtc.send({ type: 'mousehwheel', delta: e.deltaX });
     }
 
     // =========================================================================
@@ -5189,14 +5199,15 @@ export class StreamView {
      */
     _buildTouchHelpContent() {
         // Touch-screen mode changes the 1-finger meaning from a relative
-        // trackpad move to a direct, absolute touch — reflect it in the help.
+        // trackpad move to a direct, absolute touch — and the drag that follows
+        // scrolls the content (any direction) instead of moving the cursor.
         const rows = this._touchScreen
             ? [
                   [t('stream.tcMoveCursor'), t('stream.tsMoveCursorVal')],
                   [t('stream.tcLeftClick'), t('stream.tsLeftClickVal')],
                   [t('stream.tcRightClick'), t('stream.tcRightClickVal')],
                   [t('stream.tcDrag'), t('stream.tsDragVal')],
-                  [t('stream.tcScroll'), t('stream.tcScrollVal')],
+                  [t('stream.tcScroll'), t('stream.tsScrollVal')],
                   [t('stream.tcZoom'), t('stream.tcZoomVal')],
                   [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
                   [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
