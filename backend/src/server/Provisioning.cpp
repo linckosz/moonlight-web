@@ -110,40 +110,50 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     const quint16 restPort = basePort + 1;
     auto* rest = new SunshineRestClient(&computers);
 
+    bool paired = false;
+    if (host && host->pairState == NvComputer::PS_PAIRED) {
+        Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
+        paired = true;
+    } else {
+        auto [startStatus, startResult] = computers.handleStartPairing(uuid);
+        if (startResult.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
+            Logger::warning(QStringLiteral("Provisioning: pairing could not start: %1")
+                                .arg(startResult.value(QStringLiteral("message")).toString()));
+            return false;
+        }
+        const QString pin = startResult.value(QStringLiteral("pin")).toString();
+
+        // Pairing stage 1 (getservercert) stays in flight until Sunshine receives
+        // the PIN. Schedule the REST push so it fires *after* the chain has started
+        // and getservercert is already in flight, letting Sunshine attach the PIN to
+        // the pending request.
+        QTimer::singleShot(800, rest, [rest, pin, user, pass, restPort]() {
+            rest->sendPin(pin, user, pass, QStringLiteral("MoonlightWeb"), restPort);
+        });
+
+        // Drive the (asynchronous) pairing chain to completion under a local event
+        // loop. Safe here: provisioning runs once at startup, before the main event
+        // loop and outside the reentrant HTTP request path.
+        paired = computers.pairHostBlocking(uuid, 65000);
+        Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1")
+                         .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
+    }
+
     // Dual-stream seamless switching needs Sunshine to accept at least TWO
     // concurrent sessions ("Maximum Connected Clients", config key `channels`,
     // default 1). Raise it to 2 when lower; leave any higher value untouched.
     // Best-effort — a refusal only means the runtime probe reports
     // dual_unavailable and streaming falls back to the legacy relaunch.
+    //
+    // MUST come after pairing, never before: applying the new limit restarts
+    // Sunshine (it only reads its config at startup), and a fresh install is
+    // exactly the case that needs the bump — so running it first tore down the
+    // getservercert request the pairing was waiting on. Sunshine had already
+    // taken the PIN and reported success while our chain, left hanging, retried
+    // and raised a second "incoming pairing request" a minute later. The calls
+    // are asynchronous and complete under the main event loop after this returns.
     rest->ensureMinChannels(2, user, pass, restPort);
 
-    if (host && host->pairState == NvComputer::PS_PAIRED) {
-        Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
-        return true;
-    }
-
-    auto [startStatus, startResult] = computers.handleStartPairing(uuid);
-    if (startResult.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
-        Logger::warning(QStringLiteral("Provisioning: pairing could not start: %1")
-                            .arg(startResult.value(QStringLiteral("message")).toString()));
-        return false;
-    }
-    const QString pin = startResult.value(QStringLiteral("pin")).toString();
-
-    // Pairing stage 1 (getservercert) stays in flight until Sunshine receives
-    // the PIN. Schedule the REST push so it fires *after* the chain has started
-    // and getservercert is already in flight, letting Sunshine attach the PIN to
-    // the pending request.
-    QTimer::singleShot(800, rest, [rest, pin, user, pass, restPort]() {
-        rest->sendPin(pin, user, pass, QStringLiteral("MoonlightWeb"), restPort);
-    });
-
-    // Drive the (asynchronous) pairing chain to completion under a local event
-    // loop. Safe here: provisioning runs once at startup, before the main event
-    // loop and outside the reentrant HTTP request path.
-    const bool paired = computers.pairHostBlocking(uuid, 65000);
-    Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1")
-                     .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
     return paired;
 }
 

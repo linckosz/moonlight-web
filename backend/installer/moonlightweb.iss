@@ -1021,6 +1021,14 @@ begin
   else Result := IntToStr(pct) + '%';
 end;
 
+// This step's contribution to the overall bar. A terminal step is finished
+// whatever its outcome, so skipped/failed count as a full share — the bar must
+// only ever move forward, and must be able to reach 100%.
+function BarPercent(const state: String; pct: Integer): Integer;
+begin
+  if IsTerminal(state) then Result := 100 else Result := pct;
+end;
+
 // Extract "<key>":"<value>" from the backend's compact provisioning.status.json.
 function StatusValue(const content, key: String): String;
 var
@@ -1097,8 +1105,11 @@ begin
   itSun := 0; itPair := 0; itAr := 0;
   prevSun := ''; prevPair := ''; prevAr := '';
   try
-    // ~90s budget (300 * 300ms); the A-record may still finalize afterwards.
-    for i := 0 to 300 do begin
+    // ~3min budget (600 * 300ms). The A-record step now also waits for the ACME
+    // certificate (up to 30s of DNS propagation retries, then the order itself),
+    // so the old 90s budget expired mid-issuance and the wizard moved on while
+    // the domain was still served with the self-signed fallback.
+    for i := 0 to 600 do begin
       ps := ''; ar := '';
       if LoadStringFromFile(statusPath, raw) then begin
         content := raw; // implicit AnsiString -> String (Unicode Inno)
@@ -1107,27 +1118,35 @@ begin
       end;
       spin := SpinChar(i);
 
-      // Pseudo-progress: climb ~1%/300ms while a task runs (capped at 95), then
-      // snap to 100 on done. Gives the long A-record/ACME step visible movement
-      // instead of a spinner that looks frozen.
+      // Pseudo-progress: climb towards 95 while a task runs, then snap to 100 on
+      // done. Gives a long step visible movement instead of a spinner that looks
+      // frozen. Each step climbs at its own rate, sized on how long it actually
+      // takes, so none of them parks at 95% for the rest of the install:
+      //   Sunshine  ~1%/300ms  (download + silent install)
+      //   pairing   ~1%/600ms  (up to ~65s: PIN push + the 5-stage handshake)
+      //   A-record  ~1%/1.5s   (DNS propagation, then the ACME order)
       if SunshineStepState = 'done' then pctSun := 100
       else if IsTerminal(SunshineStepState) then pctSun := 0
       else begin itSun := itSun + 1; pctSun := itSun; if pctSun > 95 then pctSun := 95; end;
 
       if ps = 'done' then pctPair := 100
       else if IsTerminal(ps) then pctPair := 0
-      else begin itPair := itPair + 1; pctPair := itPair; if pctPair > 95 then pctPair := 95; end;
+      else begin itPair := itPair + 1; pctPair := itPair div 2; if pctPair > 95 then pctPair := 95; end;
 
       if ar = 'done' then pctAr := 100
       else if IsTerminal(ar) then pctAr := 0
-      else begin itAr := itAr + 1; pctAr := itAr; if pctAr > 95 then pctAr := 95; end;
+      else begin itAr := itAr + 1; pctAr := itAr div 5; if pctAr > 95 then pctAr := 95; end;
 
       LblSunshine.Caption := StepGlyph(SunshineStepState, spin) + ' ' + PadRight(StepPercent(SunshineStepState, pctSun), 6) + ExpandConstant('{cm:TaskSunshine}');
       LblPairing.Caption  := StepGlyph(ps, spin) + ' ' + PadRight(StepPercent(ps, pctPair), 6) + ExpandConstant('{cm:TaskPairing}');
       LblArecord.Caption  := StepGlyph(ar, spin) + ' ' + PadRight(StepPercent(ar, pctAr), 6) + ExpandConstant('{cm:TaskArecord}');
 
-      // Smooth overall bar driven by the three pseudo-percentages (max 300).
-      ProgressPage.SetProgress(pctSun + pctPair + pctAr, 300);
+      // Smooth overall bar driven by the three pseudo-percentages (max 300). A
+      // skipped/failed step counts as complete here (its label already says so):
+      // it is finished, and scoring it 0 would both drag the bar backwards when
+      // it resolves and stop it ever reaching 100%.
+      ProgressPage.SetProgress(BarPercent(SunshineStepState, pctSun) + BarPercent(ps, pctPair)
+                               + BarPercent(ar, pctAr), 300);
 
       // When a task has just turned [OK], pause 1s so the user registers it.
       holdDone := ((SunshineStepState = 'done') and (prevSun <> 'done'))
@@ -1136,7 +1155,10 @@ begin
       prevSun := SunshineStepState; prevPair := ps; prevAr := ar;
 
       if IsTerminal(SunshineStepState) and IsTerminal(ps) and IsTerminal(ar) then begin
-        if holdDone then Sleep(1000);
+        // Everything settled. SetProgress above already pumped the message queue,
+        // so the full bar and the final [OK] lines are on screen: hold them long
+        // enough to be read instead of blinking straight to the next page.
+        Sleep(900);
         Break;
       end;
       if holdDone then Sleep(1000) else Sleep(300);
