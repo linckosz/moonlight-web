@@ -53,6 +53,7 @@ import {
 import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET, pickAutoEnhancer } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { t } from '../i18n/i18n.js';
+import { escapeHtml } from '../util/escapeHtml.js';
 import { Icons } from './icons.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
@@ -3410,34 +3411,67 @@ export class StreamView {
         //   client pipeline   decode queue + decode + frame queue + render
         //                     (per-frame, browser clock) — or the jitter-buffer/
         //                     decode getStats deltas on the native media track.
+        // The total is followed by its per-leg breakdown, in pipeline order:
+        // "42.3ms (8, 3, 2, 11, 18)". A leg with no sample in its window shows
+        // "–" so the positions stay stable instead of shifting.
         let avgLatency = '--';
+        let latencyParts = '';
+        let latencyTitle = '';
         {
             const clientStats = isMedia ? this._mediaLatencyStats : this._clientLatencyStats;
+            // Sunshine is a single leg: capture→encode is all the host reports.
+            // Everything downstream is measured separately, so it is split.
+            const legs = [
+                { key: 'statLegHost', stats: this._hostProcStats },
+                { key: 'statLegHostNet', stats: this._hostRttStats },
+            ];
+            if (isMedia) {
+                // Native media track: the getStats sample lumps the network
+                // RTT/2, the jitter buffer and the decode into one leg.
+                legs.push({ key: 'statLegClientMedia', stats: clientStats, counts: true });
+            } else {
+                legs.push({ key: 'statLegServer', stats: this._decodeLatencyStats });
+                legs.push({
+                    key: 'statLegNet',
+                    stats: this._browserRttStats,
+                    scale: 0.5,
+                    counts: true,
+                });
+                legs.push({ key: 'statLegClient', stats: clientStats, counts: true });
+            }
             let latency = 0;
             let haveLatency = false;
-            if (clientStats.count > 0) {
-                latency += clientStats.avg;
-                haveLatency = true;
+            const parts = [];
+            const titles = [];
+            for (const leg of legs) {
+                const label = t('stream.' + leg.key);
+                if (leg.stats.count > 0) {
+                    const ms = leg.stats.avg * (leg.scale || 1);
+                    latency += ms;
+                    if (leg.counts) haveLatency = true;
+                    parts.push(String(Math.round(ms)));
+                    titles.push(label + ' ' + ms.toFixed(1) + 'ms');
+                } else {
+                    parts.push('–');
+                    titles.push(label + ' –');
+                }
             }
-            // Media mode: the getStats sample already contains the network RTT/2.
-            if (!isMedia && this._browserRttStats.count > 0) {
-                latency += this._browserRttStats.avg / 2;
-                haveLatency = true;
+            if (haveLatency) {
+                avgLatency = latency.toFixed(1) + 'ms';
+                latencyParts = '(' + parts.join(', ') + ')';
+                latencyTitle = titles.join(' · ');
             }
-            if (this._hostRttStats.count > 0) latency += this._hostRttStats.avg;
-            if (this._hostProcStats.count > 0) latency += this._hostProcStats.avg;
-            if (!isMedia && this._decodeLatencyStats.count > 0) {
-                latency += this._decodeLatencyStats.avg;
-            }
-            if (haveLatency) avgLatency = latency.toFixed(1) + 'ms';
         }
         html +=
-            '<div class="stats-row stats-latency-row">' +
+            '<div class="stats-row stats-latency-row"' +
+            (latencyTitle ? ' title="' + escapeHtml(latencyTitle) + '"' : '') +
+            '>' +
             '<span class="stats-label">' +
             t('stream.statLatency') +
             '</span>' +
             '<span class="stats-value stats-latency">' +
             avgLatency +
+            (latencyParts ? ' <span class="stats-latency-parts">' + latencyParts + '</span>' : '') +
             '</span>' +
             '</div>';
 
