@@ -5692,6 +5692,9 @@ export class StreamView {
             this._kbToolbar.remove();
             this._kbToolbar = null;
         }
+        // The special-keys bar just went away — recompute the bottom inset the
+        // toasts sit above (a standby leg never owned it).
+        if (!this._standby) this._releaseKbdInset();
         if (this.streamEl) {
             this.streamEl.style.height = '';
             this.streamEl.style.top = '';
@@ -5844,6 +5847,9 @@ export class StreamView {
             this._kbToolbar.remove();
             this._kbToolbar = null;
         }
+        // The special-keys bar just went away — recompute the bottom inset the
+        // toasts sit above (a standby leg never owned it).
+        if (!this._standby) this._releaseKbdInset();
         if (this.streamEl) {
             this.streamEl.style.height = '';
             this.streamEl.style.top = '';
