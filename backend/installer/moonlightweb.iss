@@ -281,16 +281,17 @@ begin
   else Result := '';
 end;
 
-// True when a previous install is present. The registry entry is the reliable
-// signal (and the one that told Inno to prefill {app} with the previous
-// location); a leftover exe there is the fallback for a half-removed install,
-// which still has to be stopped before the file copy.
+// True when a previous install is present. The registry entry is the only
+// signal available this early: InitializeWizard runs before the destination
+// page, so {app} is NOT initialized yet and expanding it there aborts Setup
+// with "An attempt was made to expand the 'app' constant before it was
+// initialized" (only visible on a machine with no previous install, where the
+// registry test doesn't short-circuit first). The leftover-exe case — a
+// half-removed install whose server may still be running — is handled at
+// ssInstall instead, where {app} is known (see CurStepChanged).
 function PreviousInstallExists(): Boolean;
 begin
-  Result := True;
-  if RegKeyExists(HKLM, UninstallKey) then Exit;
-  if FileExists(ExpandConstant('{app}\{#MyAppExe}')) then Exit;
-  Result := False;
+  Result := RegKeyExists(HKLM, UninstallKey);
 end;
 
 // True when the server is registered as a Windows service (install-service.bat).
@@ -1154,7 +1155,12 @@ begin
   // is holding it open.
   if CurStep = ssInstall then begin
     ServiceInstalled := DetectService();
-    if UpdateMode or ServiceInstalled then StopRunningInstance();
+    // The FileExists arm covers a half-removed install (no uninstall entry, so
+    // UpdateMode is False) whose exe is still there and possibly running. {app}
+    // is initialized by now, which is why the test lives here and not in
+    // PreviousInstallExists.
+    if UpdateMode or ServiceInstalled
+       or FileExists(ExpandConstant('{app}\{#MyAppExe}')) then StopRunningInstance();
     Exit;
   end;
 
