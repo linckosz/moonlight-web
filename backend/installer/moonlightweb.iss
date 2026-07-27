@@ -636,9 +636,10 @@ var
   s: String;
 begin
   if UpdateMode then begin
+    // Keep the argument array on the same line as the call: ISCC reads a line
+    // whose first non-blank character is '[' as a section tag, even inside [Code].
     if PrevVersion <> '' then
-      Result := FmtMessage(ExpandConstant('{cm:UpdateReadyMemo}'),
-                           [PrevVersion, '{#MyAppVersion}'])
+      Result := FmtMessage(ExpandConstant('{cm:UpdateReadyMemo}'), [PrevVersion, '{#MyAppVersion}'])
     else
       Result := FmtMessage(ExpandConstant('{cm:UpdateReadyMemoFresh}'), ['{#MyAppVersion}']);
     Exit;
