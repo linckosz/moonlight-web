@@ -25,6 +25,10 @@
         '<a href="/guides/" data-nav="guides" data-i18n="nav.guides">Guides</a>' +
         '<a href="/faq.html" data-nav="faq" data-i18n="nav.faq">FAQ</a>' +
         '<a href="/contact.html" data-nav="contact" data-i18n="nav.contact">Contact</a>' +
+      '</nav>' +
+      /* Controls, not nav links — kept OUTSIDE <nav> so mobile can hoist them
+         onto the brand row (top right) while the links wrap to their own row. */
+      '<div class="hdr-actions">' +
         '<span class="lang">' +
           '<select id="lang-select" aria-label="Language" data-umami-event="lang">' +
             '<option value="en">English</option>' +
@@ -33,7 +37,7 @@
           '</select>' +
         '</span>' +
         '<a class="btn btn-primary gh-btn" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" aria-label="GitHub" data-umami-event="github" data-umami-event-loc="nav">★ <span class="gh-label">GitHub</span></a>' +
-      '</nav>' +
+      '</div>' +
     '</div>';
 
   var footer =
