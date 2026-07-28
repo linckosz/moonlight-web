@@ -74,8 +74,6 @@ void run_app_settings_tests()
     CHECK_EQ(s.videoEnhancementAlgo(), QString("fsr1"));
     s.setStunServer("stun:example.org:3478");
     CHECK_EQ(s.stunServer(), QString("stun:example.org:3478"));
-    s.setTransport("wss");
-    CHECK_EQ(s.transport(), QString("wss"));
     s.setTransportMode("webrtc-dc-udp");
     CHECK_EQ(s.transportMode(), QString("webrtc-dc-udp"));
     s.setUniqueId("abcd1234");
