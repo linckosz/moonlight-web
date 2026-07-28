@@ -284,8 +284,9 @@ const MoonlightApp = {
      *   - Initial route: reads pathname. Only "/" and "/admin" survive refresh.
      */
     _initRouter() {
-        window.addEventListener('popstate', (e) => {
-            const state = e.state || {};
+        window.addEventListener('popstate', () => {
+            // The event's `state` is deliberately not read: there is only one
+            // main view and both branches below reset it unconditionally.
 
             // ── Overlay guard was popped — close overlay, restore main view ──
             if (this._nav.overlay) {
@@ -307,7 +308,7 @@ const MoonlightApp = {
             }
 
             // ── Normal main-view navigation ──────────────────────────────────
-            this._navigateToMainView('hosts', state);
+            this._navigateToMainView();
         });
 
         // ── Initial route ──────────────────────────────────────────────────
@@ -655,7 +656,9 @@ const MoonlightApp = {
             // empty, hidden placeholder so we never flash a stale/wrong number:
             // the tag stays invisible until the real version arrives here.
             if (health && health.version) {
-                const versionEl = document.querySelector('.app-header .version');
+                const versionEl = /** @type {HTMLElement} */ (
+                    document.querySelector('.app-header .version')
+                );
                 if (versionEl) {
                     versionEl.textContent = 'v' + health.version;
                     versionEl.hidden = false;
@@ -1381,7 +1384,9 @@ const MoonlightApp = {
                 }
             });
         }
-        const rb = overlay.querySelector('.btn-restart-sunshine');
+        const rb = /** @type {HTMLButtonElement} */ (
+            overlay.querySelector('.btn-restart-sunshine')
+        );
         if (rb) {
             rb.addEventListener('click', async () => {
                 rb.disabled = true;

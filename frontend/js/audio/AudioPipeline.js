@@ -48,7 +48,11 @@ export class AudioPipeline {
     /**
      * @param {object} [options]
      * @param {number} [options.sampleRate=48000] - Target sample rate.
+     * @param {number} [options.channels=2] - Output channel count.
      * @param {string} [options.workletUrl='/js/audio/audio-processor.js'] - URL to the AudioWorklet processor module.
+     * @param {boolean} [options.timeStretch=true] - Pitch-preserving WSOLA
+     *   time-stretch in the worklet; disabled by the `audio_time_stretch`
+     *   server kill switch.
      */
     constructor(options = {}) {
         this.sampleRate = options.sampleRate || 48000;

@@ -36,6 +36,8 @@ function publishKbdInset(px) {
     else root.style.removeProperty('--kbd-inset');
 }
 
+/** @typedef {import('./StreamView.js').StreamView} StreamViewInstance */
+
 /**
  * Virtual-keyboard / physical-keyboard capture subsystem for StreamView.
  *
@@ -57,6 +59,7 @@ export class StreamViewKeyboard {
      *     Escape, Home/End/PageUp/Down, Delete).
      *   - focus/blur: keep _kbdVisible and the button state in sync (the OS may
      *     dismiss the keyboard on its own).
+     * @this {StreamViewInstance}
      */
     _setupKeyboardCapture() {
         const cap = this._kbdCapture;
@@ -64,7 +67,7 @@ export class StreamViewKeyboard {
 
         this._resetKbdCapture();
 
-        cap.addEventListener('input', (e) => {
+        cap.addEventListener('input', (/** @type {InputEvent} */ e) => {
             // Preferred path: InputEvent exposes an explicit type + data. On iOS
             // Safari `cap.value` can lag inside the handler (so the sentinel diff
             // misses characters like "*"), but `e.data`/`e.inputType` are exact.
@@ -170,6 +173,7 @@ export class StreamViewKeyboard {
 
     /** Seed the capture element with the filler sentinel and put the caret at
      *  the end, so Backspace always has something to delete and inserted text
+     * @this {StreamViewInstance}
      *  appends after the sentinel. (contenteditable: textContent + Range.) */
     _resetKbdCapture() {
         const cap = this._kbdCapture;
@@ -191,6 +195,7 @@ export class StreamViewKeyboard {
     }
 
     /** Send a single key press (down+up), applying any latched toolbar mods,
+     * @this {StreamViewInstance}
      *  then release those mods (one-shot, see _releaseLatchedMods). */
     _sendKey(vk) {
         const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
@@ -217,18 +222,29 @@ export class StreamViewKeyboard {
         return null;
     }
 
-    /** Current latched modifier state as DOM-event-style flags. */
+    /**
+     * Current latched modifier state as DOM-event-style flags.
+     *
+     * @this {StreamViewInstance}
+     */
     _modFlags() {
+        /** @type {StreamViewInstance['_heldMods']} */
         const m = this._heldMods || {};
         return { ctrlKey: !!m.ctrl, shiftKey: !!m.shift, altKey: !!m.alt, metaKey: !!m.meta };
     }
 
+    /** @this {StreamViewInstance} */
     _anyModHeld() {
+        /** @type {StreamViewInstance['_heldMods']} */
         const m = this._heldMods || {};
         return m.ctrl || m.shift || m.alt || m.meta;
     }
 
-    /** Build the special-keys bar (hidden until the soft keyboard opens). */
+    /**
+     * Build the special-keys bar (hidden until the soft keyboard opens).
+     *
+     * @this {StreamViewInstance}
+     */
     _buildKbToolbar() {
         this._heldMods = { ctrl: false, shift: false, alt: false, meta: false };
         // Locked modifiers stay held across keys (fast double-tap) until tapped
@@ -244,6 +260,9 @@ export class StreamViewKeyboard {
         bar.className = 'stream-kbd-toolbar';
 
         // [label, kind, id]. kind: 'mod' | 'key'.
+        // [label, kind, id] — `id` is a virtual-key code for 'key' entries and a
+        // modifier name for 'mod' entries, so the tuple is deliberately mixed.
+        /** @type {Array<[string, 'key', number] | [string, 'mod', string]>} */
         const items = [
             ['Win', 'key', 0x5b], // momentary tap → Start menu (single press)
             ['Esc', 'key', 0x1b],
@@ -262,7 +281,11 @@ export class StreamViewKeyboard {
         const HOLD_REPEAT_VKS = new Set([0x25, 0x26, 0x27, 0x28, 0x2e]);
 
         for (const [label, kind, id] of items) {
-            const btn = document.createElement('button');
+            // `_held` is an expando: the press-and-hold branch below tracks the
+            // pressed state on the element itself rather than in a side map.
+            const btn = /** @type {HTMLButtonElement & { _held?: boolean }} */ (
+                document.createElement('button')
+            );
             btn.className = 'stream-kbd-key' + (kind === 'mod' ? ' is-mod' : '');
             btn.textContent = label;
             btn.tabIndex = -1;
@@ -328,6 +351,7 @@ export class StreamViewKeyboard {
      *    off) — solid blue. A slow second tap just turns it off.
      *  - tap while locked: off.
      *  A real key down/up is sent so a bare press works (e.g. Win alone opens
+     * @this {StreamViewInstance}
      *  the Start menu) and the flag carries over to subsequent keys. */
     _toggleMod(name, btn) {
         const vk = StreamViewKeyboard.MOD_VK[name];
@@ -368,6 +392,7 @@ export class StreamViewKeyboard {
 
     /** Send a toolbar action key (down+up) with the current latched mods, then
      *  release the latches (one-shot sticky keys: Shift/Ctrl/Alt apply to the
+     * @this {StreamViewInstance}
      *  next key only and auto-clear once it fires). */
     _sendToolbarKey(vk) {
         const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
@@ -378,6 +403,7 @@ export class StreamViewKeyboard {
 
     /** Release any latched toolbar modifiers, sending the matching keyup and
      *  clearing each button highlight. Called after a key action so the user
+     * @this {StreamViewInstance}
      *  never has to tap a modifier a second time to turn it off. */
     _releaseLatchedMods() {
         const m = this._heldMods;
@@ -399,7 +425,11 @@ export class StreamViewKeyboard {
         }
     }
 
-    /** Re-focus the hidden capture so the soft keyboard stays open after a tap. */
+    /**
+     * Re-focus the hidden capture so the soft keyboard stays open after a tap.
+     *
+     * @this {StreamViewInstance}
+     */
     _refocusCapture() {
         const cap = this._kbdCapture;
         if (!cap) return;
@@ -410,6 +440,7 @@ export class StreamViewKeyboard {
         }
     }
 
+    /** @this {StreamViewInstance} */
     _toggleVirtualKeyboard() {
         // Tapping the toggle button blurs the capture <textarea> first, which
         // flips _kbdVisible to false before this runs. Treat a very recent blur
@@ -420,6 +451,7 @@ export class StreamViewKeyboard {
     }
 
     /** Focus the hidden capture element — opens the OS soft keyboard.
+     * @this {StreamViewInstance}
      *  Must run inside a user gesture (button tap / 3-finger tap). */
     _showVirtualKeyboard() {
         if (!this._kbdCapture) return;
@@ -431,6 +463,7 @@ export class StreamViewKeyboard {
         }
     }
 
+    /** @this {StreamViewInstance} */
     _hideVirtualKeyboard() {
         if (this._kbdCapture) this._kbdCapture.blur();
     }
@@ -440,6 +473,7 @@ export class StreamViewKeyboard {
      * VisualViewport shrinks when the keyboard opens (iOS Safari + Android
      * Chrome); we resize the overlay to the visible area so the centered video
      * fits above the keyboard instead of hiding behind it.
+     * @this {StreamViewInstance}
      */
     _handleViewportResize() {
         const vv = window.visualViewport;
@@ -480,6 +514,7 @@ export class StreamViewKeyboard {
      * drop the toast stack behind the keys for the whole transition. This
      * view's own bar is already gone by now; a bar still standing belongs to
      * the successor, which the inset must keep clearing.
+     * @this {StreamViewInstance}
      */
     _releaseKbdInset() {
         const vv = window.visualViewport;
@@ -488,11 +523,17 @@ export class StreamViewKeyboard {
             publishKbdInset(0);
             return;
         }
-        const bar = document.querySelector('.stream-kbd-toolbar.visible');
+        const bar = /** @type {HTMLElement} */ (
+            document.querySelector('.stream-kbd-toolbar.visible')
+        );
         publishKbdInset(kbHeight + (bar ? bar.offsetHeight : 0));
     }
 
-    /** Hide the special-keys bar and release any latched modifiers. */
+    /**
+     * Hide the special-keys bar and release any latched modifiers.
+     *
+     * @this {StreamViewInstance}
+     */
     _hideKbToolbar() {
         if (!this._kbToolbar) return;
         this._kbToolbar.classList.remove('visible');

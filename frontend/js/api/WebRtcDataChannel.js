@@ -85,6 +85,11 @@ export class WebRtcDataChannel {
      * @param {string} signalingUrl - URL of the backend's SignalingServer WS.
      * @param {object} [options]
      * @param {object[]} [options.iceServers] - Optional ICE servers (STUN/TURN).
+     * @param {boolean} [options.wssMode] - Legacy StreamRelay WS passthrough:
+     *   act as a plain WS client, with no PeerConnection or DataChannels.
+     * @param {boolean} [options.wssFragmented] - In WSS mode, expect the 17-byte
+     *   fragmentation header (DataChannel protocol) instead of the legacy
+     *   2-byte one.
      */
     constructor(signalingUrl, options = {}) {
         this.signalingUrl = signalingUrl;
@@ -619,6 +624,7 @@ export class WebRtcDataChannel {
         // Use dynamically-received ICE servers from backend, or fall back
         // to the default Google public STUN server.
         const iceServers = this._dynamicIceServers || this._defaultIceServers;
+        /** @type {RTCConfiguration} */
         const config = {
             iceServers: iceServers,
             iceTransportPolicy: 'all',

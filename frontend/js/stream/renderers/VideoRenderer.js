@@ -81,4 +81,14 @@ export class VideoRenderer {
     get kind() {
         return 'base';
     }
+
+    /**
+     * Whether the renderer is currently presenting an HDR surface. Only the
+     * WebGPU and <video> paths can be; Canvas2D never is, so the default
+     * completes the contract for it. Callers already coerce with `!!`, so this
+     * returns exactly what they observed before (`undefined` → `false`).
+     */
+    get hdrActive() {
+        return false;
+    }
 }

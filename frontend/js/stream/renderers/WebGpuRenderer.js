@@ -619,6 +619,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32>{
 `;
 
 export class WebGpuRenderer extends VideoRenderer {
+    constructor() {
+        super();
+        // Declared here so the instance shape is explicit; `create()` is the
+        // only construction path and overwrites all of them before returning.
+        /** @type {string} 'h264' | 'hevc' | 'av1'. */
+        this.videoCodec = '';
+        /** @type {'sgsr'|'fsr1'|'off'} Upscaler pass; 'off' blits through. */
+        this._algo = 'sgsr';
+        /** @type {boolean} HDR→SDR tone-map path (exclusive with _hdr). */
+        this._hdrTonemap = false;
+        /** @type {number} 10-bit sample alignment (1.0 = low-aligned 0..1023). */
+        this._codeScale = 1.0;
+    }
+
     static async create(canvas, opts) {
         if (!navigator.gpu) throw new Error('WebGPU unavailable (no navigator.gpu)');
 

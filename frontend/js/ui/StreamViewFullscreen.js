@@ -18,6 +18,8 @@
 import { t } from '../i18n/i18n.js';
 import { IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetect.js';
 
+/** @typedef {import('./StreamView.js').StreamView} StreamViewInstance */
+
 /**
  * Fullscreen / wake-lock / immersive-exit subsystem for StreamView.
  *
@@ -28,6 +30,7 @@ import { IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetec
  * instance), copied onto StreamView.prototype at the bottom of StreamView.js.
  */
 export class StreamViewFullscreen {
+    /** @this {StreamViewInstance} */
     _initMobileFullscreen() {
         // Mobile or tablet only (excludes touchscreen laptops via User-Agent detection)
         if (!IS_MOBILE_OR_TABLET) return;
@@ -63,6 +66,7 @@ export class StreamViewFullscreen {
     /**
      * Mobile auto-fullscreen (orientation change / landscape launch).
      * Delegates to _requestFullscreen(): same chain, same CSS fallback.
+     * @this {StreamViewInstance}
      */
     _requestMobileFullscreen() {
         this._requestFullscreen();
@@ -73,6 +77,7 @@ export class StreamViewFullscreen {
      * (prevents iPhone auto-lock and PC display sleep). The lock is auto-released
      * by the browser when the page is hidden, so we re-acquire it on visibility
      * change. No-op when the API is unavailable.
+     * @this {StreamViewInstance}
      */
     async _acquireWakeLock() {
         if (!('wakeLock' in navigator)) return;
@@ -106,7 +111,11 @@ export class StreamViewFullscreen {
         }
     }
 
-    /** Release the wake lock and drop the visibility handler. */
+    /**
+     * Release the wake lock and drop the visibility handler.
+     *
+     * @this {StreamViewInstance}
+     */
     _releaseWakeLock() {
         // Mark intentional so the release handler doesn't re-acquire.
         this._wakeReleased = true;
@@ -133,6 +142,7 @@ export class StreamViewFullscreen {
      *   1. document.documentElement.requestFullscreen() — standard Fullscreen API.
      *   2. _enterCssFallbackFullscreen() — fake fullscreen via CSS when the API
      *      is unavailable or rejected (iOS Safari, non-user-gesture calls).
+     * @this {StreamViewInstance}
      */
     _requestFullscreen() {
         if (this._cssFullscreen) return;
@@ -159,6 +169,7 @@ export class StreamViewFullscreen {
      * (iOS Safari canvas mode). Hides the header and stretches the canvas to
      * cover the viewport. No exit button: desktop uses the keyboard combo and
      * mobile auto-exits when rotating back to portrait.
+     * @this {StreamViewInstance}
      */
     _enterCssFallbackFullscreen() {
         if (this._cssFullscreen || this._quitting) return;
@@ -179,6 +190,7 @@ export class StreamViewFullscreen {
     /**
      * Show a one-shot "Add to Home Screen" hint, then fade it out after 4s.
      * Sits above the CSS fullscreen canvas (z-index) and is shown once per view.
+     * @this {StreamViewInstance}
      */
     _showInstallHint() {
         if (this._installHintShown) return;
@@ -209,6 +221,7 @@ export class StreamViewFullscreen {
      * Sync the Escape Keyboard Lock with the current fullscreen state.
      * In fullscreen, lock Escape so it reaches the host (instead of exiting);
      * out of fullscreen, release it. Chrome/Edge only — no-op elsewhere.
+     * @this {StreamViewInstance}
      */
     _syncKeyboardLock() {
         const kb = navigator.keyboard;
@@ -236,6 +249,7 @@ export class StreamViewFullscreen {
      * Single "give me back control" action bound to the immersive exit combo.
      * Releases the mouse pointer lock, drops the full keyboard lock and leaves
      * fullscreen (standard or CSS fallback) — whichever are currently active.
+     * @this {StreamViewInstance}
      */
     _exitImmersive() {
         if (document.pointerLockElement === this.inputEl) {
@@ -258,6 +272,7 @@ export class StreamViewFullscreen {
     /**
      * Show a 2s transient tip explaining how to exit fullscreen, since Escape
      * is now forwarded to the host. Same transparent style as the install hint.
+     * @this {StreamViewInstance}
      */
     _showFullscreenExitHint() {
         const isMac = /Mac/.test(navigator.platform);
@@ -268,6 +283,7 @@ export class StreamViewFullscreen {
     /**
      * Display a transparent on-screen hint for `ms`, reusing a single element.
      * Repeated calls reset the text and the auto-dismiss timer (no stacking).
+     * @this {StreamViewInstance}
      */
     _showTransientHint(text, ms) {
         let hint = this._transientHintEl;
@@ -294,6 +310,7 @@ export class StreamViewFullscreen {
 
     /**
      * Exit CSS fallback fullscreen. Restores header and canvas area.
+     * @this {StreamViewInstance}
      */
     _exitCssFallbackFullscreen() {
         if (!this._cssFullscreen) return;
@@ -314,6 +331,7 @@ export class StreamViewFullscreen {
      *   1. webkitExitFullscreen() — exits native video player fullscreen (iOS Safari).
      *   2. document.exitFullscreen() — standard Fullscreen API exit.
      *   3. _exitCssFallbackFullscreen() — CSS fallback exit.
+     * @this {StreamViewInstance}
      */
     _exitMobileFullscreen() {
         // Also clean up CSS fallback fullscreen if active
@@ -340,6 +358,7 @@ export class StreamViewFullscreen {
      * Desktop: always visible (unless already in fullscreen).
      * Mobile/tablet: visible only in landscape — in portrait the user should
      * rotate first (rotation auto-enters fullscreen anyway).
+     * @this {StreamViewInstance}
      */
     _updateMobileFsButtonVisibility() {
         if (!this._mobileFsBtn) return;

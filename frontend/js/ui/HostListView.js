@@ -702,7 +702,7 @@ export class HostListView {
                 // Data changed — replace just this card
                 const tmp = document.createElement('div');
                 tmp.innerHTML = this.renderCard(host);
-                const newCard = tmp.firstElementChild;
+                const newCard = /** @type {HTMLElement} */ (tmp.firstElementChild);
                 newCard.dataset.fingerprint = fp;
                 card.replaceWith(newCard);
                 card = newCard;
@@ -1041,7 +1041,9 @@ export class HostListView {
                 </div>
             `;
 
-            const input = overlay.querySelector('.manual-add-input');
+            const input = /** @type {HTMLInputElement} */ (
+                overlay.querySelector('.manual-add-input')
+            );
             const done = (value) => {
                 overlay.remove();
                 resolve(value);

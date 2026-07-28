@@ -18,6 +18,19 @@
 /**
  * MoonlightWeb — REST API client
  */
+
+/**
+ * An `Error` decorated with the HTTP context of a failed request. Thrown by
+ * every `BackendClient` method; `LoginView`, `PairDialog` and `MoonlightApp`
+ * branch on these fields.
+ *
+ * @typedef {Error & {
+ *   statusCode?: number,
+ *   responseBody?: any,
+ *   aborted?: boolean,
+ * }} BackendError
+ */
+
 export class BackendClient {
     static async _handleError(resp, path = '') {
         let msg = '';
@@ -43,7 +56,9 @@ export class BackendClient {
             sessionStorage.removeItem('mw_auth_reload');
         }
 
-        const error = new Error(msg || `Request failed (${resp.status})`);
+        const error = /** @type {BackendError} */ (
+            new Error(msg || `Request failed (${resp.status})`)
+        );
         error.statusCode = resp.status;
         error.responseBody = body;
         throw error;
@@ -76,7 +91,7 @@ export class BackendClient {
             return resp.json();
         } catch (err) {
             if (err && err.name === 'AbortError') {
-                const e = new Error('server_timeout');
+                const e = /** @type {BackendError} */ (new Error('server_timeout'));
                 e.statusCode = 0;
                 e.aborted = true;
                 throw e;
