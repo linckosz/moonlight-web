@@ -6,11 +6,10 @@
 #   2. backend tests — Qt Test + OpenCppCoverage (70% gate), after C++ quality.
 #   3. installers — the full release packaging (release.yml, reused as a
 #      workflow) for Windows x64/ARM64, Linux x64 and macOS arm64, once the
-#      frontend job and backend tests are green. Every branch push produces
-#      installable artifacts; there is no separate compile-only build stage,
-#      because packaging compiles the same four targets and then exercises what
-#      a bare build never touches (staging, windeployqt, the Inno Setup script,
-#      linuxdeploy, macdeployqt + signing).
+#      frontend job and backend tests are green. There is no separate
+#      compile-only build stage, because packaging compiles the same four
+#      targets and then exercises what a bare build never touches (staging,
+#      windeployqt, the Inno Setup script, linuxdeploy, macdeployqt + signing).
 #
 # Packaging never runs on a broken commit, so the (expensive) multi-platform
 # matrix is only spent on validated code.
@@ -19,22 +18,28 @@ name: CI
 on:
   pull_request:
   push:
-    # Every branch, so a feature branch yields testable installers — but NOT
-    # tags: an unfiltered `push` fires on those too, and a v* tag would then run
-    # the packaging twice (here and from release.yml's own tag trigger), with
-    # both runs racing to upload the same GitHub Release assets.
-    branches: ["**"]
+    # Tags ONLY — a v* tag is the one push that must be validated and packaged
+    # automatically, because this pipeline is what publishes the release assets
+    # (release.yml no longer carries its own tag trigger, so packaging can never
+    # run twice and race itself for the upload).
+    #
+    # Deliberately NOT branches: a branch push does not spend the multi-platform
+    # matrix by default. Want installers for an untagged commit? Run this
+    # workflow from the Actions tab (workflow_dispatch) on that branch — same
+    # pipeline, same artifacts, just on demand.
+    tags: ["v*"]
   workflow_dispatch:
 
 # Least-privilege token: this pipeline only reads the repo and writes artifacts.
 permissions:
   contents: read
 
-# Cancel superseded runs on a branch or PR to save CI minutes, but never cancel
-# a push on main (those feed releases and must run to completion).
+# Cancel superseded runs on a PR or a manual branch run to save CI minutes, but
+# never cancel a tag run: that one publishes the release assets and must go to
+# completion.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   # ──────────────────── 1. QUALITY + FRONTEND TESTS ────────────────────
@@ -201,10 +206,10 @@ jobs:
   # ARM64), .deb/.rpm/.AppImage (Linux) and the guided .pkg (macOS), each
   # wrapped in a zip by upload-artifact. Untagged runs stamp
   # <last tag>-<3-char sha> (e.g. 0.2.1-b7c) and publish nothing: the
-  # gh-release steps in release.yml are gated on refs/tags.
+  # gh-release steps in release.yml are gated on refs/tags — and on a v* tag run
+  # they see the tag ref, so this is also the path that publishes the release.
   #
-  # Skipped on pull_request: a same-repo branch already got its installers from
-  # its own push, and a fork's PR token is read-only, so requesting the
+  # Skipped on pull_request: a fork's PR token is read-only, so requesting the
   # contents:write below would fail the job outright. Fork PRs still get the
   # quality and test stages above.
   package:

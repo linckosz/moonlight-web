@@ -7,15 +7,18 @@
 # runtime (via the native deploy tool), OpenSSL and the frontend/ served as
 # static files (staged by `cmake --install`, which strips dev tooling).
 #
-# CI (ci.yml) calls this same workflow on every push to main, so untagged
-# installers can be downloaded from the run's artifacts and tested before a tag
-# is cut. Only the version differs: a v* tag ships `1.2.3`, any other run ships
+# CI (ci.yml) calls this same workflow as its last stage, so untagged installers
+# can be downloaded from a manual CI run's artifacts and tested before a tag is
+# cut. Only the version differs: a v* tag ships `1.2.3`, any other run ships
 # `<last tag>-<3-char sha>` (e.g. 0.2.1-b7c).
 name: release
 
+# NO tag trigger here on purpose. A v* tag fires ci.yml, which validates the
+# commit and then calls this workflow (workflow_call below) — so a release is
+# always gated on green quality/tests, and the packaging matrix runs exactly
+# once. Adding `push: tags` back would double every tag build and have the two
+# runs race to upload the same GitHub Release assets.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       platform:
@@ -28,10 +31,11 @@ on:
           - windows-arm64
           - linux
           - macos
-  # Called by CI once the gates are green on a push to main, so the installers
-  # available for testing come off this exact packaging path — no second recipe
-  # to keep in sync. Nothing is published: the gh-release steps below stay gated
-  # on a v* tag, so an untagged run only uploads workflow artifacts.
+  # Called by CI once the gates are green, so the installers come off this exact
+  # packaging path — no second recipe to keep in sync. What the run does with
+  # them depends on the caller's ref: the gh-release steps below stay gated on a
+  # v* tag, so a CI run on a tag publishes the release, and a manual CI run on a
+  # branch only uploads workflow artifacts.
   workflow_call:
     inputs:
       platform:
