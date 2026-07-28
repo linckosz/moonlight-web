@@ -113,6 +113,8 @@ export class WebRtcMedia {
         this.onError = null; // Error event
         this.onAudio = null; // (sample: Uint8Array) PCM16 audio
         this.onStats = null; // (msg: object) stats/pong messages from backend
+        this.onTakeover = null; // () session taken over by another device
+        this.onRevoked = null; // () this device's access was revoked by the admin
 
         // Stats
         this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
@@ -573,6 +575,12 @@ export class WebRtcMedia {
                         msg.type === 'clipboardcaps'
                     ) {
                         if (this.onStats) this.onStats(msg);
+                    } else if (msg.type === 'takeover') {
+                        // Exit notice from MediaTrackRelay::sendExitNotice, sent
+                        // on this DC just before the relay closes it.
+                        if (this.onTakeover) this.onTakeover();
+                    } else if (msg.type === 'revoked') {
+                        if (this.onRevoked) this.onRevoked();
                     } else {
                         console.log('[WebRtcMedia] Input DC message:', msg);
                     }

@@ -33,9 +33,9 @@ export type StreamTransport = (WebRtcDataChannel | WebRtcMedia) & {
     /** The transport sent an IDR request (throttled) — feeds congestion stats. */
     onIdrRequested?: ((reason: string) => void) | null;
 
-    // ── DataChannel only, but wired unconditionally by StreamView ────────────
-    // NOTE: `WebRtcMedia` has no takeover/revoked signalling, so in
-    // `webrtc-media` transport these are assigned and never invoked.
+    // ── Both transports ──────────────────────────────────────────────────────
+    // Delivered as an exit notice on the input DataChannel, sent by the relay
+    // (DataChannelRelay / MediaTrackRelay) just before it closes the channel.
     /** Session taken over by another device. */
     onTakeover?: (() => void) | null;
     /** This device's access was revoked by an admin. */
