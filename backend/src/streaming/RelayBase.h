@@ -60,12 +60,13 @@ public:
 
     /// Notify the browser that its session was taken over by another device,
     /// so it can show a graceful "session interrupted" exit before the channels
-    /// close. Best-effort: sent on the control channel just before stop().
+    /// close. Sent on the control channel just before stop(); implementations
+    /// flush it synchronously, since the caller tears down immediately after.
     virtual void notifyClientTakenOver() {}
 
     /// Notify the browser that its device access was revoked by the admin,
     /// so it can show a graceful "access revoked" exit before the channels
-    /// close. Best-effort: sent on the control channel just before stop().
+    /// close. Same delivery guarantee as notifyClientTakenOver().
     virtual void notifyClientRevoked() {}
 
     /// Request an IDR frame from Sunshine (keyframe).

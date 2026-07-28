@@ -39,11 +39,12 @@ public:
     void stop();
 
     /// Notify the browser (over the WS) that its session was taken over by
-    /// another device, just before stop() closes the socket. Best-effort.
+    /// another device, just before stop() closes the socket. Flushed before
+    /// returning, so the close that follows cannot drop it.
     void notifyClientTakenOver();
 
     /// Notify the browser (over the WS) that its device access was revoked,
-    /// just before stop() closes the socket. Best-effort.
+    /// just before stop() closes the socket. Flushed before returning.
     void notifyClientRevoked();
 
     void setServerHost(const QString& host) { m_ServerHost = host; }
@@ -84,6 +85,10 @@ private slots:
     void onShimConnectionTerminated(int errorCode);
 
 private:
+    /// Send an exit notice ("takeover" / "revoked") over the WS and flush it,
+    /// so it reaches the browser ahead of the close that follows.
+    void sendExitNotice(const char* type);
+
     /// Enable/disable WSS video fragmentation (same format as DataChannelRelay).
     /// When true, video frames are split into chunks with a 17-byte header
     /// matching the DataChannelRelay protocol, sent over the WebSocket with
