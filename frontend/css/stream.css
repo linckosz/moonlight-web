@@ -585,6 +585,18 @@ body.streaming-active::after {
     gap: 11px;
 }
 
+/* The loader's own Stop button: the outgoing StreamView (and its header) is
+   already gone, so this is the only way out of a relaunch that never lands.
+   Pinned to the top instead of following the flex centering, so it reads as
+   the same header the stream had a moment ago. */
+#stream-relaunch-loader .stream-header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+}
+
 /* Frozen last frame of the outgoing stream (quality transition on a live
    stream): shown near-full brightness with only a small corner spinner — no
    connection steps — so the switch reads as a brief pause, not a reconnect. */
