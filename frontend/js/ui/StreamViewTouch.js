@@ -259,6 +259,9 @@ export class StreamViewTouch {
                 : '';
         if (this.canvas) this.canvas.style.transform = transform;
         if (this.videoEl) this.videoEl.style.transform = transform;
+        // getBoundingClientRect reflects the transform, so zoom/pan moves the
+        // media rect — the cached measurement is now stale.
+        this._invalidateMediaRect();
     }
 
     /** Cancel a pending long-press → drag timer. */
