@@ -15,6 +15,8 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+/** @typedef {import('./StreamView.js').StreamView} StreamViewInstance */
+
 /**
  * Touch input (mobile trackpad-like) subsystem for StreamView.
  *
@@ -32,6 +34,7 @@ export class StreamViewTouch {
      * Laptop-trackpad model:
      *   1 finger → start tracking for relative cursor movement / tap.
      *   2 fingers (simultaneous) → right click (mousedown+mouseup button=3).
+     * @this {StreamViewInstance}
      */
     handleTouchStart(e) {
         // A touch anywhere on screen dismisses the gesture hint, not just a tap
@@ -121,6 +124,7 @@ export class StreamViewTouch {
 
     /** Seed multi-finger trackers from the current touch list: finger spacing
      *  (first two fingers, for pinch) and the centroid of all touches (for
+     * @this {StreamViewInstance}
      *  2-finger scroll and 3-finger pan). */
     _seedMultiTouch(touches) {
         const n = touches.length;
@@ -147,6 +151,7 @@ export class StreamViewTouch {
 
     /** True once a multi-finger gesture has clearly moved (centroid travel or,
      *  for 2 fingers, a real pinch) beyond the given tap-jitter tolerance (px).
+     * @this {StreamViewInstance}
      *  Pass dist=null for 3-finger gestures (spacing irrelevant). */
     _multiMovedBeyondTol(cx, cy, dist, tol) {
         const movedC = Math.hypot(
@@ -162,6 +167,7 @@ export class StreamViewTouch {
 
     /** Finger px → wheel units for the gesture in progress: trackpad-style
      *  amplification for a two-finger drag, near 1:1 for a single finger on a
+     * @this {StreamViewInstance}
      *  touch screen (where the finger is meant to *be* the content). */
     _curScrollScale() {
         return this._touchScreen && this._touchMaxFingers === 1
@@ -174,6 +180,7 @@ export class StreamViewTouch {
      *  vertical wheel is positive when the finger goes down, the horizontal one
      *  is negative when it goes right (positive hwheel = view scrolls right).
      *  Deltas are amplified and carried as fractions so slow drags still
+     * @this {StreamViewInstance}
      *  register, and the centroid is sampled for the release flick. */
     _emitScroll(dCx, dCy, sampleX, sampleY) {
         const scale = this._curScrollScale();
@@ -201,6 +208,7 @@ export class StreamViewTouch {
     }
 
     /** Touch-screen mode: map a finger's client position to the host's absolute
+     * @this {StreamViewInstance}
      *  cursor position (over the real picture, letterbox-aware) and send it. */
     _sendAbsTouch(clientX, clientY) {
         const rect = this._mediaRect();
@@ -220,6 +228,7 @@ export class StreamViewTouch {
      * Apply the current zoom/pan to the streamed display (canvas + video).
      * Pan is clamped so the scaled image edges never reveal the black area.
      * Origin is the center; the input layer stays unscaled.
+     * @this {StreamViewInstance}
      */
     _applyZoomTransform() {
         if (this.canvasArea) {
@@ -231,8 +240,8 @@ export class StreamViewTouch {
             let iw = 0,
                 ih = 0;
             if (this._videoIsDisplay()) {
-                iw = el.videoWidth;
-                ih = el.videoHeight;
+                iw = /** @type {HTMLVideoElement} */ (el).videoWidth;
+                ih = /** @type {HTMLVideoElement} */ (el).videoHeight;
             } else if (this.canvas) {
                 iw = this.canvas.width;
                 ih = this.canvas.height;
@@ -264,7 +273,11 @@ export class StreamViewTouch {
         this._invalidateMediaRect();
     }
 
-    /** Cancel a pending long-press → drag timer. */
+    /**
+     * Cancel a pending long-press → drag timer.
+     *
+     * @this {StreamViewInstance}
+     */
     _clearLongPress() {
         if (this._touchLongPressTimer) {
             clearTimeout(this._touchLongPressTimer);
@@ -284,6 +297,7 @@ export class StreamViewTouch {
      * 2 fingers → pinch = zoom the local display (focal recenter), otherwise
      *             scroll wheel on both axes to the host (works zoomed in too).
      * 3 fingers → pan the zoomed display (no scroll/zoom side effects).
+     * @this {StreamViewInstance}
      */
     handleTouchMove(e) {
         if (e.target.closest('button') || e.target.closest('#stream-stats-overlay')) return;
@@ -462,6 +476,7 @@ export class StreamViewTouch {
      * Handle touch end.
      *
      * 1→0 finger transition with minimal movement → left click (tap).
+     * @this {StreamViewInstance}
      */
     handleTouchEnd(e) {
         // UI buttons / stats card: suppress the browser's synthetic click — it
@@ -584,6 +599,7 @@ export class StreamViewTouch {
 
     /** Start the inertial scroll glide. Computes the release velocity from the
      *  recent centroid samples, then sends decaying wheel deltas each frame
+     * @this {StreamViewInstance}
      *  until the velocity dies out (or a new touch cancels it). */
     _startScrollMomentum() {
         this._stopScrollMomentum();
@@ -629,7 +645,11 @@ export class StreamViewTouch {
         this._scrollMomentumRaf = requestAnimationFrame(step);
     }
 
-    /** Cancel any running inertial scroll glide. */
+    /**
+     * Cancel any running inertial scroll glide.
+     *
+     * @this {StreamViewInstance}
+     */
     _stopScrollMomentum() {
         if (this._scrollMomentumRaf != null) {
             cancelAnimationFrame(this._scrollMomentumRaf);

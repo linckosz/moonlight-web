@@ -40,6 +40,12 @@
 import { VideoRenderer } from './VideoRenderer.js';
 
 export class VideoElementRenderer extends VideoRenderer {
+    constructor() {
+        super();
+        /** @type {number} Frames written to the generator — caps warm-up logging. */
+        this._wrote = 0;
+    }
+
     static async create(canvas, opts) {
         if (typeof MediaStreamTrackGenerator === 'undefined') {
             throw new Error('MediaStreamTrackGenerator unavailable');

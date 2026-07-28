@@ -343,6 +343,7 @@ function configureDecoder() {
 
     const shared = { codedWidth: 1920, codedHeight: 1080, optimizeForLatency: true };
     // Decoder color space: HDR (BT.2020 + PQ) or SDR (BT.709).
+    /** @type {{ colorSpace: HdrVideoColorSpaceInit }} */
     const vColor = isHdr
         ? {
               colorSpace: {
@@ -381,7 +382,11 @@ function configureDecoder() {
         return;
     }
 
-    // H.264: AVCC with description + fallback variants
+    // H.264: AVCC with description + fallback variants. Explicitly typed: the
+    // fallbacks deliberately drop fields (description, dimensions, colorSpace)
+    // one at a time, so inferring the element type from the richest entry would
+    // reject every degraded variant.
+    /** @type {HdrVideoDecoderConfig[]} */
     const configsToTry = [colorConfig];
     for (const fbCodec of fallbacks) {
         if (fbCodec === codec) continue;

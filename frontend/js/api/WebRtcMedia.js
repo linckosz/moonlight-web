@@ -82,6 +82,8 @@ export class WebRtcMedia {
      * @param {object} [options]
      * @param {object[]} [options.iceServers] - Optional ICE servers (STUN/TURN).
      * @param {HTMLVideoElement} [options.videoElement] - <video> element for rendering.
+     * @param {HTMLAudioElement} [options.audioElement] - <audio> element for the
+     *   native RTP Opus track. Normally assigned by StreamView after construction.
      */
     constructor(signalingUrl, options = {}) {
         this.signalingUrl = signalingUrl;
@@ -381,6 +383,7 @@ export class WebRtcMedia {
         // Use dynamically-received ICE servers from backend, or fall back
         // to the default Google public STUN server.
         const iceServers = this._dynamicIceServers || this._defaultIceServers;
+        /** @type {RTCConfiguration} */
         const config = {
             iceServers: iceServers,
             iceTransportPolicy: 'all',

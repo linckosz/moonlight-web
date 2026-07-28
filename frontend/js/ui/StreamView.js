@@ -58,6 +58,8 @@ import {
 } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { t } from '../i18n/i18n.js';
+
+/** @typedef {import('../types/transport.js').StreamTransport} StreamTransport */
 import { escapeHtml } from '../util/escapeHtml.js';
 import { Icons } from './icons.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
@@ -363,17 +365,22 @@ export class StreamView {
         // streaming session and only clutter the UI. The UPnP state is visible
         // in the Admin/Settings UI before the stream starts, where the user can
         // act on it. During streaming, the toast is pure distraction.
+        // Cast to the shared transport surface: the two classes have different
+        // capabilities and every call site guards the members it needs. See
+        // js/types/transport.d.ts.
         if (this._transport === 'webrtc-media') {
-            this.webrtc = new WebRtcMedia(signalingUrl);
+            this.webrtc = /** @type {StreamTransport} */ (new WebRtcMedia(signalingUrl));
         } else if (this._transport === 'wss') {
             // Legacy WSS mode: direct WebSocket passthrough via StreamRelay,
             // without any WebRTC PeerConnection or DataChannels.
-            this.webrtc = new WebRtcDataChannel(signalingUrl, {
-                wssMode: true,
-                wssFragmented: false,
-            });
+            this.webrtc = /** @type {StreamTransport} */ (
+                new WebRtcDataChannel(signalingUrl, {
+                    wssMode: true,
+                    wssFragmented: false,
+                })
+            );
         } else {
-            this.webrtc = new WebRtcDataChannel(signalingUrl);
+            this.webrtc = /** @type {StreamTransport} */ (new WebRtcDataChannel(signalingUrl));
         }
         // Browser-driven transport fallback: ICE failures surface as errors so
         // MoonlightApp can relaunch with the next transport (no in-session WS
@@ -658,7 +665,9 @@ export class StreamView {
                 // Coming back to the tab may leave the pointer over the picture
                 // without a mousemove — re-hide the local cursor (double cursor).
                 this._refreshLocalCursorOnFocus();
-                const header = document.querySelector('.stream-header');
+                const header = /** @type {HTMLElement} */ (
+                    document.querySelector('.stream-header')
+                );
                 if (header) {
                     // Toggle will-change to force layer re-compositing
                     header.style.willChange = 'transform, opacity';
@@ -1005,8 +1014,8 @@ export class StreamView {
         // overlay (trackpad model), not just the canvas/video rectangle.
         this.streamEl = el;
 
-        this.canvasArea = el.querySelector('.stream-canvas-area');
-        this.canvas = el.querySelector('#stream-canvas');
+        this.canvasArea = /** @type {HTMLElement} */ (el.querySelector('.stream-canvas-area'));
+        this.canvas = /** @type {HTMLCanvasElement} */ (el.querySelector('#stream-canvas'));
         // Default GPU-accelerated 2D context — matches Mac Chrome behavior.
         // Mac Chrome handles NV12→RGBA correctly via Metal; Windows Chrome
         // should do the same via D3D11.
@@ -1025,7 +1034,7 @@ export class StreamView {
         this._setupOutputSizeObserver();
         this._setupMediaRectInvalidation();
         // Video element for native RTP media track mode (webrtc-media)
-        this.videoEl = el.querySelector('#stream-video');
+        this.videoEl = /** @type {HTMLVideoElement} */ (el.querySelector('#stream-video'));
         // The video never receives pointer/touch events directly: input is
         // handled by the overlay (touch) and canvas (mouse). This also blocks
         // iOS gestures that would drag or zoom the <video> element.
@@ -1048,7 +1057,7 @@ export class StreamView {
         // decodes Opus (jitter buffer + FEC + PLC) and plays it through this
         // <audio> element. Wired before setupWebRtc() → connect() so ontrack finds
         // it. Unused on WSS (which decodes via the AudioPipeline).
-        this.audioEl = el.querySelector('#stream-audio');
+        this.audioEl = /** @type {HTMLAudioElement} */ (el.querySelector('#stream-audio'));
         if (this.audioEl) {
             this.audioEl.style.display = 'none';
             // Standby: muted until promote (no double audio with the live view).
@@ -1062,14 +1071,15 @@ export class StreamView {
         // has pointer-events:none, so without this layer the mouse was dead.
         // Sitting on top of <video> also fixes iOS Safari swallowing touches
         // over the video element.
-        this.inputEl = el.querySelector('#stream-input-layer');
+        this.inputEl = /** @type {HTMLElement} */ (el.querySelector('#stream-input-layer'));
         this.inputEl.style.touchAction = 'none';
 
         // statusEl kept for backward compatibility — setStatus() is now a no-op
         this.statusEl = null;
-        this.hintEl = el.querySelector('#stream-hint');
+        this.hintEl = /** @type {HTMLElement} */ (el.querySelector('#stream-hint'));
 
-        el.querySelector('#btn-stream-quit').onclick = () => this._handleManualQuit();
+        /** @type {HTMLElement} */ (el.querySelector('#btn-stream-quit')).onclick = () =>
+            this._handleManualQuit();
 
         // ── Streaming stats overlay (top-center card, elegant styling) ─────
         this._overlayEl = document.createElement('div');
@@ -1095,7 +1105,7 @@ export class StreamView {
         this._makeStatsDraggable(this._overlayEl);
         // × hides the stats card for the rest of the session.
         this._overlayEl.addEventListener('click', (e) => {
-            if (!e.target.closest('.overlay-close-btn')) return;
+            if (!(/** @type {Element} */ (e.target).closest('.overlay-close-btn'))) return;
             e.stopPropagation();
             e.preventDefault();
             this._closeOverlayEl(this._overlayEl);
@@ -1116,7 +1126,7 @@ export class StreamView {
             this._makeStatsDraggable(this._immersiveOverlay);
             // × hides the reminder for the rest of the session.
             this._immersiveOverlay.addEventListener('click', (e) => {
-                if (!e.target.closest('.overlay-close-btn')) return;
+                if (!(/** @type {Element} */ (e.target).closest('.overlay-close-btn'))) return;
                 e.stopPropagation();
                 e.preventDefault();
                 this._closeOverlayEl(this._immersiveOverlay);
@@ -1221,7 +1231,7 @@ export class StreamView {
         // view's teardown removes its whole #stream-view root — carrying the
         // now-active view's misplaced keyboard/fullscreen buttons away with it
         // (two keyboards during the swap, then none until a manual restart).
-        const header = this._rootEl.querySelector('.stream-header');
+        const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
         if (header) {
             // Insert before the quit button (first child)
             header.insertBefore(this._mobileFsBtn, header.firstChild);
@@ -2704,7 +2714,9 @@ export class StreamView {
                 console.warn('[StreamView] Canvas2D context lost, recreating...');
                 this._renderer.recreateContext();
                 // Force re-composite all overlay layers by briefly toggling transform
-                const header = document.querySelector('.stream-header');
+                const header = /** @type {HTMLElement} */ (
+                    document.querySelector('.stream-header')
+                );
                 if (header) {
                     header.style.transform = 'translateZ(0)';
                     requestAnimationFrame(() => {
@@ -2836,6 +2848,7 @@ export class StreamView {
         if (this._mediaRectListeners) return;
         const onChange = () => this._invalidateMediaRect();
         const opts = { passive: true, capture: true };
+        /** @type {Array<[EventTarget, string, AddEventListenerOptions|undefined]>} */
         const targets = [
             [window, 'resize', undefined],
             [window, 'orientationchange', undefined],
@@ -3133,7 +3146,9 @@ export class StreamView {
             if (!peer || typeof peer.getStats !== 'function') return;
             try {
                 const report = await peer.getStats();
+                /** @type {RTCInboundRtpStreamStats|null} */
                 let inbound = null;
+                /** @type {RTCIceCandidatePairStats|null} */
                 let candidatePair = null;
                 report.forEach((s) => {
                     if (s.type === 'inbound-rtp' && s.kind === 'video') inbound = s;
@@ -5464,8 +5479,8 @@ export class StreamView {
         let iw = 0,
             ih = 0;
         if (this._videoIsDisplay() && disp) {
-            iw = disp.videoWidth;
-            ih = disp.videoHeight;
+            iw = /** @type {HTMLVideoElement} */ (disp).videoWidth;
+            ih = /** @type {HTMLVideoElement} */ (disp).videoHeight;
         } else if (this.canvas) {
             iw = this.canvas.width;
             ih = this.canvas.height;

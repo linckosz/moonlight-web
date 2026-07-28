@@ -34,6 +34,18 @@ import { VideoRenderer } from './VideoRenderer.js';
 import { CODEC_HEVC } from '../../util/Mp4Muxer.js';
 
 export class Canvas2DRenderer extends VideoRenderer {
+    constructor() {
+        super();
+        // Declared here so the instance shape is explicit; `create()` is the
+        // only construction path and overwrites all of them before returning.
+        /** @type {string} 'h264' | 'hevc' | 'av1'. */
+        this.videoCodec = '';
+        /** @type {boolean} Gate for the NV12 'copy' path. */
+        this.isChromeWindowsHevc = false;
+        /** @type {number} Frames drawn — drives the one-shot warm-up logging. */
+        this._rendered = 0;
+    }
+
     /**
      * @param {HTMLCanvasElement|OffscreenCanvas} canvas
      * @param {object} opts
