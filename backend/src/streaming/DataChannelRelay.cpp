@@ -18,6 +18,7 @@
 #include "DataChannelRelay.h"
 #include "ClipboardBridge.h"
 #include "MoonlightShim.h"
+#include "ExitNotice.h"
 
 extern "C" {
 #include "Limelight.h"
@@ -1302,14 +1303,16 @@ void DataChannelRelay::notifyClientRevoked()
 
 void DataChannelRelay::sendExitNotice(const char* type)
 {
-    // Best-effort control message on the input DC, sent before stop() closes it,
-    // so the browser can show a graceful exit instead of a generic disconnect.
-    // Reliable/ordered channel → flushed ahead of the close.
+    // Control message on the input DC, sent before stop() closes it, so the
+    // browser can show a graceful exit instead of a generic disconnect. The
+    // channel being reliable/ordered is not enough on its own: send() only
+    // queues into SCTP, and the close() that follows may discard it — hence the
+    // synchronous flush (see ExitNotice.h).
     if (!m_InputDc || m_Stopping.load()) return;
     QByteArray json = QJsonDocument(QJsonObject{{"type", type}}).toJson(QJsonDocument::Compact);
-    try {
-        m_InputDc->send(std::string(json.constData(), json.size()));
-    } catch (...) {}
+    if (!exitnotice::sendAndFlush(m_InputDc, std::string(json.constData(), json.size()))) {
+        qWarning() << "[DataChannelRelay] Exit notice" << type << "not flushed before teardown";
+    }
 }
 
 void DataChannelRelay::stop()

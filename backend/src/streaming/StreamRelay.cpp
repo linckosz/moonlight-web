@@ -116,20 +116,27 @@ bool StreamRelay::start()
 
 void StreamRelay::notifyClientTakenOver()
 {
-    // Best-effort "taken over" notice over the WS before stop() closes it.
-    if (!m_WsClient || m_Stopping) return;
-    QJsonObject obj{{"type", "takeover"}};
-    m_WsClient->sendTextMessage(
-        QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+    sendExitNotice("takeover");
 }
 
 void StreamRelay::notifyClientRevoked()
 {
-    // Best-effort "access revoked" notice over the WS before stop() closes it.
+    sendExitNotice("revoked");
+}
+
+void StreamRelay::sendExitNotice(const char* type)
+{
+    // Exit notice over the WS before stop() closes it, so the browser can show
+    // a graceful exit instead of a generic disconnect. sendTextMessage() only
+    // queues into the socket's write buffer, and stop() closes right after —
+    // flush() hands the bytes to the OS, which then delivers them ahead of the
+    // TCP close. (The DataChannel relays need a stronger guarantee; see
+    // ExitNotice.h.)
     if (!m_WsClient || m_Stopping) return;
-    QJsonObject obj{{"type", "revoked"}};
+    QJsonObject obj{{"type", type}};
     m_WsClient->sendTextMessage(
         QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+    m_WsClient->flush();
 }
 
 void StreamRelay::stop()

@@ -18,6 +18,7 @@
 #include "MediaTrackRelay.h"
 #include "ClipboardBridge.h"
 #include "MoonlightShim.h"
+#include "ExitNotice.h"
 
 extern "C" {
 #include "Limelight.h"
@@ -770,12 +771,15 @@ void MediaTrackRelay::notifyClientRevoked()
 
 void MediaTrackRelay::sendExitNotice(const char* type)
 {
-    // Best-effort exit notice on the input DC before stop() closes it.
+    // Exit notice on the input DC before stop() closes it, so the browser can
+    // show a graceful exit instead of a generic disconnect. Flushed
+    // synchronously: stop() follows immediately and its close() would otherwise
+    // be free to discard the still-queued message (see ExitNotice.h).
     if (!m_InputDc || m_Stopping.load()) return;
     QByteArray json = QJsonDocument(QJsonObject{{"type", type}}).toJson(QJsonDocument::Compact);
-    try {
-        m_InputDc->send(std::string(json.constData(), json.size()));
-    } catch (...) {}
+    if (!exitnotice::sendAndFlush(m_InputDc, std::string(json.constData(), json.size()))) {
+        qWarning() << "[MediaTrackRelay] Exit notice" << type << "not flushed before teardown";
+    }
 }
 
 void MediaTrackRelay::stop()
