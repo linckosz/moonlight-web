@@ -30,7 +30,7 @@ frontend/
 │   │   ├── audio-decode-worker.js / opusWasm.js  # WASM Opus fallback decode path
 │   │   └── iosAudioUnlock.js   # iOS silent-switch workaround (looping silent <audio>)
 │   ├── stream/
-│   │   ├── VideoDecodeWorker.js# opt-in OffscreenCanvas decode+render worker (mw_video_worker=1)
+│   │   ├── VideoDecodeWorker.js# OffscreenCanvas decode+render worker (video_worker: auto|on|off)
 │   │   ├── JitterController.js # adaptive jitterBufferTarget (webrtc-media), AIMD control law
 │   │   ├── GamepadManager.js   # Gamepad API → input DC (standard mapping, rumble)
 │   │   └── renderers/          # VideoRenderer base + WebGpu / Canvas2D / VideoElement + factory
@@ -42,10 +42,11 @@ frontend/
 │   │   ├── PairDialog.js / Toast.js / icons.js
 │   ├── models/                 # Host.js, App.js
 │   ├── util/                   # Mp4Muxer (NAL/avcC/hvcC/codec strings), Av1Utils (OBU parse),
-│   │                           # SdpUtils (forceOpusStereo), BrowserDetect, VersionGuard, escapeHtml
+│   │                           # SdpUtils (forceOpusStereo), AutoBitrate (recommended kbps),
+│   │                           # BrowserDetect, VersionGuard, escapeHtml
 │   ├── i18n/i18n.js            # homemade runtime i18n (en/fr/zh, Tolgee-compatible JSON)
 │   └── vendor/opus-decoder.min.js
-├── locales/{en,fr,zh}.json     # ~279 keys, nested namespaces
+├── locales/{en,fr,zh}.json     # ~430 keys, nested namespaces
 ├── test/                       # Vitest suites (jsdom) for the pure-logic modules
 └── package.json                # dev tooling only (prettier, eslint, vitest, typescript)
 ```
@@ -69,7 +70,8 @@ Auth flow: `LoginView` is shown when the backend answers 401 (PIN entry or certi
 `ui/StreamView.js` owns the whole in-stream experience:
 
 - **Transport client** — instantiates `WebRtcDataChannel` or `WebRtcMedia` per the `transport_chain` echoed by `/start`, and walks the chain (relaunch with `transport_index+1`) when a transport fails to establish. WSS mode reuses the DC framing over one socket.
-- **Decode** — WebCodecs `VideoDecoder` fed Annex-B access units; `Mp4Muxer.js` extracts SPS/PPS(/VPS), builds `avcC`/`hvcC` descriptions and codec strings; `Av1Utils.js` does the AV1 sequence-header equivalent. An opt-in worker (`mw_video_worker=1`) moves decode+render to an OffscreenCanvas worker.
+- **Two live views at once** — `app.js` owns a second `StreamView` (the standby stream slot) during a **seamless quality transition**: a quality/codec/transport change launches the other slot, and the display, input and audio are handed over on its first decoded frame, never through a loader. The outgoing view is retired with `quit({retire:true})` so the shared Sunshine app survives ([Streaming §5.6](05-Streaming-and-Transports.md#56-session-lifecycle--teardown-discipline)).
+- **Decode** — WebCodecs `VideoDecoder` fed Annex-B access units; `Mp4Muxer.js` extracts SPS/PPS(/VPS), builds `avcC`/`hvcC` descriptions and codec strings; `Av1Utils.js` does the AV1 sequence-header equivalent. Decode+render move to an OffscreenCanvas worker per the `video_worker` setting (`auto` = heuristic, desktop only).
 - **Render** — via the renderer abstraction (next section), sized with HiDPI awareness, fullscreen through `StreamViewFullscreen` (header button + CSS fallback for iOS).
 - **Input** — keyboard (`StreamViewKeyboard`: Escape forwarded as a key; shortcuts on `Ctrl/Cmd+Alt+Shift` combos), mouse (pointer-lock "gaming mode" vs absolute; `_mouseFocused` model), touch (`StreamViewTouch`: trackpad model by default — 1 finger moves the cursor, 2 scroll; **touch-screen mode** instead places the cursor where you touch and turns the 1-finger drag into an all-directions scroll, long press still grabs for drag & hold), gamepads (`GamepadManager`, polled per frame, change-only snapshots, rumble feedback), virtual keyboard on mobile (input-event diffing with a sentinel — the only reliable capture across iOS/Gboard), clipboard `paste` events.
 - **Stats overlay** — FPS, bitrate, decode/render timings, RTT; **latency is displayed as a sum of measured legs** (host processing + ENet RTT/2 + client pipeline per frame) — never a cross-machine clock offset (which freezes on the offset error).

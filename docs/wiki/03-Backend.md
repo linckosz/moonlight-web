@@ -21,7 +21,7 @@ The backend is a single windowless executable (`MoonlightWeb` / `MoonlightWeb.ex
 | | `NvPairingManager`, `IdentityManager` | GameStream pairing (challenge-response) + persistent RSA client identity |
 | | `SunshineInstaller`, `SunshineRestClient` | On-demand Sunshine install; REST pairing (`/api/pin`) for the wizard. Sunshine liveness is probed on **port 47989** (pgrep is unreliable on macOS). |
 | `src/streaming/` | see [§3.3](#33-streaming-layer) | The streaming bridge |
-| `src/network/` | `InternetAccessManager`, `PdnsClient`, `StunClient`, `UPNPClient`, `AcmeClient`, `GeoIpService`, `UpdateChecker` | Internet access orchestration (see [§3.4](#34-internet-access)) |
+| `src/network/` | `InternetAccessManager`, `PdnsClient`, `StunClient`, `UPNPClient`, `AcmeClient`, `GeoIpService`, `UpdateChecker`, `SelfUpdater` | Internet access orchestration (see [§3.4](#34-internet-access)); update check + unattended self-update (see [Installers §9.4](09-Installers-and-Packaging.md#94-shared-runtime-behaviors)) |
 | `src/common/` | `Logger`, `CrashHandler`, `Types.h`, `MacActivity` | File logging (Qt messages captured via `qInstallMessageHandler`), Windows minidumps, shared HTTP types, macOS activity assertions |
 | `TrayManager`, `Autostart` | | Tray icon + login-item/autostart registration (exit code 0 = voluntary quit, supervisors don't restart) |
 
@@ -31,7 +31,7 @@ The backend is a single windowless executable (`MoonlightWeb` / `MoonlightWeb.ex
 
 - **Two listeners**: plain HTTP (redirects to HTTPS) and HTTPS. An optional **secondary HTTPS listener** exists for *port parity*: when another instance behind the same NAT owns external :443, this instance adds a listener on its deterministic fallback port for the public domain while the primary keeps serving localhost/LAN (so an open admin page never loses its origin).
 - **`Connection: close`** after every response — this is why `ConnectionGuard`'s flood threshold is generous (a single page load is dozens of connections).
-- **WebSocket upgrades** are detected and raw-proxied to internal WS servers: signaling (48001), stream relay (48002), control channel (48003). The proxy cleanup lambda uses a `shared_ptr` guard (a `bool*` guard historically caused a use-after-free during `~QSslSocket` on macOS).
+- **WebSocket upgrades** are detected and raw-proxied to internal WS servers: signaling (48001), stream relay (48002), control channel (48003), plus the second stream slot (`/ws1` → 48011, `/ws1/stream` → 48012). The proxy cleanup lambda uses a `shared_ptr` guard (a `bool*` guard historically caused a use-after-free during `~QSslSocket` on macOS).
 - **Async routes**: handlers may take a `ResponseCallback` and answer later (30 s timeout); sockets pending an async answer are tracked in `m_PendingAsyncSockets`.
 - **Auth enforcement**: every `/api/*` request except `health`, `server/hostname` and `auth/*` requires localhost or a valid `mw_session` cookie; `/api/admin/*` additionally requires localhost (or a host session). 401s are reported to `ConnectionGuard`.
 
@@ -41,6 +41,7 @@ The backend is a single windowless executable (`MoonlightWeb` / `MoonlightWeb.ex
 
 | Class | Role |
 |---|---|
+| `StreamWorkerHost` + `worker/StreamWorkerMain` | Parent-side handle and child-side entry point for one `--stream-worker` process (JSON lines over stdin/stdout). Everything below runs **inside that child**; the parent keeps two slots alive (live + standby) — see [Streaming §5.6](05-Streaming-and-Transports.md#56-session-lifecycle--teardown-discipline). |
 | `StreamSession` (`Session.cpp`) | Ephemeral orchestrator for one `/start` request: launches/resumes the app on Sunshine (per-browser `uniqueid`, `s_ActiveUniqueIds` registry decides launch-vs-resume), builds the `StreamConfig`, creates the shim + the relay for the chosen transport, answers the HTTP request with `{ws_url, transport_chain, transport_index, negotiated codec…}`, then self-deletes once streaming runs. AV1 is force-falled-back to H.264 here when needed. |
 | `MoonlightShim` | The bridge into `moonlight-common-c` (`LiStartConnection` + decoder/audio/connection callbacks). Receives decoded-protocol H.264/HEVC/AV1 access units and Opus packets on moonlight's threads and hands them to the active relay. `stopConnection()` must always run **before** relay destruction (UAF otherwise). |
 | `SignalingServer` | Per-session WebSocket server for SDP/ICE. Only advertises the private LAN ICE candidate to clients detected as local (never leaks the LAN IP to internet peers). |
@@ -54,7 +55,7 @@ The backend is a single windowless executable (`MoonlightWeb` / `MoonlightWeb.ex
 | `ClipboardBridge` | Bidirectional text clipboard sync (gated to host == backend machine). |
 | `StreamConfig` | Width/height/fps/bitrate/codec-mask/HDR/4:4:4 config passed to moonlight-common-c. |
 
-Congestion handling (mobile networks): a **degradation ladder** reduces bitrate by −30%, then switches transport family, then caps at 60 fps (floor 2 Mbps), session-only — combined with exponential IDR backoff on both sides. This was the fix for the "4G IDR spiral".
+Congestion handling (mobile networks) is **frontend-driven** (`app.js`), session-only — the user's stored settings are never touched — and combined with exponential IDR backoff on both sides (the fix for the "4G IDR spiral"). The **degradation ladder** (15 s minimum between rungs): every rung cuts the bitrate (−50% on the first, −30% after, floor 2 Mbps) and, while above 720p, also drops the resolution one rung and auto-enables SGSR upscaling so the drop stays discreet; then forces `webrtc-media-udp`; then caps at 60 fps; when every knob is at its floor, a plain transport restart. An **automatic upgrade** walks the same ladder back up (one knob per step: fps → transport → resolution → bitrate) after ~75 s without a congestion signal, with the stable period doubling (capped at 10 min) each time an upgrade flaps. Each step is applied through the **seamless standby relaunch** ([§5.6](05-Streaming-and-Transports.md#56-session-lifecycle--teardown-discipline)), so the quality change is not a visible reconnection.
 
 ## 3.4 Internet access
 
@@ -72,7 +73,7 @@ Congestion handling (mobile networks): a **degradation ladder** reduces bitrate 
 
 1. Qt app + icon, message handler → `Logger`, `CrashHandler::install` (Windows minidumps).
 2. `loadEnvFile()` (`.env` next to exe, else project root; supports multi-line PEM values) then `applyEmbeddedEnvDefaults()` (CI-baked `MW_*` fallbacks).
-3. CLI parse (`--port`, `--log`, `--ws-port`, `--autostart`).
+3. CLI parse (`--port`, `--log`, `--ws-port`, `--autostart`, `--stream-worker` — the last one re-enters as a stream child process and skips everything below).
 4. **Force Qt TLS backend to OpenSSL** (Windows Schannel can't import ACME PEM keys → would serve the self-signed cert on the public domain).
 5. `AppSettings` + `seedDocumentedDefaults()`; **single-instance `QLockFile`** — a second launch asks the running instance to focus the admin page (`/api/local/focus`) and exits 0.
 6. `HttpServer` + domain/cert config; `ComputerManager.init()`; `IdentityManager` (RSA identity); eager OpenSSL init (avoids a libdatachannel DTLS init race).
@@ -90,6 +91,7 @@ All under `QStandardPaths::AppDataLocation` (e.g. `%APPDATA%\MoonlightWeb\Moonli
 | `settings.json` | All server settings — see [Settings Reference](07-Settings-Reference.md) |
 | `sessions.json` | Persisted auth sessions (SHA-256 token hashes only) |
 | `logs/moonlightweb.log` | Rolling log (all Qt messages captured) |
+| `logs/moonlightweb-worker-<pid>.log` | One per `--stream-worker` child (a shared file would interleave and race on rotation) |
 | `crashes/*.dmp` | Windows minidumps |
 | Internet-access audit log (JSONL) | One entry per DNS A-record registration, with consent record |
 | ACME artifacts (`letsencrypt/…`) | Issued cert/key files referenced from `settings.json` |

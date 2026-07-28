@@ -48,7 +48,6 @@ Key mechanics (all present in the code — regressions here are the most expensi
 - **Backpressure everywhere**: 256 KB DC high-watermark (keyframes exempt), frontend consults `decodeQueueSize` before `decode()`, bounded worker→main signal queue (`m_PendingVideoFrames`, decremented on consume), WebGPU `draw()` awaits `onSubmittedWorkDone()`.
 - **webrtc-media specifics**: no browser PLI reaches the backend, so a **proactive IDR every 250 ms** runs until the client confirms; RTP timestamps are derived from real capture times (a synthetic 60 fps clock broke frame pacing); packets are sent from the capture thread; `playoutDelayHint`/`jitterBufferTarget` is set on the `RTCRtpReceiver` (not the element), driven adaptively by `JitterController` (AIMD; a non-zero target also re-arms backend NACK).
 - **Codec bootstrap**: SPS/PPS(/VPS) are parsed browser-side (`Mp4Muxer.js` / `Av1Utils.js`) to build exact codec strings for `VideoDecoder.configure`; 4:4:4 chroma is opt-in and only offered for profiles the selected codec/browser advertises via the codec masks.
-- **Debug**: `MW_FRAME_DUMP=1` dumps raw frames on both WS and WebRTC paths.
 
 ### Why canvas *and* `<video>`?
 
@@ -89,7 +88,28 @@ Browser events (kbd/mouse/touch/gamepad/clipboard)
 
 ## 5.6 Session lifecycle & teardown discipline
 
-Ordering rules that prevent whole bug classes (crashes, 504s, zombie sessions):
+### Stream worker processes & the two slots
+
+`stream_worker_enabled` (default **on**) runs every session in a `MoonlightWeb --stream-worker` **child process** (`StreamWorkerHost` parent-side, `worker/StreamWorkerMain.cpp` child-side; JSON lines over stdin/stdout). Since `moonlight-common-c` is process-global, one process = one session — so child processes are what buy **two concurrent slots** (plus crash isolation: a relay crash no longer takes the web server down).
+
+| Slot | Signaling / relay ports | Browser path | Role |
+|---|---|---|---|
+| 0 | 48001 / 48002 | `/ws`, `/ws/stream` | The live stream. |
+| 1 | 48011 / 48012 | `/ws1`, `/ws1/stream` | The **standby** leg of seamless quality switching. |
+
+**Seamless switching** (quality step, HDR/codec change, congestion degradation): the frontend launches the *other* slot with `{standby:true, session_slot}` and its own derived `client_uniqueid`, keeps the live stream playing, and swaps the display only on the standby's **first decoded frame** — the user never sees a loader. A standby launch never takes over slot 0; it joins the already-running Sunshine app (`preferResume`).
+
+Rules specific to the dual path:
+
+- **A standby launch is the capability probe.** Hosts that refuse a second concurrent session are remembered per host (`dual_supported:false` / `status:"dual_unavailable"` in the `/start` response) and the frontend reverts to the legacy relaunch. Heuristic backstop: slot 0 dying within ~3 s of a standby launch means the host took over instead of adding a session.
+- **Always retire, never plain-quit, when a twin stream exists.** The frontend's `quit({retire:true})` sends `keep_host_session:true`, which disconnects the leg *without* a Sunshine `/cancel`. Both legs share one Sunshine app: a `/cancel` kills the surviving leg too and cascades into `Failed to decrypt RTSP` on it. This applies to the standby swap **and** to the legacy relaunch path.
+- `/quit` with `session_slot` tears down that slot only; without it, every slot owned by the caller's `client_uniqueid` (legacy semantics).
+- The parent tracks which uniqueids still have a live Sunshine app (workers are fresh processes with no in-process resume hint), so a relaunch goes straight to `/resume` — Sunshine rejects `/launch` while an app is running.
+- Set `stream_worker_enabled:false` to fall back to the legacy in-process, single-stream mode; the ordering rules below then apply in-process and are also what the worker executes internally.
+
+### Ordering rules
+
+These prevent whole bug classes (crashes, 504s, zombie sessions):
 
 1. Frontend quits by calling `webrtc.close()` **before** HTTP `/quit` (a `_stopping` guard silences `onerror`; `close()` uses its own `_closed` guard).
 2. Backend `/quit` and all teardown paths stop the **shim first** (`stopConnection()` — moonlight stops calling back), then `relay->stop()`, then `deleteLater()`.
