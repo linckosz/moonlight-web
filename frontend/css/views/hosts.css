@@ -58,12 +58,42 @@
     background-color: var(--border-1);
     border-radius: 2px;
 }
+/* No width transition: the width is eased frame by frame in HostListView, and a
+   transition on top of that would only add lag. The sheen carries the "still
+   working" signal through the long install, where the easing crawls. */
 .update-banner-progress-fill {
+    position: relative;
     display: block;
     height: 100%;
+    overflow: hidden;
     background-color: var(--accent-1);
     border-radius: 2px;
-    transition: width 0.4s ease-out;
+    will-change: width;
+}
+.update-banner-progress-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, 0.45) 50%,
+        transparent 100%
+    );
+    animation: update-progress-sheen 1.6s ease-in-out infinite;
+}
+@keyframes update-progress-sheen {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(100%);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .update-banner-progress-fill::after {
+        animation: none;
+    }
 }
 .update-banner-notes {
     font-size: var(--fs-xs);

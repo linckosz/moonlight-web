@@ -35,6 +35,32 @@ import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 
+/**
+ * Update progress is driven by a local animation, not by the poll samples.
+ *
+ * The host reports a figure every ~900 ms at best, and stops reporting at all
+ * the moment the installer kills it — a bar painted straight from those samples
+ * reads as "jump, jump, freeze". Instead each phase owns a slice of the bar and
+ * eases towards its ceiling without ever reaching it, so the bar is always
+ * moving; a figure coming from the host only ever pushes it forward.
+ *
+ * `tau` is the exponential time constant in seconds: ~63 % of the remaining
+ * distance to the ceiling is covered in that time.
+ */
+const UPDATE_PHASES = {
+    // Seconds on any usable link — a small slice, quickly filled.
+    downloading: { ceiling: 30, tau: 4 },
+    // The host flips to `restarting` as soon as it has spawned the installer,
+    // but it is the install that is actually running (and it still answers us),
+    // so both share one slow budget.
+    installing: { ceiling: 90, tau: 18 },
+    restarting: { ceiling: 90, tau: 18 },
+    // Host gone: nothing left to poll but /api/health. Slightly brisker — this
+    // is the tail, and the bar should read as nearly there when the new build
+    // answers and the page reloads.
+    finalizing: { ceiling: 99, tau: 16 },
+};
+
 export class HostListView {
     // Backoff before re-attempting an app-list fetch that failed transiently
     // (host momentarily unreachable — e.g. remote path warming up post-reboot).
@@ -99,6 +125,8 @@ export class HostListView {
                 if (banner) {
                     banner.hidden = true;
                     banner.innerHTML = '';
+                    this._stopProgressAnimation();
+                    this._progressFill = null;
                 }
                 return;
             }
@@ -268,6 +296,9 @@ export class HostListView {
         const version = this.esc(info.latest);
         const notes = info.release_url || '';
         const canUpdate = this._canSelfUpdate();
+        // Whatever this replaces, the progress row's nodes are gone with it.
+        this._stopProgressAnimation();
+        this._progressFill = null;
         banner.innerHTML = `
             <span class="update-banner-icon" aria-hidden="true">${Icons.power}</span>
             <span class="update-banner-text">${
@@ -298,30 +329,92 @@ export class HostListView {
 
     // Repaint the banner as a progress row. No dismiss button: the host is being
     // replaced under us, hiding the bar would only lose the user.
+    //
+    // The row is built once and then updated in place — re-rendering the markup
+    // on every poll would hand the animation a brand new element each time, with
+    // no width to continue from.
     _renderUpdateProgress(status) {
         const banner = this.container.querySelector('#update-banner');
         if (!banner) return;
-        const pct = Math.max(0, Math.min(100, status.percent || 0));
+
+        if (!this._progressFill || !banner.contains(this._progressFill)) {
+            banner.innerHTML = `
+                <span class="update-banner-icon" aria-hidden="true">${Icons.power}</span>
+                <span class="update-banner-text"></span>
+                <span class="update-banner-progress" role="progressbar"
+                      aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                    <span class="update-banner-progress-fill" style="width:0%"></span>
+                </span>
+            `;
+            this._progressTrack = banner.querySelector('.update-banner-progress');
+            this._progressFill = banner.querySelector('.update-banner-progress-fill');
+            this._progressLabel = banner.querySelector('.update-banner-text');
+            this._progressShown = 0;
+            this._progressFloor = 0;
+        }
+        banner.hidden = false;
+
         let label;
         if (status.requires_host_confirmation && status.state !== 'downloading')
             label = t('update.confirmOnHost');
         else if (status.state === 'downloading') label = t('update.downloading');
         else if (status.state === 'installing') label = t('update.installing');
         else label = t('update.restarting');
+        if (this._progressLabel.textContent !== label) this._progressLabel.textContent = label;
 
-        banner.innerHTML = `
-            <span class="update-banner-icon" aria-hidden="true">${Icons.power}</span>
-            <span class="update-banner-text">${label}</span>
-            <span class="update-banner-progress" role="progressbar"
-                  aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
-                <span class="update-banner-progress-fill" style="width:${pct}%"></span>
-            </span>
-        `;
-        banner.hidden = false;
+        this._progressPhase = UPDATE_PHASES[status.state] ? status.state : 'installing';
+        // The host's own figure is a floor, never a setpoint: it may be stale by
+        // up to a poll, and it must not drag the bar backwards.
+        const pct = Math.max(0, Math.min(100, status.percent || 0));
+        if (pct > this._progressFloor) this._progressFloor = pct;
+        this._startProgressAnimation();
+    }
+
+    // Ease the bar towards the ceiling of its phase, one frame at a time.
+    _startProgressAnimation() {
+        if (this._progressRaf) return;
+        this._progressAt = performance.now();
+        const step = () => {
+            this._progressRaf = null;
+            if (this._destroyed || !this._progressFill) return;
+            const now = performance.now();
+            // Clamp: a backgrounded tab stops firing frames, and the catch-up
+            // step on return should not slam the bar into its ceiling.
+            const dt = Math.min((now - this._progressAt) / 1000, 1);
+            this._progressAt = now;
+
+            const phase = UPDATE_PHASES[this._progressPhase] || UPDATE_PHASES.installing;
+            let value = this._progressShown;
+            // Catching up to a figure the host reported is still a slide, not a
+            // snap — the download typically lands whole in the very first poll.
+            if (value < this._progressFloor)
+                value += (this._progressFloor - value) * (1 - Math.exp(-dt / 0.6));
+            if (value < phase.ceiling)
+                value += (phase.ceiling - value) * (1 - Math.exp(-dt / phase.tau));
+            this._progressShown = Math.min(value, phase.ceiling);
+
+            this._paintProgress(this._progressShown);
+            this._progressRaf = requestAnimationFrame(step);
+        };
+        this._progressRaf = requestAnimationFrame(step);
+    }
+
+    _stopProgressAnimation() {
+        if (this._progressRaf) cancelAnimationFrame(this._progressRaf);
+        this._progressRaf = null;
+    }
+
+    _paintProgress(value) {
+        const pct = Math.max(0, Math.min(100, value));
+        this._progressFill.style.width = `${pct.toFixed(1)}%`;
+        if (this._progressTrack)
+            this._progressTrack.setAttribute('aria-valuenow', String(Math.round(pct)));
     }
 
     _renderUpdateFailed(message) {
         this._updateBusy = false;
+        this._stopProgressAnimation();
+        this._progressFill = null;
         const banner = this.container.querySelector('#update-banner');
         if (!banner) return;
         banner.innerHTML = `
@@ -339,6 +432,9 @@ export class HostListView {
     async _startUpdate() {
         if (this._updateBusy) return;
         this._updateBusy = true;
+        // Fresh bar even if a previous attempt failed halfway up.
+        this._stopProgressAnimation();
+        this._progressFill = null;
         this._renderUpdateProgress({ state: 'downloading', percent: 0 });
         try {
             await BackendClient.startUpdate();
@@ -397,7 +493,10 @@ export class HostListView {
         // Phase 2 — wait for the new build. Generous budget: a Windows install
         // plus the server rebinding its ports can take a couple of minutes, and
         // an elevation prompt on the host desktop may be waiting for someone.
-        this._renderUpdateProgress({ state: 'restarting', percent: 98 });
+        // Nothing reports progress any more, so the bar rides on its own easing
+        // from wherever phase 1 left it — no jump to a fixed 98 % that would
+        // then sit still for the whole restart.
+        this._renderUpdateProgress({ state: 'finalizing', percent: 0 });
         for (let i = 0; i < 200 && !this._destroyed; i++) {
             await sleep(3000);
             const health = await BackendClient.probeHealth();
@@ -407,6 +506,10 @@ export class HostListView {
             // silently look like the update did nothing.
             if (health && health.version && health.version !== info.current) {
                 localStorage.removeItem('mw_update_dismissed');
+                // Close the bar before the reload wipes it — the last thing seen
+                // should be a full bar, not one frozen at 96 %.
+                this._stopProgressAnimation();
+                if (this._progressFill) this._paintProgress(100);
                 location.reload();
                 return;
             }
@@ -439,6 +542,8 @@ export class HostListView {
         this._active = false;
         this._destroyed = true;
         this.stop();
+        this._stopProgressAnimation();
+        this._progressFill = null;
         if (this._clickHandler) {
             this.container.removeEventListener('click', this._clickHandler);
             this._clickHandler = null;
