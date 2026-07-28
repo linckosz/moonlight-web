@@ -361,23 +361,6 @@ void AppSettings::setHmacKey(const QByteArray& key)
     writeAll(obj);
 }
 
-// ── Transport preference ───────────────────────────────────────────────────────
-
-QString AppSettings::transport() const
-{
-    QJsonObject obj = readAll();
-    QString t = obj.value("transport").toString();
-    if (t.isEmpty()) return "webrtc"; // default
-    return t;
-}
-
-void AppSettings::setTransport(const QString& transport)
-{
-    QJsonObject obj = readAll();
-    obj["transport"] = transport;
-    writeAll(obj);
-}
-
 // ── UPnP NAT traversal ────────────────────────────────────────────────────────
 
 bool AppSettings::upnpEnabled() const

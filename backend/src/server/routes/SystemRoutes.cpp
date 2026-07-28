@@ -495,7 +495,6 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["gaming_mode"] = appSettings.gamingMode();
         obj["show_performance_stats"] = appSettings.showPerformanceStats();
         obj["upnp_enabled"] = appSettings.upnpEnabled();
-        obj["transport"] = appSettings.transport();
         obj["stun_server"] = appSettings.stunServer();
         obj["internet_access_enabled"] = appSettings.internetAccessEnabled();
         QString transportMode = appSettings.transportMode();

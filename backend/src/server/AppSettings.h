@@ -188,16 +188,6 @@ public:
     QString stunServer() const;
     void setStunServer(const QString& url);
 
-    // ── Transport preference ──────────────────────────────────────────────────
-    //
-    // Values stored in JSON: "webrtc" (default), "wss" (legacy StreamRelay)
-    //
-    // "webrtc": Uses WebRTC DataChannels via libdatachannel (default).
-    // "wss":    Uses the legacy WebSocket StreamRelay (for testing/diagnostics).
-
-    QString transport() const;
-    void setTransport(const QString& transport);
-
     // ── Internet Access ───────────────────────────────────────────────────────
 
     /// Whether Internet Access via PowerDNS is enabled.
