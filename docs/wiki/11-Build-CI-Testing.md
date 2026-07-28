@@ -35,7 +35,7 @@ Toolchain: CMake ≥ 3.21, Ninja, **Qt 6.11** (Core, Network, **WebSockets**), C
 
 ## 11.2 CI (`.github/workflows/ci.yml`)
 
-Gated pipeline — quality and tests **block** the packaging stage. Runs on every branch push (never on tags: `release.yml` owns those), on pull requests, and on manual dispatch.
+Gated pipeline — quality and tests **block** the packaging stage. Runs on **`v*` tags**, on pull requests, and on manual dispatch — **not on branch pushes**: an ordinary push spends no CI minutes, so installers for an untagged commit are a deliberate act (Actions → CI → *Run workflow* on that branch). A tag is the one automatic push trigger, because this pipeline is what publishes the release (`release.yml` has no tag trigger of its own — see 11.3).
 
 | Job | Runner | What |
 |---|---|---|
@@ -47,7 +47,7 @@ Gated pipeline — quality and tests **block** the packaging stage. Runs on ever
 
 There is **no compile-only build stage**: packaging compiles the same four targets and additionally exercises `cmake --install`, `windeployqt`, the Inno Setup script, linuxdeploy and `macdeployqt` — the parts a bare build never touches, and where breakage actually happens. To test any commit, open its run and download the `MoonlightWeb-windows-<arch>-v<version>` / `moonlightweb-linux-x64-v<version>` / `moonlightweb-macos-arm64-v<version>` artifact (GitHub serves each as a zip). Untagged versions read `<last v* tag>-<3-char sha>`, e.g. `0.2.0-a71`.
 
-`package` is skipped on `pull_request` for two reasons: a same-repo branch already got its installers from its own push, and a fork's PR token is read-only so the job's `contents: write` request would fail. Fork PRs still run quality + tests.
+`package` is skipped on `pull_request`: a fork's PR token is read-only, so the job's `contents: write` request would fail outright. Fork PRs still run quality + tests.
 
 CI-specific workarounds baked into the workflows: `aqtinstall` pinned to a master commit (Qt 6.11 layout change) + `py7zr 1.1.0`; macOS uses `clang_64`; Windows builds with **Ninja** (VS 18 generator issues); `gh` path fixes. `build-asan.yml` provides an AddressSanitizer build on demand.
 
@@ -55,9 +55,9 @@ CI-specific workarounds baked into the workflows: `aqtinstall` pinned to a maste
 
 ## 11.3 Release (`.github/workflows/release.yml`)
 
-Tag push, manual dispatch, or a `workflow_call` from CI → per-platform packaging:
+Manual dispatch or a `workflow_call` from CI → per-platform packaging. It has **no tag trigger**: a `v*` tag fires `ci.yml`, which validates the commit and then calls this workflow, so a release is always gated on green quality/tests and the packaging matrix runs exactly once (two tag-triggered runs would race to upload the same Release assets).
 
-- **setup** job computes the version (feeds `MW_VERSION`): the tag on a `v*` push, otherwise `<last v* tag>-<3-char sha>`. It also exports `pkg_version`, the same string with `-` → `.`, because rpm rejects dashes in `Version` — the Linux job uses that one throughout.
+- **setup** job computes the version (feeds `MW_VERSION`): the tag when the run's ref is a `v*` tag, otherwise `<last v* tag>-<3-char sha>`. It also exports `pkg_version`, the same string with `-` → `.`, because rpm rejects dashes in `Version` — the Linux job uses that one throughout.
 - Publishing to the GitHub Release only happens on a `refs/tags/` ref; every other run stops at the workflow artifacts.
 - **windows** (x64 + arm64): build → archive **PDB symbols** as an artifact → stage bundle → `windeployqt` + Qt OpenSSL TLS plugin + OpenSSL DLLs (vcpkg on arm64) → **Inno Setup** installer.
 - **linux**: build → security TNR (`ctest`) → linuxdeploy **AppDir** (+ Wayland plugins best-effort) → **AppImage** → `make-packages.sh` → **.deb + .rpm**.
