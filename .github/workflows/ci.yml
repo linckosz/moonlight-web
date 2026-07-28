@@ -200,7 +200,7 @@ jobs:
   # exact installer a v* tag would publish — Inno Setup .exe (Windows x64 +
   # ARM64), .deb/.rpm/.AppImage (Linux) and the guided .pkg (macOS), each
   # wrapped in a zip by upload-artifact. Untagged runs stamp
-  # <last tag>-<3-char sha> (e.g. 0.2.0-b7c) and publish nothing: the
+  # <last tag>-<3-char sha> (e.g. 0.2.1-b7c) and publish nothing: the
   # gh-release steps in release.yml are gated on refs/tags.
   #
   # Skipped on pull_request: a same-repo branch already got its installers from

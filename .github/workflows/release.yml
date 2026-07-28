@@ -10,7 +10,7 @@
 # CI (ci.yml) calls this same workflow on every push to main, so untagged
 # installers can be downloaded from the run's artifacts and tested before a tag
 # is cut. Only the version differs: a v* tag ships `1.2.3`, any other run ships
-# `<last tag>-<3-char sha>` (e.g. 0.2.0-b7c).
+# `<last tag>-<3-char sha>` (e.g. 0.2.1-b7c).
 name: release
 
 on:
@@ -82,20 +82,20 @@ jobs:
       # MW_VERSION baked into the binary, artifact names):
       #   • v* tag push  → the tag, verbatim minus the "v" (v1.2.3 → 1.2.3)
       #   • anywhere else (CI on main, manual dispatch) → last v* tag + the
-      #     3-char commit sha, e.g. 0.2.0-b7c, so a test installer says exactly
+      #     3-char commit sha, e.g. 0.2.1-b7c, so a test installer says exactly
       #     which commit it came from.
       - id: ver
         run: |
           if [ "$GITHUB_REF" != "${GITHUB_REF#refs/tags/v}" ]; then
             v="${GITHUB_REF_NAME#v}"
           else
-            tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.2.0)
+            tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.2.1)
             # cut, not `rev-parse --short=3`: git refuses to abbreviate below 4.
             v="${tag#v}-$(git rev-parse HEAD | cut -c1-3)"
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           # rpm rejects '-' in the Version field, so the Linux packages use a
-          # dotted variant (0.2.0-b7c → 0.2.0.b7c). Identical on a tag build.
+          # dotted variant (0.2.1-b7c → 0.2.1.b7c). Identical on a tag build.
           echo "pkg_version=${v//-/.}" >> "$GITHUB_OUTPUT"
           echo "Version: $v" >> "$GITHUB_STEP_SUMMARY"
 
