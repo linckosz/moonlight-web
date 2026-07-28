@@ -207,7 +207,6 @@ export class StreamViewTouch {
         if (!rect || !rect.width || !rect.height) return;
         const x = Math.round(Math.max(0, Math.min(clientX - rect.left, rect.width)));
         const y = Math.round(Math.max(0, Math.min(clientY - rect.top, rect.height)));
-        this._noteInputSend();
         this.webrtc.send({
             type: 'mousemove',
             x,
@@ -362,7 +361,6 @@ export class StreamViewTouch {
                 const dx = (touch.clientX - this._touchLastX) * sens;
                 const dy = (touch.clientY - this._touchLastY) * sens;
                 if (dx !== 0 || dy !== 0) {
-                    this._noteInputSend();
                     this.webrtc.send({
                         type: 'mousemove',
                         dx: Math.round(dx),
