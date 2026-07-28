@@ -12,17 +12,18 @@ An honest inventory of what remains, what constrains the design, and where the l
 |---|---|---|
 | Gamepad | **Phases 2–3**: non-standard controllers (wheels, HOTAS) per-device remapping, richer haptics | Phase 1 MVP shipped (standard mapping + rumble); ignoring non-standard pads is deliberate (`GamepadManager.js`) |
 | Video Enhancement | **C7 (optional)**: HDR-aware enhancement path (f16/compute pipeline) | C1–C6 complete & validated; blocked on the canvas-HDR limitation ([ch. 5](05-Streaming-and-Transports.md#53-hdr--support-and-limitations)) |
-| Frontend threading | OffscreenCanvas decode/render worker is **opt-in** (`mw_video_worker=1`) | Promote to default after broader device validation |
+| Frontend threading | OffscreenCanvas decode/render worker now defaults to `auto` (heuristic, desktop only); `video_worker: on\|off` forces it | Extend the heuristic to mobile after broader device validation |
 | Multi-instance NAT | Two instances behind one NAT coexist (deterministic fallback ports), but a "process dies" crash report in that setup remains to be root-caused | `upnp-multi-instance` follow-up |
 | Input | Clipboard sync and NumLock host-sync shipped but flagged "to validate E2E" on more device matrices | |
 | C++ quality tooling | clang-format + cppcheck gate exists; **clang-tidy is not yet a CI gate** (`run_clang_tidy.sh` is local-only) | |
+| TLS | `CertManager::renewWithLego()` still shells out to the external `lego` binary for a scanned cert under 14 days, and drops to a self-signed cert when it fails | Dead path since the native `AcmeClient` — either delete it or route it through `AcmeClient` |
 | DC frame ordering | The ordered-DC + FrameSender→IDR fix for stutters needs validation on iPhone/Wi-Fi matrices | |
 
 ## 13.2 Structural constraints (accept, don't fight)
 
 | Constraint | Consequence |
 |---|---|
-| **`moonlight-common-c` is a process-global singleton** | One stream per server process — hence take-over semantics, deferred starts, single-session backend. True multi-session would require multi-process relays. |
+| **`moonlight-common-c` is a process-global singleton** | One session **per process** — hence take-over semantics and deferred starts. Lifted to *two* concurrent slots by running each session in a `--stream-worker` child (which is what makes seamless quality switching possible); going beyond that is a matter of generalizing the slot table, not of architecture. |
 | **Browsers only** | Codec support is at the browser's mercy (HEVC/AV1 availability varies; MediaTrack path is H.264-only); no raw UDP from JS — everything rides WebRTC/WSS. |
 | **Canvas is SDR-referred** | Real HDR requires the `<video>` sink → HDR and WebGPU enhancement are mutually exclusive. Until browsers expose HDR canvas (WebGPU `rgba16float` + HDR compositing is still maturing), this stands. |
 | **The `/start` response precedes ICE** | The client must own transport fallback; the server can never know a transport failed. |
@@ -49,7 +50,8 @@ An honest inventory of what remains, what constrains the design, and where the l
 - Symbol upload + crash-report ingestion (currently: local minidumps + manual cdb symbolization).
 
 **Product**
-- Multi-session via per-stream relay processes (lifts the singleton constraint — the largest architectural change on the table).
+- Multi-session beyond the current two slots: the per-stream worker process shipped, so what remains is a variable-size slot table (ports, take-over rules, UI) instead of a hard-coded pair.
+- **Bring-your-own-domain is only half-supported**: `settings.json`'s `domain` is overwritten by the `MW_DOMAIN` sentinel at every boot, so a custom FQDN never reaches `CertManager`'s CN check and the entry points (tray, shortcut) keep advertising the local URL. Honouring a stored FQDN would make [§7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate) a first-class path instead of a documented workaround.
 - Host-side virtual display management (resolution matching without changing the host desktop).
 - More locales (the i18n runtime + Tolgee flow make this cheap; zh shipped recently).
 - Optional TURN relay fallback for networks where even ICE-TCP fails but WSS latency is unacceptable.

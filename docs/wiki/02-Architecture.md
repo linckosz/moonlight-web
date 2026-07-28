@@ -27,7 +27,7 @@ The MoonlightWeb server plays three roles at once:
 
 1. **Web server** — serves the frontend (static files) and a REST API over HTTPS.
 2. **GameStream client** — embeds `moonlight-common-c` and speaks NvHTTP/RTSP/RTP/ENet to Sunshine, exactly like moonlight-qt would.
-3. **Streaming bridge** — re-encapsulates the decoded-protocol media (H.264/HEVC/AV1 frames, Opus packets) and input into browser-reachable transports: WebRTC DataChannels, WebRTC RTP media tracks, or a WSS relay.
+3. **Streaming bridge** — re-encapsulates the decoded-protocol media (H.264/HEVC/AV1 frames, Opus packets) and input into browser-reachable transports: WebRTC DataChannels, WebRTC RTP media tracks, or a WSS relay. Each session actually runs in a **child process** (`--stream-worker`), which is what lets two of them coexist despite the `moonlight-common-c` singleton.
 
 The **DNS stack is decoupled**: it runs on a separate machine and only provides subdomain registration + the marketing site. MoonlightWeb talks to it through a REST API (`MW_PDNS_URL`/`MW_PDNS_TOKEN`).
 
@@ -41,6 +41,7 @@ The **DNS stack is decoupled**: it runs on a separate machine and only provides 
 | **WSS `/ws` (signaling)** | WebRTC SDP/ICE exchange, proxied by the HTTPS server to an internal signaling WebSocket server (default port 48001). The WS URL is always anchored on `window.location.host` (the page origin), never on a backend-computed host — this is what keeps non-default external ports working. |
 | **WebRTC PeerConnection** | The stream itself: video/audio/input DataChannels, or RTP media tracks (see [Streaming & Transports](05-Streaming-and-Transports.md)). |
 | **WSS `/ws/stream`** | Legacy/fallback full-stream relay (video+audio+input over one WebSocket) when WebRTC cannot connect. |
+| **WSS `/ws1`, `/ws1/stream`** | The same two surfaces for the **second stream slot** (internal 48011/48012) — the standby leg of seamless quality switching. |
 | **WSS `/ws/control`** | Tiny control channel every open tab keeps: used for single-tab dedup (a second app launch redirects an existing tab to `/admin` instead of opening a duplicate). |
 
 All WebSocket surfaces share the single HTTPS port: the HTTP server detects the `Upgrade` header and proxies the socket to the right internal WS server. One public port (443 by default) carries everything.
@@ -78,10 +79,10 @@ Browser                        MoonlightWeb                        Sunshine
 
 Key invariants (hard-won, do not regress):
 
-- **One stream at a time.** `moonlight-common-c` is a process-global singleton and the signaling port is fixed. A second browser launching does a **take-over**: the live client is notified (`{"type":"takeover"}`), its relay is torn down *without* cancelling the Sunshine session, and the newcomer `/resume`s it.
+- **One session per process, two slots per server.** `moonlight-common-c` is a process-global singleton and the signaling port is fixed, so each session runs in its own `--stream-worker` child process (`stream_worker_enabled`, default on) — slot 0 is the live stream, slot 1 the standby used for seamless quality switching. A second *browser* launching still does a **take-over**: the live client is notified (`{"type":"takeover"}`), its relay is torn down *without* cancelling the Sunshine session, and the newcomer `/resume`s it. Only a `standby:true` launch is allowed to add a session instead of replacing one.
 - **The response to `/start` is sent before ICE connects.** Connection failures are only observable client-side, so the **browser drives the transport fallback chain** by relaunching with `transport_index + 1`.
 - **Teardown is serialized.** A new session's `start()` is deferred until the previous relay graph is fully destroyed (`QObject::destroyed`), because the signaling port and the moonlight singleton are only freed then.
-- Sessions are keyed per-browser by a `client_uniqueid` (hex, localStorage) so one browser's quit/relaunch never cancels another client's Sunshine session, and a page reload `/resume`s its own session.
+- Sessions are keyed per-browser by a `client_uniqueid` (hex, from `mw_client_uniqueid` in localStorage) so one browser's quit/relaunch never cancels another client's Sunshine session, and a page reload `/resume`s its own session.
 
 ## 2.3 Technology stack & rationale
 
@@ -111,6 +112,7 @@ moonlight-web/
 │   │   ├── server/             # HTTP/HTTPS server, REST router, auth, settings, certs
 │   │   │   └── routes/         # AuthRoutes, HostRoutes, SystemRoutes
 │   │   ├── streaming/          # Session, relays (DC/media/WSS), shim, input, signaling
+│   │   │   └── worker/         # --stream-worker child-process entry point
 │   │   ├── network/            # InternetAccess: PDNS, STUN, UPnP, ACME, GeoIP, updates
 │   │   └── common/             # Logger, CrashHandler, shared types
 │   ├── tests/                  # Qt Test suites + coverage scripts

@@ -48,7 +48,8 @@ Per-browser preferences (stored in `localStorage`, with server defaults) are edi
 |:---:|:---:|
 | ![Stream settings](../screenshots/settings.png) | ![Advanced options (mobile)](../screenshots/advanced.png) |
 
-- **Bitrate** 1–150 Mbps or auto, **resolution** 720p–2160p or *Native Host*, **FPS** 15–240, **codec** auto/H.264/HEVC/AV1 (unsupported options greyed out live via `VideoDecoder.isConfigSupported`), **HDR**, **4:4:4 chroma**, aspect ratio, VSync, performance stats, gaming mode.
+- **Bitrate** 1–150 Mbps or auto (recommendation derived from resolution/FPS/HDR), **resolution** 720p–2160p or *Native Host*, **FPS** 15–240, **codec** auto/H.264/HEVC/AV1 (unsupported options greyed out live via `VideoDecoder.isConfigSupported`), **HDR**, **4:4:4 chroma**, aspect ratio, allow-tearing (off = VSync pacing), performance stats, gaming mode, touch sensitivity / touch-screen mode, and a mobile **Power Saving** mode that forces the lightest pipeline.
+- Changing quality mid-stream is **seamless**: a second stream is prepared in the background and the display switches on its first frame — no loader, no reconnection (the same mechanism the automatic congestion ladder uses).
 - **Video Enhancement** (WebGPU upscaling + sharpening) with algorithm choice (auto / SGSR / FSR1):
 
 ![Video Enhancement — 720p upscaled to 1440p](../screenshots/video_enhancement.gif)
@@ -64,7 +65,7 @@ The admin page controls:
 - **Access PIN** — generate/clear the 8-character PIN remote devices must enter once; each successful use auto-regenerates it.
 - **Sessions table** — every authenticated device with IP, geolocation (city/country), last-seen, streaming flag; sessions can be renamed or revoked (revoking a streaming session kills the stream immediately).
 - **Certificate authentication** — download/regenerate a token file that remote users can upload instead of typing a PIN.
-- **HTTP/HTTPS ports**, **transport mode** (auto or forced), and the **Internet Access** toggle.
+- **HTTPS port** (rebinds live; the HTTP port is displayed only), **transport mode** (auto or forced), and the **Internet Access** toggle.
 - **Sunshine management** — install/start/stop the local Sunshine when needed.
 
 ### Internet access
@@ -78,7 +79,7 @@ Enabling **Internet Access** (an explicit, logged opt-in) makes the server autom
 
 ![Admin page — Internet access & server config](../screenshots/admin.png)
 
-Known limitations are detected and reported in the UI: UPnP disabled (manual forwarding needed), CGNAT/double-NAT (port forwarding cannot work), port already mapped by another device, restrictive corporate CAs (bring your own domain/cert — see [Settings Reference](07-Settings-Reference.md)).
+Known limitations are detected and reported in the UI: UPnP disabled (manual forwarding needed), CGNAT/double-NAT (port forwarding cannot work), port already mapped by another device, restrictive corporate CAs. Prefer your own name and certificate (`stream.mywebsite.com`)? That path skips Internet Access entirely — see [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
 
 ### First-run setup
 

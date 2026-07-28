@@ -46,7 +46,7 @@ Two cooperating layers:
 
 - **LAN**: a self-signed certificate is generated on first run (browser shows a one-time warning — inherent to self-signed TLS).
 - **Internet Access**: a real certificate is issued via the native **ACMEv2 client** (`AcmeClient`) with the **DNS-01 challenge** through the PowerDNS API — ZeroSSL DV90 when EAB credentials are configured, Let's Encrypt otherwise. Renewal below 30 days remaining; `certificateChanged` performs a **hot TLS reload** (no restart, new connections get the new cert).
-- **Bring your own**: `domain` + `cert_pem`/`cert_key` in `settings.json` (file paths or env-var names); the CN must match the domain, lifecycle is the user's.
+- **Bring your own**: drop the certificate and its private key (PEM) in the data dir's `cert/` folder — `CertManager` scans it and loads the pair; renewal and lifecycle are the user's. Full procedure, with the DNS/router side: [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
 - Qt's TLS backend is forced to **OpenSSL** (Windows Schannel cannot import ACME PEM keys — it would silently fall back to the self-signed cert and break the public domain).
 - Historical ACME pitfalls fixed and guarded: finalize-URL handling, self-signed↔ACME key collision, `loadCertFiles` ordering, hot reload.
 
@@ -65,7 +65,7 @@ Enabling Internet Access is an **explicit opt-in** (checkbox unchecked everywher
 
 ## 6.8 Other hardening
 
-- `/api/admin/*` → 403 unless localhost/host-session; `/api/local/focus` → loopback only (`req.isLocal`).
+- `/api/admin/*` → 403 unless localhost/host-session; the internet/setup/system/local routes re-check the same `req.isLocal` predicate inside their handlers.
 - Input to Sunshine is encrypted (AES-128-GCM, per-session key) as per GameStream.
 - Private LAN ICE candidates are advertised **only to clients detected as local** — internet peers never learn the LAN IP.
 - Per-browser `client_uniqueid` values are sanitized to hex (max 32 chars) before reaching launch URLs.
