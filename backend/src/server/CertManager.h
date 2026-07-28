@@ -64,16 +64,25 @@ public:
     /// public config. Returns true on success.
     bool generateSelfSignedCert();
 
+    /// True when @p cert is valid for @p domain: the CN or any DNS subject
+    /// alternative name matches, wildcards included. SANs are what browsers
+    /// actually check and what a modern CA fills in — a cert whose CN is empty
+    /// (increasingly common) or set to another name in the SAN list must not be
+    /// rejected here. An empty @p domain matches anything.
+    static bool certMatchesDomain(const QSslCertificate& cert, const QString& domain);
+
 private:
     QString findCertDir();
     bool loadCertFiles(const QString& certDir);
     bool loadCertFilesExplicit(const QString& certFilePath);
     QString findCertByDomain(const QString& domain);
     QString extractCertCN(const QString& pemPath);
+    /// Load a PEM file and report whether its first certificate covers @p domain
+    /// (CN or SAN, see certMatchesDomain).
+    static bool certFileMatchesDomain(const QString& pemPath, const QString& domain);
     QString scanKeyInDir(const QString& dir) const;
     QSslKey loadKeyFromEnv() const;
     QString scanCertInDir(const QString& dir, const QString& domain = QString()) const;
-    bool renewWithLego();
 
     static QByteArray resolvePemValue(const QString& value);
 
@@ -84,5 +93,5 @@ private:
 
     QString m_CertPem; ///< env var name or file path
     QString m_CertKey; ///< env var name or file path
-    QString m_Domain;  ///< expected CN for cert matching
+    QString m_Domain;  ///< expected CN/SAN for cert matching
 };

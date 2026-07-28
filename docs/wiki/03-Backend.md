@@ -69,6 +69,8 @@ Congestion handling (mobile networks) is **frontend-driven** (`app.js`), session
 6. **UPnP mapping** with *port parity* (external == internal, always): if another device owns the preferred external port, a deterministic FNV-1a fallback port derived from `unique_id` is chosen and the HTTPS listener is extended to it via the rebind callback. Never evicts another device's mapping. CGNAT is detected and surfaced.
 7. Periodic checks every 5 min (IP change, DNS resolution ~24h, cert expiry); NAT-hairpin reachability is tested to decide whether the host's own browser can use the public URL.
 
+**Bring-your-own-domain**: when `domain` in `settings.json` holds a valid FQDN that is not the computed `{unique_id}.{MW_DOMAIN}`, the manager keeps it verbatim and runs in a **network-only mode** — steps 1/3/4/5 (identifiers, DNS, ACME) are skipped since the zone and the certificate belong to the user, while IP detection, UPnP and hairpin still run. Every DNS/ACME entry point (`createOrUpdateARecord`, `updateARecord`, `checkCertificate`, `issueCertificate`) refuses on its own, so no periodic task or manual `/api/internet/renew-cert` can reach a foreign zone. See [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
+
 ## 3.5 Startup sequence (`main.cpp`)
 
 1. Qt app + icon, message handler → `Logger`, `CrashHandler::install` (Windows minidumps).

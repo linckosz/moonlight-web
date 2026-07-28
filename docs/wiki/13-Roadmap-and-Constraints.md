@@ -16,7 +16,6 @@ An honest inventory of what remains, what constrains the design, and where the l
 | Multi-instance NAT | Two instances behind one NAT coexist (deterministic fallback ports), but a "process dies" crash report in that setup remains to be root-caused | `upnp-multi-instance` follow-up |
 | Input | Clipboard sync and NumLock host-sync shipped but flagged "to validate E2E" on more device matrices | |
 | C++ quality tooling | clang-format + cppcheck gate exists; **clang-tidy is not yet a CI gate** (`run_clang_tidy.sh` is local-only) | |
-| TLS | `CertManager::renewWithLego()` still shells out to the external `lego` binary for a scanned cert under 14 days, and drops to a self-signed cert when it fails | Dead path since the native `AcmeClient` — either delete it or route it through `AcmeClient` |
 | DC frame ordering | The ordered-DC + FrameSender→IDR fix for stutters needs validation on iPhone/Wi-Fi matrices | |
 
 ## 13.2 Structural constraints (accept, don't fight)
@@ -51,7 +50,7 @@ An honest inventory of what remains, what constrains the design, and where the l
 
 **Product**
 - Multi-session beyond the current two slots: the per-stream worker process shipped, so what remains is a variable-size slot table (ports, take-over rules, UI) instead of a hard-coded pair.
-- **Bring-your-own-domain is only half-supported**: `settings.json`'s `domain` is overwritten by the `MW_DOMAIN` sentinel at every boot, so a custom FQDN never reaches `CertManager`'s CN check and the entry points (tray, shortcut) keep advertising the local URL. Honouring a stored FQDN would make [§7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate) a first-class path instead of a documented workaround.
+- Bring-your-own-domain is configured by hand in `settings.json` ([§7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate)); an admin-page field + a certificate panel (CN, expiry, source) would remove the file editing and surface an ageing certificate before the browser does.
 - Host-side virtual display management (resolution matching without changing the host desktop).
 - More locales (the i18n runtime + Tolgee flow make this cheap; zh shipped recently).
 - Optional TURN relay fallback for networks where even ICE-TCP fails but WSS latency is unacceptable.

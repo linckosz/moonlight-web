@@ -45,6 +45,12 @@ class AppSettings;
  *   6. UPnP port mapping delegation
  *   7. Pending registration retry every 30s
  *
+ * Bring-your-own-domain: when settings.json's `domain` holds a valid FQDN that
+ * is not the computed {unique_id}.{MW_DOMAIN}, steps 1/3/4/5 are skipped — the
+ * user owns the zone and the certificate. Only the network half runs (public IP
+ * detection, UPnP mapping, NAT-hairpin test), so the same one-click toggle keeps
+ * the router configured for a domain we do not manage.
+ *
  * Lifecycle:
  *   - Created early in main(), registered with API routes.
  *   - start() is called when Internet Access is enabled.
@@ -93,8 +99,16 @@ public:
     /// it would hijack the DNS server's own records. Case-insensitive.
     static bool isReservedSubdomain(const QString& label);
 
-    /// The registered domain name (e.g. "92b8d127.example.com").
+    /// The registered domain name (e.g. "92b8d127.example.com"), or the
+    /// user-owned FQDN when one is configured (see customDomain()).
     QString domain() const { return m_Domain; }
+
+    /// True when the served domain comes from settings.json (`domain` holding a
+    /// valid FQDN that is not the computed one) rather than from the shared
+    /// MW_DOMAIN registration. In that mode this manager never touches DNS and
+    /// never issues a certificate — the user owns both — but still detects the
+    /// public IP, maps the router ports and tests NAT hairpin.
+    bool customDomain() const { return m_CustomDomain; }
 
     /// Current public IP.
     QString publicIp() const { return m_PublicIp; }
@@ -268,6 +282,9 @@ private:
     // State
     bool m_Active = false;
     QString m_Domain;
+    bool m_CustomDomain = false; ///< True when settings.json carries a user-owned FQDN instead of
+                                 ///< the computed {unique_id}.{MW_DOMAIN}. The DNS/ACME half of the
+                                 ///< manager is then inert (we own neither the zone nor the cert).
     QString m_PublicIp;
     QString
         m_LocalIp; ///< LAN IP address of this host (discovered via UPnP or GetAdaptersAddresses)

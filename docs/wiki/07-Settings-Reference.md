@@ -56,7 +56,7 @@ The browser also stores per-device keys the server deliberately ignores when the
 | `internet_access_enabled` | bool | `false` | Auto-starts `InternetAccessManager` at boot when true. |
 | `unique_id` | string | generated | 8-hex-char subdomain label. Reserved labels rejected. |
 | `registered_uid` | string | — | Last subdomain actually registered (used to release the old one on change). |
-| `domain` | string | `"MW_DOMAIN"` | Sentinel, not a configuration knob: `ensureIdentifiers()` rewrites it at every boot and `AppSettings::domain()` recomputes `{unique_id}.{MW_DOMAIN}`. For your own FQDN see [§7.5](#75-bring-your-own-domain--certificate). |
+| `domain` | string | `"MW_DOMAIN"` | The sentinel means "computed": `{unique_id}.{MW_DOMAIN}`. Replace it with **your own FQDN** to serve the app under it — the value is then kept verbatim and Internet Access switches to its network-only mode ([§7.5](#75-bring-your-own-domain--certificate)). Anything that is not a valid FQDN falls back to the computed name. |
 | `public_ip` | string | — | Resolved public IP (STUN or manual). |
 | `auto_ip_detection` | bool | `true` | STUN/HTTP auto-detect vs manual `public_ip`. |
 | `pending_registration` | bool | `false` | Set when registration failed offline; retried at startup. |
@@ -67,7 +67,7 @@ The browser also stores per-device keys the server deliberately ignores when the
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `cert_pem` / `cert_key` | string | `"MW_CERT_PEM"` / `"MW_CERT_KEY"` | Certificate/key **source**: an env-var *name* or a *file path*. ACME issuance rewrites these to the issued file paths. A cert loaded from this pair is **CN-checked against the computed `domain`** and skipped on mismatch — a manual cert for your own FQDN is therefore installed by the directory scan instead ([§7.5](#75-bring-your-own-domain--certificate)). |
+| `cert_pem` / `cert_key` | string | `"MW_CERT_PEM"` / `"MW_CERT_KEY"` | Certificate/key **source**: an env-var *name* or a *file path*. ACME issuance rewrites these to the issued file paths. The certificate must cover `domain` (**CN or SAN**, wildcards included) or it is skipped in favour of the `cert/` directory scan. |
 | `hmac_key` | string (Base64) | generated | Session-token HMAC key, persisted so sessions survive restarts. |
 | `certificate_token` | string | generated first boot | The downloadable auth token file content. |
 | `cert_auth_enabled` | bool | `false` | Enable certificate-file authentication. |
@@ -112,7 +112,7 @@ CI bakes `MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_*` (from r
 
 ## 7.5 Bring your own domain & certificate
 
-The one-click **Internet Access** flow is the *shared-domain* automation (subdomain on the project's PowerDNS + ACME DNS-01 + UPnP). If you own a domain, you can instead publish the server as `https://stream.mywebsite.com` with your own certificate. Nothing in the app has to be enabled for that — it is DNS + router + two PEM files.
+The one-click **Internet Access** flow is the *shared-domain* automation (subdomain on the project's PowerDNS + ACME DNS-01 + UPnP). If you own a domain, publish the server as `https://stream.mywebsite.com` with your own certificate instead: set `domain` in `settings.json`, and the manager switches to a **network-only mode** — public-IP detection, UPnP port mapping and NAT-hairpin test still run, DNS registration and ACME issuance never do (the zone and the certificate are yours).
 
 **1. DNS — A record on your public IP.** In `mywebsite.com`'s zone create `stream` → **your router's public IPv4** (the WAN address, *not* the machine's `192.168.x.x`). Check it with `curl https://api.ipify.org` on the host, or read *Public IP* on the admin page. IPv6-only reachability needs an AAAA record instead. A dynamic ISP address needs a DDNS updater; a **CGNAT** address (`100.64.0.0/10`) can never be port-forwarded — the admin page detects and reports that case.
 
@@ -124,27 +124,33 @@ The one-click **Internet Access** flow is the *shared-domain* automation (subdom
 | TCP 80 (optional) | same host:80 | HTTP→HTTPS redirect; also needed if you renew with an HTTP-01 ACME client on that machine. |
 | UDP 48010–48014 (recommended) | same host, same ports | Direct WebRTC media (`SignalingServer` maps the first free port of that range). Without it the fallback chain still works over ICE-TCP, then `wss`, at a worse latency profile. |
 
-If the router speaks UPnP, leaving `upnp_enabled: true` gets the UDP mapping for free; the TCP 443 rule stays manual as long as Internet Access is off.
+If the router speaks UPnP, keeping `upnp_enabled: true` **and** Internet Access on maps 80/443/UDP for you even with a custom domain (step 5); otherwise every rule above is manual.
 
-**3. Certificate.** Issue one for `stream.mywebsite.com` (certbot / win-acme / lego with your DNS provider, or any commercial CA). You need two **unencrypted PEM** files: the full chain and the private key (RSA or EC).
+**3. Certificate.** Issue one for `stream.mywebsite.com` (certbot / win-acme / lego with your DNS provider, or any commercial CA). You need two **unencrypted PEM** files: the full chain and the private key (RSA or EC). A wildcard (`*.mywebsite.com`) works too.
 
-**4. Install it.** Copy both files (`*.pem` extension, same folder) into the server's cert directory, then restart the server:
+**4. Declare the domain and install the certificate.** Stop the server, edit `settings.json` (path in [§7.1](#71-settingsjson-location)), then restart:
 
-| OS | Folder |
-|---|---|
-| **Windows** | `%APPDATA%\MoonlightWeb\MoonlightWeb\cert\` |
-| **macOS** | `~/Library/Application Support/MoonlightWeb/MoonlightWeb/cert/` |
-| **Linux** | `~/.local/share/MoonlightWeb/MoonlightWeb/cert/` |
+```jsonc
+{
+  "domain": "stream.mywebsite.com",
+  // optional — absolute paths to your PEM files; omit to use the cert/ folder
+  "cert_pem": "C:/certs/fullchain.pem",
+  "cert_key": "C:/certs/privkey.pem"
+}
+```
 
-`CertManager` scans that folder recursively for a `*.pem` certificate plus a `*.pem` private key and loads them regardless of CN when no CN matches the computed domain. Confirm in `logs/moonlightweb.log`: `SSL certificate loaded: CN=stream.mywebsite.com`. **Renewal is yours** — drop the new files in and restart (no auto-renew for a user-supplied cert; ACME hot-reload only covers Internet Access).
+Without `cert_pem`/`cert_key`, drop both files (`*.pem`, same folder) into the data dir's `cert/` subfolder — `%APPDATA%\MoonlightWeb\MoonlightWeb\cert\` on Windows, `~/Library/Application Support/MoonlightWeb/MoonlightWeb/cert/` on macOS, `~/.local/share/MoonlightWeb/MoonlightWeb/cert/` on Linux. `CertManager` scans recursively for a certificate that **covers the domain (CN or SAN, wildcards included)** plus a private key beside it.
 
-**5. Leave Internet Access off.** It would register a subdomain under the shared domain and re-run ACME for it. Authentication is unchanged: remote devices still need the admin PIN or the certificate-auth token file (see [Security](06-Security.md)).
+Confirm in `logs/moonlightweb.log`: `SSL certificate loaded: CN=stream.mywebsite.com`. **Renewal is yours**: replace the files and restart. A certificate near expiry is kept and logged as *renew it soon* — it is never silently downgraded to a self-signed one.
+
+**5. Internet Access — optional, and safe to leave on.** With a custom domain it registers nothing and requests no certificate; it only keeps the router mapping fresh (UPnP), re-detects the public IP, tests NAT hairpin, and points the tray/shortcut entry URLs at your domain. Turn it off to manage the forwarding entirely by hand. `GET /api/internet/status` reports `custom_domain: true` in that mode.
+
+Authentication is unchanged: remote devices still need the admin PIN or the certificate-auth token file (see [Security](06-Security.md)).
 
 **Caveats**
 
-- `domain` in `settings.json` is *not* the way to declare your FQDN: it is rewritten to the `"MW_DOMAIN"` sentinel at every boot. Practical consequences: `cert_pem`/`cert_key` file paths are CN-checked against the computed `{unique_id}.{MW_DOMAIN}` and skipped for your cert (hence step 4's folder scan), and the tray/shortcut entry points keep pointing at the local URL — bookmark the public one yourself.
-- **Renew before the last 14 days.** A scanned certificate with less than 14 days left triggers a legacy `lego renew` attempt (an external binary the project does not ship); when it fails — it always does — the server falls back to a **self-signed** cert. Refresh the files while the current one is still comfortably valid.
 - Reaching `stream.mywebsite.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry.
+- `unique_id` keeps existing (it is this instance's identity) but is never registered while a custom domain is set. Restoring `"domain": "MW_DOMAIN"` brings the shared-domain behaviour back.
 - The `stream` label is only reserved on the project's shared domain, never on yours.
 
 ---

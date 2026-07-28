@@ -96,9 +96,22 @@ void run_app_settings_tests()
     s.setHmacKey(key);
     CHECK_EQ(s.hmacKey(), key);
 
-    // domain(): a stored FQDN is returned as-is; otherwise built from uniqueId.
+    // domain(): the sentinel resolves to {unique_id}.{MW_DOMAIN}, while a stored
+    // FQDN is a user-owned domain and must survive verbatim — InternetAccess
+    // decides on exactly this difference whether it may touch DNS/ACME.
+    qputenv("MW_DOMAIN", "example.test");
+    s.setUniqueId("abcd1234");
+    s.setDomain("MW_DOMAIN");
+    CHECK_EQ(s.domain(), QString("abcd1234.example.test"));
     s.setDomain("my.host.example.com");
     CHECK_EQ(s.domain(), QString("my.host.example.com"));
+    // A stored value that is not a valid FQDN never wins over the computed one.
+    s.setDomain("nodot");
+    CHECK_EQ(s.domain(), QString("abcd1234.example.test"));
+    // Storing the computed name is not a custom domain either.
+    s.setDomain("abcd1234.example.test");
+    CHECK_EQ(s.domain(), QString("abcd1234.example.test"));
+    qunsetenv("MW_DOMAIN");
 
     // Documented file-only defaults are idempotently seeded.
     s.seedDocumentedDefaults();

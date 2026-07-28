@@ -26,7 +26,6 @@
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QNetworkInterface>
-#include <QProcess>
 #include <QRandomGenerator>
 #include <QSslCertificate>
 #include <QStandardPaths>
@@ -198,24 +197,57 @@ QString CertManager::findCertByDomain(const QString& domain)
         QDirIterator it(rootDir, {"*.pem"}, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             QString filePath = it.next();
-            QString certCn = extractCertCN(filePath);
-            if (certCn.isEmpty()) continue;
+            if (!certFileMatchesDomain(filePath, domain)) continue;
 
-            if (certCn.compare(domain, Qt::CaseInsensitive) == 0) {
-                QDir certDir = QFileInfo(filePath).absoluteDir();
-                QString keyPath = scanKeyInDir(certDir.absolutePath());
-                if (!keyPath.isEmpty()) {
-                    Logger::info(
-                        QString("[CERT] Found matching certificate: CN=%1, file=%2, key=%3")
-                            .arg(certCn, filePath, keyPath));
-                    return certDir.absolutePath();
-                }
-                Logger::info(QString("[CERT] CN matches but no private key found in %1, skipping")
-                                 .arg(certDir.absolutePath()));
+            QDir certDir = QFileInfo(filePath).absoluteDir();
+            QString keyPath = scanKeyInDir(certDir.absolutePath());
+            if (!keyPath.isEmpty()) {
+                Logger::info(QString("[CERT] Found matching certificate: CN=%1, file=%2, key=%3")
+                                 .arg(extractCertCN(filePath), filePath, keyPath));
+                return certDir.absolutePath();
             }
+            Logger::info(QString("[CERT] Domain matches but no private key found in %1, skipping")
+                             .arg(certDir.absolutePath()));
         }
     }
     return {};
+}
+
+bool CertManager::certMatchesDomain(const QSslCertificate& cert, const QString& domain)
+{
+    if (domain.isEmpty()) return true;
+
+    // "*.example.com" covers "host.example.com" but not "example.com" nor a
+    // deeper "a.b.example.com" (RFC 6125: one label, leftmost only).
+    auto matches = [&domain](const QString& name) {
+        if (name.isEmpty()) return false;
+        if (name.startsWith(QLatin1String("*."))) {
+            const QString suffix = name.mid(1); // ".example.com"
+            const int dot = domain.indexOf(QLatin1Char('.'));
+            return dot > 0 && domain.mid(dot).compare(suffix, Qt::CaseInsensitive) == 0;
+        }
+        return name.compare(domain, Qt::CaseInsensitive) == 0;
+    };
+
+    const QStringList cns = cert.subjectInfo(QSslCertificate::CommonName);
+    for (const QString& cn : cns)
+        if (matches(cn)) return true;
+
+    const QList<QString> sans = cert.subjectAlternativeNames().values(QSsl::DnsEntry);
+    for (const QString& san : sans)
+        if (matches(san)) return true;
+
+    return false;
+}
+
+bool CertManager::certFileMatchesDomain(const QString& pemPath, const QString& domain)
+{
+    QFile f(pemPath);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const QList<QSslCertificate> certs = QSslCertificate::fromDevice(&f, QSsl::Pem);
+    f.close();
+    if (certs.isEmpty()) return false;
+    return certMatchesDomain(certs.first(), domain);
 }
 
 QString CertManager::extractCertCN(const QString& pemPath)
@@ -279,11 +311,8 @@ QString CertManager::scanCertInDir(const QString& dir, const QString& domain) co
 
         if (certs.isEmpty()) continue;
 
-        // If domain is specified, verify CN match
-        if (!domain.isEmpty()) {
-            QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
-            if (cns.isEmpty() || cns.first().compare(domain, Qt::CaseInsensitive) != 0) continue;
-        }
+        // If a domain is specified, the cert must cover it (CN or SAN)
+        if (!certMatchesDomain(certs.first(), domain)) continue;
 
         QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
         QString cn = cns.isEmpty() ? "(no CN)" : cns.first();
@@ -346,11 +375,7 @@ bool CertManager::loadCertFiles(const QString& certDir)
             f.close();
             if (certs.isEmpty()) continue;
 
-            if (!domain.isEmpty()) {
-                QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
-                if (cns.isEmpty() || cns.first().compare(domain, Qt::CaseInsensitive) != 0)
-                    continue;
-            }
+            if (!certMatchesDomain(certs.first(), domain)) continue;
 
             QStringList cns = certs.first().subjectInfo(QSslCertificate::CommonName);
             QString cn = cns.isEmpty() ? "(no CN)" : cns.first();
@@ -519,18 +544,18 @@ bool CertManager::loadCert()
     if (!certData.isEmpty() && !keyData.isEmpty()) {
         QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
 
-        // If domain is set, verify CN matches. An embedded cert for a
-        // different domain (e.g. leftover from a previous unique_id) must
-        // not be used — fall through to ACME file-based mode.
-        if (!m_Domain.isEmpty() && !chain.isEmpty()) {
+        // If domain is set, the cert must cover it (CN or SAN). One for a
+        // different domain (e.g. leftover from a previous unique_id, or the
+        // build-time embedded shared-domain cert on a bring-your-own-domain
+        // install) must not be used — fall through to the file scan.
+        if (!m_Domain.isEmpty() && !chain.isEmpty() &&
+            !certMatchesDomain(chain.first(), m_Domain)) {
             QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
-            if (cn.compare(m_Domain, Qt::CaseInsensitive) != 0) {
-                Logger::warning(QString("[CERT] Embedded cert CN=%1 does not match domain=%2 — "
-                                        "falling back to file scan")
-                                    .arg(cn, m_Domain));
-                certData.clear();
-                keyData.clear();
-            }
+            Logger::warning(QString("[CERT] Embedded cert CN=%1 does not cover domain=%2 — "
+                                    "falling back to file scan")
+                                .arg(cn, m_Domain));
+            certData.clear();
+            keyData.clear();
         }
     }
 
@@ -575,60 +600,24 @@ bool CertManager::loadCert()
             return generateSelfSignedCert();
         }
 
+        // A loaded certificate is always kept, even close to expiry: replacing a
+        // real (if ageing) certificate with a self-signed one turns a warning
+        // nobody sees yet into a browser error right now. Renewal belongs to
+        // whoever owns the domain — AcmeClient for the shared one, the user for
+        // their own (they drop new PEM files in and restart).
         QDateTime expiry = m_SslConfig.localCertificate().expiryDate();
-        QDateTime renewThreshold = QDateTime::currentDateTimeUtc().addDays(14);
-
-        if (expiry > renewThreshold) {
+        if (expiry <= QDateTime::currentDateTimeUtc().addDays(14)) {
+            Logger::warning(QString("SSL certificate expires %1 — renew it soon")
+                                .arg(expiry.toString("yyyy-MM-dd")));
+        } else {
             Logger::info(QString("SSL certificate valid until %1, no renewal needed")
                              .arg(expiry.toString("yyyy-MM-dd")));
-            return true;
         }
-
-        Logger::warning(QString("SSL certificate expires %1, attempting lego renewal...")
-                            .arg(expiry.toString("yyyy-MM-dd")));
-
-        if (renewWithLego()) {
-            Logger::info("Certificate renewed, reloading...");
-            return loadCertFiles(certDir);
-        }
-
-        Logger::warning("Lego renewal failed, falling back to self-signed certificate");
-    } else {
-        Logger::warning("No SSL certificate files found, generating self-signed certificate");
+        return true;
     }
 
+    Logger::warning("No SSL certificate files found, generating self-signed certificate");
     return generateSelfSignedCert();
-}
-
-bool CertManager::renewWithLego()
-{
-    QProcess lego;
-    lego.setProcessChannelMode(QProcess::MergedChannels);
-    lego.start("lego", QStringList() << "renew");
-
-    if (!lego.waitForStarted(5000)) {
-        Logger::warning("lego not found in PATH, cannot auto-renew");
-        return false;
-    }
-
-    if (!lego.waitForFinished(60000)) {
-        lego.kill();
-        lego.waitForFinished(5000);
-        Logger::warning("lego renew timed out after 60s");
-        return false;
-    }
-
-    QByteArray output = lego.readAll();
-
-    if (lego.exitCode() != 0) {
-        Logger::warning(QString("lego renew failed (exit %1): %2")
-                            .arg(lego.exitCode())
-                            .arg(QString::fromUtf8(output).trimmed()));
-        return false;
-    }
-
-    Logger::info("lego renew completed successfully");
-    return true;
 }
 
 bool CertManager::reloadTls()
@@ -648,14 +637,13 @@ bool CertManager::reloadTls()
     if (!certData.isEmpty() && !keyData.isEmpty()) {
         QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
 
-        if (!m_Domain.isEmpty() && !chain.isEmpty()) {
+        if (!m_Domain.isEmpty() && !chain.isEmpty() &&
+            !certMatchesDomain(chain.first(), m_Domain)) {
             QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
-            if (cn.compare(m_Domain, Qt::CaseInsensitive) != 0) {
-                Logger::warning(
-                    QString("[CERT] Reload: embedded cert CN=%1 != domain=%2").arg(cn, m_Domain));
-                certData.clear();
-                keyData.clear();
-            }
+            Logger::warning(QString("[CERT] Reload: embedded cert CN=%1 does not cover domain=%2")
+                                .arg(cn, m_Domain));
+            certData.clear();
+            keyData.clear();
         }
     }
 

@@ -177,22 +177,25 @@ void InternetAccessManager::start()
     ensureIdentifiers();
     qInfo() << "[InternetAccess] Step 1 OK — domain:" << m_Domain;
 
-    // Step 2: Read the PowerDNS token from MW_PDNS_TOKEN env var
-    QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN"));
-    qInfo() << "[InternetAccess] Step 2 — token source: env var MW_PDNS_TOKEN"
-            << "empty:" << token.isEmpty() << "length:" << token.length();
+    // Step 2: Read the PowerDNS token from MW_PDNS_TOKEN env var. Skipped for a
+    // user-owned domain: we register nothing, so a missing token is not an error.
+    if (!m_CustomDomain) {
+        QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN"));
+        qInfo() << "[InternetAccess] Step 2 — token source: env var MW_PDNS_TOKEN"
+                << "empty:" << token.isEmpty() << "length:" << token.length();
 
-    if (token.isEmpty()) {
-        m_LastError =
-            QStringLiteral("PowerDNS token is empty. Set the MW_PDNS_TOKEN environment variable "
-                           "in Qt Creator (Projects → Run → Environment) or your shell.");
-        qWarning() << "[InternetAccess]" << m_LastError;
-        m_Phase = QStringLiteral("pending");
-        m_Settings->setPendingRegistration(true);
-        m_PendingRegistrationTimer->start(kPendingRetryMs);
-        return;
+        if (token.isEmpty()) {
+            m_LastError = QStringLiteral(
+                "PowerDNS token is empty. Set the MW_PDNS_TOKEN environment variable "
+                "in Qt Creator (Projects → Run → Environment) or your shell.");
+            qWarning() << "[InternetAccess]" << m_LastError;
+            m_Phase = QStringLiteral("pending");
+            m_Settings->setPendingRegistration(true);
+            m_PendingRegistrationTimer->start(kPendingRetryMs);
+            return;
+        }
+        m_Pdns.setToken(token);
     }
-    m_Pdns.setToken(token);
 
     // Step 3: Detect public IP via STUN (before A record creation)
     m_Phase = QStringLiteral("detecting_ip");
@@ -205,7 +208,8 @@ void InternetAccessManager::start()
     // Step 3.5: Pre-check DNS — if the domain already resolves, skip PowerDNS A record creation.
     // This is critical when STUN fails (e.g. IPv6 XOR-MAPPED-ADDRESS not supported):
     // the existing A record is still valid, so no need to touch PowerDNS at all.
-    {
+    // Never for a user-owned domain: their zone is not ours to write to.
+    if (!m_CustomDomain) {
         bool skipARecordStep = false;
         QString resolvedIp = resolveDomain(m_Domain);
         if (!resolvedIp.isEmpty()) {
@@ -240,8 +244,8 @@ void InternetAccessManager::start()
     // Step 5: Initial DNS check (spaced to 24h thereafter). A freshly created A
     // record needs time to propagate, so retry a few times before giving up —
     // otherwise the first check fails and misleads anyone reading the logs.
-    m_Phase = QStringLiteral("checking_dns");
-    {
+    if (!m_CustomDomain) {
+        m_Phase = QStringLiteral("checking_dns");
         QString resolvedIp;
         for (int attempt = 1; attempt <= kDnsCheckRetries; ++attempt) {
             resolvedIp = resolveDomain(m_Domain);
@@ -275,14 +279,16 @@ void InternetAccessManager::start()
         m_LastDnsCheck = QDateTime::currentDateTimeUtc();
     }
 
-    // Step 6: Issue/renew TLS certificate
-    m_Phase = QStringLiteral("issuing_certificate");
-    {
+    // Step 6: Issue/renew TLS certificate (never for a user-owned domain — the
+    // certificate for it is the user's, CertManager just loads what they dropped
+    // in the cert directory).
+    if (!m_CustomDomain) {
+        m_Phase = QStringLiteral("issuing_certificate");
         QString existingCert = m_Settings->certPem();
         qInfo() << "[InternetAccess] Step 6 — checking certificate: cert_pem=\"" << existingCert
                 << "\"";
+        checkCertificate();
     }
-    checkCertificate();
 
     // Step 7: UPnP port mapping
     m_Phase = QStringLiteral("configuring_ports");
@@ -568,6 +574,9 @@ QJsonObject InternetAccessManager::statusJson() const
     QJsonObject obj;
     obj[QStringLiteral("active")] = m_Active;
     obj[QStringLiteral("domain")] = m_Domain;
+    // True when `domain` in settings.json is a user-owned FQDN: no DNS
+    // registration, no ACME — only IP detection, port mapping and hairpin.
+    obj[QStringLiteral("custom_domain")] = m_CustomDomain;
     obj[QStringLiteral("local_ip")] = m_LocalIp;
     obj[QStringLiteral("public_ip")] = m_PublicIp;
     obj[QStringLiteral("unique_id")] = m_UniqueId;
@@ -678,8 +687,20 @@ void InternetAccessManager::ensureIdentifiers()
         }
     }
 
+    // Bring-your-own-domain: a valid FQDN in settings.json that is not the
+    // computed one is the user's, so keep it verbatim — rewriting the sentinel
+    // here would silently drop it at every boot, and CertManager would then
+    // CN-check their certificate against a domain they never asked for.
+    const QString stored = m_Settings->domain();
+    m_CustomDomain = AppSettings::isValidFqdn(stored) && stored != buildDomain();
+    if (m_CustomDomain) {
+        m_Domain = stored;
+        qInfo() << "[InternetAccess] Custom domain from settings:" << m_Domain
+                << "— DNS registration and ACME issuance are disabled";
+        return;
+    }
+
     // Store sentinel — the real domain is always derivable from uniqueId + baseDomain.
-    // A custom FQDN (different from the computed one) would be stored by other paths.
     m_Domain = buildDomain();
     m_Settings->setDomain(QStringLiteral("MW_DOMAIN"));
 
@@ -753,6 +774,8 @@ void InternetAccessManager::releaseOldSubdomain()
 
 bool InternetAccessManager::createOrUpdateARecord()
 {
+    if (m_CustomDomain) return false; // user-owned zone — never registered here
+
     qInfo() << "[InternetAccess] Checking A record for subdomain:" << m_UniqueId;
 
     // One subdomain per owner: free the previously registered one if unique_id
@@ -997,6 +1020,10 @@ void InternetAccessManager::logDnsRegistrationAudit(const QString& action)
 
 bool InternetAccessManager::updateARecord()
 {
+    // The user's own zone is not ours to write to (the periodic IP-change path
+    // lands here directly).
+    if (m_CustomDomain) return false;
+
     if (m_Domain.isEmpty() || m_PublicIp.isEmpty()) {
         qWarning() << "[InternetAccess] Cannot update A record: domain or IP empty";
         return false;
@@ -1023,6 +1050,15 @@ bool InternetAccessManager::updateARecord()
 
 bool InternetAccessManager::issueCertificate()
 {
+    // ACME DNS-01 writes the challenge through the PowerDNS API, which only
+    // covers the shared domain — a manual /api/internet/renew-cert on a
+    // user-owned domain must not even try.
+    if (m_CustomDomain) {
+        qWarning() << "[InternetAccess] Certificate issuance skipped — custom domain" << m_Domain
+                   << "is managed by the user";
+        return false;
+    }
+
     if (m_CertIssuing) {
         qInfo() << "[InternetAccess] ACME issuance already in progress";
         return true;
@@ -1102,6 +1138,13 @@ QString InternetAccessManager::readCertExpiry(const QString& certPath)
 
 bool InternetAccessManager::checkCertificate()
 {
+    // User-owned domain: the certificate is theirs (dropped in the cert
+    // directory or pointed at by cert_pem/cert_key). Never reissue over it.
+    if (m_CustomDomain) {
+        qInfo() << "[InternetAccess] Custom domain — certificate lifecycle left to the user";
+        return false;
+    }
+
     QString certPem = m_Settings->certPem();
     QString certKey = m_Settings->certKey();
     QString currentDomain = m_Domain;
