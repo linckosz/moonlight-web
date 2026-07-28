@@ -106,14 +106,24 @@ private:
     static QString elevationMethod();
     static bool methodNeedsHostConfirmation(const QString& method);
 
-    // The download budget in the overall percentage; the rest is the install.
-    static constexpr int kDownloadShare = 70;
+    // Budget split, tuned on *elapsed time* rather than bytes: the download is
+    // a couple of seconds on any usable link while the install + relaunch is
+    // 15-30 s, so giving the download most of the bar made it jump straight to
+    // ~70 % and then sit there. Keep it small; the install owns the rest.
+    static constexpr int kDownloadShare = 25;
+    // The install has no readable progress, so it eases towards a ceiling it
+    // never reaches — "still working, slowing down" is the only honest shape.
+    // The client keeps interpolating past it once we are killed.
+    static constexpr int kInstallCeiling = 90;
+    static constexpr double kInstallTauSec = 14.0;
+    static constexpr int kInstallTickMs = 250;
 
     UpdateChecker* m_checker;
     QNetworkAccessManager* m_nam;
     QNetworkReply* m_reply = nullptr;
     QFile* m_file = nullptr;
     QTimer* m_installTick = nullptr; // pseudo-progress while the installer runs
+    int m_installElapsedMs = 0;      // drives the install easing curve
 
     State m_state = State::Idle;
     int m_percent = 0;

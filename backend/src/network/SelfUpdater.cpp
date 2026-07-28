@@ -31,6 +31,8 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <cmath>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #else
@@ -267,15 +269,21 @@ void SelfUpdater::onDownloadFinished()
 
     m_state = State::Installing;
     m_percent = kDownloadShare;
+    m_installElapsedMs = 0;
 
     // Pseudo-progress: the installers give us nothing to read, and on Windows
     // this process is killed partway through, so the bar just has to keep
-    // moving until the client loses us.
+    // moving until the client loses us. Exponential rather than linear — a
+    // linear crawl either hits its cap long before the install ends (and then
+    // freezes, which is exactly what a stuck update looks like) or is too slow
+    // to read as motion. This never reaches kInstallCeiling.
     m_installTick = new QTimer(this);
     connect(m_installTick, &QTimer::timeout, this, [this]() {
-        if (m_percent < 97) ++m_percent;
+        m_installElapsedMs += kInstallTickMs;
+        const double eased = 1.0 - std::exp(-(m_installElapsedMs / 1000.0) / kInstallTauSec);
+        m_percent = kDownloadShare + static_cast<int>((kInstallCeiling - kDownloadShare) * eased);
     });
-    m_installTick->start(400);
+    m_installTick->start(kInstallTickMs);
 
     runInstaller();
 }
