@@ -46,7 +46,7 @@ Two cooperating layers:
 
 - **LAN**: a self-signed certificate is generated on first run (browser shows a one-time warning — inherent to self-signed TLS).
 - **Internet Access**: a real certificate is issued via the native **ACMEv2 client** (`AcmeClient`) with the **DNS-01 challenge** through the PowerDNS API — ZeroSSL DV90 when EAB credentials are configured, Let's Encrypt otherwise. Renewal below 30 days remaining; `certificateChanged` performs a **hot TLS reload** (no restart, new connections get the new cert).
-- **Bring your own**: drop the certificate and its private key (PEM) in the data dir's `cert/` folder — `CertManager` scans it and loads the pair; renewal and lifecycle are the user's. Full procedure, with the DNS/router side: [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
+- **Bring your own**: set `domain` to your FQDN and point `cert_pem`/`cert_key` at your PEM files (or drop them in the data dir's `cert/` folder). A certificate is accepted when it covers the domain by **CN or SAN**, wildcards included; renewal and lifecycle are the user's, and a certificate close to expiry is kept, never downgraded to self-signed. Full procedure, with the DNS/router side: [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
 - Qt's TLS backend is forced to **OpenSSL** (Windows Schannel cannot import ACME PEM keys — it would silently fall back to the self-signed cert and break the public domain).
 - Historical ACME pitfalls fixed and guarded: finalize-URL handling, self-signed↔ACME key collision, `loadCertFiles` ordering, hot reload.
 

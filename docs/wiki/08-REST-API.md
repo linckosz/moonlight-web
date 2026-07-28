@@ -59,7 +59,7 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 | `GET /api/admin/settings` | 🏠 | `{http_port, https_port, cert_auth_enabled}` + `local_key` on loopback (lets the admin page carry its session to the public domain). |
 | `POST /api/admin/settings` | 🏠 | Accepts **`https_port`** (rebinds live, deferred) and **`cert_auth_enabled`** only; anything else → 400. |
 | `GET /api/settings/streaming` / `POST /api/settings/streaming` | 🔑 / 🏠 | Server-side streaming defaults (the browser seeds its localStorage from these; POST is localhost-only and silently ignores per-device keys it doesn't know). |
-| `GET /api/internet/status` | 🔑 | Full Internet-Access state: phase, domain, public IP, external ports, hairpin, cert expiry, transport mode, last error. |
+| `GET /api/internet/status` | 🔑 | Full Internet-Access state: phase, domain, `custom_domain` (user-owned FQDN → DNS/ACME inert), public IP, external ports, hairpin, cert expiry, transport mode, last error. |
 | `POST /api/internet/enable` | 🏠 | Opt-in (records consent `{message, source}`) + start the manager. Also the write route for `unique_id` (only while unset, reserved labels rejected), `transport_mode`, `public_ip`, `auto_ip_detection`, `upnp_enabled`. |
 | `POST /api/internet/disable` / `POST /api/internet/refresh` / `POST /api/internet/renew-cert` | 🏠 | Stop / force IP+DNS re-check / force ACME renewal. |
 | `GET /api/setup/status` / `POST /api/setup/apply` | 🏠 | First-run wizard state + apply (internet consent, Sunshine install/pair) with live checklist. |

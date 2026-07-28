@@ -47,6 +47,7 @@
 #include <array>
 #include <functional>
 #include "server/AppSettings.h"
+#include "server/CertManager.h"
 #include "server/Provisioning.h"
 #include "server/HttpServer.h"
 #include "server/ControlChannel.h"
@@ -750,7 +751,7 @@ int main(int argc, char* argv[])
                 QList<QSslCertificate> certs = QSslCertificate::fromData(certData, QSsl::Pem);
                 if (!certs.isEmpty()) {
                     QString cn = certs.first().subjectInfo(QSslCertificate::CommonName).value(0);
-                    if (!cn.isEmpty() && cn.compare(domain, Qt::CaseInsensitive) == 0) {
+                    if (CertManager::certMatchesDomain(certs.first(), domain)) {
                         // Embedded cert matches the computed domain — restore env var
                         // references, overwriting any stale LE file paths from settings.
                         Logger::info(QString("[main] Embedded cert CN=%1 matches domain=%2 "
