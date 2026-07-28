@@ -513,7 +513,7 @@ body.streaming-active::after {
     font-variant-numeric: tabular-nums;
 }
 
-/* The dotted underline is the only hint that a breakdown is one hover (or one
+/* The dotted underline is the only hint that a breakdown is one click (or one
    tap) away — no permanent affordance cluttering the card. */
 .stats-latency {
     color: #f0c040;
