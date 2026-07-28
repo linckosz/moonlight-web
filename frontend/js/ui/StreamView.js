@@ -480,6 +480,16 @@ export class StreamView {
         this._pingSeq = 0;
         this._pingInterval = null;
 
+        // ── Main-thread health probe (diagnostic, see _startRafProbe) ─────────
+        // Interval between consecutive rAF callbacks, and the rate of input
+        // events we serialize+send. Together they say whether a rising RENDER
+        // QUEUE comes from a starved main thread (rAF ticks arriving late) or
+        // from upstream frame delivery. Not part of the latency total.
+        this._rafDeltaStats = new SlidingStats(2000);
+        this._rafProbeId = null;
+        this._rafProbeLast = 0;
+        this._inputSendTimes = []; // perf.now() of each input send (2s window)
+
         // ── webrtc-media native stats (getStats polling) ──────────────────────
         // RTP media track frames bypass the JS decoder, so fps/bitrate/latency
         // must be read from RTCPeerConnection.getStats() instead of the
@@ -1151,6 +1161,9 @@ export class StreamView {
 
         // Start overlay update timer (every 500ms)
         this._overlayInterval = setInterval(() => this._updateOverlay(), 500);
+        // Main-thread health probe — runs for the whole session, independent of
+        // the render loop (which is absent in worker / webrtc-media mode).
+        this._startRafProbe();
 
         // ── Keyboard shortcuts slide ────────────────────────────────────────
         this._shortcutsSlide = document.createElement('div');
@@ -2804,6 +2817,65 @@ export class StreamView {
         this.renderRunning = false;
     }
 
+    /**
+     * Diagnostic probe: sample the interval between rAF callbacks.
+     *
+     * A rAF callback is scheduled once per display refresh, so the interval is
+     * pinned at ~16.7ms (or ~8.3ms at 120Hz) unless the main thread is busy when
+     * the tick comes due — then the callback runs late and the interval stretches
+     * by exactly the delay. It is therefore a direct read on main-thread
+     * starvation, independent of the video pipeline.
+     *
+     * Deliberately its own loop rather than a hook in the render loop: that one
+     * doesn't run in worker or webrtc-media mode (startRenderLoop returns early),
+     * and the point is to measure the thread, not the renderer. Cost is one
+     * subtraction and one push per frame.
+     */
+    _startRafProbe() {
+        if (this._rafProbeId !== null) return;
+        this._rafProbeLast = 0;
+        const tick = (now) => {
+            if (this._rafProbeLast > 0) {
+                const d = now - this._rafProbeLast;
+                if (d > 0 && d < 5000) this._rafDeltaStats.addSample(d);
+            }
+            this._rafProbeLast = now;
+            this._rafProbeId = requestAnimationFrame(tick);
+        };
+        this._rafProbeId = requestAnimationFrame(tick);
+    }
+
+    _stopRafProbe() {
+        if (this._rafProbeId === null) return;
+        try {
+            cancelAnimationFrame(this._rafProbeId);
+        } catch (e) {}
+        this._rafProbeId = null;
+        this._rafProbeLast = 0;
+    }
+
+    /** Diagnostic: record one outgoing input message and report the current
+     *  send rate (events/s over a 2s window). Called from the input send path —
+     *  this is the per-event main-thread work the probe is looking for. */
+    _noteInputSend() {
+        const now = performance.now();
+        this._inputSendTimes.push(now);
+        while (this._inputSendTimes.length > 0 && now - this._inputSendTimes[0] > 2000) {
+            this._inputSendTimes.shift();
+        }
+    }
+
+    _inputSendRate() {
+        const now = performance.now();
+        while (this._inputSendTimes.length > 0 && now - this._inputSendTimes[0] > 2000) {
+            this._inputSendTimes.shift();
+        }
+        if (this._inputSendTimes.length < 2) return 0;
+        const span = now - this._inputSendTimes[0];
+        if (span <= 0) return 0;
+        return (this._inputSendTimes.length / span) * 1000;
+    }
+
     // Observe the canvas area and feed the output size (CSS box × dPR) to the
     // renderer. Canvas2D ignores it (no-op); WebGPU uses it as its backing res.
     _setupOutputSizeObserver() {
@@ -3762,6 +3834,34 @@ export class StreamView {
                         '</div>',
                 );
             }
+            // Diagnostic probe rows. Appended after the legs and deliberately
+            // OUTSIDE the latency sum: these measure the main thread, not a
+            // stage of the pipeline. RAF is the interval between rAF callbacks
+            // (avg/max) — pinned at the refresh interval on a healthy thread,
+            // stretching by exactly the delay when it is starved. INPUT is how
+            // many input messages/s we serialize and send, the per-event work
+            // most likely to do the starving.
+            const rafAvg = this._rafDeltaStats.avg;
+            const rafMax = this._rafDeltaStats.max;
+            rows.push(
+                '<div class="stats-leg-row">' +
+                    '<span class="stats-label">RAF</span>' +
+                    '<span class="stats-value">' +
+                    (this._rafDeltaStats.count > 0
+                        ? rafAvg.toFixed(1) + '/' + rafMax.toFixed(0) + 'ms'
+                        : '–') +
+                    '</span>' +
+                    '</div>',
+            );
+            const inRate = this._inputSendRate();
+            rows.push(
+                '<div class="stats-leg-row">' +
+                    '<span class="stats-label">INPUT</span>' +
+                    '<span class="stats-value">' +
+                    (inRate > 0 ? inRate.toFixed(0) + '/s' : '–') +
+                    '</span>' +
+                    '</div>',
+            );
             if (haveLatency) {
                 avgLatency = latency.toFixed(1) + 'ms';
                 latencyDetail = rows.join('');
@@ -4320,6 +4420,7 @@ export class StreamView {
         // Unified mousemove: absolute tracking when visible (pre-focus),
         // relative movement via pointer lock deltas when focused.
         this._onGamingMouseMove = (e) => {
+            this._noteInputSend();
             if (this._mouseFocused) {
                 this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
@@ -4459,6 +4560,7 @@ export class StreamView {
 
             // Send absolute position. LiSendMousePositionEvent() on the backend
             // will scale (x, y) from the (refW, refH) plane to host screen coords.
+            this._noteInputSend();
             this.webrtc.send({
                 type: 'mousemove',
                 x: x,
@@ -5087,6 +5189,7 @@ export class StreamView {
 
     handleMouseMove(e) {
         if (!this.pointerLocked) return;
+        this._noteInputSend();
         this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
     }
 
@@ -5721,6 +5824,8 @@ export class StreamView {
             clearInterval(this._overlayInterval);
             this._overlayInterval = null;
         }
+        this._stopRafProbe();
+        this._inputSendTimes.length = 0;
         if (this._noVideoTimer) {
             clearTimeout(this._noVideoTimer);
             this._noVideoTimer = null;
