@@ -158,7 +158,14 @@ export class BackendClient {
             },
             // Fail fast if the backend hangs/crashes instead of waiting for the
             // browser/proxy ~30s gateway timeout.
-            { timeoutMs: 15000 },
+            //
+            // 25s, not 15s: a launch that lands while a previous stream worker
+            // is still tearing down waits on that child (killed after 5s at the
+            // latest) and only THEN starts talking to Sunshine, which itself
+            // spends ~12s finishing the old app before /resume answers. 15s cut
+            // that legitimate sequence off mid-flight — the browser gave up, the
+            // backend kept going, and the next attempt hit the very same wall.
+            { timeoutMs: 25000 },
         );
     }
     static async quitApp(hostId, extra = {}) {

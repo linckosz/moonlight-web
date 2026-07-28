@@ -1081,6 +1081,11 @@ const MoonlightApp = {
         this._lastStreamHost = host;
         this._lastStreamApp = app;
 
+        // A user-initiated launch clears any previous abort (a codec/HDR
+        // fallback relaunch is a continuation of the aborted one — it must
+        // keep the flag so it bails out below).
+        if (!codecOverride) this._startupAborted = false;
+
         // Read per-browser streaming settings from localStorage
         // (defaults come from server on first visit via SettingsView)
         let streamingSettings = {};
@@ -1149,6 +1154,20 @@ const MoonlightApp = {
                 signalingUrl: result.signalingUrl,
             });
 
+            // Stop pressed while this launch was in flight — the session is
+            // already up on the host, so hand it straight back.
+            if (this._startupAborted) {
+                console.warn('[MW] Launch completed after an abort — quitting the new session');
+                if (result.status === 'streaming') {
+                    try {
+                        await BackendClient.quitApp(host.uuid, { session_slot: 0 });
+                    } catch (e) {
+                        /* ignore */
+                    }
+                }
+                return;
+            }
+
             if (result.status === 'streaming') {
                 // Dismiss "Launching..." toast so only the current status is visible
                 await Toast.dismissAll();
@@ -1183,6 +1202,22 @@ const MoonlightApp = {
                 // New StreamView rendered on top — drop any bridging loader left
                 // by a codec/HDR fallback re-launch.
                 this._hideRelaunchLoader();
+            } else {
+                // 200 with a status this build doesn't stream on. Without this
+                // branch nothing happened at all: state stayed 'launching'
+                // forever, so the guard at the top of launchApp refused every
+                // later launch, the app card kept spinning on "Launching…" and
+                // any bridging loader stayed up — only a reload got out of it,
+                // and the reload landed on the same dead end.
+                console.error('[MW] Launch returned an unexpected status:', result.status);
+                iosAudioUnlock.release();
+                this._hideRelaunchLoader();
+                if (this.hostListView) {
+                    this.hostListView.clearLaunching();
+                    this.hostListView.start();
+                }
+                Toast.error(t('launch.failed'));
+                this.transition('app_list');
             }
         } catch (err) {
             console.error('[MW] Launch failed:', err);
@@ -1529,6 +1564,11 @@ const MoonlightApp = {
     _onTransportFailed(reason) {
         // Ignore if streaming was already torn down (e.g. user pressed Back).
         if (this._nav.overlay !== 'streaming') return;
+        // The user pressed Stop on the relaunch loader: the chain is over.
+        if (this._startupAborted) {
+            console.warn(`[MW] Transport failure ignored (startup aborted): ${reason}`);
+            return;
+        }
         // The ACTIVE transport failed: any standby leg is moot (the legacy
         // relaunch below takes over every slot anyway).
         this._abortStandby('active transport failed');
@@ -1620,7 +1660,87 @@ const MoonlightApp = {
                 t('stream.streamReady') +
                 '</span></div>';
         }
+        // Escape hatch — appended after the innerHTML above so it survives it.
+        // The loader is fixed/inset:0 on top of everything and the outgoing
+        // StreamView (which owned the header, hence the Stop button) is already
+        // torn down: without a Stop of its own the user is locked in for the
+        // whole relaunch. A transport chain that keeps failing walks one launch
+        // per step, so that lock-in lasts a minute or more with a page reload as
+        // the only way out.
+        const header = document.createElement('div');
+        header.className = 'stream-header';
+        const stopBtn = document.createElement('button');
+        stopBtn.className = 'btn stream-quit-btn';
+        stopBtn.id = 'btn-relaunch-quit';
+        stopBtn.textContent = IS_MOBILE_OR_TABLET ? t('stream.stop') : t('stream.stopStreaming');
+        stopBtn.onclick = () => this._abortStreamStartup();
+        header.appendChild(stopBtn);
+        el.appendChild(header);
         document.getElementById('app').appendChild(el);
+    },
+
+    /**
+     * User pressed Stop while the startup/relaunch loader was up: give up on
+     * the whole launch (transport chain included) and go back to the apps view.
+     *
+     * The launch in flight cannot be cancelled server-side mid-request, so the
+     * flag is checked after every await that could mount a StreamView, and a
+     * best-effort /quit kills whatever session the backend ends up starting.
+     */
+    async _abortStreamStartup() {
+        if (this._startupAborted) return;
+        console.warn('[MW] Stream startup aborted by the user');
+        this._startupAborted = true;
+        this._abortStandby('startup aborted');
+        this._hideRelaunchLoader();
+        this._stopUpgradeTimer();
+        StreamView.releaseSoftKeyboard();
+        this._carryViewState = null;
+        iosAudioUnlock.release();
+
+        const sv = this.streamView;
+        this.streamView = null;
+        if (sv) {
+            sv.onQuit = null;
+            sv.onConnectionFailed = null;
+            sv.onCongestion = null;
+            sv.onCongestionSignal = null;
+            try {
+                await sv.quit({ silent: true });
+            } catch (e) {
+                /* ignore */
+            }
+        } else if (this._lastStreamHost) {
+            // No live view to quit through — tell the backend directly so a
+            // session that finishes launching right after this doesn't dangle.
+            try {
+                await BackendClient.quitApp(this._lastStreamHost.uuid, {
+                    session_slot: this._activeSlot || 0,
+                });
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        // The last StreamView teardown normally drops this, but an abort can
+        // land with no view left to do it (the loader is the only thing on
+        // screen) — and the class keeps the whole app hidden underneath.
+        if (!document.querySelector('.stream-overlay')) {
+            document.body.classList.remove('streaming-active');
+        }
+
+        this._nav.overlay = null;
+        this.transition('host_list');
+        if (this.hostListView) {
+            this.hostListView.clearLaunching();
+            this.hostListView.start();
+        }
+        if (history.state && history.state.view === this._GUARD_PREFIX + 'streaming') {
+            history.back();
+        } else {
+            this._renderMainView();
+            history.replaceState({ view: 'hosts' }, '', '/');
+        }
     },
 
     _hideRelaunchLoader() {
@@ -1742,6 +1862,22 @@ const MoonlightApp = {
         };
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id, settings);
+            // Stop pressed while this relaunch was in flight: _abortStreamStartup
+            // had no view to quit through (the outgoing one is already gone), so
+            // hand the freshly started session back here instead of mounting it.
+            if (this._startupAborted) {
+                console.warn('[MW] Relaunch completed after an abort — quitting the new session');
+                if (result.status === 'streaming') {
+                    try {
+                        // A legacy relaunch is never a standby: it always lands
+                        // on slot 0 (the backend forces reqSlot=0 there).
+                        await BackendClient.quitApp(host.uuid, { session_slot: 0 });
+                    } catch (e) {
+                        /* ignore */
+                    }
+                }
+                return null;
+            }
             if (result.status === 'streaming') {
                 // Transport relaunch (fallback chain / congestion degradation) —
                 // suppress the shortcuts slide so it doesn't re-pop each step.
