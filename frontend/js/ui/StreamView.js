@@ -423,6 +423,12 @@ export class StreamView {
         this._resizeObserver = null; // tracks the DOM output size (device px)
         this._outW = 0;
         this._outH = 0;
+        // Cached _mediaRect() measurement — see _mediaRect for why the layout
+        // read must not happen per input event. Invalidated by
+        // _setupMediaRectInvalidation; the TTL only backstops unobserved shifts.
+        this._mediaRectCache = null;
+        this._mediaRectListeners = null;
+        this.MEDIA_RECT_TTL_MS = 250;
         // Recycled buffer for HEVC RGBA copyTo — avoids per-frame allocation
         this._rgbaBuffer = null;
         this._rgbaBufferSize = 0;
@@ -1017,6 +1023,7 @@ export class StreamView {
         // Track the DOM output size for the renderer (WebGPU scales to it; the
         // worker has no DOM, so the size is forwarded as a 'resize' message).
         this._setupOutputSizeObserver();
+        this._setupMediaRectInvalidation();
         // Video element for native RTP media track mode (webrtc-media)
         this.videoEl = el.querySelector('#stream-video');
         // The video never receives pointer/touch events directly: input is
@@ -2811,9 +2818,53 @@ export class StreamView {
             this._outH = h;
             this._applyOutputSize();
         };
-        this._resizeObserver = new ResizeObserver(apply);
+        this._resizeObserver = new ResizeObserver(() => {
+            // The area moved or resized — both invalidate the cached media rect,
+            // so drop it before apply()'s unchanged-size early return.
+            this._invalidateMediaRect();
+            apply();
+        });
         this._resizeObserver.observe(this.canvasArea);
         apply(); // initial measure
+    }
+
+    // Drop the cached media rect whenever the viewport or the element's position
+    // may have changed without the ResizeObserver firing. getBoundingClientRect
+    // is viewport-relative, so a scroll alone shifts it; on iOS the visual
+    // viewport also moves independently as the URL bar collapses.
+    _setupMediaRectInvalidation() {
+        if (this._mediaRectListeners) return;
+        const onChange = () => this._invalidateMediaRect();
+        const opts = { passive: true, capture: true };
+        const targets = [
+            [window, 'resize', undefined],
+            [window, 'orientationchange', undefined],
+            [window, 'scroll', opts],
+            [document, 'fullscreenchange', undefined],
+            [document, 'webkitfullscreenchange', undefined],
+        ];
+        if (window.visualViewport) {
+            targets.push([window.visualViewport, 'resize', undefined]);
+            targets.push([window.visualViewport, 'scroll', undefined]);
+        }
+        for (const [target, type, o] of targets) {
+            try {
+                target.addEventListener(type, onChange, o);
+            } catch (e) {}
+        }
+        this._mediaRectListeners = { onChange, targets };
+    }
+
+    _teardownMediaRectInvalidation() {
+        if (!this._mediaRectListeners) return;
+        const { onChange, targets } = this._mediaRectListeners;
+        for (const [target, type, o] of targets) {
+            try {
+                target.removeEventListener(type, onChange, o);
+            } catch (e) {}
+        }
+        this._mediaRectListeners = null;
+        this._invalidateMediaRect();
     }
 
     // Quantized zoom factor folded into the output size so the WebGPU enhancer
@@ -4202,9 +4253,50 @@ export class StreamView {
      *  content. Used so the cursor is hidden only over the actual image and
      *  coordinates map to the real picture, not the surrounding black bars. */
     _mediaRect() {
-        const r = this._displayEl().getBoundingClientRect();
+        const el = this._displayEl();
         const iw = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
         const ih = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
+
+        // Serve from cache when nothing that shapes the rect has changed. The
+        // getBoundingClientRect() below is a LAYOUT READ, and the renderer
+        // rewrites canvas.width/height on every draw — so an uncached read on
+        // every mousemove forces a synchronous reflow ~100x/s, delaying the rAF
+        // tick that presents the next frame (visible as a climbing RENDER QUEUE
+        // under a moving mouse, with the render stage itself flat).
+        //
+        // The cache key covers what changes the rect without a layout read of
+        // its own: the display element (canvas <-> video swap) and the intrinsic
+        // size (resolution change), both plain attribute reads. Everything else
+        // — element box, zoom/pan transform, scroll, viewport — is invalidated
+        // explicitly by _setupMediaRectInvalidation / _applyZoomTransform. The
+        // TTL is the backstop for layout shifts nothing observes (a sibling
+        // resizing pushes the area down without resizing it): worst case the
+        // mapping is stale for one TTL, against 4 reflows/s instead of 100+.
+        const c = this._mediaRectCache;
+        if (
+            c &&
+            c.el === el &&
+            c.iw === iw &&
+            c.ih === ih &&
+            performance.now() - c.t < this.MEDIA_RECT_TTL_MS
+        ) {
+            return c.rect;
+        }
+
+        const rect = this._computeMediaRect(el, iw, ih);
+        this._mediaRectCache = { el, iw, ih, rect, t: performance.now() };
+        return rect;
+    }
+
+    /** Drop the cached media rect; the next _mediaRect() re-measures. Called
+     *  whenever the element box, transform or viewport may have moved. */
+    _invalidateMediaRect() {
+        this._mediaRectCache = null;
+    }
+
+    /** Uncached measurement — the single layout read behind _mediaRect(). */
+    _computeMediaRect(el, iw, ih) {
+        const r = el.getBoundingClientRect();
         if (!iw || !ih) return r;
         const scale = Math.min(r.width / iw, r.height / ih);
         const w = iw * scale,
@@ -5616,6 +5708,7 @@ export class StreamView {
             } catch (e) {}
             this._resizeObserver = null;
         }
+        this._teardownMediaRectInvalidation();
         if (this._renderer) {
             try {
                 this._renderer.dispose();
