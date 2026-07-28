@@ -17,3 +17,11 @@ frontend/js/vendor/** linguist-vendored
 # batch stays CRLF, regardless of the checkout platform.
 *.sh  text eol=lf
 *.bat text eol=crlf
+
+# JS must stay LF on every platform: .prettierrc pins `endOfLine: "lf"`, so a
+# CRLF checkout (core.autocrlf=true on Windows) makes `npm run format` fail on
+# every file while CI on Linux stays green.
+*.js  text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+*.ts  text eol=lf
