@@ -2709,15 +2709,23 @@ export class StreamView {
     _pumpRender() {
         if (!this.renderRunning || !this._renderer) return;
 
-        // Presentation pacing. VSync (rAF-paced) mode keeps ONE frame in
-        // reserve and presents the oldest queued frame: a frame arriving a few
-        // ms late is shown at the next tick instead of producing the
-        // "repeat + skip" judder of drop-to-freshest (this is what makes the
-        // media transport feel smoother). Costs at most one refresh interval,
-        // transiently, only while the reserve is occupied — nothing in steady
-        // state. Immediate mode (VSync off) keeps only the freshest frame for
-        // minimum latency, as before.
-        const maxQueued = this._immediateRender ? 1 : 2;
+        // Presentation pacing. Both modes present the FRESHEST decoded frame
+        // (older ones are dropped): the render-queue latency then never exceeds
+        // the time a single frame waits for its turn to draw.
+        //
+        // VSync (rAF-paced) mode used to keep one frame in reserve and present
+        // the OLDEST queued frame, to smooth over a frame arriving a few ms late
+        // (avoiding the "repeat + skip" judder of drop-to-freshest). But at a
+        // sustained framerate near the display refresh — exactly what a moving
+        // mouse produces — the reserve stays permanently occupied and adds a
+        // full refresh interval to the queue (RENDER QUEUE climbing from ~8ms at
+        // rest to ~22ms in motion on a 60Hz panel). Immediate mode, which would
+        // shed that latency, is unavailable off Chromium desktop (iOS/Safari),
+        // so presenting the freshest frame is the only lever there. At low
+        // framerates the queue rarely holds two frames, so this matches the old
+        // reserve behaviour; the reserve only ever engaged — and only ever cost
+        // latency — at high framerates.
+        const maxQueued = 1;
 
         // Previous render still in flight — trim the queue; the draw's
         // finally() re-pumps in immediate mode, the next rAF does so otherwise.
