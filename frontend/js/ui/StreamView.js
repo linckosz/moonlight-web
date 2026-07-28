@@ -432,6 +432,9 @@ export class StreamView {
 
         // Overlay stats
         this._overlayEl = null;
+        // Inner wrapper holding the stats markup: rebuilt on every tick, unlike
+        // the card itself and its × button.
+        this._statsBodyEl = null;
         this._overlayInterval = null;
         // Latency breakdown: hidden until the card is hovered (mouse) or
         // tapped (touch).
@@ -1060,8 +1063,18 @@ export class StreamView {
         this._overlayEl = document.createElement('div');
         this._overlayEl.id = 'stream-stats-overlay';
         this._overlayEl.className = 'stream-stats-overlay';
-        this._overlayEl.innerHTML =
+        // The stats markup is rebuilt twice a second, so it gets its own child
+        // wrapper and the × button is appended once, next to it. A × living
+        // inside the rebuilt markup was a moving target on touch: handleTouchEnd
+        // clicks the element captured at touchstart, and a tick landing between
+        // touchstart and touchend had already detached that node — the click
+        // went nowhere (card stays open, × just blinks as it is re-rendered).
+        this._statsBodyEl = document.createElement('div');
+        this._statsBodyEl.className = 'stats-content';
+        this._statsBodyEl.innerHTML =
             '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
+        this._overlayEl.appendChild(this._statsBodyEl);
+        this._overlayEl.appendChild(this._makeOverlayCloseBtn());
         this._rootEl.appendChild(this._overlayEl);
 
         // The stats card can sit over the game; let the user drag it out of the
@@ -3230,8 +3243,11 @@ export class StreamView {
 
     // ── Latency breakdown reveal ─────────────────────────────────────────
     /**
-     * Reveal the per-leg latency breakdown while the stats card is hovered
-     * (mouse) or after it is tapped (touch, which has no hover at all).
+     * Toggle the per-leg latency breakdown when the stats card is clicked or
+     * tapped. Deliberately not hover-driven, even on desktop: the breakdown is
+     * something you consult, and a panel that unfolds every time the cursor
+     * crosses the card — then collapses as you move away to read it — makes the
+     * card jump around under the mouse.
      *
      * The listeners live on the card itself, never on the rows: the card's
      * innerHTML is rebuilt on every stats tick, so anything bound inside it —
@@ -3239,13 +3255,7 @@ export class StreamView {
      * shown — dies twice a second.
      */
     _bindLatencyDetailReveal(el) {
-        el.addEventListener('pointerenter', (e) => {
-            if (e.pointerType !== 'touch') this._setLatencyDetail(true);
-        });
-        el.addEventListener('pointerleave', (e) => {
-            if (e.pointerType !== 'touch') this._setLatencyDetail(false);
-        });
-        // Touch: toggle on tap. Not a click listener — the drag handler
+        // Toggle on release, not on a 'click' listener: the drag handler
         // preventDefault()s the pointer sequence, so a synthetic click is not
         // guaranteed; and a real drag must not be mistaken for a tap.
         let downX = 0;
@@ -3257,7 +3267,8 @@ export class StreamView {
             downT = performance.now();
         });
         el.addEventListener('pointerup', (e) => {
-            if (e.pointerType !== 'touch') return;
+            // Left button only — a right-click on the card must not toggle.
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
             if (e.target.closest && e.target.closest('.overlay-close-btn')) return;
             if (performance.now() - downT > 600) return;
             if (Math.abs(e.clientX - downX) > 8 || Math.abs(e.clientY - downY) > 8) return;
@@ -3340,16 +3351,20 @@ export class StreamView {
 
     // ── Overlay close (×) button ─────────────────────────────────────────
 
-    /** Markup for the small × button that dismisses a draggable overlay. */
-    _overlayCloseBtnHtml() {
+    /**
+     * The small × button that dismisses a draggable overlay. Returned as a real
+     * element, not markup: it must be appended once and outlive the innerHTML
+     * rebuilds of the card it sits on (see the stats overlay in _buildUI).
+     */
+    _makeOverlayCloseBtn() {
         const label = t('stream.closeOverlay');
-        return (
-            '<button type="button" class="overlay-close-btn" aria-label="' +
-            label +
-            '" title="' +
-            label +
-            '">×</button>'
-        );
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'overlay-close-btn';
+        btn.setAttribute('aria-label', label);
+        btn.title = label;
+        btn.textContent = '×';
+        return btn;
     }
 
     /** Dismiss a draggable overlay (× button). */
@@ -3405,8 +3420,8 @@ export class StreamView {
         }
         html += '</span>';
         html += '<span class="imm-text">' + t('stream.immersiveExitTitle') + '</span>';
-        html += this._overlayCloseBtnHtml();
         this._immersiveOverlay.innerHTML = html;
+        this._immersiveOverlay.appendChild(this._makeOverlayCloseBtn());
         this._immersiveOverlay.title = t('stream.immersiveExitTitle');
     }
 
@@ -3489,11 +3504,8 @@ export class StreamView {
 
         // Before first frame: show minimal waiting state
         if (!this._firstFrameRendered) {
-            this._overlayEl.innerHTML =
-                '<div class="stats-waiting">' +
-                t('stream.connecting') +
-                '</div>' +
-                this._overlayCloseBtnHtml();
+            this._statsBodyEl.innerHTML =
+                '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
             this._overlayEl.style.display = '';
             return;
         }
@@ -3713,9 +3725,8 @@ export class StreamView {
         }
 
         html += '</div>';
-        html += this._overlayCloseBtnHtml();
 
-        this._overlayEl.innerHTML = html;
+        this._statsBodyEl.innerHTML = html;
     }
 
     // ── Stats message handler (ping/pong + periodic backend stats) ─────────
