@@ -50,7 +50,12 @@ import {
     CODEC_AV1,
 } from '../util/Av1Utils.js';
 
-import { IS_TOUCH_DEVICE, IS_MOBILE_OR_TABLET, pickAutoEnhancer } from '../util/BrowserDetect.js';
+import {
+    IS_TOUCH_DEVICE,
+    IS_MOBILE_OR_TABLET,
+    SUPPORTS_CANVAS_TEARING,
+    pickAutoEnhancer,
+} from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
@@ -2709,23 +2714,24 @@ export class StreamView {
     _pumpRender() {
         if (!this.renderRunning || !this._renderer) return;
 
-        // Presentation pacing. Both modes present the FRESHEST decoded frame
-        // (older ones are dropped): the render-queue latency then never exceeds
-        // the time a single frame waits for its turn to draw.
+        // Presentation pacing — how many decoded frames may sit in the queue.
         //
-        // VSync (rAF-paced) mode used to keep one frame in reserve and present
-        // the OLDEST queued frame, to smooth over a frame arriving a few ms late
-        // (avoiding the "repeat + skip" judder of drop-to-freshest). But at a
-        // sustained framerate near the display refresh — exactly what a moving
-        // mouse produces — the reserve stays permanently occupied and adds a
-        // full refresh interval to the queue (RENDER QUEUE climbing from ~8ms at
-        // rest to ~22ms in motion on a 60Hz panel). Immediate mode, which would
-        // shed that latency, is unavailable off Chromium desktop (iOS/Safari),
-        // so presenting the freshest frame is the only lever there. At low
-        // framerates the queue rarely holds two frames, so this matches the old
-        // reserve behaviour; the reserve only ever engaged — and only ever cost
-        // latency — at high framerates.
-        const maxQueued = 1;
+        // The reserve (keep one frame back, present the OLDEST queued frame)
+        // smooths over a frame arriving a few ms late, avoiding the "repeat +
+        // skip" judder of drop-to-freshest. But at a sustained framerate near
+        // the display refresh — exactly what a moving mouse produces — the
+        // reserve stays permanently occupied and adds a full refresh interval to
+        // the render queue (~8ms at rest -> ~22ms in motion on a 60Hz panel).
+        //
+        // Only keep the reserve where the browser can otherwise fall back to
+        // immediate mode (Chromium desktop) for low latency and VSync smoothness
+        // is a sensible default. Everywhere else — iOS/Safari, Firefox, mobile,
+        // where immediate mode is a no-op (SUPPORTS_CANVAS_TEARING === false) —
+        // present the FRESHEST frame, the only lever those platforms have to
+        // shed the reserve latency. At low framerates the queue rarely holds two
+        // frames, so this matches the reserve behaviour there anyway.
+        const useReserve = SUPPORTS_CANVAS_TEARING && !this._immediateRender;
+        const maxQueued = useReserve ? 2 : 1;
 
         // Previous render still in flight — trim the queue; the draw's
         // finally() re-pumps in immediate mode, the next rAF does so otherwise.
