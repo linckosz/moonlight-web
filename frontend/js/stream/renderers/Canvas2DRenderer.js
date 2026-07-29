@@ -101,6 +101,13 @@ export class Canvas2DRenderer extends VideoRenderer {
             return;
         }
 
+        // Diagnostics: everything awaited is "wait" (GPU upload / readback), the
+        // rest is this renderer's own work — which on an accelerated canvas
+        // includes the synchronous drawImage blocking on a full swap chain, the
+        // signature of presentation back-pressure. See VideoRenderer.lastDraw.
+        const drawStart = performance.now();
+        let waitMs = 0;
+
         // Resize the backing buffer to the frame size when needed.
         if (
             frame.displayWidth &&
@@ -122,9 +129,11 @@ export class Canvas2DRenderer extends VideoRenderer {
             //   2. ctx.drawImage(VideoFrame, 'copy')          (some Safari)
             //   3. copyTo(RGBA) → ImageData → putImageData     (last resort)
             let bitmap = null;
+            const bitmapStart = performance.now();
             try {
                 bitmap = await createImageBitmap(frame);
             } catch (e) {}
+            waitMs += performance.now() - bitmapStart;
 
             this.ctx.save();
             this.ctx.globalCompositeOperation = 'copy';
@@ -152,7 +161,9 @@ export class Canvas2DRenderer extends VideoRenderer {
                     if (w > 0 && h > 0) {
                         const size = w * h * 4;
                         const buf = new ArrayBuffer(size);
+                        const copyStart = performance.now();
                         await frame.copyTo(buf, { format: 'RGBA' });
+                        waitMs += performance.now() - copyStart;
                         const imageData = new ImageData(new Uint8ClampedArray(buf, 0, size), w, h);
                         this.ctx.putImageData(imageData, 0, 0);
                         success = true;
@@ -174,6 +185,7 @@ export class Canvas2DRenderer extends VideoRenderer {
 
             frame.close();
             this._rendered++;
+            this._noteDraw(drawStart, waitMs, bitmap ? 'nv12-bitmap' : 'nv12-fallback');
             return;
         }
 
@@ -182,14 +194,18 @@ export class Canvas2DRenderer extends VideoRenderer {
         // createImageBitmap (GPU copy + microtask gap). createImageBitmap is the
         // fallback for browsers where direct VideoFrame drawing fails.
         let rendered = false;
+        let path = 'drawImage';
         try {
             this.ctx.drawImage(frame, 0, 0, this.canvas.width, this.canvas.height);
             rendered = true;
         } catch (e) {}
 
         if (!rendered) {
+            path = 'bitmap';
             try {
+                const bitmapStart = performance.now();
                 const bitmap = await createImageBitmap(frame);
+                waitMs += performance.now() - bitmapStart;
                 this.ctx.drawImage(bitmap, 0, 0, this.canvas.width, this.canvas.height);
                 bitmap.close();
                 rendered = true;
@@ -199,12 +215,15 @@ export class Canvas2DRenderer extends VideoRenderer {
                     rendered = true;
                 } catch (e2) {
                     try {
+                        path = 'copyTo';
                         const w = frame.displayWidth || frame.codedWidth || 0;
                         const h = frame.displayHeight || frame.codedHeight || 0;
                         if (w > 0 && h > 0) {
                             const size = w * h * 4;
                             const buf = new ArrayBuffer(size);
+                            const copyStart = performance.now();
                             await frame.copyTo(buf, { format: 'RGBA' });
+                            waitMs += performance.now() - copyStart;
                             const imageData = new ImageData(
                                 new Uint8ClampedArray(buf, 0, size),
                                 w,
@@ -222,6 +241,15 @@ export class Canvas2DRenderer extends VideoRenderer {
 
         frame.close();
         this._rendered++;
+        this._noteDraw(drawStart, waitMs, rendered ? path : 'failed');
+    }
+
+    /** Record the draw split for PipelineDiag (see VideoRenderer.lastDraw). */
+    _noteDraw(startMs, waitMs, path) {
+        const total = performance.now() - startMs;
+        this.lastDraw.submitMs = Math.max(0, total - waitMs);
+        this.lastDraw.waitMs = waitMs;
+        this.lastDraw.path = path;
     }
 
     dispose() {

@@ -1219,6 +1219,14 @@ export class WebGpuRenderer extends VideoRenderer {
             return;
         }
 
+        // Diagnostics: split the encode/submit work from the GPU wait below.
+        // onSubmittedWorkDone() also absorbs the compositor's swap-chain
+        // back-pressure, so a large waitMs with a small submitMs means the
+        // pipeline is presentation-bound, not shader-bound (which is exactly
+        // what a rising framerate turns into). See VideoRenderer.lastDraw.
+        const drawStart = performance.now();
+        let uploadMs = 0;
+
         const inW = frame.displayWidth || frame.codedWidth || 0;
         const inH = frame.displayHeight || frame.codedHeight || 0;
         if (inW <= 0 || inH <= 0) {
@@ -1254,9 +1262,12 @@ export class WebGpuRenderer extends VideoRenderer {
         // would tone-map the HDR away). On failure, fall back to the blit below.
         let useYuv = false;
         if (this._hdrTonemap) {
+            const uploadStart = performance.now();
             try {
                 useYuv = await this._uploadP010(frame, inW, inH);
+                uploadMs = performance.now() - uploadStart;
             } catch (e) {
+                uploadMs = performance.now() - uploadStart;
                 useYuv = false;
                 if (!this._uploadWarned) {
                     this._uploadWarned = true;
@@ -1312,9 +1323,11 @@ export class WebGpuRenderer extends VideoRenderer {
                 // Backpressure: resolve only when the GPU finished, so the caller's
                 // render guard reflects real GPU throughput (drop-to-latest then
                 // discards the backlog instead of letting it grow → no lag creep).
+                const gpuStart = performance.now();
                 try {
                     await this._device.queue.onSubmittedWorkDone();
                 } catch (e) {}
+                this._noteDraw(drawStart, uploadMs + (performance.now() - gpuStart), 'off');
                 return;
             }
 
@@ -1422,9 +1435,23 @@ export class WebGpuRenderer extends VideoRenderer {
         // the caller's render guard self-paces to GPU capacity. Without it the
         // VSync-off / worker path submits faster than the GPU presents and the
         // backlog grows unbounded → progressive latency (4K + FSR1 + zoom).
+        const gpuStart = performance.now();
         try {
             await this._device.queue.onSubmittedWorkDone();
         } catch (e) {}
+        this._noteDraw(
+            drawStart,
+            uploadMs + (performance.now() - gpuStart),
+            this._algo + (useYuv ? '+yuv' : ''),
+        );
+    }
+
+    /** Record the draw split for PipelineDiag (see VideoRenderer.lastDraw). */
+    _noteDraw(startMs, waitMs, path) {
+        const total = performance.now() - startMs;
+        this.lastDraw.submitMs = Math.max(0, total - waitMs);
+        this.lastDraw.waitMs = waitMs;
+        this.lastDraw.path = path;
     }
 
     dispose() {

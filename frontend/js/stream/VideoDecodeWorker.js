@@ -54,6 +54,7 @@ import {
     CODEC_AV1,
 } from '../util/Av1Utils.js';
 import { createVideoRenderer } from './renderers/createRenderer.js';
+import { PipelineDiag } from './PipelineDiag.js';
 
 // ── Worker-local pipeline state (mirrors the StreamView fields) ──────────────
 const S = {
@@ -98,6 +99,10 @@ const S = {
     _decodeSamples: [], // [{ time, value }] decode() submit → decoder output
     _queueSamples: [], // [{ time, value }] decoder output → draw start
     _renderSamples: [], // [{ time, value }] draw start → draw done
+
+    // Why those three legs move: arrival cadence, queue depths, draw split and
+    // drop causes (posted with the counters — see PipelineDiag).
+    diag: new PipelineDiag(2000),
 
     stopped: false,
 
@@ -169,6 +174,7 @@ function postCounters(force) {
         clientQueueMs: stageAvg(S._queueSamples),
         clientRenderMs: stageAvg(S._renderSamples),
         resolution: S._lastResolution || '',
+        diag: S.diag.snapshot(),
     });
 }
 
@@ -511,9 +517,12 @@ function decodeFrame(data, isKeyframe, backendTs) {
 
     if (!isKeyframe && !S._referenceValid) {
         S.stats.dropped++;
+        S.diag.noteDrop('backpressure');
         requestIdr('reference invalid');
         return;
     }
+
+    S.diag.noteDecodeQueue(S.decoder.decodeQueueSize);
 
     if (!isKeyframe && S.decoder.decodeQueueSize >= S.DECODE_QUEUE_MAX) {
         const now = performance.now();
@@ -526,6 +535,7 @@ function decodeFrame(data, isKeyframe, backendTs) {
         }
         if (saturatedMs > S.QUEUE_STALL_MS) {
             S.stats.dropped++;
+            S.diag.noteDrop('backpressure');
             S._referenceValid = false;
             requestIdr('decode queue overflow');
             return;
@@ -631,6 +641,7 @@ function decodeAv1Frame(data, isKeyframe) {
     S.frameCount++;
     const type = isKeyframe ? 'key' : 'delta';
     const obuData = stripNonEssentialObus(data);
+    S.diag.noteDecodeQueue(S.decoder.decodeQueueSize);
     try {
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: obuData });
         trackChunkSubmit(timestamp);
@@ -661,6 +672,7 @@ function onDecodedFrame(frame) {
     if (S.frameQueue.length >= 3) {
         frame.close();
         S.stats.dropped++;
+        S.diag.noteDrop('queueFull');
         return;
     }
     S.frameQueue.push(frame);
@@ -683,9 +695,12 @@ function onDecodedFrame(frame) {
 // VideoFrames are never touched concurrently (Chrome Windows HEVC NV12 race).
 function pump() {
     if (S.stopped || S.rendering || S.frameQueue.length === 0) return;
+    // Depth BEFORE the trim: > 1 means the draw did not keep up with decode.
+    S.diag.noteFrameQueue(S.frameQueue.length);
     while (S.frameQueue.length > 1) {
         S.frameQueue.shift().close();
         S.stats.dropped++;
+        S.diag.noteDrop('stale');
     }
     const frame = S.frameQueue.shift();
     S.rendering = true;
@@ -698,6 +713,7 @@ function pump() {
             if (ok) {
                 S.stats.rendered++;
                 addStageSample(S._renderSamples, performance.now() - drawStart);
+                S.diag.noteDraw(S.renderer && S.renderer.lastDraw);
             }
         })
         .finally(() => {
@@ -726,6 +742,11 @@ async function drawFrame(frame) {
 // onward; stale/gap/stats/overlay stay on the main thread before this point).
 function processFrame(data, isKeyframe, backendTs) {
     if (S.stopped || S._fatalDecodeError) return;
+
+    // Arrival cadence + encoded size at the pipeline entry: distinguishes "the
+    // host now sends 60fps of heavy frames" from "the browser slowed down" when
+    // the legs inflate together.
+    S.diag.noteArrival(data.length);
 
     if (S.videoCodec === CODEC_AV1) {
         handleAv1Frame(data, isKeyframe);

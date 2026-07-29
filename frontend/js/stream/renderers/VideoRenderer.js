@@ -32,6 +32,21 @@
  */
 export class VideoRenderer {
     /**
+     * Timing of the LAST completed draw(), for the pipeline diagnostics
+     * (PipelineDiag.noteDraw). Split deliberately:
+     *   submitMs — work this renderer actually does (pixel conversion, command
+     *              encoding, the synchronous canvas call).
+     *   waitMs   — time spent waiting on something else to be ready: the GPU
+     *              queue, an image-bitmap upload, the canvas swap chain. This
+     *              is where presentation back-pressure shows up, and it is what
+     *              makes the "Render" leg grow with the framerate without the
+     *              draw itself getting any more expensive.
+     *   path     — which code path produced the frame (renderers have several).
+     * @type {{submitMs: number, waitMs: number, path: string}}
+     */
+    lastDraw = { submitMs: 0, waitMs: 0, path: '' };
+
+    /**
      * Async factory — subclasses implement it: set up the context and resources.
      * @param {HTMLCanvasElement|OffscreenCanvas} canvas
      * @param {object} opts
