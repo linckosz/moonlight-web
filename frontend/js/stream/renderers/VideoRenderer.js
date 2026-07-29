@@ -64,6 +64,16 @@ export class VideoRenderer {
     setOutputSize(width, height) {}
 
     /**
+     * Switch the enhancement pass at runtime. Only the WebGPU path has one;
+     * everywhere else this is inert, so the governor can call it blind.
+     * @param {string} algo
+     * @returns {boolean} true when the renderer switched.
+     */
+    setAlgo(algo) {
+        return false;
+    }
+
+    /**
      * Draw one VideoFrame and CLOSE it (always, even on error). Returns a
      * promise that resolves when the frame has been consumed. Does NOT touch
      * the caller's stats counters.

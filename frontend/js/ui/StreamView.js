@@ -58,6 +58,7 @@ import {
 } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { PipelineDiag, formatDiag } from '../stream/PipelineDiag.js';
+import { EnhancerGovernor } from '../stream/EnhancerGovernor.js';
 import { t } from '../i18n/i18n.js';
 
 /** @typedef {import('../types/transport.js').StreamTransport} StreamTransport */
@@ -495,6 +496,10 @@ export class StreamView {
         // posts a snapshot with the counters, kept in _workerDiag.
         this._diag = new PipelineDiag(2000);
         this._workerDiag = null;
+        // Enhancer ladder, created with the renderer when it is the WebGPU one
+        // (the worker path owns its own instance and reports its verdicts).
+        this._governor = null;
+        this._enhancerDegraded = false;
         // Presented (actually drawn) frames vs decoded ones: the fps readout
         // counts decoded frames, so a pipeline dropping a third of them at the
         // render stage still reads 60.
@@ -1458,6 +1463,13 @@ export class StreamView {
                 if (m.diag) this._workerDiag = m.diag;
                 break;
             }
+            case 'enhancer':
+                // The worker's governor stepped the enhancer up or down. The
+                // user's setting is untouched — only what runs right now, and
+                // what the overlay names.
+                this._videoEnhancementAlgo = m.algo;
+                this._enhancerDegraded = !!m.degraded;
+                break;
             case 'fatal':
                 this._fatalDecodeError = true;
                 this.setStatus('error', m.msg);
@@ -3064,6 +3076,10 @@ export class StreamView {
                         this._renderer = r;
                         this._activeRendererKind = r.kind;
                         this._rendererHdrActive = !!r.hdrActive;
+                        // Enhancer ladder for the main-thread path (the worker
+                        // runs its own): the setting is the ceiling.
+                        if (r.kind === 'webgpu')
+                            this._governor = new EnhancerGovernor(this._videoEnhancementAlgo);
                         console.log(
                             '[StreamView] renderer=' +
                                 r.kind +
@@ -3712,6 +3728,9 @@ export class StreamView {
                     : this._videoEnhancementAlgo === 'off'
                       ? t('stream.enhancerOff')
                       : 'SGSR';
+            // Stepped down by the governor: say so, otherwise the card reads as
+            // if the user's setting silently changed.
+            if (this._enhancerDegraded) enhancerName += ' (auto)';
         } else if (this._transport === 'webrtc-media' && this._videoEnhancementRequested) {
             enhancerName = 'OFF (not available on MediaTrack)';
         } else if (
@@ -3843,7 +3862,11 @@ export class StreamView {
         // second so a session can be reported without watching the overlay.
         // Not applicable to webrtc-media: no WebCodecs pipeline to observe.
         if (!isMedia) {
-            const diagLine = formatDiag(this._workerDiag || this._diag.snapshot(), {
+            const diagSnap = this._workerDiag || this._diag.snapshot();
+            // Main-thread path only: the worker applies its own ladder before
+            // posting, so re-deciding here would fight it with stale numbers.
+            if (!this._useWorker) this._applyEnhancerGovernor(diagSnap, now);
+            const diagLine = formatDiag(diagSnap, {
                 decodedFps: fps,
                 presentedFps: this._presentedFps,
                 dropsPerSec: this._dropsPerSec,
@@ -3860,6 +3883,24 @@ export class StreamView {
         html += '</div>';
 
         this._statsBodyEl.innerHTML = html;
+    }
+
+    /**
+     * Feed the observation window to the enhancer ladder and apply its verdict
+     * (main-thread renderer path). The draw wait is the enhancer's own GPU
+     * cost; the arrival interval is the budget it has to fit into.
+     */
+    _applyEnhancerGovernor(diag, now) {
+        if (!this._governor || !this._renderer) return;
+        const algo = this._governor.update({
+            waitMs: diag.renderWaitMs,
+            arrivalMs: diag.arrivalAvgMs,
+            now,
+        });
+        if (!algo) return;
+        if (!this._renderer.setAlgo(algo)) return;
+        this._videoEnhancementAlgo = algo;
+        this._enhancerDegraded = this._governor.degraded;
     }
 
     /**

@@ -55,6 +55,7 @@ import {
 } from '../util/Av1Utils.js';
 import { createVideoRenderer } from './renderers/createRenderer.js';
 import { PipelineDiag } from './PipelineDiag.js';
+import { EnhancerGovernor } from './EnhancerGovernor.js';
 
 // ── Worker-local pipeline state (mirrors the StreamView fields) ──────────────
 const S = {
@@ -103,6 +104,9 @@ const S = {
     // Why those three legs move: arrival cadence, queue depths, draw split and
     // drop causes (posted with the counters — see PipelineDiag).
     diag: new PipelineDiag(2000),
+    // Steps the enhancer down when its GPU cost stops fitting between two
+    // frames; created at init from the requested algo (its ceiling).
+    governor: null,
 
     stopped: false,
 
@@ -164,6 +168,8 @@ function postCounters(force) {
     const now = performance.now();
     if (!force && now - S._lastCountersPost < 500) return;
     S._lastCountersPost = now;
+    const diag = S.diag.snapshot();
+    applyEnhancerGovernor(diag, now);
     post({
         type: 'counters',
         received: S.stats.received,
@@ -174,8 +180,23 @@ function postCounters(force) {
         clientQueueMs: stageAvg(S._queueSamples),
         clientRenderMs: stageAvg(S._renderSamples),
         resolution: S._lastResolution || '',
-        diag: S.diag.snapshot(),
+        diag,
     });
+}
+
+// Feed the observation window to the enhancer ladder and apply its verdict.
+// The draw wait is the enhancer's own GPU cost; the arrival interval is the
+// budget it has to fit in. Main is told so the overlay can name what is running.
+function applyEnhancerGovernor(diag, now) {
+    if (!S.governor || !S.renderer) return;
+    const algo = S.governor.update({
+        waitMs: diag.renderWaitMs,
+        arrivalMs: diag.arrivalAvgMs,
+        now,
+    });
+    if (!algo) return;
+    if (!S.renderer.setAlgo(algo)) return;
+    post({ type: 'enhancer', algo, degraded: S.governor.degraded });
 }
 
 // ── Decoder lifecycle ────────────────────────────────────────────────────────
@@ -797,6 +818,9 @@ self.onmessage = (e) => {
                 hdr: !!m.hdr,
             }).then((r) => {
                 S.renderer = r;
+                // The requested algo is the ceiling: the governor only steps
+                // below it, and only while the GPU cost does not fit a frame.
+                if (r.kind === 'webgpu') S.governor = new EnhancerGovernor(m.algo);
                 // Apply an output size that may have arrived before the renderer.
                 if (S.outW > 0 && S.outH > 0) r.setOutputSize(S.outW, S.outH);
                 console.log(
