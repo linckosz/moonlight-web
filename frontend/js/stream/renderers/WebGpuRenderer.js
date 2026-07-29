@@ -1211,6 +1211,45 @@ export class WebGpuRenderer extends VideoRenderer {
         this._hasOutputSize = true;
     }
 
+    /**
+     * Switch the upscaler pass at runtime (EnhancerGovernor's ladder). Only the
+     * chosen algo's resources are built at create(), so the target's are built
+     * on first use and kept — a switch back is then free.
+     *
+     * Two things must be invalidated, not just the algo field:
+     *   - the enhancer bind group, whose LAYOUT differs between FSR1 and SGSR:
+     *     zeroing the cached input size forces _ensureInputTex to rebuild it;
+     *   - the HDR tone-map pipeline, whose render target is the canvas format
+     *     in 'off' mode and the intermediate format otherwise.
+     *
+     * @param {string} algo 'sgsr' | 'fsr1' | 'off'; anything else is refused.
+     * @returns {boolean} true when the renderer switched.
+     */
+    setAlgo(algo) {
+        if (algo === this._algo) return false;
+        if (!this._ready || !this._device) return false;
+        if (algo !== 'sgsr' && algo !== 'fsr1' && algo !== 'off') return false;
+
+        try {
+            if (algo === 'off' && !this._passthroughPipeline) this._buildPassthroughResources();
+            else if (algo === 'sgsr' && !this._enhancePipeline) this._buildSgsrResources();
+            else if (algo === 'fsr1' && !this._easuPipeline) this._buildFsr1Resources();
+        } catch (e) {
+            console.error('[WebGpuRenderer] setAlgo(' + algo + ') failed: ' + e.message);
+            return false;
+        }
+
+        const wasOff = this._algo === 'off';
+        this._algo = algo;
+        this._inW = 0;
+        this._inH = 0;
+        this._intermW = 0;
+        this._intermH = 0;
+        if (this._hdrTonemap && wasOff !== (algo === 'off')) this._buildHdrTonemapResources();
+        console.log('[WebGpuRenderer] algo → ' + algo);
+        return true;
+    }
+
     async draw(frame) {
         if (!this._ready || !this.ctx) {
             try {
