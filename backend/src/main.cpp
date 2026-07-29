@@ -275,6 +275,15 @@ static bool hasGuiSession()
 #endif
 }
 
+// True while the A-record checklist step is still open, i.e. some provisioning
+// flow is waiting on it: the Windows installer's provisioning.json or the in-app
+// setup wizard's /api/setup/apply. Both write the same status file, so the
+// asynchronous completion handlers below don't need to know which one ran.
+static bool arecordRunning()
+{
+    return Provisioning::stepStatus(QStringLiteral("arecord")) == QLatin1String("running");
+}
+
 // Open a URL in the user's default browser. On Linux, QDesktopServices::openUrl
 // routes through the XDG desktop portal, which under Ubuntu's snap-packaged
 // Firefox (the distro default) can pop a blank window that never receives the
@@ -1918,8 +1927,9 @@ int main(int argc, char* argv[])
     // freshly authorized instance brings Internet Access up immediately. When it
     // applied a provisioning.json, the installer is polling its status file: feed
     // the asynchronous A-record (domain ready) step into the live checklist.
-    const bool provisioned = Provisioning::applyOnce(QCoreApplication::applicationDirPath(),
-                                                     appSettings, computerManager);
+    // applyOnce() opens that step itself, which is what the handlers below key
+    // off — no need for its return value here.
+    Provisioning::applyOnce(QCoreApplication::applicationDirPath(), appSettings, computerManager);
 
     // Refresh the shortcut to the valid-certificate domain link once it is ready,
     // and (during a fresh install) mark the A-record checklist step done.
@@ -1929,29 +1939,33 @@ int main(int argc, char* argv[])
     // ACME order is still in flight the step stays "running" and is closed by
     // the certificateChanged handler below — otherwise the installer declares
     // success and opens the admin page on the still-self-signed domain.
+    //
+    // Gated on the step being "running" rather than on `provisioned`: the
+    // in-app setup wizard (macOS/Linux) opens the very same step from
+    // /api/setup/apply, and it needs the certificate folded into "done" for
+    // exactly the same reason the installer does.
     QObject::connect(&internetAccess, &InternetAccessManager::ready, &app,
-                     [&adminUrl, &internetAccess, provisioned](const QString&, const QString&) {
+                     [&adminUrl, &internetAccess](const QString&, const QString&) {
                          // adminUrl() folds in the active HTTPS port (fallback port
                          // for a co-existing instance behind the same NAT).
                          writeAdminShortcut(adminUrl());
-                         if (provisioned && !internetAccess.certificateIssuing())
+                         if (arecordRunning() && !internetAccess.certificateIssuing())
                              Provisioning::setStepStatus(QStringLiteral("arecord"),
                                                          QStringLiteral("done"));
                      });
     // The certificate landed (and the TLS reload connected earlier already
     // swapped it in): the domain URL is now trusted, so republish it and close
     // the checklist step.
-    QObject::connect(&internetAccess, &InternetAccessManager::certificateChanged, &app,
-                     [&adminUrl, provisioned]() {
-                         writeAdminShortcut(adminUrl());
-                         if (provisioned)
-                             Provisioning::setStepStatus(QStringLiteral("arecord"),
-                                                         QStringLiteral("done"));
-                     });
-    if (provisioned)
-        QObject::connect(&internetAccess, &InternetAccessManager::error, &app, [](const QString&) {
-            Provisioning::setStepStatus(QStringLiteral("arecord"), QStringLiteral("failed"));
+    QObject::connect(
+        &internetAccess, &InternetAccessManager::certificateChanged, &app, [&adminUrl]() {
+            writeAdminShortcut(adminUrl());
+            if (arecordRunning())
+                Provisioning::setStepStatus(QStringLiteral("arecord"), QStringLiteral("done"));
         });
+    QObject::connect(&internetAccess, &InternetAccessManager::error, &app, [](const QString&) {
+        if (arecordRunning())
+            Provisioning::setStepStatus(QStringLiteral("arecord"), QStringLiteral("failed"));
+    });
 
     // Auto-start Internet Access if it was enabled before last shutdown.
     // This handles DNS registration + public IP detection at boot without
@@ -1967,7 +1981,7 @@ int main(int argc, char* argv[])
         // the final A-record state into the installer checklist either way. An
         // ACME order still in flight keeps the step running — certificateChanged
         // (or the installer's own timeout) closes it.
-        if (provisioned && !internetAccess.certificateIssuing())
+        if (arecordRunning() && !internetAccess.certificateIssuing())
             Provisioning::setStepStatus(QStringLiteral("arecord"), internetAccess.isActive()
                                                                        ? QStringLiteral("done")
                                                                        : QStringLiteral("failed"));

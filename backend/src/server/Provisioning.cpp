@@ -61,6 +61,16 @@ void setStepStatus(const QString& step, const QString& state)
     }
 }
 
+QString stepStatus(const QString& step)
+{
+    QFile f(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+            QStringLiteral("/provisioning.status.json"));
+    if (!f.open(QIODevice::ReadOnly)) return QString();
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+    return root.value(QStringLiteral("steps")).toObject().value(step).toString();
+}
+
 // Publish a top-level informational key (e.g. the resolved admin URL) in the
 // same status file; the installer reads it to open the right page post-install.
 void setInfo(const QString& key, const QString& value)

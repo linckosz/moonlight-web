@@ -55,6 +55,12 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
 /// "arecord". States: "pending" | "running" | "done" | "failed" | "skipped".
 void setStepStatus(const QString& step, const QString& state);
 
+/// Current state of one step, empty when it was never written. Lets an
+/// asynchronous completion handler close a step only while it is still
+/// "running", instead of having to know which flow (installer or in-app wizard)
+/// opened it.
+QString stepStatus(const QString& step);
+
 /// Publish a top-level informational key in the same status file (e.g.
 /// "admin_url" with the real HTTPS port/domain, read by the installer's
 /// post-install "open admin page" action).

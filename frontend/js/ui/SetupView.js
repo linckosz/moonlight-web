@@ -367,6 +367,15 @@ export class SetupView {
                 this.bindEvents();
                 return;
             }
+            // The A record is published but the TLS certificate order is still
+            // running — it only gets the backend's event loop back now that
+            // /apply has returned. Keep the checklist live until the domain is
+            // actually usable: declaring success here hands the user a URL their
+            // browser rejects, since the domain is served with the self-signed
+            // fallback until the order lands.
+            if (result.certificate_pending) {
+                await this._awaitStep('arecord', 180000);
+            }
             // A completed run re-arms the startup gate: if a step goes missing
             // again later, the wizard reappears even after a previous "Skip".
             try {
@@ -385,6 +394,30 @@ export class SetupView {
             this.render();
             this.bindEvents();
         }
+    }
+
+    // Poll the checklist until `key` reaches a terminal state or `timeoutMs`
+    // elapses, refreshing the rendered rows meanwhile. The cap matches the
+    // Windows installer's own budget for the same wait: an ACME order that has
+    // not landed in three minutes is not going to, and the user is better served
+    // by the admin page (which shows the live certificate state) than by a
+    // wizard that never ends.
+    async _awaitStep(key, timeoutMs) {
+        const terminal = ['done', 'failed', 'skipped'];
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            let status;
+            try {
+                status = await BackendClient.getSetupStatus();
+            } catch (_e) {
+                continue; // transient while the backend is busy — keep waiting
+            }
+            const el = this.container.querySelector('#setup-checklist');
+            if (el && status.steps) el.innerHTML = this._renderChecklist(status.steps);
+            if (status.steps && terminal.includes(status.steps[key])) return status.steps[key];
+        }
+        return 'timeout';
     }
 
     // Poll the live checklist while the (blocking) apply request runs.

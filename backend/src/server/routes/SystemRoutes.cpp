@@ -301,8 +301,17 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             appSettings.setInternetAccessEnabled(true);
             internetAccess.start();
             const bool active = internetAccess.isActive();
-            Provisioning::setStepStatus("arecord", active ? "done" : "failed");
+            // start() returns once the A record resolves, but the ACME order for
+            // that domain is still in flight — and it cannot progress while this
+            // handler holds the event loop. So leave the step "running" and let
+            // the certificateChanged/error handlers in main.cpp close it once we
+            // return; the wizard keeps polling until then. Closing it here would
+            // send the user to a domain their browser still rejects, because it
+            // is served with the self-signed fallback until the order lands.
+            const bool certPending = active && internetAccess.certificateIssuing();
+            if (!certPending) Provisioning::setStepStatus("arecord", active ? "done" : "failed");
             result["internet_active"] = active;
+            result["certificate_pending"] = certPending;
             result["domain"] = internetAccess.domain();
         }
 
