@@ -83,17 +83,45 @@ fi
 
 # Best-effort: start MoonlightWeb inside the active graphical session so the
 # first-run setup page opens right after install (postinst runs as root with no
-# display; systemd-run --user runs the app under the user's session manager,
-# which carries DISPLAY/WAYLAND_DISPLAY). Skipped when already running (e.g.
-# upgrade) or when no session user is found — the Apps menu entry covers those.
+# display; systemd-run --user runs the app under the user's session manager).
+# Skipped when already running (e.g. upgrade) or when no session user is found —
+# the Apps menu entry covers those.
 if ! pgrep -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
     for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
         uid=$(id -u "$u" 2>/dev/null) || continue
-        [ -S "/run/user/$uid/bus" ] || continue
-        if runuser -u "$u" -- env \
-            XDG_RUNTIME_DIR="/run/user/$uid" \
-            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
-            systemd-run --user --collect --quiet \
+        rt="/run/user/$uid"
+        [ -S "$rt/bus" ] || continue
+        asuser="runuser -u $u -- env XDG_RUNTIME_DIR=$rt DBUS_SESSION_BUS_ADDRESS=unix:path=$rt/bus"
+
+        # The app only opens the browser when it sees a display server
+        # (hasGuiSession(), backend/src/main.cpp), and the user's systemd manager
+        # does not reliably carry DISPLAY/WAYLAND_DISPLAY — a unit started
+        # without them stays silently headless. Resolve them here and pass them
+        # explicitly: ask the manager first, then fall back to the Wayland socket
+        # in XDG_RUNTIME_DIR and to logind's X11 display name.
+        userenv=$($asuser systemctl --user show-environment 2>/dev/null)
+        wl=$(printf '%s\n' "$userenv" | sed -n 's/^WAYLAND_DISPLAY=//p')
+        dp=$(printf '%s\n' "$userenv" | sed -n 's/^DISPLAY=//p')
+        if [ -z "$wl" ]; then
+            for s in "$rt"/wayland-*; do
+                case "$s" in *.lock) continue ;; esac
+                if [ -S "$s" ]; then wl=${s##*/}; break; fi
+            done
+        fi
+        if [ -z "$dp" ]; then
+            sid=$(loginctl show-user "$u" -p Display --value 2>/dev/null)
+            [ -n "$sid" ] && dp=$(loginctl show-session "$sid" -p Display --value 2>/dev/null)
+        fi
+        # No display at all: this user is on a text console, not a desktop.
+        [ -n "$wl" ] || [ -n "$dp" ] || continue
+
+        setenv=""
+        [ -n "$wl" ] && setenv="$setenv --setenv=WAYLAND_DISPLAY=$wl"
+        [ -n "$dp" ] && setenv="$setenv --setenv=DISPLAY=$dp"
+
+        # $setenv is deliberately unquoted: it must split into separate flags
+        # (values are socket/display names — no whitespace).
+        if $asuser systemd-run --user --collect --quiet $setenv \
             /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
             break
         fi

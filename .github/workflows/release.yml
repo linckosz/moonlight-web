@@ -244,7 +244,14 @@ jobs:
     needs: setup
     if: ${{ needs.setup.outputs.linux == 'true' }}
     name: Package Linux x64
-    runs-on: ubuntu-latest
+    # NOT ubuntu-latest: the build host sets the glibc/libstdc++ floor for every
+    # Linux artifact. linuxdeploy bundles Qt and OpenSSL but never the C runtime,
+    # so a 24.04 build (glibc 2.39, GCC 13) refuses to start on anything older —
+    # "version `GLIBC_2.38' not found" on Ubuntu 22.04, Mint 21, Debian 12.
+    # 22.04 (glibc 2.35, GCC 11) is the oldest image GitHub still hosts and runs
+    # everywhere newer; C++17 + CMake 3.21 + OpenSSL 1.1 (see backend/CMakeLists)
+    # are all satisfied there. Revisit only when 22.04 is retired.
+    runs-on: ubuntu-22.04
     # Grants access to the MW_* secrets (DNS/ACME config embedded at build time).
     environment: MoonlightWeb
     steps:
