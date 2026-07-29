@@ -244,6 +244,22 @@ export class Canvas2DRenderer extends VideoRenderer {
         this._noteDraw(drawStart, waitMs, rendered ? path : 'failed');
     }
 
+    /**
+     * Canvas2D may only be pipelined on its synchronous path: `drawImage` of a
+     * VideoFrame mutates the canvas before draw() ever suspends, so two
+     * overlapping draws still land in order. Every other path awaits first
+     * (createImageBitmap, copyTo) — two of them in flight could resolve out of
+     * order and present an older frame last, and on Chrome Windows HEVC NV12
+     * they would additionally race on the same VideoFrame.
+     *
+     * Read from the last draw rather than guessed: which path a browser takes
+     * is stable, but only observable once it has run. Before the first draw the
+     * answer is "serial", which is the safe default.
+     */
+    get serialDrawsOnly() {
+        return this.lastDraw.path !== 'drawImage';
+    }
+
     /** Record the draw split for PipelineDiag (see VideoRenderer.lastDraw). */
     _noteDraw(startMs, waitMs, path) {
         const total = performance.now() - startMs;

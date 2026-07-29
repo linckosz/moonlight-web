@@ -109,6 +109,16 @@ export class VideoElementRenderer extends VideoRenderer {
         // The <video> element scales itself via CSS; nothing to do here.
     }
 
+    /**
+     * One frame at a time: draw() may await the writer's backpressure before
+     * write(), so two overlapping draws could reach write() in the reverse
+     * order and hand the <video> an older frame last. Nothing to gain either —
+     * the stream writer already paces itself on the compositor.
+     */
+    get serialDrawsOnly() {
+        return true;
+    }
+
     async draw(frame) {
         if (this._disposed || !this._writer) {
             try {

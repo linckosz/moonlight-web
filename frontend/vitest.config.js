@@ -42,6 +42,7 @@ export default defineConfig({
                 'js/stream/JitterController.js',
                 'js/stream/PipelineDiag.js',
                 'js/stream/EnhancerGovernor.js',
+                'js/stream/RenderPacing.js',
                 'js/stream/GamepadManager.js',
                 'js/stream/renderers/createRenderer.js',
                 'js/models/App.js',

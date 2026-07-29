@@ -86,6 +86,30 @@ describe('PipelineDiag', () => {
         expect(snap.renderPath).toBe('off');
     });
 
+    it('divides the draw latency by the concurrency to get the per-frame cost', () => {
+        // Same GPU cost per frame, drawn two at a time: each draw waits about
+        // twice as long, but the pipeline still pays ~10ms per frame.
+        const serial = new PipelineDiag();
+        serial.noteDraw({ submitMs: 0.2, waitMs: 10, path: 'fsr1' }, 1);
+        const solo = serial.snapshot();
+        expect(solo.drawConcurrency).toBe(1);
+        expect(solo.renderServiceMs).toBeCloseTo(10.2, 5);
+
+        const pipelined = new PipelineDiag();
+        pipelined.noteDraw({ submitMs: 0.2, waitMs: 20.2, path: 'fsr1' }, 2);
+        const duo = pipelined.snapshot();
+        expect(duo.drawConcurrency).toBe(2);
+        expect(duo.renderServiceMs).toBeCloseTo(10.2, 5);
+    });
+
+    it('assumes serial drawing when the concurrency is not given', () => {
+        const d = new PipelineDiag();
+        d.noteDraw({ submitMs: 0, waitMs: 8, path: 'off' });
+        const snap = d.snapshot();
+        expect(snap.drawConcurrency).toBe(1);
+        expect(snap.renderServiceMs).toBe(8);
+    });
+
     it('counts drops per cause and ignores unknown ones', () => {
         const d = new PipelineDiag();
         d.noteDrop('stale');
@@ -143,7 +167,7 @@ describe('formatDiag', () => {
 
         expect(line).toContain('fps in/out 60/42');
         expect(line).toContain('frame 0.0/0.0KB');
-        expect(line).toContain('draw 1.5+22.3ms');
+        expect(line).toContain('draw 1.5+22.3ms ×1.0→23.8ms');
         expect(line).toContain('[drawImage]');
         expect(line).toContain('stale 1');
     });

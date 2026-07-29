@@ -99,6 +99,7 @@ export class PipelineDiag {
         this._frameQueue = new DiagWindow(windowMs);
         this._renderSubmit = new DiagWindow(windowMs);
         this._renderWait = new DiagWindow(windowMs);
+        this._drawConcurrency = new DiagWindow(windowMs);
         this._lastArrival = 0;
         this._renderPath = '';
         // Cumulative, by cause — deltas are computed by the reader so the
@@ -134,11 +135,17 @@ export class PipelineDiag {
     /**
      * Timing of the draw that just completed, as reported by the renderer.
      * @param {{submitMs?: number, waitMs?: number, path?: string}|null} lastDraw
+     * @param {number} [inFlight] Draws running concurrently with this one — a
+     *   draw's duration is a LATENCY, and once the pipeline overlaps two of
+     *   them the time each frame actually costs the pipeline is that latency
+     *   divided by the concurrency (Little's law). Without this, doubling the
+     *   in-flight cap would look like the draw got twice as expensive.
      */
-    noteDraw(lastDraw) {
+    noteDraw(lastDraw, inFlight) {
         if (!lastDraw) return;
         this._renderSubmit.push(lastDraw.submitMs);
         this._renderWait.push(lastDraw.waitMs);
+        this._drawConcurrency.push(inFlight === undefined ? 1 : inFlight);
         if (lastDraw.path) this._renderPath = lastDraw.path;
     }
 
@@ -155,7 +162,15 @@ export class PipelineDiag {
 
     /** Flat snapshot — postMessage-safe (structured clone of plain numbers). */
     snapshot() {
+        // Per-frame cost of the render stage: the whole draw latency spread
+        // over the draws that were overlapping. This — not the raw wait — is
+        // what has to fit inside a frame interval, so it is what the enhancer
+        // ladder is fed.
+        const concurrency = Math.max(1, this._drawConcurrency.avg);
+        const drawLatency = this._renderSubmit.avg + this._renderWait.avg;
         return {
+            drawConcurrency: concurrency,
+            renderServiceMs: drawLatency / concurrency,
             arrivalAvgMs: this._arrival.avg,
             arrivalMaxMs: this._arrival.max,
             frameBytesAvg: this._frameBytes.avg,
@@ -212,6 +227,10 @@ export function formatDiag(diag, rates) {
         n1(diag.renderSubmitMs) +
         '+' +
         n1(diag.renderWaitMs) +
+        'ms ×' +
+        n1(diag.drawConcurrency) +
+        '→' +
+        n1(diag.renderServiceMs) +
         'ms' +
         (diag.renderPath ? ' [' + diag.renderPath + ']' : '') +
         ' · drop ' +

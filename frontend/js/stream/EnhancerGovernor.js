@@ -92,15 +92,18 @@ export class EnhancerGovernor {
 
     /**
      * Feed one observation window.
-     * @param {{waitMs: number, arrivalMs: number, now: number}} obs
-     *   waitMs    average GPU/presentation wait per draw (PipelineDiag)
+     * @param {{serviceMs: number, arrivalMs: number, now: number}} obs
+     *   serviceMs per-frame cost of the render stage — the draw latency divided
+     *             by how many draws overlap (PipelineDiag.renderServiceMs), NOT
+     *             the raw wait: with two draws in flight each one waits about
+     *             twice as long while costing the pipeline the same.
      *   arrivalMs average interval between incoming frames = the frame budget
      *   now       performance.now(), passed in so the policy stays pure
      * @returns {string|null} the new algo when the level changed, else null.
      */
     update(obs) {
         const budget = obs && obs.arrivalMs;
-        const wait = obs && obs.waitMs;
+        const wait = obs && obs.serviceMs;
         const now = (obs && obs.now) || 0;
         // No usable budget (stream idle, no sample yet): hold, and let the
         // sustain timers lapse rather than deciding on nothing.

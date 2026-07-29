@@ -59,6 +59,7 @@ import {
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
 import { PipelineDiag, formatDiag } from '../stream/PipelineDiag.js';
 import { EnhancerGovernor } from '../stream/EnhancerGovernor.js';
+import { drawCapFor } from '../stream/RenderPacing.js';
 import { t } from '../i18n/i18n.js';
 
 /** @typedef {import('../types/transport.js').StreamTransport} StreamTransport */
@@ -424,7 +425,7 @@ export class StreamView {
         this.pendingFrames = []; // frames buffered before decoder config
         this.frameCount = 0;
         this.renderRunning = false;
-        this._rendering = false; // Guard: prevents overlapping GPU render ops
+        this._drawsInFlight = 0; // Draws not yet retired (see RenderPacing)
         this._immediateRender = false; // Tearing on: draw is driven by decoder output, not rAF
         this._renderer = null; // VideoRenderer (Canvas2D / WebGPU); owns the context
         this._activeRendererKind = null; // 'canvas2d' | 'webgpu' (for the overlay)
@@ -2398,7 +2399,7 @@ export class StreamView {
 
         // VSync off (option A): present as soon as the frame is decoded instead of
         // waiting for the next rAF — shaves up to one refresh interval of latency.
-        // Serialized by the _rendering guard. VSync on keeps the rAF-paced loop.
+        // Bounded by the in-flight cap. VSync on keeps the rAF-paced loop.
         if (this._immediateRender) this._pumpRender();
 
         // Update status on first frame
@@ -2773,13 +2774,15 @@ export class StreamView {
     }
 
     /**
-     * Render the freshest queued frame, serialized by the _rendering guard.
+     * Render the freshest queued frame, bounded by the in-flight draw cap.
      * Called once per rAF (VSync on) or once per decoded frame (VSync off).
      *
-     * One frame is rendered at a time: HEVC NV12 on Chrome Windows fails when two
-     * VideoFrame objects are accessed concurrently (createImageBitmap / copyTo race),
-     * so the guard prevents overlapping GPU ops. Bursts (DC mode) drop all but the
-     * freshest frame to keep latency low.
+     * Up to MAX_DRAWS_IN_FLIGHT draws overlap (see RenderPacing) so a GPU round
+     * trip longer than the frame interval stops forcing a drop. Renderers that
+     * cannot take concurrent frames — Canvas2D on any path that awaits before
+     * touching the canvas, e.g. the Chrome Windows HEVC NV12 createImageBitmap /
+     * copyTo race — report serialDrawsOnly and get a cap of 1 instead. Bursts
+     * (DC mode) drop all but the freshest frame to keep latency low.
      */
     _pumpRender() {
         if (!this.renderRunning || !this._renderer) return;
@@ -2807,27 +2810,20 @@ export class StreamView {
         // is not keeping up with the decoder.
         this._diag.noteFrameQueue(this.frameQueue.length);
 
-        // Previous render still in flight — trim the queue; the draw's
-        // finally() re-pumps in immediate mode, the next rAF does so otherwise.
-        if (this._rendering) {
-            while (this.frameQueue.length > maxQueued) {
-                const old = this.frameQueue.shift();
-                old.close();
-                this.stats.dropped++;
-                this._diag.noteDrop('stale');
-            }
-            return;
-        }
-
         while (this.frameQueue.length > maxQueued) {
             const old = this.frameQueue.shift();
             old.close();
             this.stats.dropped++;
             this._diag.noteDrop('stale');
         }
+
+        // At the in-flight cap: the queue is trimmed above and the draw's
+        // finally() re-pumps in immediate mode, the next rAF does so otherwise.
+        if (this._drawsInFlight >= drawCapFor(this._renderer)) return;
         if (this.frameQueue.length === 0) return;
 
-        this._rendering = true;
+        this._drawsInFlight++;
+        const inFlight = this._drawsInFlight;
         const frame = this.frameQueue.shift();
 
         // Fire-and-forget with guard: the renderer resizes the canvas to the frame,
@@ -2850,10 +2846,10 @@ export class StreamView {
                 if (renderMs >= 0 && renderMs < 5000) this._clientRenderStats.addSample(renderMs);
                 // …and how that time splits between our work and waiting on the
                 // GPU/compositor, which is what tells back-pressure from cost.
-                this._diag.noteDraw(this._renderer && this._renderer.lastDraw);
+                this._diag.noteDraw(this._renderer && this._renderer.lastDraw, inFlight);
             })
             .finally(() => {
-                this._rendering = false;
+                this._drawsInFlight--;
                 // Immediate mode: drain a frame that arrived while we were drawing.
                 if (this._immediateRender && this.frameQueue.length > 0) this._pumpRender();
             });
@@ -3893,7 +3889,7 @@ export class StreamView {
     _applyEnhancerGovernor(diag, now) {
         if (!this._governor || !this._renderer) return;
         const algo = this._governor.update({
-            waitMs: diag.renderWaitMs,
+            serviceMs: diag.renderServiceMs,
             arrivalMs: diag.arrivalAvgMs,
             now,
         });

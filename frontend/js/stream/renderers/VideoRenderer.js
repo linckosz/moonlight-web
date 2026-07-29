@@ -64,6 +64,17 @@ export class VideoRenderer {
     setOutputSize(width, height) {}
 
     /**
+     * Whether this renderer must be given one frame at a time (see
+     * RenderPacing). False here: WebGPU is safe to pipeline because commands
+     * are executed in submission order, so two overlapping draws still present
+     * in order. Canvas2D overrides it — a path that awaits before touching the
+     * canvas could otherwise let an older frame land last.
+     */
+    get serialDrawsOnly() {
+        return false;
+    }
+
+    /**
      * Switch the enhancement pass at runtime. Only the WebGPU path has one;
      * everywhere else this is inert, so the governor can call it blind.
      * @param {string} algo

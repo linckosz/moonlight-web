@@ -56,6 +56,7 @@ import {
 import { createVideoRenderer } from './renderers/createRenderer.js';
 import { PipelineDiag } from './PipelineDiag.js';
 import { EnhancerGovernor } from './EnhancerGovernor.js';
+import { drawCapFor } from './RenderPacing.js';
 
 // ── Worker-local pipeline state (mirrors the StreamView fields) ──────────────
 const S = {
@@ -74,7 +75,7 @@ const S = {
 
     pendingFrames: [],
     frameQueue: [],
-    rendering: false,
+    drawsInFlight: 0,
 
     _noDescription: false,
     _referenceValid: true,
@@ -190,7 +191,7 @@ function postCounters(force) {
 function applyEnhancerGovernor(diag, now) {
     if (!S.governor || !S.renderer) return;
     const algo = S.governor.update({
-        waitMs: diag.renderWaitMs,
+        serviceMs: diag.renderServiceMs,
         arrivalMs: diag.arrivalAvgMs,
         now,
     });
@@ -715,16 +716,23 @@ function onDecodedFrame(frame) {
 // Render the freshest queued frame; serialize via the rendering guard so two
 // VideoFrames are never touched concurrently (Chrome Windows HEVC NV12 race).
 function pump() {
-    if (S.stopped || S.rendering || S.frameQueue.length === 0) return;
+    if (S.stopped || S.frameQueue.length === 0) return;
     // Depth BEFORE the trim: > 1 means the draw did not keep up with decode.
     S.diag.noteFrameQueue(S.frameQueue.length);
+    // Always present the freshest frame — the older ones are already stale by
+    // the time the GPU would get to them.
     while (S.frameQueue.length > 1) {
         S.frameQueue.shift().close();
         S.stats.dropped++;
         S.diag.noteDrop('stale');
     }
+    // Pipelined draws: the next frame is submitted while the current one is
+    // still retiring on the GPU, instead of after (see RenderPacing).
+    if (S.drawsInFlight >= drawCapFor(S.renderer)) return;
+
     const frame = S.frameQueue.shift();
-    S.rendering = true;
+    S.drawsInFlight++;
+    const inFlight = S.drawsInFlight;
     // Read the decode time before the draw — the renderer closes the VideoFrame.
     const decodedPerf = frame._mwDecodedPerf;
     const drawStart = performance.now();
@@ -734,11 +742,11 @@ function pump() {
             if (ok) {
                 S.stats.rendered++;
                 addStageSample(S._renderSamples, performance.now() - drawStart);
-                S.diag.noteDraw(S.renderer && S.renderer.lastDraw);
+                S.diag.noteDraw(S.renderer && S.renderer.lastDraw, inFlight);
             }
         })
         .finally(() => {
-            S.rendering = false;
+            S.drawsInFlight--;
             postCounters(false);
             pump();
         });
