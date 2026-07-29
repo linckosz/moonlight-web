@@ -51,8 +51,9 @@
       "supply": [{"@type": "HowToSupply", "name": "Linux gaming PC (x64) running Sunshine"}],
       "tool": [{"@type": "HowToTool", "name": "A modern browser on any client device (Chrome, Edge, Safari, Firefox)"}],
       "step": [
-        {"@type": "HowToStep", "name": "Download a package", "text": "Download the .deb, .rpm or portable AppImage from the MoonlightWeb releases page.", "url": "https://moonlightweb.top/guides/linux.html#step-download"},
+        {"@type": "HowToStep", "name": "Download a package", "text": "Download the .deb (Debian, Ubuntu, Mint, Pop!_OS), the .rpm (Fedora, RHEL, Rocky, Alma, openSUSE) or the portable AppImage (Arch, SteamOS and the rest) from the MoonlightWeb releases page.", "url": "https://moonlightweb.top/guides/linux.html#step-download"},
         {"@type": "HowToStep", "name": "Install and launch the server", "text": "Install the package with your package manager, or make the AppImage executable and run it, on the machine that runs Sunshine.", "url": "https://moonlightweb.top/guides/linux.html#step-install"},
+        {"@type": "HowToStep", "name": "Let the wizard install Sunshine", "text": "On first launch the setup wizard at https://localhost/setup installs the official Sunshine package for your distribution and pairs it automatically.", "url": "https://moonlightweb.top/guides/linux.html#step-sunshine"},
         {"@type": "HowToStep", "name": "Open a browser on any device", "text": "Go to https://localhost on the PC itself, your LAN IP from another device, or your personal sub-domain from anywhere.", "url": "https://moonlightweb.top/guides/linux.html#step-open"},
         {"@type": "HowToStep", "name": "Pair once with a PIN", "text": "Your Sunshine hosts are auto-discovered. Enter the PIN Sunshine shows — pairing is remembered forever.", "url": "https://moonlightweb.top/guides/linux.html#step-pair"},
         {"@type": "HowToStep", "name": "Press play", "text": "Pick a game or the full desktop and play from any browser in the house — or anywhere.", "url": "https://moonlightweb.top/guides/linux.html#step-play"}
@@ -80,7 +81,7 @@
   <h2 data-i18n="need.h">What you need</h2>
   <ul>
     <li data-i18n="need.1">A Linux gaming PC (x64) with a GPU capable of hardware encoding — the machine that runs your games.</li>
-    <li data-i18n-html="need.2"><strong>Sunshine</strong> installed on that machine as the streaming host.</li>
+    <li data-i18n-html="need.2"><strong>Sunshine</strong> as the streaming host. Don't have it yet? MoonlightWeb's setup wizard installs and pairs it for you.</li>
     <li data-i18n="need.3">Any device with a modern browser as the client: Chrome, Edge, Safari or Firefox. No app, no account.</li>
   </ul>
 
@@ -88,21 +89,35 @@
   <div class="gsteps">
     <div class="gstep cyb" id="step-download">
       <h3 data-i18n="step1.h">Download a package</h3>
-      <p data-i18n-html="step1.p">From the <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">releases page</a>:
-         <code>.deb</code> for Debian/Ubuntu, <code>.rpm</code> for Fedora/openSUSE, or a portable
-         <code>.AppImage</code> that runs on everything else.</p>
+      <p data-i18n-html="step1.p">From the <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">releases page</a>, pick the one for your distro family:
+         <code>.deb</code> for <strong>Debian, Ubuntu, Mint, Pop!_OS, elementary, Zorin</strong>;
+         <code>.rpm</code> for <strong>Fedora, RHEL, CentOS Stream, Rocky, Alma, Nobara, openSUSE</strong>;
+         a portable <code>.AppImage</code> for <strong>Arch, Manjaro, SteamOS, Bazzite</strong> and everything else.
+         Every package is self-contained (Qt and OpenSSL bundled — no dependencies to install).</p>
     </div>
     <div class="gstep cyb" id="step-install">
       <h3 data-i18n="step2.h">Install and launch — on the machine that runs Sunshine</h3>
-      <pre><code># Debian / Ubuntu
+      <pre><code># Debian / Ubuntu / Mint / Pop!_OS — double-clicking the .deb works too
 sudo apt install ./moonlightweb-*-linux-x64.deb
 
-# Fedora / openSUSE
+# Fedora / RHEL / Rocky / Alma / Nobara
 sudo dnf install ./moonlightweb-*-linux-x64.rpm
 
-# Portable AppImage
+# openSUSE
+sudo zypper install --allow-unsigned-rpm ./moonlightweb-*-linux-x64.rpm
+
+# Arch / SteamOS / other — portable AppImage (needs FUSE 2, see below)
 chmod +x moonlightweb-*-linux-x64.AppImage
 ./moonlightweb-*-linux-x64.AppImage</code></pre>
+      <p data-i18n-html="step2.p">The package installs to <code>/opt/moonlightweb</code>, adds a menu entry and a
+         <code>moonlightweb</code> command, opens the firewall ports it needs, and starts the server right away.</p>
+    </div>
+    <div class="gstep cyb" id="step-sunshine">
+      <h3 data-i18n="stepS.h">Let the wizard install Sunshine</h3>
+      <p data-i18n-html="stepS.p">On its first launch MoonlightWeb opens <code>https://localhost/setup</code>. If Sunshine isn't
+         installed yet, the wizard downloads the official package for your distro (apt, dnf, zypper or pacman family),
+         installs it behind a single password prompt, and pairs it for you — nothing to do by hand. On other
+         distributions, install Sunshine yourself and pair from the interface.</p>
     </div>
     <div class="gstep cyb" id="step-open">
       <h3 data-i18n="step3.h">Open a browser on any device</h3>
@@ -125,6 +140,14 @@ chmod +x moonlightweb-*-linux-x64.AppImage
   <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-linux" data-i18n="dl.btn">⬇ Download for Linux</a></p>
 
   <h2 data-i18n="tr.h">Troubleshooting</h2>
+  <h3 data-i18n="tr0.h">Double-clicking the AppImage only opens a "search for software" window</h3>
+  <p data-i18n-html="tr0.p">An AppImage is a plain file: your desktop refuses to run it until it is marked executable
+     (<code>chmod +x moonlightweb-*.AppImage</code>, or <em>Properties → Permissions → Allow executing</em>). It also
+     needs <strong>FUSE 2</strong>, which Ubuntu 22.04 and later no longer ship — install it with
+     <code>sudo apt install libfuse2t64</code> (<code>libfuse2</code> before Ubuntu 24.04), or run the file once with
+     <code>./moonlightweb-*.AppImage --appimage-extract-and-run</code>.
+     <strong>On Debian, Ubuntu and derivatives, just use the <code>.deb</code> instead</strong> — it installs with a
+     double-click, has none of these caveats, and adds a proper menu entry.</p>
   <h3 data-i18n="tr1.h">The host doesn't appear in the browser</h3>
   <p data-i18n="tr1.p">Make sure the client device is on the same network as the gaming PC and that your firewall
      allows MoonlightWeb's ports. You can also add a host manually by IP.</p>
@@ -162,12 +185,15 @@ window.MW_DICTS = {
     'lead':'MoonlightWeb est un serveur gratuit et open source (GPL-3.0) qui streame votre PC <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> vers n’importe quel appareil doté d’un navigateur. <strong>Un seul paquet sur le PC gamer. Tous les autres appareils ouvrent simplement une URL.</strong>',
     'need.h':'Ce qu’il vous faut',
     'need.1':'Un PC gamer Linux (x64) avec un GPU capable d’encodage matériel — la machine qui fait tourner vos jeux.',
-    'need.2':'<strong>Sunshine</strong> installé sur cette machine comme hôte de streaming.',
+    'need.2':'<strong>Sunshine</strong> comme hôte de streaming. Vous ne l’avez pas encore ? L’assistant de configuration de MoonlightWeb l’installe et l’appaire pour vous.',
     'need.3':'N’importe quel appareil avec un navigateur moderne comme client : Chrome, Edge, Safari ou Firefox. Pas d’application, pas de compte.',
     'steps.h':'Installation, étape par étape',
     'step1.h':'Téléchargez un paquet',
-    'step1.p':'Depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a> : <code>.deb</code> pour Debian/Ubuntu, <code>.rpm</code> pour Fedora/openSUSE, ou un <code>.AppImage</code> portable qui tourne sur tout le reste.',
+    'step1.p':'Depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a>, choisissez selon votre famille de distribution : <code>.deb</code> pour <strong>Debian, Ubuntu, Mint, Pop!_OS, elementary, Zorin</strong> ; <code>.rpm</code> pour <strong>Fedora, RHEL, CentOS Stream, Rocky, Alma, Nobara, openSUSE</strong> ; un <code>.AppImage</code> portable pour <strong>Arch, Manjaro, SteamOS, Bazzite</strong> et tout le reste. Chaque paquet est autonome (Qt et OpenSSL embarqués — aucune dépendance à installer).',
     'step2.h':'Installez et lancez — sur la machine qui fait tourner Sunshine',
+    'step2.p':'Le paquet s’installe dans <code>/opt/moonlightweb</code>, ajoute une entrée de menu et une commande <code>moonlightweb</code>, ouvre les ports nécessaires dans le pare-feu, et démarre le serveur immédiatement.',
+    'stepS.h':'Laissez l’assistant installer Sunshine',
+    'stepS.p':'Au premier lancement, MoonlightWeb ouvre <code>https://localhost/setup</code>. Si Sunshine n’est pas encore installé, l’assistant télécharge le paquet officiel correspondant à votre distribution (famille apt, dnf, zypper ou pacman), l’installe derrière une simple demande de mot de passe, et l’appaire pour vous — rien à faire à la main. Sur les autres distributions, installez Sunshine vous-même puis appairez depuis l’interface.',
     'step3.h':'Ouvrez un navigateur sur n’importe quel appareil',
     'step3.p':'Sur le PC lui-même : <code>https://localhost</code>. Depuis un autre appareil de votre réseau : votre IP locale. Depuis n’importe où : votre sous-domaine personnel (<code>https://vous.moonlightweb.top</code>) une fois l’accès Internet en un clic activé dans la page d’administration.',
     'step4.h':'Appairez une fois avec un code PIN',
@@ -176,6 +202,8 @@ window.MW_DICTS = {
     'step5.p':'Choisissez un jeu ou le bureau complet. Plein écran, manette en main — jusqu’à 4K HDR à 240 fps, avec moins de 20 ms de latence en Wi-Fi.',
     'dl.btn':'⬇ Télécharger pour Linux',
     'tr.h':'Dépannage',
+    'tr0.h':'Un double-clic sur l’AppImage ouvre seulement une fenêtre « rechercher un logiciel »',
+    'tr0.p':'Une AppImage est un simple fichier : votre bureau refuse de l’exécuter tant qu’elle n’est pas marquée exécutable (<code>chmod +x moonlightweb-*.AppImage</code>, ou <em>Propriétés → Permissions → Autoriser l’exécution</em>). Elle a aussi besoin de <strong>FUSE 2</strong>, qu’Ubuntu ne fournit plus depuis la 22.04 — installez-le avec <code>sudo apt install libfuse2t64</code> (<code>libfuse2</code> avant Ubuntu 24.04), ou lancez le fichier avec <code>./moonlightweb-*.AppImage --appimage-extract-and-run</code>. <strong>Sur Debian, Ubuntu et dérivés, utilisez plutôt le <code>.deb</code></strong> : il s’installe d’un double-clic, n’a aucune de ces contraintes et ajoute une vraie entrée de menu.',
     'tr1.h':'L’hôte n’apparaît pas dans le navigateur',
     'tr1.p':'Assurez-vous que l’appareil client est sur le même réseau que le PC gamer et que votre pare-feu autorise les ports de MoonlightWeb. Vous pouvez aussi ajouter un hôte manuellement par son IP.',
     'tr2.h':'HEVC ou AV1 est grisé',
@@ -196,12 +224,15 @@ window.MW_DICTS = {
     'lead':'MoonlightWeb 是一个免费、开源（GPL-3.0）的服务器，把你的 <a href="https://github.com/LizardByte/Sunshine" target="_blank" rel="noopener">Sunshine</a> 游戏主机串流到任何带浏览器的设备。<strong>在游戏 PC 上装一个软件包。其他每台设备只要打开一个网址。</strong>',
     'need.h':'你需要什么',
     'need.1':'一台 Linux 游戏 PC（x64），配备支持硬件编码的 GPU——也就是运行你游戏的那台机器。',
-    'need.2':'在那台机器上安装 <strong>Sunshine</strong> 作为串流主机。',
+    'need.2':'<strong>Sunshine</strong> 作为串流主机。还没有？MoonlightWeb 的设置向导会帮你装好并自动配对。',
     'need.3':'任何带现代浏览器的设备都可作客户端：Chrome、Edge、Safari 或 Firefox。无需应用、无需账户。',
     'steps.h':'逐步安装',
     'step1.h':'下载一个软件包',
-    'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>获取：Debian/Ubuntu 用 <code>.deb</code>，Fedora/openSUSE 用 <code>.rpm</code>，或者在其他一切系统上运行的便携 <code>.AppImage</code>。',
+    'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>按你的发行版系列选择：<strong>Debian、Ubuntu、Mint、Pop!_OS、elementary、Zorin</strong> 用 <code>.deb</code>；<strong>Fedora、RHEL、CentOS Stream、Rocky、Alma、Nobara、openSUSE</strong> 用 <code>.rpm</code>；<strong>Arch、Manjaro、SteamOS、Bazzite</strong> 及其他一切用便携的 <code>.AppImage</code>。每个软件包都是自包含的（内置 Qt 和 OpenSSL——无需安装任何依赖）。',
     'step2.h':'安装并启动——在运行 Sunshine 的那台机器上',
+    'step2.p':'软件包安装到 <code>/opt/moonlightweb</code>，添加菜单项和 <code>moonlightweb</code> 命令，打开所需的防火墙端口，并立即启动服务器。',
+    'stepS.h':'让向导安装 Sunshine',
+    'stepS.p':'首次启动时，MoonlightWeb 会打开 <code>https://localhost/setup</code>。如果尚未安装 Sunshine，向导会下载适配你发行版的官方软件包（apt、dnf、zypper 或 pacman 系），只需输入一次密码即可完成安装，并自动配对——无需手动操作。在其他发行版上，请自行安装 Sunshine，然后在界面中配对。',
     'step3.h':'在任何设备上打开浏览器',
     'step3.p':'在 PC 本机上：<code>https://localhost</code>。从你网络上的其他设备：你的局域网 IP。从任何地方：在管理页启用一键互联网访问后，用你的专属子域名（<code>https://you.moonlightweb.top</code>）。',
     'step4.h':'用 PIN 码配对一次',
@@ -210,6 +241,8 @@ window.MW_DICTS = {
     'step5.p':'选择一款游戏或完整桌面。全屏、手柄在手——最高 4K HDR、240 fps，Wi-Fi 下延迟低于 20 毫秒。',
     'dl.btn':'⬇ 下载 Linux 版',
     'tr.h':'疑难解答',
+    'tr0.h':'双击 AppImage 只弹出“搜索软件”的窗口',
+    'tr0.p':'AppImage 只是一个普通文件：在被标记为可执行之前，桌面环境不会运行它（<code>chmod +x moonlightweb-*.AppImage</code>，或者<em>属性 → 权限 → 允许执行</em>）。它还需要 <strong>FUSE 2</strong>，而 Ubuntu 22.04 及以后不再自带——请用 <code>sudo apt install libfuse2t64</code> 安装（Ubuntu 24.04 之前为 <code>libfuse2</code>），或者用 <code>./moonlightweb-*.AppImage --appimage-extract-and-run</code> 运行。<strong>在 Debian、Ubuntu 及其衍生版上，请直接使用 <code>.deb</code></strong>：双击即可安装，没有这些限制，还会添加正规的菜单项。',
     'tr1.h':'主机没有出现在浏览器里',
     'tr1.p':'请确保客户端设备与游戏 PC 处于同一网络，并且你的防火墙放行了 MoonlightWeb 的端口。你也可以通过 IP 手动添加主机。',
     'tr2.h':'HEVC 或 AV1 被置灰',
