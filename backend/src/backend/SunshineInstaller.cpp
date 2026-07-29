@@ -66,6 +66,36 @@ QString which(const QString& name)
     return QString();
 }
 
+#if defined(Q_OS_LINUX)
+QString systemctlPath()
+{
+    const QString p = which(QStringLiteral("systemctl"));
+    if (!p.isEmpty()) return p;
+    const QString fallback = QStringLiteral("/usr/bin/systemctl");
+    return QFileInfo::exists(fallback) ? fallback : QString();
+}
+
+// Name of the systemd *user* unit shipped by the official .deb/.rpm, empty when
+// none is installed (AppImage, Flatpak, hand-built — callers fall back to the
+// binary). Sunshine's own Applications-menu entry starts this unit rather than
+// the executable, and driving it too matters twice over: the unit lives in its
+// own cgroup, so Sunshine survives MoonlightWeb restarting (a bare child is
+// reaped along with our transient unit), and enabling it is the only thing that
+// brings Sunshine back at the next login.
+QString sunshineUnit()
+{
+    const QString sc = systemctlPath();
+    if (sc.isEmpty()) return QString();
+    // `systemctl --user cat` exits non-zero on an unknown unit. Canonical name
+    // first, then the alias the unit itself declares.
+    for (const QString& u : {QStringLiteral("app-dev.lizardbyte.app.Sunshine.service"),
+                             QStringLiteral("sunshine.service")}) {
+        if (run(sc, {QStringLiteral("--user"), QStringLiteral("cat"), u}, 10000) == 0) return u;
+    }
+    return QString();
+}
+#endif
+
 } // namespace
 
 DetectResult detect()
@@ -344,6 +374,20 @@ QString installLinux(const QString& user, const QString& pass)
     if (!setCredentials(user, pass))
         Logger::warning(QStringLiteral("SunshineInstaller: setting credentials failed"));
 
+    // Bring Sunshine back at every login. The packaged unit is WantedBy=
+    // graphical-session.target but nothing enables it, so without this a fresh
+    // install streams until the user logs out and never again — the host simply
+    // stops answering. Best-effort: distros without the unit keep working, they
+    // just fall back to the binary in launch().
+    const QString unit = sunshineUnit();
+    if (!unit.isEmpty()) {
+        const int erc =
+            run(systemctlPath(), {QStringLiteral("--user"), QStringLiteral("enable"), unit}, 30000);
+        Logger::info(QStringLiteral("SunshineInstaller: `systemctl --user enable %1` → %2")
+                         .arg(unit)
+                         .arg(erc));
+    }
+
     Logger::info(QStringLiteral("SunshineInstaller: Sunshine installed via %1").arg(tool));
     return QString();
 }
@@ -478,6 +522,22 @@ bool launch()
     // `open -a` starts the bundle in the user's GUI session so its permission
     // prompts (Screen Recording / Accessibility) are shown.
     return run(QStringLiteral("/usr/bin/open"), {"-a", QStringLiteral("Sunshine")}, 15000) == 0;
+#elif defined(Q_OS_LINUX)
+    // Start the packaged unit rather than the binary: a child of ours dies with
+    // us, and only the unit keeps Sunshine alive across a MoonlightWeb restart.
+    // `start` is synchronous and the unit's ExecStartPre sleeps 5s to let the
+    // desktop settle, hence the generous timeout.
+    const QString unit = sunshineUnit();
+    if (!unit.isEmpty()) {
+        if (run(systemctlPath(), {QStringLiteral("--user"), QStringLiteral("start"), unit},
+                60000) == 0)
+            return true;
+        Logger::warning(
+            QStringLiteral("SunshineInstaller: `systemctl --user start %1` failed — falling back "
+                           "to the binary")
+                .arg(unit));
+    }
+    return QProcess::startDetached(r.exePath, {});
 #else
     return QProcess::startDetached(r.exePath, {});
 #endif
@@ -533,6 +593,19 @@ bool stop()
         "SunshineInstaller: stop() is a no-op on Windows (SunshineService is admin-managed)"));
     return false;
 #else
+#if defined(Q_OS_LINUX)
+    // Ask the unit first when there is one: signalling the process directly is
+    // undone by the unit's own Restart=on-failure five seconds later (systemd
+    // counts a SIGTERM death as a failure), so pkill alone cannot stop Sunshine.
+    // `stop` is synchronous, and exits 0 on an already-inactive unit — so judge
+    // on whether Sunshine actually went away, not on the exit code: what is
+    // running may be a hand-started binary the unit knows nothing about.
+    const QString unit = sunshineUnit();
+    if (!unit.isEmpty()) {
+        run(systemctlPath(), {QStringLiteral("--user"), QStringLiteral("stop"), unit}, 30000);
+        if (!isRunning()) return true;
+    }
+#endif
     // pkill's default signal is SIGTERM, so Sunshine can shut down cleanly
     // (deregister its mDNS service, remove the menu-bar/tray item). `-x` matches
     // the exact process name ("sunshine"). Exit 0 = at least one was signaled.
