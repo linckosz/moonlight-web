@@ -51,6 +51,17 @@ export class SetupView {
         this._installSunshine = true;
         this._autoStart = true;
 
+        // Sunshine credentials, held here so they survive the re-render that a
+        // checkbox toggle triggers. A fresh install is provisioned with
+        // admin/admin, so both come prefilled and the password shows in clear —
+        // the user has to be able to read what is about to be applied. It turns
+        // into a real password field on the first edit and stays that way, the
+        // same one-way rule the Windows installer applies (SunshinePassChange in
+        // backend/installer/moonlightweb.iss).
+        this._userValue = '';
+        this._passValue = '';
+        this._passMasked = true;
+
         this._pollTimer = null;
         // Which checklist rows are relevant to the run in progress.
         this._activeSteps = [];
@@ -74,6 +85,13 @@ export class SetupView {
             // Default the install checkbox off when Sunshine is already present or
             // cannot be auto-installed on this OS.
             this._installSunshine = this._canAutoInstall && !this._sunshineInstalled;
+            // Prefill only when we are the ones creating the account. An already
+            // installed Sunshine has credentials we don't know, so those fields
+            // start empty — and masked, since nothing is there to be read.
+            const fresh = !this._sunshineInstalled;
+            this._userValue = fresh ? 'admin' : '';
+            this._passValue = fresh ? 'admin' : '';
+            this._passMasked = !fresh;
             this._step = 'config';
         } catch (err) {
             console.error('[Setup] status failed:', err);
@@ -200,11 +218,13 @@ export class SetupView {
                 <div class="login-field">
                     <label class="login-label" for="setup-user">${t('setup.username')}</label>
                     <input type="text" id="setup-user" class="login-input" autocomplete="off"
-                           value="${this._sunshineInstalled ? '' : 'admin'}" ${dis} />
+                           value="${this.esc(this._userValue)}" ${dis} />
                 </div>
                 <div class="login-field">
                     <label class="login-label" for="setup-pass">${t('setup.password')}</label>
-                    <input type="password" id="setup-pass" class="login-input" autocomplete="off" ${dis} />
+                    <input type="${this._passMasked ? 'password' : 'text'}" id="setup-pass"
+                           class="login-input" autocomplete="off"
+                           value="${this.esc(this._passValue)}" ${dis} />
                 </div>
             </div>`;
     }
@@ -282,6 +302,24 @@ export class SetupView {
                     // Toggle credential fields without losing typed values elsewhere.
                     this.render();
                     this.bindEvents();
+                });
+            }
+            const userEl = this.container.querySelector('#setup-user');
+            if (userEl) {
+                userEl.addEventListener('input', () => {
+                    this._userValue = userEl.value;
+                });
+            }
+            const passEl = this.container.querySelector('#setup-pass');
+            if (passEl) {
+                passEl.addEventListener('input', () => {
+                    this._passValue = passEl.value;
+                    if (this._passMasked) return;
+                    // First edit: the prefilled default was the only thing worth
+                    // showing, so mask from here on and never go back. Flip the
+                    // element in place — re-rendering would drop the caret.
+                    this._passMasked = true;
+                    passEl.type = 'password';
                 });
             }
             const start = this.container.querySelector('#btn-setup-start');
