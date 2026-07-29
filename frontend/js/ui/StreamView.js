@@ -57,6 +57,7 @@ import {
     pickAutoEnhancer,
 } from '../util/BrowserDetect.js';
 import { createVideoRenderer } from '../stream/renderers/createRenderer.js';
+import { PipelineDiag, formatDiag } from '../stream/PipelineDiag.js';
 import { t } from '../i18n/i18n.js';
 
 /** @typedef {import('../types/transport.js').StreamTransport} StreamTransport */
@@ -486,6 +487,23 @@ export class StreamView {
         this._chunkSubmitTimes = new Map(); // chunk timestamp (µs) → perf.now() at decode()
         this._pingSeq = 0;
         this._pingInterval = null;
+
+        // ── Pipeline diagnostics ────────────────────────────────────────────
+        // The three legs above say how long each stage took; these say why they
+        // move (arrival cadence, queue depths, draw submit-vs-wait, drop causes).
+        // Filled here on the main-thread path; the worker path fills its own and
+        // posts a snapshot with the counters, kept in _workerDiag.
+        this._diag = new PipelineDiag(2000);
+        this._workerDiag = null;
+        // Presented (actually drawn) frames vs decoded ones: the fps readout
+        // counts decoded frames, so a pipeline dropping a third of them at the
+        // render stage still reads 60.
+        this._presentedFps = 0;
+        this._lastRenderedCount = 0;
+        this._lastDropCount = 0;
+        this._lastDropSampleMs = 0;
+        this._dropsPerSec = 0;
+        this._lastDiagLogMs = 0;
 
         // ── webrtc-media native stats (getStats polling) ──────────────────────
         // RTP media track frames bypass the JS decoder, so fps/bitrate/latency
@@ -1435,6 +1453,9 @@ export class StreamView {
                 if (m.clientDecodeMs > 0) this._clientDecodeStats.addSample(m.clientDecodeMs);
                 if (m.clientQueueMs > 0) this._clientQueueStats.addSample(m.clientQueueMs);
                 if (m.clientRenderMs > 0) this._clientRenderStats.addSample(m.clientRenderMs);
+                // Worker-side pipeline observations (queues, draw split, drop
+                // causes) — the overlay/console read the last snapshot posted.
+                if (m.diag) this._workerDiag = m.diag;
                 break;
             }
             case 'fatal':
@@ -2200,10 +2221,13 @@ export class StreamView {
         // Keyframes always pass through — they restore the reference.
         if (!isKeyframe && !this._referenceValid) {
             this.stats.dropped++;
+            this._diag.noteDrop('backpressure');
             // Retry while waiting — the original request may have been lost.
             this._requestIdr('reference invalid');
             return;
         }
+
+        this._diag.noteDecodeQueue(this.decoder.decodeQueueSize);
 
         // Decoder queue backpressure: transient saturation is absorbed by
         // decoding through (instant delta-dropping caused a perpetual
@@ -2227,6 +2251,7 @@ export class StreamView {
             }
             if (saturatedMs > this.QUEUE_STALL_MS) {
                 this.stats.dropped++;
+                this._diag.noteDrop('backpressure');
                 this._referenceValid = false;
                 this._requestIdr('decode queue overflow');
                 return;
@@ -2353,6 +2378,7 @@ export class StreamView {
         if (this.frameQueue.length >= 3) {
             frame.close();
             this.stats.dropped++;
+            this._diag.noteDrop('queueFull');
             return;
         }
 
@@ -2765,6 +2791,10 @@ export class StreamView {
         const useReserve = SUPPORTS_CANVAS_TEARING && !this._immediateRender;
         const maxQueued = useReserve ? 2 : 1;
 
+        // Queue depth BEFORE any trim: a depth above the reserve means the draw
+        // is not keeping up with the decoder.
+        this._diag.noteFrameQueue(this.frameQueue.length);
+
         // Previous render still in flight — trim the queue; the draw's
         // finally() re-pumps in immediate mode, the next rAF does so otherwise.
         if (this._rendering) {
@@ -2772,6 +2802,7 @@ export class StreamView {
                 const old = this.frameQueue.shift();
                 old.close();
                 this.stats.dropped++;
+                this._diag.noteDrop('stale');
             }
             return;
         }
@@ -2780,6 +2811,7 @@ export class StreamView {
             const old = this.frameQueue.shift();
             old.close();
             this.stats.dropped++;
+            this._diag.noteDrop('stale');
         }
         if (this.frameQueue.length === 0) return;
 
@@ -2804,6 +2836,9 @@ export class StreamView {
                 // Render stage: the GPU/canvas draw itself, same clock.
                 const renderMs = performance.now() - drawStart;
                 if (renderMs >= 0 && renderMs < 5000) this._clientRenderStats.addSample(renderMs);
+                // …and how that time splits between our work and waiting on the
+                // GPU/compositor, which is what tells back-pressure from cost.
+                this._diag.noteDraw(this._renderer && this._renderer.lastDraw);
             })
             .finally(() => {
                 this._rendering = false;
@@ -3602,6 +3637,9 @@ export class StreamView {
             if (elapsed > 0.5) {
                 bitrateMbps = (this._totalBytes * 8) / elapsed / 1e6;
             }
+
+            // Presented-frame and drop rates for the diagnostics line below.
+            this._sampleDiagRates(now);
         }
 
         const codec = this.videoCodec === 'auto' ? 'h264' : this.videoCodec;
@@ -3796,9 +3834,55 @@ export class StreamView {
             html += '<div class="stats-latency-detail">' + latencyDetail + '</div>';
         }
 
+        // ── Pipeline observations ───────────────────────────────────────────
+        // The legs above say how long each stage took; this line says why they
+        // move — arrival cadence, queue depths, how the draw splits between our
+        // own work and waiting on the GPU/compositor, and where frames are lost
+        // between decode and presentation ("fps in/out"). Revealed with the
+        // latency breakdown (it explains it), and traced to the console once a
+        // second so a session can be reported without watching the overlay.
+        // Not applicable to webrtc-media: no WebCodecs pipeline to observe.
+        if (!isMedia) {
+            const diagLine = formatDiag(this._workerDiag || this._diag.snapshot(), {
+                decodedFps: fps,
+                presentedFps: this._presentedFps,
+                dropsPerSec: this._dropsPerSec,
+            });
+            if (showDetail) {
+                html += '<div class="stats-diag">' + escapeHtml(diagLine) + '</div>';
+            }
+            if (now - this._lastDiagLogMs > 1000) {
+                this._lastDiagLogMs = now;
+                console.log('[perf] ' + diagLine);
+            }
+        }
+
         html += '</div>';
 
         this._statsBodyEl.innerHTML = html;
+    }
+
+    /**
+     * Refresh the derived diagnostic rates: frames actually PRESENTED per
+     * second — the card's fps counts decoded frames, which is not the same
+     * number once the render stage starts dropping — and the drop rate.
+     * Cumulative counters over the wall clock, so the worker path (counters
+     * posted every 500ms) and the main-thread path (live increments) read alike.
+     */
+    _sampleDiagRates(now) {
+        if (this._lastDropSampleMs === 0) {
+            this._lastDropSampleMs = now;
+            this._lastRenderedCount = this.stats.rendered;
+            this._lastDropCount = this.stats.dropped;
+            return;
+        }
+        const dt = (now - this._lastDropSampleMs) / 1000;
+        if (dt < 0.4) return;
+        this._presentedFps = Math.max(0, this.stats.rendered - this._lastRenderedCount) / dt;
+        this._dropsPerSec = Math.max(0, this.stats.dropped - this._lastDropCount) / dt;
+        this._lastDropSampleMs = now;
+        this._lastRenderedCount = this.stats.rendered;
+        this._lastDropCount = this.stats.dropped;
     }
 
     // ── Stats message handler (ping/pong + periodic backend stats) ─────────
@@ -3976,6 +4060,12 @@ export class StreamView {
             }
             return;
         }
+
+        // Arrival cadence + encoded size at the pipeline entry (worker mode
+        // measures its own, past the postMessage hop): distinguishes "the host
+        // now sends 60fps of heavy frames" from "the browser slowed down" when
+        // the latency legs inflate together.
+        this._diag.noteArrival(data.length);
 
         // AV1 pipeline: no NAL units, no SPS/PPS, no Annex B start codes.
         // OBUs are passed directly to the decoder.

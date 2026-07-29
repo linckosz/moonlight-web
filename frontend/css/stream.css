@@ -549,6 +549,21 @@ body.streaming-active::after {
     color: rgba(240, 192, 64, 0.75);
 }
 
+/* Pipeline observations, revealed with the latency breakdown. One dense
+   free-form line rather than labelled rows: it is a diagnostic trace (the same
+   text goes to the console), so it wraps instead of forcing the card wider. */
+.stats-diag {
+    margin-top: 3px;
+    padding-top: 3px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    max-width: 260px;
+    font-size: 9px;
+    line-height: 1.35;
+    color: rgba(255, 255, 255, 0.55);
+    white-space: normal;
+    word-break: break-word;
+}
+
 /* ── Startup overlay (centered 3-step connection status) ──────────────── */
 .stream-startup-overlay {
     display: none;
