@@ -23,14 +23,14 @@ function feed(gov, obs, seconds, startMs = 0) {
     let now = startMs;
     for (let i = 0; i < seconds * 2; i++) {
         now += 500;
-        const algo = gov.update({ waitMs: obs.waitMs, arrivalMs: obs.arrivalMs, now });
+        const algo = gov.update({ serviceMs: obs.serviceMs, arrivalMs: obs.arrivalMs, now });
         if (algo) steps.push({ algo, now });
     }
     return steps;
 }
 
 /**
- * Same, but the draw wait follows the level actually running — which is the
+ * Same, but the service time follows the level actually running — which is the
  * whole point of the ladder: stepping down is supposed to make the draw
  * cheaper. Feeding a fixed cost would model a ladder that changes nothing.
  */
@@ -39,7 +39,7 @@ function run(gov, costByLevel, seconds, startMs = 0, arrivalMs = 16.7) {
     let now = startMs;
     for (let i = 0; i < seconds * 2; i++) {
         now += 500;
-        const algo = gov.update({ waitMs: costByLevel[gov.level], arrivalMs, now });
+        const algo = gov.update({ serviceMs: costByLevel[gov.level], arrivalMs, now });
         if (algo) steps.push({ algo, now });
     }
     return { steps, now };
@@ -51,7 +51,7 @@ const CONTENDED = { fsr1: 19.5, sgsr: 12, off: 3 };
 const IDLE = { fsr1: 10.3, sgsr: 6, off: 2 };
 
 describe('EnhancerGovernor — measured scenarios', () => {
-    // Each: [name, draw wait avg, arrival avg] from the captured [perf] lines.
+    // Each: [name, render service time, arrival avg] from the captured [perf] lines.
     const healthy = [
         ['video paused, 27fps', 10.1, 38.0],
         ['video playing, 60fps', 10.3, 16.8],
@@ -59,10 +59,10 @@ describe('EnhancerGovernor — measured scenarios', () => {
         ['Teams call, static 22fps', 10.2, 47.0],
     ];
 
-    for (const [name, waitMs, arrivalMs] of healthy) {
+    for (const [name, serviceMs, arrivalMs] of healthy) {
         it(`holds FSR1 — ${name}`, () => {
             const gov = new EnhancerGovernor('fsr1');
-            expect(feed(gov, { waitMs, arrivalMs }, 60)).toEqual([]);
+            expect(feed(gov, { serviceMs, arrivalMs }, 60)).toEqual([]);
             expect(gov.level).toBe('fsr1');
             expect(gov.degraded).toBe(false);
         });
@@ -70,7 +70,7 @@ describe('EnhancerGovernor — measured scenarios', () => {
 
     it('steps down under a Teams call at 60fps (19.5ms wait for a 16.7ms budget)', () => {
         const gov = new EnhancerGovernor('fsr1');
-        const steps = feed(gov, { waitMs: 19.5, arrivalMs: 16.7 }, 10);
+        const steps = feed(gov, { serviceMs: 19.5, arrivalMs: 16.7 }, 10);
         expect(steps[0].algo).toBe('sgsr');
         expect(gov.degraded).toBe(true);
     });
@@ -79,13 +79,13 @@ describe('EnhancerGovernor — measured scenarios', () => {
 describe('EnhancerGovernor', () => {
     it('never climbs above the user setting', () => {
         const gov = new EnhancerGovernor('sgsr');
-        expect(feed(gov, { waitMs: 0.5, arrivalMs: 16.7 }, 120)).toEqual([]);
+        expect(feed(gov, { serviceMs: 0.5, arrivalMs: 16.7 }, 120)).toEqual([]);
         expect(gov.level).toBe('sgsr');
     });
 
     it('walks the whole ladder down but stops at off', () => {
         const gov = new EnhancerGovernor('fsr1');
-        const steps = feed(gov, { waitMs: 40, arrivalMs: 16.7 }, 60);
+        const steps = feed(gov, { serviceMs: 40, arrivalMs: 16.7 }, 60);
         expect(steps.map((s) => s.algo)).toEqual(['sgsr', 'off']);
         expect(gov.level).toBe('off');
     });
@@ -93,9 +93,9 @@ describe('EnhancerGovernor', () => {
     it('needs the verdict to hold — a single busy window changes nothing', () => {
         const gov = new EnhancerGovernor('fsr1');
         let now = 0;
-        expect(gov.update({ waitMs: 40, arrivalMs: 16.7, now: (now += 500) })).toBe(null);
-        expect(gov.update({ waitMs: 5, arrivalMs: 16.7, now: (now += 500) })).toBe(null);
-        expect(gov.update({ waitMs: 40, arrivalMs: 16.7, now: (now += 500) })).toBe(null);
+        expect(gov.update({ serviceMs: 40, arrivalMs: 16.7, now: (now += 500) })).toBe(null);
+        expect(gov.update({ serviceMs: 5, arrivalMs: 16.7, now: (now += 500) })).toBe(null);
+        expect(gov.update({ serviceMs: 40, arrivalMs: 16.7, now: (now += 500) })).toBe(null);
         expect(gov.level).toBe('fsr1');
     });
 
@@ -134,14 +134,14 @@ describe('EnhancerGovernor', () => {
         const gov = new EnhancerGovernor('fsr1');
         // One expensive burst, long enough to degrade once and no more: the
         // stale samples that follow must not walk the ladder down again.
-        const steps = feed(gov, { waitMs: 40, arrivalMs: 16.7 }, 3);
+        const steps = feed(gov, { serviceMs: 40, arrivalMs: 16.7 }, 3);
         expect(steps.map((s) => s.algo)).toEqual(['sgsr']);
     });
 
     it('decides nothing without a usable frame budget', () => {
         const gov = new EnhancerGovernor('fsr1');
-        expect(feed(gov, { waitMs: 40, arrivalMs: 0 }, 60)).toEqual([]);
-        expect(feed(gov, { waitMs: 40, arrivalMs: 5000 }, 60)).toEqual([]);
+        expect(feed(gov, { serviceMs: 40, arrivalMs: 0 }, 60)).toEqual([]);
+        expect(feed(gov, { serviceMs: 40, arrivalMs: 5000 }, 60)).toEqual([]);
         expect(gov.level).toBe('fsr1');
     });
 
