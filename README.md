@@ -84,7 +84,82 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 
 </div>
 
-### Video Enhancement (bonus)
+---
+
+## Install
+
+Grab the installer for your OS from the **[latest release](https://github.com/linckosz/moonlight-web/releases/latest)** — or from **[moonlightweb.top](https://moonlightweb.top/#download)**, which picks the right file for you. Step‑by‑step guides with screenshots: [Windows](https://moonlightweb.top/guides/windows.html) · [macOS](https://moonlightweb.top/guides/macos.html) · [Linux](https://moonlightweb.top/guides/linux.html).
+
+> ✅ **Sunshine is handled for you.** The installers detect it, install it if missing and pair it
+> automatically — you don't have to install it beforehand. (On Linux that step happens in the
+> in‑app setup wizard rather than in the package; see below.)
+
+> ℹ️ Moonlight‑Web runs on **any machine on the same LAN as Sunshine** — it doesn't have
+> to be the Sunshine PC. **Installing it on the Sunshine machine is ideal** (minimal latency
+> via localhost, instant mDNS discovery, simpler port forwarding, one‑click Sunshine setup),
+> but not required — in that case just skip the Sunshine step and pair by IP.
+
+### Windows 10 / 11
+
+**`MoonlightWeb-installer-<version>-win-x64.exe`** (or `-win-arm64.exe` on ARM devices).
+
+Double‑click it — the wizard (English / Français / 简体中文) does everything:
+
+| Step | What it does |
+|---|---|
+| **Install** | App + Start‑Menu/Desktop shortcuts, firewall rule, optional **start at logon**. |
+| **Internet link** | Opt‑in (unchecked by default): public sub‑domain + free TLS certificate. |
+| **Sunshine** | Detected, or **installed silently** for you (official LizardByte installer), then **paired automatically** with the credentials you enter. |
+| **Checklist** | Live progress (Sunshine → pairing → DNS record), then opens the admin page. |
+
+**Updates** reuse the same installer: a single *Update* confirmation page, settings, Internet link and pairing kept. In‑app one‑click update works too (no UAC prompt — an elevated scheduled task is registered at install).\
+**Service (optional):** `backend/packaging/windows/install-service.bat` installs a session‑0 service via NSSM (server available before any user logs in).
+
+### macOS (Apple Silicon)
+
+**`moonlightweb-<version>-macos-arm64.pkg`** — native installer: *Introduction → License → **Sunshine** → Install*. The Sunshine page detects or downloads and installs Sunshine for you; the app lands in `/Applications` with an optional **start at login** (LaunchAgent).
+
+⚠️ macOS cannot grant screen capture programmatically: allow **Sunshine** in *System Settings → Privacy & Security → Screen Recording* at its first launch. The in‑app wizard (`https://localhost/setup`) opens that pane for you and finishes anything the installer couldn't.\
+*Intel Macs:* no prebuilt package — [build from source](#fork--build).
+
+### Linux (x64)
+
+Pick the package for your distro family. All of them are **self‑contained** (Qt + OpenSSL bundled, **no dependencies**), install to `/opt/moonlightweb` with a `moonlightweb` command and a menu entry, open the firewall ports (80/tcp, 443/tcp, 47999/udp) best‑effort, and start the app right after install.
+
+| Distro family | Package | Command |
+|---|---|---|
+| **Debian · Ubuntu · Mint · Pop!\_OS · elementary · Zorin · Kali** | **`.deb`** | `sudo apt install ./moonlightweb-<ver>-linux-x64.deb` |
+| **Fedora · RHEL · CentOS Stream · Rocky · Alma · Nobara** | **`.rpm`** | `sudo dnf install ./moonlightweb-<ver>-linux-x64.rpm` |
+| **openSUSE · SLE** | **`.rpm`** | `sudo zypper install --allow-unsigned-rpm ./moonlightweb-<ver>-linux-x64.rpm` |
+| **Arch · Manjaro · EndeavourOS · SteamOS · Bazzite · anything else** | **`.AppImage`** | `chmod +x moonlightweb-<ver>-linux-x64.AppImage && ./moonlightweb-<ver>-linux-x64.AppImage` |
+
+> 💡 **On Debian/Ubuntu, use the `.deb`, not the AppImage.** An AppImage is a plain file: it needs
+> the executable bit (`chmod +x`) — without it, double‑clicking only opens GNOME's *“Search for
+> software”* dialog — plus **FUSE 2**, which Ubuntu ≥ 22.04 no longer ships
+> (`sudo apt install libfuse2t64`, or `libfuse2` before 24.04; alternatively run it with
+> `--appimage-extract-and-run`). The `.deb` has none of these caveats.
+
+**Sunshine on Linux** is *not* shipped in the package. On first launch the app opens
+`https://localhost/setup`, which installs the official Sunshine package for you (apt / dnf /
+zypper / pacman families, via a single polkit password prompt) and pairs it. On other distros,
+install Sunshine yourself, then pair from the UI.
+
+**Autostart** uses an XDG autostart entry; for a headless/server install use the systemd unit in
+[`backend/packaging/systemd/`](backend/packaging/systemd/).
+
+### First launch (all platforms)
+
+1. The server starts and shows a **tray icon**; a browser opens on the setup or admin page.
+2. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
+   - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
+   - Until the Internet link is enabled, the cert is **self‑signed** — accept the browser warning (normal on LAN).
+3. **Pair** your host (PIN shown by Sunshine) and stream. From another LAN device: `https://<PC-LAN-IP>`; from anywhere: your sub‑domain, once [Internet access](#internet-access) is on.
+
+Prefer to build it yourself? See [Fork & build](#fork--build).
+
+---
+
+## Video Enhancement (bonus)
 
 Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1)** + **sharpening**, to gain sharpness when the stream resolution differs from the display resolution.
 
@@ -93,22 +168,6 @@ Browser‑side image enhancement on the GPU (WebGPU): **upscaling (FSR1 & SGSRv1
 ![Video Enhancement — 720p upscaled to 1440p](docs/screenshots/video_enhancement.gif)
 
 </div>
-
----
-
-## Install
-
-> ✅ Moonlight‑Web runs on **any machine on the same LAN as Sunshine** — it doesn't have
-> to be the Sunshine PC. **Installing it on the Sunshine machine is ideal** (minimal latency
-> via localhost, instant mDNS discovery, simpler port forwarding), but not required.
-
-1. **Prerequisite**: a PC with **Sunshine** installed and working.
-2. **Grab** the latest release binary, **or** build from source (see [Fork & build](#fork--build)).
-3. **Run** `MoonlightWeb` (Windows: `MoonlightWeb.exe`). A **tray icon** appears.
-4. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
-   - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
-   - First launch uses a **self‑signed** cert — accept the browser warning (normal on LAN).
-5. **Pair** your host and stream. From another LAN device: `https://<PC-LAN-IP>`.
 
 ---
 
