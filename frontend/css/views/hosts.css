@@ -103,7 +103,10 @@
 .update-banner-notes:hover {
     color: var(--accent-1);
 }
-.update-banner-dismiss {
+/* Two ✕ that look identical on purpose: -dismiss silences that version for
+   good, -close only clears the row (see the click handler). */
+.update-banner-dismiss,
+.update-banner-close {
     flex: 0 0 auto;
     padding: 4px;
     background: none;
@@ -113,7 +116,8 @@
     line-height: 1;
     cursor: pointer;
 }
-.update-banner-dismiss:hover {
+.update-banner-dismiss:hover,
+.update-banner-close:hover {
     color: var(--accent-1);
 }
 @media (max-width: 600px) {
