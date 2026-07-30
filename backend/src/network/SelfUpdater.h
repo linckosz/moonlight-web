@@ -97,6 +97,15 @@ private:
     QString verifyDigest();
     void runInstaller();
     void onInstallerFinished(int exitCode, bool crashed);
+    void armWatchdog();
+#ifdef Q_OS_WIN
+    // Run the installer from a transient LocalSystem task so it is NOT a child
+    // of this process. Empty on success, else the error to report.
+    QString startViaSystemTask(const QString& program, const QStringList& args);
+#endif
+    // Where the installer is told to write its own log — the only account of what
+    // it did once message boxes are suppressed.
+    static QString installerLogPath();
     // `dropStaged` false keeps the downloaded installer on disk — used when it
     // may still be picked up by a prompt waiting on the host desktop.
     void fail(const QString& message, bool dropStaged = true);
