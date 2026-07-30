@@ -727,6 +727,19 @@ int main(int argc, char* argv[])
     UpdateChecker updateChecker(QCoreApplication::applicationVersion());
     SelfUpdater selfUpdater(&updateChecker);
 
+    // Keep the release cache warm on our own clock instead of on client traffic.
+    // statusJson() is stale-while-revalidate: the caller that finds the cache
+    // stale gets update_available=false and only *then* kicks the fetch. A host
+    // that is polled rarely — or a page that asks once, right after boot — would
+    // therefore keep seeing "no update" long after a release landed.
+    QTimer updatePollTimer;
+    updatePollTimer.setInterval(UpdateChecker::kCacheHours * 3600 * 1000);
+    QObject::connect(&updatePollTimer, &QTimer::timeout, &updateChecker, &UpdateChecker::refresh);
+    updatePollTimer.start();
+    // First fetch shortly after boot: late enough for the network stack (and any
+    // ACME/DNS work above) to be up, early enough to precede the first client.
+    QTimer::singleShot(5000, &updateChecker, &UpdateChecker::refresh);
+
     // Re-sync domain on HttpServer — ensureIdentifiers() (called in
     // the InternetAccessManager constructor) may have just generated a
     // new unique_id, which changes the computed domain.

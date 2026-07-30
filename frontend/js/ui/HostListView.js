@@ -66,6 +66,14 @@ export class HostListView {
     // (host momentarily unreachable — e.g. remote path warming up post-reboot).
     static APP_LIST_RETRY_MS = 4000;
 
+    // Update-banner cadence. Asking the host is free — it answers from a cache it
+    // refreshes on its own timer (UpdateChecker::kCacheHours), never per request —
+    // so 30 min just bounds how long a banner can lag behind that cache. MIN_MS
+    // floors the extra checks fired
+    // by visibilitychange (a phone can wake this page many times a minute).
+    static UPDATE_CHECK_MS = 30 * 60 * 1000;
+    static UPDATE_CHECK_MIN_MS = 5 * 60 * 1000;
+
     constructor(container) {
         this.container = container;
         this.hosts = [];
@@ -84,15 +92,22 @@ export class HostListView {
         this._destroyed = false;
         // Update banner: the cached GitHub-Releases result, and whether an update
         // is currently being applied on the host (which then owns the banner).
-        this._updateChecked = false;
+        this._updateCheckedAt = 0;
+        this._updateTimer = null;
+        // Bounded fast retries while the host's first GitHub fetch is in flight.
+        this._updateWarmupTries = 0;
         this._updateInfo = null;
         this._updateBusy = false;
         this._hostsLoaded = false;
         this.renderShell();
 
-        // Auto-scan when page gains focus
+        // Auto-scan when page gains focus. Also re-ask about updates: a phone
+        // keeps this page alive for days behind a locked screen, and coming back
+        // to it is the moment the user would actually read a banner.
         this._visibilityHandler = () => {
-            if (!document.hidden && !this._destroyed) this._autoScan();
+            if (document.hidden || this._destroyed) return;
+            this._autoScan();
+            this._checkForUpdate();
         };
         document.addEventListener('visibilitychange', this._visibilityHandler);
 
@@ -243,19 +258,50 @@ export class HostListView {
         this._active = true;
         this._autoScan();
         this.scheduleNextPoll(0); // immediate first refresh
-        this._checkForUpdate(); // discreet "new version available" banner (once)
+        this._checkForUpdate(); // discreet "new version available" banner
+        this._scheduleUpdateCheck();
     }
 
     // --- Update banner ---
 
+    // Re-ask periodically so a page left open for days still learns about a
+    // release. Cheap: the backend answers from its own cache.
+    _scheduleUpdateCheck() {
+        if (this._updateTimer || this._destroyed) return;
+        this._updateTimer = setInterval(() => {
+            if (this._destroyed || !this._active) return;
+            this._checkForUpdate();
+        }, HostListView.UPDATE_CHECK_MS);
+    }
+
     // Ask the backend (cached GitHub Releases check) whether a newer MoonlightWeb
     // build exists and, if so, paint a discreet dismissible banner at the top of
-    // the Hosts view. Runs at most once per view lifetime; failures stay silent.
+    // the Hosts view. Failures stay silent.
+    //
+    // Not a one-shot: the backend's own check is stale-while-revalidate, so the
+    // very first answer after its boot is "no update" even when there is one.
+    // Asking once per page load meant a long-lived tab could never see a banner.
     async _checkForUpdate() {
-        if (this._updateChecked) return;
-        this._updateChecked = true;
+        // Nothing to learn while the banner shows an update in flight, and don't
+        // re-ask more often than the backend could plausibly change its answer.
+        if (this._updateBusy) return;
+        const now = Date.now();
+        if (now - this._updateCheckedAt < HostListView.UPDATE_CHECK_MIN_MS) return;
+        this._updateCheckedAt = now;
         const info = await BackendClient.checkForUpdate();
-        if (this._destroyed || !info || !info.update_available) return;
+        if (this._destroyed) return;
+        // `checked_at` empty means the host has never completed a check — its
+        // fetch is in flight right now and this "no update" is a placeholder.
+        // Don't wait for the next tick to find out.
+        if (info && !info.checked_at && this._updateWarmupTries < 3) {
+            this._updateWarmupTries++;
+            this._updateCheckedAt = 0;
+            setTimeout(() => {
+                if (!this._destroyed && this._active) this._checkForUpdate();
+            }, 10000);
+            return;
+        }
+        if (!info || !info.update_available) return;
         // Respect a prior dismissal — but only for that exact version, so a newer
         // release re-surfaces the banner.
         if (localStorage.getItem('mw_update_dismissed') === info.latest) return;
@@ -531,6 +577,10 @@ export class HostListView {
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
+        }
+        if (this._updateTimer) {
+            clearInterval(this._updateTimer);
+            this._updateTimer = null; // re-armed by start()
         }
         for (const uuid of Object.keys(this._appRetryTimers)) {
             clearTimeout(this._appRetryTimers[uuid]);
