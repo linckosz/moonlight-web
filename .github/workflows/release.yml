@@ -203,6 +203,79 @@ jobs:
         shell: pwsh
         run: Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/arm64-windows/bin/*.dll" dist/ -ErrorAction SilentlyContinue
 
+      # ── Authenticode signing (SignPath) ──────────────────────────────────
+      # Without a signature Windows SmartScreen greets every download with
+      # "Windows protected your PC", and it never stops: reputation accrues to
+      # the signing certificate, so an unsigned build restarts from zero on each
+      # release no matter how many people install it.
+      #
+      # SignPath signs remotely. The private key never reaches this runner, so
+      # there is no signtool here and nothing to hand ISCC — every pass is a
+      # round trip through the Actions artifact store, which is the only input
+      # SignPath's action accepts. Hence the shape of what follows:
+      #   • the payload exe is signed BEFORE ISCC packages it,
+      #   • the installer is signed AFTER ISCC produces it,
+      #   • the uninstaller is not signed at all (see moonlightweb.iss).
+      #
+      # The slugs below are defined in the SignPath project, not here — they
+      # must match the project / signing policy / artifact configuration set up
+      # at signpath.io or the request is rejected. Two artifact configurations
+      # are needed because a bare .exe and an Inno installer are different
+      # shapes to SignPath.
+      #
+      # All of it is skipped when SIGNPATH_API_TOKEN is unset, so forks and runs
+      # without the MoonlightWeb environment keep emitting the same unsigned
+      # installer as before — loudly, via a run annotation, not silently.
+      - name: Detect signing secrets
+        id: signing
+        shell: pwsh
+        run: |
+          $on = -not [string]::IsNullOrWhiteSpace("${{ secrets.SIGNPATH_API_TOKEN }}")
+          "enabled=$($on.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (-not $on) {
+            Write-Host "::warning title=Unsigned build::No SignPath token configured - this installer is UNSIGNED and will trip SmartScreen."
+          }
+
+      # An intermediate, not a deliverable: it exists only because SignPath
+      # takes its input from the artifact store. One-day retention keeps the
+      # unsigned exe from lingering next to the real artifacts.
+      - name: Upload payload for signing
+        id: payload-unsigned
+        if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: unsigned-payload-${{ matrix.arch }}
+          path: dist/MoonlightWeb.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign payload (SignPath)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: SignPath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: moonlight-web
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-payload
+          github-artifact-id: ${{ steps.payload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-payload
+
+      # MoonlightWeb.exe is the only first-party binary cmake stages
+      # (backend/CMakeLists.txt:359) — Qt's and OpenSSL's DLLs arrive with their
+      # own signatures. It has to be signed before ISCC swallows it: the service
+      # registers it to run at boot, so an unsigned copy inside a signed
+      # installer would still get flagged on first launch.
+      - name: Swap in the signed payload
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $signed = "signed-payload\MoonlightWeb.exe"
+          if (-not (Test-Path $signed)) { throw "SignPath returned no $signed" }
+          Copy-Item $signed dist\MoonlightWeb.exe -Force
+
       # Interactive installer: stepped wizard (Internet authorization, Sunshine
       # detection/silent-install + pairing, Desktop admin shortcut). It is the
       # only Windows artifact shipped (no raw zip).
@@ -214,13 +287,52 @@ jobs:
         shell: pwsh
         # DNS/ACME secrets are compiled into MoonlightWeb.exe at build time, not
         # passed to the installer — nothing on the user's machine carries them.
+        # No signing arguments: ISCC has no local signtool to call (see the note
+        # at the top of moonlightweb.iss); the installer is signed below.
         run: |
+          $ErrorActionPreference = "Stop"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             "/DSourceDir=$(Resolve-Path dist)" `
             "/DMyArch=${{ matrix.arch }}" `
             "/DMyAppVersion=${{ needs.setup.outputs.version }}" `
             "/O$(Get-Location)" `
             backend\installer\moonlightweb.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+
+      - name: Upload installer for signing
+        id: installer-unsigned
+        if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: unsigned-installer-${{ matrix.arch }}
+          path: MoonlightWeb-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign installer (SignPath)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: SignPath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: moonlight-web
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-installer
+          github-artifact-id: ${{ steps.installer-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+
+      # Overwrite in place so the two publish steps below need no knowledge of
+      # signing and can never ship the unsigned build by accident.
+      - name: Swap in the signed installer
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "MoonlightWeb-installer-${{ needs.setup.outputs.version }}-win-${{ matrix.arch }}.exe"
+          $signed = Join-Path "signed-installer" $name
+          if (-not (Test-Path $signed)) { throw "SignPath returned no $signed" }
+          Copy-Item $signed $name -Force
 
       # Downloadable on every run (incl. the CI call on main and a
       # workflow_dispatch with no tag).

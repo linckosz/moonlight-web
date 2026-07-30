@@ -61,7 +61,7 @@ AppId={{6F2C9E4A-7B3D-4E5F-9A1C-2D8E4B6F0A33}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=MoonlightWeb
-AppPublisherURL=https://github.com/moonlight-stream/moonlight-web
+AppPublisherURL=https://github.com/linckosz/moonlight-web
 DefaultDirName={autopf}\MoonlightWeb
 DefaultGroupName=MoonlightWeb
 DisableProgramGroupPage=yes
@@ -69,6 +69,18 @@ OutputBaseFilename=MoonlightWeb-installer-{#MyAppVersion}-win-{#MyArch}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; NO SignTool= here, on purpose. Authenticode signing happens in release.yml,
+; around this compile rather than inside it: SignPath signs remotely and the
+; private key never reaches the build machine, so there is no local signtool for
+; ISCC to call. The payload exe is signed before it is packaged here, and the
+; installer this produces is signed afterwards.
+;
+; The one casualty is the uninstaller: ISCC generates it at compile time and
+; SignedUninstaller=yes would need that same local signtool, so unins000.exe
+; ships unsigned and the uninstall UAC prompt reads "Unknown publisher". The
+; download itself — the only thing SmartScreen gates — is fully signed. Adding
+; SignTool=/SignedUninstaller= back would just make ISCC abort with "Unknown
+; SignTool name" unless a signing provider with a local CLI replaces SignPath.
 ; Branding: installer .exe icon + small wizard logo (top-right on inner pages).
 ; Paths are relative to this .iss; PNG wizard images need Inno Setup 6.3+.
 SetupIconFile=..\..\frontend\assets\favicon.ico
