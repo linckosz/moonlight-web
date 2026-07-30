@@ -77,6 +77,15 @@ WizardSmallImageFile=..\..\frontend\assets\logo-512.png
 UninstallDisplayIcon={app}\{#MyAppExe}
 UninstallDisplayName={#MyAppName}
 PrivilegesRequired=admin
+; Do NOT let Inno's Restart Manager pass deal with the running MoonlightWeb.
+; That pass happens while "Preparing to Install", i.e. BEFORE ssInstall — before
+; StopRunningInstance() gets its turn — and it is looking at a process that may
+; be a session-0 service. In a `/VERYSILENT /SUPPRESSMSGBOXES` run (how the app
+; updates itself) anything it stumbles on becomes a silent abort with nothing but
+; an exit code to show for it. We stop the app/service ourselves at ssInstall and
+; bring it back at ssPostInstall, which is the whole point of those two steps.
+CloseApplications=no
+RestartApplications=no
 #if MyArch == "arm64"
 ArchitecturesInstallIn64BitMode=arm64
 ArchitecturesAllowed=arm64
