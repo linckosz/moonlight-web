@@ -20,6 +20,7 @@
 #include "common/Logger.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -223,6 +224,8 @@ QString SelfUpdater::start()
 
     m_method = method;
     m_target = info.value("latest").toString();
+    m_expectedSize = static_cast<qint64>(info.value("asset_size").toDouble());
+    m_expectedDigest = info.value("asset_digest").toString();
     m_error.clear();
     m_state = State::Downloading;
     m_percent = 0;
@@ -261,16 +264,33 @@ void SelfUpdater::onDownloadFinished()
         fail(QStringLiteral("Download failed: %1").arg(reply->errorString()));
         return;
     }
-    // A truncated or HTML error body would make the installer fail with no
-    // diagnostic once we are gone; catch the obvious case now.
+    // Verify what we got against what GitHub said the asset is, BEFORE handing
+    // it to an installer that reports nothing. An installer whose bytes are not
+    // the published ones fails its own integrity check, writes no log, and dies
+    // with a bare exit code — which is a miserable thing to debug from the other
+    // side of the planet. A release whose asset is replaced between the check
+    // and the download is enough to land here.
     const qint64 size = m_file ? m_file->size() : 0;
-    if (size < 1024 * 1024) {
+    delete m_file;
+    m_file = nullptr;
+
+    if (m_expectedSize > 0 && size != m_expectedSize) {
+        fail(QStringLiteral("Downloaded installer is %1 bytes, expected %2 — the release asset "
+                            "changed under us; try again")
+                 .arg(size)
+                 .arg(m_expectedSize));
+        return;
+    }
+    if (m_expectedSize <= 0 && size < 1024 * 1024) {
+        // No published size to compare against: fall back to catching the
+        // obvious case (an HTML error page saved as an installer).
         fail(QStringLiteral("Downloaded installer looks truncated (%1 bytes)").arg(size));
         return;
     }
-
-    delete m_file;
-    m_file = nullptr;
+    if (const QString bad = verifyDigest(); !bad.isEmpty()) {
+        fail(bad);
+        return;
+    }
 
     m_state = State::Installing;
     m_percent = kDownloadShare;
@@ -291,6 +311,30 @@ void SelfUpdater::onDownloadFinished()
     m_installTick->start(kInstallTickMs);
 
     runInstaller();
+}
+
+QString SelfUpdater::verifyDigest()
+{
+    // GitHub publishes it as "sha256:<hex>"; anything else (or nothing at all,
+    // on an older API response) leaves the size check as the only guard.
+    if (!m_expectedDigest.startsWith(QLatin1String("sha256:"), Qt::CaseInsensitive)) return {};
+    const QString want = m_expectedDigest.mid(7).trimmed().toLower();
+    if (want.isEmpty()) return {};
+
+    QFile f(m_pkgPath);
+    if (!f.open(QIODevice::ReadOnly))
+        return QStringLiteral("Cannot re-read the downloaded installer to verify it");
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&f)) return QStringLiteral("Could not hash the downloaded installer");
+    const QString got = QString::fromLatin1(hash.result().toHex());
+    if (got != want)
+        return QStringLiteral("Downloaded installer does not match the published sha256 "
+                              "(%1 vs %2) — try again")
+            .arg(got.left(12), want.left(12));
+    Logger::info(QStringLiteral("[Update] installer verified: %1 bytes, sha256 %2")
+                     .arg(m_expectedSize)
+                     .arg(want.left(12)));
+    return {};
 }
 
 void SelfUpdater::runInstaller()

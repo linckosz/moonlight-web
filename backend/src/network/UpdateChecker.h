@@ -71,7 +71,11 @@ private:
     // Best asset for this OS/arch from a release's `assets` array. Fills outName
     // with the matched asset filename; returns its browser_download_url (empty
     // when nothing matches — caller falls back to the release page).
-    static QString pickAsset(const class QJsonArray& assets, QString& outName);
+    // Also hands back what GitHub says the asset *is* (exact byte count and
+    // "sha256:<hex>" digest) so the download can be verified rather than
+    // guessed at. Either may come back empty on an older API response.
+    static QString pickAsset(const class QJsonArray& assets, QString& outName, qint64& outSize,
+                             QString& outDigest);
 
     QString m_current;
     QNetworkAccessManager* m_nam;

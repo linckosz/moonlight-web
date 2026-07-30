@@ -92,6 +92,9 @@ private:
     };
 
     void onDownloadFinished();
+    // Empty when the staged file matches the digest GitHub published for it (or
+    // when there is no digest to check against); the error message otherwise.
+    QString verifyDigest();
     void runInstaller();
     void onInstallerFinished(int exitCode, bool crashed);
     // `dropStaged` false keeps the downloaded installer on disk — used when it
@@ -137,4 +140,8 @@ private:
     QString m_target;  // version being installed
     QString m_pkgPath; // staged installer on disk
     QString m_method;  // elevation path chosen for this run
+    // What GitHub says the asset is, captured when the download starts so a
+    // release edited mid-flight cannot move the goalposts.
+    qint64 m_expectedSize = 0;
+    QString m_expectedDigest;
 };
