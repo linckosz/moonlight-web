@@ -201,6 +201,35 @@ export class GamepadManager {
         }
     }
 
+    /**
+     * True when any pad is away from rest (button, trigger or stick).
+     *
+     * A pad only reports on change, so a stick shoved and held goes silent
+     * exactly like a held key — and the host's input watchdog reads silence as
+     * a dead link. StreamView's held-input heartbeat asks this so it keeps
+     * beating while a stick is pushed. The threshold matches the backend's
+     * (MoonlightShim::sendControllerState).
+     */
+    hasActiveState() {
+        const AT_REST = 4096;
+        for (const entry of this._pads.values()) {
+            const s = entry.last;
+            if (!s) continue;
+            if (
+                s.buttons !== 0 ||
+                s.lt !== 0 ||
+                s.rt !== 0 ||
+                Math.abs(s.lx) >= AT_REST ||
+                Math.abs(s.ly) >= AT_REST ||
+                Math.abs(s.rx) >= AT_REST ||
+                Math.abs(s.ry) >= AT_REST
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Trigger vibration on the matching controller (host rumble request). */
     rumble(index, low, high) {
         const pads = navigator.getGamepads ? navigator.getGamepads() : [];
