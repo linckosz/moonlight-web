@@ -42,6 +42,12 @@ class UpdateChecker : public QObject
 {
     Q_OBJECT
 public:
+    // How long a fetched release stays authoritative. Also the period of the
+    // host's own refresh timer (main.cpp), so the cache is renewed on our clock
+    // rather than on whoever happens to ask first. One fetch per window, for all
+    // clients — GitHub allows 60/h unauthenticated, we spend 8/day.
+    static constexpr int kCacheHours = 6;
+
     explicit UpdateChecker(QString currentVersion, QObject* parent = nullptr);
 
     // Cached result as JSON:
@@ -66,8 +72,6 @@ private:
     // with the matched asset filename; returns its browser_download_url (empty
     // when nothing matches — caller falls back to the release page).
     static QString pickAsset(const class QJsonArray& assets, QString& outName);
-
-    static constexpr int kCacheHours = 6;
 
     QString m_current;
     QNetworkAccessManager* m_nam;
