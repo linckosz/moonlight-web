@@ -180,7 +180,7 @@ bool UpdateChecker::isNewer(const QString& latest, const QString& current)
 }
 
 QString UpdateChecker::pickAsset(const QJsonArray& assets, QString& outName, qint64& outSize,
-                                QString& outDigest)
+                                 QString& outDigest)
 {
     // Build the ordered list of filename suffixes/tokens to accept for this
     // platform, most-specific first. The CI asset names embed the version but
