@@ -21,10 +21,16 @@
 #include <QThread>
 #include <QPointer>
 #include <QByteArray>
+#include <QElapsedTimer>
+#include <QHash>
+#include <QMutex>
+#include <QVector>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <chrono>
+
+class QTimer;
 
 struct _SERVER_INFORMATION;
 struct _STREAM_CONFIGURATION;
@@ -73,7 +79,9 @@ public:
 
     bool isConnected() const { return m_Connected; }
 
-    void sendKeyEvent(short keyCode, bool down, char modifiers, char flags);
+    // `hold` marks a press the client wants kept down through a brief link
+    // stall (movement keys in gaming mode) — see the input watchdog below.
+    void sendKeyEvent(short keyCode, bool down, char modifiers, char flags, bool hold = false);
     // --- Toggle-lock sync (NumLock / CapsLock / ScrollLock) ---
     // Snapshot the host's real lock-key state, only possible when the
     // streamed host IS this machine (same gate as clipboard sync). Must run
@@ -92,7 +100,7 @@ public:
     void sendUtf8Text(const QString& text);
     void sendMouseMove(short deltaX, short deltaY);
     void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
-    void sendMouseButton(bool down, int button);
+    void sendMouseButton(bool down, int button, bool hold = false);
     void sendMouseScroll(short scrollAmount);
     // Horizontal wheel — Sunshine protocol extension (no-op on GeForce Experience hosts).
     void sendMouseHScroll(short scrollAmount);
@@ -108,6 +116,53 @@ public:
                              unsigned char leftTrigger, unsigned char rightTrigger,
                              short leftStickX, short leftStickY, short rightStickX,
                              short rightStickY);
+
+    // ── Input watchdog (dead-man switch) ────────────────────────────────────
+    //
+    // The input channel is ordered+reliable: a link stall does not lose events,
+    // it DELAYS them. A press that already landed therefore stays down on the
+    // host for the whole stall while its release waits in the SCTP queue, and
+    // the guest OS typematic turns one keystroke into dozens ("rrrrrrr..." for
+    // a 2 s freeze). A stuck key also outlives a link that never comes back.
+    //
+    // Nothing the client sends during the stall can fix this — its correction
+    // would ride the same blocked queue. So the host side watches for silence:
+    // every message from the client refreshes a liveness timestamp, and when it
+    // goes stale we release whatever is still held. The client heartbeats its
+    // full held-input state (only while something IS held), so the next message
+    // after the stall both refreshes liveness and re-presses anything the user
+    // is genuinely still holding — see syncHeldInputs().
+    //
+    // Two grace periods: `hold` inputs (movement keys/buttons in gaming mode)
+    // get the long one, so a network hiccup does not stop a player mid-stride;
+    // everything else gets the short one, chosen to fire BEFORE the typematic
+    // delay (~500 ms on Windows) so no repeat is ever generated.
+    static constexpr int kInputWatchdogTickMs = 100;
+    static constexpr int kInputStaleMs = 250;
+    static constexpr int kInputStaleHoldMs = 3000;
+
+    /// A press currently applied to the host, kept so the watchdog can release
+    /// it and a heartbeat can restore it.
+    struct HeldKey
+    {
+        short keyCode = 0;
+        char modifiers = 0;
+        char flags = 0;
+        bool hold = false;
+    };
+
+    /// Refresh the client-liveness timestamp. Call from every relay on every
+    /// inbound client message, whatever its type.
+    void noteClientAlive();
+
+    /// Release every held key/button (and neutralize every non-idle gamepad).
+    /// `includeHold` also releases the inputs flagged `hold`.
+    void releaseHeldInputs(bool includeHold);
+
+    /// Reconcile the host with the client's authoritative held-input state
+    /// (its heartbeat): press what the watchdog released but the user still
+    /// holds, release what drifted. `buttonMask` is 1 << (button - 1).
+    void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask, bool buttonsHold);
 
     // Request an IDR frame from the host (Sunshine).
     // Called when the browser needs a keyframe to configure its decoder.
@@ -244,6 +299,34 @@ private:
     // Balances MacActivity begin/end (App Nap suppression) across the
     // startConnection → finishCleanup lifecycle, whatever teardown path runs.
     bool m_ActivityHeld = false;
+
+    // ── Input watchdog state (contract in the public section) ───────────────
+    // The relay input path runs on the relay thread, but the clipboard paste
+    // path injects its chord from the main thread — so the held-input state is
+    // mutex-guarded, and only the QTimer (thread-affine) is hopped back onto
+    // the shim's own thread.
+    QMutex m_InputStateMutex;
+    QTimer* m_InputWatchdog = nullptr;
+    QElapsedTimer m_ClientAliveTimer; // invalid until the first client message
+    QHash<short, HeldKey> m_HeldKeys;
+    quint32 m_HeldButtons = 0; // 1 << (button - 1)
+    bool m_HeldButtonsHold = false;
+    QHash<short, short> m_ActiveGamepads; // controller index → active mask
+    bool m_ShortStaleFired = false;       // don't re-log/re-release each tick
+    bool m_LongStaleFired = false;
+    // The watchdog only arms once the client has proved it heartbeats its held
+    // state (first 'inputstate' message). Without that handshake an older
+    // cached frontend — which goes silent while a key is legitimately held —
+    // would have its keys released out from under it.
+    bool m_HeartbeatSeen = false;
+
+    /// Run the watchdog only while something is actually held down.
+    void updateInputWatchdog();
+    void onInputWatchdogTick();
+    bool anythingHeld() const
+    {
+        return !m_HeldKeys.isEmpty() || m_HeldButtons != 0 || !m_ActiveGamepads.isEmpty();
+    }
 
     void finishCleanup();
     void blockingStopConnection();

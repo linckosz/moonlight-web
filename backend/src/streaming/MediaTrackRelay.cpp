@@ -17,6 +17,7 @@
 
 #include "MediaTrackRelay.h"
 #include "ClipboardBridge.h"
+#include "InputMessageCodec.h"
 #include "MoonlightShim.h"
 #include "ExitNotice.h"
 
@@ -608,34 +609,26 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     QJsonObject msg = doc.object();
     QString type = msg["type"].toString();
 
+    // Any message at all proves the input link is alive — feeds the shim's
+    // dead-man switch (see MoonlightShim's input-watchdog section).
+    if (m_Shim) m_Shim->noteClientAlive();
+
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
-        int vk = msg["keyCode"].toInt(0);
-        QString code = msg["code"].toString();
-        char mods = 0;
-        if (msg["ctrlKey"].toBool(false)) mods |= 0x02;
-        if (msg["shiftKey"].toBool(false)) mods |= 0x01;
-        if (msg["altKey"].toBool(false)) mods |= 0x04;
-        if (msg["metaKey"].toBool(false)) mods |= 0x08;
-
         short keyCode;
         char flags = 0;
-
-        // International keys without standard US VK equivalents:
-        // IntlBackslash (ISO key next to left Shift) and IntlRo (JIS \ key)
-        // need NON_NORMALIZED mode: Sunshine injects the keyCode as a raw VK
-        // (not a US-layout scancode), so the host's active layout resolves it.
-        if (code == "IntlBackslash") {
-            keyCode = 0xE2; // VK_OEM_102 (ISO <> key)
-            flags = SS_KBE_FLAG_NON_NORMALIZED;
-        } else if (code == "IntlRo") {
-            keyCode = 0xC1; // VK_ABNT_C1 (JIS Ro key)
-            flags = SS_KBE_FLAG_NON_NORMALIZED;
-        } else {
-            keyCode = static_cast<short>(vk);
-            flags = 0;
-        }
-        m_Shim->sendKeyEvent(keyCode, down, mods, flags);
+        InputMsg::resolveHostKey(msg["keyCode"].toInt(0), msg["code"].toString(), keyCode, flags);
+        // `hold`: a movement key the client wants kept down through a brief
+        // stall instead of released at the short grace period (see the shim).
+        m_Shim->sendKeyEvent(keyCode, down, InputMsg::modifierMask(msg), flags,
+                             msg["hold"].toBool(false));
+    } else if (type == "inputstate") {
+        // Client heartbeat: its authoritative held-input state, sent while (and
+        // only while) something is held. Re-presses whatever the watchdog
+        // released during a stall but the user is genuinely still holding.
+        m_Shim->syncHeldInputs(InputMsg::parseHeldKeys(msg),
+                               static_cast<quint32>(msg["buttons"].toInt(0)),
+                               msg["buttonsHold"].toBool(false));
     } else if (type == "mousemove") {
         // Absolute mouse position (non-gaming mode)
         if (msg.contains("x") && msg.contains("y") && msg.contains("referenceWidth") &&
@@ -654,7 +647,7 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     } else if (type == "mousedown" || type == "mouseup") {
         bool down = (type == "mousedown");
         int button = msg["button"].toInt(1);
-        m_Shim->sendMouseButton(down, button);
+        m_Shim->sendMouseButton(down, button, msg["hold"].toBool(false));
     } else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);

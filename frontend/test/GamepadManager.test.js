@@ -124,6 +124,28 @@ describe('GamepadManager', () => {
         );
     });
 
+    it('reports an at-rest pad as inactive and a pushed one as active', () => {
+        const send = vi.fn();
+        const gm = new GamepadManager(send);
+        const pad = fakePad({ index: 0 });
+        setPads([pad]);
+        gm.start();
+        // A connected pad sitting at rest must not keep the held-input
+        // heartbeat alive — that is what tells the host the link is idle.
+        expect(gm.hasActiveState()).toBe(false);
+
+        // Stick shoved and left there: the pad stops reporting, so only this
+        // is left to keep the host's watchdog from releasing it.
+        pad.axes = [1, 0, 0, 0];
+        rafCb();
+        expect(gm.hasActiveState()).toBe(true);
+
+        pad.axes = [0, 0, 0, 0];
+        rafCb();
+        expect(gm.hasActiveState()).toBe(false);
+        gm.stop();
+    });
+
     it('triggers the vibration actuator on rumble', () => {
         const send = vi.fn();
         const gm = new GamepadManager(send);

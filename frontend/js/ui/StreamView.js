@@ -573,6 +573,15 @@ export class StreamView {
         // keyup never reaches us and the host keeps the key — turning a later
         // "e" into Win+E, etc. We synthesize the missing keyups on blur/hidden.
         this._heldPhysKeys = new Map();
+        // Mouse buttons currently held (1-based, as sent to the host). Same
+        // reason as above, plus it feeds the held-input heartbeat below.
+        this._heldMouseButtons = new Set();
+        // Held-input heartbeat: see _sendInputState(). Repeats our held state
+        // to the host so it can release everything when we go silent — a link
+        // stall delays a RELEASE whose press already landed, and the host would
+        // otherwise see the key down for the whole stall (typematic turns one
+        // "r" into forty).
+        this._inputStateInterval = null;
 
         // ── Clipboard bridge state ─────────────────────────────────────────
         // Enabled by a backend 'clipboardcaps' message, sent only when the
@@ -3018,6 +3027,16 @@ export class StreamView {
                 this.webrtc.send({ type: 'ping', seq, ts: performance.now() });
             }, 2000);
 
+            // Held-input heartbeat (see _sendInputState). The first beat is
+            // forced — even with nothing held — because it doubles as the
+            // capability handshake that arms the host-side watchdog.
+            if (this._inputStateInterval) clearInterval(this._inputStateInterval);
+            this._sendInputState(true);
+            this._inputStateInterval = setInterval(() => {
+                if (this._quitting) return;
+                this._sendInputState();
+            }, 100);
+
             // Start polling connected gamepads (Xbox/PlayStation). Sends a
             // controller snapshot over the input transport only on change.
             if (!this._gamepadManager && navigator.getGamepads) {
@@ -5082,20 +5101,16 @@ export class StreamView {
         // AZERTY instead of VK_Q), which breaks Sunshine's layout correction.
         // Fall back to e.keyCode only for unmapped codes.
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
-        // Remember the matching keyup so we can release the key if focus is lost
-        // before the real keyup fires. Modifier flags are cleared on release.
-        this._heldPhysKeys.set(e.code || vkCode, {
-            type: 'keyup',
-            keyCode: vkCode,
-            code: e.code,
-            key: e.key,
-        });
-        this.webrtc.send({
+        // _sendKeyEvent remembers the matching keyup, so the key can be released
+        // if focus is lost before the real keyup fires (modifier flags are
+        // cleared on release) and so the held-input heartbeat reports it.
+        this._sendKeyEvent({
             type: 'keydown',
             keyCode: vkCode,
             // Keep e.code for backend to detect IntlBackslash/IntlRo
             code: e.code,
             key: e.key,
+            hold: this._holdsThroughStall(e.code),
             ctrlKey: e.ctrlKey,
             shiftKey: e.shiftKey,
             altKey: e.altKey,
@@ -5119,8 +5134,7 @@ export class StreamView {
         }
         e.preventDefault();
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
-        this._heldPhysKeys.delete(e.code || vkCode);
-        this.webrtc.send({
+        this._sendKeyEvent({
             type: 'keyup',
             keyCode: vkCode,
             code: e.code,
@@ -5132,21 +5146,151 @@ export class StreamView {
         });
     }
 
-    // Release every physically-held key on the host. Called when the window
-    // loses focus or goes hidden: the OS may eat the keyup (Win key → Start
-    // menu, Alt+Tab), which would otherwise leave a modifier stuck on the host.
+    // Release every physically-held key and mouse button on the host. Called
+    // when the window loses focus or goes hidden: the OS may eat the keyup (Win
+    // key → Start menu, Alt+Tab), which would otherwise leave a modifier stuck
+    // on the host. Mouse buttons have the same hole in gaming mode, where a
+    // mouseup arriving after focus loss is dropped by the _mouseFocused gate.
     _releaseAllPhysKeys() {
-        if (!this._heldPhysKeys || this._heldPhysKeys.size === 0) return;
-        for (const payload of this._heldPhysKeys.values()) {
-            this.webrtc.send({
-                ...payload,
-                ctrlKey: false,
-                shiftKey: false,
-                altKey: false,
-                metaKey: false,
+        if (this._heldPhysKeys && this._heldPhysKeys.size > 0) {
+            for (const payload of this._heldPhysKeys.values()) {
+                this.webrtc.send({
+                    ...payload,
+                    ctrlKey: false,
+                    shiftKey: false,
+                    altKey: false,
+                    metaKey: false,
+                });
+            }
+            this._heldPhysKeys.clear();
+        }
+        if (this._heldMouseButtons && this._heldMouseButtons.size > 0) {
+            for (const button of this._heldMouseButtons) {
+                this.webrtc.send({ type: 'mouseup', button });
+            }
+            this._heldMouseButtons.clear();
+        }
+    }
+
+    // =========================================================================
+    // Held-input heartbeat (host-side watchdog — see backend MoonlightShim)
+    // =========================================================================
+
+    /**
+     * Inputs the host must keep pressed through a brief stall instead of
+     * releasing at the short grace period.
+     *
+     * These are the FPS movement keys — and ZQSD (AZERTY) and WASD (QWERTY) are
+     * the very same physical keys: games bind by scancode, and e.code names the
+     * position, so one set covers both layouts. Gaming mode only: at the
+     * desktop these are ordinary letters, where a stall-induced repeat is
+     * exactly the bug we are fixing.
+     */
+    static HOLD_THROUGH_STALL_CODES = new Set([
+        'KeyW',
+        'KeyA',
+        'KeyS',
+        'KeyD',
+        'ArrowUp',
+        'ArrowDown',
+        'ArrowLeft',
+        'ArrowRight',
+    ]);
+
+    _holdsThroughStall(code) {
+        return !!this._gamingMode && StreamView.HOLD_THROUGH_STALL_CODES.has(code);
+    }
+
+    /**
+     * Send a key event and keep _heldPhysKeys in sync.
+     *
+     * Every keydown/keyup goes through here — physical keys, the soft-keyboard
+     * toolbar, latched modifiers — because the host now releases anything we
+     * stop mentioning. A press this set does not know about (a latched Ctrl, a
+     * held arrow on the touch toolbar) would be dropped by the watchdog after
+     * the short grace period.
+     *
+     * @param {object} msg a `keydown` or `keyup` input message
+     */
+    _sendKeyEvent(msg) {
+        const id = msg.code || msg.keyCode;
+        if (msg.type === 'keydown') {
+            this._heldPhysKeys.set(id, {
+                type: 'keyup',
+                keyCode: msg.keyCode,
+                code: msg.code,
+                key: msg.key,
+                hold: !!msg.hold,
+            });
+        } else {
+            this._heldPhysKeys.delete(id);
+        }
+        this.webrtc.send(msg);
+    }
+
+    /** Send a mouse button event and keep _heldMouseButtons in sync (same
+     *  reason as _sendKeyEvent). `button` is 1-based, as the host expects. */
+    _sendMouseButton(button, down) {
+        if (down) this._heldMouseButtons.add(button);
+        else this._heldMouseButtons.delete(button);
+        this.webrtc.send({
+            type: down ? 'mousedown' : 'mouseup',
+            button,
+            // Aim/fire in gaming mode is a genuine hold, not a drag.
+            hold: down && !!this._gamingMode,
+        });
+    }
+
+    /**
+     * Beat our held-input state to the host.
+     *
+     * The input channel is ordered+reliable, so a stall does not lose events —
+     * it delays them. A press that already landed stays down on the host for
+     * the whole stall while its release waits in the queue, and guest typematic
+     * turns one "r" into forty. We cannot fix that from here (a correction
+     * would ride the same blocked queue), so the host releases held inputs when
+     * this heartbeat goes silent, and each beat re-asserts what is genuinely
+     * still down so anything released mid-stall comes straight back.
+     *
+     * Sends nothing while nothing is held — except the one `force`d beat at
+     * channel open, which tells the host this client heartbeats at all (older
+     * cached frontends must not have their keys released out from under them).
+     *
+     * @param {boolean} force send even when nothing is held
+     */
+    _sendInputState(force = false) {
+        const held = this._heldPhysKeys;
+        const buttonsHeld = this._heldMouseButtons;
+        const padActive = !!(this._gamepadManager && this._gamepadManager.hasActiveState());
+        if (!force && held.size === 0 && buttonsHeld.size === 0 && !padActive) return;
+
+        // Modifier flags are a property of the whole state, not of each key.
+        const mods = {
+            ctrlKey: held.has('ControlLeft') || held.has('ControlRight'),
+            shiftKey: held.has('ShiftLeft') || held.has('ShiftRight'),
+            altKey: held.has('AltLeft') || held.has('AltRight'),
+            metaKey: held.has('MetaLeft') || held.has('MetaRight'),
+        };
+        const keys = [];
+        for (const payload of held.values()) {
+            keys.push({
+                keyCode: payload.keyCode,
+                code: payload.code,
+                hold: !!payload.hold,
+                ...mods,
             });
         }
-        this._heldPhysKeys.clear();
+        let buttons = 0;
+        for (const button of buttonsHeld) buttons |= 1 << (button - 1);
+
+        this.webrtc.send({
+            type: 'inputstate',
+            keys,
+            buttons,
+            // A held mouse button in gaming mode is aim/fire, not a drag: give
+            // it the long grace period like the movement keys.
+            buttonsHold: !!this._gamingMode,
+        });
     }
 
     // =========================================================================
@@ -5201,14 +5345,8 @@ export class StreamView {
         if (!pending) return;
         clearTimeout(pending.timer);
         this._pendingPasteKey = null;
-        // Register for focus-loss auto-release like any forwarded keydown.
-        this._heldPhysKeys.set(pending.code || pending.keydownMsg.keyCode, {
-            type: 'keyup',
-            keyCode: pending.keydownMsg.keyCode,
-            code: pending.keydownMsg.code,
-            key: pending.keydownMsg.key,
-        });
-        this.webrtc.send(pending.keydownMsg);
+        // Registers for focus-loss auto-release like any forwarded keydown.
+        this._sendKeyEvent(pending.keydownMsg);
     }
 
     /** Host clipboard changed: mirror it into the local clipboard. Browsers
@@ -5244,11 +5382,11 @@ export class StreamView {
     }
 
     handleMouseDown(e) {
-        this.webrtc.send({ type: 'mousedown', button: e.button + 1 });
+        this._sendMouseButton(e.button + 1, true);
     }
 
     handleMouseUp(e) {
-        this.webrtc.send({ type: 'mouseup', button: e.button + 1 });
+        this._sendMouseButton(e.button + 1, false);
     }
 
     handleWheel(e) {
@@ -5903,6 +6041,10 @@ export class StreamView {
             clearInterval(this._pingInterval);
             this._pingInterval = null;
         }
+        if (this._inputStateInterval) {
+            clearInterval(this._inputStateInterval);
+            this._inputStateInterval = null;
+        }
         this._stopMediaStatsPolling();
 
         // Clear IDR request timer
@@ -6058,6 +6200,10 @@ export class StreamView {
         if (this._pingInterval) {
             clearInterval(this._pingInterval);
             this._pingInterval = null;
+        }
+        if (this._inputStateInterval) {
+            clearInterval(this._inputStateInterval);
+            this._inputStateInterval = null;
         }
         this._stopMediaStatsPolling();
 

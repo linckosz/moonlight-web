@@ -17,16 +17,19 @@
 
 #include "StreamRelay.h"
 #include "ClipboardBridge.h"
+#include "InputMessageCodec.h"
 #include "MoonlightShim.h"
 
 #include <QCoreApplication>
 #include <QThread>
 #include <QMetaObject>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
 #include <QDateTime>
 #include <QMap>
+#include <QVector>
 #include <chrono>
 
 StreamRelay::StreamRelay(MoonlightShim* shim, quint16 wsPort, const QSslConfiguration& sslConfig,
@@ -553,15 +556,25 @@ void StreamRelay::onWsTextMessage(const QString& message)
         qInfo() << "[StreamRelay] Input #" << count << "type=" << type;
     }
 
+    // Any message at all proves the input link is alive — feeds the shim's
+    // dead-man switch (see MoonlightShim's input-watchdog section).
+    if (m_Shim) m_Shim->noteClientAlive();
+
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
-        int vk = msg["keyCode"].toInt(0);
-        char mods = 0;
-        if (msg["ctrlKey"].toBool(false)) mods |= 0x02;
-        if (msg["shiftKey"].toBool(false)) mods |= 0x01;
-        if (msg["altKey"].toBool(false)) mods |= 0x04;
-        if (msg["metaKey"].toBool(false)) mods |= 0x08;
-        m_Shim->sendKeyEvent(static_cast<short>(vk), down, mods, 0);
+        short keyCode;
+        char flags = 0;
+        // Shared codec, so this transport now resolves IntlBackslash/IntlRo
+        // like the others instead of passing the raw VK through.
+        InputMsg::resolveHostKey(msg["keyCode"].toInt(0), msg["code"].toString(), keyCode, flags);
+        m_Shim->sendKeyEvent(keyCode, down, InputMsg::modifierMask(msg), flags,
+                             msg["hold"].toBool(false));
+    } else if (type == "inputstate") {
+        // Client heartbeat of its held-input state — full contract in
+        // MoonlightShim's input-watchdog section.
+        m_Shim->syncHeldInputs(InputMsg::parseHeldKeys(msg),
+                               static_cast<quint32>(msg["buttons"].toInt(0)),
+                               msg["buttonsHold"].toBool(false));
     } else if (type == "mousemove") {
         // Absolute mouse position (non-gaming mode) — same handling as
         // DataChannelRelay, otherwise the host cursor never moves in WSS.
@@ -581,7 +594,7 @@ void StreamRelay::onWsTextMessage(const QString& message)
     } else if (type == "mousedown" || type == "mouseup") {
         bool down = (type == "mousedown");
         int button = msg["button"].toInt(1);
-        m_Shim->sendMouseButton(down, button);
+        m_Shim->sendMouseButton(down, button, msg["hold"].toBool(false));
     } else if (type == "mousewheel") {
         short delta = static_cast<short>(msg["delta"].toInt(0));
         m_Shim->sendMouseScroll(delta);

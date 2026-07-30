@@ -199,8 +199,10 @@ export class StreamViewKeyboard {
      *  then release those mods (one-shot, see _releaseLatchedMods). */
     _sendKey(vk) {
         const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
-        this.webrtc.send({ type: 'keydown', ...base });
-        this.webrtc.send({ type: 'keyup', ...base });
+        // _sendKeyEvent (not webrtc.send) so the held-key set stays exact: the
+        // host releases anything the heartbeat stops reporting.
+        this._sendKeyEvent({ type: 'keydown', ...base });
+        this._sendKeyEvent({ type: 'keyup', ...base });
         this._releaseLatchedMods();
     }
 
@@ -311,7 +313,7 @@ export class StreamViewKeyboard {
                     if (e) e.preventDefault();
                     if (!btn._held) return;
                     btn._held = false;
-                    this.webrtc.send({ type: 'keyup', ...flags() });
+                    this._sendKeyEvent({ type: 'keyup', ...flags() });
                     this._releaseLatchedMods();
                     this._refocusCapture();
                 };
@@ -320,7 +322,7 @@ export class StreamViewKeyboard {
                     e.stopPropagation();
                     if (btn._held) return;
                     btn._held = true;
-                    this.webrtc.send({ type: 'keydown', ...flags() });
+                    this._sendKeyEvent({ type: 'keydown', ...flags() });
                     // Capture so we still get the release if the finger slides off.
                     try {
                         btn.setPointerCapture(e.pointerId);
@@ -362,7 +364,7 @@ export class StreamViewKeyboard {
             this._lockedMods[name] = false;
             this._modLastTap[name] = now;
             // Flags reflect already-held mods (this one now included).
-            this.webrtc.send({
+            this._sendKeyEvent({
                 type: 'keydown',
                 keyCode: vk,
                 code: '',
@@ -379,7 +381,7 @@ export class StreamViewKeyboard {
             // locked → off, or a slow second tap on a latched mod → off.
             this._heldMods[name] = false;
             this._lockedMods[name] = false;
-            this.webrtc.send({
+            this._sendKeyEvent({
                 type: 'keyup',
                 keyCode: vk,
                 code: '',
@@ -396,8 +398,8 @@ export class StreamViewKeyboard {
      *  next key only and auto-clear once it fires). */
     _sendToolbarKey(vk) {
         const base = { keyCode: vk, code: '', key: '', ...this._modFlags() };
-        this.webrtc.send({ type: 'keydown', ...base });
-        this.webrtc.send({ type: 'keyup', ...base });
+        this._sendKeyEvent({ type: 'keydown', ...base });
+        this._sendKeyEvent({ type: 'keyup', ...base });
         this._releaseLatchedMods();
     }
 
@@ -413,7 +415,7 @@ export class StreamViewKeyboard {
             // Locked modifiers stay held across keys until explicitly tapped off.
             if (this._lockedMods && this._lockedMods[name]) continue;
             m[name] = false; // clear before flags so this one reads as released
-            this.webrtc.send({
+            this._sendKeyEvent({
                 type: 'keyup',
                 keyCode: StreamViewKeyboard.MOD_VK[name],
                 code: '',
@@ -543,7 +545,7 @@ export class StreamViewKeyboard {
                 if (!this._heldMods[name]) continue;
                 this._heldMods[name] = false;
                 if (this._lockedMods) this._lockedMods[name] = false;
-                this.webrtc.send({
+                this._sendKeyEvent({
                     type: 'keyup',
                     keyCode: StreamViewKeyboard.MOD_VK[name],
                     code: '',

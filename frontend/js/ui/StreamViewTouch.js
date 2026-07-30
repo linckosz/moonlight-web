@@ -109,7 +109,10 @@ export class StreamViewTouch {
                     this._touchDragging = true;
                     // Touch-screen mode: grab the button right under the finger.
                     if (this._touchScreen) this._sendAbsTouch(this._touchStartX, this._touchStartY);
-                    this.webrtc.send({ type: 'mousedown', button: 1 });
+                    // _sendMouseButton (not webrtc.send): the host releases held
+                    // buttons the heartbeat stops reporting, and a drag that
+                    // pauses mid-gesture sends nothing else.
+                    this._sendMouseButton(1, true);
                 }
             }, this._touchLongPressMs);
         } else {
@@ -529,13 +532,13 @@ export class StreamViewTouch {
 
         if (this._touchDragging) {
             // End the long-press drag — release the held left button.
-            this.webrtc.send({ type: 'mouseup', button: 1 });
+            this._sendMouseButton(1, false);
         } else if (isTap) {
             if (this._touchMaxFingers >= 3) {
                 this._toggleVirtualKeyboard(); // 3-finger tap → keyboard
             } else if (this._touchMaxFingers === 2) {
-                this.webrtc.send({ type: 'mousedown', button: 3 });
-                this.webrtc.send({ type: 'mouseup', button: 3 }); // 2-finger tap → right click
+                this._sendMouseButton(3, true);
+                this._sendMouseButton(3, false); // 2-finger tap → right click
             } else {
                 // 1-finger tap → left click. Touch-screen mode positions the
                 // cursor first; a fast double-tap at the same spot lands a second
@@ -557,8 +560,8 @@ export class StreamViewTouch {
                     const py = isDouble ? this._lastTapY : this._touchStartY;
                     this._sendAbsTouch(px, py);
                 }
-                this.webrtc.send({ type: 'mousedown', button: 1 });
-                this.webrtc.send({ type: 'mouseup', button: 1 });
+                this._sendMouseButton(1, true);
+                this._sendMouseButton(1, false);
                 if (isDouble) {
                     this._lastTapTime = 0; // consumed — avoid chaining into a triple
                 } else {
