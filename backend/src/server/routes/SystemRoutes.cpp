@@ -51,8 +51,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // The admin UI runs on localhost and needs the full payload. Remote
         // sessions must not learn the internal network topology / file layout.
         if (!req.isLocal) {
-            for (const char* key :
-                 {"local_ip", "public_ip", "unique_id", "cert_pem", "cert_key", "last_error"})
+            for (const char* key : {"local_ip", "local_ips", "public_ip", "unique_id", "cert_pem",
+                                    "cert_key", "last_error"})
                 obj.remove(QLatin1String(key));
         }
         return HttpResponse::json(obj);

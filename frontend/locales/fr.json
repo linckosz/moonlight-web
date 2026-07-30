@@ -262,6 +262,7 @@
         "portMappingProtocols": "TCP et UDP",
         "localAccess": "Accès local",
         "localAccessHint": "Accédez à ce serveur depuis d'autres appareils de votre réseau local.",
+        "localAccessMulti": "La première adresse est celle de votre réseau partagé ; les suivantes appartiennent à des cartes virtuelles et ne sont joignables que depuis leurs machines virtuelles.",
         "serverConfig": "Configuration du serveur",
         "transportMode": "Mode de transport",
         "transportAuto": "Auto (préférer UDP)",

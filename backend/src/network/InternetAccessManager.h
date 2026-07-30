@@ -25,6 +25,7 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QStringList>
 
 #include "PdnsClient.h"
 #include "StunClient.h"
@@ -182,6 +183,9 @@ private:
     /// Eager init: ensure unique_id and domain exist, without touching DNS.
     void ensureIdentifiers();
 
+    /// Re-read this host's IPv4 addresses into m_LocalIps / m_LocalIp (best first).
+    void refreshLocalAddresses();
+
     /// Create or verify the A record under the existing parent domain.
     bool createOrUpdateARecord();
 
@@ -286,8 +290,11 @@ private:
                                  ///< the computed {unique_id}.{MW_DOMAIN}. The DNS/ACME half of the
                                  ///< manager is then inert (we own neither the zone nor the cert).
     QString m_PublicIp;
-    QString
-        m_LocalIp; ///< LAN IP address of this host (discovered via UPnP or GetAdaptersAddresses)
+    QString m_LocalIp;      ///< Best LAN IP of this host: the default-route address (= first
+                            ///< entry of m_LocalIps). What the port mapping and the shared
+                            ///< access URL point at.
+    QStringList m_LocalIps; ///< Every IPv4 another machine can reach us on, best first. Includes
+                            ///< host-only virtual switches, only reachable from their own VMs.
     QString m_UniqueId;
     QString m_LastError;
     QString m_Phase; ///< Current activation step (drives the UI loader). See statusJson "phase".

@@ -19,6 +19,7 @@
 
 #include <QObject>
 #include <QHostAddress>
+#include <QStringList>
 #include <cstdint>
 #include <string>
 #include <memory>
@@ -75,6 +76,13 @@ public:
 
     // Check if a valid IGD was discovered and is available.
     bool isAvailable() const { return m_Available; }
+
+    // Every IPv4 address of this host another machine (physical or virtual) can
+    // reach, best first: the default-route address, then the other adapters that
+    // carry a gateway, then the gateway-less ones (Hyper-V "Default Switch",
+    // VirtualBox host-only — reachable only from the VMs attached to them).
+    // Loopback, link-local (169.254.x) and down interfaces are excluded.
+    static QStringList getLocalIPs();
 
     // Get the local LAN IP address of this host by inspecting network interfaces.
     // Returns true on success; buf is filled with a dotted-decimal IPv4 string.
