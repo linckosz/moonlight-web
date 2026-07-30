@@ -510,6 +510,13 @@ export class StreamView {
         this._lastDropSampleMs = 0;
         this._dropsPerSec = 0;
         this._lastDiagLogMs = 0;
+        // The raw observation line (and its 1/s console trace) is a debugging
+        // aid, not a user-facing readout: off unless mw_perf_diag = '1'. The
+        // counters themselves keep running — the enhancer ladder feeds on them.
+        this._perfDiag = false;
+        try {
+            this._perfDiag = localStorage.getItem('mw_perf_diag') === '1';
+        } catch (e) {}
 
         // ── webrtc-media native stats (getStats polling) ──────────────────────
         // RTP media track frames bypass the JS decoder, so fps/bitrate/latency
@@ -3853,26 +3860,30 @@ export class StreamView {
         // The legs above say how long each stage took; this line says why they
         // move — arrival cadence, queue depths, how the draw splits between our
         // own work and waiting on the GPU/compositor, and where frames are lost
-        // between decode and presentation ("fps in/out"). Revealed with the
-        // latency breakdown (it explains it), and traced to the console once a
-        // second so a session can be reported without watching the overlay.
+        // between decode and presentation ("fps in/out"). Raw debugging output,
+        // so it stays behind mw_perf_diag: shown with the latency breakdown (it
+        // explains it) and traced to the console once a second, so a session can
+        // be reported without watching the overlay.
         // Not applicable to webrtc-media: no WebCodecs pipeline to observe.
         if (!isMedia) {
             const diagSnap = this._workerDiag || this._diag.snapshot();
             // Main-thread path only: the worker applies its own ladder before
             // posting, so re-deciding here would fight it with stale numbers.
+            // Runs whether or not the diagnostics are displayed.
             if (!this._useWorker) this._applyEnhancerGovernor(diagSnap, now);
-            const diagLine = formatDiag(diagSnap, {
-                decodedFps: fps,
-                presentedFps: this._presentedFps,
-                dropsPerSec: this._dropsPerSec,
-            });
-            if (showDetail) {
-                html += '<div class="stats-diag">' + escapeHtml(diagLine) + '</div>';
-            }
-            if (now - this._lastDiagLogMs > 1000) {
-                this._lastDiagLogMs = now;
-                console.log('[perf] ' + diagLine);
+            if (this._perfDiag) {
+                const diagLine = formatDiag(diagSnap, {
+                    decodedFps: fps,
+                    presentedFps: this._presentedFps,
+                    dropsPerSec: this._dropsPerSec,
+                });
+                if (showDetail) {
+                    html += '<div class="stats-diag">' + escapeHtml(diagLine) + '</div>';
+                }
+                if (now - this._lastDiagLogMs > 1000) {
+                    this._lastDiagLogMs = now;
+                    console.log('[perf] ' + diagLine);
+                }
             }
         }
 
