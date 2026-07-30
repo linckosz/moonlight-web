@@ -128,6 +128,24 @@ export class HostListView {
                 return;
             }
 
+            // ── Update banner: close without silencing the version ─────────
+            // The ✕ on a *failure* only clears the row. Recording the version as
+            // dismissed there would make a failed update bury its own retry
+            // button: the banner would never come back for that release, so the
+            // only way to try again would be to clear localStorage by hand.
+            if (e.target.closest('.update-banner-close')) {
+                const banner = this.container.querySelector('#update-banner');
+                if (banner) {
+                    banner.hidden = true;
+                    banner.innerHTML = '';
+                    this._stopProgressAnimation();
+                    this._progressFill = null;
+                }
+                // Only for this page load — a reload offers the update again.
+                this._updateInfo = null;
+                return;
+            }
+
             // ── Update banner dismiss ──────────────────────────────────────
             const dismissBtn = e.target.closest('.update-banner-dismiss');
             if (dismissBtn) {
@@ -468,8 +486,7 @@ export class HostListView {
             <span class="update-banner-text">${t('update.failed')}${
                 message ? ` — ${this.esc(message)}` : ''
             }</span>
-            <button class="update-banner-dismiss"
-                    data-version="${this.esc((this._updateInfo && this._updateInfo.latest) || '')}"
+            <button class="update-banner-close"
                     aria-label="${this.esc(t('update.dismiss'))}">${Icons.close || '✕'}</button>
         `;
         banner.hidden = false;
