@@ -58,6 +58,21 @@ bool updateTaskExists()
     }
     return p.exitCode() == 0;
 }
+
+// Transient task used by the "service" path to get the installer OUT of our
+// process tree. Recreated (/F) on every attempt, so a leftover is harmless — it
+// points at a staged file the next startup deletes.
+const char* kServiceTaskName = "MoonlightWeb Update (service)";
+
+QString xmlEscape(const QString& s)
+{
+    QString out = s;
+    out.replace(QLatin1Char('&'), QLatin1String("&amp;"));
+    out.replace(QLatin1Char('<'), QLatin1String("&lt;"));
+    out.replace(QLatin1Char('>'), QLatin1String("&gt;"));
+    out.replace(QLatin1Char('"'), QLatin1String("&quot;"));
+    return out;
+}
 #else
 // Single-quote a value for `sh -c`. The install commands are assembled as one
 // shell string so the whole sequence (install → stop us → relaunch) survives
@@ -90,6 +105,14 @@ SelfUpdater::SelfUpdater(UpdateChecker* checker, QObject* parent)
         for (const QFileInfo& fi : dir.entryInfoList(QDir::Files))
             QFile::remove(fi.absoluteFilePath());
     }
+#ifdef Q_OS_WIN
+    // Same reasoning for the transient task the service path registers: it can
+    // only be dropped once the update it was running is over. Detached — a
+    // startup must not wait on schtasks.
+    QProcess::startDetached(QStringLiteral("schtasks.exe"),
+                            {QStringLiteral("/Delete"), QStringLiteral("/TN"),
+                             QString::fromLatin1(kServiceTaskName), QStringLiteral("/F")});
+#endif
 }
 
 QString SelfUpdater::stagingDir()
@@ -337,6 +360,76 @@ QString SelfUpdater::verifyDigest()
     return {};
 }
 
+QString SelfUpdater::installerLogPath()
+{
+    // Next to our own log, NOT in the staging directory: that one is wiped on the
+    // next startup, which is exactly when someone comes looking for the log of
+    // the update that just failed.
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir().mkpath(base + QStringLiteral("/logs"));
+    return base + QStringLiteral("/logs/installer.log");
+}
+
+#ifdef Q_OS_WIN
+QString SelfUpdater::startViaSystemTask(const QString& program, const QStringList& args)
+{
+    // Registered from XML rather than /TR: the action carries a quoted path and
+    // switches, and schtasks' own parsing of that string is a minefield. This is
+    // the same approach the installer uses for its own tasks.
+    const QString xmlPath = stagingDir() + QStringLiteral("/update-task.xml");
+    QString xml = QStringLiteral(
+        "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n"
+        "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n"
+        "  <RegistrationInfo><Author>MoonlightWeb</Author></RegistrationInfo>\r\n"
+        "  <Principals><Principal id=\"Author\">"
+        "<UserId>S-1-5-18</UserId>" // LocalSystem: we are already SYSTEM, so no prompt
+        "<RunLevel>HighestAvailable</RunLevel></Principal></Principals>\r\n"
+        "  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"
+        "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+        "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"
+        "<AllowHardTerminate>false</AllowHardTerminate>"
+        "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"
+        "<Enabled>true</Enabled></Settings>\r\n"
+        "  <Actions Context=\"Author\"><Exec><Command>%1</Command>"
+        "<Arguments>%2</Arguments></Exec></Actions>\r\n"
+        "</Task>\r\n");
+    // <Arguments> is one flat string, so anything holding a space (the /LOG path
+    // under a user profile like "John Doe") has to carry its own quotes.
+    QStringList quoted;
+    for (const QString& a : args)
+        quoted << (a.contains(u' ') ? QLatin1Char('"') + a + QLatin1Char('"') : a);
+    xml = xml.arg(xmlEscape(QDir::toNativeSeparators(program)), xmlEscape(quoted.join(u' ')));
+
+    QFile f(xmlPath);
+    if (!f.open(QIODevice::WriteOnly)) return QStringLiteral("Cannot write the update task");
+    // UTF-16LE with a BOM — what schtasks expects for an XML definition.
+    const char16_t bom = 0xFEFF;
+    f.write(reinterpret_cast<const char*>(&bom), 2);
+    const std::u16string body = xml.toStdU16String();
+    f.write(reinterpret_cast<const char*>(body.data()), qint64(body.size() * 2));
+    f.close();
+
+    const QString name = QString::fromLatin1(kServiceTaskName);
+    QProcess reg;
+    reg.start(QStringLiteral("schtasks.exe"), {QStringLiteral("/Create"), QStringLiteral("/TN"),
+                                              name, QStringLiteral("/XML"), xmlPath,
+                                              QStringLiteral("/F")});
+    if (!reg.waitForFinished(20000) || reg.exitCode() != 0)
+        return QStringLiteral("Could not register the update task (%1)")
+            .arg(QString::fromLocal8Bit(reg.readAllStandardError()).trimmed());
+
+    // /Run returns as soon as the task is queued. Its own child is the installer,
+    // so nothing here is in our process tree any more.
+    QProcess run;
+    run.start(QStringLiteral("schtasks.exe"),
+              {QStringLiteral("/Run"), QStringLiteral("/TN"), name});
+    if (!run.waitForFinished(20000) || run.exitCode() != 0)
+        return QStringLiteral("Could not start the update task (%1)")
+            .arg(QString::fromLocal8Bit(run.readAllStandardError()).trimmed());
+    return {};
+}
+#endif
+
 void SelfUpdater::runInstaller()
 {
     Logger::info(QStringLiteral("[Update] applying %1 via %2").arg(m_target, m_method));
@@ -345,10 +438,32 @@ void SelfUpdater::runInstaller()
     // Inno silent switches: no wizard, no message boxes, no reboot. Update mode
     // is auto-detected by the installer from the existing install, so every page
     // is skipped and the current configuration is preserved.
+    // The /LOG is not a debugging leftover: with message boxes suppressed it is
+    // the ONLY account of what the installer did, and it is written by a process
+    // that outlives us — so it is the only evidence that can survive a failed
+    // update at all. Costs nothing, answers everything.
     const QStringList silent{QStringLiteral("/VERYSILENT"), QStringLiteral("/SUPPRESSMSGBOXES"),
-                             QStringLiteral("/NORESTART"), QStringLiteral("/SP-")};
+                             QStringLiteral("/NORESTART"), QStringLiteral("/SP-"),
+                             QStringLiteral("/LOG=") + installerLogPath()};
 
-    QString program = m_pkgPath; // "service" (SYSTEM) or "direct" (UAC on the host)
+    // A service must NOT be the installer's parent. Inno's Restart Manager pass
+    // shuts down the application holding the files it is replacing — i.e. us —
+    // and NSSM takes the whole process tree down with the service, installer
+    // included, the very moment it starts working. Verified on a service install:
+    // launched as our child it silently does nothing; the identical command run
+    // by the task scheduler as SYSTEM installs cleanly.
+    if (m_method == QLatin1String("service")) {
+        const QString err = startViaSystemTask(m_pkgPath, silent);
+        if (!err.isEmpty()) {
+            fail(err);
+            return;
+        }
+        m_state = State::Restarting;
+        armWatchdog();
+        return;
+    }
+
+    QString program = m_pkgPath; // "direct" — UAC consent on the host desktop
     QStringList args = silent;
     if (m_method == QLatin1String("scheduled-task")) {
         // The task's action already carries the installer path + silent switches.
@@ -433,7 +548,11 @@ void SelfUpdater::runInstaller()
 #endif
 
     m_state = State::Restarting;
+    armWatchdog();
+}
 
+void SelfUpdater::armWatchdog()
+{
     // Every path is supposed to end with this process being replaced. If we are
     // still alive when this fires, it did not happen — and without it the state
     // machine would sit in "restarting" forever: the bar can never complete, and
