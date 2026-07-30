@@ -32,7 +32,15 @@
 #endif
 
 #include <QDebug>
+#include <QFile>
 #include <QHostInfo>
+#include <QRegularExpression>
+#include <QSet>
+#include <QUdpSocket>
+
+#include <algorithm>
+#include <cstring>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
@@ -315,38 +323,154 @@ void UPNPClient::cleanup()
     memset(m_LanAddr, 0, sizeof(m_LanAddr));
 }
 
-bool UPNPClient::getLocalIP(char* buf, size_t bufsize)
-{
-#ifdef Q_OS_WIN
-    // Use GetAdaptersAddresses to find the default interface IP
-    DWORD buflen = 0;
-    GetAdaptersAddresses(AF_INET,
-                         GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
-                         nullptr, nullptr, &buflen);
+namespace {
 
-    if (buflen == 0) return false;
+// One reachable IPv4 address of this host, with what we know about how routable
+// it is. Ranking (see rankCandidates) puts the address other LAN machines can
+// actually reach first, instead of whichever adapter the OS happens to list.
+struct LanCandidate
+{
+    QString ip;
+    bool isDefaultRoute = false; ///< Source address the kernel picks for the internet
+    bool hasGateway = false;     ///< Adapter carries a default gateway
+    quint32 metric = 0;          ///< Windows interface metric (lower = preferred)
+};
+
+// Loopback and link-local (169.254.x, APIPA) addresses are never usable as an
+// access URL for another machine.
+bool isUsableIPv4(const QString& ip)
+{
+    const QHostAddress addr(ip);
+    if (addr.isNull() || addr.protocol() != QAbstractSocket::IPv4Protocol) return false;
+    if (addr.isLoopback() || addr.isLinkLocal()) return false;
+    const quint32 v4 = addr.toIPv4Address();
+    return v4 != 0;
+}
+
+// Source address the OS would use to reach the internet: connecting a UDP socket
+// makes the kernel run its routing table without sending a packet. This is the
+// one address guaranteed to sit on the real LAN.
+QString defaultRouteAddress()
+{
+    QUdpSocket probe;
+    probe.connectToHost(QHostAddress(QStringLiteral("8.8.8.8")), 53);
+    const QHostAddress local = probe.localAddress();
+    probe.close();
+    return local.isNull() ? QString() : local.toString();
+}
+
+QStringList rankCandidates(QList<LanCandidate>& candidates)
+{
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [](const LanCandidate& a, const LanCandidate& b) {
+                         if (a.isDefaultRoute != b.isDefaultRoute) return a.isDefaultRoute;
+                         if (a.hasGateway != b.hasGateway) return a.hasGateway;
+                         return a.metric < b.metric;
+                     });
+
+    QStringList result;
+    for (const LanCandidate& c : candidates)
+        if (!result.contains(c.ip)) result.append(c.ip);
+    return result;
+}
+
+} // namespace
+
+QStringList UPNPClient::getLocalIPs()
+{
+    QList<LanCandidate> candidates;
+    const QString defaultRoute = defaultRouteAddress();
+
+#ifdef Q_OS_WIN
+    // GAA_FLAG_INCLUDE_GATEWAYS fills FirstGatewayAddress: a gateway is what
+    // tells a real NIC apart from a host-only virtual switch (Hyper-V "Default
+    // Switch" 192.168.32.1, VirtualBox 192.168.56.1), which is reachable from
+    // its VMs but from no other machine on the LAN.
+    const DWORD flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
+                        GAA_FLAG_INCLUDE_GATEWAYS;
+
+    DWORD buflen = 0;
+    GetAdaptersAddresses(AF_INET, flags, nullptr, nullptr, &buflen);
+    if (buflen == 0) return {};
 
     std::vector<unsigned char> bufVec(buflen);
     PIP_ADAPTER_ADDRESSES addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(bufVec.data());
-
-    DWORD ret = GetAdaptersAddresses(
-        AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER,
-        nullptr, addresses, &buflen);
-
-    if (ret != ERROR_SUCCESS) return false;
+    if (GetAdaptersAddresses(AF_INET, flags, nullptr, addresses, &buflen) != ERROR_SUCCESS)
+        return {};
 
     for (PIP_ADAPTER_ADDRESSES aa = addresses; aa; aa = aa->Next) {
-        // Skip loopback and tunnel adapters
         if (aa->IfType == IF_TYPE_SOFTWARE_LOOPBACK || aa->IfType == IF_TYPE_TUNNEL) continue;
+        if (aa->OperStatus != IfOperStatusUp) continue;
 
-        // Prefer Ethernet / Wi-Fi
+        const bool hasGateway = aa->FirstGatewayAddress != nullptr;
+
         for (PIP_ADAPTER_UNICAST_ADDRESS ua = aa->FirstUnicastAddress; ua; ua = ua->Next) {
             if (ua->Address.lpSockaddr->sa_family != AF_INET) continue;
 
+            char ipBuf[INET_ADDRSTRLEN] = {};
             sockaddr_in* sa = reinterpret_cast<sockaddr_in*>(ua->Address.lpSockaddr);
-            inet_ntop(AF_INET, &sa->sin_addr, buf, static_cast<DWORD>(bufsize));
-            return true;
+            if (!inet_ntop(AF_INET, &sa->sin_addr, ipBuf, sizeof(ipBuf))) continue;
+
+            LanCandidate c;
+            c.ip = QString::fromLatin1(ipBuf);
+            if (!isUsableIPv4(c.ip)) continue;
+            c.isDefaultRoute = (c.ip == defaultRoute);
+            c.hasGateway = hasGateway;
+            c.metric = static_cast<quint32>(aa->Ipv4Metric);
+            candidates.append(c);
         }
+    }
+#else
+    // Linux: /proc/net/route lists a 0.0.0.0 destination for every interface
+    // carrying a default route. Elsewhere (macOS/BSD) only the UDP probe tells
+    // us which interface is routable, so gateway-less docker/bridge adapters
+    // simply rank after it instead of being demoted explicitly.
+    QSet<QString> gatewayIfaces;
+    QFile routes(QStringLiteral("/proc/net/route"));
+    if (routes.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!routes.atEnd()) {
+            const QStringList fields = QString::fromLatin1(routes.readLine())
+                                           .split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+            // iface | destination | gateway | ... — destination 00000000 = default route
+            if (fields.size() >= 3 && fields[1] == QLatin1String("00000000"))
+                gatewayIfaces.insert(fields[0]);
+        }
+    }
+
+    struct ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) == -1) return {};
+
+    for (struct ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+        if (!(ifa->ifa_flags & IFF_UP) || !(ifa->ifa_flags & IFF_RUNNING)) continue;
+
+        char ipBuf[INET_ADDRSTRLEN] = {};
+        struct sockaddr_in* sa = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
+        if (!inet_ntop(AF_INET, &sa->sin_addr, ipBuf, sizeof(ipBuf))) continue;
+
+        LanCandidate c;
+        c.ip = QString::fromLatin1(ipBuf);
+        if (!isUsableIPv4(c.ip)) continue;
+        c.isDefaultRoute = (c.ip == defaultRoute);
+        c.hasGateway = gatewayIfaces.contains(QString::fromLatin1(ifa->ifa_name));
+        candidates.append(c);
+    }
+
+    freeifaddrs(ifaddr);
+#endif
+
+    return rankCandidates(candidates);
+}
+
+bool UPNPClient::getLocalIP(char* buf, size_t bufsize)
+{
+    const QStringList addresses = getLocalIPs();
+    if (!addresses.isEmpty()) {
+        const QByteArray ip = addresses.first().toLatin1();
+        if (static_cast<size_t>(ip.size()) + 1 > bufsize) return false;
+        memcpy(buf, ip.constData(), ip.size() + 1);
+        return true;
     }
 
     // Fallback: gethostname + getaddrinfo (gethostbyname is deprecated)
@@ -357,30 +481,15 @@ bool UPNPClient::getLocalIP(char* buf, size_t bufsize)
         struct addrinfo* res = nullptr;
         if (getaddrinfo(hostname, nullptr, &hints, &res) == 0 && res) {
             sockaddr_in* sa = reinterpret_cast<sockaddr_in*>(res->ai_addr);
-            inet_ntop(AF_INET, &sa->sin_addr, buf, static_cast<DWORD>(bufsize));
+#ifdef Q_OS_WIN
+            inet_ntop(AF_INET, &sa->sin_addr, buf, bufsize);
+#else
+            inet_ntop(AF_INET, &sa->sin_addr, buf, static_cast<socklen_t>(bufsize));
+#endif
             freeaddrinfo(res);
             return true;
         }
     }
 
     return false;
-#else
-    // Unix/macOS: getifaddrs
-    struct ifaddrs* ifaddr = nullptr;
-    if (getifaddrs(&ifaddr) == -1) return false;
-
-    bool found = false;
-    for (struct ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
-        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
-
-        struct sockaddr_in* sa = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
-        inet_ntop(AF_INET, &sa->sin_addr, buf, bufsize);
-        found = true;
-        break;
-    }
-
-    freeifaddrs(ifaddr);
-    return found;
-#endif
 }

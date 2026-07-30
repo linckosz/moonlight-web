@@ -262,6 +262,7 @@
         "portMappingProtocols": "TCP 和 UDP",
         "localAccess": "本地访问",
         "localAccessHint": "从本地网络上的其他设备访问此服务器。",
+        "localAccessMulti": "第一个地址属于您的共享网络；其余地址属于虚拟网卡，只能从对应的虚拟机访问。",
         "serverConfig": "服务器配置",
         "transportMode": "传输模式",
         "transportAuto": "自动（优先 UDP）",

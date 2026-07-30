@@ -67,6 +67,8 @@ export class AdminView {
         this._domain = '';
         this._publicIp = '';
         this._localIp = '';
+        // Every IPv4 the backend can be reached on, best (default-route) first.
+        this._localIps = [];
         this._uniqueId = '';
         this._transportMode = 'auto';
         this._availableTransports = [];
@@ -162,6 +164,12 @@ export class AdminView {
             this._externalHttpsPort = status.external_https_port || this._httpsPort;
             this._publicIp = status.public_ip || '';
             this._localIp = status.local_ip || '';
+            this._localIps =
+                status.local_ips && status.local_ips.length
+                    ? status.local_ips
+                    : this._localIp
+                      ? [this._localIp]
+                      : [];
             this._uniqueId = status.unique_id || '';
             this._transportMode = status.transport_mode || 'auto';
             this._availableTransports = status.available_transports || [];
@@ -519,8 +527,7 @@ export class AdminView {
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
     }
 
-    _buildLocalUrl() {
-        const ip = this._getLocalIpForDisplay();
+    _buildLocalUrl(ip = this._getLocalIpForDisplay()) {
         if (!ip) return '';
         const port = this._httpsPort !== 443 ? ':' + this._httpsPort : '';
         return 'https://' + ip + port;
@@ -765,17 +772,23 @@ export class AdminView {
 
                 <!-- Local Access -->
                 ${
-                    this._localIp
+                    this._localIps.length
                         ? `
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('admin.localAccess')}</h3>
                     <div class="settings-field u-pt-0">
+                        ${this._localIps
+                            .map(
+                                (ip) => `
                         <div class="admin-url-row">
-                            <a href="${this.esc(this._buildLocalUrl())}" target="_blank" rel="noopener"
-                               class="tunnel-url-link">${this.esc(this._buildLocalUrl())}</a>
-                        </div>
+                            <a href="${this.esc(this._buildLocalUrl(ip))}" target="_blank" rel="noopener"
+                               class="tunnel-url-link">${this.esc(this._buildLocalUrl(ip))}</a>
+                        </div>`,
+                            )
+                            .join('')}
                         <p class="settings-hint">
                             ${t('admin.localAccessHint')}
+                            ${this._localIps.length > 1 ? `<br />${t('admin.localAccessMulti')}` : ''}
                         </p>
                     </div>
                 </div>

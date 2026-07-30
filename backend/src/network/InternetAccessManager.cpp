@@ -130,11 +130,7 @@ InternetAccessManager::InternetAccessManager(AppSettings* settings, QObject* par
     ensureIdentifiers();
 
     // Synchronous local IP detection for admin UI display
-    char buf[64] = {};
-    if (UPNPClient::getLocalIP(buf, sizeof(buf))) {
-        m_LocalIp = QString::fromLatin1(buf);
-        qInfo() << "[InternetAccess] Local LAN IP:" << m_LocalIp;
-    }
+    refreshLocalAddresses();
 
     // Eager UPnP discovery (deferred, non-blocking) so that upnp_available
     // is correctly reported even if Internet Access has never been enabled.
@@ -312,11 +308,7 @@ void InternetAccessManager::start()
             mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream");
 
             // Capture local LAN IP for the UI (port mapping display)
-            char buf[64] = {};
-            if (UPNPClient::getLocalIP(buf, sizeof(buf))) {
-                m_LocalIp = QString::fromLatin1(buf);
-                qInfo() << "[InternetAccess] Local LAN IP:" << m_LocalIp;
-            }
+            refreshLocalAddresses();
 
             // Double NAT detection: UPnP external IP vs STUN public IP
             std::string upnpExternalIp = m_Upnp.getExternalIPAddress();
@@ -578,6 +570,10 @@ QJsonObject InternetAccessManager::statusJson() const
     // registration, no ACME — only IP detection, port mapping and hairpin.
     obj[QStringLiteral("custom_domain")] = m_CustomDomain;
     obj[QStringLiteral("local_ip")] = m_LocalIp;
+    // Every address another machine can reach this host on, best first: a
+    // multi-homed host (Hyper-V, VirtualBox, WSL) needs all of them shown —
+    // only one is on the shared LAN, the others reach their own VMs.
+    obj[QStringLiteral("local_ips")] = QJsonArray::fromStringList(m_LocalIps);
     obj[QStringLiteral("public_ip")] = m_PublicIp;
     obj[QStringLiteral("unique_id")] = m_UniqueId;
     obj[QStringLiteral("internet_access_enabled")] = m_Settings->internetAccessEnabled();
@@ -648,6 +644,16 @@ bool InternetAccessManager::isReservedSubdomain(const QString& label)
 // ---------------------------------------------------------------------------
 // Identifiers — eagerly initialized at startup, without touching DNS
 // ---------------------------------------------------------------------------
+
+void InternetAccessManager::refreshLocalAddresses()
+{
+    const QStringList addresses = UPNPClient::getLocalIPs();
+    if (addresses.isEmpty()) return; // keep the previous value rather than blanking the UI
+
+    m_LocalIps = addresses;
+    m_LocalIp = addresses.first();
+    qInfo() << "[InternetAccess] Local LAN IP:" << m_LocalIp << "— all reachable:" << m_LocalIps;
+}
 
 void InternetAccessManager::ensureIdentifiers()
 {
