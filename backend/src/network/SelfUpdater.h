@@ -24,6 +24,7 @@
 class QFile;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QProcess;
 class QTimer;
 class UpdateChecker;
 
@@ -92,7 +93,10 @@ private:
 
     void onDownloadFinished();
     void runInstaller();
-    void fail(const QString& message);
+    void onInstallerFinished(int exitCode, bool crashed);
+    // `dropStaged` false keeps the downloaded installer on disk — used when it
+    // may still be picked up by a prompt waiting on the host desktop.
+    void fail(const QString& message, bool dropStaged = true);
 
     // Where the downloaded installer is staged. On Windows this MUST match the
     // path baked into the elevated scheduled task's action (see moonlightweb.iss
@@ -124,6 +128,8 @@ private:
     QFile* m_file = nullptr;
     QTimer* m_installTick = nullptr; // pseudo-progress while the installer runs
     int m_installElapsedMs = 0;      // drives the install easing curve
+    QTimer* m_watchdog = nullptr;    // gives up when the installer never lands
+    QProcess* m_installer = nullptr; // Windows: kept to read its exit code
 
     State m_state = State::Idle;
     int m_percent = 0;

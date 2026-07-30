@@ -98,7 +98,12 @@ QString SelfUpdater::stagingDir()
     // elevated, so it must not be writable by other local accounts.
     const QString base = qEnvironmentVariable("LOCALAPPDATA");
     if (!base.isEmpty()) return base + QStringLiteral("/MoonlightWeb/update");
-    return QDir::tempPath() + QStringLiteral("/MoonlightWeb/update");
+    // A service inherits the SCM's *system* environment block, which carries no
+    // LOCALAPPDATA at all. Falling back to the temp directory would put the
+    // installer in C:\Windows\Temp — a directory every local account can write
+    // to, holding a file we are about to execute as SYSTEM. The install
+    // directory is admin-only, which is the property that actually matters.
+    return QCoreApplication::applicationDirPath() + QStringLiteral("/update");
 #else
     return QDir::tempPath() + QStringLiteral("/MoonlightWeb-update");
 #endif
@@ -299,18 +304,30 @@ void SelfUpdater::runInstaller()
     const QStringList silent{QStringLiteral("/VERYSILENT"), QStringLiteral("/SUPPRESSMSGBOXES"),
                              QStringLiteral("/NORESTART"), QStringLiteral("/SP-")};
 
-    bool started = false;
+    QString program = m_pkgPath; // "service" (SYSTEM) or "direct" (UAC on the host)
+    QStringList args = silent;
     if (m_method == QLatin1String("scheduled-task")) {
         // The task's action already carries the installer path + silent switches.
-        started = QProcess::startDetached(
-            QStringLiteral("schtasks.exe"),
-            {QStringLiteral("/Run"), QStringLiteral("/TN"), QString::fromLatin1(kUpdateTaskName)});
-    } else {
-        // "service" (already SYSTEM) or "direct" (UAC consent on the host desktop).
-        started = QProcess::startDetached(m_pkgPath, silent);
+        program = QStringLiteral("schtasks.exe");
+        args = {QStringLiteral("/Run"), QStringLiteral("/TN"),
+                QString::fromLatin1(kUpdateTaskName)};
     }
-    if (!started) {
-        fail(QStringLiteral("Could not launch the installer"));
+
+    // A tracked child rather than startDetached: an installer that declines to
+    // run leaves NO trace anywhere (/SUPPRESSMSGBOXES turns every diagnostic
+    // into an exit code and nothing else), and that code is the only thing that
+    // tells the difference between "still working" and "never started". Nothing
+    // depends on the child outliving us — Inno's SetupLdr waits for the real
+    // setup and forwards its exit code, and the setup that replaces this process
+    // is a grandchild that survives us being killed.
+    m_installer = new QProcess(this);
+    connect(m_installer, &QProcess::finished, this,
+            [this](int code, QProcess::ExitStatus status) {
+                onInstallerFinished(code, status != QProcess::NormalExit);
+            });
+    m_installer->start(program, args);
+    if (!m_installer->waitForStarted(10000)) {
+        fail(QStringLiteral("Could not launch the installer: %1").arg(m_installer->errorString()));
         return;
     }
 #else
@@ -372,21 +389,63 @@ void SelfUpdater::runInstaller()
 #endif
 
     m_state = State::Restarting;
+
+    // Every path is supposed to end with this process being replaced. If we are
+    // still alive when this fires, it did not happen — and without it the state
+    // machine would sit in "restarting" forever: the bar can never complete, and
+    // every retry of /api/update/start is rejected with "already in progress"
+    // until someone restarts the server by hand.
+    m_watchdog = new QTimer(this);
+    m_watchdog->setSingleShot(true);
+    connect(m_watchdog, &QTimer::timeout, this, [this]() {
+        // Keep the staged installer: a prompt may still be waiting for someone
+        // on the host desktop, and it is that file it would run.
+        fail(QStringLiteral("The installer did not go through — MoonlightWeb is still "
+                            "running the old version. Check the host PC."),
+             false);
+    });
+    // A prompt on the host desktop needs a human to walk over to it; the silent
+    // paths have no such excuse.
+    m_watchdog->start(methodNeedsHostConfirmation(m_method) ? 15 * 60 * 1000 : 3 * 60 * 1000);
 }
 
-void SelfUpdater::fail(const QString& message)
+void SelfUpdater::onInstallerFinished(int exitCode, bool crashed)
+{
+    // Reaching this at all is the unexpected case: the installer normally takes
+    // this process down long before it is done.
+    if (crashed) {
+        fail(QStringLiteral("The installer crashed before applying the update"));
+        return;
+    }
+    if (exitCode != 0) {
+        fail(QStringLiteral("The installer exited with code %1 without applying the update")
+                 .arg(exitCode));
+        return;
+    }
+    // Exit code 0 while we are still running: either the launcher just queued
+    // the work (scheduled task) or the install is being finished by a process
+    // that outlived its parent. Let the watchdog be the judge.
+    Logger::info(QStringLiteral("[Update] installer launcher exited cleanly, still waiting"));
+}
+
+void SelfUpdater::fail(const QString& message, bool dropStaged)
 {
     if (m_installTick) {
         m_installTick->stop();
         m_installTick->deleteLater();
         m_installTick = nullptr;
     }
+    if (m_watchdog) {
+        m_watchdog->stop();
+        m_watchdog->deleteLater();
+        m_watchdog = nullptr;
+    }
     if (m_file) {
         m_file->close();
         delete m_file;
         m_file = nullptr;
     }
-    QFile::remove(m_pkgPath);
+    if (dropStaged) QFile::remove(m_pkgPath);
     m_state = State::Failed;
     m_error = message;
     Logger::warning(QStringLiteral("[Update] %1").arg(message));
