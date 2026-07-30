@@ -123,7 +123,10 @@ void UpdateChecker::applyResult(const QJsonObject& release)
     const bool available = isNewer(latest, m_current);
 
     QString assetName;
-    QString downloadUrl = pickAsset(release.value("assets").toArray(), assetName);
+    qint64 assetSize = 0;
+    QString assetDigest;
+    QString downloadUrl =
+        pickAsset(release.value("assets").toArray(), assetName, assetSize, assetDigest);
     const QString releaseUrl = release.value("html_url").toString();
     // No matching asset for this platform → send the user to the release page.
     if (downloadUrl.isEmpty()) downloadUrl = releaseUrl;
@@ -135,6 +138,8 @@ void UpdateChecker::applyResult(const QJsonObject& release)
     obj["download_url"] = downloadUrl;
     obj["release_url"] = releaseUrl;
     obj["asset_name"] = assetName;
+    obj["asset_size"] = assetSize;
+    obj["asset_digest"] = assetDigest;
     obj["checked_at"] = m_lastCheck.toString(Qt::ISODate);
     m_result = obj;
 
@@ -174,7 +179,8 @@ bool UpdateChecker::isNewer(const QString& latest, const QString& current)
     return false; // equal
 }
 
-QString UpdateChecker::pickAsset(const QJsonArray& assets, QString& outName)
+QString UpdateChecker::pickAsset(const QJsonArray& assets, QString& outName, qint64& outSize,
+                                QString& outDigest)
 {
     // Build the ordered list of filename suffixes/tokens to accept for this
     // platform, most-specific first. The CI asset names embed the version but
@@ -205,10 +211,14 @@ QString UpdateChecker::pickAsset(const QJsonArray& assets, QString& outName)
             const QString name = a.value("name").toString();
             if (name.endsWith(suffix, Qt::CaseInsensitive)) {
                 outName = name;
+                outSize = static_cast<qint64>(a.value("size").toDouble());
+                outDigest = a.value("digest").toString();
                 return a.value("browser_download_url").toString();
             }
         }
     }
     outName.clear();
+    outSize = 0;
+    outDigest.clear();
     return {};
 }
