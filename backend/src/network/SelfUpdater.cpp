@@ -411,9 +411,9 @@ QString SelfUpdater::startViaSystemTask(const QString& program, const QStringLis
 
     const QString name = QString::fromLatin1(kServiceTaskName);
     QProcess reg;
-    reg.start(QStringLiteral("schtasks.exe"), {QStringLiteral("/Create"), QStringLiteral("/TN"),
-                                              name, QStringLiteral("/XML"), xmlPath,
-                                              QStringLiteral("/F")});
+    reg.start(QStringLiteral("schtasks.exe"),
+              {QStringLiteral("/Create"), QStringLiteral("/TN"), name, QStringLiteral("/XML"),
+               xmlPath, QStringLiteral("/F")});
     if (!reg.waitForFinished(20000) || reg.exitCode() != 0)
         return QStringLiteral("Could not register the update task (%1)")
             .arg(QString::fromLocal8Bit(reg.readAllStandardError()).trimmed());
@@ -480,10 +480,9 @@ void SelfUpdater::runInstaller()
     // setup and forwards its exit code, and the setup that replaces this process
     // is a grandchild that survives us being killed.
     m_installer = new QProcess(this);
-    connect(m_installer, &QProcess::finished, this,
-            [this](int code, QProcess::ExitStatus status) {
-                onInstallerFinished(code, status != QProcess::NormalExit);
-            });
+    connect(m_installer, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+        onInstallerFinished(code, status != QProcess::NormalExit);
+    });
     m_installer->start(program, args);
     if (!m_installer->waitForStarted(10000)) {
         fail(QStringLiteral("Could not launch the installer: %1").arg(m_installer->errorString()));
