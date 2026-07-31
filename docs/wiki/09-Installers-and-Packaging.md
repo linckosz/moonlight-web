@@ -72,7 +72,7 @@ The same file is compiled into the repository index below, so the software-centr
 
 | Piece | How |
 |---|---|
-| APT index | `apt-ftparchive packages pool` → `Packages{,.gz}` (`gzip -9cn`: no timestamp, so an unchanged index stays byte-identical), then `apt-ftparchive release` → `Release`. Both written to a temp file and copied in — writing via shell redirect into the directory being scanned is not safe. |
+| APT index | `apt-ftparchive packages pool` → `Packages{,.gz}` (`gzip -9cn`: no timestamp, so an unchanged index stays byte-identical), then `apt-ftparchive release` → `Release`. Both written to a temp file and copied in — writing via shell redirect into the directory being scanned is not safe. **Never pass `--arch`**: it does not filter on the Architecture field, it restricts the scan to files *named* `*_<arch>.deb`, which our release naming is not — the result is a silently empty index and `apt` reporting "unable to locate package". An empty `Packages` is therefore fatal. |
 | APT signature | `gpg --clearsign` → **`InRelease`** (what modern apt fetches) *and* `--detach-sign --armor` → `Release.gpg` for older clients. Trust flows from the signed Release alone; individual .debs are not signed. |
 | DNF index | `createrepo_c` → `repodata/`, plus a detached armored signature on `repomd.xml`. |
 | DNF signature | rpm needs **both**: `repo_gpgcheck=1` (the signed `repomd.xml`) *and* `gpgcheck=1` (per-package), so the .rpm itself is `rpmsign --addsign`ed. The CI key has no passphrase and there is no tty → `--pinentry-mode loopback`. |
