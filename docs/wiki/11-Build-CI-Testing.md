@@ -76,6 +76,8 @@ Four jobs run **after** the packaging matrix and only on a `refs/tags/` ref — 
 | `linux-repo-deploy` | `linux-repo` | `deploy-pages`. A separate job because a job may declare only **one** environment, and `linux-repo` needs `MoonlightWeb` for the key while deployment needs `github-pages`. `concurrency: pages` with `cancel-in-progress: false` — a release must never land half-published. |
 | `aur` | `linux` | Renders `PKGBUILD` + `.SRCINFO` from one substitution pass and pushes to `ssh://aur@aur.archlinux.org/moonlightweb-bin.git`; the commit is skipped when nothing changed, so re-running a tag build is idempotent. |
 
+**A called workflow can never exceed the caller's token.** Every permission scope any job in `release.yml` requests — `contents` for the release assets, `pages` for `configure-pages`/`upload-pages-artifact`, `id-token` for the OIDC token `deploy-pages` exchanges — must also be granted by the `package` job in `ci.yml`. The check runs when the run starts, so a missing scope fails the whole pipeline with **`startup_failure`** before a single step executes, and with no per-job log to read.
+
 **Missing credentials never fail a release.** Every publishing step is gated on a `steps.*.outputs.enabled` flag computed by a first step that emits a `::warning` when its secret is unset — the release ships, minus that channel. (The `secrets` context is unavailable in a job-level `if:`, hence the step-plus-output pattern rather than a job condition.)
 
 | Secret (environment `MoonlightWeb`) | Without it |
