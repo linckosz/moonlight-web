@@ -2,10 +2,14 @@
 # ============================================================================
 # MoonlightWeb — build the signed APT and DNF repositories.
 #
-# Takes the .deb and .rpm the `linux` job just built, folds them into the
-# existing published tree (so previous versions stay installable), regenerates
-# every index and signs it. The result is a plain directory of static files:
-# GitHub Pages serves it as-is, and so would any web host.
+# Takes the .deb and .rpm the `linux` job just built, indexes them and signs the
+# indexes. The result is a plain directory of static files, uploaded straight to
+# GitHub Pages as a deployment artifact — nothing is ever committed, so a
+# repository of binaries never lands in anyone's clone.
+#
+# Only the version being released is published. apt and dnf never resolve
+# anything but the newest, and older packages stay on the GitHub releases page,
+# so keeping a pool of past versions would cost bandwidth for nothing.
 #
 # What this buys over a downloaded .deb:
 #   * `apt install moonlightweb` / `dnf install moonlightweb`
@@ -35,11 +39,6 @@ VERSION=$3
 SITE=$(realpath -m "$4")
 KEY=$5
 
-# How many versions stay downloadable. apt/dnf only ever need the newest, so
-# this is purely a rollback convenience — and GitHub Pages recommends staying
-# under 1 GB total, which a self-contained Qt bundle eats quickly.
-KEEP=2
-
 ORIGIN=moonlightweb
 BASEURL=https://linckosz.github.io/moonlight-web
 
@@ -62,24 +61,6 @@ cp -f "$RPM" "$RPMDIR/"
 rpmsign --key-id="$KEY" \
         --define "_gpg_sign_cmd_extra_args --pinentry-mode loopback" \
         --addsign "$RPMDIR/$(basename "$RPM")"
-
-# ── Prune old versions ──────────────────────────────────────────────────────
-# Filenames are moonlightweb-<version>-linux-x64.<ext>, so a version sort on the
-# whole name orders releases correctly.
-prune() {
-    local dir=$1 ext=$2 n
-    n=$(find "$dir" -maxdepth 1 -name "moonlightweb-*.$ext" | wc -l)
-    if [ "$n" -gt "$KEEP" ]; then
-        find "$dir" -maxdepth 1 -name "moonlightweb-*.$ext" -printf '%f\n' \
-            | sort -V | head -n "$((n - KEEP))" \
-            | while read -r old; do
-                  echo "pruning $old"
-                  rm -f "$dir/$old"
-              done
-    fi
-}
-prune "$POOL" deb
-prune "$RPMDIR" rpm
 
 # ── DEP-11: the software-centre index ───────────────────────────────────────
 # Compiled from /usr/share/metainfo + the icon inside the package, so the
@@ -164,8 +145,8 @@ repo_gpgcheck=1
 gpgkey=$BASEURL/moonlightweb.asc
 EOF
 
-# GitHub Pages serves the tree as a static site; without this it would try to
-# run the directory listing through Jekyll and drop anything starting with "_".
+# Artifact deployments skip Jekyll entirely, so this is belt and braces: it
+# keeps the tree servable as-is should it ever be published from a branch.
 touch "$SITE/.nojekyll"
 
 cat > "$SITE/index.html" <<EOF
@@ -207,8 +188,8 @@ EOF
 SIZE_KB=$(du -sk "$SITE" | cut -f1)
 echo "Repository built at $SITE ($((SIZE_KB / 1024)) MB)"
 ls -lh "$POOL" "$RPMDIR"
-# GitHub Pages publishes above 1 GB but warns; 800 MB is the point to lower KEEP
-# or move the pool to object storage.
+# GitHub documents 1 GB as the size a published Pages site should stay under.
+# A single release is nowhere near it; this fires only if the bundle balloons.
 if [ "$SIZE_KB" -gt 819200 ]; then
-    echo "::warning title=Package repository is large::$((SIZE_KB / 1024)) MB published to GitHub Pages (soft limit 1 GB) - lower KEEP in make-repo.sh."
+    echo "::warning title=Package repository is large::$((SIZE_KB / 1024)) MB published to GitHub Pages (documented ceiling 1 GB) - the payload needs object storage."
 fi
