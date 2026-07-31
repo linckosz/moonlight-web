@@ -31,6 +31,8 @@ An honest inventory of what remains, what constrains the design, and where the l
 | **Single DNS box** | The shared-domain infrastructure is one VM: no anycast, no volumetric-DDoS absorption; `ns2` on a second IP is the documented cheap upgrade. |
 | **No accounts / single settings store** | By design (server-side `settings.json`, no multi-user) — features requiring per-user server state should map to per-browser localStorage or be rethought. |
 | **Sunshine's HTTP fragility** | Host polling must stay suspended during streams; one HTTPS request per host at a time. |
+| **macOS notarization needs a paid Apple Developer ID** | No free tier, no OSS programme — a *downloaded* `.pkg` will always be refused by Gatekeeper. The Homebrew cask and `install.sh` route around it (`installer(8)` never consults Gatekeeper), so the fix is a documented command, not a signature ([§9.2](09-Installers-and-Packaging.md)). |
+| **Compile-time DNS/ACME secrets** | Any build system that compiles from source on its own infrastructure (PPA, COPR, OBS) yields a silently LAN-only binary — hence self-hosted signed APT/DNF repositories shipping the same binary as the release ([§9.3](09-Installers-and-Packaging.md)). Likewise Flatpak/Snap are out: a sandbox can neither run the host package manager to install Sunshine nor open firewall ports. |
 
 ## 13.3 Improvement leads
 

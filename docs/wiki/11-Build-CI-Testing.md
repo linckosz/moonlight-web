@@ -59,11 +59,33 @@ Manual dispatch or a `workflow_call` from CI → per-platform packaging. It has 
 
 - **setup** job computes the version (feeds `MW_VERSION`): the tag when the run's ref is a `v*` tag, otherwise `<last v* tag>-<3-char sha>`. It also exports `pkg_version`, the same string with `-` → `.`, because rpm rejects dashes in `Version` — the Linux job uses that one throughout.
 - Publishing to the GitHub Release only happens on a `refs/tags/` ref; every other run stops at the workflow artifacts.
-- **windows** (x64 + arm64): build → archive **PDB symbols** as an artifact → stage bundle → `windeployqt` + Qt OpenSSL TLS plugin + OpenSSL DLLs (vcpkg on arm64) → **Inno Setup** installer.
-- **linux**: build → security TNR (`ctest`) → linuxdeploy **AppDir** (+ Wayland plugins best-effort) → **AppImage** → `make-packages.sh` → **.deb + .rpm**.
+- **windows** (x64 + arm64): build → archive **PDB symbols** as an artifact → stage bundle → `windeployqt` + Qt OpenSSL TLS plugin + OpenSSL DLLs (vcpkg on arm64) → **SignPath** signs `MoonlightWeb.exe` → **Inno Setup** installer → SignPath signs the installer. Each signed file overwrites the unsigned one in place; the two `unsigned-*` artifacts exist only because SignPath reads its input from the artifact store (1-day retention). See [Installers §9.1](09-Installers-and-Packaging.md).
+- **linux**: build → security TNR (`ctest`) → linuxdeploy **AppDir** (+ Wayland plugins best-effort) → **AppImage** → `make-packages.sh` → **.deb + .rpm** (AppStream metainfo included).
 - **macos** (arm64, macos-15): build → security TNR (`ctest`) → assemble `.app` → `macdeployqt` + ad-hoc sign → **interactive `.pkg`** via `build-pkg.sh`.
 
 Artifact naming is what `UpdateChecker` matches per-platform (`MoonlightWeb-installer-<v>-win-<arch>.exe`, `moonlightweb-<v>-linux-x64.{deb,rpm}`, AppImage, `moonlightweb-macos-arm64.pkg`).
+
+### Publishing jobs (tag-only)
+
+Four jobs run **after** the packaging matrix and only on a `refs/tags/` ref — each publishes to a service outside this repository, so it must never advertise a version with no release behind it. All of them consume the artifact the packaging job just uploaded rather than re-downloading the release asset, which may not be visible yet.
+
+| Job | Needs | What it publishes |
+|---|---|---|
+| `homebrew` | `macos` | Renders `backend/packaging/homebrew/moonlightweb.rb` (version + sha256 of the built pkg) and pushes it to `linckosz/homebrew-tap` as `Casks/moonlightweb.rb`. |
+| `linux-repo` | `linux` | Imports the GPG key, runs `make-repo.sh`, uploads the signed APT+DNF tree with `upload-pages-artifact`. |
+| `linux-repo-deploy` | `linux-repo` | `deploy-pages`. A separate job because a job may declare only **one** environment, and `linux-repo` needs `MoonlightWeb` for the key while deployment needs `github-pages`. `concurrency: pages` with `cancel-in-progress: false` — a release must never land half-published. |
+| `aur` | `linux` | Renders `PKGBUILD` + `.SRCINFO` from one substitution pass and pushes to `ssh://aur@aur.archlinux.org/moonlightweb-bin.git`; the commit is skipped when nothing changed, so re-running a tag build is idempotent. |
+
+**Missing credentials never fail a release.** Every publishing step is gated on a `steps.*.outputs.enabled` flag computed by a first step that emits a `::warning` when its secret is unset — the release ships, minus that channel. (The `secrets` context is unavailable in a job-level `if:`, hence the step-plus-output pattern rather than a job condition.)
+
+| Secret (environment `MoonlightWeb`) | Without it |
+|---|---|
+| `SIGNPATH_API_TOKEN`, `SIGNPATH_ORGANIZATION_ID` | Windows binaries ship **unsigned** (SmartScreen warns). |
+| `HOMEBREW_TAP_TOKEN` (PAT with Contents:write on the tap — `GITHUB_TOKEN` is scoped to this repo) | The cask stays on the previous version. |
+| `GPG_PRIVATE_KEY` (passphrase-less repository signing key) | No APT/DNF repository is built or deployed. |
+| `AUR_SSH_KEY` | `moonlightweb-bin` stays on the previous version. |
+
+`github-pages` is created by GitHub on the first deployment and defaults to *"deployments from the default branch only"* — `linux-repo-deploy` runs on a **tag** ref, so it needs a `v*` rule of type *tag* under Settings → Environments → `github-pages` → Deployment branches and tags (or *No restriction*). Symptom when it is missing: `Branch "refs/tags/vX.Y.Z" is not allowed to deploy to github-pages due to environment protection rules` — add the rule and re-run the job; the release assets are already published at that point.
 
 The Windows crash minidumps (`crashes/*.dmp`) are symbolized with the archived PDBs + Qt PDBs via `cdb`.
 
