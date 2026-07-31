@@ -31,7 +31,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
-import { SUPPORTS_CANVAS_TEARING } from '../util/BrowserDetect.js';
+import { SUPPORTS_CANVAS_TEARING, IS_MOBILE_OR_TABLET } from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
@@ -821,8 +821,12 @@ export class SettingsView {
                         <span class="setting-desc">Decodes &amp; renders video off the UI thread (OffscreenCanvas). <strong>Auto</strong> enables it above 4 logical cores. Falls back automatically if unsupported. DataChannel/WSS transports only.</span>
                     </div>
 
+                    <!-- Finger input, mobile/tablet only. A touchscreen laptop is
+                         driven by its trackpad or a mouse: both settings only act on
+                         the touch path (StreamViewTouch), so neither is offered
+                         there — gate on the platform type, not on IS_TOUCH_DEVICE. -->
                     ${
-                        IS_TOUCH_DEVICE
+                        IS_MOBILE_OR_TABLET
                             ? `
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
@@ -833,9 +837,7 @@ export class SettingsView {
                             </span>
                         </label>
                         <span class="setting-desc">${t('settings.touchScreenDesc')}</span>
-                    </div>`
-                            : ''
-                    }
+                    </div>
 
                     <div class="settings-field">
                         <label class="settings-label" for="settings-sensitivity">
@@ -850,7 +852,9 @@ export class SettingsView {
                             <span>0.5×</span>
                             <span>5×</span>
                         </div>
-                    </div>
+                    </div>`
+                            : ''
+                    }
 
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
