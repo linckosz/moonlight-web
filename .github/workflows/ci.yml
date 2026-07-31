@@ -217,11 +217,18 @@ jobs:
     needs: [frontend, test-backend]
     if: github.event_name != 'pull_request'
     uses: ./.github/workflows/release.yml
-    # release.yml declares contents:write for its release steps; a called
-    # workflow cannot exceed the caller's token, hence the per-job grant here
-    # (this pipeline's default is contents:read).
+    # A called workflow can never exceed the caller's token, and the check is
+    # made when the run starts: a permission release.yml asks for and this job
+    # does not grant fails the whole run with "startup_failure", before a
+    # single step executes. Every scope any job in release.yml requests has to
+    # be listed here (this pipeline's default is contents:read):
+    #   contents  → publishing the release assets
+    #   pages     → configure-pages / upload-pages-artifact (linux-repo)
+    #   id-token  → the OIDC token deploy-pages exchanges (linux-repo-deploy)
     permissions:
       contents: write
+      pages: write
+      id-token: write
     # MW_* (DNS/ACME) live in the MoonlightWeb environment the packaging jobs
     # request; without inherit they'd resolve empty → LAN-only installers.
     secrets: inherit
