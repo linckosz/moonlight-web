@@ -26,6 +26,7 @@ PKG="$ROOT/pkgroot"
 trap 'rm -rf "$ROOT"' EXIT
 
 mkdir -p "$PKG$PREFIX" "$PKG/usr/bin" "$PKG/usr/share/applications" \
+         "$PKG/usr/share/metainfo" \
          "$PKG/usr/share/icons/hicolor/512x512/apps"
 
 # Relocatable bundle straight from the AppDir (bin/ also holds frontend/).
@@ -47,7 +48,10 @@ cp "$APPDIR/MoonlightWeb.png" \
    "$PKG/usr/share/icons/hicolor/512x512/apps/moonlightweb.png"
 
 # Menu entry (absolute Exec: /opt is not on PATH for .desktop resolution).
-cat > "$PKG/usr/share/applications/moonlightweb.desktop" <<EOF
+# Named after the AppStream component ID so a software centre matches the two
+# without ambiguity; the <launchable> in the metainfo points back here.
+APPID=top.moonlightweb.MoonlightWeb
+cat > "$PKG/usr/share/applications/$APPID.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=MoonlightWeb
@@ -55,8 +59,26 @@ Comment=Sunshine streaming client for the browser
 Exec=$PREFIX/bin/MoonlightWeb
 Icon=moonlightweb
 Categories=Network;Game;
+Keywords=streaming;sunshine;moonlight;gaming;remote;
 Terminal=false
+StartupWMClass=MoonlightWeb
 EOF
+
+# AppStream metadata: what GNOME Software / KDE Discover / Ubuntu App Center
+# actually index. Without it the app is installable but invisible in every
+# graphical software centre. The same file is compiled into the repository
+# index by the `linux-repo` job (see .github/workflows/release.yml).
+sed -e "s/@MW_VERSION@/$VERSION/g" -e "s/@MW_DATE@/$(date -u +%Y-%m-%d)/g" \
+    "$(dirname "$0")/$APPID.metainfo.xml" \
+    > "$PKG/usr/share/metainfo/$APPID.metainfo.xml"
+
+# Catches a malformed template before it reaches a user's software centre.
+# Advisory only: appstreamcli is not installed on every build host, and its
+# newer releases add warnings that would otherwise break packaging.
+if command -v appstreamcli >/dev/null 2>&1; then
+    appstreamcli validate --no-net "$PKG/usr/share/metainfo/$APPID.metainfo.xml" \
+        || echo "warning: AppStream validation reported issues (not fatal)"
+fi
 
 # Post-install / pre-remove hooks shared by both package formats.
 cat > "$ROOT/postinst.sh" <<'EOF'
@@ -156,7 +178,7 @@ EOF
 common=(
     -s dir -n moonlightweb -v "$VERSION"
     --license GPL-3.0 --vendor MoonlightWeb
-    --url "https://github.com/moonlight-stream/moonlight-web"
+    --url "https://moonlightweb.top/"
     --description "Sunshine streaming client for the browser (self-contained, bundled Qt runtime)"
     --maintainer "MoonlightWeb"
     --after-install "$ROOT/postinst.sh"

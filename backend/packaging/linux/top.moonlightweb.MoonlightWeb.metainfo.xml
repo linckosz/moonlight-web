@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MoonlightWeb — AppStream metadata (TEMPLATE, @MW_VERSION@/@MW_DATE@ are
+  substituted by backend/packaging/linux/make-packages.sh).
+
+  This is what makes the app visible in a graphical software centre: GNOME
+  Software, KDE Discover and Ubuntu's App Center all index AppStream, not the
+  raw package list, and Ubuntu explicitly hides packages that have none
+  (ubuntu/app-center#1273). A .desktop file alone is not enough.
+
+  Installed to /usr/share/metainfo/ inside the .deb and .rpm, and compiled into
+  the DEP-11 / repodata index the `linux-repo` job publishes — the same file
+  serves both the local install and the repository listing.
+
+  Validated by make-packages.sh when appstreamcli is available; run it by hand
+  with "appstreamcli validate" for the full explanation of any warning.
+-->
+<component type="desktop-application">
+  <id>top.moonlightweb.MoonlightWeb</id>
+
+  <!-- Licence of this metadata file, not of the program (that's project_license). -->
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+
+  <name>MoonlightWeb</name>
+  <summary>Stream your Sunshine games to any device with a browser</summary>
+
+  <description>
+    <p>
+      MoonlightWeb turns your gaming PC into a stream any browser can open. It
+      pairs with a Sunshine host, then serves the picture over WebRTC to
+      whatever device is at hand — a laptop, a tablet, a phone, a TV — with no
+      client to install on the other end.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Play from any browser: nothing to install on the device you play from</li>
+      <li>Hardware-accelerated H.264 and HEVC, up to 4K and 120 FPS</li>
+      <li>Gamepad, keyboard, mouse and touch controls, including on-screen gamepad</li>
+      <li>Optional Internet access with automatic HTTPS, for playing away from home</li>
+      <li>Installs and configures Sunshine for you on first run</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">top.moonlightweb.MoonlightWeb.desktop</launchable>
+
+  <url type="homepage">https://moonlightweb.top/</url>
+  <url type="bugtracker">https://github.com/linckosz/moonlight-web/issues</url>
+  <url type="help">https://moonlightweb.top/guides/linux.html</url>
+  <url type="faq">https://moonlightweb.top/faq.html</url>
+  <url type="vcs-browser">https://github.com/linckosz/moonlight-web</url>
+
+  <developer id="top.moonlightweb">
+    <name>MoonlightWeb</name>
+  </developer>
+
+  <categories>
+    <category>Network</category>
+    <category>Game</category>
+  </categories>
+
+  <keywords>
+    <keyword>streaming</keyword>
+    <keyword>sunshine</keyword>
+    <keyword>moonlight</keyword>
+    <keyword>gaming</keyword>
+    <keyword>remote</keyword>
+    <keyword>webrtc</keyword>
+  </keywords>
+
+  <!-- Absolute URLs: a software centre fetches these over the network, so they
+       must resolve without the package being installed. Served by website/. -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>Your Sunshine library, ready to launch from the browser</caption>
+      <image type="source">https://moonlightweb.top/assets/home.jpg</image>
+    </screenshot>
+    <screenshot>
+      <caption>Streaming to a phone with the on-screen gamepad</caption>
+      <image type="source">https://moonlightweb.top/assets/mobile.jpg</image>
+    </screenshot>
+    <screenshot>
+      <caption>Stream quality and codec settings</caption>
+      <image type="source">https://moonlightweb.top/assets/settings.jpg</image>
+    </screenshot>
+    <screenshot>
+      <caption>The admin page: sessions, pairing and Internet access</caption>
+      <image type="source">https://moonlightweb.top/assets/admin.jpg</image>
+    </screenshot>
+  </screenshots>
+
+  <!-- Declared so a software centre can tell whether the app suits the device
+       it is being browsed from. The web UI drives every input kind. -->
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>gamepad</control>
+    <control>touch</control>
+  </supports>
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+
+  <!-- No objectionable content of its own; what is streamed is whatever the
+       host runs. All-null is the correct answer for a streaming client. -->
+  <content_rating type="oars-1.1"/>
+
+  <provides>
+    <binary>moonlightweb</binary>
+  </provides>
+
+  <releases>
+    <release version="@MW_VERSION@" date="@MW_DATE@">
+      <url type="details">https://github.com/linckosz/moonlight-web/releases</url>
+    </release>
+  </releases>
+</component>
