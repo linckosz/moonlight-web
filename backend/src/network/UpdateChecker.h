@@ -59,6 +59,12 @@ public:
     // Force an immediate refresh, ignoring the cache window.
     void refresh();
 
+signals:
+    // A fetch finished — on success *and* on failure. SelfUpdater waits on this
+    // after a download that did not match the cached metadata, so it must fire
+    // on every outcome: a check that quietly gave up would strand the retry.
+    void checkFinished();
+
 private:
     void doFetch();
     void applyResult(const QJsonObject& release);

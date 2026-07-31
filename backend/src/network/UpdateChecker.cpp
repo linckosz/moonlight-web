@@ -25,6 +25,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QScopeGuard>
 #include <QSysInfo>
 #include <QUrl>
 
@@ -91,6 +92,10 @@ void UpdateChecker::doFetch()
         reply->deleteLater();
         m_inFlight = false;
         m_lastCheck = QDateTime::currentDateTimeUtc();
+        // Signalled on the way out of every branch below, including the ones
+        // that keep the previous result: whoever is waiting on this check has to
+        // be released whether or not it learned anything.
+        const auto done = qScopeGuard([this] { emit checkFinished(); });
 
         if (reply->error() != QNetworkReply::NoError) {
             Logger::warning(QStringLiteral("[Update] check failed: %1").arg(reply->errorString()));

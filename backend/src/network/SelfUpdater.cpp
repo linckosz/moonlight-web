@@ -221,6 +221,13 @@ QString SelfUpdater::start()
         return QStringLiteral("This platform has no unattended update path — "
                               "update MoonlightWeb on the host manually");
 
+    m_method = method;
+    m_recheckDone = false;
+    return beginDownload();
+}
+
+QString SelfUpdater::beginDownload()
+{
     const QJsonObject info = m_checker->statusJson();
     if (!info.value("update_available").toBool()) return QStringLiteral("No update available");
     // An empty asset_name means UpdateChecker fell back to the release page:
@@ -245,7 +252,6 @@ QString SelfUpdater::start()
         return QStringLiteral("Cannot write to the update staging directory");
     }
 
-    m_method = method;
     m_target = info.value("latest").toString();
     m_expectedSize = static_cast<qint64>(info.value("asset_size").toDouble());
     m_expectedDigest = info.value("asset_digest").toString();
@@ -297,11 +303,19 @@ void SelfUpdater::onDownloadFinished()
     delete m_file;
     m_file = nullptr;
 
+    // Both guards below compare against metadata UpdateChecker cached, possibly
+    // hours ago (kCacheHours). Re-publishing a release — deleting it and pushing
+    // the tag again, which rebuilds every asset — keeps the asset name and the
+    // download URL but changes the bytes behind them, so a stale cache
+    // mismatches on a download that is in fact perfectly good. That is the
+    // likely case here, and it fixes itself: refetch and replay, once.
     if (m_expectedSize > 0 && size != m_expectedSize) {
-        fail(QStringLiteral("Downloaded installer is %1 bytes, expected %2 — the release asset "
-                            "changed under us; try again")
-                 .arg(size)
-                 .arg(m_expectedSize));
+        const QString why = QStringLiteral("Downloaded installer is %1 bytes, expected %2")
+                                .arg(size)
+                                .arg(m_expectedSize);
+        if (retryOnStaleMetadata(why)) return;
+        fail(why + QStringLiteral(" — the published asset does not match what this download "
+                                  "produced; install it manually from the releases page"));
         return;
     }
     if (m_expectedSize <= 0 && size < 1024 * 1024) {
@@ -311,6 +325,7 @@ void SelfUpdater::onDownloadFinished()
         return;
     }
     if (const QString bad = verifyDigest(); !bad.isEmpty()) {
+        if (retryOnStaleMetadata(bad)) return;
         fail(bad);
         return;
     }
@@ -334,6 +349,49 @@ void SelfUpdater::onDownloadFinished()
     m_installTick->start(kInstallTickMs);
 
     runInstaller();
+}
+
+bool SelfUpdater::retryOnStaleMetadata(const QString& reason)
+{
+    // Exactly one extra attempt per start(): if the freshly fetched metadata
+    // disagrees with the bytes too, the file really is wrong and downloading it
+    // a third time will not change that.
+    if (m_recheckDone) return false;
+    m_recheckDone = true;
+
+    Logger::warning(
+        QStringLiteral("[Update] %1 — re-checking the release and retrying").arg(reason));
+    m_percent = 0; // stays State::Downloading: from the UI's side this is one attempt
+
+    // Wait for the check, never *on* it. A host that just lost its link would
+    // otherwise sit on "downloading" until the watchdog that does not exist yet
+    // fires, which is to say forever.
+    m_recheckGuard = new QTimer(this);
+    m_recheckGuard->setSingleShot(true);
+    connect(m_recheckGuard, &QTimer::timeout, this, [this, reason]() {
+        disconnect(m_recheckWait);
+        m_recheckGuard->deleteLater();
+        m_recheckGuard = nullptr;
+        fail(reason + QStringLiteral(" — and the release could not be re-checked; try again"));
+    });
+
+    m_recheckWait = connect(
+        m_checker, &UpdateChecker::checkFinished, this,
+        [this, reason]() {
+            m_recheckGuard->stop();
+            m_recheckGuard->deleteLater();
+            m_recheckGuard = nullptr;
+            // beginDownload() re-reads the checker, so this now carries whatever
+            // the release actually holds — including "no update available" if it
+            // was pulled entirely.
+            if (const QString err = beginDownload(); !err.isEmpty())
+                fail(reason + QStringLiteral(" — ") + err);
+        },
+        Qt::SingleShotConnection);
+
+    m_recheckGuard->start(kRecheckTimeoutMs);
+    m_checker->refresh();
+    return true;
 }
 
 QString SelfUpdater::verifyDigest()

@@ -91,10 +91,20 @@ private:
         Failed
     };
 
+    // Stage and fetch the asset UpdateChecker currently resolves, from whatever
+    // its cache holds right now. Split out of start() so a download refused by
+    // the checks below can be replayed against re-fetched metadata without
+    // asking the user to click again. Empty on success, else the error.
+    QString beginDownload();
     void onDownloadFinished();
     // Empty when the staged file matches the digest GitHub published for it (or
     // when there is no digest to check against); the error message otherwise.
     QString verifyDigest();
+    // A download that does not match what the checker promised is, far more
+    // often than a broken transfer, a release that was re-published since the
+    // last check. Refetch and replay the download once; true when that is under
+    // way (the caller must return), false when it is not worth trying again.
+    bool retryOnStaleMetadata(const QString& reason);
     void runInstaller();
     void onInstallerFinished(int exitCode, bool crashed);
     void armWatchdog();
@@ -133,15 +143,22 @@ private:
     static constexpr int kInstallCeiling = 90;
     static constexpr double kInstallTauSec = 14.0;
     static constexpr int kInstallTickMs = 250;
+    // How long the stale-metadata retry waits for a fresh check before giving up
+    // and reporting the original mismatch. Generous — the request itself times
+    // out at 8 s — but bounded: the UI is sitting on "downloading" meanwhile.
+    static constexpr int kRecheckTimeoutMs = 20000;
 
     UpdateChecker* m_checker;
     QNetworkAccessManager* m_nam;
     QNetworkReply* m_reply = nullptr;
     QFile* m_file = nullptr;
-    QTimer* m_installTick = nullptr; // pseudo-progress while the installer runs
-    int m_installElapsedMs = 0;      // drives the install easing curve
-    QTimer* m_watchdog = nullptr;    // gives up when the installer never lands
-    QProcess* m_installer = nullptr; // Windows: kept to read its exit code
+    QTimer* m_installTick = nullptr;       // pseudo-progress while the installer runs
+    int m_installElapsedMs = 0;            // drives the install easing curve
+    QTimer* m_watchdog = nullptr;          // gives up when the installer never lands
+    QProcess* m_installer = nullptr;       // Windows: kept to read its exit code
+    QTimer* m_recheckGuard = nullptr;      // bounds the wait on a forced check
+    QMetaObject::Connection m_recheckWait; // that check's one-shot subscription
+    bool m_recheckDone = false;            // one retry per start(), never a loop
 
     State m_state = State::Idle;
     int m_percent = 0;
