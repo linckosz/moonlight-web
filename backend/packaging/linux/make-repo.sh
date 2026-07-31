@@ -105,7 +105,21 @@ done
 # ── APT indexes ─────────────────────────────────────────────────────────────
 (
     cd "$SITE/deb"
-    apt-ftparchive --arch amd64 packages pool > "$WORK/Packages"
+    # No --arch: it does not filter on the Architecture field, it makes the
+    # scanner glob for "*_<arch>.deb" (writer.cc, AddPattern). Our packages are
+    # named moonlightweb-<version>-linux-x64.deb — the name UpdateChecker
+    # matches — so the pattern matched nothing and published an empty index,
+    # with apt then reporting "unable to locate package". Unfiltered, the
+    # scanner reads Architecture from each control file, which is what we want:
+    # the pool only ever holds one amd64 package anyway.
+    apt-ftparchive packages pool > "$WORK/Packages"
+    # An empty index is worse than a failed job: the repository stays online and
+    # installs nothing.
+    if [ ! -s "$WORK/Packages" ]; then
+        echo "error: apt-ftparchive indexed no package. pool/ holds:" >&2
+        find pool -type f >&2
+        exit 1
+    fi
     cp -f "$WORK/Packages" "$DIST/main/binary-amd64/Packages"
     # -n: no timestamp in the gzip header, so an unchanged index stays
     # byte-identical and the checksums below do not churn.
