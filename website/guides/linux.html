@@ -86,6 +86,28 @@
     <li data-i18n-html="need.4">A distribution no older than <strong>Ubuntu 22.04</strong>, <strong>Debian 12</strong> or <strong>Fedora 36</strong> (glibc 2.34+). Qt and OpenSSL are bundled, but the system C runtime never can be — on an older distro the package installs and the app then refuses to start.</li>
   </ul>
 
+  <h2 id="one-line-install" data-i18n="repo.h">The short way: one command, and updates for free</h2>
+  <p data-i18n-html="repo.p">MoonlightWeb publishes signed <strong>APT</strong> and <strong>DNF</strong> repositories. Installing from one
+     of them means your system updater keeps MoonlightWeb current by itself, and the app appears in
+     <strong>GNOME Software</strong>, <strong>KDE Discover</strong> and Ubuntu's <strong>App Center</strong> like any
+     other application. This one command detects your distribution and does the right thing:</p>
+  <pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre>
+  <p data-i18n="repo.manual">Rather do it by hand? Those are exactly these steps:</p>
+  <pre><code># Debian / Ubuntu / Mint / Pop!_OS
+sudo install -d /etc/apt/keyrings
+curl -fsSL https://linckosz.github.io/moonlight-web/moonlightweb.gpg | sudo tee /etc/apt/keyrings/moonlightweb.gpg > /dev/null
+curl -fsSL https://linckosz.github.io/moonlight-web/moonlightweb.sources | sudo tee /etc/apt/sources.list.d/moonlightweb.sources > /dev/null
+sudo apt update &amp;&amp; sudo apt install moonlightweb
+
+# Fedora / RHEL / Rocky / Alma / Nobara / openSUSE
+sudo curl -fsSL -o /etc/yum.repos.d/moonlightweb.repo https://linckosz.github.io/moonlight-web/moonlightweb.repo
+sudo dnf install moonlightweb
+
+# Arch / Manjaro / EndeavourOS
+paru -S moonlightweb-bin</code></pre>
+  <p data-i18n-html="repo.rest">SteamOS, Bazzite and other immutable systems have no package manager to add a repository to — they keep
+     the portable AppImage, which the same command downloads for you. The manual route below still works everywhere.</p>
+
   <h2 data-i18n="steps.h">Installation, step by step</h2>
   <div class="gsteps">
     <div class="gstep cyb" id="step-download">
@@ -195,6 +217,10 @@ window.MW_DICTS = {
     'need.2':'<strong>Sunshine</strong> comme hôte de streaming. Vous ne l’avez pas encore ? L’assistant de configuration de MoonlightWeb l’installe et l’appaire pour vous.',
     'need.3':'N’importe quel appareil avec un navigateur moderne comme client : Chrome, Edge, Safari ou Firefox. Pas d’application, pas de compte.',
     'need.4':'Une distribution pas plus ancienne qu’<strong>Ubuntu 22.04</strong>, <strong>Debian 12</strong> ou <strong>Fedora 36</strong> (glibc 2.34+). Qt et OpenSSL sont embarqués, mais la bibliothèque C du système ne peut jamais l’être : sur une distribution plus ancienne, le paquet s’installe puis l’application refuse de démarrer.',
+    'repo.h':'La voie rapide : une commande, et les mises à jour en prime',
+    'repo.p':'MoonlightWeb publie des dépôts <strong>APT</strong> et <strong>DNF</strong> signés. Installer depuis l’un d’eux, c’est laisser le gestionnaire de mises à jour du système garder MoonlightWeb à jour tout seul, et voir l’application apparaître dans <strong>GNOME Logiciels</strong>, <strong>KDE Discover</strong> et l’<strong>App Center</strong> d’Ubuntu comme n’importe quelle autre. Cette commande unique détecte votre distribution et fait ce qu’il faut :',
+    'repo.manual':'Vous préférez le faire à la main ? Ce sont exactement ces étapes :',
+    'repo.rest':'SteamOS, Bazzite et les autres systèmes immuables n’ont pas de gestionnaire de paquets auquel ajouter un dépôt : ils gardent l’AppImage portable, que la même commande télécharge pour vous. La méthode manuelle ci-dessous reste valable partout.',
     'steps.h':'Installation, étape par étape',
     'step1.h':'Téléchargez un paquet',
     'step1.p':'Depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a>, choisissez selon votre famille de distribution : <code>.deb</code> pour <strong>Debian, Ubuntu, Mint, Pop!_OS, elementary, Zorin</strong> ; <code>.rpm</code> pour <strong>Fedora, RHEL, CentOS Stream, Rocky, Alma, Nobara, openSUSE</strong> ; un <code>.AppImage</code> portable pour <strong>Arch, Manjaro, SteamOS, Bazzite</strong> et tout le reste. Chaque paquet est autonome (Qt et OpenSSL embarqués — aucune dépendance à installer).',
@@ -237,6 +263,10 @@ window.MW_DICTS = {
     'need.2':'<strong>Sunshine</strong> 作为串流主机。还没有？MoonlightWeb 的设置向导会帮你装好并自动配对。',
     'need.3':'任何带现代浏览器的设备都可作客户端：Chrome、Edge、Safari 或 Firefox。无需应用、无需账户。',
     'need.4':'发行版不低于 <strong>Ubuntu 22.04</strong>、<strong>Debian 12</strong> 或 <strong>Fedora 36</strong>（glibc 2.34+）。Qt 和 OpenSSL 已内置，但系统的 C 运行库永远无法内置：在更旧的发行版上，软件包能装上，应用却拒绝启动。',
+    'repo.h':'捷径：一条命令，还自带更新',
+    'repo.p':'MoonlightWeb 提供经过签名的 <strong>APT</strong> 和 <strong>DNF</strong> 软件源。从软件源安装，意味着系统的更新程序会自动让 MoonlightWeb 保持最新，而且应用会像其他程序一样出现在 <strong>GNOME 软件</strong>、<strong>KDE Discover</strong> 和 Ubuntu 的 <strong>App Center</strong> 中。这一条命令会检测你的发行版并做正确的事：',
+    'repo.manual':'想手动操作？那正是下面这些步骤：',
+    'repo.rest':'SteamOS、Bazzite 及其他不可变系统没有可以添加软件源的包管理器——它们继续使用便携的 AppImage，同一条命令也会帮你下载。下面的手动方式在任何系统上依然有效。',
     'steps.h':'逐步安装',
     'step1.h':'下载一个软件包',
     'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>按你的发行版系列选择：<strong>Debian、Ubuntu、Mint、Pop!_OS、elementary、Zorin</strong> 用 <code>.deb</code>；<strong>Fedora、RHEL、CentOS Stream、Rocky、Alma、Nobara、openSUSE</strong> 用 <code>.rpm</code>；<strong>Arch、Manjaro、SteamOS、Bazzite</strong> 及其他一切用便携的 <code>.AppImage</code>。每个软件包都是自包含的（内置 Qt 和 OpenSSL——无需安装任何依赖）。',

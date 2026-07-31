@@ -133,7 +133,15 @@ Both hand the `.pkg` to `installer(8)`, which never consults Gatekeeper. Keeping
 
 ### Linux (x64)
 
-Pick the package for your distro family. All of them are **self‑contained** (Qt + OpenSSL bundled, **no dependencies**), install to `/opt/moonlightweb` with a `moonlightweb` command and a menu entry, open the firewall ports (80/tcp, 443/tcp, 47999/udp) best‑effort, and start the app right after install.
+**Install from the repository — one command, and updates handled for you:**
+
+```sh
+curl -fsSL https://moonlightweb.top/install.sh | bash
+```
+
+It registers the signed **APT** or **DNF** repository and installs from it, so `apt`/`dnf` upgrade MoonlightWeb along with the rest of the system, and the app shows up in **GNOME Software**, **KDE Discover** and Ubuntu's **App Center**. Arch and derivatives get [`moonlightweb-bin`](https://aur.archlinux.org/packages/moonlightweb-bin) from the AUR; distros with neither fall back to the AppImage. The repository can also be added by hand — see the [Linux guide](https://moonlightweb.top/guides/linux.html#one-line-install).
+
+Or pick the package for your distro family directly. All of them are **self‑contained** (Qt + OpenSSL bundled, **no dependencies**), install to `/opt/moonlightweb` with a `moonlightweb` command and a menu entry, open the firewall ports (80/tcp, 443/tcp, 47999/udp) best‑effort, and start the app right after install.
 
 | Distro family | Package | Command |
 |---|---|---|
