@@ -121,3 +121,9 @@ backend/src/server/file_list.txt
 backend/src/tmp_list.txt
 backend/src/streaming/list_files.sh
 backend/installer/MoonlightWeb/
+
+# Exported GPG key material. The repository signing key lives in the
+# GPG_PRIVATE_KEY secret and in the maintainer's keyring; the public half is
+# republished by make-repo.sh on every release. Neither belongs in git, and a
+# stray `git add -A` must never be able to stage the private half.
+*.asc
