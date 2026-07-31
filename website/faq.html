@@ -113,6 +113,11 @@
           "@type": "Question",
           "name": "How does MoonlightWeb work under the hood?",
           "acceptedAnswer": {"@type": "Answer", "text": "A small C++/Qt server runs on the gaming PC next to Sunshine. It embeds moonlight-common-c, speaks the GameStream protocol (RTSP/RTP/ENet) to Sunshine, and relays video, audio and input to browsers over WebRTC. In the browser: WebCodecs decodes, WebGPU renders, and an AudioWorklet plays Opus audio."}
+        },
+        {
+          "@type": "Question",
+          "name": "Why does my system warn me about the installer?",
+          "acceptedAnswer": {"@type": "Answer", "text": "The installers are not signed with a paid certificate, and Windows SmartScreen and macOS Gatekeeper flag anything they do not recognise. The code is public, so you can read exactly what you are installing. On Windows: click More info, then Run anyway. On macOS the warning only applies to browser downloads, so `brew install --cask linckosz/tap/moonlightweb` or `curl -fsSL https://moonlightweb.top/install.sh | bash` avoids it entirely; otherwise allow the downloaded file in System Settings, Privacy & Security, Open Anyway."}
         }
       ]
     }
@@ -223,6 +228,18 @@
       video, audio and input to browsers over WebRTC. In the browser: WebCodecs decodes, WebGPU renders,
       and an AudioWorklet plays Opus audio.</p></div>
   </details>
+  <details>
+    <summary data-i18n="q15.s">Why does my system warn me about the installer?</summary>
+    <div class="a" data-i18n-html="q15.a"><p>Because the installers aren't signed with a paid certificate — Windows
+      SmartScreen and macOS Gatekeeper flag anything they don't recognise, signed or not, safe or not. The code is
+      public, so you can read exactly what you're installing.</p>
+      <p>On <strong>Windows</strong>: click <em>More info</em>, then <em>Run anyway</em>.</p>
+      <p>On <strong>macOS</strong>, skip the warning entirely — it only applies to browser downloads:</p>
+      <pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre>
+      <pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre>
+      <p>Or keep the downloaded file and allow it in <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>.
+      Details in the <a href="/guides/macos.html">macOS guide</a>.</p></div>
+  </details>
 
   <h2 data-i18n="h2.start">Get started</h2>
   <div class="xlinks">
@@ -278,6 +295,8 @@ window.MW_DICTS = {
     'q13.a':'<p>MoonlightWeb est auto-hébergé : le stream va directement de votre PC à votre navigateur, jamais par le cloud d’un tiers. Les hôtes sont appairés par un code PIN, et l’accès Internet utilise HTTPS avec un certificat TLS gratuit et auto-renouvelé.</p>',
     'q14.s':'Comment MoonlightWeb fonctionne-t-il en coulisses ?',
     'q14.a':'<p>Un petit serveur C++/Qt tourne sur le PC gamer à côté de Sunshine. Il embarque <code>moonlight-common-c</code>, parle le protocole GameStream (RTSP/RTP/ENet) à Sunshine, et relaie la vidéo, l’audio et les entrées vers les navigateurs via WebRTC. Dans le navigateur : WebCodecs décode, WebGPU affiche, et un AudioWorklet joue l’audio Opus.</p>',
+    'q15.s':'Pourquoi mon système m’avertit-il à propos de l’installateur ?',
+    'q15.a':'<p>Parce que les installateurs ne sont pas signés avec un certificat payant — SmartScreen sous Windows et Gatekeeper sous macOS signalent tout ce qu’ils ne reconnaissent pas, signé ou non, sûr ou non. Le code est public : vous pouvez lire exactement ce que vous installez.</p><p>Sous <strong>Windows</strong> : cliquez sur <em>Informations complémentaires</em>, puis <em>Exécuter quand même</em>.</p><p>Sous <strong>macOS</strong>, évitez complètement l’avertissement — il ne concerne que les téléchargements par navigateur :</p><pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre><pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre><p>Ou gardez le fichier téléchargé et autorisez-le dans <strong>Réglages Système → Confidentialité et sécurité → Ouvrir quand même</strong>. Détails dans le <a href="/guides/macos.html">guide macOS</a>.</p>',
     'h2.start':'Pour commencer',
     'x.win.t':'Installer sur Windows', 'x.win.d':'Installateur guidé — Sunshine inclus dans l’assistant.',
     'x.mac.t':'Installer sur macOS', 'x.mac.d':'Guide Apple Silicon avec l’installateur .pkg.',
@@ -321,6 +340,8 @@ window.MW_DICTS = {
     'q13.a':'<p>MoonlightWeb 是自托管的：串流直接从你的 PC 到你的浏览器，绝不经过任何他人的云。主机通过 PIN 码配对，互联网访问使用 HTTPS，配有免费自动续期的 TLS 证书。</p>',
     'q14.s':'MoonlightWeb 底层是如何工作的？',
     'q14.a':'<p>一个小型 C++/Qt 服务器在游戏 PC 上紧挨 Sunshine 运行。它内嵌 <code>moonlight-common-c</code>，用 GameStream 协议（RTSP/RTP/ENet）与 Sunshine 通信，并通过 WebRTC 把视频、音频和输入转发到浏览器。在浏览器中：WebCodecs 解码，WebGPU 渲染，AudioWorklet 播放 Opus 音频。</p>',
+    'q15.s':'为什么我的系统会对安装程序发出警告？',
+    'q15.a':'<p>因为安装程序没有用付费证书签名——Windows SmartScreen 和 macOS Gatekeeper 会标记一切它们不认识的东西，无论是否已签名、是否安全。代码是公开的，你可以确切地看到自己安装的是什么。</p><p>在 <strong>Windows</strong> 上：点击<em>更多信息</em>，然后<em>仍要运行</em>。</p><p>在 <strong>macOS</strong> 上可以完全避开警告——它只针对浏览器下载的文件：</p><pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre><pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre><p>或者保留已下载的文件，在<strong>系统设置 → 隐私与安全性 → 仍要打开</strong>中放行。详见 <a href="/guides/macos.html">macOS 指南</a>。</p>',
     'h2.start':'开始使用',
     'x.win.t':'在 Windows 上安装', 'x.win.d':'向导式安装程序——Sunshine 已包含在向导中。',
     'x.mac.t':'在 macOS 上安装', 'x.mac.d':'Apple Silicon 指南，附 .pkg 安装程序。',

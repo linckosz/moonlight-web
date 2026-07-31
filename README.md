@@ -119,6 +119,15 @@ Double‑click it — the wizard (English / Français / 简体中文) does every
 
 **`moonlightweb-<version>-macos-arm64.pkg`** — native installer: *Introduction → License → **Sunshine** → Install*. The Sunshine page detects or downloads and installs Sunshine for you; the app lands in `/Applications` with an optional **start at login** (LaunchAgent).
 
+**Skip the Gatekeeper prompt.** The `.pkg` isn't notarized (an Apple Developer ID costs $99/yr, with no free or open‑source tier), so a *downloaded* one is refused with *"cannot be opened because it is from an unidentified developer"*. That check only applies to files a browser downloaded — either of these installs the exact same package without it:
+
+```sh
+brew install --cask linckosz/tap/moonlightweb
+curl -fsSL https://moonlightweb.top/install.sh | bash
+```
+
+Both hand the `.pkg` to `installer(8)`, which never consults Gatekeeper. Keeping the downloaded file instead? On **macOS 15 Sequoia+**, double‑click it, let it be refused, then *System Settings → Privacy & Security → **Open Anyway*** (the old Control‑click → Open shortcut is gone) — or `xattr -dr com.apple.quarantine ~/Downloads/moonlightweb-*.pkg`.
+
 ⚠️ macOS cannot grant screen capture programmatically: allow **Sunshine** in *System Settings → Privacy & Security → Screen Recording* at its first launch. The in‑app wizard (`https://localhost/setup`) opens that pane for you and finishes anything the installer couldn't.\
 *Intel Macs:* no prebuilt package — [build from source](#fork--build).
 
