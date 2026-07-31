@@ -72,6 +72,7 @@ Enabling Internet Access is an **explicit opt-in** (checkbox unchecked everywher
 - Session cookies are the only client-held secret; settings/keys/certs are server-side only.
 - Frontend escapes all interpolated HTML (`escapeHtml.js`).
 - CI embeds DNS/ACME secrets (`MW_*`) into the binary at build time — installers ship **no editable secrets** on disk; runtime env/.env still override.
+- **Distribution integrity**: Windows binaries and the installer are Authenticode-signed via SignPath; the APT repository is trusted through a signed `InRelease`, the DNF one through both a signed `repomd.xml` and per-package `rpmsign` signatures; the Homebrew cask and AUR package pin a sha256 of the exact release asset. The signing key lives only in the `GPG_PRIVATE_KEY` CI secret and the maintainer's keyring — `*.asc` is gitignored so an exported half can never be staged. Details in [Installers & Packaging §9.1–9.3](09-Installers-and-Packaging.md).
 - The DNS stack has its own hardening (rate limits, non-root containers, no published API port) — see [PowerDNS Stack](10-PowerDNS-Stack.md).
 - Backend security-focused tests exist (`backend/tests/security_main.cpp`, `test_auth_manager.cpp`, `test_connection_guard.cpp`, `test_input_crypto.cpp`).
 
