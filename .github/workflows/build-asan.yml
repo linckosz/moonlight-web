@@ -33,7 +33,7 @@ jobs:
           extra: --base https://download.qt.io # official server (fallback mirrors serve incomplete XML)
 
       - name: Setup MSVC (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ./.github/actions/msvc-env
         with:
           arch: x64
 

@@ -1,0 +1,73 @@
+name: MSVC developer environment
+description: >
+  Put the MSVC toolchain (cl, link, the Windows SDK) on PATH for every later
+  step of the job, the way a "x64 Native Tools Command Prompt" would.
+
+# Replaces ilammy/msvc-dev-cmd@v1, which does the same thing but as a
+# JavaScript action: it is pinned to the Node 20 runtime GitHub is retiring,
+# and upstream has been dormant since March 2024 (v1.13.0), so the runners are
+# already forcing it onto Node 24 with a deprecation warning on every run.
+# A composite action runs shell steps only — there is no runtime to deprecate.
+#
+# Same technique as backend/build_msvc.bat: ask vswhere where Visual Studio is,
+# run its VsDevCmd.bat, and keep whatever that changed in the environment.
+
+inputs:
+  arch:
+    description: Target architecture — x64, arm64 or x86
+    default: x64
+
+runs:
+  using: composite
+  steps:
+    - name: Import the VsDevCmd environment
+      shell: pwsh
+      env:
+        MW_TARGET_ARCH: ${{ inputs.arch }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (-not (Test-Path $vswhere)) { throw "vswhere not found at $vswhere" }
+        $install = & $vswhere -latest -products * -property installationPath
+        if (-not $install) { throw 'No Visual Studio installation on this runner' }
+
+        $devcmd = Join-Path $install 'Common7\Tools\VsDevCmd.bat'
+        if (-not (Test-Path $devcmd)) { throw "VsDevCmd.bat not found under $install" }
+
+        # The ARM64 installers build on windows-11-arm, where the toolchain is
+        # native, not cross — so the host follows the runner rather than being
+        # assumed to be x64.
+        $hostArch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
+        $arch = $env:MW_TARGET_ARCH
+
+        # `set` after the batch file has run is the only honest way to read what
+        # it did: it exports a few dozen variables and rewrites PATH, and the
+        # list changes with the Visual Studio version.
+        $out = cmd /c "call `"$devcmd`" -arch=$arch -host_arch=$hostArch -no_logo && set"
+        if ($LASTEXITCODE -ne 0 -or -not $out) {
+          throw "VsDevCmd.bat -arch=$arch -host_arch=$hostArch failed ($LASTEXITCODE)"
+        }
+
+        # Only what actually changed goes to GITHUB_ENV, so this does not pin a
+        # snapshot of every runner-managed variable for the rest of the job.
+        # cmd's pseudo-variables ("=C:", "=ExitCode") start with '=' and are
+        # skipped by the pattern, which requires a non-empty name.
+        $written = 0
+        $sawPath = $false
+        foreach ($line in $out) {
+          if ($line -match '^([^=]+)=(.*)$') {
+            $name = $Matches[1]
+            $value = $Matches[2]
+            if ([Environment]::GetEnvironmentVariable($name) -ne $value) {
+              Add-Content -Path $env:GITHUB_ENV -Value "$name=$value" -Encoding utf8
+              if ($name -eq 'Path' -or $name -eq 'PATH') { $sawPath = $true }
+              $written++
+            }
+          }
+        }
+        # The failure this guards against is silent: without the toolchain on
+        # PATH, CMake picks whatever compiler it can find and the build fails
+        # much later, somewhere unrelated.
+        if (-not $sawPath) { throw 'VsDevCmd.bat left PATH untouched - the toolchain is missing' }
+        Write-Host "MSVC $arch (host $hostArch) from $install - $written variables"
