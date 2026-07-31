@@ -140,7 +140,7 @@ jobs:
       # Ninja + MSVC env: the runner's Visual Studio major version changes over
       # time, so avoid the version-pinned "Visual Studio NN" generator.
       - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ./.github/actions/msvc-env
         with:
           arch: ${{ matrix.arch }}
 
