@@ -249,8 +249,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # continue-on-error: signing is a quality of the release, not a condition
+      # of it. A SignPath outage, an expired token or a project that is not set
+      # up yet must not cost the whole Windows installer — the swap below is
+      # gated on the outcome, so a failed request simply leaves the unsigned
+      # payload in place and the run is annotated.
       - name: Sign payload (SignPath)
+        id: sign-payload
         if: steps.signing.outputs.enabled == 'true'
+        continue-on-error: true
         uses: SignPath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -268,7 +275,7 @@ jobs:
       # registers it to run at boot, so an unsigned copy inside a signed
       # installer would still get flagged on first launch.
       - name: Swap in the signed payload
-        if: steps.signing.outputs.enabled == 'true'
+        if: steps.sign-payload.outcome == 'success'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -310,7 +317,9 @@ jobs:
           retention-days: 1
 
       - name: Sign installer (SignPath)
+        id: sign-installer
         if: steps.signing.outputs.enabled == 'true'
+        continue-on-error: true
         uses: SignPath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -325,7 +334,7 @@ jobs:
       # Overwrite in place so the two publish steps below need no knowledge of
       # signing and can never ship the unsigned build by accident.
       - name: Swap in the signed installer
-        if: steps.signing.outputs.enabled == 'true'
+        if: steps.sign-installer.outcome == 'success'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -333,6 +342,17 @@ jobs:
           $signed = Join-Path "signed-installer" $name
           if (-not (Test-Path $signed)) { throw "SignPath returned no $signed" }
           Copy-Item $signed $name -Force
+
+      # One annotation for whichever half failed, so an unsigned release is
+      # never a silent one. Both are reported: the payload and the installer are
+      # signed by two different artifact configurations and can fail apart.
+      - name: Report a failed signing request
+        if: steps.signing.outputs.enabled == 'true' && (steps.sign-payload.outcome != 'success' || steps.sign-installer.outcome != 'success')
+        shell: pwsh
+        run: |
+          $p = "${{ steps.sign-payload.outcome }}"
+          $i = "${{ steps.sign-installer.outcome }}"
+          Write-Host "::warning title=Unsigned Windows build::SignPath request failed (payload: $p, installer: $i) - ${{ matrix.arch }} ships UNSIGNED and will trip SmartScreen. Check the project, signing policy and artifact configuration slugs at signpath.io."
 
       # Downloadable on every run (incl. the CI call on main and a
       # workflow_dispatch with no tag).
@@ -683,9 +703,17 @@ jobs:
           echo "cask: moonlightweb ${VERSION} sha256 ${SHA}" >> "$GITHUB_STEP_SUMMARY"
 
       # A PAT (or fine-grained token with Contents: write on linckosz/homebrew-tap)
-      # — GITHUB_TOKEN is scoped to this repo and cannot push to the tap.
+      # — GITHUB_TOKEN is scoped to this repo and cannot push to the tap. A
+      # fine-grained token has to name that repository explicitly, so one minted
+      # before the tap existed cannot reach it.
+      #
+      # continue-on-error: the release is already published by the time this
+      # runs. A rejected token or a missing tap must leave the cask stale, not
+      # turn a good release red.
       - name: Push to the tap
+        id: tap-push
         if: steps.tap.outputs.enabled == 'true'
+        continue-on-error: true
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ needs.setup.outputs.version }}
@@ -705,6 +733,11 @@ jobs:
           fi
           git -C tap commit -m "moonlightweb ${VERSION}"
           git -C tap push
+
+      - name: Report a failed tap push
+        if: steps.tap-push.outcome == 'failure'
+        run: |
+          echo "::warning title=Homebrew cask not updated::Pushing to linckosz/homebrew-tap failed - the cask still points at the previous version. Check that HOMEBREW_TAP_TOKEN grants Contents: write on that repository."
 
   # ── Linux package repositories ───────────────────────────────────────────
   # Builds the signed APT and DNF repositories served at
@@ -905,8 +938,12 @@ jobs:
           done
           echo "aur: moonlightweb-bin ${VERSION} sha256 ${SHA}" >> "$GITHUB_STEP_SUMMARY"
 
+      # continue-on-error for the same reason as the tap push: the release is
+      # already out, a refused key must leave the AUR stale rather than red.
       - name: Push to the AUR
+        id: aur-push
         if: steps.aur.outputs.enabled == 'true'
+        continue-on-error: true
         env:
           AUR_KEY: ${{ secrets.AUR_SSH_KEY }}
           VERSION: ${{ needs.setup.outputs.pkg_version }}
@@ -937,3 +974,8 @@ jobs:
           fi
           git -C aur commit -m "moonlightweb-bin ${VERSION}"
           git -C aur push
+
+      - name: Report a failed AUR push
+        if: steps.aur-push.outcome == 'failure'
+        run: |
+          echo "::warning title=AUR package not updated::Pushing moonlightweb-bin failed - it still points at the previous version. Check that AUR_SSH_KEY matches a key registered on the aur.archlinux.org account."
