@@ -24,7 +24,7 @@
 #   deb/pool/main/m/moonlightweb/*.deb
 #   deb/dists/stable/{Release,Release.gpg,InRelease}
 #   deb/dists/stable/main/binary-amd64/Packages{,.gz}
-#   deb/dists/stable/main/dep11/{Components-*.yml.gz,icons-*.tar.gz}
+#   deb/dists/stable/main/dep11/{Components-amd64.yml.gz,icons-<size>.tar.gz}
 #   rpm/x86_64/*.rpm  +  rpm/repodata/ (repomd.xml.asc)
 #
 # Usage: make-repo.sh <deb> <rpm> <version> <site-dir> <gpg-key-id>
@@ -77,17 +77,30 @@ appstreamcli compose \
     --no-net \
     "$WORK/unpack"
 
-# appstreamcli has moved these output paths between releases; locate them rather
-# than hard-coding. Without them the packages install fine but never appear in a
-# software centre, which is the whole point of this job — so this is fatal.
-rm -f "$DIST/main/dep11"/*
-find "$WORK/as" -name 'Components-*' -exec cp -f {} "$DIST/main/dep11/" \;
-find "$WORK/as" -name 'icons-*.tar.gz' -exec cp -f {} "$DIST/main/dep11/" \;
-if ! ls "$DIST/main/dep11"/Components-* >/dev/null 2>&1; then
-    echo "error: appstreamcli compose produced no DEP-11 index" >&2
-    echo "       check /usr/share/metainfo in the .deb" >&2
+# `appstreamcli compose` writes a catalog named after the origin and, despite
+# the DEP-11 vocabulary around it, always in XML — the CLI exposes no format
+# switch (asc_compose.c: "%s.xml.gz"). apt fetches DEP-11 *YAML* under the
+# canonical dep11/Components-<arch> name, so the catalog is converted: the
+# output format of `convert` is inferred from the input suffix, .xml.gz in
+# giving YAML out.
+CATALOG="$WORK/as/data/$ORIGIN.xml.gz"
+if [ ! -f "$CATALOG" ]; then
+    echo "error: appstreamcli compose produced no catalog at $CATALOG" >&2
+    echo "       check /usr/share/metainfo in the .deb. It did write:" >&2
+    find "$WORK/as" -type f >&2
     exit 1
 fi
+rm -f "$DIST/main/dep11"/*
+appstreamcli convert "$CATALOG" "$DIST/main/dep11/Components-amd64.yml.gz"
+
+# Icons are exported loose, as <size>/<component-id>.png; a DEP-11 client wants
+# one tarball per size beside the catalog. Not fatal when absent: the listing
+# still works, it just shows no icon. 48x48 is normally missing — compose
+# refuses to upscale, and the package ships a single 512x512 source.
+for d in "$WORK/as/icons"/*/; do
+    [ -d "$d" ] || continue
+    tar -C "$d" -czf "$DIST/main/dep11/icons-$(basename "$d").tar.gz" .
+done
 
 # ── APT indexes ─────────────────────────────────────────────────────────────
 (
