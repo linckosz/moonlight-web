@@ -30,9 +30,13 @@ WebCodecs for decoding, WebGPU for rendering, AudioWorklet for Opus audio.
 
 ## Platforms (server)
 
-- Windows x64 / arm64 (guided installer)
-- macOS Apple Silicon (DMG)
-- Linux x64 (.deb, .rpm, portable AppImage)
+- Windows x64 / arm64 (guided .exe installer)
+- macOS Apple Silicon (.pkg installer, or `brew install --cask linckosz/tap/moonlightweb`)
+- Linux x64 (.deb, .rpm, portable AppImage, or the signed apt/dnf repositories
+  and the AUR package `moonlightweb-bin`)
+
+One command installs the right one on macOS and Linux, repository included:
+`curl -fsSL https://moonlightweb.top/install.sh | bash`
 
 The client requires no install: any modern browser (Chrome, Edge, Safari, Firefox).
 
