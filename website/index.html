@@ -405,6 +405,9 @@
   .dl-card .cmd.ok svg{fill:var(--cyan)}
   .dl-card .cmd.ok .ico-copy{display:none}
   .dl-card .cmd.ok .ico-ok{display:block}
+  .dl-card .cmd-note{margin:.55rem 0 0; font-size:.74rem}
+  .dl-card .cmd-note a{color:var(--muted)}
+  .dl-card .cmd-note a:hover{color:var(--cyan)}
   @media(hover:hover){
     .dl-card:hover{border-color:var(--line-glow); transform:translateY(-3px)}
     .dl-card:hover .os{fill:var(--cyan)}
@@ -786,12 +789,20 @@
           <a data-asset="linux-appimage" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-asset="linux-appimage">.AppImage</a>
         </div>
         <!-- A downloaded package never updates itself. The signed apt/dnf
-             repositories do, and put the app in the software centre. One
-             command for all of them: apt/dnf/pacman are detected by install.sh,
-             so a card too narrow for three recipes still shows the real one. -->
+             repositories do, and put the app in the software centre. One recipe
+             covers all of them — install.sh detects apt, dnf, zypper and yum,
+             and falls back to the AppImage on SteamOS and the immutable ones.
+             Arch is the only genuinely different command: no repository there,
+             the AUR is the native path. -->
         <div class="cmds">
-          <p class="cmd-lbl" data-i18n="dl.linux.repo">apt · dnf · pacman</p>
+          <p class="cmd-lbl" data-i18n="dl.linux.repo">Debian · Ubuntu · Fedora · openSUSE</p>
           <button class="cmd" type="button" data-copy="curl -fsSL https://moonlightweb.top/install.sh | bash" data-umami-event="copy-command" data-umami-event-cmd="linux-curl"><span>curl -fsSL https://moonlightweb.top/install.sh | bash</span><svg class="ico-copy" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg><svg class="ico-ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button>
+          <p class="cmd-lbl" data-i18n="dl.linux.aur">Arch · Manjaro (AUR)</p>
+          <button class="cmd" type="button" data-copy="paru -S moonlightweb-bin" data-umami-event="copy-command" data-umami-event-cmd="linux-aur"><span>paru -S moonlightweb-bin</span><svg class="ico-copy" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg><svg class="ico-ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button>
+          <!-- The repository has to be registered before `apt install moonlightweb`
+               works, and that recipe is four lines — too much for a one-line .cmd
+               button, so it stays in the guide. -->
+          <p class="cmd-note"><a href="guides/linux.html#one-line-install" data-i18n="dl.linux.manual" data-umami-event="guide" data-umami-event-loc="dl-linux">Prefer apt/dnf by hand? →</a></p>
         </div>
       </div>
     </div>
@@ -1097,7 +1108,8 @@
     'dl.mac':'Installeur Apple Silicon avec un assistant de configuration guidé.',
     'dl.mac.brew':'Homebrew', 'dl.mac.curl':'Terminal',
     'dl.linux':'.deb pour Debian et Ubuntu, .rpm pour Fedora et openSUSE, AppImage pour Arch, SteamOS et le reste.',
-    'dl.linux.repo':'apt · dnf · pacman',
+    'dl.linux.repo':'Debian · Ubuntu · Fedora · openSUSE', 'dl.linux.aur':'Arch · Manjaro (AUR)',
+    'dl.linux.manual':'Plutôt apt/dnf à la main ? →',
     'dl.foot':'Vous jouez depuis un téléphone, une tablette ou une TV ? Rien à télécharger — le client, c’est votre navigateur. <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">Toutes les versions →</a>',
 
     'cta.kicker':'Gratuit & open source', 'cta.h2':'Appuyez sur play sur votre propre cloud.',
@@ -1190,7 +1202,8 @@
     'dl.mac':'Apple Silicon 安装程序，附带向导式配置。',
     'dl.mac.brew':'Homebrew', 'dl.mac.curl':'终端',
     'dl.linux':'Debian/Ubuntu 用 .deb，Fedora/openSUSE 用 .rpm，Arch、SteamOS 及其他用 AppImage。',
-    'dl.linux.repo':'apt · dnf · pacman',
+    'dl.linux.repo':'Debian · Ubuntu · Fedora · openSUSE', 'dl.linux.aur':'Arch · Manjaro（AUR）',
+    'dl.linux.manual':'想手动用 apt/dnf？→',
     'dl.foot':'用手机、平板或电视畅玩？无需下载——你的浏览器就是客户端。<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">全部版本 →</a>',
 
     'cta.kicker':'免费 & 开源', 'cta.h2':'在你自己的云上按下开始。',
