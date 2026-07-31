@@ -707,12 +707,18 @@ jobs:
           git -C tap push
 
   # ── Linux package repositories ───────────────────────────────────────────
-  # Publishes signed APT and DNF repositories to the gh-pages branch, served at
+  # Builds the signed APT and DNF repositories served at
   # https://linckosz.github.io/moonlight-web/. This is what turns a one-off
   # download into a managed install: `apt install moonlightweb`, updates through
   # the system updater, and — thanks to the DEP-11 index compiled from the
   # metainfo file in the package — an entry in GNOME Software, KDE Discover and
   # Ubuntu's App Center, which index AppStream rather than the package list.
+  #
+  # The tree leaves as a Pages deployment artifact rather than a gh-pages
+  # commit: it is ~100 MB of binaries per release, and a branch holding them
+  # would be fetched by every `git clone` of this repository. Deploying it is
+  # the separate `linux-repo-deploy` job below, because a job may declare only
+  # one environment and this one needs MoonlightWeb for the signing key.
   #
   # Tag-only, because the repository must never advertise a version that has no
   # release behind it. Skipped, loudly, when GPG_PRIVATE_KEY is unset — same
@@ -720,11 +726,18 @@ jobs:
   linux-repo:
     needs: [setup, linux]
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
-    name: Publish APT + DNF repositories
+    name: Build APT + DNF repositories
     # Not the 22.04 pin the `linux` job needs: nothing is compiled here, and a
     # current appstreamcli produces a better DEP-11 index.
     runs-on: ubuntu-latest
     environment: MoonlightWeb
+    outputs:
+      published: ${{ steps.sign.outputs.enabled }}
+    permissions:
+      contents: read
+      # configure-pages switches the repository to Actions-based publishing on
+      # the first run, so nobody has to click through Settings → Pages.
+      pages: write
     steps:
       - uses: actions/checkout@v5
 
@@ -739,6 +752,12 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "::warning title=Package repositories not published::GPG_PRIVATE_KEY is unset - apt/dnf still serve the previous version."
           fi
+
+      - name: Configure GitHub Pages
+        if: steps.sign.outputs.enabled == 'true'
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
 
       - name: Install repository tooling
         if: steps.sign.outputs.enabled == 'true'
@@ -779,62 +798,59 @@ jobs:
           echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
           gpgconf --reload gpg-agent
 
-      # Previous versions live in the published branch, so it is the input to
-      # this build. A missing branch (first ever run) simply starts empty.
-      - name: Fetch the published repository
-        if: steps.sign.outputs.enabled == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if git clone --depth 1 --branch gh-pages \
-               "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" site 2>/dev/null; then
-            rm -rf site/.git
-          else
-            echo "no gh-pages branch yet - starting a fresh repository"
-            mkdir -p site
-          fi
-
       - name: Build the repositories
         if: steps.sign.outputs.enabled == 'true'
         env:
           VERSION: ${{ needs.setup.outputs.pkg_version }}
         run: |
           set -euo pipefail
+          mkdir -p site
           chmod +x backend/packaging/linux/make-repo.sh
           backend/packaging/linux/make-repo.sh \
             "moonlightweb-${VERSION}-linux-x64.deb" \
             "moonlightweb-${VERSION}-linux-x64.rpm" \
             "${VERSION}" site "${{ steps.key.outputs.fpr }}"
-
-      # Force-pushed as a single orphan commit: the pool holds ~100 MB of
-      # binaries per release, and keeping their history would grow this
-      # repository without bound. The branch is a published artifact, not a
-      # source of truth — everything in it is rebuilt from the tag.
-      - name: Publish to gh-pages
-        if: steps.sign.outputs.enabled == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.setup.outputs.pkg_version }}
-        run: |
-          set -euo pipefail
-          cd site
-          git init -q -b gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -qm "repository: moonlightweb ${VERSION}"
-          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
           {
             echo "### Linux package repositories"
             echo ""
-            echo "Published \`moonlightweb ${VERSION}\` to <https://linckosz.github.io/moonlight-web/>."
+            echo "Built \`moonlightweb ${VERSION}\` for <https://linckosz.github.io/moonlight-web/>."
             echo ""
             echo '```sh'
             echo "sudo apt install moonlightweb   # after adding the repository"
             echo "sudo dnf install moonlightweb"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the Pages artifact
+        if: steps.sign.outputs.enabled == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  # ── Pages deployment ─────────────────────────────────────────────────────
+  # Split out only because a job may declare a single environment, and
+  # deploy-pages requires `github-pages` while the build above requires
+  # `MoonlightWeb` for the signing key. Skipped along with the build when
+  # GPG_PRIVATE_KEY is unset, since there would be no artifact to deploy.
+  linux-repo-deploy:
+    needs: linux-repo
+    if: ${{ needs.linux-repo.outputs.published == 'true' }}
+    name: Deploy the package repositories
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Pages allows one deployment at a time; queue rather than cancel, so a
+    # release never lands half-published.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
 
   # ── AUR ──────────────────────────────────────────────────────────────────
   # Publishes moonlightweb-bin, the native install path for Arch, Manjaro and
