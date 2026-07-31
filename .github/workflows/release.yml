@@ -625,3 +625,81 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: moonlightweb-${{ needs.setup.outputs.version }}-macos-arm64.pkg
+
+  # ── Homebrew tap ─────────────────────────────────────────────────────────
+  # Publishes the cask that makes `brew install --cask linckosz/tap/moonlightweb`
+  # work. This is the only macOS install path with no Gatekeeper warning at all:
+  # the .pkg is not notarized (Apple has no free tier and no OSS programme), so
+  # a double-clicked download is refused as "unidentified developer" — but
+  # Homebrew hands the .pkg to installer(8) as root, and installer(8) never
+  # consults Gatekeeper.
+  #
+  # Runs only on a v* tag: the cask points at a release asset URL, which does
+  # not exist for the untagged 0.2.1-b7c builds. Skipped, loudly, when
+  # HOMEBREW_TAP_TOKEN is unset — same posture as the SignPath steps above.
+  homebrew:
+    needs: [setup, macos]
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    name: Publish Homebrew cask
+    runs-on: ubuntu-latest
+    environment: MoonlightWeb
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check tap credentials
+        id: tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Homebrew cask not published::HOMEBREW_TAP_TOKEN is unset - the tap still points at the previous version."
+          fi
+
+      # The cask pins a sha256, so it has to be computed from the exact file the
+      # macos job just published — not re-downloaded from the release, which may
+      # not be visible yet when this runs.
+      - name: Download the released .pkg
+        if: steps.tap.outputs.enabled == 'true'
+        uses: actions/download-artifact@v6
+        with:
+          name: moonlightweb-macos-arm64-v${{ needs.setup.outputs.version }}
+
+      - name: Render the cask
+        if: steps.tap.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          set -euo pipefail
+          PKG="moonlightweb-${VERSION}-macos-arm64.pkg"
+          [ -f "$PKG" ] || { echo "::error::$PKG not found in the artifact"; exit 1; }
+          SHA="$(sha256sum "$PKG" | cut -d' ' -f1)"
+          sed -e "s/@MW_VERSION@/${VERSION}/g" -e "s/@MW_SHA256@/${SHA}/g" \
+            backend/packaging/homebrew/moonlightweb.rb > moonlightweb.rb
+          echo "cask: moonlightweb ${VERSION} sha256 ${SHA}" >> "$GITHUB_STEP_SUMMARY"
+
+      # A PAT (or fine-grained token with Contents: write on linckosz/homebrew-tap)
+      # — GITHUB_TOKEN is scoped to this repo and cannot push to the tap.
+      - name: Push to the tap
+        if: steps.tap.outputs.enabled == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_TOKEN}@github.com/linckosz/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp moonlightweb.rb tap/Casks/moonlightweb.rb
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add Casks/moonlightweb.rb
+          # Re-running a tag build must not fail on an empty commit.
+          if git -C tap diff --cached --quiet; then
+            echo "cask already at ${VERSION}, nothing to push"
+            exit 0
+          fi
+          git -C tap commit -m "moonlightweb ${VERSION}"
+          git -C tap push

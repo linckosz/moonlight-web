@@ -115,7 +115,24 @@
 
   <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-macos" data-i18n="dl.btn">⬇ Download for macOS</a></p>
 
+  <h2 id="one-line-install" data-i18n="cli.h">One command instead — and no warning</h2>
+  <p data-i18n-html="cli.p">MoonlightWeb is free and open source, which also means it isn't signed with a paid Apple
+     Developer ID. macOS therefore greets a <em>downloaded</em> <code>.pkg</code> with
+     <strong>“cannot be opened because it is from an unidentified developer”</strong>. That check only applies to files
+     a browser downloaded, so either of these installs the very same package with nothing to click through:</p>
+  <pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre>
+  <pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre>
+  <p data-i18n="cli.note">Both ask for your administrator password, install into /Applications and open the setup
+     wizard — same installer, same result, one step less.</p>
+
   <h2 data-i18n="tr.h">Troubleshooting</h2>
+  <h3 data-i18n="tr0.h">macOS refuses to open the installer: “unidentified developer”</h3>
+  <p data-i18n-html="tr0.p">Expected, and harmless: clearing that dialog requires a paid Apple Developer ID. Use one of
+     the two commands above and it never appears. If you'd rather keep the file you already downloaded, on
+     <strong>macOS 15 Sequoia and newer</strong> double-click it once, let it be refused, then open
+     <strong>System Settings → Privacy &amp; Security</strong>, scroll to the bottom and click <strong>Open Anyway</strong>
+     — the old Control-click → Open shortcut no longer works. The terminal equivalent is
+     <code>xattr -dr com.apple.quarantine ~/Downloads/moonlightweb-*.pkg</code>.</p>
   <h3 data-i18n="tr1.h">The host doesn't appear in the browser</h3>
   <p data-i18n="tr1.p">Make sure the client device is on the same network as the Mac, and that macOS allowed
      incoming connections for MoonlightWeb when prompted. You can also add a host manually by IP.</p>
@@ -167,7 +184,12 @@ window.MW_DICTS = {
     'step5.h':'Appuyez sur play',
     'step5.p':'Choisissez un jeu ou le bureau complet. iPhone, iPad, un autre ordinateur portable, une TV — tout ce qui a un navigateur devient un client.',
     'dl.btn':'⬇ Télécharger pour macOS',
+    'cli.h':'Une seule commande — et plus d’avertissement',
+    'cli.p':'MoonlightWeb est gratuit et open source, ce qui veut aussi dire qu’il n’est pas signé avec un Apple Developer ID payant. macOS accueille donc un <code>.pkg</code> <em>téléchargé</em> par « <strong>impossible à ouvrir car il provient d’un développeur non identifié</strong> ». Ce contrôle ne s’applique qu’aux fichiers récupérés par un navigateur : chacune de ces deux commandes installe exactement le même paquet, sans rien à contourner :',
+    'cli.note':'Les deux demandent votre mot de passe administrateur, installent dans /Applications et ouvrent l’assistant de configuration — même installateur, même résultat, une étape en moins.',
     'tr.h':'Dépannage',
+    'tr0.h':'macOS refuse d’ouvrir l’installateur : « développeur non identifié »',
+    'tr0.p':'C’est normal, et sans danger : faire disparaître ce message exige un Apple Developer ID payant. Utilisez l’une des deux commandes ci-dessus et il n’apparaît jamais. Si vous préférez garder le fichier déjà téléchargé : sur <strong>macOS 15 Sequoia et plus récent</strong>, double-cliquez-le une fois, laissez-le être refusé, puis ouvrez <strong>Réglages Système → Confidentialité et sécurité</strong>, descendez tout en bas et cliquez sur <strong>Ouvrir quand même</strong> — l’ancien raccourci Ctrl-clic → Ouvrir ne fonctionne plus. L’équivalent en terminal : <code>xattr -dr com.apple.quarantine ~/Downloads/moonlightweb-*.pkg</code>.',
     'tr1.h':'L’hôte n’apparaît pas dans le navigateur',
     'tr1.p':'Assurez-vous que l’appareil client est sur le même réseau que le Mac, et que macOS a bien autorisé les connexions entrantes pour MoonlightWeb à l’invite. Vous pouvez aussi ajouter un hôte manuellement par son IP.',
     'tr2.h':'Jouer sur iPhone ou iPad',
@@ -202,7 +224,12 @@ window.MW_DICTS = {
     'step5.h':'按下开始',
     'step5.p':'选择一款游戏或完整桌面。iPhone、iPad、另一台笔记本、一台电视——任何带浏览器的东西都能成为客户端。',
     'dl.btn':'⬇ 下载 macOS 版',
+    'cli.h':'一条命令搞定——而且没有警告',
+    'cli.p':'MoonlightWeb 免费且开源，这也意味着它没有用付费的 Apple Developer ID 签名。因此 macOS 会对<em>下载来的</em> <code>.pkg</code> 提示“<strong>无法打开，因为它来自身份不明的开发者</strong>”。这项检查只针对浏览器下载的文件，所以下面任意一条命令都能安装完全相同的软件包，无需任何额外点击：',
+    'cli.note':'两者都会要求输入管理员密码，安装到 /Applications 并打开设置向导——同一个安装程序，同样的结果，少一个步骤。',
     'tr.h':'疑难解答',
+    'tr0.h':'macOS 拒绝打开安装程序：“身份不明的开发者”',
+    'tr0.p':'这是预期行为，也无害：要消除该提示需要付费的 Apple Developer ID。使用上面两条命令之一就不会出现。如果你想用已经下载好的文件：在 <strong>macOS 15 Sequoia 及更新版本</strong>上先双击一次、让它被拒绝，然后打开<strong>系统设置 → 隐私与安全性</strong>，滚动到底部并点击<strong>仍要打开</strong>——旧的 Control-点按 → 打开的快捷方式已失效。终端等效命令：<code>xattr -dr com.apple.quarantine ~/Downloads/moonlightweb-*.pkg</code>。',
     'tr1.h':'主机没有出现在浏览器里',
     'tr1.p':'请确保客户端设备与这台 Mac 处于同一网络，并且在提示时 macOS 允许了 MoonlightWeb 的传入连接。你也可以通过 IP 手动添加主机。',
     'tr2.h':'在 iPhone 或 iPad 上游玩',
