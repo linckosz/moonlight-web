@@ -680,7 +680,6 @@ export class HostListView {
                 h.reachable,
                 h.pairState,
                 h.name,
-                h.activeAddress,
                 h.port,
                 h.gpuModel,
                 h.displayModes,
@@ -695,10 +694,9 @@ export class HostListView {
             host.reachable,
             host.pairState,
             host.name,
-            host.activeAddress,
             host.port,
             host.gpuModel,
-            host.macAddress,
+            host.wakeSupported,
             JSON.stringify(host.displayModes),
         ].join('|');
     }

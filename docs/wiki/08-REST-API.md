@@ -57,7 +57,7 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 
 | Method & path | Access | Description |
 |---|---|---|
-| `GET /api/hosts` | 🔑 | Known hosts with state, pair status, apps. |
+| `GET /api/hosts` | 🔑 | Known hosts with state, pair status, apps. **No addresses**: `activeAddress`, `localAddress`, `remoteAddress`, `manualAddress` and `macAddress` are deliberately not serialized (`NvComputer::toJson`) — the browser only ever talks to this server, routes are keyed by `uuid`, and Wake-on-LAN is sent host-side, so the LAN topology has no reason to reach the page. Waking is advertised as the boolean `wakeSupported`. Persistence is unaffected (it uses `serialize(QSettings&)`). |
 | `POST /api/hosts/scan` | 🔑 | Trigger an ephemeral mDNS scan. |
 | `POST /api/hosts/manual` | 🔑 | Add a host by IP/hostname. |
 | `DELETE /api/hosts/:id` | 🔑 | Forget a host. |

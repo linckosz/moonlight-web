@@ -241,6 +241,12 @@ bool NvComputer::isLocalMachine() const
 
 // --- JSON serialization -----------------------------------------------------
 
+// Deliberately address-free: this is the API representation, and the browser
+// never dials a host directly — every route is keyed by uuid and the streaming
+// path goes through this server. Exposing the LAN topology (addresses, MAC) to
+// any page that can reach /api/hosts buys the frontend nothing, so it is not
+// sent. Persistence uses serialize(QSettings&), not this, so the addresses are
+// still remembered across restarts.
 QJsonObject NvComputer::toJson() const
 {
     QJsonObject obj;
@@ -249,7 +255,6 @@ QJsonObject NvComputer::toJson() const
     obj["state"] = computerStateToString(state);
     obj["reachable"] = reachable;
     obj["pairState"] = pairStateToString(pairState);
-    obj["activeAddress"] = activeAddress.address();
     obj["port"] = static_cast<int>(activeAddress.port());
     obj["gpuModel"] = gpuModel;
     obj["gfeVersion"] = gfeVersion;
@@ -261,8 +266,11 @@ QJsonObject NvComputer::toJson() const
     // Frontend uses this to warn when a user streams the very PC they're on.
     obj["isLocalHost"] = isLocalMachine();
 
-    // MAC as hex string
-    obj["macAddress"] = QString::fromUtf8(macAddress.toHex(':'));
+    // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
+    // itself never has to reach the browser — the UI only needs to know whether
+    // the button can be offered at all.
+    obj["wakeSupported"] =
+        !macAddress.isEmpty() && macAddress != QByteArray(macAddress.size(), '\0');
 
     // Display modes
     QJsonArray modesArr;
@@ -274,11 +282,6 @@ QJsonObject NvComputer::toJson() const
         modesArr.append(modeObj);
     }
     obj["displayModes"] = modesArr;
-
-    // Persisted addresses
-    obj["localAddress"] = localAddress.toString();
-    obj["remoteAddress"] = remoteAddress.toString();
-    obj["manualAddress"] = manualAddress.toString();
 
     return obj;
 }
