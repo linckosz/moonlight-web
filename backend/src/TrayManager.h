@@ -33,11 +33,20 @@ class TrayManager : public QObject
     Q_OBJECT
 
 public:
+    /// @p server may be null in client mode, where the URL provider is the only
+    /// source of URLs.
     explicit TrayManager(HttpServer* server, QObject* parent = nullptr);
     ~TrayManager();
 
     /// Create and show the tray icon. Returns false if the system tray is unavailable.
     bool init();
+
+    /// Tray-only mode: this process runs no server of its own, it decorates a
+    /// MoonlightWeb instance that lives where nobody can see it (the Windows
+    /// service in session 0, a systemd unit). Drops the menu entries that would
+    /// act on a server we do not own — Restart would restart this bare tray, and
+    /// Quit cannot stop a service — and says so in the menu. Call before init().
+    void setClientMode(bool on) { m_ClientMode = on; }
 
     /// Resolve the application icon from the shipped frontend assets (PNG
     /// preferred: QtGui decodes it without the imageformats .ico plugin).
@@ -70,7 +79,8 @@ private:
     /// no listener is up.
     QUrl localUrl(const QString& path) const;
 
-    HttpServer* m_Server;
+    HttpServer* m_Server; // null in client mode
+    bool m_ClientMode = false;
     std::function<QUrl(const QString& path)> m_UrlProvider;
     QSystemTrayIcon* m_TrayIcon;
     QMenu* m_Menu;

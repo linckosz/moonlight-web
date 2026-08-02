@@ -23,7 +23,7 @@ The backend is a single windowless executable (`MoonlightWeb` / `MoonlightWeb.ex
 | `src/streaming/` | see [§3.3](#33-streaming-layer) | The streaming bridge |
 | `src/network/` | `InternetAccessManager`, `PdnsClient`, `StunClient`, `UPNPClient`, `AcmeClient`, `GeoIpService`, `UpdateChecker`, `SelfUpdater` | Internet access orchestration (see [§3.4](#34-internet-access)); update check + unattended self-update (see [Installers §9.4](09-Installers-and-Packaging.md#94-shared-runtime-behaviors)) |
 | `src/common/` | `Logger`, `CrashHandler`, `Types.h`, `MacActivity` | File logging (Qt messages captured via `qInstallMessageHandler`), Windows minidumps, shared HTTP types, macOS activity assertions |
-| `TrayManager`, `Autostart` | | Tray icon + login-item/autostart registration (exit code 0 = voluntary quit, supervisors don't restart) |
+| `TrayManager`, `Autostart` | | Tray icon (server mode, or the reduced *client mode* that decorates a service running elsewhere) + login-item/autostart registration (exit code 0 = voluntary quit, supervisors don't restart) |
 
 ## 3.2 HTTP server
 
@@ -77,7 +77,7 @@ Congestion handling (mobile networks) is **frontend-driven** (`app.js`), session
 2. `loadEnvFile()` (`.env` next to exe, else project root; supports multi-line PEM values) then `applyEmbeddedEnvDefaults()` (CI-baked `MW_*` fallbacks).
 3. CLI parse (`--port`, `--log`, `--ws-port`, `--autostart`, `--stream-worker` — the last one re-enters as a stream child process and skips everything below).
 4. **Force Qt TLS backend to OpenSSL** (Windows Schannel can't import ACME PEM keys → would serve the self-signed cert on the public domain).
-5. `AppSettings` + `seedDocumentedDefaults()`; **single-instance `QLockFile`** — a second launch asks the running instance to focus the admin page (`/api/local/focus`) and exits 0.
+5. `AppSettings` + `seedDocumentedDefaults()`; **single-instance `QLockFile`** — a second launch asks the running instance to focus the admin page (`/api/local/focus`) and exits 0, *or* stays alive as a **tray-only client** when the instance holding the lock has no desktop to draw on (Windows service in session 0, systemd unit) — see [Installers §9.4](09-Installers-and-Packaging.md#94-shared-runtime-behaviors).
 6. `HttpServer` + domain/cert config; `ComputerManager.init()`; `IdentityManager` (RSA identity); eager OpenSSL init (avoids a libdatachannel DTLS init race).
 7. `AuthManager` (+ first-boot certificate token), route registration (health/update/hostname/auth/hosts/start/quit/system).
 8. Relay lifecycle wiring: take-over logic, revoked-session kill-switch, deferred start (see [Architecture §2.2](02-Architecture.md)).
@@ -100,6 +100,7 @@ All under `QStandardPaths::AppDataLocation` (e.g. `%APPDATA%\MoonlightWeb\Moonli
 | Internet-access audit log (JSONL) | One entry per DNS A-record registration, with consent record |
 | ACME artifacts (`letsencrypt/…`) | Issued cert/key files referenced from `settings.json` |
 | `moonlightweb.lock` | Single-instance lock |
+| `moonlightweb-tray.lock` | Tray-client lock — one tray per desktop session, whoever owns the server |
 
 ## 3.7 Headless operator CLI
 

@@ -28,7 +28,7 @@ An optional logon task (`--autostart`) starts the server at login without openin
 
 **Uninstall**: stops the server (logon task `/End` + `/Delete`, `taskkill`), drops the `MoonlightWeb Update` task and its staging dir, the firewall rule, the shortcuts and `provisioning*.json`. Everything the user configured lives outside `{app}` and is **kept by default**; a modal shown at `usUninstall` offers an **unchecked** "also delete my configuration" box which, when ticked, wipes `%AppData%\MoonlightWeb\MoonlightWeb` (settings, sessions, ACME certificate, logs, crash dumps) and `HKCU\Software\MoonlightWeb` (paired hosts + Moonlight client identity). A silent uninstall never asks and never deletes.
 
-**Service option**: `backend/packaging/windows/install-service.bat` / `uninstall-service.bat` wrap NSSM for a session-0 service install (sets `MW_SERVICE`).
+**Service option**: `backend/packaging/windows/install-service.bat` / `uninstall-service.bat` wrap NSSM for a session-0 service install (sets `MW_SERVICE`), so the server is up before anyone logs in. The service and the logon task then both launch the same exe: the service wins the single-instance lock, and the logon-task launch becomes a **tray-only client** (§9.4) instead of exiting — otherwise the machine would have no tray icon at all after a reboot.
 
 ## 9.2 macOS — interactive `.pkg` (`backend/installer/macos/`)
 
@@ -111,7 +111,8 @@ The dispatcher behind `curl -fsSL https://moonlightweb.top/install.sh | bash`. O
 
 | Behavior | Mechanism |
 |---|---|
-| Single instance | `QLockFile`; a second launch focuses/opens the admin page then exits 0. |
+| Single instance | `QLockFile`; a second launch focuses/opens the admin page then exits 0 — unless it becomes the tray client below. |
+| Tray for an invisible server | A service draws its tray where nobody can see it (Windows session 0, systemd), so `runTrayClient()` keeps the losing launch alive with **nothing but the tray**, pointed at the running server's loopback URL. Guarded three ways: a desktop session (a second service launch still exits), its own `moonlightweb-tray.lock` (one client, no stacked icons), and proof that the lock owner has no desktop here — on Windows the lock file's PID resolves to another session, or cannot be queried at all (a service, or another user); elsewhere the running instance's own `headless` flag. The menu drops **Restart** and renames Quit to **Hide Tray Icon**: this process owns no server. |
 | Auto-restart on crash | systemd `Restart=on-failure` / launchd KeepAlive / NSSM; **exit 0 = voluntary quit, never restarted**. |
 | Self-healing shortcuts | The server rewrites the Desktop entry on startup and whenever the entry URL changes (port parity rebind, Internet Access ready) — the installer can't know the runtime port/domain. |
 | Auto-update discovery | `UpdateChecker` → GitHub Releases (`/api/update/check`), a discreet banner on the hosts page. It never offers a download: the installer must run on the **host**, not on the phone reading the banner. |
@@ -133,7 +134,7 @@ The dispatcher behind `curl -fsSL https://moonlightweb.top/install.sh | bash`. O
 | Flatpak / Snap cannot install Sunshine or open ports | `SunshineInstaller` shells out to `apt-get`/`dnf`/`zypper`/`pacman` and the postinst opens firewalld/ufw — neither is reachable from a sandbox, so neither format is published. |
 | A `gh-pages` branch of package binaries would be pulled by every clone | The repository tree is uploaded as a **Pages deployment artifact**; nothing is committed (§9.3). |
 | Ubuntu's App Center hides packages with no AppStream metadata | A `metainfo.xml` inside the package + a DEP-11 index in the repository (§9.3) — a `.desktop` entry alone is invisible. |
-| Windows service session 0 has no desktop | `MW_SERVICE` suppresses tray/shortcut/browser behaviors. |
+| Windows service session 0 has no desktop | `MW_SERVICE` suppresses tray/shortcut/browser behaviors; the desktop session gets its tray from a separate tray-only client (§9.4). |
 | A remote browser cannot answer a UAC / polkit / `osascript` prompt on the host desktop | Windows: elevated trigger-less scheduled task started with `schtasks /Run` (§9.1). Linux AppImage: in-place file replacement, no root at all. Service/root installs: already elevated. Everything else reports `requires_host_confirmation` so the UI says "confirmation required on the host PC" instead of hanging on an invisible dialog. |
 | An elevated task running an exe from a writable directory is a privilege-escalation hole | Staging lives under per-user `%LocalAppData%` (expanded by Task Scheduler in the task's own user context), never `%ProgramData%`. |
 | Inno Setup can't know the final admin URL | Server publishes `admin_url` via `Provisioning::setInfo`; installer reads it post-install with a provisional fallback. |

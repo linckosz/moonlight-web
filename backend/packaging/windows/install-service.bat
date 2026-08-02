@@ -9,8 +9,11 @@ REM
 REM  Restart policy: NSSM relaunches the process on a crash, but a clean exit
 REM  (code 0 = user quit via tray / Stop) is treated as a real stop and is NOT
 REM  relaunched.
-REM  (Note: a Windows service runs in session 0 with no desktop, so the tray
-REM   icon will not appear while running this way.)
+REM  (Note: a Windows service runs in session 0, whose desktop nobody is logged
+REM   into, so the service itself draws no tray icon. The desktop session gets
+REM   one anyway: the logon task's launch loses the single-instance lock, sees
+REM   that the owner is in another session, and stays alive as a tray-only
+REM   client pointed at this service. Keep the logon task installed.)
 REM ===========================================================================
 setlocal
 set SVC=MoonlightWeb
