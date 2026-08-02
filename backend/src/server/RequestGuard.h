@@ -113,4 +113,19 @@ struct Decision
 
 Decision evaluate(const Request& req, const Context& ctx);
 
+/// How to answer GET /api/admin/token.
+enum class AdminTokenReply
+{
+    Grant, ///< 200 with the key — the caller may use the admin routes
+    Empty, ///< 200 with no key — a valid session that simply is not admin
+    Deny,  ///< 403, and report an auth failure — no session at all
+};
+
+/// The frontend asks for the admin key on every page load, before knowing
+/// whether this browser is entitled to one. Only a caller with no session at
+/// all is fishing for it: answering Deny to a merely non-admin session would
+/// feed ConnectionGuard and eventually ban a legitimate remote user from their
+/// own server.
+AdminTokenReply adminTokenReply(const Decision& decision, const Context& ctx, bool authenticated);
+
 } // namespace RequestGuard

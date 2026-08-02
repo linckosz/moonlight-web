@@ -376,4 +376,30 @@ void run_request_guard_tests()
         c.peerLocal = true;
         CHECK(evaluate(r, c).outcome == Outcome::Allow);
     }
+
+    SECTION("RequestGuard — admin token reply");
+
+    {
+        Decision hostMachine;
+        hostMachine.hostMachine = true;
+        Decision remote; // nothing granted
+
+        Context plain;
+        Context admin;
+        admin.adminSession = true;
+
+        // The host's own page, and a remote session that unlocked admin with the
+        // password, both get the key.
+        CHECK(adminTokenReply(hostMachine, plain, true) == AdminTokenReply::Grant);
+        CHECK(adminTokenReply(remote, admin, true) == AdminTokenReply::Grant);
+
+        // A valid remote session without admin rights gets an empty answer. The
+        // regression this guards: replying Deny here fed ConnectionGuard on every
+        // page load, and after AUTHFAIL_MAX loads the user was banned from their
+        // own server for 10 minutes — with a perfectly valid session.
+        CHECK(adminTokenReply(remote, plain, true) == AdminTokenReply::Empty);
+
+        // No session at all is the only case that counts as fishing.
+        CHECK(adminTokenReply(remote, plain, false) == AdminTokenReply::Deny);
+    }
 }
