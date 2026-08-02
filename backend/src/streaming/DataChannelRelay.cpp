@@ -795,7 +795,7 @@ void DataChannelRelay::createDataChannels()
         });
     }
 
-    qInfo() << "[DataChannelRelay] DataChannels created (video=0, audio=1, input=2)";
+    qInfo() << "[DataChannelRelay] Channels created (video=DC#0, audio=RTP, input=DC#2)";
 }
 
 // --- Video/Audio forwarding (from MoonlightShim signals, on main thread) ---

@@ -12,11 +12,13 @@ The same Sunshine-side stream (RTSP/RTP/ENet handled by `moonlight-common-c`) ca
 
 | Mode | Backend relay | Browser path | Video sink | Codecs | Notes |
 |---|---|---|---|---|---|
-| `webrtc-dc-udp` | `DataChannelRelay` | SCTP DataChannels over UDP ICE | canvas (WebCodecs) | H.264/HEVC/AV1 | Default. Lowest latency with full codec choice |
+| `webrtc-dc-udp` | `DataChannelRelay` | video+input SCTP DataChannels **+ RTP audio track**, UDP ICE | canvas (WebCodecs) | H.264/HEVC/AV1 | Default. Lowest latency with full codec choice |
 | `webrtc-dc-tcp` | `DataChannelRelay` | same, ICE-TCP candidates | canvas | H.264/HEVC/AV1 | UDP-hostile networks |
-| `webrtc-media-udp` | `MediaTrackRelay` | native RTP tracks | `<video>` (browser decoder) | **H.264 only** | Browser-managed jitter/FEC/PLC; true-HDR-capable sink |
+| `webrtc-media-udp` | `MediaTrackRelay` | RTP video+audio tracks, input DataChannel | `<video>` (browser decoder) | **H.264 only** | Browser-managed jitter/FEC/PLC; true-HDR-capable sink |
 | `webrtc-media-tcp` | `MediaTrackRelay` | same, ICE-TCP | `<video>` | H.264 only | |
-| `wss` | `StreamRelay` | one WebSocket (TLS) | canvas | H.264/HEVC/AV1 | Always works (it rides the HTTPS port); worst latency profile |
+| `wss` | `StreamRelay` | one WebSocket (TLS), video+audio+input multiplexed | canvas | H.264/HEVC/AV1 | Always works (it rides the HTTPS port); worst latency profile |
+
+The two WebRTC families differ only in the **video** path: `-dc` fragments access units over SCTP for WebCodecs, `-media` sends a real RTP video track. Audio is an RTP Opus track in both; input is always the `input` DataChannel. `-udp` vs `-tcp` changes nothing but the ICE candidate types (`enableIceTcp`).
 
 ### The fallback chain
 
@@ -65,12 +67,14 @@ Key mechanics (all present in the code — regressions here are the most expensi
 
 ```
 Sunshine ─RTP─► moonlight-common-c (Opus packets, NOT PCM) ─► relay
-   DC/WSS: ordered audio channel → WebCodecs AudioDecoder → AudioWorklet (jitter buffer + WSOLA)
-   media : native RTP Opus track → browser (FEC/PLC) → <audio>
+   webrtc-dc / webrtc-media: native RTP Opus track → browser (jitter buffer + FEC/PLC) → <audio>
+   wss                     : Opus over the WebSocket → WebCodecs AudioDecoder → AudioWorklet (jitter buffer + WSOLA)
 ```
 
-- 5.1/stereo Opus; SDP is rewritten with `stereo=1` (browsers answer mono by default). Mobile clients may request 10 ms low-bandwidth frames (`low_audio`).
-- The AudioWorklet jitter buffer adapts between ~60 and ~160 ms; WSOLA time-stretch (default on) absorbs clock drift pitch-free.
+- **Both WebRTC transports carry audio as a real media track, never a DataChannel** — `m=audio` sendonly, Opus PT 111, `OpusRtpPacketizer` + `RtcpNackResponder(64)`, played from `pc.ontrack` on an `<audio>` element. `DataChannelRelay` and `MediaTrackRelay` are identical here. The ordered audio DataChannel this replaced head-of-line-blocked on packet loss (periodic ~0.5 s dropouts); the browser's NetEq conceals the loss instead. SCTP id 1 stays reserved-but-unused from that era.
+- RTP timestamps advance by the negotiated Opus frame size (`audioSamplesPerFrame()`), never by arrival time — an arrival-time clock makes NetEq time-stretch and the audio turns robotic.
+- 5.1/stereo Opus; SDP carries `stereo=1;sprop-stereo=1` (without it libwebrtc instantiates a **mono** decoder and downmixes (L+R)/2 — ~6 dB quieter than moonlight-qt, stereo image lost). Mobile clients may request 10 ms low-bandwidth frames (`low_audio`).
+- **`wss` only**: `AudioPipeline` decodes Opus with the WebCodecs `AudioDecoder` (WASM `opus-decoder` worker fallback) and feeds `audio-processor.js`. That AudioWorklet jitter buffer adapts between ~60 and ~160 ms; WSOLA time-stretch (default on) absorbs clock drift pitch-free.
 - `mute_host_audio` maps to GameStream `localAudioPlayMode` (host speakers muted by default while streaming).
 - **Never apply gain in JS** — the historical "60% volume" issue was Sunshine's virtual sink volume on the host (host loopback is post-volume and volume keys act on it mid-stream); `HostAudioSink` normalizes it.
 

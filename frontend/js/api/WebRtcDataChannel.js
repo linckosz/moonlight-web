@@ -753,7 +753,7 @@ export class WebRtcDataChannel {
         this.dataChannels.input = this.pc.createDataChannel('input', inputInit);
         this._setupDataChannel('input', this.dataChannels.input);
 
-        console.log('[WebRTC] DataChannels created (video=0, audio=1, input=2)');
+        console.log('[WebRTC] Channels created (video=DC#0, audio=RTP, input=DC#2)');
     }
 
     _setupDataChannel(label, dc) {
@@ -1339,13 +1339,15 @@ export class WebRtcDataChannel {
     /**
      * Handle incoming WebSocket messages in WSS mode.
      *
-     * StreamRelay protocol (2-byte header + payload):
-     *   [channel:1][flags:1][payload...]
-     *   channel=0x01 video, channel=0x02 audio
-     *   flags bit0: 1=keyframe (video only)
+     * StreamRelay protocol, two shapes sharing the channel prefix byte
+     * (channel=0x01 video, channel=0x02 audio):
+     *   fragmented (_wssFragmented): [channel:1][frag_header:17][payload...]
+     *   legacy:                      [channel:1][flags:1][payload...]
+     *                                flags bit0: 1=keyframe (video only)
      *
-     * The video payload is raw H.264 Annex B data; audio is raw PCM16.
-     * Text messages from the backend are ignored (they carry no useful data).
+     * The video payload is raw H.264/HEVC/AV1 Annex B; audio is encoded Opus
+     * (moonlight-common-c never hands us PCM), decoded by AudioPipeline.
+     * Text messages carry stats/pong/rumble/clipboard JSON.
      */
     _onWssMessage(evt) {
         if (this._stopping) return;
