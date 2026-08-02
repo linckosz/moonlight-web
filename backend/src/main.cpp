@@ -411,13 +411,13 @@ static LoopbackReply loopbackRequest(const QString& base, const QString& path,
     return out;
 }
 
-// Loopback base URL of the running server, or empty when none answers.
+// HTTPS port the running server answers on, or 0 when none does.
 //
 // The persisted port is the authority, but it is read from *this* user's
 // settings.json — run as a different user than the service (a plain `sudo`-less
 // `moonlightweb --status` against a root-owned systemd unit) that file is a
 // different one, or absent. So fall back to the default 443 before giving up.
-static QString findRunningInstance(quint16 persistedPort)
+static quint16 findRunningHttpsPort(quint16 persistedPort)
 {
     QList<quint16> candidates{persistedPort};
     if (!candidates.contains(443)) candidates.append(443);
@@ -425,10 +425,18 @@ static QString findRunningInstance(quint16 persistedPort)
     for (quint16 p : candidates) {
         const QString base = p == 443 ? QStringLiteral("https://127.0.0.1")
                                       : QStringLiteral("https://127.0.0.1:%1").arg(p);
-        if (loopbackRequest(base, QStringLiteral("/api/health"), QByteArray(), 3000).ok)
-            return base;
+        if (loopbackRequest(base, QStringLiteral("/api/health"), QByteArray(), 3000).ok) return p;
     }
-    return QString();
+    return 0;
+}
+
+// Loopback base URL of the running server, or empty when none answers.
+static QString findRunningInstance(quint16 persistedPort)
+{
+    const quint16 p = findRunningHttpsPort(persistedPort);
+    if (p == 0) return QString();
+    return p == 443 ? QStringLiteral("https://127.0.0.1")
+                    : QStringLiteral("https://127.0.0.1:%1").arg(p);
 }
 
 // The agreement the operator must accept before a subdomain is registered in
@@ -663,6 +671,148 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
     return 0;
 }
 
+// ── Tray-only client ────────────────────────────────────────────────────────
+//
+// A MoonlightWeb that already runs where nobody can see it still deserves a
+// tray icon on the desktop: the Windows NSSM service lives in session 0, whose
+// desktop no user is ever logged into, and a systemd unit has no session at
+// all. Both draw their tray into the void — which is why a machine running the
+// service showed no icon after a reboot even though the logon task fired.
+//
+// So a launch that loses the single-instance lock does not always exit. When
+// the instance that owns the lock is headless and *this* one has a desktop, it
+// stays alive with nothing but the tray, pointed at the loopback URL of the
+// server it decorates.
+//
+// Guards, in order: only in a desktop session (a second service launch must
+// still exit), only one client at a time (its own lock file — otherwise every
+// desktop launch would stack another icon), and only when the running instance
+// draws no tray of its own (else a plain desktop install would show two).
+
+#ifdef Q_OS_WIN
+// True when the process holding the single-instance lock cannot possibly have
+// drawn a tray icon on THIS desktop: it lives in another Windows session (a
+// service in session 0, whose desktop nobody is ever logged into), or it runs
+// under an account this process may not even query — which amounts to the same
+// thing.
+//
+// Asking Windows beats asking the server: it also works against an instance too
+// old to report `headless` in /api/setup/status (≤ 0.2.3).
+//
+// One deliberate false positive: an elevated instance in our own session is
+// unqueryable too, so a copy started with "Run as administrator" would get a
+// second icon from us. Degenerate and purely cosmetic — not worth enumerating
+// the SCM to rule out.
+static bool lockOwnerHasNoDesktopHere(const QLockFile& lock)
+{
+    qint64 pid = 0;
+    QString host, appName;
+    if (!lock.getLockInfo(&pid, &host, &appName) || pid <= 0) return false;
+
+    DWORD ourSession = 0;
+    DWORD theirSession = 0;
+    if (!ProcessIdToSessionId(GetCurrentProcessId(), &ourSession)) return false;
+    if (!ProcessIdToSessionId(static_cast<DWORD>(pid), &theirSession))
+        return true; // ERROR_ACCESS_DENIED: a service, or another user's process
+    return theirSession != ourSession;
+}
+#endif
+
+// Wait without a running event loop of our own.
+static void waitMs(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
+// Loopback URL for the tray entries. "localhost", not 127.0.0.1: the loopback
+// certificate carries localhost as a SAN, so the browser only has to accept a
+// self-signed certificate, not a name mismatch on top of it. No host key is
+// needed — loopback carries local privilege by itself.
+static QUrl trayClientUrl(quint16 httpsPort, const QString& path)
+{
+    return QUrl(httpsPort == 443
+                    ? QStringLiteral("https://localhost") + path
+                    : QStringLiteral("https://localhost:%1%2").arg(httpsPort).arg(path));
+}
+
+static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool ownerHasNoDesktopHere)
+{
+    QLockFile trayLock(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                       "/moonlightweb-tray.lock");
+    trayLock.setStaleLockTime(0); // stale detection by PID liveness only
+    if (!trayLock.tryLock(100)) {
+        Logger::info("A tray client is already running — nothing to do");
+        return 0;
+    }
+
+    // At logon the service and this process start within the same second, and
+    // the service's TLS listener is a few seconds behind. Give it time before
+    // concluding that nothing is there. A refused connection returns at once,
+    // so this costs nothing in the common case.
+    quint16 port = 0;
+    for (int attempt = 0; attempt < 10 && port == 0; ++attempt) {
+        if (attempt > 0) waitMs(2000);
+        port = findRunningHttpsPort(persistedHttpsPort);
+    }
+    if (port == 0) {
+        Logger::info("No tray client: the instance holding the lock never answered on loopback");
+        return 0;
+    }
+
+    // Second opinion for the platforms with no session check of their own (a
+    // systemd --user unit started outside a graphical session): the running
+    // instance says itself whether it has a desktop to draw on.
+    if (!ownerHasNoDesktopHere) {
+        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
+                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
+        const LoopbackReply setup =
+            loopbackRequest(base, QStringLiteral("/api/setup/status"), QByteArray(), 5000);
+        if (!setup.ok || !setup.json.value("headless").toBool(false)) {
+            Logger::info("No tray client: the running instance has a desktop and its own tray");
+            return 0;
+        }
+    }
+
+    Logger::info(QStringLiteral("Tray-only client for the headless instance on port %1").arg(port));
+
+    TrayManager tray(nullptr);
+    tray.setClientMode(true);
+    tray.setUrlProvider([&port](const QString& path) { return trayClientUrl(port, path); });
+    if (!tray.init()) {
+        Logger::warning("Tray client: no system tray available — exiting");
+        return 0;
+    }
+
+    // Follow the server if it moves: a port-parity rebind or a service restart
+    // on a fallback port would otherwise leave the tray pointing at nothing.
+    // And do not outlive it: an icon for a server that is gone (service stopped
+    // or uninstalled) is worse than no icon — it would also sit next to the
+    // tray of whatever instance takes the lock next. A service restart is a
+    // matter of seconds, so only a sustained silence counts.
+    int silentPolls = 0;
+    QTimer portPoll;
+    portPoll.setInterval(60000);
+    QObject::connect(&portPoll, &QTimer::timeout, &app, [&port, &tray, &silentPolls]() {
+        const quint16 p = findRunningHttpsPort(port);
+        if (p == 0) {
+            if (++silentPolls < 5) return;
+            Logger::info("Tray client: the server has been gone for 5 minutes — quitting");
+            QApplication::quit();
+            return;
+        }
+        silentPolls = 0;
+        if (p == port) return;
+        Logger::info(QStringLiteral("Tray client: server moved to port %1").arg(p));
+        port = p;
+        tray.refreshTooltip();
+    });
+    portPoll.start();
+
+    return app.exec();
+}
+
 int main(int argc, char* argv[])
 {
     // Before QApplication: on a headless Linux host this swaps the xcb platform
@@ -851,7 +1001,8 @@ int main(int argc, char* argv[])
     instanceLock.setStaleLockTime(0); // stale detection by PID liveness only
     if (!instanceLock.tryLock(100)) {
         Logger::info("Another instance is already running");
-        if (hasGuiSession() && !parser.isSet(autostartOption)) {
+        if (!hasGuiSession()) return 0;
+        if (!parser.isSet(autostartOption)) {
             quint16 p = appSettings.httpsPort(443); // running instance persisted its port
             const QString base = p == 443 ? QStringLiteral("https://localhost")
                                           : QStringLiteral("https://localhost:%1").arg(p);
@@ -863,7 +1014,14 @@ int main(int argc, char* argv[])
                 openInBrowser(base + QStringLiteral("/admin"));
             }
         }
-        return 0;
+        // The server we just found may be a service with no desktop to draw on
+        // (Windows session 0, systemd). Then this process stays as its tray.
+#ifdef Q_OS_WIN
+        const bool ownerHidden = lockOwnerHasNoDesktopHere(instanceLock);
+#else
+        const bool ownerHidden = false;
+#endif
+        return runTrayClient(app, appSettings.httpsPort(443), ownerHidden);
     }
 
     HttpServer server(httpPort);
@@ -2423,9 +2581,13 @@ int main(int argc, char* argv[])
 
     // Phase N: System tray icon. Its entries open the public domain (with the
     // host key) once Internet Access is live, https://localhost otherwise.
+    // Skipped under a service supervisor: Windows accepts a Shell_NotifyIcon
+    // from session 0 and reports success, so the icon is "created" on a desktop
+    // no one is logged into — a phantom that only ever showed up in the log.
+    // The desktop session gets its tray from runTrayClient() instead.
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
-    trayManager.init();
+    if (hasGuiSession()) trayManager.init();
 
     // Keep every host-side entry point current when the entry URL changes:
     // parity rebind moves the HTTPS port, 'ready' switches links to the domain.

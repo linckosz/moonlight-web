@@ -86,17 +86,27 @@ bool TrayManager::init()
 
     refreshTooltip();
 
-    // Build context menu
+    // Build context menu. In client mode the server is a service this process
+    // neither owns nor can stop: the header says so, Restart is gone, and Quit
+    // is named for what it actually does — remove the icon, leave the server up.
+    if (m_ClientMode) {
+        QAction* header = m_Menu->addAction(tr("Server runs as a system service"));
+        header->setEnabled(false);
+        m_Menu->addSeparator();
+    }
     QAction* openAction = m_Menu->addAction(tr("&Open"));
     QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
     m_Menu->addSeparator();
-    QAction* restartAction = m_Menu->addAction(tr("&Restart"));
-    m_Menu->addSeparator();
-    QAction* quitAction = m_Menu->addAction(tr("&Quit"));
+    QAction* restartAction = nullptr;
+    if (!m_ClientMode) {
+        restartAction = m_Menu->addAction(tr("&Restart"));
+        m_Menu->addSeparator();
+    }
+    QAction* quitAction = m_Menu->addAction(m_ClientMode ? tr("&Hide Tray Icon") : tr("&Quit"));
 
     connect(openAction, &QAction::triggered, this, &TrayManager::onOpen);
     connect(controlPanelAction, &QAction::triggered, this, &TrayManager::onOpenSettings);
-    connect(restartAction, &QAction::triggered, this, &TrayManager::onRestart);
+    if (restartAction) connect(restartAction, &QAction::triggered, this, &TrayManager::onRestart);
     connect(quitAction, &QAction::triggered, this, &TrayManager::onQuit);
     connect(m_TrayIcon, &QSystemTrayIcon::activated, this, &TrayManager::onActivated);
 
@@ -109,8 +119,10 @@ bool TrayManager::init()
     m_DockMenu = new QMenu();
     m_DockMenu->addAction(openAction);
     m_DockMenu->addAction(controlPanelAction);
-    m_DockMenu->addSeparator();
-    m_DockMenu->addAction(restartAction);
+    if (restartAction) {
+        m_DockMenu->addSeparator();
+        m_DockMenu->addAction(restartAction);
+    }
     m_DockMenu->setAsDockMenu();
 
     // Clicking the Dock icon re-activates the app; with no native window the
@@ -124,7 +136,12 @@ bool TrayManager::init()
             });
 #endif
 
-    qInfo() << "[TrayManager] System tray icon created, port" << m_Server->activeHttpsPort();
+    // Query stripped: the entry URL carries the single-use host key (?mwk=...),
+    // which has no business in a log file.
+    QUrl logged = localUrl(QString());
+    logged.setQuery(QString());
+    qInfo() << "[TrayManager] System tray icon created" << (m_ClientMode ? "(client mode)" : "")
+            << "for" << logged.toString();
     return true;
 }
 
@@ -153,6 +170,8 @@ QUrl TrayManager::localUrl(const QString& path) const
         QUrl url = m_UrlProvider(path);
         if (!url.isEmpty()) return url;
     }
+
+    if (!m_Server) return QUrl(); // client mode: the provider above is all there is
 
     quint16 httpsPort = m_Server->activeHttpsPort();
     if (httpsPort != 0)
