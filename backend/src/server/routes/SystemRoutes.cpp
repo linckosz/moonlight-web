@@ -226,29 +226,20 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         sunObj["installed"] = sun.installed;
         sunObj["can_auto_install"] = SunshineInstaller::canAutoInstall();
         sunObj["running"] = sun.installed && SunshineInstaller::isRunning();
-        // Paired = some known host is paired AND lives on this machine (loopback
-        // or one of our own interface addresses — mDNS may have registered the
-        // local Sunshine under its LAN IP rather than 127.0.0.1).
+        // Paired = some known host is paired AND lives on this machine. The
+        // address matching this used to do by hand is exactly what
+        // NvComputer::isLocalMachine() does (loopback, or one of our own
+        // interface addresses — mDNS may register the local Sunshine under its
+        // LAN IP rather than 127.0.0.1), and it is surfaced as isLocalHost.
         bool paired = false;
-        const QList<QHostAddress> selfAddrs = QNetworkInterface::allAddresses();
         const QJsonArray hosts = computerManager.getHostsJson();
         for (const QJsonValue& v : hosts) {
             const QJsonObject h = v.toObject();
             if (h.value("pairState").toString() != QLatin1String("paired")) continue;
-            for (const char* key : {"activeAddress", "localAddress", "manualAddress"}) {
-                QString addr = h.value(QLatin1String(key)).toString();
-                // Strip a ":port" suffix (single colon only — leave IPv6 alone).
-                const int colon = addr.lastIndexOf(':');
-                if (colon > 0 && addr.indexOf(':') == colon) addr.truncate(colon);
-                if (addr.isEmpty()) continue;
-                const QHostAddress ip(addr);
-                if (addr == QLatin1String("localhost") || ip.isLoopback() ||
-                    selfAddrs.contains(ip)) {
-                    paired = true;
-                    break;
-                }
+            if (h.value("isLocalHost").toBool()) {
+                paired = true;
+                break;
             }
-            if (paired) break;
         }
         sunObj["paired"] = paired;
         obj["sunshine"] = sunObj;

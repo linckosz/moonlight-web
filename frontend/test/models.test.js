@@ -46,18 +46,29 @@ describe('Host model', () => {
         expect(offline.isOnline).toBe(false);
     });
 
-    it('offers Wake-on-LAN only for offline hosts with a real MAC', () => {
-        expect(new Host({ state: 'offline', macAddress: 'AA:BB:CC:DD:EE:FF' }).canWake).toBe(true);
-        expect(new Host({ state: 'offline', macAddress: '00:00:00:00:00:00' }).canWake).toBe(false);
+    // The MAC never reaches the browser — the backend sends wakeSupported, which
+    // already accounts for an unknown or all-zero address.
+    it('offers Wake-on-LAN only for offline hosts the server can wake', () => {
+        expect(new Host({ state: 'offline', wakeSupported: true }).canWake).toBe(true);
+        expect(new Host({ state: 'offline', wakeSupported: false }).canWake).toBe(false);
         expect(new Host({ state: 'offline' }).canWake).toBe(false);
-        expect(new Host({ state: 'online', macAddress: 'AA:BB:CC:DD:EE:FF' }).canWake).toBe(false);
+        expect(new Host({ state: 'online', wakeSupported: true }).canWake).toBe(false);
+        // Service down but machine reachable: nothing to wake.
+        expect(new Host({ state: 'offline', reachable: true, wakeSupported: true }).canWake).toBe(
+            false,
+        );
+    });
+
+    it('never exposes host addresses on the model', () => {
+        const h = new Host({ name: 'Desk', activeAddress: '10.0.0.5', macAddress: 'AA:BB' });
+        expect(h.activeAddress).toBeUndefined();
+        expect(h.macAddress).toBeUndefined();
+        expect(h.localAddress).toBeUndefined();
     });
 
     it('picks a display name from name, never from the address', () => {
         expect(new Host({ name: 'Desk' }).displayName).toBe('Desk');
-        expect(new Host({ name: 'UNKNOWN', activeAddress: '10.0.0.5' }).displayName).toBe(
-            'Unknown Host',
-        );
+        expect(new Host({ name: 'UNKNOWN' }).displayName).toBe('Unknown Host');
         expect(new Host({ name: '' }).displayName).toBe('Unknown Host');
     });
 

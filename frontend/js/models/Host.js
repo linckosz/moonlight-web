@@ -30,18 +30,17 @@ export class Host {
         // (host powered on, MoonlightWeb/Sunshine not started). Backend-derived.
         this.reachable = data.reachable === true;
         this.pairState = data.pairState || 'unknown';
-        this.activeAddress = data.activeAddress || '';
         this.port = data.port || 47989;
         this.gpuModel = data.gpuModel || '';
         this.gfeVersion = data.gfeVersion || '';
         this.appVersion = data.appVersion || '';
         this.currentGameId = data.currentGameId || 0;
         this.displayModes = data.displayModes || [];
-        this.localAddress = data.localAddress || '';
-        this.remoteAddress = data.remoteAddress || '';
-        this.manualAddress = data.manualAddress || '';
         this.serverCodecModeSupport = data.serverCodecModeSupport || 1;
-        this.macAddress = data.macAddress || '';
+        // The backend never sends host addresses or the MAC: the browser talks
+        // only to this server, and Wake-on-LAN is sent server-side. All we get
+        // is whether waking is possible at all.
+        this.wakeSupported = data.wakeSupported === true;
         // Backend flag: this host is the very machine MoonlightWeb runs on.
         this.isLocalHost = data.isLocalHost === true;
     }
@@ -66,15 +65,10 @@ export class Host {
         return !this.isOnline && this.reachable;
     }
 
-    // Wake-on-LAN is offered for offline hosts with a known (non-zero) MAC —
+    // Wake-on-LAN is offered for offline hosts whose MAC the server knows —
     // but only when the machine is actually down (not merely service-down).
     get canWake() {
-        return (
-            !this.isOnline &&
-            !this.reachable &&
-            !!this.macAddress &&
-            this.macAddress !== '00:00:00:00:00:00'
-        );
+        return !this.isOnline && !this.reachable && this.wakeSupported;
     }
 
     get displayName() {
