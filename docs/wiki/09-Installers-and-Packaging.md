@@ -55,10 +55,26 @@ One **linuxdeploy AppDir** (binary + bundled Qt runtime with `$ORIGIN` rpaths + 
 
 - **AppImage** for Arch-based and immutable distros (SteamOS, Bazzite).
 - **`.deb` + `.rpm`** via **fpm**: the AppDir tree is relocated under `/opt/moonlightweb`, with a `qt.conf`, a `/usr/bin/moonlightweb` symlink, a hicolor icon and a `.desktop` menu entry (absolute `Exec=`, `/opt` isn't on PATH). **No hard dependencies** — Qt/OpenSSL are bundled; naming distro libs would make the package distro-specific.
-- **postinst**: refreshes desktop/icon caches; **opens firewall ports best-effort** (443/tcp, 80/tcp, 47999/udp on firewalld/ufw — Linux firewalls are port-based, and this runs before the app picks a port); **launches the app inside the active graphical session** via `systemd-run --user` (postinst runs as root with no display).
-- **prerm**: stops the running instance; removes the firewall rules on uninstall (kept on upgrade).
+- **postinst**: refreshes desktop/icon caches; **opens firewall ports best-effort** (443/tcp, 80/tcp, 47999/udp on firewalld/ufw — Linux firewalls are port-based, and this runs before the app picks a port); **launches the app inside the active graphical session** via `systemd-run --user` (postinst runs as root with no display), or falls back to the **headless branch** below.
+- **prerm**: stops the running instance (`systemctl stop` when the service is installed — `pkill` would count as a failure for `Restart=on-failure` and have systemd relaunch the old binary mid-copy); on uninstall, also disables and removes the unit and the firewall rules (both kept on upgrade).
 
-Autostart uses an XDG autostart entry; a systemd unit (`backend/packaging/systemd/moonlightweb.service`) covers headless/service installs. The Desktop shortcut is a `Type=Application` entry executing the binary (a `Type=Link` renders a generic icon and GNOME refuses to launch it) marked `gio trusted`.
+Autostart uses an XDG autostart entry. The Desktop shortcut is a `Type=Application` entry executing the binary (a `Type=Link` renders a generic icon and GNOME refuses to launch it) marked `gio trusted`.
+
+### Headless (server) installs — §9.3.1
+
+A machine with no desktop gets a **system service** instead of a menu entry, decided by postinst without asking: if no logged-in user has a display *and* `systemctl get-default` is not `graphical.target` (or `MW_HEADLESS=1` is set), it runs `systemctl enable --now moonlightweb`. `get-default` is the discriminator rather than `$DISPLAY` alone because the overwhelmingly common case is a desktop being installed over SSH; that machine must keep the per-session launch.
+
+The unit itself ships to **`/usr/lib/systemd/system/`** on every install, desktop included — a unit that merely exists there does nothing until enabled, and putting it in the vendor directory is what makes upgrades refresh it like any other packaged file while leaving `/etc/systemd/system/` free for an admin override. Enablement, not the file, is the headless marker: `systemctl is-enabled` is what postinst and prerm both branch on. On upgrade postinst therefore `restart`s (never `try-restart` — prerm has just stopped the unit, so it is inactive and try-restart would leave it down) and returns early; on removal prerm disables it before the package manager deletes the file.
+
+Three things make headless actually work:
+
+| Piece | Why |
+|---|---|
+| **offscreen QPA plugin** | The server is windowless but is a `QApplication` (QtWidgets, for the tray), and Qt *aborts at construction* when the default xcb plugin finds no display. `release.yml` bundles `libqoffscreen.so` next to `libqxcb.so` via `EXTRA_PLATFORM_PLUGINS` (with a `test -f` guard — a silent miss would only surface as a crash on a user's server), and `selectHeadlessPlatform()` in `main.cpp` selects it before `QApplication` exists whenever neither `DISPLAY` nor `WAYLAND_DISPLAY` is set. An explicit `QT_QPA_PLATFORM` always wins. |
+| **No Sunshine** | `SunshineInstaller::canAutoInstall()` returns false without a desktop session, and `install()` refuses with an explanation. The install runs under `pkexec`, which needs an interactive polkit agent — with no session it would block until timeout rather than fail — and Sunshine is pointless there anyway: nothing to capture, no GPU to encode on. `/api/setup/status` reports `headless: true` so the wizard drops the step. |
+| **Operator CLI** | The admin page is localhost-only and a headless box has no browser, so `moonlightweb --status`, `--new-pin` and `--enable-internet` drive the *running* instance over its own loopback API. See [Backend §3.7](03-Backend.md#37-headless-operator-cli). |
+
+`mw::hasDesktopSession()` / `mw::hasDisplayServer()` (`backend/src/common/DesktopSession.h`) are the single source of truth for all of this: the first adds "not a service launch" (`MW_SERVICE`) on top of the second, which answers "can Qt draw?" and must stay callable before `QApplication` exists.
 
 ### Software-centre visibility (AppStream)
 

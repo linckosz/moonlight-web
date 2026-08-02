@@ -30,7 +30,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPasswordDigestor>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QTimer>
 #include <QUuid>
 
@@ -152,6 +154,9 @@ void AuthManager::loadSessions()
     int skipped = 0;
     m_sessions.clear();
     const qint64 now = QDateTime::currentSecsSinceEpoch();
+    // With no password configured there is no door to have come through, so a
+    // persisted admin flag is stale (or hand-edited) — drop it on the way in.
+    const bool keepAdminFlags = hasAdminPassword();
 
     for (const auto& val : arr) {
         QJsonObject obj = val.toObject();
@@ -165,6 +170,7 @@ void AuthManager::loadSessions()
         info.lastSeen = obj.contains("last_seen") ? static_cast<qint64>(obj["last_seen"].toDouble())
                                                   : info.createdAt;
         info.isHost = obj["is_host"].toBool(false);
+        info.isAdmin = keepAdminFlags && obj["is_admin"].toBool(false);
 
         // Drop sessions that are already expired by inactivity.
         const qint64 last = info.lastSeen > 0 ? info.lastSeen : info.createdAt;
@@ -296,6 +302,30 @@ QString AuthManager::isPrivateIP(const QString& ip)
     return QStringLiteral("Remote");
 }
 
+bool AuthManager::isLanAddress(const QString& ip)
+{
+    const QHostAddress addr(cleanClientAddress(ip));
+    if (addr.isNull()) return false;
+    if (addr.isLoopback()) return true;
+    // 169.254/16 and fe80::/10 — an address that no router forwards.
+    if (addr.isLinkLocal()) return true;
+
+    if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
+        const quint32 v4 = addr.toIPv4Address();
+        if ((v4 & 0xFF000000) == 0x0A000000) return true; // 10.0.0.0/8
+        if ((v4 & 0xFFF00000) == 0xAC100000) return true; // 172.16.0.0/12
+        if ((v4 & 0xFFFF0000) == 0xC0A80000) return true; // 192.168.0.0/16
+        return false;
+    }
+    if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
+        // Unique local addresses (fc00::/7): the IPv6 answer to RFC 1918, and
+        // what a v6-only LAN hands out.
+        const Q_IPV6ADDR raw = addr.toIPv6Address();
+        if ((raw[0] & 0xFE) == 0xFC) return true;
+    }
+    return false;
+}
+
 QString AuthManager::rateLimitKey(const QString& ip)
 {
     QString clean = cleanClientAddress(ip);
@@ -334,52 +364,162 @@ void AuthManager::cleanupExpired()
     }
 }
 
-AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QString& pin)
+int AuthManager::bucketLockout(const QString& bucket) const
 {
-    cleanupExpired();
+    auto it = m_rateLimits.find(bucket);
+    if (it == m_rateLimits.end()) return 0;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    if (it->lockoutUntilEpoch > now) return static_cast<int>(it->lockoutUntilEpoch - now);
+    return 0;
+}
 
-    const QString key = rateLimitKey(ip);
-    auto& entry = m_rateLimits[key]; // Creates entry if not exists
+int AuthManager::bucketRemainingAttempts(const QString& bucket) const
+{
+    auto it = m_rateLimits.find(bucket);
+    if (it == m_rateLimits.end()) return 3;
 
-    // Check if currently locked out
-    qint64 now = QDateTime::currentSecsSinceEpoch();
-    if (entry.lockoutUntilEpoch > now) {
-        int remaining = static_cast<int>(entry.lockoutUntilEpoch - now);
-        Logger::info(QString("[Auth] Rate limited for %1: %2s remaining").arg(ip).arg(remaining));
-        return {RateLimited, 0, remaining};
-    }
+    const RateLimitEntry& e = it.value();
+    if (e.failures < 3)
+        return 3 - e.failures;
+    else if (e.failures < 5)
+        return 5 - e.failures;
+    else if (e.failures < 10)
+        return 10 - e.failures;
+    return 0;
+}
 
-    // Compare PIN (constant-time). Reject when no valid PIN has been generated,
-    // otherwise a client submitting the "--------" sentinel would authenticate.
-    if (hasValidPin() && constantTimeEquals(pin, m_currentPin)) {
+AuthManager::ValidateResult AuthManager::recordAttempt(const QString& bucket, bool matched,
+                                                       const QString& ip, const QString& what)
+{
+    auto& entry = m_rateLimits[bucket]; // Creates entry if not exists
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+
+    if (matched) {
         // Success: reset all counters
         entry.failures = 0;
         entry.lockoutUntilEpoch = 0;
-        Logger::info(QString("[Auth] PIN validated successfully for %1").arg(ip));
+        Logger::info(QString("[Auth] %1 validated successfully for %2").arg(what, ip));
         return {Valid, 3, 0};
     }
 
-    // Failed attempt
     entry.failures++;
     entry.lastFailure = QDateTime::currentDateTime();
 
     // Apply lockout based on failure count
     if (entry.failures >= 10) {
         entry.lockoutUntilEpoch = now + (LOCKOUT_LONG_MS / 1000);
-        Logger::warning(QString("[Auth] %1 failed PIN 10+ times -- lockout 10min").arg(ip));
+        Logger::warning(QString("[Auth] %1 failed %2 10+ times -- lockout 10min").arg(ip, what));
     } else if (entry.failures >= 5) {
         entry.lockoutUntilEpoch = now + (LOCKOUT_MEDIUM_MS / 1000);
-        Logger::warning(QString("[Auth] %1 failed PIN 5+ times -- lockout 2min").arg(ip));
+        Logger::warning(QString("[Auth] %1 failed %2 5+ times -- lockout 2min").arg(ip, what));
     } else if (entry.failures >= 3) {
         entry.lockoutUntilEpoch = now + (LOCKOUT_SHORT_MS / 1000);
-        Logger::warning(QString("[Auth] %1 failed PIN 3+ times -- lockout 30s").arg(ip));
+        Logger::warning(QString("[Auth] %1 failed %2 3+ times -- lockout 30s").arg(ip, what));
     }
 
-    Logger::info(QString("[Auth] Invalid PIN from %1 (failure #%2)").arg(ip).arg(entry.failures));
+    Logger::info(
+        QString("[Auth] Invalid %1 from %2 (failure #%3)").arg(what, ip).arg(entry.failures));
 
-    int remaining = remainingAttempts(ip);
-    int lockoutSecs = lockoutSeconds(ip);
-    return {InvalidPin, remaining, lockoutSecs};
+    return {InvalidPin, bucketRemainingAttempts(bucket), bucketLockout(bucket)};
+}
+
+AuthManager::ValidateResult AuthManager::validatePin(const QString& ip, const QString& pin)
+{
+    cleanupExpired();
+
+    const QString bucket = rateLimitKey(ip);
+    if (const int locked = bucketLockout(bucket); locked > 0) {
+        Logger::info(QString("[Auth] Rate limited for %1: %2s remaining").arg(ip).arg(locked));
+        return {RateLimited, 0, locked};
+    }
+
+    // Compare PIN (constant-time). Reject when no valid PIN has been generated,
+    // otherwise a client submitting the "--------" sentinel would authenticate.
+    const bool matched = hasValidPin() && constantTimeEquals(pin, m_currentPin);
+    return recordAttempt(bucket, matched, ip, QStringLiteral("PIN"));
+}
+
+// ── Remote admin password ─────────────────────────────────────────────────────
+
+QString AuthManager::encodePassword(const QString& password)
+{
+    QByteArray salt(PBKDF2_SALT_BYTES, '\0');
+    for (int i = 0; i < salt.size(); ++i)
+        salt[i] = static_cast<char>(QRandomGenerator::system()->bounded(256));
+
+    const QByteArray key = QPasswordDigestor::deriveKeyPbkdf2(
+        QCryptographicHash::Sha256, password.toUtf8(), salt, PBKDF2_ITERATIONS, PBKDF2_KEY_BYTES);
+
+    return QStringLiteral("pbkdf2-sha256$%1$%2$%3")
+        .arg(PBKDF2_ITERATIONS)
+        .arg(QString::fromLatin1(salt.toBase64()), QString::fromLatin1(key.toBase64()));
+}
+
+bool AuthManager::passwordMatches(const QString& digest, const QString& password)
+{
+    // "pbkdf2-sha256$<iterations>$<b64 salt>$<b64 key>"
+    const QStringList parts = digest.split(QLatin1Char('$'));
+    if (parts.size() != 4 || parts[0] != QLatin1String("pbkdf2-sha256")) return false;
+
+    bool ok = false;
+    const int iterations = parts[1].toInt(&ok);
+    if (!ok || iterations <= 0) return false;
+
+    const QByteArray salt = QByteArray::fromBase64(parts[2].toLatin1());
+    const QByteArray expected = QByteArray::fromBase64(parts[3].toLatin1());
+    if (salt.isEmpty() || expected.isEmpty()) return false;
+
+    const QByteArray actual = QPasswordDigestor::deriveKeyPbkdf2(
+        QCryptographicHash::Sha256, password.toUtf8(), salt, iterations, expected.size());
+
+    // Compare the Base64 forms so the shared constant-time helper applies.
+    return constantTimeEquals(QString::fromLatin1(actual.toBase64()), parts[3]);
+}
+
+bool AuthManager::hasAdminPassword() const
+{
+    return m_settings && !m_settings->adminPasswordDigest().isEmpty();
+}
+
+bool AuthManager::setAdminPassword(const QString& password)
+{
+    if (!m_settings) return false;
+
+    if (password.isEmpty()) {
+        m_settings->setAdminPasswordDigest(QString());
+        // The door is gone; nobody keeps the access it used to grant.
+        demoteAdminSessions();
+        Logger::info("[Auth] Remote admin password removed");
+        return true;
+    }
+    if (password.size() < MIN_ADMIN_PASSWORD_LEN) return false;
+
+    m_settings->setAdminPasswordDigest(encodePassword(password));
+    // A password change is also a revocation: machines that unlocked with the
+    // old one must present the new one.
+    demoteAdminSessions();
+    Logger::info("[Auth] Remote admin password set");
+    return true;
+}
+
+AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip,
+                                                               const QString& password)
+{
+    cleanupExpired();
+
+    // Own counter, so failed unlock attempts never lock a user out of PIN login.
+    const QString bucket = QStringLiteral("admin|") + rateLimitKey(ip);
+    if (const int locked = bucketLockout(bucket); locked > 0) {
+        Logger::info(
+            QString("[Auth] Admin unlock rate limited for %1: %2s remaining").arg(ip).arg(locked));
+        return {RateLimited, 0, locked};
+    }
+
+    const QString digest = m_settings ? m_settings->adminPasswordDigest() : QString();
+    // No password set → nothing can match, but the attempt is still counted:
+    // probing for one is exactly what an attacker would do first.
+    const bool matched = !digest.isEmpty() && passwordMatches(digest, password);
+    return recordAttempt(bucket, matched, ip, QStringLiteral("admin password"));
 }
 
 QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost)
@@ -434,6 +574,44 @@ bool AuthManager::isHostSession(const QString& token) const
     if (!validateSession(token)) return false;
     auto it = m_sessions.find(hashToken(token));
     return it != m_sessions.end() && it->isHost;
+}
+
+bool AuthManager::isAdminSession(const QString& token) const
+{
+    if (!validateSession(token)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    return it != m_sessions.end() && it->isAdmin;
+}
+
+bool AuthManager::promoteSessionToAdmin(const QString& token)
+{
+    if (!validateSession(token)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    if (it == m_sessions.end()) return false;
+    if (it->isAdmin) return true;
+
+    it->isAdmin = true;
+    saveSessions();
+    emit sessionsChanged();
+    Logger::info(
+        QString("[Auth] Admin access unlocked for %1 (machine='%2')").arg(it->ip, it->machineName));
+    return true;
+}
+
+int AuthManager::demoteAdminSessions()
+{
+    int cleared = 0;
+    for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
+        if (!it->isAdmin) continue;
+        it->isAdmin = false;
+        cleared++;
+    }
+    if (cleared > 0) {
+        saveSessions();
+        emit sessionsChanged();
+        Logger::info(QString("[Auth] Admin access revoked for %1 session(s)").arg(cleared));
+    }
+    return cleared;
 }
 
 void AuthManager::touchSession(const QString& token)
@@ -597,28 +775,12 @@ QList<SessionInfo> AuthManager::sessions() const
 
 int AuthManager::remainingAttempts(const QString& ip) const
 {
-    auto it = m_rateLimits.find(rateLimitKey(ip));
-    if (it == m_rateLimits.end()) return 3;
-
-    const RateLimitEntry& e = it.value();
-    if (e.failures < 3)
-        return 3 - e.failures;
-    else if (e.failures < 5)
-        return 5 - e.failures;
-    else if (e.failures < 10)
-        return 10 - e.failures;
-    return 0;
+    return bucketRemainingAttempts(rateLimitKey(ip));
 }
 
 int AuthManager::lockoutSeconds(const QString& ip) const
 {
-    auto it = m_rateLimits.find(rateLimitKey(ip));
-    if (it == m_rateLimits.end()) return 0;
-
-    const RateLimitEntry& e = it.value();
-    qint64 now = QDateTime::currentSecsSinceEpoch();
-    if (e.lockoutUntilEpoch > now) return static_cast<int>(e.lockoutUntilEpoch - now);
-    return 0;
+    return bucketLockout(rateLimitKey(ip));
 }
 
 bool AuthManager::isRateLimited(const QString& ip) const

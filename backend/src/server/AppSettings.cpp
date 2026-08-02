@@ -584,6 +584,24 @@ bool AppSettings::certAuthEnabled() const
     return obj.value("cert_auth_enabled").toBool(false);
 }
 
+// ── Remote admin password ─────────────────────────────────────────────────────
+
+QString AppSettings::adminPasswordDigest() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("admin_password").toString();
+}
+
+void AppSettings::setAdminPasswordDigest(const QString& digest)
+{
+    QJsonObject obj = readAll();
+    if (digest.isEmpty())
+        obj.remove("admin_password");
+    else
+        obj["admin_password"] = digest;
+    writeAll(obj);
+}
+
 // ── DNS subdomain ownership token ───────────────────────────────────────────────
 
 QString AppSettings::ownerToken() const

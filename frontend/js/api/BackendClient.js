@@ -32,6 +32,53 @@
  */
 
 export class BackendClient {
+    /** Cached promise for the per-run admin key (see _adminKey). */
+    static _adminKeyPromise = null;
+
+    /**
+     * The host's admin key, or null when this browser is not entitled to one
+     * (a remote session — its admin calls are refused server-side anyway).
+     *
+     * The backend requires it on every admin write on top of the request coming
+     * from the host machine, because the source IP alone is something a
+     * malicious page can borrow: it makes the victim's own browser issue the
+     * request. A custom header cannot be sent cross-origin without a preflight
+     * the backend never answers, so only same-origin code can present it.
+     *
+     * The key is regenerated whenever the server restarts, hence the refresh.
+     */
+    static async _adminKey({ refresh = false } = {}) {
+        if (refresh) this._adminKeyPromise = null;
+        if (!this._adminKeyPromise) {
+            this._adminKeyPromise = (async () => {
+                // Hard-bounded: every write waits on this, so a backend that
+                // accepts the connection and then goes quiet must not freeze the
+                // UI. Failing here only costs the header — the request still
+                // goes out, and a 403 triggers one refresh + replay below.
+                let controller = null;
+                let timer = null;
+                if (typeof AbortController !== 'undefined') {
+                    controller = new AbortController();
+                    timer = setTimeout(() => controller.abort(), 3000);
+                }
+                try {
+                    const resp = await fetch('/api/admin/token', {
+                        cache: 'no-store',
+                        signal: controller ? controller.signal : undefined,
+                    });
+                    if (!resp.ok) return null;
+                    const data = await resp.json();
+                    return data.token || null;
+                } catch (_) {
+                    return null;
+                } finally {
+                    if (timer) clearTimeout(timer);
+                }
+            })();
+        }
+        return this._adminKeyPromise;
+    }
+
     static async _handleError(resp, path = '') {
         let msg = '';
         let body = null;
@@ -70,7 +117,7 @@ export class BackendClient {
         return resp.json();
     }
 
-    static async post(path, body = {}, { timeoutMs = 0 } = {}) {
+    static async post(path, body = {}, { timeoutMs = 0, _retried = false } = {}) {
         // Optional client-side timeout: when the backend hangs (crashed/stuck)
         // without closing the socket, abort early so the UI gets fast feedback
         // instead of waiting for the browser/proxy timeout (~30s → 504).
@@ -81,12 +128,24 @@ export class BackendClient {
             timer = setTimeout(() => controller.abort(), timeoutMs);
         }
         try {
+            const headers = { 'Content-Type': 'application/json' };
+            const adminKey = await this._adminKey();
+            if (adminKey) headers['X-MW-Admin-Key'] = adminKey;
+
             const resp = await fetch(path, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify(body),
                 signal: controller ? controller.signal : undefined,
             });
+            // A 403 on an admin route means the key we hold is stale (the server
+            // restarted and minted a new one). Refresh it and replay once — the
+            // request was refused before any handler ran, so replaying is safe.
+            if (resp.status === 403 && !_retried) {
+                const fresh = await this._adminKey({ refresh: true });
+                if (fresh && fresh !== adminKey)
+                    return this.post(path, body, { timeoutMs, _retried: true });
+            }
             if (!resp.ok) return this._handleError(resp, path);
             return resp.json();
         } catch (err) {
@@ -103,7 +162,12 @@ export class BackendClient {
     }
 
     static async del(path) {
-        const resp = await fetch(path, { method: 'DELETE' });
+        /** @type {Record<string, string>} */
+        const headers = {};
+        const adminKey = await this._adminKey();
+        if (adminKey) headers['X-MW-Admin-Key'] = adminKey;
+
+        const resp = await fetch(path, { method: 'DELETE', headers });
         if (!resp.ok) return this._handleError(resp, path);
         return resp.json();
     }
@@ -232,6 +296,15 @@ export class BackendClient {
      *  for a localhost-equivalent session over the public domain. */
     static async redeemHostKey(key) {
         return this.post('/api/auth/host-key', { key });
+    }
+    /** Spend the remote admin password to give this (already authenticated,
+     *  LAN) session the same admin access the host machine has. */
+    static async adminUnlock(password) {
+        return this.post('/api/auth/admin-unlock', { password });
+    }
+    /** Set, change or (with an empty string) remove the remote admin password. */
+    static async setAdminPassword(password) {
+        return this.post('/api/admin/password', { password });
     }
 
     // ── Certificate Authentication ─────────────────────────────────────────

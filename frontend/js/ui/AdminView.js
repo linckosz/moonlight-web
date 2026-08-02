@@ -48,9 +48,18 @@ export class AdminView {
         this.onClose = onClose || (() => {});
         this._options = options || {};
 
-        // True when the backend says this browser runs on the host machine
-        // (loopback peer OR a host-key session over the public domain).
-        this._isHostMachine = false;
+        // True when the backend grants this browser admin access: it runs on the
+        // host machine (loopback peer OR a host-key session over the public
+        // domain), or it is a LAN machine that unlocked with the admin password.
+        this._hasAdminAccess = false;
+        // Narrower: this browser really is the host machine.
+        this._isRealHostMachine = false;
+        // A LAN machine without admin access that may unlock it with the
+        // password — the view renders the prompt instead of the "host only"
+        // notice. Set for exactly the clients /api/auth/admin-unlock accepts.
+        this._adminUnlockAvailable = false;
+        // Admin view of the same setting: whether a password exists to hand out.
+        this._adminPasswordSet = false;
         // Host key (host machine only) for the post-activation domain redirect.
         this._localKey = '';
 
@@ -200,7 +209,10 @@ export class AdminView {
     async _loadAuthStatus() {
         try {
             const status = await BackendClient.getAuthStatus();
-            this._isHostMachine = !!status.is_localhost;
+            this._hasAdminAccess = !!status.is_localhost;
+            this._isRealHostMachine = !!status.is_host_machine;
+            this._adminUnlockAvailable = !!status.admin_unlock_available;
+            this._adminPasswordSet = !!status.admin_password_set;
             if (status.pin) {
                 this._pin = status.pin;
             }
@@ -213,6 +225,69 @@ export class AdminView {
         } catch (err) {
             console.warn('[Admin] Failed to load auth status:', err);
         }
+    }
+
+    // Spend the remote admin password. On success the session itself gains
+    // admin access, so the whole page (nav buttons, cached admin key, the
+    // sections themselves) is rebuilt from a reload rather than patched — this
+    // runs once per device, and a stale cached key would just 403.
+    async _unlockAdmin() {
+        const input = this.container.querySelector('#admin-unlock-input');
+        const btn = this.container.querySelector('#btn-admin-unlock');
+        const password = input ? input.value : '';
+        if (!password) {
+            Toast.warning(t('admin.unlockEmpty'));
+            return;
+        }
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('btn-loading');
+        }
+        try {
+            await BackendClient.adminUnlock(password);
+            Toast.success(t('admin.unlockOk'));
+            setTimeout(() => window.location.reload(), 400);
+        } catch (err) {
+            const body = (err && err.responseBody) || {};
+            if (body.lockout_seconds > 0) {
+                Toast.error(t('admin.unlockLockout', { seconds: body.lockout_seconds }));
+            } else {
+                Toast.error(t('admin.unlockFailed'));
+            }
+            if (input) {
+                input.value = '';
+                input.focus();
+            }
+        } finally {
+            const b = this.container.querySelector('#btn-admin-unlock');
+            if (b) {
+                b.disabled = false;
+                b.classList.remove('btn-loading');
+            }
+        }
+    }
+
+    // Set, change or (empty password) remove the remote admin password.
+    // Every machine that unlocked with the previous one loses its access — that
+    // is the reset: change the password and the old holders are out.
+    async _saveAdminPassword(password) {
+        if (password && password.length < 8) {
+            Toast.warning(t('admin.remoteAdminTooShort', { count: 8 }));
+            return;
+        }
+        if (!password && !this._adminPasswordSet) return;
+
+        try {
+            const result = await BackendClient.setAdminPassword(password);
+            this._adminPasswordSet = !!result.admin_password_set;
+            Toast.success(password ? t('admin.remoteAdminSaved') : t('admin.remoteAdminRemoved'));
+        } catch (err) {
+            console.error('[Admin] Failed to save the admin password:', err);
+            Toast.error(t('admin.remoteAdminSaveFailed', { message: err.message }));
+            return;
+        }
+        this.render();
+        this.bindEvents();
     }
 
     // Sunshine install status (localhost only). Reuses the setup wizard's status
@@ -521,8 +596,10 @@ export class AdminView {
 
     _isLocalhost() {
         // Backend-driven: also true when the page was opened on the host machine
-        // through the public domain (host-key session), not just on loopback.
-        if (this._isHostMachine) return true;
+        // through the public domain (host-key session), and when a LAN machine
+        // unlocked admin access with the remote admin password — not just on
+        // loopback. Named for what it gates (admin), not for where we are.
+        if (this._hasAdminAccess) return true;
         const hostname = window.location.hostname;
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
     }
@@ -538,8 +615,9 @@ export class AdminView {
     }
 
     render() {
-        // Host machine only: remote sessions (even authenticated) must not see
-        // the server administration sections — show a notice instead.
+        // Admins only: remote sessions must not see the server administration
+        // sections. A LAN machine holding the admin password gets the unlock
+        // prompt; everyone else gets a notice.
         if (!this._isLocalhost()) {
             this.container.innerHTML = `
                 <div class="admin-view" id="view-admin">
@@ -548,7 +626,24 @@ export class AdminView {
                         <button class="view-close-btn" id="btn-admin-close"
                                 title="${this.esc(t('common.close'))}">&times;</button>
                     </div>
-                    <p class="setting-desc">${t('admin.hostOnly')}</p>
+                    ${
+                        this._adminUnlockAvailable
+                            ? `
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">${t('admin.unlockTitle')}</h3>
+                        <div class="settings-field u-pt-0">
+                            <p class="setting-desc">${t('admin.unlockDesc')}</p>
+                            <input type="password" class="settings-input" id="admin-unlock-input"
+                                   autocomplete="current-password"
+                                   placeholder="${this.esc(t('admin.unlockPlaceholder'))}" />
+                            <button class="btn btn-neutral u-mt-2" id="btn-admin-unlock">
+                                ${t('admin.unlockAction')}
+                            </button>
+                        </div>
+                    </div>
+                    `
+                            : `<p class="setting-desc">${t('admin.hostOnly')}</p>`
+                    }
                 </div>
             `;
             return;
@@ -658,6 +753,42 @@ export class AdminView {
                 `
                         : ''
                 }
+
+                <!-- Remote admin access (LAN password) -->
+                <div class="settings-section">
+                    <h3 class="settings-section-title">${t('admin.remoteAdmin')}</h3>
+                    <div class="settings-field u-pt-0">
+                        <p class="setting-desc">${t('admin.remoteAdminDesc')}</p>
+                        <p class="settings-hint">
+                            ${
+                                this._adminPasswordSet
+                                    ? t('admin.remoteAdminSet')
+                                    : t('admin.remoteAdminUnset')
+                            }
+                        </p>
+                        <input type="password" id="admin-remote-password" class="settings-input"
+                               autocomplete="new-password"
+                               placeholder="${this.esc(t('admin.remoteAdminPlaceholder'))}" />
+                        <div class="u-mt-2">
+                            <button class="btn btn-neutral" id="btn-set-admin-password">
+                                ${
+                                    this._adminPasswordSet
+                                        ? t('admin.remoteAdminChange')
+                                        : t('admin.remoteAdminSetAction')
+                                }
+                            </button>
+                            ${
+                                this._adminPasswordSet
+                                    ? `<button class="btn btn-danger btn-small u-ml-2"
+                                               id="btn-clear-admin-password">
+                                           ${t('admin.remoteAdminRemove')}
+                                       </button>`
+                                    : ''
+                            }
+                        </div>
+                        <p class="settings-hint u-mt-2">${t('admin.remoteAdminHint')}</p>
+                    </div>
+                </div>
 
                 <!-- Internet -->
                 <div class="settings-section" id="admin-section-internet">
@@ -1080,6 +1211,38 @@ export class AdminView {
     }
 
     bindEvents() {
+        // Admin unlock prompt (LAN machine that is not the host). Bound before
+        // everything else because in that state it is the only control on the
+        // page — the rest of bindEvents just finds nothing.
+        const unlockBtn = this.container.querySelector('#btn-admin-unlock');
+        const unlockInput = this.container.querySelector('#admin-unlock-input');
+        if (unlockBtn && unlockInput) {
+            unlockBtn.addEventListener('click', () => this._unlockAdmin());
+            unlockInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this._unlockAdmin();
+                }
+            });
+        }
+
+        // Remote admin password: set / change / remove (admin only)
+        const setPassBtn = this.container.querySelector('#btn-set-admin-password');
+        const passInput = this.container.querySelector('#admin-remote-password');
+        if (setPassBtn && passInput) {
+            setPassBtn.addEventListener('click', () => this._saveAdminPassword(passInput.value));
+            passInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this._saveAdminPassword(passInput.value);
+                }
+            });
+        }
+        const clearPassBtn = this.container.querySelector('#btn-clear-admin-password');
+        if (clearPassBtn) {
+            clearPassBtn.addEventListener('click', () => this._saveAdminPassword(''));
+        }
+
         // Internet Access checkbox toggle
         const internetChk = this.container.querySelector('#chk-internet-enable');
         if (internetChk) {

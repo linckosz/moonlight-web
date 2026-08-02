@@ -17,6 +17,7 @@
 
 #include "HttpServer.h"
 #include "HttpParser.h"
+#include "RequestGuard.h"
 #include "RestRouter.h"
 #include "StaticFileHandler.h"
 #include "server/AuthManager.h"
@@ -273,6 +274,17 @@ HttpServer::HttpServer(quint16 httpPort, quint16 httpsPort, QObject* parent)
         frontendDir = QCoreApplication::applicationDirPath() + "/../Resources/frontend/";
     m_StaticFiles =
         new StaticFileHandler(frontendDir, QCoreApplication::applicationVersion(), this);
+
+    // Admin key: a per-run secret the frontend fetches from /api/admin/token and
+    // echoes on every admin write (see adminKeyMatches). Deliberately NOT
+    // persisted — it is a CSRF barrier, not a credential, and a fresh one each
+    // run means a copy that leaked into a log or a screenshot dies with the
+    // process. The frontend re-fetches it transparently after a restart.
+    QByteArray key(32, '\0');
+    for (int i = 0; i < key.size(); ++i)
+        key[i] = static_cast<char>(QRandomGenerator::securelySeeded().bounded(256));
+    m_AdminKey = QString::fromLatin1(
+        key.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
 }
 
 HttpServer::~HttpServer()
@@ -589,6 +601,24 @@ bool HttpServer::isAuthenticated(const HttpRequest& req) const
     return !token.isEmpty() && m_AuthManager->validateSession(token);
 }
 
+bool HttpServer::adminKeyMatches(const HttpRequest& req) const
+{
+    const QByteArray given = req.headers.value(QStringLiteral("x-mw-admin-key")).toUtf8();
+    const QByteArray expected = m_AdminKey.toUtf8();
+    if (expected.isEmpty()) return false; // fail closed
+
+    // Constant-time: fold the length difference into the accumulator so the
+    // running time never depends on where the first mismatch is.
+    const int n = qMax(given.size(), expected.size());
+    quint8 diff = static_cast<quint8>(given.size() ^ expected.size());
+    for (int i = 0; i < n; ++i) {
+        const quint8 a = i < given.size() ? static_cast<quint8>(given[i]) : 0;
+        const quint8 b = i < expected.size() ? static_cast<quint8>(expected[i]) : 0;
+        diff |= static_cast<quint8>(a ^ b);
+    }
+    return diff == 0;
+}
+
 // --- Abuse mitigation -------------------------------------------------------
 
 bool HttpServer::rejectIfAbusive(QTcpSocket* socket)
@@ -693,11 +723,76 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = HttpParser::parse(requestData);
     req.clientAddress = socket->peerAddress().toString();
-    // "Local" = full admin access: a loopback peer, or a host-key session — the
-    // browser runs on the host machine but reaches us through the public domain
-    // (its peer address is then the router/NAT-hairpin address, not loopback).
-    req.isLocal = isLocalRequest(req.clientAddress) ||
-                  (m_AuthManager && m_AuthManager->isHostSession(sessionTokenFromRequest(req)));
+
+    // ── Access decision ───────────────────────────────────────────────────────
+    // The local privilege below is granted on the source IP alone, and a browser
+    // running on the host lends that IP to every page it has open: without these
+    // checks any website could drive the whole admin API through the victim's
+    // browser (no CORS header of ours is involved — the response being
+    // unreadable does not stop the request from taking effect). The rules live
+    // in RequestGuard::evaluate so they can be tested as a unit.
+    const bool peerLocal = isLocalRequest(req.clientAddress);
+    const QString sessionToken = sessionTokenFromRequest(req);
+    RequestGuard::Context ctx;
+    ctx.peerLocal = peerLocal;
+    ctx.hostSession = m_AuthManager && m_AuthManager->isHostSession(sessionToken);
+    ctx.adminSession = m_AuthManager && m_AuthManager->isAdminSession(sessionToken);
+    ctx.adminKeyOk = adminKeyMatches(req);
+    ctx.publicDomain = m_Certs.domain();
+
+    RequestGuard::Request guardReq;
+    guardReq.method = req.method;
+    guardReq.path = req.path;
+    guardReq.headers = req.headers;
+    guardReq.bodySize = req.body.size();
+
+    const RequestGuard::Decision decision = RequestGuard::evaluate(guardReq, ctx);
+
+    if (decision.outcome == RequestGuard::Outcome::BlockCrossSite) {
+        Logger::warning(QString("[HttpServer] Cross-site request refused: %1 %2 (origin='%3')")
+                            .arg(req.method, req.path, req.headers.value("origin")));
+        m_ConnGuard.reportAuthFailure(req.clientAddress);
+        QJsonObject obj;
+        obj["error"] = "cross_site_request_blocked";
+        sendResponse(socket, HttpResponse::json(obj, 403));
+        return;
+    }
+    if (decision.outcome == RequestGuard::Outcome::BlockContentType) {
+        QJsonObject obj;
+        obj["error"] = "unsupported_media_type";
+        sendResponse(socket, HttpResponse::json(obj, 415));
+        return;
+    }
+    if (decision.hostUntrusted) {
+        Logger::warning(QString("[HttpServer] Local privilege denied for untrusted Host '%1' "
+                                "(possible DNS rebinding) on %2")
+                            .arg(req.headers.value("host"), req.path));
+    }
+
+    const bool localPrivilege = decision.localPrivilege;
+    req.isLocal = decision.adminPrivilege;
+    req.isHostMachine = decision.hostMachine;
+    req.hostTrusted = decision.hostTrusted;
+
+    // The frontend fetches the admin key here. Handled inline rather than as a
+    // route so it can never be reached without the checks above.
+    if (req.path == QLatin1String("/api/admin/token")) {
+        if (!decision.hostMachine && !ctx.adminSession) {
+            // Feed the guard: repeatedly probing for the admin key is exactly
+            // what an attacker who cannot read it would do.
+            m_ConnGuard.reportAuthFailure(req.clientAddress);
+            QJsonObject obj;
+            obj["error"] = "forbidden";
+            sendResponse(socket, HttpResponse::json(obj, 403));
+            return;
+        }
+        QJsonObject obj;
+        obj["token"] = m_AdminKey;
+        HttpResponse resp = HttpResponse::json(obj);
+        resp.headers["Cache-Control"] = "no-store";
+        sendResponse(socket, resp);
+        return;
+    }
 
     // HTTP→HTTPS redirect for plain HTTP connections.
     //
@@ -723,7 +818,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         int portSep = host.lastIndexOf(':');
         QString hostname = (portSep >= 0) ? host.left(portSep) : host;
 
-        bool isLocalClient = HttpServer::isLocalRequest(req.clientAddress);
+        bool isLocalClient = peerLocal;
         bool isPublicDomain = !isLanHost(hostname);
         bool isLoopbackHost = hostname.compare("localhost", Qt::CaseInsensitive) == 0 ||
                               hostname == "127.0.0.1" || hostname == "::1" || hostname == "[::1]";
@@ -773,9 +868,9 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // Exemptions: localhost, /api/auth/*, /api/health, /api/server/hostname.
     // Only /api/server/hostname is public (the login screen displays the PC name
     // before authentication); /api/server/status (ports) now requires a session.
-    if (m_AuthManager && !HttpServer::isLocalRequest(req.clientAddress) &&
-        req.path != "/api/health" && req.path != "/api/server/hostname" &&
-        !req.path.startsWith("/api/auth/") && !isAuthenticated(req)) {
+    if (m_AuthManager && !localPrivilege && req.path != "/api/health" &&
+        req.path != "/api/server/hostname" && !req.path.startsWith("/api/auth/") &&
+        !isAuthenticated(req)) {
         // Unauthenticated remote API hit = credential scanning; feed the guard
         // so repeated failures ban the source IP.
         m_ConnGuard.reportAuthFailure(req.clientAddress);
@@ -818,29 +913,37 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
 void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData)
 {
+    const HttpRequest up = HttpParser::parse(requestData);
+    const QString peerAddr = clientSocket->peerAddress().toString();
+
+    // ── Origin check ──────────────────────────────────────────────────────────
+    // WebSockets are not subject to the same-origin policy: any page may open
+    // one to any host, and no CORS negotiation stands in the way. Since a local
+    // peer skips the session check below, a page open in the host's browser
+    // would otherwise reach the signaling channel directly — which relays
+    // keyboard and mouse events to the streamed desktop. Browsers always send
+    // Origin on the handshake and a page cannot alter it.
+    if (!RequestGuard::isWebSocketOriginAllowed(up.headers.value("origin"),
+                                                up.headers.value("host"))) {
+        Logger::warning(QString("[HttpServer] WebSocket upgrade refused: origin '%1' does not "
+                                "match host '%2'")
+                            .arg(up.headers.value("origin"), up.headers.value("host")));
+        m_ConnGuard.reportAuthFailure(peerAddr);
+        QJsonObject obj;
+        obj["error"] = "cross_site_request_blocked";
+        sendResponse(clientSocket, HttpResponse::json(obj, 403));
+        return;
+    }
+
     // ── Auth check: validate session cookie before proxying WS upgrade ────
-    if (m_AuthManager && !HttpServer::isLocalRequest(clientSocket->peerAddress().toString())) {
-        QString headerPart = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n\r\n")));
-        bool authenticated = false;
-        for (const QString& line : headerPart.split("\r\n")) {
-            if (line.startsWith("Cookie:", Qt::CaseInsensitive)) {
-                QString cookie = line.mid(7).trimmed();
-                QStringList cookies = cookie.split(";");
-                for (const QString& c : cookies) {
-                    QString trimmed = c.trimmed();
-                    if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive)) {
-                        QString token = trimmed.mid(QStringLiteral("mw_session=").length());
-                        if (m_AuthManager->validateSession(token)) {
-                            authenticated = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (authenticated) break;
-        }
-        if (!authenticated) {
-            m_ConnGuard.reportAuthFailure(clientSocket->peerAddress().toString());
+    // Same Host requirement as the REST path: a rebound name must not inherit
+    // the local peer's exemption.
+    const bool localPrivilege =
+        HttpServer::isLocalRequest(peerAddr) &&
+        RequestGuard::isTrustedHost(up.headers.value("host"), m_Certs.domain());
+    if (m_AuthManager && !localPrivilege) {
+        if (!m_AuthManager->validateSession(sessionTokenFromRequest(up))) {
+            m_ConnGuard.reportAuthFailure(peerAddr);
             QJsonObject obj;
             obj["error"] = "authentication_required";
             HttpResponse resp = HttpResponse::json(obj, 401);

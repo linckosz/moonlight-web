@@ -442,6 +442,15 @@ jobs:
           cp frontend/assets/icon-512.png AppDir/MoonlightWeb.png
 
       - name: Deploy Qt into AppDir
+        # EXTRA_PLATFORM_PLUGINS adds the offscreen QPA plugin next to the xcb one
+        # linuxdeploy-plugin-qt deploys by default. The server is windowless but
+        # still a QApplication (QtWidgets, for the tray), and Qt aborts at
+        # construction when xcb finds no display — so without offscreen the
+        # binary cannot start on a headless host (server, container, systemd unit
+        # running before anyone logs in). main.cpp selects it automatically when
+        # neither DISPLAY nor WAYLAND_DISPLAY is set.
+        env:
+          EXTRA_PLATFORM_PLUGINS: libqoffscreen.so
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
@@ -451,6 +460,9 @@ jobs:
             -d backend/packaging/moonlightweb.desktop \
             -i AppDir/MoonlightWeb.png \
             --plugin qt
+          # A silent miss here only shows up as a crash on a user's headless box.
+          test -f AppDir/usr/plugins/platforms/libqoffscreen.so \
+            || { echo "::error::offscreen QPA plugin missing from the AppDir — headless hosts cannot start"; exit 1; }
 
       # linuxdeploy-plugin-qt only bundles the xcb platform plugin; add the
       # Wayland client plugins so native Wayland sessions (GNOME/KDE defaults)

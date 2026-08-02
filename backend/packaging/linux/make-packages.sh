@@ -41,8 +41,18 @@ Prefix = ..
 Plugins = plugins
 EOF
 
-# CLI entry point on PATH.
+# CLI entry point on PATH. Also what the headless operator commands are invoked
+# as (`moonlightweb --status`, `--new-pin`, `--enable-internet`).
 ln -sfn "$PREFIX/bin/MoonlightWeb" "$PKG/usr/bin/moonlightweb"
+
+# systemd unit for headless installs. Vendor directory, not /etc/systemd/system:
+# a unit that merely *exists* there does nothing until something enables it, so
+# a desktop install is unaffected, upgrades refresh it like any other packaged
+# file, and /etc stays free for an admin override (systemd's own precedence
+# rules). postinst enables it only when the machine has no desktop.
+mkdir -p "$PKG/usr/lib/systemd/system"
+cp "$(dirname "$0")/../systemd/moonlightweb.service" \
+   "$PKG/usr/lib/systemd/system/moonlightweb.service"
 
 cp "$APPDIR/MoonlightWeb.png" \
    "$PKG/usr/share/icons/hicolor/512x512/apps/moonlightweb.png"
@@ -103,12 +113,27 @@ elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Statu
     done
 fi
 
+# Upgrade over a headless install: the service owns the binary we just replaced.
+# Restart it onto the new one and stop here — everything below is first-install
+# wiring that is already done. `restart` rather than `try-restart` because prerm
+# has just stopped it, so it is inactive and try-restart would leave it down;
+# gating on is-enabled is what keeps a deliberately disabled service disabled.
+if command -v systemctl >/dev/null 2>&1 &&
+   systemctl is-enabled --quiet moonlightweb.service 2>/dev/null; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl restart moonlightweb.service >/dev/null 2>&1 || true
+    exit 0
+fi
+
 # Best-effort: start MoonlightWeb inside the active graphical session so the
 # first-run setup page opens right after install (postinst runs as root with no
 # display; systemd-run --user runs the app under the user's session manager).
 # Skipped when already running (e.g. upgrade) or when no session user is found —
 # the Apps menu entry covers those.
-if ! pgrep -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
+started=""
+if pgrep -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
+    started=1
+else
     for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
         uid=$(id -u "$u" 2>/dev/null) || continue
         rt="/run/user/$uid"
@@ -145,19 +170,82 @@ if ! pgrep -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
         # (values are socket/display names — no whitespace).
         if $asuser systemd-run --user --collect --quiet $setenv \
             /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; then
+            started=1
             break
         fi
     done
+fi
+
+# ── Headless install ───────────────────────────────────────────────────────
+# Nothing above could start the app: no logged-in user has a display. On a
+# server, a container host or a box installed over SSH, that is the normal
+# state, and the right answer is a system service that runs before (and
+# without) any login — not a menu entry nobody will ever click.
+#
+# `systemctl get-default` is the discriminator: a desktop distribution boots
+# graphical.target and merely happens to have nobody logged in right now, so
+# installing a system-wide service there would fight the per-session launch on
+# the next login. MW_HEADLESS=1 forces the branch (containers, images).
+if [ -z "$started" ] && command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    default_target=$(systemctl get-default 2>/dev/null || echo "")
+    if [ "${MW_HEADLESS:-0}" = "1" ] || [ "$default_target" != "graphical.target" ]; then
+        # The unit file is already on disk (/usr/lib/systemd/system, shipped by
+        # this package) — enabling is the whole install step.
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        if systemctl enable --now moonlightweb.service >/dev/null 2>&1; then
+            # Sunshine is deliberately absent: it captures a display and encodes
+            # on a GPU, neither of which exists here. The app detects that on its
+            # own (mw::hasDesktopSession) and never offers to install it — this
+            # box is a relay to Sunshine/GameStream hosts elsewhere on the LAN.
+            cat <<'BANNER'
+
+MoonlightWeb is installed and running as a system service (headless mode).
+
+  Status, URLs and access PIN:   moonlightweb --status
+  Allow a new device:            moonlightweb --new-pin
+  Publish it on the internet:    moonlightweb --enable-internet
+
+On your LAN there is nothing else to configure — open https://<this-machine-ip>
+from any browser. Sunshine was not installed: this host has no display to
+capture and no GPU to encode with; add your streaming hosts by IP instead.
+
+BANNER
+        else
+            echo "warning: could not enable the moonlightweb service — start it with" >&2
+            echo "         sudo systemctl enable --now moonlightweb" >&2
+        fi
+    fi
 fi
 exit 0
 EOF
 cat > "$ROOT/prerm.sh" <<'EOF'
 #!/bin/sh
-# Stop a running instance so the package files are not held open.
-pkill -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1 || true
+# Is the headless service the thing running MoonlightWeb here?
+service_active=""
+if command -v systemctl >/dev/null 2>&1 &&
+   systemctl is-enabled --quiet moonlightweb.service 2>/dev/null; then
+    service_active=1
+fi
+
+# Stop a running instance so the package files are not held open. Under the
+# service, go through systemctl rather than pkill: a signal counts as a failure
+# for Restart=on-failure, so pkill would have systemd bring the old binary
+# straight back up in the middle of the file copy. `systemctl stop` is an
+# operator-initiated stop and is never restarted.
+if [ -n "$service_active" ]; then
+    systemctl stop moonlightweb.service >/dev/null 2>&1 || true
+else
+    pkill -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1 || true
+fi
 
 # Remove the firewall ports opened at install (best-effort; skip on upgrade).
 if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
+    # Real removal: drop the enablement symlinks before the package manager
+    # deletes the unit file, or systemd is left with a dangling enabled unit.
+    if [ -n "$service_active" ]; then
+        systemctl disable moonlightweb.service >/dev/null 2>&1 || true
+    fi
+
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         for p in 443/tcp 80/tcp 47999/udp; do
             firewall-cmd --permanent --remove-port="$p" >/dev/null 2>&1 || true

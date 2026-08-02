@@ -315,9 +315,11 @@ const MoonlightApp = {
         const path = window.location.pathname;
         let mainView, mainState, initialOverlay;
 
-        if (path === '/admin' && this._isHostLocal()) {
-            // Admin survives refresh — shown as overlay on hosts. Host machine
-            // only: a remote session landing on /admin is sent to the hosts view.
+        if (path === '/admin' && this._canReachAdmin()) {
+            // Admin survives refresh — shown as overlay on hosts. Admins only:
+            // a remote session landing on /admin is sent to the hosts view
+            // (unless it may unlock, in which case AdminView asks for the
+            // password).
             mainView = 'hosts';
             mainState = { view: 'hosts' };
             initialOverlay = 'admin';
@@ -541,9 +543,10 @@ const MoonlightApp = {
      *                             { scrollTo: 'internet' } for AdminView)
      */
     _openOverlay(type, options) {
-        // Admin is host-machine-only (AdminView re-checks server-side data too).
-        if (type === 'admin' && !this._isHostLocal()) {
-            console.warn('[MW] Admin overlay blocked: not on the host machine');
+        // Admin is for the host machine and for LAN machines holding the remote
+        // admin password (AdminView re-checks server-side data too).
+        if (type === 'admin' && !this._canReachAdmin()) {
+            console.warn('[MW] Admin overlay blocked: no admin access');
             return;
         }
 
@@ -748,13 +751,34 @@ const MoonlightApp = {
     },
 
     /**
-     * True when this browser runs on the host machine: loopback origin, or the
-     * backend confirmed it (host-key session over the public domain).
+     * True when this browser has admin access: it runs on the host machine
+     * (loopback origin, or a host-key session over the public domain), or it is
+     * a LAN machine that unlocked with the remote admin password.
      */
     _isHostLocal() {
-        if (this._isHostMachine) return true;
+        if (this._hasAdminAccess) return true;
         const hostname = window.location.hostname;
         return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+    },
+
+    /**
+     * True only when this browser really runs on the host machine. Narrower
+     * than _isHostLocal(): a password-unlocked LAN admin has the same rights
+     * but none of the local desktop the setup wizard needs.
+     */
+    _isHostMachine() {
+        if (this._isRealHostMachine) return true;
+        const hostname = window.location.hostname;
+        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+    },
+
+    /**
+     * True when the admin page may be opened at all — either this browser
+     * already has admin access, or it is a LAN machine that can unlock it with
+     * the password (AdminView renders the prompt in that case).
+     */
+    _canReachAdmin() {
+        return this._isHostLocal() || !!this._adminUnlockAvailable;
     },
 
     async _checkAuth() {
@@ -766,7 +790,11 @@ const MoonlightApp = {
 
         try {
             const status = await BackendClient.getAuthStatus();
-            this._isHostMachine = !!status.is_localhost;
+            this._hasAdminAccess = !!status.is_localhost;
+            this._isRealHostMachine = !!status.is_host_machine;
+            // A LAN machine the operator gave the admin password to: it may ask
+            // for the admin page even though it is not the host.
+            this._adminUnlockAvailable = !!status.admin_unlock_available;
 
             // Localhost or already authenticated — proceed
             if (status.is_localhost || status.authenticated) {
@@ -816,12 +844,21 @@ const MoonlightApp = {
      * init continue.
      */
     async _maybeShowSetup() {
-        if (!this._isHostLocal()) return false;
+        // Every step needs the local desktop, so this is the host machine's
+        // wizard — not a password-unlocked LAN admin's.
+        if (!this._isHostMachine()) return false;
 
         try {
             const status = await BackendClient.getSetupStatus();
             // Windows provisioning is owned by the Inno Setup installer.
             if (!status || status.os === 'Windows') return false;
+            // Headless host (server, container): every step the wizard offers
+            // needs a desktop — installing Sunshine (nothing to capture, no GPU,
+            // and pkexec has no agent to ask), a login item, opening a browser.
+            // The terminal owns that machine: `moonlightweb --status`,
+            // `--new-pin`, `--enable-internet`. Reachable here only through an
+            // SSH tunnel to localhost, so just stay out of the way.
+            if (status.headless) return false;
             const firstRun = status.setup_completed === false;
             // Only Sunshine's *installed* state gates a re-show: `paired` is
             // discovered asynchronously (mDNS host list), so at cold start a
@@ -927,13 +964,11 @@ const MoonlightApp = {
     },
 
     _initNavButtons() {
-        // Backend-driven: also true when the page was opened on the host machine
-        // through the public domain (host-key session).
-        const isLocal = this._isHostLocal();
-
         const btnAdmin = document.getElementById('btn-admin');
         if (btnAdmin) {
-            if (!isLocal) {
+            // Shown to admins, and to LAN machines that can unlock the page with
+            // the remote admin password — that offer is the whole point.
+            if (!this._canReachAdmin()) {
                 btnAdmin.style.display = 'none';
             } else {
                 btnAdmin.style.display = '';

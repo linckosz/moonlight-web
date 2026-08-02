@@ -97,6 +97,71 @@ void run_auth_manager_tests()
     auth.setCertAuthEnabled(true);
     CHECK(auth.certAuthEnabled());
 
+    // ── Remote admin password ──────────────────────────────────────────────
+    CHECK(!auth.hasAdminPassword());
+    CHECK(!auth.setAdminPassword("short")); // below MIN_ADMIN_PASSWORD_LEN
+    CHECK(!auth.hasAdminPassword());
+    CHECK(auth.setAdminPassword("correct-horse"));
+    CHECK(auth.hasAdminPassword());
+
+    // The plaintext is never stored: what lands in settings is a PBKDF2 digest.
+    const QString digest = settings.adminPasswordDigest();
+    CHECK(digest.startsWith("pbkdf2-sha256$"));
+    CHECK(!digest.contains("correct-horse"));
+
+    const QString adminIp = "192.168.5.20";
+    CHECK(auth.validateAdminPassword(adminIp, "correct-horse").result == AuthManager::Valid);
+    CHECK(auth.validateAdminPassword(adminIp, "wrong").result == AuthManager::InvalidPin);
+
+    // Its lockout counter is its own: hammering the password must not lock the
+    // same address out of PIN login.
+    const QString pinIp = "192.168.5.21";
+    auth.generatePin();
+    for (int i = 0; i < 6; ++i)
+        auth.validateAdminPassword(pinIp, "wrong");
+    CHECK(auth.isRateLimited(pinIp) == false);
+    CHECK(auth.validateAdminPassword(pinIp, "correct-horse").result == AuthManager::RateLimited);
+
+    // A session is promoted, not created: the password raises what an
+    // already-admitted device may do.
+    QString adminToken = auth.createSession(adminIp, "Living room PC");
+    CHECK(!auth.isAdminSession(adminToken));
+    CHECK(auth.promoteSessionToAdmin(adminToken));
+    CHECK(auth.isAdminSession(adminToken));
+    CHECK(!auth.isHostSession(adminToken)); // admin, but not the host machine
+    CHECK(!auth.promoteSessionToAdmin("bogus-token"));
+
+    // Changing the password revokes every unlock the old one bought.
+    CHECK(auth.setAdminPassword("another-password"));
+    CHECK(!auth.isAdminSession(adminToken));
+    CHECK(auth.validateSession(adminToken)); // still signed in, just not admin
+
+    // Removing it closes the door entirely, and a stale flag on disk is not
+    // honoured on the way back in.
+    auth.promoteSessionToAdmin(adminToken);
+    CHECK(auth.setAdminPassword(""));
+    CHECK(!auth.hasAdminPassword());
+    CHECK(!auth.isAdminSession(adminToken));
+    auth.saveSessions();
+    auth.loadSessions();
+    CHECK(!auth.isAdminSession(adminToken));
+    auth.destroyAllSessions();
+
+    // ── LAN address classification (gates the unlock) ──────────────────────
+    CHECK(AuthManager::isLanAddress("127.0.0.1"));
+    CHECK(AuthManager::isLanAddress("::1"));
+    CHECK(AuthManager::isLanAddress("192.168.1.5"));
+    CHECK(AuthManager::isLanAddress("10.1.2.3"));
+    CHECK(AuthManager::isLanAddress("172.20.0.1"));
+    CHECK(AuthManager::isLanAddress("::ffff:192.168.1.5")); // IPv4-mapped
+    CHECK(AuthManager::isLanAddress("169.254.3.4"));        // link-local
+    CHECK(AuthManager::isLanAddress("fe80::1"));            // link-local v6
+    CHECK(AuthManager::isLanAddress("fd12:3456::1"));       // unique-local v6
+    CHECK(!AuthManager::isLanAddress("8.8.8.8"));
+    CHECK(!AuthManager::isLanAddress("172.32.0.1")); // just outside 172.16/12
+    CHECK(!AuthManager::isLanAddress("2001:db8::1"));
+    CHECK(!AuthManager::isLanAddress(""));
+
     // ── Address helpers (static) ───────────────────────────────────────────
     CHECK_EQ(AuthManager::cleanClientAddress("::ffff:192.168.1.5"), QString("192.168.1.5"));
     CHECK_EQ(AuthManager::isPrivateIP("192.168.1.5"), QString("Local"));

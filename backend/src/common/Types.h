@@ -32,11 +32,20 @@ struct HttpRequest
     QMap<QString, QString> queryParams;
     QMap<QString, QString> pathParams;
     QByteArray body;
-    QString clientAddress; // Populated by HttpServer from socket peer
-    bool isLocal = false;  // Populated by HttpServer: loopback peer OR a valid
-                           // host-key session (browser on the host machine
-                           // reaching us through the public domain). Gates all
-                           // "localhost only" admin functionality.
+    QString clientAddress;      // Populated by HttpServer from socket peer
+    bool isLocal = false;       // Populated by HttpServer: loopback peer OR a valid
+                                // host-key session (browser on the host machine
+                                // reaching us through the public domain) OR a LAN
+                                // session that unlocked the remote admin password.
+                                // Gates all "localhost only" admin functionality.
+    bool isHostMachine = false; // Same, minus the password unlock: the caller
+                                // really is the host machine. Only for actions
+                                // that need the local desktop (setup wizard,
+                                // Sunshine install), not for admin rights.
+    bool hostTrusted = false;   // The Host header names this machine (loopback,
+                                // a LAN address, an mDNS name, or our domain) —
+                                // false means we were reached under someone
+                                // else's name, e.g. a third-party tunnel.
 };
 
 struct HttpResponse

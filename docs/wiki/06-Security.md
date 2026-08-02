@@ -20,13 +20,26 @@ Three ways to obtain a session, all implemented in `AuthManager` + `AuthRoutes`:
 | **Certificate file** | Admin downloads a token file (`/api/admin/certificate/download`, 64+ random bytes Base64) → remote user uploads it instead of typing a PIN | Optional (`cert_auth_enabled`), revocable by regeneration. Compared in constant time. |
 | **Host key** (`?mwk=`) | The host machine's own entry points (tray, Desktop shortcut, startup open) embed a long random key in the URL. Redeeming it (`POST /api/auth/host-key`) proves the browser runs *on the host* even when reached via the public domain (peer address is the router, not loopback) | Grants a **host session** (localhost-equivalent, admin-capable). **Single-use**: each redemption rotates the key and rewrites every entry point, so a leaked URL cannot be replayed. |
 
-`localhost` requests (loopback peer address) bypass authentication entirely and are the only way (besides host sessions) to use `/api/admin/*`.
+`localhost` requests (loopback peer address) bypass authentication entirely and are the only way — besides host sessions and the remote admin password below — to use `/api/admin/*`.
+
+### 6.2.1 Remote admin password (LAN only)
+
+Admin access is otherwise granted by *address*: the host machine has it, nobody else ever does. That leaves the operator stuck when the host is a headless box, a machine they are not sitting at, or simply a PC in another room. The remote admin password is the second door.
+
+- **Set from the admin page** (`POST /api/admin/password`, admin-gated). Stored as **PBKDF2-SHA256, 210 000 iterations, 16-byte random salt** — the plaintext is never written, so a forgotten password is *reset*, never recovered. Minimum 8 characters.
+- **Spent by an already-authenticated LAN device** (`POST /api/auth/admin-unlock`). It **promotes an existing session** rather than creating one: a device still has to pass the PIN first. The password raises what an admitted device may do; it never admits anyone.
+- Two independent gates keep it off the Internet, because either one alone is forgeable in a deployment we support:
+  - the peer address must be LAN (`AuthManager::isLanAddress` — loopback, RFC 1918, link-local, `fc00::/7`), **and**
+  - the `Host` header must name this machine (`RequestGuard::isTrustedHost`). A TLS-terminating tunnel makes every visitor look like `127.0.0.1`, which the peer check alone would accept; a hairpin-NAT LAN client arrives under the public domain, which the Host check alone would accept for Internet visitors too. Both together admit exactly the LAN.
+- Failed attempts use **their own rate-limit bucket** (`admin|<ip>`), on the same 3/5/10 → 30 s/2 min/10 min tiers, so hammering the password cannot lock a legitimate user out of PIN login (or vice versa).
+- **Changing or removing the password revokes every unlock the old one bought** (`demoteAdminSessions`), except the caller's own when they are the remote admin doing the reset. Sessions survive — only the admin flag is dropped. A persisted `is_admin` with no password configured is discarded at load.
+- An unlocked LAN admin gets `isLocal` (full admin), but **not** `isHostMachine`: it never receives the host key and never sees the first-run setup wizard, both of which belong to the machine with the local desktop.
 
 ## 6.3 Sessions
 
 - A successful auth issues a random token in the `mw_session` cookie. **Only its SHA-256 (base64url) is stored** — in memory and in `sessions.json` — so a stolen sessions file cannot be replayed.
 - **Sliding expiration**: 90 days of inactivity (`SESSION_TTL_SECS`); any authenticated request bumps `lastSeen`. Expired sessions are purged periodically; persisted sessions older than 24 h without a live process are discarded on load.
-- Sessions carry IP, machine name (renameable), geolocation (async `GeoIpService` lookup, refreshed when the IP changes), a `streaming` flag (single active stream), and `is_host`.
+- Sessions carry IP, machine name (renameable), geolocation (async `GeoIpService` lookup, refreshed when the IP changes), a `streaming` flag (single active stream), `is_host`, and `is_admin` (unlocked with the remote admin password — see §6.2.1).
 - **Revocation is immediate**: destroying a session that is actively streaming emits `streamingSessionRevoked`, which tears the live relay down and cancels the browser's Sunshine session (kill-switch in `main.cpp`).
 - Regenerating the PIN invalidates **all** sessions.
 - HMAC signing key: generated once, persisted (`hmac_key` in settings) so sessions survive restarts.
@@ -35,7 +48,7 @@ Three ways to obtain a session, all implemented in `AuthManager` + `AuthRoutes`:
 
 Two cooperating layers:
 
-1. **`AuthManager` PIN rate limiting** — per rate-limit bucket (raw IPv4, or /64 prefix for IPv6 — a client trivially owns a whole /64): 3 failures → escalating lockouts (30 s → 2 min → 10 min), remaining attempts surfaced to the UI. Constant-time comparisons throughout.
+1. **`AuthManager` secret rate limiting** — per rate-limit bucket (raw IPv4, or /64 prefix for IPv6 — a client trivially owns a whole /64): 3 failures → escalating lockouts (30 s → 2 min → 10 min), remaining attempts surfaced to the UI. Constant-time comparisons throughout. The PIN and the remote admin password each get their own bucket per address.
 2. **`ConnectionGuard`** — in-process fail2ban equivalent (fail2ban itself is Linux-only), checked at `accept()` time so banned IPs cost no TLS handshake:
    - Connection flood: > 200 new TCP connections / 10 s / IP (generous because the server is `Connection: close` — one page load bursts dozens of connections).
    - Auth-failure flood: > 10 rejected (401) requests / 60 s / IP.

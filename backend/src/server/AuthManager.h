@@ -44,6 +44,9 @@ struct SessionInfo
     bool isHost = false;    // created by redeeming the host key: this browser runs on
                             // the host machine itself (via the public domain) and is
                             // granted localhost-equivalent (admin) access
+    bool isAdmin = false;   // unlocked admin access from the LAN with the remote
+                            // admin password; same privileges as isHost, but this
+                            // browser is on another machine
 
     QJsonObject toJson() const
     {
@@ -57,6 +60,7 @@ struct SessionInfo
         obj["last_seen"] = lastSeen;
         obj["streaming"] = streaming;
         obj["is_host"] = isHost;
+        obj["is_admin"] = isAdmin;
         return obj;
     }
 };
@@ -97,6 +101,24 @@ public:
 
     ValidateResult validatePin(const QString& ip, const QString& pin);
 
+    // ── Remote admin password ──────────────────────────────────────────────
+    // Second door into admin access, for a LAN machine that is not the host.
+    // Unlike the PIN this one is persistent and reusable: it is a password, not
+    // a one-shot pairing code, so it is stored as a PBKDF2 digest and shares
+    // the PIN's lockout tiers on its own per-IP counter (a wrong password must
+    // not lock a legitimate user out of PIN login, and vice versa).
+
+    /// True when a password has been set (the unlock door exists at all).
+    bool hasAdminPassword() const;
+    /// Set the password, or remove it when @p password is empty.
+    /// Rejects anything shorter than MIN_ADMIN_PASSWORD_LEN. Returns false when
+    /// rejected, or when there is no AppSettings to persist to.
+    bool setAdminPassword(const QString& password);
+    /// Rate-limited verification. Always InvalidPin when no password is set.
+    ValidateResult validateAdminPassword(const QString& ip, const QString& password);
+
+    static constexpr int MIN_ADMIN_PASSWORD_LEN = 8;
+
     // ── Session management ─────────────────────────────────────────────────
     QString createSession(const QString& ip, const QString& machineName = QString(),
                           bool isHost = false);
@@ -104,6 +126,17 @@ public:
     /** True when the raw cookie token belongs to a valid *host* session (created
      *  by redeeming the host key — the browser runs on the host machine). */
     bool isHostSession(const QString& token) const;
+    /** True when the raw cookie token belongs to a session that unlocked admin
+     *  access with the remote admin password. Orthogonal to isHostSession:
+     *  same privileges, different proof. */
+    bool isAdminSession(const QString& token) const;
+    /** Grant admin access to an existing session (after the password checked
+     *  out). Takes the raw cookie token. Returns false for unknown sessions. */
+    bool promoteSessionToAdmin(const QString& token);
+    /** Drop the admin flag from every password-unlocked session. Used when the
+     *  password is changed or removed, so the old secret stops granting access
+     *  to the machines that already used it. Returns the number cleared. */
+    int demoteAdminSessions();
     /** Bump a session's lastSeen on activity (sliding expiration). Takes the raw
      *  cookie token. No-op for unknown/empty tokens. */
     void touchSession(const QString& token);
@@ -174,6 +207,11 @@ public:
     static QString cleanClientAddress(const QString& ip);
     /** Returns "Local" for private IPs (10.x, 172.16-31.x, 192.168.x, 127.x, ::1), else "Remote" */
     static QString isPrivateIP(const QString& ip);
+    /** True when @p ip can only be reached from this LAN: loopback, an RFC 1918
+     *  range, a link-local address, or an IPv6 unique-local address (fc00::/7).
+     *  Unlike isPrivateIP this understands IPv6, which matters because it gates
+     *  the admin password unlock. */
+    static bool isLanAddress(const QString& ip);
     /** Rate-limit bucket key for an address: the raw IPv4, or the /64 prefix for
      *  IPv6 (a single client trivially owns a whole /64, so per-/128 buckets are
      *  pointless against guessing). */
@@ -220,6 +258,29 @@ private:
     QByteArray generateHmac(const QString& data) const;
     void cleanupExpired();
     static QByteArray generateRandomKey();
+
+    // ── Rate limiting, shared by the PIN and the admin password ────────────
+    // Each secret gets its own bucket key so a burst against one never locks
+    // the other out. @p bucket is a key into m_rateLimits, not an address.
+
+    /// Seconds of lockout remaining on @p bucket; 0 when an attempt is allowed.
+    int bucketLockout(const QString& bucket) const;
+    /// Record the outcome of an attempt and build the caller's reply. @p what
+    /// names the secret in the log line ("PIN", "admin password").
+    ValidateResult recordAttempt(const QString& bucket, bool matched, const QString& ip,
+                                 const QString& what);
+    /// Attempts left before the next lockout tier on @p bucket.
+    int bucketRemainingAttempts(const QString& bucket) const;
+
+    /// PBKDF2-SHA256 digest of @p password with a fresh random salt, encoded as
+    /// "pbkdf2-sha256$<iterations>$<b64 salt>$<b64 key>".
+    static QString encodePassword(const QString& password);
+    /// Constant-time check of @p password against an encodePassword() string.
+    static bool passwordMatches(const QString& digest, const QString& password);
+
+    static constexpr int PBKDF2_ITERATIONS = 210000; // OWASP 2023 floor for SHA-256
+    static constexpr int PBKDF2_SALT_BYTES = 16;
+    static constexpr int PBKDF2_KEY_BYTES = 32;
     /// SHA-256 (base64url) of a raw session token — the value stored/looked up.
     static QString hashToken(const QString& token);
     /// Length-independent, constant-time string comparison (anti timing-attack).
