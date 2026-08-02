@@ -240,7 +240,7 @@ void MediaTrackRelay::createTracksAndChannels()
 {
     if (!m_Pc) return;
 
-    qInfo() << "[MediaTrackRelay] Creating video track + audio/input DataChannels";
+    qInfo() << "[MediaTrackRelay] Creating video+audio tracks + input DataChannel";
 
     // ── Video track (H.264, server->browser, RTP) ──────────────────────────
     // libdatachannel generates the SDP media section (m=video) automatically.
@@ -374,7 +374,7 @@ void MediaTrackRelay::createTracksAndChannels()
         }
     }
 
-    qInfo() << "[MediaTrackRelay] Tracks+Channels created (video=Track, audio=DC#0, input=DC#1)";
+    qInfo() << "[MediaTrackRelay] Tracks+Channels created (video=RTP, audio=RTP, input=DC#1)";
 }
 
 // ── Video forwarding (via RTP media track) ──────────────────────────────────────

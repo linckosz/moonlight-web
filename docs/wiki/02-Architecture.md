@@ -39,7 +39,7 @@ The **DNS stack is decoupled**: it runs on a separate machine and only provides 
 |---|---|
 | **HTTPS REST** (`/api/...`) | Hosts/apps/pairing, settings, admin, auth, internet access. Full reference in [REST API](08-REST-API.md). |
 | **WSS `/ws` (signaling)** | WebRTC SDP/ICE exchange, proxied by the HTTPS server to an internal signaling WebSocket server (default port 48001). The WS URL is always anchored on `window.location.host` (the page origin), never on a backend-computed host — this is what keeps non-default external ports working. |
-| **WebRTC PeerConnection** | The stream itself: video/audio/input DataChannels, or RTP media tracks (see [Streaming & Transports](05-Streaming-and-Transports.md)). |
+| **WebRTC PeerConnection** | The stream itself: video over a DataChannel or an RTP track (per transport family), audio always an RTP Opus track, input always a DataChannel (see [Streaming & Transports](05-Streaming-and-Transports.md)). |
 | **WSS `/ws/stream`** | Legacy/fallback full-stream relay (video+audio+input over one WebSocket) when WebRTC cannot connect. |
 | **WSS `/ws1`, `/ws1/stream`** | The same two surfaces for the **second stream slot** (internal 48011/48012) — the standby leg of seamless quality switching. |
 | **WSS `/ws/control`** | Tiny control channel every open tab keeps: used for single-tab dedup (a second app launch redirects an existing tab to `/admin` instead of opening a duplicate). |

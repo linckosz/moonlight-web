@@ -92,10 +92,10 @@ The **webrtc-media transport** natively renders into a `<video>` element (RTP �
 ## 4.5 Audio pipeline
 
 - moonlight-common-c delivers **encoded Opus** (never PCM); the backend forwards those bytes verbatim on every transport, so decode happens client-side.
-- `AudioPipeline` decodes with the WebCodecs `AudioDecoder` (WASM `opus-decoder` fallback in a worker) and transfers Float32 PCM to `audio-processor.js` (AudioWorklet, real-time thread).
-- The worklet implements an **adaptive jitter buffer** (~60 ms base, grows to ~160 ms on underruns/near-underruns, decays slowly) and optional **WSOLA time-stretch** (`audio_time_stretch`, default on) to absorb clock drift without latency.
+- On **both WebRTC transport families** (`webrtc-dc` *and* `webrtc-media`) audio is a native RTP Opus track handed to an `<audio>` element via `pc.ontrack` — the browser owns the jitter buffer, FEC and PLC (this is what fixed the periodic micro-dropouts of the old ordered audio DataChannel). Nothing below applies there.
+- **`wss` only**: `AudioPipeline` decodes with the WebCodecs `AudioDecoder` (WASM `opus-decoder` fallback in a worker) and transfers Float32 PCM to `audio-processor.js` (AudioWorklet, real-time thread).
+- That worklet implements an **adaptive jitter buffer** (~60 ms base, grows to ~160 ms on underruns/near-underruns, decays slowly) and optional **WSOLA time-stretch** (`audio_time_stretch`, default on) to absorb clock drift without latency.
 - Stereo is forced in SDP (`stereo=1` via `SdpUtils.forceOpusStereo`) — browsers default their Opus answer to mono. **No gain is ever applied in JS** (volume issues are host-side sink issues).
-- On the **webrtc-media** transports audio is a native RTP Opus track (browser-managed FEC/PLC — fixed micro-dropouts); WSS keeps the AudioPipeline path.
 - iOS: sound on the built-in speaker with the silent switch on requires a looping silent `<audio>` element (`iosAudioUnlock.js`) to escape the *ambient* audio category.
 
 ## 4.6 i18n

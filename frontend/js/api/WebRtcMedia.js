@@ -60,7 +60,7 @@ function wsCloseDescription(code) {
  * instead of DataChannels.  The browser's native RTCPeerConnection
  * handles the H.264 RTP stream, decoding it directly to a <video> element.
  *
- * Audio and input still use DataChannels (PCM16 audio, JSON input).
+ * Audio is a native RTP Opus track too; only input uses a DataChannel (JSON).
  *
  * Signaling flow (same as WebRtcDataChannel):
  *   1. Connect to signaling WS (URL given by backend /start response).
@@ -68,13 +68,14 @@ function wsCloseDescription(code) {
  *   3. Create RTCPeerConnection, set remote description, generate answer.
  *   4. Send SDP answer back via signaling WS.
  *   5. Exchange ICE candidates bidirectionally.
- *   6. Once DataChannels open + video track active, close signaling WS.
+ *   6. Once the input DataChannel opens + video track active, close signaling WS.
  *
  * DataChannel layout (must match MediaTrackRelay backend):
- *   - Audio DC: negotiated=true, id=0, label="audio" (PCM16, same fragmentation as WebRtcDataChannel)
  *   - Input DC: negotiated=true, id=1, label="input" (JSON, same as WebRtcDataChannel)
+ *   - id=0 is reserved-unused (the audio DC this replaced with an RTP track)
  *
- * Video: arrives via pc.ontrack (H.264 RTP), rendered to <video> element.
+ * Video and audio arrive via pc.ontrack (H.264 RTP + Opus RTP), rendered to
+ * the <video> / <audio> elements.
  */
 export class WebRtcMedia {
     /**
