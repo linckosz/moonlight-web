@@ -17,6 +17,7 @@
 
 #include "SunshineInstaller.h"
 
+#include "../common/DesktopSession.h"
 #include "../common/Logger.h"
 
 #include <QDir>
@@ -400,6 +401,13 @@ bool canAutoInstall()
 #if defined(Q_OS_MACOS)
     return true;
 #elif defined(Q_OS_LINUX)
+    // Headless (server, container, systemd unit): refuse outright. The install
+    // runs under pkexec, which needs an interactive polkit agent to ask for a
+    // password — with no desktop session there is none, and the call would hang
+    // until its timeout instead of failing. Sunshine is useless there anyway:
+    // it captures a display and encodes on a GPU, neither of which exists.
+    if (!mw::hasDesktopSession()) return false;
+
     // No network here (called by every /api/setup/status poll): family + tools
     // presence only; the exact release asset is resolved at install time.
     const DistroInfo d = detectDistro();
@@ -498,6 +506,13 @@ static QString installMacOS(const QString& user, const QString& pass)
 QString install(const QString& user, const QString& pass)
 {
 #if defined(Q_OS_LINUX)
+    // Belt-and-braces with canAutoInstall(): a caller that asked for the install
+    // anyway (a stale wizard payload, a scripted /api/setup/apply) must get a
+    // clean error rather than a pkexec that blocks for want of a polkit agent.
+    if (!mw::hasDesktopSession())
+        return QStringLiteral("No desktop session: Sunshine needs a display to capture and a GPU "
+                              "to encode. Install it manually on a machine that has both, then "
+                              "pair it here by IP.");
     return installLinux(user, pass);
 #else
     return installMacOS(user, pass);

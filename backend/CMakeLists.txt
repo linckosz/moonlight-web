@@ -166,6 +166,7 @@ add_executable(mw-server
     src/server/HttpServer.cpp
     src/server/ControlChannel.cpp
     src/server/HttpParser.cpp
+    src/server/RequestGuard.cpp
     src/server/CertManager.cpp
     src/server/StaticFileHandler.cpp
     src/server/RestRouter.cpp
@@ -174,6 +175,7 @@ add_executable(mw-server
     src/server/routes/SystemRoutes.cpp
     src/common/Logger.cpp
     src/common/CrashHandler.cpp
+    src/common/DesktopSession.cpp
     src/network/UPNPClient.cpp
     src/network/PdnsClient.cpp
     src/network/StunClient.cpp
@@ -344,7 +346,9 @@ if(MW_BUILD_TESTS)
     add_executable(mw-security-tests
         tests/security_main.cpp
         tests/test_connection_guard.cpp
+        tests/test_request_guard.cpp
         src/server/ConnectionGuard.cpp
+        src/server/RequestGuard.cpp
     )
     target_include_directories(mw-security-tests PRIVATE src tests)
     target_link_libraries(mw-security-tests PRIVATE Qt6::Core Qt6::Network)

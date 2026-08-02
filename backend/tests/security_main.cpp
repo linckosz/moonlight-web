@@ -15,12 +15,14 @@
 TestStats g_stats;
 
 void run_connection_guard_tests();
+void run_request_guard_tests();
 
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
 
     run_connection_guard_tests();
+    run_request_guard_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");

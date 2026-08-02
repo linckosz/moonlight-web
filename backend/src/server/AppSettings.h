@@ -275,6 +275,22 @@ public:
     /// Enable or disable certificate authentication.
     void setCertAuthEnabled(bool enabled);
 
+    // ── Remote admin password ───────────────────────────────────────────────
+    //
+    // Admin access is normally granted by address: whoever browses from the
+    // host machine itself gets it, everyone else never does. This password is
+    // the second door — it lets a LAN machine that is NOT the host unlock the
+    // same admin access (see AuthManager::validateAdminPassword). Stored only
+    // as a PBKDF2 digest; the plaintext never touches disk and cannot be read
+    // back, so a forgotten password is reset from the host, not recovered.
+
+    /// Encoded digest ("pbkdf2-sha256$<iters>$<salt>$<key>"), empty when unset.
+    QString adminPasswordDigest() const;
+
+    /// Persist an encoded digest. An empty value removes the password, which
+    /// closes the second door entirely (host-only admin again).
+    void setAdminPasswordDigest(const QString& digest);
+
     // ── DNS subdomain ownership ─────────────────────────────────────────────
     //
     // Per-instance random token written to a _owner.<uid> TXT record. Before

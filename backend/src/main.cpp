@@ -33,16 +33,23 @@
 #include <QSslConfiguration>
 #include <QSslSocket>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <QTimer>
 #include <QUrl>
 #include <QDateTime>
 #include <QHostInfo>
 #include <QHostAddress>
+#include <QJsonArray>
 #include <QRandomGenerator>
 
+// isatty(): the operator CLI prompts for consent only when a human can answer.
+#include <cstdio>
 #ifdef Q_OS_WIN
 #define NOMINMAX
 #include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 #include <array>
 #include <functional>
@@ -58,6 +65,7 @@
 #include "server/routes/SystemRoutes.h"
 #include "common/Logger.h"
 #include "common/CrashHandler.h"
+#include "common/DesktopSession.h"
 #include "backend/ComputerManager.h"
 #include "backend/IdentityManager.h"
 #include "backend/SunshineInstaller.h"
@@ -259,19 +267,32 @@ static void writeAdminShortcut(const QString& url)
 #endif
 }
 
-// True when a desktop session can show a browser/tray: never under a service
-// supervisor, and on Linux only when a display server is reachable. Do NOT use
-// QSystemTrayIcon::isSystemTrayAvailable() for this: GNOME has no system tray
-// by default, which would wrongly report "headless" and skip the first-run
-// setup wizard.
+// True when a desktop session can show a browser/tray. Shared with the Sunshine
+// installer (a headless box has no polkit agent to answer pkexec) and with the
+// setup routes — see common/DesktopSession.h for the full rationale.
 static bool hasGuiSession()
 {
-    if (!qEnvironmentVariableIsEmpty("MW_SERVICE")) return false;
+    return mw::hasDesktopSession();
+}
+
+// Pick the QPA platform plugin before QApplication exists. The server is
+// windowless, but it is a QApplication (the tray needs QtWidgets), and Qt
+// aborts at construction when the default xcb plugin finds no display:
+//   "qt.qpa.plugin: Could not load the Qt platform plugin xcb"
+// On a headless Linux box (server, container, systemd unit before login) fall
+// back to the offscreen plugin so the whole HTTP/streaming stack runs with no
+// X11 or Wayland at all. An explicit QT_QPA_PLATFORM always wins — this only
+// fills in a default.
+//
+// The packages ship libqoffscreen.so alongside libqxcb.so (EXTRA_PLATFORM_PLUGINS
+// in .github/workflows/release.yml); if a hand-built Qt lacks it, Qt still emits
+// its own diagnostic naming the plugins it did find.
+static void selectHeadlessPlatform()
+{
 #if defined(Q_OS_LINUX)
-    return !qEnvironmentVariableIsEmpty("DISPLAY") ||
-           !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY");
-#else
-    return true;
+    if (mw::hasDisplayServer()) return;
+    if (!qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) return;
+    qputenv("QT_QPA_PLATFORM", "offscreen");
 #endif
 }
 
@@ -334,8 +355,320 @@ static bool requestFocusAdmin(const QString& base)
     return ok;
 }
 
+// ── Headless operator CLI ───────────────────────────────────────────────────
+// A headless install has no admin page within reach: the operator is on SSH,
+// and the browser that will use the server lives on another machine. `--status`
+// and `--enable-internet` drive the *running* instance through the very same
+// loopback endpoints the admin page calls, and print the result as plain text.
+//
+// They are queries against another process, so they run before the
+// single-instance lock is taken and never start a server of their own.
+
+struct LoopbackReply
+{
+    bool ok = false;    // transport-level success AND HTTP 2xx
+    int httpStatus = 0; // 0 when the request never completed
+    QJsonObject json;   // parsed body (empty when not JSON)
+    QString error;      // human-readable transport error
+};
+
+// One loopback HTTPS call. The loopback certificate is the self-signed LAN one,
+// so peer verification is off — the peer is a socket on 127.0.0.1, which no
+// certificate could authenticate better than the kernel already does.
+static LoopbackReply loopbackRequest(const QString& base, const QString& path,
+                                     const QByteArray& postBody = QByteArray(),
+                                     int timeoutMs = 15000)
+{
+    QNetworkAccessManager nam;
+    QNetworkRequest req{QUrl(base + path)};
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
+    ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
+    req.setSslConfiguration(ssl);
+
+    QNetworkReply* reply = postBody.isNull() ? nam.get(req) : nam.post(req, postBody);
+    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+                     [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
+
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timer.start(timeoutMs);
+    loop.exec();
+
+    LoopbackReply out;
+    if (!timer.isActive()) {
+        out.error = QStringLiteral("timed out after %1 s").arg(timeoutMs / 1000);
+    } else if (reply->error() != QNetworkReply::NoError) {
+        out.error = reply->errorString();
+    }
+    out.httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    out.json = QJsonDocument::fromJson(reply->readAll()).object();
+    out.ok = out.error.isEmpty() && out.httpStatus >= 200 && out.httpStatus < 300;
+    reply->deleteLater();
+    return out;
+}
+
+// Loopback base URL of the running server, or empty when none answers.
+//
+// The persisted port is the authority, but it is read from *this* user's
+// settings.json — run as a different user than the service (a plain `sudo`-less
+// `moonlightweb --status` against a root-owned systemd unit) that file is a
+// different one, or absent. So fall back to the default 443 before giving up.
+static QString findRunningInstance(quint16 persistedPort)
+{
+    QList<quint16> candidates{persistedPort};
+    if (!candidates.contains(443)) candidates.append(443);
+
+    for (quint16 p : candidates) {
+        const QString base = p == 443 ? QStringLiteral("https://127.0.0.1")
+                                      : QStringLiteral("https://127.0.0.1:%1").arg(p);
+        if (loopbackRequest(base, QStringLiteral("/api/health"), QByteArray(), 3000).ok)
+            return base;
+    }
+    return QString();
+}
+
+// The agreement the operator must accept before a subdomain is registered in
+// their name. Printed verbatim and sent verbatim as `consent_message`, so the
+// DNS audit log records the exact words that were shown — same contract as the
+// wizard's checkbox text (frontend/js/ui/SetupView.js).
+static const char* kCliInternetConsent =
+    "MoonlightWeb will register a public sub-domain for this machine on the "
+    "shared MoonlightWeb DNS zone, point it at this network's public IP address, "
+    "and obtain a TLS certificate for it. The sub-domain and the IP address are "
+    "stored on the MoonlightWeb DNS server for as long as the link is enabled.";
+
+// stdin is a terminal — i.e. there is a human who can answer a prompt.
+static bool stdinIsInteractive()
+{
+#if defined(Q_OS_WIN)
+    return _isatty(_fileno(stdin)) != 0;
+#else
+    return isatty(fileno(stdin)) != 0;
+#endif
+}
+
+// `moonlightweb --status`: everything an operator needs to reach the server and
+// to know what is still missing. Returns the process exit code.
+static int runStatusCommand(quint16 persistedHttpsPort)
+{
+    QTextStream out(stdout);
+    const QString base = findRunningInstance(persistedHttpsPort);
+    if (base.isEmpty()) {
+        out << "MoonlightWeb is not running (nothing answers on the loopback interface).\n"
+            << "\n"
+            << "  systemd:  sudo systemctl status moonlightweb\n"
+            << "  logs:     ~/.local/share/MoonlightWeb/MoonlightWeb/logs/moonlightweb.log\n";
+        out.flush();
+        return 1;
+    }
+
+    const QJsonObject server = loopbackRequest(base, "/api/server/status").json;
+    const QJsonObject setup = loopbackRequest(base, "/api/setup/status").json;
+    const QJsonObject auth = loopbackRequest(base, "/api/auth/status").json;
+    const QJsonObject inet = loopbackRequest(base, "/api/internet/status").json;
+
+    const int httpsPort = setup.value("https_port").toInt(443);
+    const QString portSuffix = httpsPort == 443 ? QString() : QStringLiteral(":%1").arg(httpsPort);
+    const bool headless = setup.value("headless").toBool(false);
+
+    out << "MoonlightWeb " << server.value("version").toString() << " — running";
+    if (headless) out << " (headless)";
+    out << "\n\n";
+
+    out << "  This machine   https://localhost" << portSuffix << "\n";
+    const QJsonArray localIps = inet.value("local_ips").toArray();
+    bool firstIp = true;
+    for (const QJsonValue& v : localIps) {
+        out << (firstIp ? "  On your LAN    " : "                 ") << "https://" << v.toString()
+            << portSuffix << "\n";
+        firstIp = false;
+    }
+
+    const bool internetOn =
+        inet.value("active").toBool(false) && !inet.value("domain").toString().isEmpty();
+    if (internetOn) {
+        const int extPort = inet.value("external_https_port").toInt(443);
+        out << "  From internet  https://" << inet.value("domain").toString()
+            << (extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort)) << "\n";
+        if (inet.value("cert_issuing").toBool(false))
+            out << "                 (certificate still being issued — retry in a minute)\n";
+    } else {
+        out << "  From internet  off — enable it with:  moonlightweb --enable-internet\n";
+        // Only worth probing (and only actionable) while the link is off: it
+        // tells the operator up front whether enabling it will configure the
+        // router by itself or need a port forward typed in by hand. Nothing on
+        // the LAN depends on any of this.
+        const QJsonObject upnp =
+            loopbackRequest(base, "/api/internet/upnp-probe", QByteArray(), 10000).json;
+        if (upnp.value("available").toBool(false))
+            out << "                 a UPnP router answered — the port will be mapped for you\n";
+        else
+            out << "                 no UPnP router — you would have to forward TCP " << httpsPort
+                << " to this\n"
+                << "                 machine yourself (nothing to do for LAN use)\n";
+    }
+
+    out << "\n";
+    // The PIN is what a browser on another device is asked for, once. Localhost
+    // never needs it — which is exactly why a headless operator, who only ever
+    // reaches the server from another device, has to be told about it here.
+    // "------" is the sentinel for "no PIN set" (AuthManager::clearPin).
+    const QString pin = auth.value("pin").toString();
+    if (pin.isEmpty() || pin == QLatin1String("------"))
+        out << "  Access PIN     none set — create one with:  moonlightweb --new-pin\n";
+    else if (auth.value("pin_consumed").toBool(false))
+        out << "  Access PIN     already used — issue a new one with:  moonlightweb --new-pin\n";
+    else
+        out << "  Access PIN     " << pin << "   (asked once per browser)\n";
+
+    const QJsonObject sun = setup.value("sunshine").toObject();
+    if (headless)
+        out << "  Sunshine       not applicable on a headless host — add your hosts by IP\n";
+    else if (sun.value("installed").toBool(false))
+        out << "  Sunshine       installed"
+            << (sun.value("paired").toBool(false) ? ", paired\n" : ", not paired\n");
+
+    out << "\n";
+    out.flush();
+    return 0;
+}
+
+// `moonlightweb --new-pin`: issue the PIN a browser on another device is asked
+// for. On a headless host the admin page's "generate" button is out of reach
+// (it is localhost-only, and localhost has no browser), so this is the only way
+// to hand out access. Uses the non-revoking endpoint: existing devices keep
+// their sessions.
+static int runNewPinCommand(quint16 persistedHttpsPort)
+{
+    QTextStream out(stdout);
+    const QString base = findRunningInstance(persistedHttpsPort);
+    if (base.isEmpty()) {
+        out << "MoonlightWeb is not running — start it first "
+               "(sudo systemctl start moonlightweb).\n";
+        out.flush();
+        return 1;
+    }
+
+    const LoopbackReply reply =
+        loopbackRequest(base, "/api/admin/pin/generate", QByteArrayLiteral("{}"));
+    if (!reply.ok) {
+        out << "Failed: "
+            << (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
+                                      : reply.error)
+            << "\n";
+        out.flush();
+        return 1;
+    }
+
+    out << "\n  Access PIN     " << reply.json.value("pin").toString() << "\n"
+        << "\n"
+        << "  Enter it once in the browser of each device you want to allow.\n"
+        << "  It is single-use: run this again for the next device.\n\n";
+    out.flush();
+    return 0;
+}
+
+// `moonlightweb --enable-internet`: publish the sub-domain, get the certificate,
+// map the router port when a UPnP-IGD answers — and say plainly what to forward
+// by hand when none does. Returns the process exit code.
+static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
+{
+    QTextStream out(stdout);
+    const QString base = findRunningInstance(persistedHttpsPort);
+    if (base.isEmpty()) {
+        out << "MoonlightWeb is not running — start it first "
+               "(sudo systemctl start moonlightweb).\n";
+        out.flush();
+        return 1;
+    }
+
+    out << "\n" << kCliInternetConsent << "\n\n";
+    if (!assumeYes) {
+        if (!stdinIsInteractive()) {
+            out << "Re-run with --yes to accept this and continue.\n";
+            out.flush();
+            return 1;
+        }
+        out << "Type 'yes' to continue: ";
+        out.flush();
+        QTextStream in(stdin);
+        if (in.readLine().trimmed().compare(QStringLiteral("yes"), Qt::CaseInsensitive) != 0) {
+            out << "Cancelled — nothing was registered.\n";
+            out.flush();
+            return 1;
+        }
+    }
+
+    // Probe the router before enabling, so the closing advice is accurate even
+    // if the enable itself half-fails.
+    const bool upnp = loopbackRequest(base, "/api/internet/upnp-probe", QByteArray(), 10000)
+                          .json.value("available")
+                          .toBool(false);
+
+    QJsonObject body;
+    body["internet_access_enabled"] = true;
+    body["consent_message"] = QString::fromUtf8(kCliInternetConsent);
+    out << "\nRegistering the sub-domain and requesting the certificate…\n";
+    out.flush();
+
+    // Generous: the handler returns only once the A record resolves, and DNS
+    // propagation plus the ACME order are both network round-trips away.
+    const LoopbackReply reply = loopbackRequest(
+        base, "/api/internet/enable", QJsonDocument(body).toJson(QJsonDocument::Compact), 180000);
+    if (!reply.ok) {
+        out << "Failed: "
+            << (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
+                                      : reply.error)
+            << "\n";
+        out.flush();
+        return 1;
+    }
+
+    const QJsonObject st = reply.json;
+    const QString domain = st.value("domain").toString();
+    const int extPort = st.value("external_https_port").toInt(443);
+    const QString extSuffix = extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort);
+
+    if (!st.value("active").toBool(false)) {
+        out << "Failed: " << st.value("last_error").toString(QStringLiteral("unknown error"))
+            << "\n";
+        out.flush();
+        return 1;
+    }
+
+    out << "\n  Public URL     https://" << domain << extSuffix << "\n";
+    if (st.value("cert_issuing").toBool(false))
+        out << "                 certificate still being issued — it lands within a minute\n";
+
+    out << "\n";
+    if (upnp) {
+        out << "  Router         UPnP gateway found — port " << extPort
+            << "/tcp mapped automatically.\n";
+    } else {
+        // The only manual step on a headless internet install, and the one that
+        // silently breaks everything when skipped. Spell it out.
+        out << "  Router         no UPnP gateway answered. Forward this port by hand in your\n"
+            << "                 router's admin page, or the public URL will not resolve to\n"
+            << "                 this machine:\n"
+            << "\n"
+            << "                     TCP " << extPort << "  ->  " << st.value("local_ip").toString()
+            << ":" << st.value("https_port").toInt(443) << "\n";
+    }
+    out << "\n";
+    out.flush();
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
+    // Before QApplication: on a headless Linux host this swaps the xcb platform
+    // plugin (which would abort for want of a display) for offscreen.
+    selectHeadlessPlatform();
+
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("MoonlightWeb");
     QCoreApplication::setApplicationVersion(QStringLiteral(MW_VERSION));
@@ -357,11 +690,25 @@ int main(int argc, char* argv[])
     //   macOS:   ~/Library/Application Support/MoonlightWeb/MoonlightWeb/logs
     //   Linux:   ~/.local/share/MoonlightWeb/MoonlightWeb/logs
     qInstallMessageHandler(mwMessageHandler);
-    // --stream-worker: stdout is the worker's JSON event protocol — route the
-    // console echo to stderr BEFORE anything logs (CrashHandler::install below
-    // logs an INFO line). The full worker branch runs after CLI parsing.
-    for (int i = 1; i < argc; ++i)
-        if (qstrcmp(argv[i], "--stream-worker") == 0) Logger::instance()->setConsoleToStderr(true);
+    // Route the console echo to stderr BEFORE anything logs (CrashHandler::install
+    // below logs an INFO line), for every mode whose stdout is a payload rather
+    // than a log: --stream-worker carries the JSON event protocol, and the
+    // operator commands print a report a human (or a script) reads. The real
+    // branches for all of them run after CLI parsing.
+    // --help/--version included: QCommandLineParser writes them to stdout and
+    // exits, and two INFO lines ahead of the usage text is exactly the kind of
+    // noise that breaks `moonlightweb --help | less`.
+    for (int i = 1; i < argc; ++i) {
+        static const char* const kQuietStdout[] = {
+            "--stream-worker", "--status", "--new-pin", "--enable-internet", "--help",
+            "--help-all",      "-h",       "-?",        "--version",         "-v"};
+        for (const char* flag : kQuietStdout) {
+            if (qstrcmp(argv[i], flag) == 0) {
+                Logger::instance()->setConsoleToStderr(true);
+                break;
+            }
+        }
+    }
     {
         const QString logDir =
             QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
@@ -411,6 +758,24 @@ int main(int argc, char* argv[])
                                           "process of the main server");
     parser.addOption(streamWorkerOption);
 
+    // Headless operator commands: query / configure the RUNNING instance from a
+    // terminal, then exit. No server is started and no lock is taken.
+    QCommandLineOption statusOption(
+        "status", "Print the running server's URLs, access PIN and internet status, then exit");
+    parser.addOption(statusOption);
+
+    QCommandLineOption newPinOption(
+        "new-pin", "Issue a new access PIN for a remote browser, print it, then exit");
+    parser.addOption(newPinOption);
+
+    QCommandLineOption enableInternetOption(
+        "enable-internet",
+        "Publish this server on a public sub-domain (asks for consent), then exit");
+    parser.addOption(enableInternetOption);
+
+    QCommandLineOption yesOption("yes", "Accept the --enable-internet agreement non-interactively");
+    parser.addOption(yesOption);
+
     parser.process(app);
 
     // Configure logging
@@ -459,6 +824,19 @@ int main(int argc, char* argv[])
     // Read HTTP/HTTPS port preferences from persisted settings.
     // CLI --port overrides the persisted HTTP port when explicitly provided.
     AppSettings appSettings;
+
+    // ── Headless operator commands ───────────────────────────────────────────
+    // Talk to the instance that is already running and exit. Two orderings
+    // matter here: before the single-instance lock, so these are never mistaken
+    // for a second server launch (which would try to surface an admin page
+    // nobody can see); and before seedDocumentedDefaults(), so querying the
+    // service as a different user than it runs as does not leave a stray
+    // settings.json behind in that user's home.
+    if (parser.isSet(statusOption)) return runStatusCommand(appSettings.httpsPort(443));
+    if (parser.isSet(newPinOption)) return runNewPinCommand(appSettings.httpsPort(443));
+    if (parser.isSet(enableInternetOption))
+        return runEnableInternetCommand(appSettings.httpsPort(443), parser.isSet(yesOption));
+
     appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
     quint16 httpPort = appSettings.httpPort(80);
     if (parser.isSet("port")) httpPort = parser.value("port").toUShort();

@@ -23,9 +23,11 @@
 #include "server/AuthManager.h"
 #include "server/Provisioning.h"
 #include "network/InternetAccessManager.h"
+#include "network/UPNPClient.h"
 #include "backend/ComputerManager.h"
 #include "backend/SunshineInstaller.h"
 #include "Autostart.h"
+#include "common/DesktopSession.h"
 #include "common/Logger.h"
 
 #include <QCoreApplication>
@@ -54,6 +56,36 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             for (const char* key : {"local_ip", "local_ips", "public_ip", "unique_id", "cert_pem",
                                     "cert_key", "last_error"})
                 obj.remove(QLatin1String(key));
+        }
+        return HttpResponse::json(obj);
+    });
+
+    // API route: is there a UPnP-IGD router willing to map our ports?
+    //
+    // `upnp_available` in /api/internet/status only becomes meaningful once
+    // Internet Access has run a discovery, so a LAN-only install always reports
+    // false there. This endpoint answers the question on demand — it is what
+    // tells a headless operator whether opening the server to the internet will
+    // configure itself or needs a manual port forward on the router.
+    //
+    // Blocks for up to the M-SEARCH timeout (~2 s) on the main thread. That is
+    // why it is localhost-only and never polled: it is an explicit operator
+    // action (`moonlightweb --status`, the admin page), not a background check.
+    server.router()->get("/api/internet/upnp-probe", [&](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+
+        UPNPClient* upnp = internetAccess.upnpClient();
+        // Re-using a live IGD avoids re-running discovery under an active
+        // Internet Access session (and avoids disturbing its mappings).
+        const bool available = upnp->isAvailable() || upnp->discover(2000);
+
+        QJsonObject obj;
+        obj["available"] = available;
+        if (available) {
+            obj["gateway"] = upnp->gatewayAddress().toString();
+            obj["lan_ip"] = QString::fromStdString(upnp->lanAddress());
+            const std::string ext = upnp->getExternalIPAddress();
+            if (!ext.empty()) obj["external_ip"] = QString::fromStdString(ext);
         }
         return HttpResponse::json(obj);
     });
@@ -184,6 +216,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["setup_completed"] = appSettings.setupCompleted();
         obj["os"] = "Linux";
 #endif
+        // No display server (server, container, systemd unit): the wizard hides
+        // its Sunshine step entirely — nothing on this machine can capture a
+        // screen or encode on a GPU. The install script reads the same flag.
+        obj["headless"] = !mw::hasDesktopSession();
+
         SunshineInstaller::DetectResult sun = SunshineInstaller::detect();
         QJsonObject sunObj;
         sunObj["installed"] = sun.installed;
@@ -427,8 +464,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             obj["cert_auth_enabled"] = authManager.certAuthEnabled();
             // Host machine only: the current host key, so the
             // admin page can carry its session over to the
-            // public-domain URL after Internet activation.
-            if (req.isLocal) obj["local_key"] = appSettings.localKey();
+            // public-domain URL after Internet activation. Not
+            // isLocal — a LAN admin that unlocked with the password
+            // has the same rights but is NOT the host, and handing
+            // it the key would rotate the one the host's own
+            // shortcut still embeds.
+            if (req.isHostMachine) obj["local_key"] = appSettings.localKey();
             return HttpResponse::json(obj);
         });
 

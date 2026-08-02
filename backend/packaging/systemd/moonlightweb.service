@@ -1,7 +1,12 @@
-# MoonlightWeb — Linux systemd unit (auto-restart on crash).
+# MoonlightWeb — Linux systemd unit (headless / server installs).
 #
-# Install (system-wide, runs headless without a tray):
-#   sudo cp moonlightweb.service /etc/systemd/system/
+# The .deb and .rpm install this file to /usr/lib/systemd/system/ and their
+# postinst enables it automatically when the machine has no desktop (see
+# backend/packaging/linux/make-packages.sh) — a desktop install leaves it
+# present but disabled, which does nothing. Installing it by hand (AppImage,
+# hand-built tree) or overriding the packaged one:
+#
+#   sudo cp moonlightweb.service /etc/systemd/system/   # /etc wins over /usr/lib
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now moonlightweb
 #
@@ -19,12 +24,15 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-# Adjust the install path to where you deployed the binary + web assets.
-ExecStart=/opt/moonlightweb/MoonlightWeb
-WorkingDirectory=/opt/moonlightweb
+# Path used by the .deb/.rpm layout. A hand-built tree needs both lines adjusted.
+ExecStart=/opt/moonlightweb/bin/MoonlightWeb
+# The frontend is resolved relative to the executable, so this only affects
+# relative paths in logs — but keep it next to the binary all the same.
+WorkingDirectory=/opt/moonlightweb/bin
 
-# Marks this as a supervised launch: on an auto-restart, the instance must NOT
-# steal a UPnP port mapping owned by another device. Only a manual launch wins.
+# Marks this as a supervised launch: no tray, no browser auto-open, and on an
+# auto-restart the instance must NOT steal a UPnP port mapping owned by another
+# device. Only a manual launch wins.
 Environment=MW_SERVICE=1
 
 # Restart ONLY on failure (non-zero exit code or terminating signal),
@@ -36,7 +44,10 @@ SuccessExitStatus=0
 
 # Bind to :80 / :443 without running as full root.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-# Optional: run under a dedicated unprivileged user instead of root.
+# Optional: run under a dedicated unprivileged user instead of root. Note that
+# the settings, the paired-host list and the Moonlight client identity live in
+# that user's home ($HOME/.config + $HOME/.local/share), so switching users
+# after first boot starts from a blank configuration and unpairs every host.
 # User=moonlightweb
 # Group=moonlightweb
 

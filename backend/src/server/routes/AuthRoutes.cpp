@@ -147,18 +147,125 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         return HttpResponse::json(obj);
     });
 
+    // ── Remote admin unlock ─────────────────────────────────────────────────
+    // Admin access is granted by address: the host machine has it, nobody else
+    // does. These two routes add a second door for a LAN machine that is not
+    // the host — the operator sets a password from the host, and any other
+    // machine on the same network can spend it to get the same admin page.
+    //
+    // POST /api/auth/admin-unlock — spend the password to promote this session.
+    server.router()->post("/api/auth/admin-unlock", [&authManager](const HttpRequest& req) {
+        // Already an admin (host machine, or unlocked earlier): nothing to do.
+        // Answering "ok" keeps the frontend's flow simple and, more to the
+        // point, means the host can never burn attempts on its own bucket.
+        // isHostMachine as well as isLocal, because isLocal additionally wants
+        // the admin key on a POST and the host has no session to fall back on.
+        if (req.isLocal || req.isHostMachine) {
+            QJsonObject obj;
+            obj["status"] = "ok";
+            return HttpResponse::json(obj);
+        }
+
+        // LAN only, by explicit design: the password is a convenience for the
+        // machines in the same house, not a second front door on the internet.
+        // Two independent conditions, because either one alone is forgeable in
+        // a deployment we support — a TLS-terminating tunnel makes every
+        // visitor look like 127.0.0.1 (peer check alone would pass), and a
+        // hairpin-NAT LAN client arrives under the public domain (Host check
+        // alone would pass for internet visitors too).
+        if (!AuthManager::isLanAddress(req.clientAddress) || !req.hostTrusted) {
+            QJsonObject obj;
+            obj["status"] = "error";
+            obj["error"] = "lan_only";
+            return HttpResponse::json(obj, 403);
+        }
+
+        // The unlock upgrades an existing session rather than creating one, so
+        // a device still has to pass the PIN first: the password raises what an
+        // already-admitted device may do, it does not admit anyone.
+        const QString token = HttpServer::sessionTokenFromRequest(req);
+        if (!authManager.validateSession(token)) {
+            QJsonObject obj;
+            obj["status"] = "error";
+            obj["error"] = "not_authenticated";
+            return HttpResponse::json(obj, 401);
+        }
+
+        if (!authManager.hasAdminPassword()) {
+            QJsonObject obj;
+            obj["status"] = "error";
+            obj["error"] = "not_configured";
+            return HttpResponse::json(obj, 403);
+        }
+
+        const QString password = QJsonDocument::fromJson(req.body).object()["password"].toString();
+        const auto result = authManager.validateAdminPassword(req.clientAddress, password);
+
+        QJsonObject obj;
+        switch (result.result) {
+        case AuthManager::Valid:
+            authManager.promoteSessionToAdmin(token);
+            obj["status"] = "ok";
+            return HttpResponse::json(obj);
+        case AuthManager::InvalidPin:
+            obj["status"] = "error";
+            obj["error"] = "invalid_password";
+            obj["remaining"] = result.remainingAttempts;
+            obj["lockout_seconds"] = result.lockoutSeconds;
+            return HttpResponse::json(obj, 401);
+        case AuthManager::RateLimited:
+            obj["status"] = "error";
+            obj["error"] = "rate_limited";
+            obj["lockout_seconds"] = result.lockoutSeconds;
+            return HttpResponse::json(obj, 429);
+        }
+        return HttpResponse::error(500, "Internal error");
+    });
+
+    // POST /api/admin/password — set, change or remove the remote admin
+    // password (admin only). An empty password removes it.
+    server.router()->post("/api/admin/password", [&authManager](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+
+        const QString password = QJsonDocument::fromJson(req.body).object()["password"].toString();
+
+        // setAdminPassword() revokes every unlock the old password bought, which
+        // would include the caller's own if they are a remote admin resetting
+        // it. They just proved they are an admin, so hand it straight back.
+        const QString token = HttpServer::sessionTokenFromRequest(req);
+        const bool callerWasRemoteAdmin = authManager.isAdminSession(token);
+
+        if (!authManager.setAdminPassword(password)) {
+            QJsonObject obj;
+            obj["status"] = "error";
+            obj["error"] = "too_short";
+            obj["min_length"] = AuthManager::MIN_ADMIN_PASSWORD_LEN;
+            return HttpResponse::json(obj, 400);
+        }
+        if (callerWasRemoteAdmin && !password.isEmpty()) authManager.promoteSessionToAdmin(token);
+
+        QJsonObject obj;
+        obj["status"] = "ok";
+        obj["admin_password_set"] = authManager.hasAdminPassword();
+        return HttpResponse::json(obj);
+    });
+
     // GET /api/auth/status — check current auth status
     server.router()->get("/api/auth/status", [&authManager, &geoIpService](const HttpRequest& req) {
         QJsonObject obj;
         QString authedToken; // set when a valid session cookie is found below
 
         bool isLocal = req.isLocal;
+        // Historical name: it means "has admin access", which since the remote
+        // admin password is no longer the same thing as "is the host machine".
         obj["is_localhost"] = isLocal;
+        obj["is_host_machine"] = req.isHostMachine;
 
         if (isLocal) {
             obj["authenticated"] = true; // localhost is always authenticated
             obj["pin"] = authManager.currentPin();
             obj["pin_consumed"] = authManager.isPinConsumed();
+            obj["admin_password_set"] = authManager.hasAdminPassword();
         } else {
             // Check session cookie
             bool auth = false;
@@ -200,6 +307,12 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         obj["requires_pin"] = !isLocal;
         obj["active_sessions"] = authManager.activeSessionCount();
         obj["cert_auth_enabled"] = authManager.certAuthEnabled();
+        // Tells the frontend to offer the admin page behind a password prompt.
+        // Mirrors exactly what /api/auth/admin-unlock will accept, so the
+        // button never appears where the unlock would be refused.
+        obj["admin_unlock_available"] =
+            !isLocal && obj["authenticated"].toBool() && authManager.hasAdminPassword() &&
+            AuthManager::isLanAddress(req.clientAddress) && req.hostTrusted;
 
         HttpResponse resp = HttpResponse::json(obj);
         // Slide the cookie browser-side too, so an active client keeps a

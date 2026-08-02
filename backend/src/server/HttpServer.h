@@ -126,6 +126,13 @@ public:
     /// Extract the raw mw_session cookie token from a request ("" if absent).
     static QString sessionTokenFromRequest(const HttpRequest& req);
 
+    /// Whether @p req carries the per-run admin key (X-MW-Admin-Key header),
+    /// which admin writes require on top of coming from the host machine. The
+    /// key is served by GET /api/admin/token to local callers only; a foreign
+    /// page cannot read it (no CORS) nor send a custom header without a
+    /// preflight we never answer.
+    bool adminKeyMatches(const HttpRequest& req) const;
+
 signals:
     void started(quint16 port);
     void serverError(const QString& message);
@@ -182,6 +189,10 @@ private:
 
     /// PIN-based authentication manager (nullable — auth disabled when null).
     AuthManager* m_AuthManager = nullptr;
+
+    /// Per-run secret required on admin writes (see adminKeyMatches). Generated
+    /// in the constructor, never written to disk.
+    QString m_AdminKey;
 
     /// Per-IP abuse mitigation (connection-flood + auth-failure ban). Checked at
     /// accept() time for both HTTP and HTTPS listeners.

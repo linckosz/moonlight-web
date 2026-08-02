@@ -84,6 +84,8 @@ Congestion handling (mobile networks) is **frontend-driven** (`app.js`), session
 9. `server.start()` (port fallback ranges), persist actual ports, `InternetAccessManager` wiring (rebind callback, `Provisioning::applyOnce`, auto-start if enabled).
 10. Desktop-shortcut self-heal, `ControlChannel`, `TrayManager`, browser auto-open (`/setup` on first run for macOS/Linux, `/admin` otherwise; suppressed with `--autostart` or headless).
 
+Step 0, before `QApplication` even exists: `selectHeadlessPlatform()` swaps the xcb QPA plugin for **offscreen** when Linux offers no display server, so the same binary runs unchanged on a server or in a container (see [Installers §9.3.1](09-Installers-and-Packaging.md#headless-server-installs--931)). The operator CLI (§3.7) branches right after `AppSettings`, before the instance lock.
+
 ## 3.6 Data on disk
 
 All under `QStandardPaths::AppDataLocation` (e.g. `%APPDATA%\MoonlightWeb\MoonlightWeb\` on Windows):
@@ -98,6 +100,18 @@ All under `QStandardPaths::AppDataLocation` (e.g. `%APPDATA%\MoonlightWeb\Moonli
 | Internet-access audit log (JSONL) | One entry per DNS A-record registration, with consent record |
 | ACME artifacts (`letsencrypt/…`) | Issued cert/key files referenced from `settings.json` |
 | `moonlightweb.lock` | Single-instance lock |
+
+## 3.7 Headless operator CLI
+
+On a server there is no browser on the machine, and the admin API is localhost-only — so the two ends never meet. Three flags close the gap by driving the **already-running** instance through the very endpoints the admin page calls, printing the result as text and exiting. They branch **before** the single-instance `QLockFile` (they are queries against another process, not a second server) and route the log echo to stderr so stdout carries only the report.
+
+| Flag | Endpoint(s) | Prints |
+|---|---|---|
+| `--status` | `server/status`, `setup/status`, `auth/status`, `internet/status`, `internet/upnp-probe` | Loopback/LAN/public URLs, access PIN, Sunshine state, and — while Internet Access is off — whether a UPnP router answered or a port forward has to be typed in by hand |
+| `--new-pin` | `POST /api/admin/pin/generate` | A fresh access PIN. Deliberately the non-revoking endpoint (`/api/auth/regenerate` destroys every session) |
+| `--enable-internet [--yes]` | `POST /api/internet/enable` | Prints the consent text, requires `yes` on a TTY (or `--yes`), sends that exact text as `consent_message` so the DNS audit log records what was shown, then the public URL and the router verdict |
+
+The loopback port is read from this user's `settings.json`, then falls back to 443 — running the CLI as a different user than the service (a `sudo`-less `moonlightweb --status` against a root-owned unit) reads a different file, or none. Peer verification is off for these calls: the certificate on 127.0.0.1 is the self-signed LAN one, and no certificate authenticates a loopback socket better than the kernel already does.
 
 ---
 

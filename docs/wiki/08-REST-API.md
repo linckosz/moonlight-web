@@ -10,7 +10,21 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 
 - 🌐 *public* — no auth (also exempted from the 401 guard: `health`, `server/hostname`, `auth/*`).
 - 🔑 *session* — localhost, or a valid `mw_session` cookie.
-- 🏠 *admin* — `req.isLocal`, i.e. a **loopback peer or a host-key session** (the host's own browser reaching the server through the public domain). `/api/admin/*` returns 403 otherwise; the setup/internet/system/local routes apply the same check inside their handlers.
+- 🏠 *admin* — `req.isLocal`, i.e. a **loopback peer, a host-key session** (the host's own browser reaching the server through the public domain) **or a LAN session that unlocked the remote admin password** ([Security §6.2.1](06-Security.md#621-remote-admin-password-lan-only)), **and** the admin key on writes (below). `/api/admin/*` returns 403 otherwise; the setup/internet/system/local routes apply the same check inside their handlers.
+- 🖥️ *host machine* — `req.isHostMachine`: 🏠 minus the password unlock. Reserved for what needs the local desktop or identifies the host itself (`local_key`, the first-run wizard).
+
+**Request requirements** (enforced in `RequestGuard` + `HttpServer::processRequest`, before routing)
+
+The address-based trust above is something a malicious page can borrow — it makes the victim's own browser issue the request, which then arrives from 127.0.0.1 like the admin UI's would. Every `/api/*` request is therefore screened first:
+
+| Rule | Failure | Why |
+|---|---|---|
+| `Sec-Fetch-Site` must be `same-origin`/`none` (falling back to `Origin` vs `Host` on engines that lack it). Absent on both = non-browser client, allowed. | 403 `cross_site_request_blocked` | A page cannot forge either header, so this is what separates our frontend from any other site. |
+| A non-empty body must be `Content-Type: application/json`. | 415 `unsupported_media_type` | Not CORS-safelisted, so a cross-origin write needs a preflight we never answer. |
+| `Host` must be loopback, a private/LAN address, `*.local`, or the configured public domain — **otherwise the request keeps working but loses 🔑/🏠 privileges**. | — | DNS rebinding makes the attacker same-origin with us (able to *read* the PIN, `local_key`, TLS key) but cannot change the name in `Host`. |
+| Writes (`POST`/`DELETE`) to 🏠 routes must carry `X-MW-Admin-Key`. Reads do not. | route's own 403 | A custom header cannot cross origins without a preflight. `GET /api/admin/token` serves the key to 🏠 callers only; it is regenerated at every server start, and `BackendClient` refetches + replays once on a 403. |
+
+WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entirely, and `/ws` carries input events).
 
 ## 8.1 Health & server info
 
@@ -29,9 +43,11 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 | Method & path | Access | Description |
 |---|---|---|
 | `POST /api/auth/validate` | 🌐 | Body `{pin}` or certificate upload → sets `mw_session` cookie. Rate-limited (remaining attempts / lockout seconds in the response). Consumed PIN auto-regenerates. |
-| `GET /api/auth/status` | 🌐 | Session validity, `is_host`, whether a PIN exists, cert-auth enabled. |
+| `GET /api/auth/status` | 🌐 | Session validity, `is_localhost` (has admin), `is_host_machine`, `admin_unlock_available`, `admin_password_set` (admin only), whether a PIN exists, cert-auth enabled. |
 | `POST /api/auth/regenerate` | 🏠 | New PIN + invalidate all sessions. |
 | `POST /api/admin/pin/generate` / `POST /api/admin/pin/clear` | 🏠 | Manage the PIN. |
+| `POST /api/auth/admin-unlock` | 🔑 LAN | Body `{password}` → promotes this session to admin. Requires a LAN peer **and** a trusted `Host`, an existing session, and a configured password; own rate-limit bucket (401 `invalid_password`, 429 `rate_limited`, 403 `lan_only`/`not_configured`). |
+| `POST /api/admin/password` | 🏠 | Body `{password}` sets or changes the remote admin password (min 8 chars, 400 `too_short`); an empty string removes it. Either way, every session unlocked with the old password loses admin — except the caller's. |
 | `GET /api/auth/sessions` | 🏠 | Sessions table (opaque token hash ids, IP, geo, machine name, streaming flag). |
 | `POST /api/auth/sessions/revoke` | 🏠 | Revoke by opaque id; a streaming session's relay is torn down immediately. |
 | `GET /api/admin/certificate/download` / `POST /api/admin/certificate/regenerate` | 🏠 | Certificate-file auth token. |
@@ -56,13 +72,15 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 
 | Method & path | Access | Description |
 |---|---|---|
-| `GET /api/admin/settings` | 🏠 | `{http_port, https_port, cert_auth_enabled}` + `local_key` on loopback (lets the admin page carry its session to the public domain). |
+| `GET /api/admin/token` | 🏠 | `{token}` — the per-run admin key required on 🏠 writes (`X-MW-Admin-Key`). Handled in `processRequest`, not the router, so it can never be reached ahead of the screening rules above. |
+| `GET /api/admin/settings` | 🏠 | `{http_port, https_port, cert_auth_enabled}` + `local_key` for 🖥️ callers only (lets the admin page carry its session to the public domain). |
 | `POST /api/admin/settings` | 🏠 | Accepts **`https_port`** (rebinds live, deferred) and **`cert_auth_enabled`** only; anything else → 400. |
 | `GET /api/settings/streaming` / `POST /api/settings/streaming` | 🔑 / 🏠 | Server-side streaming defaults (the browser seeds its localStorage from these; POST is localhost-only and silently ignores per-device keys it doesn't know). |
 | `GET /api/internet/status` | 🔑 | Full Internet-Access state: phase, domain, `custom_domain` (user-owned FQDN → DNS/ACME inert), public IP, external ports, hairpin, cert expiry, transport mode, last error. |
 | `POST /api/internet/enable` | 🏠 | Opt-in (records consent `{message, source}`) + start the manager. Also the write route for `unique_id` (only while unset, reserved labels rejected), `transport_mode`, `public_ip`, `auto_ip_detection`, `upnp_enabled`. |
 | `POST /api/internet/disable` / `POST /api/internet/refresh` / `POST /api/internet/renew-cert` | 🏠 | Stop / force IP+DNS re-check / force ACME renewal. |
-| `GET /api/setup/status` / `POST /api/setup/apply` | 🏠 | First-run wizard state + apply (internet consent, Sunshine install/pair) with live checklist. |
+| `GET /api/internet/upnp-probe` | 🏠 | On-demand IGD discovery → `{available, gateway, lan_ip, external_ip}`. `upnp_available` in `/api/internet/status` is only meaningful once the manager has run a discovery, so a LAN-only install always reads false there. **Blocks ~2 s** on the main thread (M-SEARCH) — an explicit operator action, never polled. Reuses a live IGD rather than re-discovering under an active session. |
+| `GET /api/setup/status` / `POST /api/setup/apply` | 🏠 | First-run wizard state + apply (internet consent, Sunshine install/pair) with live checklist. `headless: true` when no desktop session — the wizard then drops the Sunshine step entirely (nothing to capture, no GPU, and `pkexec` has no agent to ask). |
 | `POST /api/system/open-screen-recording` | 🏠 | macOS: open the Screen-Recording TCC pane (Sunshine permission). |
 | `POST /api/system/start-sunshine` / `POST /api/system/stop-sunshine` | 🏠 | Control the local Sunshine (liveness probed on port 47989). |
 

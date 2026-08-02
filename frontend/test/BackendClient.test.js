@@ -15,11 +15,25 @@ function jsonResponse(body, { ok = true, status = 200 } = {}) {
     };
 }
 
+// Mock fetch that answers the admin-key probe every write performs, and routes
+// everything else to `handler`. Returns the mock so callers can inspect the
+// non-token calls via `apiCalls()`.
+function mockFetch(handler, { adminKey = 'ADMIN-KEY' } = {}) {
+    const fetchMock = vi.fn().mockImplementation((path, init) => {
+        if (path === '/api/admin/token') return Promise.resolve(jsonResponse({ token: adminKey }));
+        return typeof handler === 'function' ? handler(path, init) : Promise.resolve(handler);
+    });
+    fetchMock.apiCalls = () => fetchMock.mock.calls.filter((c) => c[0] !== '/api/admin/token');
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+}
+
 describe('BackendClient', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         localStorage.clear();
         sessionStorage.clear();
+        BackendClient._adminKeyPromise = null; // cached across calls by design
     });
 
     it('GET returns parsed JSON on success', async () => {
@@ -30,21 +44,61 @@ describe('BackendClient', () => {
     });
 
     it('POST sends a JSON body with the right headers', async () => {
-        const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
-        vi.stubGlobal('fetch', fetchMock);
+        const fetchMock = mockFetch(jsonResponse({ ok: true }));
         await BackendClient.addManualHost('10.0.0.9');
-        const [path, init] = fetchMock.mock.calls[0];
+        const [path, init] = fetchMock.apiCalls()[0];
         expect(path).toBe('/api/hosts/manual');
         expect(init.method).toBe('POST');
         expect(JSON.parse(init.body)).toEqual({ address: '10.0.0.9' });
         expect(init.headers['Content-Type']).toBe('application/json');
     });
 
-    it('DELETE hits the right endpoint', async () => {
-        const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    // The admin key is what separates our own frontend from a page that merely
+    // borrowed the browser's address: a custom header cannot cross origins
+    // without a preflight the backend never answers.
+    it('POST carries the admin key on writes', async () => {
+        const fetchMock = mockFetch(jsonResponse({ ok: true }));
+        await BackendClient.addManualHost('10.0.0.9');
+        expect(fetchMock.apiCalls()[0][1].headers['X-MW-Admin-Key']).toBe('ADMIN-KEY');
+    });
+
+    it('POST refreshes a stale admin key once on 403 and replays', async () => {
+        // First probe hands out the key the client already had; the server has
+        // since restarted and only honours the second one.
+        const keys = ['OLD-KEY', 'NEW-KEY'];
+        const fetchMock = vi.fn().mockImplementation((path, init) => {
+            if (path === '/api/admin/token')
+                return Promise.resolve(jsonResponse({ token: keys.shift() || 'NEW-KEY' }));
+            if (init.headers['X-MW-Admin-Key'] !== 'NEW-KEY')
+                return Promise.resolve(
+                    jsonResponse({ error: 'forbidden' }, { ok: false, status: 403 }),
+                );
+            return Promise.resolve(jsonResponse({ ok: true }));
+        });
         vi.stubGlobal('fetch', fetchMock);
+        await expect(BackendClient.generatePin()).resolves.toEqual({ ok: true });
+        expect(fetchMock.mock.calls.filter((c) => c[0] === '/api/admin/token')).toHaveLength(2);
+    });
+
+    it('remote clients get no key and still send the request', async () => {
+        const fetchMock = vi.fn().mockImplementation((path) => {
+            if (path === '/api/admin/token')
+                return Promise.resolve(jsonResponse({ error: 'forbidden' }, { ok: false, status: 403 }));
+            return Promise.resolve(jsonResponse({ ok: true }));
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        await BackendClient.addManualHost('10.0.0.9');
+        const init = fetchMock.mock.calls.filter((c) => c[0] !== '/api/admin/token')[0][1];
+        expect(init.headers['X-MW-Admin-Key']).toBeUndefined();
+    });
+
+    it('DELETE hits the right endpoint', async () => {
+        const fetchMock = mockFetch(jsonResponse({}));
         await BackendClient.removeHost('uuid-1');
-        expect(fetchMock).toHaveBeenCalledWith('/api/hosts/uuid-1', { method: 'DELETE' });
+        const [path, init] = fetchMock.apiCalls()[0];
+        expect(path).toBe('/api/hosts/uuid-1');
+        expect(init.method).toBe('DELETE');
+        expect(init.headers['X-MW-Admin-Key']).toBe('ADMIN-KEY');
     });
 
     it('throws a rich error on a non-auth failure', async () => {
@@ -69,18 +123,15 @@ describe('BackendClient', () => {
 
     it('aborts a POST after the client timeout', async () => {
         // fetch rejects with an AbortError when the signal fires.
-        vi.stubGlobal(
-            'fetch',
-            vi.fn().mockImplementation(
-                (_p, init) =>
-                    new Promise((_resolve, reject) => {
-                        init.signal.addEventListener('abort', () => {
-                            const e = new Error('aborted');
-                            e.name = 'AbortError';
-                            reject(e);
-                        });
-                    }),
-            ),
+        mockFetch(
+            (_p, init) =>
+                new Promise((_resolve, reject) => {
+                    init.signal.addEventListener('abort', () => {
+                        const e = new Error('aborted');
+                        e.name = 'AbortError';
+                        reject(e);
+                    });
+                }),
         );
         await expect(BackendClient.post('/slow', {}, { timeoutMs: 5 })).rejects.toMatchObject({
             message: 'server_timeout',
@@ -96,10 +147,9 @@ describe('BackendClient', () => {
     });
 
     it('launchApp includes the client unique id and streaming settings', async () => {
-        const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ started: true }));
-        vi.stubGlobal('fetch', fetchMock);
+        const fetchMock = mockFetch(jsonResponse({ started: true }));
         await BackendClient.launchApp('host1', 42, { bitrate: 20000 });
-        const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+        const body = JSON.parse(fetchMock.apiCalls()[0][1].body);
         expect(body).toMatchObject({ appId: 42, bitrate: 20000 });
         expect(body.client_uniqueid).toMatch(/^[0-9A-F]{16}$/);
     });

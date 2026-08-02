@@ -80,6 +80,47 @@ done_banner() {
     say ""
 }
 
+# No desktop on this machine: no browser to open the setup wizard in, and no
+# display to capture — so no Sunshine either. The package's postinstall reaches
+# the same conclusion on its own (it installs and starts the systemd service
+# instead of launching into a graphical session); this only decides how to
+# report it, and hands over to the app's own operator command for the details.
+#
+# `systemctl get-default` is the discriminator rather than $DISPLAY alone: this
+# script is very often run over SSH on a machine that does have a desktop.
+# MW_HEADLESS=1 forces it either way.
+is_headless() {
+    [ "${MW_HEADLESS:-0}" = "1" ] && return 0
+    [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && return 1
+    have systemctl || return 1
+    [ "$(systemctl get-default 2>/dev/null)" = "graphical.target" ] && return 1
+    return 0
+}
+
+done_banner_headless() {
+    say ""
+    say "${bold}MoonlightWeb installed and running as a system service.${reset}"
+    say ""
+    # Real URLs, real PIN, real router verdict — straight from the running
+    # server, so nothing here can drift from what it actually did. systemd has
+    # only just been told to start it, and --status talks to a listening socket:
+    # give the TLS listener a few seconds to come up before giving up on it.
+    if have moonlightweb; then
+        _try=0
+        while [ "$_try" -lt 15 ]; do
+            if moonlightweb --status 2>/dev/null; then break; fi
+            _try=$((_try + 1))
+            sleep 1
+        done
+        [ "$_try" -lt 15 ] || say "  ${dim}(server still starting — run 'moonlightweb --status')${reset}"
+    fi
+    say "  ${dim}Sunshine was not installed: this host has no display to capture and no${reset}"
+    say "  ${dim}GPU to encode with. Add your streaming hosts by IP from the web UI.${reset}"
+    say ""
+    say "  ${dim}Service:  sudo systemctl {status,restart,stop} moonlightweb${reset}"
+    say ""
+}
+
 # ── macOS ──────────────────────────────────────────────────────────────────
 install_macos() {
     # Only Apple Silicon is published; an Intel Mac has to build from source.
@@ -205,6 +246,12 @@ EOF
     say ""
     say "  ${dim}No repository on this distro, so no automatic updates:${reset}"
     say "  ${dim}re-run this script to upgrade.${reset}"
+    if [ "${MW_HEADLESS:-0}" = "1" ]; then
+        say ""
+        say "  ${dim}Headless host: only the .deb and .rpm register the systemd service for${reset}"
+        say "  ${dim}you. To run this AppImage as one, adapt the unit shipped in the repo:${reset}"
+        say "  ${dim}backend/packaging/systemd/moonlightweb.service (point ExecStart here).${reset}"
+    fi
     say ""
     exit 0
 }
@@ -213,6 +260,14 @@ EOF
 install_linux() {
     [ "$(uname -m)" = "x86_64" ] || die "only x86_64 Linux is published — build from source:
   https://github.com/$REPO#fork--build"
+
+    # Propagated into the package's postinstall, which uses it for the same
+    # decision (dpkg/rpm keep the environment they were invoked with).
+    if is_headless; then
+        MW_HEADLESS=1
+        export MW_HEADLESS
+        say "${dim}No desktop detected — installing in headless (server) mode.${reset}"
+    fi
 
     if have apt-get; then
         install_apt
@@ -242,7 +297,11 @@ install_linux() {
         install_appimage
     fi
 
-    done_banner
+    if [ "${MW_HEADLESS:-0}" = "1" ]; then
+        done_banner_headless
+    else
+        done_banner
+    fi
     say "  ${dim}Ports 443/tcp, 80/tcp and 47999/udp are opened in firewalld/ufw${reset}"
     say "  ${dim}when one of them is active.${reset}"
     say ""
