@@ -248,4 +248,11 @@ Decision evaluate(const Request& req, const Context& ctx)
     return d;
 }
 
+AdminTokenReply adminTokenReply(const Decision& decision, const Context& ctx, bool authenticated)
+{
+    if (decision.hostMachine || ctx.adminSession) return AdminTokenReply::Grant;
+    if (authenticated) return AdminTokenReply::Empty;
+    return AdminTokenReply::Deny;
+}
+
 } // namespace RequestGuard

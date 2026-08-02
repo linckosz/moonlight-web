@@ -777,18 +777,27 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // The frontend fetches the admin key here. Handled inline rather than as a
     // route so it can never be reached without the checks above.
     if (req.path == QLatin1String("/api/admin/token")) {
-        if (!decision.hostMachine && !ctx.adminSession) {
-            // Feed the guard: repeatedly probing for the admin key is exactly
-            // what an attacker who cannot read it would do.
-            m_ConnGuard.reportAuthFailure(req.clientAddress);
-            QJsonObject obj;
-            obj["error"] = "forbidden";
-            sendResponse(socket, HttpResponse::json(obj, 403));
-            return;
-        }
         QJsonObject obj;
-        obj["token"] = m_AdminKey;
-        HttpResponse resp = HttpResponse::json(obj);
+        HttpResponse resp;
+        switch (RequestGuard::adminTokenReply(decision, ctx, isAuthenticated(req))) {
+        case RequestGuard::AdminTokenReply::Grant:
+            obj["token"] = m_AdminKey;
+            resp = HttpResponse::json(obj);
+            break;
+        case RequestGuard::AdminTokenReply::Empty:
+            // A valid session that simply has no admin rights (a remote client
+            // that has not unlocked with the admin password). Answer plainly
+            // with no key — and do NOT count it as an auth failure, or
+            // ConnectionGuard would ban a legitimate remote user from their own
+            // server after AUTHFAIL_MAX page loads.
+            resp = HttpResponse::json(obj);
+            break;
+        case RequestGuard::AdminTokenReply::Deny:
+            m_ConnGuard.reportAuthFailure(req.clientAddress);
+            obj["error"] = "forbidden";
+            resp = HttpResponse::json(obj, 403);
+            break;
+        }
         resp.headers["Cache-Control"] = "no-store";
         sendResponse(socket, resp);
         return;
@@ -895,7 +904,15 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     m_Router->dispatchAsync(req, [this, socket](const HttpResponse& resp) {
         if (m_PendingAsyncSockets.contains(socket)) {
             m_PendingAsyncSockets.remove(socket);
-            sendResponse(socket, resp);
+            // API answers are per-session state (host list, sessions, settings)
+            // and several are privilege-dependent — the very same URL returns
+            // less to a remote client than to the host. Nothing may keep a copy:
+            // no-store also keeps them out of the browser's on-disk cache, where
+            // they would outlive the session that was allowed to see them.
+            // Handlers that set their own policy keep it.
+            HttpResponse out = resp;
+            if (!out.headers.contains("Cache-Control")) out.headers["Cache-Control"] = "no-store";
+            sendResponse(socket, out);
         } else {
             // The socket is no longer pending because it disconnected mid-request:
             // onDisconnected() already did socket->deleteLater(), so by the time
