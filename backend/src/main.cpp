@@ -50,6 +50,7 @@
 #include <io.h>
 #else
 #include <unistd.h>
+#include <termios.h>
 #endif
 #include <array>
 #include <functional>
@@ -377,11 +378,13 @@ struct LoopbackReply
 // certificate could authenticate better than the kernel already does.
 static LoopbackReply loopbackRequest(const QString& base, const QString& path,
                                      const QByteArray& postBody = QByteArray(),
-                                     int timeoutMs = 15000)
+                                     int timeoutMs = 15000, const QString& adminKey = QString())
 {
     QNetworkAccessManager nam;
     QNetworkRequest req{QUrl(base + path)};
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    if (!adminKey.isEmpty())
+        req.setRawHeader(QByteArrayLiteral("X-MW-Admin-Key"), adminKey.toUtf8());
     QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
     ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
     req.setSslConfiguration(ssl);
@@ -428,6 +431,23 @@ static quint16 findRunningHttpsPort(quint16 persistedPort)
         if (loopbackRequest(base, QStringLiteral("/api/health"), QByteArray(), 3000).ok) return p;
     }
     return 0;
+}
+
+// POST to an admin route from the terminal.
+//
+// Every mutating admin endpoint additionally requires the per-run admin key
+// (RequestGuard treats a write without it as something another page drove
+// through the user's browser). A terminal is not a browser, but the gate cannot
+// tell — so fetch the key exactly as the frontend does, over the same loopback
+// connection that already proves we are on this machine, and present it.
+static LoopbackReply loopbackAdminPost(const QString& base, const QString& path,
+                                       const QByteArray& body, int timeoutMs = 15000)
+{
+    const QString key =
+        loopbackRequest(base, QStringLiteral("/api/admin/token"), QByteArray(), 5000)
+            .json.value(QStringLiteral("token"))
+            .toString();
+    return loopbackRequest(base, path, body, timeoutMs, key);
 }
 
 // Loopback base URL of the running server, or empty when none answers.
@@ -533,6 +553,18 @@ static int runStatusCommand(quint16 persistedHttpsPort)
     else
         out << "  Access PIN     " << pin << "   (asked once per browser)\n";
 
+    // The admin page is localhost-only, so on a headless host the LAN password is
+    // the only way anyone reaches it. There is no built-in default: until one is
+    // set the door is shut, and the operator has no other way to find that out.
+    if (auth.value("remote_admin_enabled").toBool(false)) {
+        if (auth.value("admin_password_set").toBool(false))
+            out << "  Admin password set   (change it with:  moonlightweb "
+                   "--set-admin-password)\n";
+        else
+            out << "  Admin password none set — no computer on your network can open the admin\n"
+                << "                 page. Set one with:  moonlightweb --set-admin-password\n";
+    }
+
     const QJsonObject sun = setup.value("sunshine").toObject();
     if (headless)
         out << "  Sunshine       not applicable on a headless host — add your hosts by IP\n";
@@ -562,7 +594,7 @@ static int runNewPinCommand(quint16 persistedHttpsPort)
     }
 
     const LoopbackReply reply =
-        loopbackRequest(base, "/api/admin/pin/generate", QByteArrayLiteral("{}"));
+        loopbackAdminPost(base, "/api/admin/pin/generate", QByteArrayLiteral("{}"));
     if (!reply.ok) {
         out << "Failed: "
             << (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
@@ -576,6 +608,106 @@ static int runNewPinCommand(quint16 persistedHttpsPort)
         << "\n"
         << "  Enter it once in the browser of each device you want to allow.\n"
         << "  It is single-use: run this again for the next device.\n\n";
+    out.flush();
+    return 0;
+}
+
+// Read a secret from the terminal without echoing it. When stdin is a pipe
+// (the installer feeding a password it already collected) the line is simply
+// read: there is no terminal to turn echo off on.
+static QString readSecretFromStdin(const QString& prompt)
+{
+    QTextStream out(stdout);
+    QTextStream in(stdin);
+
+    if (!stdinIsInteractive()) return in.readLine();
+
+    out << prompt;
+    out.flush();
+
+#if defined(Q_OS_WIN)
+    HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    const bool saved = GetConsoleMode(handle, &mode) != 0;
+    if (saved) SetConsoleMode(handle, mode & ~static_cast<DWORD>(ENABLE_ECHO_INPUT));
+    const QString line = in.readLine();
+    if (saved) SetConsoleMode(handle, mode);
+#else
+    termios saved{};
+    const bool haveTermios = tcgetattr(fileno(stdin), &saved) == 0;
+    if (haveTermios) {
+        termios quiet = saved;
+        quiet.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+        tcsetattr(fileno(stdin), TCSAFLUSH, &quiet);
+    }
+    const QString line = in.readLine();
+    if (haveTermios) tcsetattr(fileno(stdin), TCSAFLUSH, &saved);
+#endif
+
+    // The user's Enter never reached the screen, so end the line ourselves.
+    out << "\n";
+    out.flush();
+    return line;
+}
+
+// `moonlightweb --set-admin-password`: set (or replace) the password a computer
+// on the LAN spends to open the admin page.
+//
+// There is no built-in default password, so on a headless host this is the only
+// way to open that door at all: the admin page it guards is localhost-only, and
+// a headless box has no browser to open it with. Replacing the password signs
+// out every machine that unlocked with the old one.
+static int runSetAdminPasswordCommand(quint16 persistedHttpsPort)
+{
+    QTextStream out(stdout);
+    const QString base = findRunningInstance(persistedHttpsPort);
+    if (base.isEmpty()) {
+        out << "MoonlightWeb is not running — start it first "
+               "(sudo systemctl start moonlightweb).\n";
+        out.flush();
+        return 1;
+    }
+
+    const QString password = readSecretFromStdin(QStringLiteral("New admin password: "));
+    if (password.size() < AuthManager::MIN_ADMIN_PASSWORD_LEN) {
+        out << "Too short — the password must be at least " << AuthManager::MIN_ADMIN_PASSWORD_LEN
+            << " characters. Nothing was changed.\n";
+        out.flush();
+        return 1;
+    }
+    // Only worth confirming when a human typed it blind; a piped password was
+    // already confirmed by whatever collected it.
+    if (stdinIsInteractive() && readSecretFromStdin(QStringLiteral("Repeat it: ")) != password) {
+        out << "The two entries differ — nothing was changed.\n";
+        out.flush();
+        return 1;
+    }
+
+    QJsonObject body;
+    body["password"] = password;
+    // Setting a password is what the door is for: an operator running this means
+    // to allow the unlock, so make sure the toggle is not left off.
+    body["enabled"] = true;
+
+    const LoopbackReply reply = loopbackAdminPost(
+        base, "/api/admin/password", QJsonDocument(body).toJson(QJsonDocument::Compact));
+    if (!reply.ok) {
+        const QString apiError = reply.json.value("error").toString();
+        out << "Failed: "
+            << (!apiError.isEmpty()
+                    ? apiError
+                    : (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
+                                             : reply.error))
+            << "\n";
+        out.flush();
+        return 1;
+    }
+
+    out << "\n  Admin password set.\n"
+        << "\n"
+        << "  A computer on this network can now open the admin page at the server's\n"
+        << "  URL and unlock it with this password. Machines that used a previous\n"
+        << "  password have been signed out.\n\n";
     out.flush();
     return 0;
 }
@@ -625,7 +757,7 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 
     // Generous: the handler returns only once the A record resolves, and DNS
     // propagation plus the ACME order are both network round-trips away.
-    const LoopbackReply reply = loopbackRequest(
+    const LoopbackReply reply = loopbackAdminPost(
         base, "/api/internet/enable", QJsonDocument(body).toJson(QJsonDocument::Compact), 180000);
     if (!reply.ok) {
         out << "Failed: "
@@ -849,9 +981,17 @@ int main(int argc, char* argv[])
     // exits, and two INFO lines ahead of the usage text is exactly the kind of
     // noise that breaks `moonlightweb --help | less`.
     for (int i = 1; i < argc; ++i) {
-        static const char* const kQuietStdout[] = {
-            "--stream-worker", "--status", "--new-pin", "--enable-internet", "--help",
-            "--help-all",      "-h",       "-?",        "--version",         "-v"};
+        static const char* const kQuietStdout[] = {"--stream-worker",
+                                                   "--status",
+                                                   "--new-pin",
+                                                   "--enable-internet",
+                                                   "--set-admin-password",
+                                                   "--help",
+                                                   "--help-all",
+                                                   "-h",
+                                                   "-?",
+                                                   "--version",
+                                                   "-v"};
         for (const char* flag : kQuietStdout) {
             if (qstrcmp(argv[i], flag) == 0) {
                 Logger::instance()->setConsoleToStderr(true);
@@ -917,6 +1057,11 @@ int main(int argc, char* argv[])
     QCommandLineOption newPinOption(
         "new-pin", "Issue a new access PIN for a remote browser, print it, then exit");
     parser.addOption(newPinOption);
+
+    QCommandLineOption setAdminPasswordOption(
+        "set-admin-password",
+        "Set the password another computer on this network uses to open the admin page, then exit");
+    parser.addOption(setAdminPasswordOption);
 
     QCommandLineOption enableInternetOption(
         "enable-internet",
@@ -984,6 +1129,8 @@ int main(int argc, char* argv[])
     // settings.json behind in that user's home.
     if (parser.isSet(statusOption)) return runStatusCommand(appSettings.httpsPort(443));
     if (parser.isSet(newPinOption)) return runNewPinCommand(appSettings.httpsPort(443));
+    if (parser.isSet(setAdminPasswordOption))
+        return runSetAdminPasswordCommand(appSettings.httpsPort(443));
     if (parser.isSet(enableInternetOption))
         return runEnableInternetCommand(appSettings.httpsPort(443), parser.isSet(yesOption));
 

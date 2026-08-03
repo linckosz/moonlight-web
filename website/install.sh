@@ -91,6 +91,8 @@ cli_hint() {
         "${dim}URLs, access PIN, internet state${reset}"
     printf '    %-34s %s\n' "$MW_CLI --new-pin" \
         "${dim}let one more device in${reset}"
+    printf '    %-34s %s\n' "$MW_CLI --set-admin-password" \
+        "${dim}open the admin page to your LAN${reset}"
     printf '    %-34s %s\n' "$MW_CLI --enable-internet" \
         "${dim}publish it on a public sub-domain${reset}"
     printf '    %-34s %s\n' "$MW_CLI --help" \
@@ -197,6 +199,74 @@ ask_internet() {
 # the package's postinstall has only just been told to start — so wait for it to
 # answer on loopback first. `--yes` prints the full agreement and proceeds; the
 # audit entry records those exact words, not the summary shown above.
+# The operator commands all talk to the running instance over loopback, and the
+# package's postinstall has only just been told to start it. Give it a moment to
+# answer before asking it anything.
+wait_for_server() {
+    _try=0
+    while [ "$_try" -lt 30 ]; do
+        if "$MW_CLI" --status > /dev/null 2>&1; then return 0; fi
+        _try=$((_try + 1))
+        sleep 1
+    done
+    return 1
+}
+
+# The admin page is restricted to the machine itself, and a headless box has no
+# browser to open it with — so this password is the only way its owner ever
+# reaches it, from another computer on the same network. There is no built-in
+# default, which means skipping this leaves that door shut rather than leaving it
+# open with a password everyone knows. Ask now, while someone is watching.
+#
+# Read from /dev/tty, not stdin: under `curl | bash` stdin is the script itself.
+set_admin_password() {
+    [ -n "$MW_CLI" ] || return 0
+    { [ -t 1 ] && [ -r /dev/tty ]; } || return 0
+
+    say ""
+    say "${bold}Set an admin password for this server${reset}"
+    say ""
+    say "  You type it to open the admin page from another computer on your"
+    say "  network — the PIN above only grants streaming. Without a password the"
+    say "  admin page cannot be opened at all on a machine with no desktop."
+    say ""
+    say "  ${dim}At least 8 characters. Leave it empty to skip; you can set one"
+    say "  later with: $MW_CLI --set-admin-password${reset}"
+    say ""
+
+    _stty="$(stty -g < /dev/tty 2>/dev/null)" || _stty=""
+    # Leaving a terminal with echo off is a far worse outcome than an unanswered
+    # question, so Ctrl-C restores it and leaves.
+    trap '[ -n "$_stty" ] && stty "$_stty" < /dev/tty 2>/dev/null
+          printf "\n"; exit 130' INT TERM
+    stty -echo < /dev/tty 2>/dev/null || true
+    printf '  Password: '
+    IFS= read -r _pw < /dev/tty || _pw=""
+    [ -n "$_stty" ] && stty "$_stty" < /dev/tty 2>/dev/null
+    trap - INT TERM
+    printf '\n'
+
+    if [ -z "$_pw" ]; then
+        say "  ${dim}Skipped — the admin page stays reachable from this machine only.${reset}"
+        return 0
+    fi
+
+    if ! wait_for_server; then
+        say "  ${red}The server is not answering yet.${reset} ${dim}Set it with:"
+        say "  $MW_CLI --set-admin-password${reset}"
+        _pw=""
+        return 0
+    fi
+
+    if printf '%s\n' "$_pw" | "$MW_CLI" --set-admin-password > /dev/null 2>&1; then
+        say "  ${dim}Admin password set.${reset}"
+    else
+        say "  ${red}Could not set it.${reset} ${dim}It may be too short — retry with:"
+        say "  $MW_CLI --set-admin-password${reset}"
+    fi
+    _pw=""
+}
+
 enable_internet() {
     [ "$WANT_INTERNET" = "yes" ] || return 0
     if [ -z "$MW_CLI" ]; then
@@ -204,12 +274,7 @@ enable_internet() {
         return 0
     fi
 
-    _try=0
-    while [ "$_try" -lt 30 ]; do
-        if "$MW_CLI" --status > /dev/null 2>&1; then break; fi
-        _try=$((_try + 1))
-        sleep 1
-    done
+    wait_for_server || true
 
     if ! "$MW_CLI" --enable-internet --yes; then
         say ""
@@ -577,6 +642,7 @@ install_linux() {
     enable_internet
 
     if [ "${MW_HEADLESS:-0}" = "1" ]; then
+        set_admin_password
         done_banner_headless
     else
         done_banner
