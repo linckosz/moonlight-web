@@ -62,7 +62,7 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 | `POST /api/hosts/manual` | 🔑 | Add a host by IP/hostname. |
 | `DELETE /api/hosts/:id` | 🔑 | Forget a host. |
 | `POST /api/hosts/:id/wol` | 🔑 | Wake-on-LAN. |
-| `POST /api/hosts/:id/pair` (async) / `GET /api/hosts/:id/pair` | 🔑 | Start pairing (returns the PIN to type into Sunshine) / poll status. Fully event-driven (no nested loop). |
+| `POST /api/hosts/:id/pair/start` / `POST /api/hosts/:id/pair` (async) | 🔑 | Start pairing (returns the PIN to type into Sunshine) / poll status. Fully event-driven (no nested loop). Starting is a POST because it acts on the host: a GET gets fetched by link-preview bots, prefetchers and URL-following antivirus, and those arrive as ordinary navigations that no cross-site check can tell apart from the user. |
 | `GET /api/hosts/:id/apps` (async) | 🔑 | App list (with box-art fetched in background). |
 | `GET /api/hosts/:id/appasset` | 🔑 | Box-art image. |
 | `POST /api/hosts/:id/start` (async) | 🔑 | **The launch route.** Body: `appId` + per-browser overrides (`video_codec`, `stream_bitrate/height/fps/aspect`, `hdr_enabled`, `chroma_444_enabled`, `gaming_mode`, `mute_host_audio`, `video_enhancement`, `low_audio`, `client_uniqueid`, `transport_mode`, `transport_index`) + the dual-stream pair `standby` / `session_slot` (a `standby:true` launch adds the second slot instead of taking over). Performs take-over, launch/resume on Sunshine, worker spawn + relay creation. Response: `{signalingUrl\|wsUrl, transport_chain, transport_index, negotiated codec, codecOverridden, dual_supported…}`, or `{status:"dual_unavailable"}` when the host refuses a second concurrent session. |
