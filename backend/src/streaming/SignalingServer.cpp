@@ -48,8 +48,9 @@ SignalingServer::SignalingServer(RelayBase* relay, quint16 wsPort, const QString
     qInfo() << "[SignalingServer] Created, wsPort=" << wsPort
             << "mode=NonSecure (tunnel/Cloudflare handles TLS)";
 
-    // Always NonSecure — TLS is terminated by the external tunnel or Cloudflare.
-    // Local LAN clients connect via ws://localhost:<port> directly.
+    // Always NonSecure — TLS is terminated by HttpServer (or the external tunnel
+    // in front of it). Browsers never reach this socket directly: they connect to
+    // wss://<host>/ws and HttpServer proxies the upgrade here over loopback.
     m_WsServer =
         new QWebSocketServer(QString("Moonlight-Signaling"), QWebSocketServer::NonSecureMode, this);
 
@@ -71,8 +72,13 @@ bool SignalingServer::start()
     // it on its own thread when this new one binds. Retry briefly (this runs on
     // the relay thread during startup, nothing else uses it yet). Non-AddressInUse
     // errors fail immediately. Normally listen() succeeds on the first attempt.
+    // Loopback only. This channel carries the SDP/ICE exchange and, once the WS
+    // fallback kicks in, the keyboard and mouse events themselves — and it
+    // authenticates nobody: the Origin and session checks live in HttpServer's
+    // proxy (handleWebSocketUpgrade), which reaches us over 127.0.0.1. Binding
+    // the wildcard address published a way around those checks to the whole LAN.
     int bindAttempts = 0;
-    while (!m_WsServer->listen(QHostAddress::Any, m_WsPort)) {
+    while (!m_WsServer->listen(QHostAddress::LocalHost, m_WsPort)) {
         if (++bindAttempts > 20) {
             qWarning() << "[SignalingServer] Failed to listen on port" << m_WsPort
                        << "error:" << m_WsServer->errorString() << "after" << bindAttempts
