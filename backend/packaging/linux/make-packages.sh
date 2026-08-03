@@ -260,9 +260,38 @@ fi
 exit 0
 EOF
 
-# No hard dependencies: Qt/OpenSSL are bundled; the libraries linuxdeploy leaves
-# to the system (glibc, libX11, libGL, fontconfig...) exist on any desktop
-# session, and naming them per-distro would make the packages distro-specific.
+# Qt and OpenSSL are bundled, but linuxdeploy deliberately leaves the graphics
+# and font stack to the system — those libraries are driver- and distro-coupled
+# and must never be shipped. They are NEEDED entries of the executable itself,
+# not lazily dlopen'd, so the process does not start without them:
+#
+#   moonlightweb: error while loading shared libraries: libGLX.so.0
+#
+# Every desktop session has them, which is why nothing was declared here at
+# first. A minimal server or container image does not — and that is precisely
+# where the headless install is meant to run, so the CLI (`moonlightweb
+# --status`) died before printing a line. Declaring them is what makes the
+# package manager pull them in.
+#
+# The list is what `ldd` reports unresolved on a bare debian:12 (plus libxcb,
+# needed by the xcb platform plugin on a desktop). Keep it in step with
+# backend/packaging/aur/PKGBUILD, which names the same set for Arch.
+deb_depends=(
+    --depends libgl1 --depends libopengl0 --depends libegl1
+    --depends libfontconfig1 --depends libfreetype6
+    --depends libx11-6 --depends libx11-xcb1 --depends libxcb1
+)
+# RPM resolves soname provides, which every RPM distro generates the same way —
+# unlike package names, which differ between Fedora (libglvnd-glx) and openSUSE
+# (Mesa-libGL1). Depending on the soname keeps one .rpm valid for both.
+rpm_depends=(
+    --depends "libGLX.so.0()(64bit)" --depends "libOpenGL.so.0()(64bit)"
+    --depends "libGL.so.1()(64bit)" --depends "libEGL.so.1()(64bit)"
+    --depends "libfontconfig.so.1()(64bit)" --depends "libfreetype.so.6()(64bit)"
+    --depends "libX11.so.6()(64bit)" --depends "libX11-xcb.so.1()(64bit)"
+    --depends "libxcb.so.1()(64bit)"
+)
+
 common=(
     -s dir -n moonlightweb -v "$VERSION"
     --license GPL-3.0 --vendor MoonlightWeb
@@ -274,8 +303,10 @@ common=(
     -C "$PKG"
 )
 
-fpm "${common[@]}" -t deb -a amd64  -p "$OUT/moonlightweb-$VERSION-linux-x64.deb" .
-fpm "${common[@]}" -t rpm -a x86_64 -p "$OUT/moonlightweb-$VERSION-linux-x64.rpm" .
+fpm "${common[@]}" "${deb_depends[@]}" \
+    -t deb -a amd64  -p "$OUT/moonlightweb-$VERSION-linux-x64.deb" .
+fpm "${common[@]}" "${rpm_depends[@]}" \
+    -t rpm -a x86_64 -p "$OUT/moonlightweb-$VERSION-linux-x64.rpm" .
 
 echo "Packages written to $OUT:"
 ls -lh "$OUT"/moonlightweb-"$VERSION"-linux-x64.{deb,rpm}
