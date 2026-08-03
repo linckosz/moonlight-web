@@ -23,12 +23,15 @@
 #  pairing, service registration), only the clicking is skipped. On macOS the
 #  installer's GUI panes are bypassed, so the postinstall uses its documented
 #  CLI defaults (install Sunshine, admin/admin credentials, Internet Access
-#  off) and the in-app wizard finishes the configuration.
+#  off) and the in-app wizard finishes the configuration. Internet Access is
+#  the one pane this script asks for itself — see ask_internet below.
 #
 #  Environment overrides:
 #    MW_VERSION=0.2.4   pin a version (macOS and the AppImage fallback only;
 #                       apt/dnf always resolve the newest in the repository)
 #    MW_REPO=owner/name install from a fork
+#    MW_INTERNET=1|0    answer the Internet Access question up front (default:
+#                       0 — LAN only — whenever there is no terminal to ask on)
 #
 #  Served from website/install.sh; the canonical copy lives in the repo.
 # ===========================================================================
@@ -71,6 +74,30 @@ latest_version() {
     esac
 }
 
+# How to invoke MoonlightWeb's operator commands on this install path. The
+# packages put a `moonlightweb` symlink on PATH; the AppImage and the macOS
+# bundle are only ever reachable by their own path. Empty until an install
+# succeeds, so nothing below promises a command that is not there.
+MW_CLI=""
+
+# The operator commands worth knowing before closing the terminal. The web UI
+# covers all of them, but it is not always the shortest route — and on a box
+# reached over SSH it is not a route at all.
+cli_hint() {
+    [ -n "$MW_CLI" ] || return 0
+    say "  ${bold}MoonlightWeb is a command-line tool too:${reset}"
+    say ""
+    printf '    %-34s %s\n' "$MW_CLI --status" \
+        "${dim}URLs, access PIN, internet state${reset}"
+    printf '    %-34s %s\n' "$MW_CLI --new-pin" \
+        "${dim}let one more device in${reset}"
+    printf '    %-34s %s\n' "$MW_CLI --enable-internet" \
+        "${dim}publish it on a public sub-domain${reset}"
+    printf '    %-34s %s\n' "$MW_CLI --help" \
+        "${dim}every command${reset}"
+    say ""
+}
+
 done_banner() {
     say ""
     say "${bold}MoonlightWeb installed.${reset}"
@@ -78,6 +105,117 @@ done_banner() {
     say "  Finish the setup in your browser:  ${bold}https://localhost/setup${reset}"
     say "  From another device on your LAN:   https://<this-machine-ip>"
     say ""
+    cli_hint
+}
+
+# ── Internet Access consent ────────────────────────────────────────────────
+# Asked here rather than left to the app, because this is the only moment a
+# human is certainly watching: on a headless box nobody ever opens the setup
+# wizard, and the answer decides whether the machine is reachable from outside
+# the LAN at all.
+#
+# Drawn on /dev/tty, not stdin: under `curl | bash` stdin is the script itself.
+# With no terminal to draw on (CI, image builds, `sh install.sh < /dev/null`)
+# the answer is No — the private default — and MW_INTERNET answers it up front.
+WANT_INTERNET=no
+
+ask_internet() {
+    case "${MW_INTERNET:-}" in
+        1|yes|true) WANT_INTERNET=yes; return 0 ;;
+        0|no|false) WANT_INTERNET=no; return 0 ;;
+    esac
+    { [ -t 1 ] && [ -r /dev/tty ] && have stty && have od && have dd; } || return 0
+
+    say ""
+    say "${bold}Expose this machine on the internet?${reset}"
+    say ""
+    say "  MoonlightWeb can claim a sub-domain of moonlightweb.top for this"
+    say "  machine, point it at your public IP address and obtain a real TLS"
+    say "  certificate for it — so you can stream from anywhere, not only from"
+    say "  this network. The sub-domain and that IP address are stored on the"
+    say "  MoonlightWeb DNS server for as long as you keep the link on."
+    say ""
+    say "  ${dim}No decides nothing for good: Internet Access can be turned on —"
+    say "  and off again — at any time from the admin page.${reset}"
+    say ""
+    say "  ${dim}up/down arrows to choose, Enter to confirm${reset}"
+    say ""
+
+    # Cursor hidden and the terminal put in raw mode for the duration, so a
+    # keypress arrives immediately and is not echoed into the drawing. Both are
+    # undone on the way out, including on Ctrl-C — leaving a terminal with no
+    # echo is a far worse outcome than an unanswered question.
+    _sel=1
+    _stty="$(stty -g < /dev/tty 2>/dev/null)" || _stty=""
+    # Ctrl-C has to leave, not merely tidy up: the handler returns into the read
+    # loop otherwise, and the loop would carry on with a cooked terminal.
+    trap '[ -n "$_stty" ] && stty "$_stty" < /dev/tty 2>/dev/null
+          printf "\033[?25h\n"; exit 130' INT TERM
+    stty -echo -icanon min 1 time 0 < /dev/tty 2>/dev/null || true
+    printf '\033[?25l'
+
+    _drawn=""
+    while :; do
+        # Redraw in place: back up over the two option lines printed last pass.
+        # Keep them short enough never to wrap, or the count would be wrong.
+        [ -z "$_drawn" ] || printf '\033[2A'
+        _drawn=1
+        if [ "$_sel" = 0 ]; then
+            printf '    %s> Yes%s  register the sub-domain now\033[K\n' "$bold" "$reset"
+            printf '      No   %sstay on this network only%s\033[K\n' "$dim" "$reset"
+        else
+            printf '      Yes  %sregister the sub-domain now%s\033[K\n' "$dim" "$reset"
+            printf '    %s> No%s   stay on this network only\033[K\n' "$bold" "$reset"
+        fi
+
+        # One byte at a time, as a decimal value: `read` cannot see an escape
+        # sequence arrive and od keeps this to tools every POSIX system has.
+        _key="$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 | tr -d ' \n')"
+        case "$_key" in
+            27) # CSI: swallow the '[', then act on the final byte
+                dd bs=1 count=1 < /dev/tty > /dev/null 2>&1
+                case "$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 | tr -d ' \n')" in
+                    65|68) _sel=0 ;; # up, left
+                    66|67) _sel=1 ;; # down, right
+                esac ;;
+            121|89) _sel=0 ;;                            # y, Y
+            110|78) _sel=1 ;;                            # n, N
+            32|9) [ "$_sel" = 0 ] && _sel=1 || _sel=0 ;; # space, tab
+            10|13|"") break ;;                           # Enter — or EOF
+        esac
+    done
+
+    printf '\033[?25h'
+    [ -z "$_stty" ] || stty "$_stty" < /dev/tty 2>/dev/null || true
+    trap - INT TERM
+    [ "$_sel" = 0 ] && WANT_INTERNET=yes || WANT_INTERNET=no
+    say ""
+}
+
+# Act on a Yes, once the app is installed. The registration is driven by the
+# *running* instance (it holds the DNS credentials and the ACME account), which
+# the package's postinstall has only just been told to start — so wait for it to
+# answer on loopback first. `--yes` prints the full agreement and proceeds; the
+# audit entry records those exact words, not the summary shown above.
+enable_internet() {
+    [ "$WANT_INTERNET" = "yes" ] || return 0
+    if [ -z "$MW_CLI" ]; then
+        say "  ${dim}Turn on Internet Access from the admin page once it is running.${reset}"
+        return 0
+    fi
+
+    _try=0
+    while [ "$_try" -lt 30 ]; do
+        if "$MW_CLI" --status > /dev/null 2>&1; then break; fi
+        _try=$((_try + 1))
+        sleep 1
+    done
+
+    if ! "$MW_CLI" --enable-internet --yes; then
+        say ""
+        say "  ${red}Internet Access could not be enabled.${reset} Nothing else is affected —"
+        say "  ${dim}retry from the admin page, or with: $MW_CLI --enable-internet${reset}"
+    fi
 }
 
 # No desktop on this machine: no browser to open the setup wizard in, and no
@@ -117,6 +255,7 @@ done_banner_headless() {
     say "  ${dim}Sunshine was not installed: this host has no display to capture and no${reset}"
     say "  ${dim}GPU to encode with. Add your streaming hosts by IP from the web UI.${reset}"
     say ""
+    cli_hint
     say "  ${dim}Service:  sudo systemctl {status,restart,stop} moonlightweb${reset}"
     say ""
 }
@@ -126,6 +265,8 @@ install_macos() {
     # Only Apple Silicon is published; an Intel Mac has to build from source.
     [ "$(uname -m)" = "arm64" ] || die "no prebuilt package for Intel Macs — build from source:
   https://github.com/$REPO#fork--build"
+
+    ask_internet
 
     VERSION="${MW_VERSION:-}"
     if [ -z "$VERSION" ]; then
@@ -156,6 +297,10 @@ install_macos() {
     $SUDO installer -pkg "$TMP/$PKG" -target / \
         || die "installer failed. Details: /tmp/moonlightweb-postinstall.log"
 
+    # No symlink on PATH here: the .pkg installs an app bundle and nothing else.
+    MW_CLI="/Applications/MoonlightWeb.app/Contents/MacOS/MoonlightWeb"
+    enable_internet
+
     done_banner
     say "  ${dim}macOS cannot grant screen capture programmatically: allow Sunshine in${reset}"
     say "  ${dim}System Settings → Privacy & Security → Screen Recording when it asks.${reset}"
@@ -180,6 +325,7 @@ install_apt() {
     say "${bold}Installing${reset}"
     $SUDO apt-get update
     DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y moonlightweb
+    MW_CLI=moonlightweb
 }
 
 # ── Linux: DNF / YUM (Fedora, RHEL, Nobara) and zypper (openSUSE) ──────────
@@ -197,6 +343,7 @@ install_rpm() {
         zypper)  $SUDO zypper --non-interactive --gpg-auto-import-keys refresh
                  $SUDO zypper --non-interactive install moonlightweb ;;
     esac
+    MW_CLI=moonlightweb
 }
 
 # ── Linux: AppImage fallback ───────────────────────────────────────────────
@@ -223,6 +370,7 @@ install_appimage() {
            die "the downloaded file is not a valid AppImage — check $URL" ;;
     esac
     chmod +x "$DEST/MoonlightWeb.AppImage"
+    MW_CLI="$DEST/MoonlightWeb.AppImage"
 
     # Menu entry, so it is not only reachable from a terminal.
     mkdir -p "$HOME/.local/share/applications"
@@ -244,6 +392,14 @@ EOF
     say "  Start it:  ${bold}$DEST/MoonlightWeb.AppImage${reset}"
     say "  Then open: ${bold}https://localhost/setup${reset}"
     say ""
+    cli_hint
+    # Nothing started the app here — unlike the packages, an AppImage has no
+    # postinstall — so the sub-domain cannot be registered from this script.
+    if [ "$WANT_INTERNET" = "yes" ]; then
+        say "  ${dim}Internet Access: start it first, then run${reset}"
+        say "  ${dim}  $MW_CLI --enable-internet${reset}"
+        say ""
+    fi
     say "  ${dim}No repository on this distro, so no automatic updates:${reset}"
     say "  ${dim}re-run this script to upgrade.${reset}"
     if [ "${MW_HEADLESS:-0}" = "1" ]; then
@@ -260,6 +416,8 @@ EOF
 install_linux() {
     [ "$(uname -m)" = "x86_64" ] || die "only x86_64 Linux is published — build from source:
   https://github.com/$REPO#fork--build"
+
+    ask_internet
 
     # Propagated into the package's postinstall, which uses it for the same
     # decision (dpkg/rpm keep the environment they were invoked with).
@@ -284,6 +442,9 @@ install_linux() {
             if have "$helper"; then
                 say "${bold}Installing moonlightweb-bin from the AUR${reset} ${dim}($helper)${reset}"
                 "$helper" -S --needed moonlightweb-bin
+                # Repackaged .deb: same /usr/bin/moonlightweb symlink.
+                MW_CLI=moonlightweb
+                enable_internet
                 done_banner
                 exit 0
             fi
@@ -296,6 +457,8 @@ install_linux() {
     else
         install_appimage
     fi
+
+    enable_internet
 
     if [ "${MW_HEADLESS:-0}" = "1" ]; then
         done_banner_headless
