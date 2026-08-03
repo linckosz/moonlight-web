@@ -59,13 +59,26 @@ const walk = (d) =>
         const p = path.join(d, e.name);
         return e.isDirectory() ? walk(p) : p.endsWith('.js') ? [p] : [];
     });
-const re = /\bt\(\s*['"`]([a-zA-Z0-9_.]+)['"`]/g;
+// A t() argument is either a whole key — t('stream.statLatency') — or a prefix
+// built at runtime — t('stream.' + leg.key). Group 3 catches the trailing '+'
+// that tells them apart: without it, a prefix is read as a literal key and
+// reported missing, which is a false failure that makes the whole gate useless.
+const re = /\bt\(\s*(['"`])([a-zA-Z0-9_.]+)\1(\s*\+)?/g;
+const enKeyList = [...enKeys];
 for (const file of walk(JS)) {
     const s = fs.readFileSync(file, 'utf8');
     let m;
     while ((m = re.exec(s))) {
-        if (!enKeys.has(m[1]))
-            fail(`${path.relative(ROOT, file)}: t('${m[1]}') has no entry in en.json`);
+        const key = m[2];
+        if (m[3]) {
+            // The full key is only known at runtime, so verify what can be:
+            // that the prefix still names a section of the catalog. That catches
+            // a renamed or misspelled prefix, which is the realistic mistake.
+            if (!enKeyList.some((k) => k.startsWith(key)))
+                fail(`${path.relative(ROOT, file)}: t('${key}' + …) matches no key in en.json`);
+        } else if (!enKeys.has(key)) {
+            fail(`${path.relative(ROOT, file)}: t('${key}') has no entry in en.json`);
+        }
     }
 }
 
