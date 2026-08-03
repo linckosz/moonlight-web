@@ -104,7 +104,11 @@ bool StreamRelay::start()
 {
     qInfo() << "[StreamRelay] Starting WS server on port" << m_WsPort;
 
-    if (!m_WsServer->listen(QHostAddress::Any, m_WsPort)) {
+    // Loopback only, same reasoning as SignalingServer: the browser reaches this
+    // relay through HttpServer's /ws/stream proxy, which is where the Origin and
+    // session checks are enforced. Exposing it on every interface would let any
+    // page on the LAN open the video/input channel without passing them.
+    if (!m_WsServer->listen(QHostAddress::LocalHost, m_WsPort)) {
         qWarning() << "[StreamRelay] WebSocket server failed to listen on port" << m_WsPort
                    << "error:" << m_WsServer->errorString();
         return false;
