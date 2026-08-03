@@ -245,9 +245,11 @@ void run_api_csrf_tests()
     CHECK(serve(wire("GET /api/auth/status HTTP/1.1", {"Host: [::1]:8080"})).localPrivilege);
     CHECK(serve(wire("GET /api/auth/status HTTP/1.1", {"Host: 192.168.1.20"})).localPrivilege);
     CHECK(serve(wire("GET /api/auth/status HTTP/1.1", {"Host: dualrtx.local"})).localPrivilege);
-    // A TLS-terminating tunnel forwards to loopback under our own domain.
-    CHECK(serve(wire("GET /api/auth/status HTTP/1.1", {"Host: ab2407f0.moonlightweb.top"}))
-              .localPrivilege);
+    // Our own domain does NOT confer it, even from loopback: a TLS-terminating
+    // tunnel runs on this machine and forwards the whole internet from there,
+    // under exactly that name.
+    CHECK(!serve(wire("GET /api/auth/status HTTP/1.1", {"Host: ab2407f0.moonlightweb.top"}))
+               .localPrivilege);
     // Someone else's tunnel is someone else's name.
     CHECK(!serve(wire("GET /api/auth/status HTTP/1.1", {"Host: xyz.trycloudflare.com"}))
                .localPrivilege);

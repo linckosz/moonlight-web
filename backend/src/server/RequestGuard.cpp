@@ -140,7 +140,7 @@ bool isWebSocketOriginAllowed(const QString& origin, const QString& hostHeader)
     return normalizeAuthority(origin) == host;
 }
 
-bool isTrustedHost(const QString& hostHeader, const QString& publicDomain)
+bool isLocalHostName(const QString& hostHeader)
 {
     // Port-insensitive on purpose: what matters is whether the NAME addresses
     // this machine. We routinely answer on a non-default HTTPS port (44729 and
@@ -179,12 +179,20 @@ bool isTrustedHost(const QString& hostHeader, const QString& publicDomain)
         return false;
     }
 
-    // A DNS name. Only our own domain (and mDNS names, which cannot be
-    // registered by an attacker) may speak for this machine — this is what
-    // stops DNS rebinding: attacker.example re-pointed at 127.0.0.1 still
-    // arrives with its own name in Host, and is refused the local privilege.
-    if (host.endsWith(QLatin1String(".local"))) return true;
+    // An mDNS name is only resolvable by a machine on the same link, and cannot
+    // be registered by an outsider.
+    return host.endsWith(QLatin1String(".local"));
+}
 
+bool isTrustedHost(const QString& hostHeader, const QString& publicDomain)
+{
+    if (isLocalHostName(hostHeader)) return true;
+
+    // Our own domain also speaks for this machine — the host reaches itself
+    // that way through hairpin NAT, and every remote client arrives under it.
+    // This is what stops DNS rebinding: attacker.example re-pointed at
+    // 127.0.0.1 still carries its own name in Host and is refused.
+    const QString host = splitAuthority(hostHeader).host;
     const QString domain = splitAuthority(publicDomain).host;
     return !domain.isEmpty() && host == domain;
 }
@@ -258,9 +266,16 @@ Decision evaluate(const Request& req, const Context& ctx)
     // cannot dodge: it makes the attacker's page same-origin with us (so the
     // cross-site test above passes, and the attacker can READ our responses),
     // but the browser still sends the attacker's own name in Host.
-    d.hostTrusted = isTrustedHost(req.headers.value(QStringLiteral("host")), ctx.publicDomain);
+    const QString hostHeader = req.headers.value(QStringLiteral("host"));
+    d.hostTrusted = isTrustedHost(hostHeader, ctx.publicDomain);
     d.hostUntrusted = ctx.peerLocal && !d.hostTrusted;
-    d.localPrivilege = ctx.peerLocal && d.hostTrusted;
+
+    // Being reached from this machine is only worth something when the name we
+    // were reached under could not have come from outside. Under the public
+    // domain it could: a TLS-terminating tunnel runs here and forwards every
+    // visitor from loopback, so the pair (local peer, our domain) describes the
+    // whole internet just as well as it describes the host.
+    d.localPrivilege = ctx.peerLocal && isLocalHostName(hostHeader);
 
     // Two ways to be the host machine: reach us from the machine itself, or
     // prove it with the host key over the public domain.
