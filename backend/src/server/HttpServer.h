@@ -150,7 +150,11 @@ private:
 
     void processRequest(QTcpSocket* socket, const QByteArray& requestData);
     void onReadyReadSocket(QTcpSocket* socket);
-    void sendResponse(QTcpSocket* socket, const HttpResponse& response);
+    /// Write @p response and close. @p hostHeader is the request's Host, used to
+    /// scope the CSP's connect-src to the origin the page was served from; leave
+    /// it empty for responses that are never a document (errors, early refusals).
+    void sendResponse(QTcpSocket* socket, const HttpResponse& response,
+                      const QString& hostHeader = QString());
     void handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArray& requestData);
     bool isLanHost(const QString& host) const;
 

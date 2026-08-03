@@ -46,6 +46,10 @@ struct HttpRequest
                                 // a LAN address, an mDNS name, or our domain) —
                                 // false means we were reached under someone
                                 // else's name, e.g. a third-party tunnel.
+    bool malformed = false;     // The request line/headers could not be trusted —
+                                // currently set when the percent-decoded path
+                                // carries control characters (CR/LF smuggled in
+                                // as %0d/%0a). Answered with 400 and never routed.
 };
 
 struct HttpResponse
