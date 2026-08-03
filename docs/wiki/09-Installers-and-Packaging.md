@@ -107,6 +107,8 @@ Arch and its derivatives are the one family with no repository of ours: there is
 
 The dispatcher behind `curl -fsSL https://moonlightweb.top/install.sh | bash`. On macOS it runs the pkg path (§9.2). On Linux it detects the package manager — `apt-get` → keyring + `.sources` + `apt-get install`; `dnf`/`yum`/`zypper` → the `.repo` dropped into `/etc/yum.repos.d` (or `/etc/zypp/repos.d`); `pacman` → `paru`/`yay` on `moonlightweb-bin`, else the AppImage — and falls back to the AppImage (into `~/.local/bin` with a `.desktop` entry) on anything else, which is what immutable systems like SteamOS and Bazzite get. Downloads are checked for their magic bytes (`xar!` for the pkg, `\177ELF` for the AppImage) before anything is executed.
 
+It asks **one** question before installing: whether to expose the machine on the internet (`ask_internet`). A Yes is spent afterwards as `moonlightweb --enable-internet --yes`, once the freshly installed instance answers on loopback — so the DNS audit entry records the CLI agreement verbatim, not the summary shown in the prompt. It is a **two-option arrow selector**, drawn on `/dev/tty` because under `curl | bash` stdin is the script itself; the terminal is put in raw mode (`stty -echo -icanon`) and restored on the way out, including on Ctrl-C. With no terminal to draw on — CI, image builds, `< /dev/null` — the answer is No, the private default, and `MW_INTERNET=1|0` answers it up front for unattended installs. The closing banner then lists the operator commands (`--status`, `--new-pin`, `--enable-internet`, `--help`), but only where that install path actually left a binary to invoke.
+
 ## 9.4 Shared runtime behaviors
 
 | Behavior | Mechanism |
