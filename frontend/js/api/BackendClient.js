@@ -187,8 +187,8 @@ export class BackendClient {
     static async wakeHost(uuid) {
         return this.post(`/api/hosts/${uuid}/wol`);
     }
-    static async getPairState(hostId) {
-        return this.get(`/api/hosts/${hostId}/pair`);
+    static async startPairing(hostId) {
+        return this.post(`/api/hosts/${hostId}/pair/start`);
     }
     static async confirmPairing(hostId) {
         return this.post(`/api/hosts/${hostId}/pair`);

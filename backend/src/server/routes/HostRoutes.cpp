@@ -64,8 +64,14 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(result, status);
     });
 
-    // Phase 3: Pairing routes
-    server.router()->get("/api/hosts/:id/pair", [&computerManager](const HttpRequest& req) {
+    // Phase 3: Pairing routes.
+    //
+    // Starting a pairing is a POST even though it reads like a query, because it
+    // changes state on the Sunshine host. A GET is fetched by things that never
+    // meant to act: a link preview bot, a browser prefetch, an antivirus that
+    // follows URLs — none of which a cross-site check can distinguish from the
+    // user, since they arrive as plain navigations. POST is out of their reach.
+    server.router()->post("/api/hosts/:id/pair/start", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
         auto [status, result] = computerManager.handleStartPairing(uuid);

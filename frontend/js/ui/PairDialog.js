@@ -19,7 +19,7 @@
  * MoonlightWeb — Pairing dialog
  *
  * Flow:
- *   1. GET /api/hosts/:id/pair → backend does stage 1, returns PIN
+ *   1. POST /api/hosts/:id/pair/start → backend does stage 1, returns PIN
  *   2. Dialog displays PIN, auto-polls POST /api/hosts/:id/pair (stages 2-5)
  *   3. User enters PIN in Sunshine → next POST poll succeeds → paired
  */
@@ -57,7 +57,7 @@ export class PairDialog {
         const pinEl = this.overlay.querySelector('.pairing-pin-display');
 
         try {
-            const result = await this._getPairStateWithRetry();
+            const result = await this._startPairingWithRetry();
 
             if (result.status === 'initiated' && result.pin) {
                 this.pin = result.pin;
@@ -85,10 +85,10 @@ export class PairDialog {
     // to fetch") on a transient hiccup; retry a couple of times before showing
     // an error so the user never has to reload the page. HTTP-level errors
     // (statusCode set) are real answers — no retry.
-    async _getPairStateWithRetry(attempts = 3) {
+    async _startPairingWithRetry(attempts = 3) {
         for (let i = 1; ; i++) {
             try {
-                return await BackendClient.getPairState(this.host.uuid);
+                return await BackendClient.startPairing(this.host.uuid);
             } catch (err) {
                 if (err.statusCode || i >= attempts || !this.overlay) throw err;
                 console.warn(`[PairDialog] pair request failed (try ${i}), retrying:`, err);
