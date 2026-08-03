@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "common/Types.h"
+
 #include <QMap>
 #include <QString>
 
@@ -84,6 +86,11 @@ struct Request
     qsizetype bodySize = 0;
 };
 
+/// Narrow a parsed request down to those parts. Production and the TNR both go
+/// through this, so a field dropped on the way to evaluate() fails a test
+/// instead of silently opening a gate (a lost Sec-Fetch-Site would).
+Request describe(const HttpRequest& req);
+
 /// What the server knows about the caller, independent of the request itself.
 struct Context
 {
@@ -112,6 +119,14 @@ struct Decision
 };
 
 Decision evaluate(const Request& req, const Context& ctx);
+
+/// The HTTP status a refused outcome must be answered with, 0 for Allow. Here
+/// rather than at the call site so the status is part of the tested contract.
+int blockStatus(Outcome outcome);
+
+/// The machine-readable `error` field that goes with blockStatus(), "" for
+/// Allow.
+QString blockError(Outcome outcome);
 
 /// How to answer GET /api/admin/token.
 enum class AdminTokenReply

@@ -740,27 +740,18 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     ctx.adminKeyOk = adminKeyMatches(req);
     ctx.publicDomain = m_Certs.domain();
 
-    RequestGuard::Request guardReq;
-    guardReq.method = req.method;
-    guardReq.path = req.path;
-    guardReq.headers = req.headers;
-    guardReq.bodySize = req.body.size();
+    const RequestGuard::Decision decision =
+        RequestGuard::evaluate(RequestGuard::describe(req), ctx);
 
-    const RequestGuard::Decision decision = RequestGuard::evaluate(guardReq, ctx);
-
-    if (decision.outcome == RequestGuard::Outcome::BlockCrossSite) {
-        Logger::warning(QString("[HttpServer] Cross-site request refused: %1 %2 (origin='%3')")
-                            .arg(req.method, req.path, req.headers.value("origin")));
-        m_ConnGuard.reportAuthFailure(req.clientAddress);
+    if (decision.outcome != RequestGuard::Outcome::Allow) {
+        if (decision.outcome == RequestGuard::Outcome::BlockCrossSite) {
+            Logger::warning(QString("[HttpServer] Cross-site request refused: %1 %2 (origin='%3')")
+                                .arg(req.method, req.path, req.headers.value("origin")));
+            m_ConnGuard.reportAuthFailure(req.clientAddress);
+        }
         QJsonObject obj;
-        obj["error"] = "cross_site_request_blocked";
-        sendResponse(socket, HttpResponse::json(obj, 403));
-        return;
-    }
-    if (decision.outcome == RequestGuard::Outcome::BlockContentType) {
-        QJsonObject obj;
-        obj["error"] = "unsupported_media_type";
-        sendResponse(socket, HttpResponse::json(obj, 415));
+        obj["error"] = RequestGuard::blockError(decision.outcome);
+        sendResponse(socket, HttpResponse::json(obj, RequestGuard::blockStatus(decision.outcome)));
         return;
     }
     if (decision.hostUntrusted) {

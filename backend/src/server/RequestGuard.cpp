@@ -204,6 +204,36 @@ bool isBodyContentTypeAllowed(const QString& contentType, qsizetype bodySize)
     return type == QLatin1String("application/json");
 }
 
+Request describe(const HttpRequest& req)
+{
+    Request out;
+    out.method = req.method;
+    out.path = req.path;
+    out.headers = req.headers;
+    out.bodySize = req.body.size();
+    return out;
+}
+
+int blockStatus(Outcome outcome)
+{
+    switch (outcome) {
+    case Outcome::BlockCrossSite: return 403;
+    case Outcome::BlockContentType: return 415;
+    case Outcome::Allow: break;
+    }
+    return 0;
+}
+
+QString blockError(Outcome outcome)
+{
+    switch (outcome) {
+    case Outcome::BlockCrossSite: return QStringLiteral("cross_site_request_blocked");
+    case Outcome::BlockContentType: return QStringLiteral("unsupported_media_type");
+    case Outcome::Allow: break;
+    }
+    return {};
+}
+
 Decision evaluate(const Request& req, const Context& ctx)
 {
     Decision d;
