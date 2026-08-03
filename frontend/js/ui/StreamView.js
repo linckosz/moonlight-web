@@ -2866,11 +2866,12 @@ export class StreamView {
         this._pacingTimer = setTimeout(
             () => {
                 this._pacingTimer = null;
-                // Nothing left to present: the reserve ran dry. That is the one
-                // signal the pacer cannot infer from the frames it does see.
-                if (this._framePacer && this.frameQueue.length === 0) {
-                    this._framePacer.noteUnderrun(performance.now());
-                }
+                // Just pump — an empty queue here means the head was already
+                // presented by a pump that ran at/past the deadline, not that the
+                // reserve ran dry. Real underruns are detected in schedule()
+                // (excess > reserve); bumping here would grow the reserve on
+                // phantom evidence. See the worker's armPacingTimer for the full
+                // argument.
                 this._pumpRender();
             },
             Math.max(0, delayMs),
@@ -3963,7 +3964,15 @@ export class StreamView {
             // hold already lands in the render-queue leg above (decoder output →
             // draw start), so counting it here would double it. It is shown so
             // the adaptation is visible: 0 on a clean link, growing under jitter.
-            const pacer = this._framePacer ? this._framePacer.stats : this._pacerStats;
+            // Worker mode: the WORKER's pacer does the pacing and posts its
+            // stats with the counters; the main-thread _framePacer exists only
+            // as the fallback for a failed worker init and would read 0 forever
+            // here. Prefer each mode's live source.
+            const pacer = this._useWorker
+                ? this._pacerStats
+                : this._framePacer
+                  ? this._framePacer.stats
+                  : this._pacerStats;
             if (pacer) {
                 rows.push(
                     '<div class="stats-leg-row">' +
