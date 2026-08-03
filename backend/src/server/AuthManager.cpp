@@ -476,23 +476,30 @@ bool AuthManager::passwordMatches(const QString& digest, const QString& password
     return constantTimeEquals(QString::fromLatin1(actual.toBase64()), parts[3]);
 }
 
+bool AuthManager::remoteAdminEnabled() const
+{
+    return m_settings && m_settings->remoteAdminEnabled();
+}
+
 bool AuthManager::hasAdminPassword() const
 {
-    return m_settings && !m_settings->adminPasswordDigest().isEmpty();
+    // A password always exists while remote admin is on: either the operator's,
+    // or the built-in default.
+    return remoteAdminEnabled();
+}
+
+bool AuthManager::isAdminPasswordDefault() const
+{
+    return remoteAdminEnabled() && m_settings->adminPasswordDigest().isEmpty();
 }
 
 bool AuthManager::setAdminPassword(const QString& password)
 {
     if (!m_settings) return false;
-
-    if (password.isEmpty()) {
-        m_settings->setAdminPasswordDigest(QString());
-        // The door is gone; nobody keeps the access it used to grant.
-        demoteAdminSessions();
-        Logger::info("[Auth] Remote admin password removed");
-        return true;
-    }
     if (password.size() < MIN_ADMIN_PASSWORD_LEN) return false;
+    // Refusing the default keeps isAdminPasswordDefault() honest: "the operator
+    // chose their own" must never be true of the value everybody knows.
+    if (password == QLatin1String(DEFAULT_ADMIN_PASSWORD)) return false;
 
     m_settings->setAdminPasswordDigest(encodePassword(password));
     // A password change is also a revocation: machines that unlocked with the
@@ -500,6 +507,15 @@ bool AuthManager::setAdminPassword(const QString& password)
     demoteAdminSessions();
     Logger::info("[Auth] Remote admin password set");
     return true;
+}
+
+void AuthManager::setRemoteAdminEnabled(bool enabled)
+{
+    if (!m_settings) return;
+    m_settings->setRemoteAdminEnabled(enabled);
+    // The door is gone; nobody keeps the access it used to grant.
+    if (!enabled) demoteAdminSessions();
+    Logger::info(QString("[Auth] Remote administration %1").arg(enabled ? "enabled" : "disabled"));
 }
 
 AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip,
@@ -515,10 +531,15 @@ AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip
         return {RateLimited, 0, locked};
     }
 
-    const QString digest = m_settings ? m_settings->adminPasswordDigest() : QString();
-    // No password set → nothing can match, but the attempt is still counted:
-    // probing for one is exactly what an attacker would do first.
-    const bool matched = !digest.isEmpty() && passwordMatches(digest, password);
+    // Remote admin off → nothing can match, but the attempt is still counted:
+    // probing for it is exactly what an attacker would do first.
+    bool matched = false;
+    if (remoteAdminEnabled()) {
+        const QString digest = m_settings->adminPasswordDigest();
+        matched = digest.isEmpty()
+                      ? constantTimeEquals(password, QLatin1String(DEFAULT_ADMIN_PASSWORD))
+                      : passwordMatches(digest, password);
+    }
     return recordAttempt(bucket, matched, ip, QStringLiteral("admin password"));
 }
 

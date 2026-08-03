@@ -191,7 +191,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             return HttpResponse::json(obj, 401);
         }
 
-        if (!authManager.hasAdminPassword()) {
+        // Enabled by default, so this only fires where the operator turned
+        // remote administration off on purpose.
+        if (!authManager.remoteAdminEnabled()) {
             QJsonObject obj;
             obj["status"] = "error";
             obj["error"] = "not_configured";
@@ -222,31 +224,42 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         return HttpResponse::error(500, "Internal error");
     });
 
-    // POST /api/admin/password — set, change or remove the remote admin
-    // password (admin only). An empty password removes it.
+    // POST /api/admin/password — change the remote admin password and/or turn
+    // remote administration on and off (admin only). Body may carry either or
+    // both of {password, enabled}; the toggle is applied first so a single call
+    // can re-enable the door and set a password behind it.
     server.router()->post("/api/admin/password", [&authManager](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
-        const QString password = QJsonDocument::fromJson(req.body).object()["password"].toString();
+        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        const QString password = body["password"].toString();
 
-        // setAdminPassword() revokes every unlock the old password bought, which
-        // would include the caller's own if they are a remote admin resetting
-        // it. They just proved they are an admin, so hand it straight back.
+        // Changing either setting revokes every unlock the old password bought,
+        // which would include the caller's own if they are a remote admin doing
+        // the reset. They just proved they are an admin, so hand it back.
         const QString token = HttpServer::sessionTokenFromRequest(req);
         const bool callerWasRemoteAdmin = authManager.isAdminSession(token);
 
-        if (!authManager.setAdminPassword(password)) {
+        if (body.contains("enabled")) authManager.setRemoteAdminEnabled(body["enabled"].toBool());
+
+        if (!password.isEmpty() && !authManager.setAdminPassword(password)) {
             QJsonObject obj;
             obj["status"] = "error";
-            obj["error"] = "too_short";
+            // Two ways to be refused, and the UI must say which: too short, or
+            // the built-in default (which would leave the warning banner up
+            // while claiming a password had been chosen).
+            obj["error"] =
+                password.size() < AuthManager::MIN_ADMIN_PASSWORD_LEN ? "too_short" : "is_default";
             obj["min_length"] = AuthManager::MIN_ADMIN_PASSWORD_LEN;
             return HttpResponse::json(obj, 400);
         }
-        if (callerWasRemoteAdmin && !password.isEmpty()) authManager.promoteSessionToAdmin(token);
+        if (callerWasRemoteAdmin && authManager.remoteAdminEnabled())
+            authManager.promoteSessionToAdmin(token);
 
         QJsonObject obj;
         obj["status"] = "ok";
-        obj["admin_password_set"] = authManager.hasAdminPassword();
+        obj["remote_admin_enabled"] = authManager.remoteAdminEnabled();
+        obj["admin_password_is_default"] = authManager.isAdminPasswordDefault();
         return HttpResponse::json(obj);
     });
 
@@ -265,7 +278,11 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             obj["authenticated"] = true; // localhost is always authenticated
             obj["pin"] = authManager.currentPin();
             obj["pin_consumed"] = authManager.isPinConsumed();
-            obj["admin_password_set"] = authManager.hasAdminPassword();
+            obj["remote_admin_enabled"] = authManager.remoteAdminEnabled();
+            // Drives the admin page's warning banner: the built-in default is
+            // documented, so leaving it in place means any device that can
+            // stream can also administer.
+            obj["admin_password_is_default"] = authManager.isAdminPasswordDefault();
         } else {
             // Check session cookie
             bool auth = false;
@@ -311,7 +328,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // Mirrors exactly what /api/auth/admin-unlock will accept, so the
         // button never appears where the unlock would be refused.
         obj["admin_unlock_available"] =
-            !isLocal && obj["authenticated"].toBool() && authManager.hasAdminPassword() &&
+            !isLocal && obj["authenticated"].toBool() && authManager.remoteAdminEnabled() &&
             AuthManager::isLanAddress(req.clientAddress) && req.hostTrusted;
 
         HttpResponse resp = HttpResponse::json(obj);

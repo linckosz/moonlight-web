@@ -602,6 +602,19 @@ void AppSettings::setAdminPasswordDigest(const QString& digest)
     writeAll(obj);
 }
 
+bool AppSettings::remoteAdminEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("remote_admin_enabled").toBool(true);
+}
+
+void AppSettings::setRemoteAdminEnabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["remote_admin_enabled"] = enabled;
+    writeAll(obj);
+}
+
 // ── DNS subdomain ownership token ───────────────────────────────────────────────
 
 QString AppSettings::ownerToken() const

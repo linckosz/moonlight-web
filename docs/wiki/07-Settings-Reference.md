@@ -71,7 +71,8 @@ The browser also stores per-device keys the server deliberately ignores when the
 | `hmac_key` | string (Base64) | generated | Session-token HMAC key, persisted so sessions survive restarts. |
 | `certificate_token` | string | generated first boot | The downloadable auth token file content. |
 | `cert_auth_enabled` | bool | `false` | Enable certificate-file authentication. |
-| `admin_password` | string | absent | PBKDF2-SHA256 digest (`pbkdf2-sha256$iters$salt$key`) of the remote admin password — the one a LAN machine spends to open the admin page. Set from the admin page only; delete the key to disable remote administration. See [Security §6.2.1](06-Security.md#621-remote-admin-password-lan-only). |
+| `admin_password` | string | absent | PBKDF2-SHA256 digest (`pbkdf2-sha256$iters$salt$key`) of the remote admin password — the one a LAN machine spends to open the admin page. **Absent means the built-in default `moonlightweb` is still in force**, and the admin page warns about it. Set from the admin page only. See [Security §6.2.1](06-Security.md#621-remote-admin-password-lan-only). |
+| `remote_admin_enabled` | bool | `true` | Whether the LAN may unlock admin access at all. Set to `false` for host-only administration; the stored digest is kept, so re-enabling restores your password rather than the default. |
 | *(host key)* | string | generated | Single-use host-machine key embedded as `?mwk=` in host-side entry URLs; rotates on redemption. |
 
 ### Lifecycle
