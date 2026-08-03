@@ -154,9 +154,10 @@ void AuthManager::loadSessions()
     int skipped = 0;
     m_sessions.clear();
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    // With no password configured there is no door to have come through, so a
-    // persisted admin flag is stale (or hand-edited) — drop it on the way in.
-    const bool keepAdminFlags = hasAdminPassword();
+    // With the door closed — remote admin off, or no password ever set — there
+    // is nothing a session could have come through, so a persisted admin flag is
+    // stale (or hand-edited). Drop it on the way in.
+    const bool keepAdminFlags = remoteAdminEnabled() && adminPasswordSet();
 
     for (const auto& val : arr) {
         QJsonObject obj = val.toObject();
@@ -481,25 +482,15 @@ bool AuthManager::remoteAdminEnabled() const
     return m_settings && m_settings->remoteAdminEnabled();
 }
 
-bool AuthManager::hasAdminPassword() const
+bool AuthManager::adminPasswordSet() const
 {
-    // A password always exists while remote admin is on: either the operator's,
-    // or the built-in default.
-    return remoteAdminEnabled();
-}
-
-bool AuthManager::isAdminPasswordDefault() const
-{
-    return remoteAdminEnabled() && m_settings->adminPasswordDigest().isEmpty();
+    return m_settings && !m_settings->adminPasswordDigest().isEmpty();
 }
 
 bool AuthManager::setAdminPassword(const QString& password)
 {
     if (!m_settings) return false;
     if (password.size() < MIN_ADMIN_PASSWORD_LEN) return false;
-    // Refusing the default keeps isAdminPasswordDefault() honest: "the operator
-    // chose their own" must never be true of the value everybody knows.
-    if (password == QLatin1String(DEFAULT_ADMIN_PASSWORD)) return false;
 
     m_settings->setAdminPasswordDigest(encodePassword(password));
     // A password change is also a revocation: machines that unlocked with the
@@ -531,14 +522,13 @@ AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip
         return {RateLimited, 0, locked};
     }
 
-    // Remote admin off → nothing can match, but the attempt is still counted:
-    // probing for it is exactly what an attacker would do first.
+    // Remote admin off, or no password ever set → nothing can match, but the
+    // attempt is still counted: probing for it is exactly what an attacker would
+    // do first, and the rate limit is what makes that expensive.
     bool matched = false;
     if (remoteAdminEnabled()) {
         const QString digest = m_settings->adminPasswordDigest();
-        matched = digest.isEmpty()
-                      ? constantTimeEquals(password, QLatin1String(DEFAULT_ADMIN_PASSWORD))
-                      : passwordMatches(digest, password);
+        matched = !digest.isEmpty() && passwordMatches(digest, password);
     }
     return recordAttempt(bucket, matched, ip, QStringLiteral("admin password"));
 }

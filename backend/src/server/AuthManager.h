@@ -108,33 +108,32 @@ public:
     // the PIN's lockout tiers on its own per-IP counter (a wrong password must
     // not lock a legitimate user out of PIN login, and vice versa).
     //
-    // It ships with a built-in default (DEFAULT_ADMIN_PASSWORD), because the
-    // only way to set one is from the host — and an unreachable host is the
-    // whole reason this door exists. The default is public knowledge, so it is
-    // NOT a secret: what stands between it and an attacker is that the unlock
-    // only promotes an already-authenticated LAN session. The admin page warns
-    // about it until the operator picks their own.
+    // There is deliberately NO built-in default password. A documented default
+    // is public knowledge, and while the unlock only ever promotes a session
+    // that already passed the PIN, that still means "whoever can stream can also
+    // administer" on every install whose owner never changed it. So the door
+    // starts closed and stays closed until a password is set:
+    //   - with a desktop, from the admin page, which the owner can always open;
+    //   - headless, from the terminal (`moonlightweb --set-admin-password`),
+    //     which the installer prompts for since there is no page to open.
+    // Until then validateAdminPassword() matches nothing at all.
 
-    /// True when the LAN may unlock admin at all (i.e. remote admin enabled).
-    /// A password always exists while it is: the default, or a custom one.
-    bool hasAdminPassword() const;
-    /// True while the built-in default is still in force — remote admin is
-    /// enabled and no custom password has been set.
-    bool isAdminPasswordDefault() const;
+    /// True when a remote admin password has been set. While false the LAN
+    /// unlock door is shut: nothing can satisfy validateAdminPassword().
+    bool adminPasswordSet() const;
     /// Replace the password. Rejects anything shorter than
     /// MIN_ADMIN_PASSWORD_LEN (including the empty string: use
-    /// setRemoteAdminEnabled(false) to close the door) and the default itself.
+    /// setRemoteAdminEnabled(false) to close the door).
     bool setAdminPassword(const QString& password);
     /// Enable or disable remote administration. Disabling revokes every unlock.
     void setRemoteAdminEnabled(bool enabled);
     /// Whether remote administration is enabled (mirrors AppSettings).
     bool remoteAdminEnabled() const;
-    /// Rate-limited verification. Always InvalidPin when remote admin is off.
+    /// Rate-limited verification. Always InvalidPin when remote admin is off or
+    /// no password has been set.
     ValidateResult validateAdminPassword(const QString& ip, const QString& password);
 
     static constexpr int MIN_ADMIN_PASSWORD_LEN = 8;
-    /// In force until the operator sets their own. Documented, not secret.
-    static constexpr const char* DEFAULT_ADMIN_PASSWORD = "moonlightweb";
 
     // ── Session management ─────────────────────────────────────────────────
     QString createSession(const QString& ip, const QString& machineName = QString(),

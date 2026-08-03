@@ -98,27 +98,21 @@ void run_auth_manager_tests()
     CHECK(auth.certAuthEnabled());
 
     // ── Remote admin password ──────────────────────────────────────────────
-    // Out of the box the door is open on the built-in default: setting a
-    // password requires reaching the host, which is exactly what an
-    // unreachable host prevents.
+    // Out of the box the door is SHUT: remote administration is enabled, but no
+    // password exists and there is no built-in default to fall back on, so
+    // nothing an attacker can type unlocks anything.
     const QString adminIp = "192.168.5.20";
     CHECK(auth.remoteAdminEnabled());
-    CHECK(auth.hasAdminPassword());
-    CHECK(auth.isAdminPasswordDefault());
+    CHECK(!auth.adminPasswordSet());
     CHECK(settings.adminPasswordDigest().isEmpty()); // nothing stored yet
-    CHECK(auth.validateAdminPassword(adminIp, AuthManager::DEFAULT_ADMIN_PASSWORD).result ==
-          AuthManager::Valid);
-    CHECK(auth.validateAdminPassword(adminIp, "not-the-default").result == AuthManager::InvalidPin);
+    CHECK(auth.validateAdminPassword(adminIp, "moonlightweb").result == AuthManager::InvalidPin);
+    CHECK(auth.validateAdminPassword(adminIp, "").result == AuthManager::InvalidPin);
 
     CHECK(!auth.setAdminPassword("short")); // below MIN_ADMIN_PASSWORD_LEN
-    // The default itself is refused: accepting it would clear the warning
-    // banner while leaving the public password in force.
-    CHECK(!auth.setAdminPassword(AuthManager::DEFAULT_ADMIN_PASSWORD));
-    CHECK(auth.isAdminPasswordDefault());
+    CHECK(!auth.adminPasswordSet());
 
     CHECK(auth.setAdminPassword("correct-horse"));
-    CHECK(auth.hasAdminPassword());
-    CHECK(!auth.isAdminPasswordDefault());
+    CHECK(auth.adminPasswordSet());
 
     // The plaintext is never stored: what lands in settings is a PBKDF2 digest.
     const QString digest = settings.adminPasswordDigest();
@@ -127,9 +121,6 @@ void run_auth_manager_tests()
 
     CHECK(auth.validateAdminPassword(adminIp, "correct-horse").result == AuthManager::Valid);
     CHECK(auth.validateAdminPassword(adminIp, "wrong").result == AuthManager::InvalidPin);
-    // A custom password replaces the default rather than adding to it.
-    CHECK(auth.validateAdminPassword(adminIp, AuthManager::DEFAULT_ADMIN_PASSWORD).result ==
-          AuthManager::InvalidPin);
 
     // Its lockout counter is its own: hammering the password must not lock the
     // same address out of PIN login.
@@ -154,25 +145,21 @@ void run_auth_manager_tests()
     CHECK(!auth.isAdminSession(adminToken));
     CHECK(auth.validateSession(adminToken)); // still signed in, just not admin
 
-    // Disabling closes the door entirely — no password is accepted, not even
-    // the default — and a stale flag on disk is not honoured on the way back in.
+    // Disabling closes the door entirely — the stored password stops being
+    // accepted — and a stale flag on disk is not honoured on the way back in.
     auth.promoteSessionToAdmin(adminToken);
     auth.setRemoteAdminEnabled(false);
-    CHECK(!auth.hasAdminPassword());
-    CHECK(!auth.isAdminPasswordDefault());
     CHECK(!auth.isAdminSession(adminToken));
     CHECK(auth.validateAdminPassword("192.168.5.30", "another-password").result ==
-          AuthManager::InvalidPin);
-    CHECK(auth.validateAdminPassword("192.168.5.31", AuthManager::DEFAULT_ADMIN_PASSWORD).result ==
           AuthManager::InvalidPin);
     auth.saveSessions();
     auth.loadSessions();
     CHECK(!auth.isAdminSession(adminToken));
 
-    // Re-enabling restores the operator's password, not the default: the digest
-    // survived the round trip.
+    // Re-enabling restores the operator's password: the digest survived the
+    // round trip.
     auth.setRemoteAdminEnabled(true);
-    CHECK(!auth.isAdminPasswordDefault());
+    CHECK(auth.adminPasswordSet());
     CHECK(auth.validateAdminPassword("192.168.5.32", "another-password").result ==
           AuthManager::Valid);
     auth.destroyAllSessions();

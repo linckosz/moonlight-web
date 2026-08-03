@@ -63,9 +63,10 @@ export class AdminView {
         // notice. Set for exactly the clients /api/auth/admin-unlock accepts.
         this._adminUnlockAvailable = false;
         // Admin view of the same setting: whether the LAN may unlock at all, and
-        // whether it still takes the documented built-in password.
+        // whether a password has been set for it. There is no built-in default,
+        // so until one is set the door is advertised but opens for nobody.
         this._remoteAdminEnabled = true;
-        this._adminPasswordIsDefault = true;
+        this._adminPasswordSet = false;
         // Host key (host machine only) for the post-activation domain redirect.
         this._localKey = '';
 
@@ -220,7 +221,7 @@ export class AdminView {
             this._adminUnlockAvailable = !!status.admin_unlock_available;
             if (status.remote_admin_enabled !== undefined) {
                 this._remoteAdminEnabled = !!status.remote_admin_enabled;
-                this._adminPasswordIsDefault = !!status.admin_password_is_default;
+                this._adminPasswordSet = !!status.admin_password_set;
             }
             if (status.pin) {
                 this._pin = status.pin;
@@ -301,7 +302,7 @@ export class AdminView {
         try {
             const result = await BackendClient.saveRemoteAdmin(body);
             this._remoteAdminEnabled = !!result.remote_admin_enabled;
-            this._adminPasswordIsDefault = !!result.admin_password_is_default;
+            this._adminPasswordSet = !!result.admin_password_set;
             Toast.success(successMessage);
             // A remote admin who just closed the LAN door closed it on itself.
             // Reload rather than leave an admin page whose every button 403s.
@@ -311,12 +312,7 @@ export class AdminView {
             }
         } catch (err) {
             console.error('[Admin] Failed to save the remote admin settings:', err);
-            const error = ((err && err.responseBody) || {}).error;
-            if (error === 'is_default') {
-                Toast.error(t('admin.remoteAdminIsDefault'));
-            } else {
-                Toast.error(t('admin.remoteAdminSaveFailed', { message: err.message }));
-            }
+            Toast.error(t('admin.remoteAdminSaveFailed', { message: err.message }));
             // Re-render anyway: the checkbox may be showing a state the backend
             // refused, and the truth is in the fields above.
         }
@@ -802,11 +798,11 @@ export class AdminView {
                         ${
                             !this._remoteAdminEnabled
                                 ? ''
-                                : this._adminPasswordIsDefault
-                                  ? `<div class="settings-status settings-status-pending">
-                                         ${t('admin.remoteAdminDefaultWarning')}
+                                : this._adminPasswordSet
+                                  ? `<p class="settings-hint">${t('admin.remoteAdminCustom')}</p>`
+                                  : `<div class="settings-status settings-status-pending">
+                                         ${t('admin.remoteAdminNoPassword')}
                                      </div>`
-                                  : `<p class="settings-hint">${t('admin.remoteAdminCustom')}</p>`
                         }
                         ${
                             this._remoteAdminEnabled
