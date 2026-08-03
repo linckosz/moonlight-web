@@ -57,6 +57,7 @@ import { createVideoRenderer } from './renderers/createRenderer.js';
 import { PipelineDiag } from './PipelineDiag.js';
 import { EnhancerGovernor } from './EnhancerGovernor.js';
 import { drawCapFor } from './RenderPacing.js';
+import { FramePacer } from './FramePacer.js';
 
 // ── Worker-local pipeline state (mirrors the StreamView fields) ──────────────
 const S = {
@@ -76,6 +77,12 @@ const S = {
     pendingFrames: [],
     frameQueue: [],
     drawsInFlight: 0,
+
+    // Adaptive presentation reserve (null = present on decode, the historical
+    // behavior). Enabled from the init message; the worker has no localStorage.
+    pacer: null,
+    _pacingTimer: null,
+    _pacingDue: 0,
 
     _noDescription: false,
     _referenceValid: true,
@@ -97,7 +104,7 @@ const S = {
     // latency: client pipeline leg, measured entirely on the worker's clock —
     // no cross-clock offset involved. Split into its three stages so the
     // overlay breakdown can name where the browser time goes.
-    _chunkSubmitTimes: new Map(), // chunk timestamp (µs) → performance.now() at decode()
+    _chunkSubmitTimes: new Map(), // chunk timestamp (µs) → { perf, backendTs } at decode()
     _decodeSamples: [], // [{ time, value }] decode() submit → decoder output
     _queueSamples: [], // [{ time, value }] decoder output → draw start
     _renderSamples: [], // [{ time, value }] draw start → draw done
@@ -121,11 +128,49 @@ const S = {
     _lastCountersPost: 0,
 };
 
-// Record a decode() submit time; consumed in onDecodedFrame. Frames the
-// decoder never outputs would leak entries, so clear past a burst-sized bound.
-function trackChunkSubmit(timestamp) {
+// Record a decode() submit time and the frame's capture stamp; both are consumed
+// in onDecodedFrame (latency stages, and the pacer's presentation clock). Frames
+// the decoder never outputs would leak entries, so clear past a burst-sized bound.
+// backendTs is carried explicitly rather than recovered from the chunk timestamp:
+// the H.264/HEVC path derives that timestamp from backendTs but nudges it to stay
+// monotonic, and AV1 makes it up entirely (frameCount * 16667).
+function trackChunkSubmit(timestamp, backendTs) {
     if (S._chunkSubmitTimes.size > 240) S._chunkSubmitTimes.clear();
-    S._chunkSubmitTimes.set(timestamp, performance.now());
+    S._chunkSubmitTimes.set(timestamp, { perf: performance.now(), backendTs: backendTs || 0 });
+}
+
+// Wake pump() when the head frame comes due. Presentation is FIFO — a later
+// frame cannot be shown before the one it follows — so only the head's deadline
+// governs and a single pending timer is enough. (Deadlines are NOT monotonic: a
+// frame that arrives past the whole reserve gets "now", which can precede the
+// deadline of the frame ahead of it. It simply waits its turn and the resulting
+// back-to-back pair is the underrun the pacer then widens the reserve for.)
+// Re-arm only for an earlier deadline — a trim that drops the head produces one.
+function armPacingTimer(delayMs) {
+    const due = performance.now() + delayMs;
+    if (S._pacingTimer !== null) {
+        if (S._pacingDue <= due) return;
+        clearTimeout(S._pacingTimer);
+    }
+    S._pacingDue = due;
+    S._pacingTimer = setTimeout(
+        () => {
+            S._pacingTimer = null;
+            // Nothing left to present: the reserve ran dry (a decoder flush, or the
+            // network simply stopped delivering). Tell the pacer — that is the one
+            // signal it cannot infer from the frames it does see.
+            if (S.pacer && S.frameQueue.length === 0) S.pacer.noteUnderrun(performance.now());
+            pump();
+        },
+        Math.max(0, delayMs),
+    );
+}
+
+function clearPacingTimer() {
+    if (S._pacingTimer !== null) {
+        clearTimeout(S._pacingTimer);
+        S._pacingTimer = null;
+    }
 }
 
 // Sliding-window average of a client pipeline stage (2s, like the main-thread
@@ -181,6 +226,7 @@ function postCounters(force) {
         clientQueueMs: stageAvg(S._queueSamples),
         clientRenderMs: stageAvg(S._renderSamples),
         resolution: S._lastResolution || '',
+        pacer: S.pacer ? S.pacer.stats : null,
         diag,
     });
 }
@@ -280,6 +326,10 @@ function handleDecoderError(err) {
     S.frameQueue = [];
     S.pendingFrames = [];
     S.nalParser.reset();
+    // The recovery gap is not network jitter: re-priming keeps the pacer from
+    // reading it as one and pinning the reserve at MAX.
+    clearPacingTimer();
+    if (S.pacer) S.pacer.reset();
 
     setupDecoder();
     requestIdr('decoder error');
@@ -578,7 +628,7 @@ function decodeFrame(data, isKeyframe, backendTs) {
 
     try {
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: avccData });
-        trackChunkSubmit(timestamp);
+        trackChunkSubmit(timestamp, backendTs);
         S.decoder.decode(chunk);
         S.stats.received++;
         if (isKeyframe) {
@@ -665,8 +715,10 @@ function decodeAv1Frame(data, isKeyframe) {
     const obuData = stripNonEssentialObus(data);
     S.diag.noteDecodeQueue(S.decoder.decodeQueueSize);
     try {
+        // AV1 has no backendTs here (synthetic chunk timestamps), so the pacer
+        // sees 0 and leaves this path on the present-on-decode behavior.
         const chunk = new EncodedVideoChunk({ type, timestamp, duration: 16667, data: obuData });
-        trackChunkSubmit(timestamp);
+        trackChunkSubmit(timestamp, 0);
         S.decoder.decode(chunk);
         S.stats.received++;
     } catch (err) {
@@ -683,15 +735,26 @@ function onDecodedFrame(frame) {
     // Pair the decoder output with its decode() submit time (same clock): this
     // closes the decode stage (decode queue + decode). The frame carries its
     // output time so pump() can close the queue and render stages too.
-    const submitPerf = S._chunkSubmitTimes.get(frame.timestamp);
-    if (submitPerf !== undefined) {
+    const submit = S._chunkSubmitTimes.get(frame.timestamp);
+    const outPerf = performance.now();
+    let backendTs = 0;
+    if (submit !== undefined) {
         S._chunkSubmitTimes.delete(frame.timestamp);
-        const outPerf = performance.now();
-        addStageSample(S._decodeSamples, outPerf - submitPerf);
+        addStageSample(S._decodeSamples, outPerf - submit.perf);
         frame._mwDecodedPerf = outPerf;
+        backendTs = submit.backendTs;
     }
 
-    if (S.frameQueue.length >= 3) {
+    // Presentation deadline. Timing it from the decoder output (not from network
+    // arrival) is deliberate: decode time varies too, and it is the cadence of
+    // what reaches the screen that has to be smooth — this way the reserve
+    // absorbs both sources of variance with one mechanism.
+    frame._mwPresentAt = S.pacer ? S.pacer.schedule(backendTs, outPerf) : outPerf;
+
+    // Hard memory bound. With a reserve, frames legitimately wait their turn, so
+    // the cap has to clear the deepest reserve (60ms ≈ 3.6 frames @60fps) or we
+    // would drop exactly what we just decided to hold.
+    if (S.frameQueue.length >= (S.pacer ? 6 : 3)) {
         frame.close();
         S.stats.dropped++;
         S.diag.noteDrop('queueFull');
@@ -719,12 +782,29 @@ function pump() {
     if (S.stopped || S.frameQueue.length === 0) return;
     // Depth BEFORE the trim: > 1 means the draw did not keep up with decode.
     S.diag.noteFrameQueue(S.frameQueue.length);
-    // Always present the freshest frame — the older ones are already stale by
-    // the time the GPU would get to them.
-    while (S.frameQueue.length > 1) {
-        S.frameQueue.shift().close();
-        S.stats.dropped++;
-        S.diag.noteDrop('stale');
+
+    if (S.pacer) {
+        // Paced: a queued frame is not stale, it is early — the queue is the
+        // reserve. Only trim back to the memory bound, oldest first, and then
+        // wait for the head's deadline instead of racing to the freshest frame.
+        while (S.frameQueue.length > 6) {
+            S.frameQueue.shift().close();
+            S.stats.dropped++;
+            S.diag.noteDrop('stale');
+        }
+        const wait = S.frameQueue[0]._mwPresentAt - performance.now();
+        if (wait > 0) {
+            armPacingTimer(wait);
+            return;
+        }
+    } else {
+        // Always present the freshest frame — the older ones are already stale by
+        // the time the GPU would get to them.
+        while (S.frameQueue.length > 1) {
+            S.frameQueue.shift().close();
+            S.stats.dropped++;
+            S.diag.noteDrop('stale');
+        }
     }
     // Pipelined draws: the next frame is submitted while the current one is
     // still retiring on the GPU, instead of after (see RenderPacing).
@@ -810,6 +890,9 @@ self.onmessage = (e) => {
             S.videoCodec = m.videoCodec;
             S.isChromeWindowsHevc = !!m.isChromeWindowsHevc;
             S.transport = m.transport || 'webrtc';
+            // Adaptive presentation reserve (mw_pacing, resolved on main — the
+            // worker has no localStorage). Null keeps present-on-decode.
+            S.pacer = m.pacing ? new FramePacer() : null;
             // Always use a low-latency (desynchronized) context in the worker: it
             // lets the canvas bypass the document compositor and present sooner,
             // clawing back the ~1-frame latency that an OffscreenCanvas presented
@@ -882,6 +965,7 @@ self.onmessage = (e) => {
             }
             S.frameQueue = [];
             S.pendingFrames = [];
+            clearPacingTimer();
             break;
     }
 };

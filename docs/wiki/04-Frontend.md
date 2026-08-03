@@ -32,6 +32,7 @@ frontend/
 │   ├── stream/
 │   │   ├── VideoDecodeWorker.js# OffscreenCanvas decode+render worker (video_worker: auto|on|off)
 │   │   ├── JitterController.js # adaptive jitterBufferTarget (webrtc-media), AIMD control law
+│   │   ├── FramePacer.js      # adaptive presentation reserve (DataChannel paths, mw_pacing)
 │   │   ├── GamepadManager.js   # Gamepad API → input DC (standard mapping, rumble)
 │   │   └── renderers/          # VideoRenderer base + WebGpu / Canvas2D / VideoElement + factory
 │   ├── ui/
@@ -74,7 +75,7 @@ Auth flow: `LoginView` is shown when the backend answers 401 (PIN entry or certi
 - **Decode** — WebCodecs `VideoDecoder` fed Annex-B access units; `Mp4Muxer.js` extracts SPS/PPS(/VPS), builds `avcC`/`hvcC` descriptions and codec strings; `Av1Utils.js` does the AV1 sequence-header equivalent. Decode+render move to an OffscreenCanvas worker per the `video_worker` setting (`auto` = heuristic, desktop only).
 - **Render** — via the renderer abstraction (next section), sized with HiDPI awareness, fullscreen through `StreamViewFullscreen` (header button + CSS fallback for iOS).
 - **Input** — keyboard (`StreamViewKeyboard`: Escape forwarded as a key; shortcuts on `Ctrl/Cmd+Alt+Shift` combos), mouse (pointer-lock "gaming mode" vs absolute; `_mouseFocused` model), touch (`StreamViewTouch`: trackpad model by default — 1 finger moves the cursor, 2 scroll; **touch-screen mode** instead places the cursor where you touch and turns the 1-finger drag into an all-directions scroll, long press still grabs for drag & hold), gamepads (`GamepadManager`, polled per frame, change-only snapshots, rumble feedback), virtual keyboard on mobile (input-event diffing with a sentinel — the only reliable capture across iOS/Gboard), clipboard `paste` events.
-- **Stats overlay** — FPS, bitrate, decode/render timings, RTT; **latency is displayed as a sum of measured legs** (host processing + ENet RTT/2 + client pipeline per frame) — never a cross-machine clock offset (which freezes on the offset error).
+- **Stats overlay** — FPS, bitrate, decode/render timings, RTT; **latency is displayed as a sum of measured legs** (host processing + ENet RTT/2 + client pipeline per frame) — never a cross-machine clock offset (which freezes on the offset error). Frame loss is split the way moonlight-qt splits it, because the two have different fixes: **network** (`frameId` gaps — frames that never arrived, i.e. packet loss, each costing an IDR round trip) vs **jitter** (frames that arrived and decoded, then lost their turn at the render stage — uneven arrival, not loss; this is what the `FramePacer` reserve drives down). Both are DataChannel/WSS only.
 - **Degradation & resilience** — IDR request throttling with exponential backoff, frame-gap detection via `frameId`, decoder-error fallback, session teardown ordering (`webrtc.close()` **before** HTTP `/quit`; `_closed`/`_stopping` guards; 10 s grace period after a WS close when ICE is still connected — first launches often reconnect).
 
 ## 4.4 Renderers — why canvas *and* video
