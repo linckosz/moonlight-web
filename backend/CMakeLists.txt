@@ -335,8 +335,9 @@ if(MW_ASAN)
 endif()
 
 # ── Cross-platform security tests (ctest) ──────────────────────────────────
-# Lightweight runner over the pure-logic security units (ConnectionGuard:
-# per-IP anti-DDoS / abuse ban). Depends on Qt Core/Network only — no OpenSSL,
+# Lightweight runner over the pure-logic security units: ConnectionGuard (per-IP
+# anti-DDoS / abuse ban) and the CSRF / DNS-rebinding gates, the latter both in
+# isolation and from raw wire bytes. Depends on Qt Core/Network only — no OpenSSL,
 # no Windows APIs — so the SAME security logic is verified on Linux, macOS and
 # Windows, enforcing parity across platforms. The full Windows-only TNR suite
 # (OpenCppCoverage, OpenSSL-dependent units) still lives in tests/tests.pro.
@@ -347,7 +348,9 @@ if(MW_BUILD_TESTS)
         tests/security_main.cpp
         tests/test_connection_guard.cpp
         tests/test_request_guard.cpp
+        tests/test_api_csrf.cpp
         src/server/ConnectionGuard.cpp
+        src/server/HttpParser.cpp
         src/server/RequestGuard.cpp
     )
     target_include_directories(mw-security-tests PRIVATE src tests)

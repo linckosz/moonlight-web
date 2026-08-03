@@ -61,6 +61,7 @@ add_executable(run_tests
     test_static_files.cpp
     test_http_parser.cpp
     test_request_guard.cpp
+    test_api_csrf.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp

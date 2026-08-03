@@ -22,6 +22,7 @@ void run_connection_guard_tests();
 void run_static_files_tests();
 void run_http_parser_tests();
 void run_request_guard_tests();
+void run_api_csrf_tests();
 
 int main(int argc, char** argv)
 {
@@ -40,6 +41,7 @@ int main(int argc, char** argv)
     run_static_files_tests();
     run_http_parser_tests();
     run_request_guard_tests();
+    run_api_csrf_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");
