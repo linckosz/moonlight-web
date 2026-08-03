@@ -52,9 +52,9 @@ void run_auth_manager_tests()
     CHECK(!auth.validateSession("bogus-token"));
     CHECK_EQ(auth.activeSessionCount(), 1);
 
-    auth.touchSession(token);                                // sliding expiration bump
-    auth.setSessionStreaming(token, true);                   // single active stream flag
-    auth.setSessionGeo(token, "Paris", "FR");                // async geo result
+    auth.touchSession(token);                                 // sliding expiration bump
+    auth.setSessionStreaming(token, true);                    // single active stream flag
+    auth.setSessionGeo(token, "Paris", "FR");                 // async geo result
     CHECK(auth.updateSessionAddress(token, "198.51.100.99")); // IP changed → true
 
     QList<SessionInfo> list = auth.sessions();
@@ -85,7 +85,7 @@ void run_auth_manager_tests()
     QString token3 = auth.createSession("198.51.100.22");
     auth.setSessionStreaming(token3, true);
     auth.destroyAllSessions();
-    CHECK_EQ(revokedFired, 2); // destroy-all with a streaming session → teardown signal
+    CHECK_EQ(revokedFired, 2);   // destroy-all with a streaming session → teardown signal
     auth.purgeExpiredSessions(); // no-op, just exercised
 
     // ── Certificate auth ───────────────────────────────────────────────────
@@ -98,20 +98,38 @@ void run_auth_manager_tests()
     CHECK(auth.certAuthEnabled());
 
     // ── Remote admin password ──────────────────────────────────────────────
-    CHECK(!auth.hasAdminPassword());
+    // Out of the box the door is open on the built-in default: setting a
+    // password requires reaching the host, which is exactly what an
+    // unreachable host prevents.
+    const QString adminIp = "192.168.5.20";
+    CHECK(auth.remoteAdminEnabled());
+    CHECK(auth.hasAdminPassword());
+    CHECK(auth.isAdminPasswordDefault());
+    CHECK(settings.adminPasswordDigest().isEmpty()); // nothing stored yet
+    CHECK(auth.validateAdminPassword(adminIp, AuthManager::DEFAULT_ADMIN_PASSWORD).result ==
+          AuthManager::Valid);
+    CHECK(auth.validateAdminPassword(adminIp, "not-the-default").result == AuthManager::InvalidPin);
+
     CHECK(!auth.setAdminPassword("short")); // below MIN_ADMIN_PASSWORD_LEN
-    CHECK(!auth.hasAdminPassword());
+    // The default itself is refused: accepting it would clear the warning
+    // banner while leaving the public password in force.
+    CHECK(!auth.setAdminPassword(AuthManager::DEFAULT_ADMIN_PASSWORD));
+    CHECK(auth.isAdminPasswordDefault());
+
     CHECK(auth.setAdminPassword("correct-horse"));
     CHECK(auth.hasAdminPassword());
+    CHECK(!auth.isAdminPasswordDefault());
 
     // The plaintext is never stored: what lands in settings is a PBKDF2 digest.
     const QString digest = settings.adminPasswordDigest();
     CHECK(digest.startsWith("pbkdf2-sha256$"));
     CHECK(!digest.contains("correct-horse"));
 
-    const QString adminIp = "192.168.5.20";
     CHECK(auth.validateAdminPassword(adminIp, "correct-horse").result == AuthManager::Valid);
     CHECK(auth.validateAdminPassword(adminIp, "wrong").result == AuthManager::InvalidPin);
+    // A custom password replaces the default rather than adding to it.
+    CHECK(auth.validateAdminPassword(adminIp, AuthManager::DEFAULT_ADMIN_PASSWORD).result ==
+          AuthManager::InvalidPin);
 
     // Its lockout counter is its own: hammering the password must not lock the
     // same address out of PIN login.
@@ -136,15 +154,27 @@ void run_auth_manager_tests()
     CHECK(!auth.isAdminSession(adminToken));
     CHECK(auth.validateSession(adminToken)); // still signed in, just not admin
 
-    // Removing it closes the door entirely, and a stale flag on disk is not
-    // honoured on the way back in.
+    // Disabling closes the door entirely — no password is accepted, not even
+    // the default — and a stale flag on disk is not honoured on the way back in.
     auth.promoteSessionToAdmin(adminToken);
-    CHECK(auth.setAdminPassword(""));
+    auth.setRemoteAdminEnabled(false);
     CHECK(!auth.hasAdminPassword());
+    CHECK(!auth.isAdminPasswordDefault());
     CHECK(!auth.isAdminSession(adminToken));
+    CHECK(auth.validateAdminPassword("192.168.5.30", "another-password").result ==
+          AuthManager::InvalidPin);
+    CHECK(auth.validateAdminPassword("192.168.5.31", AuthManager::DEFAULT_ADMIN_PASSWORD).result ==
+          AuthManager::InvalidPin);
     auth.saveSessions();
     auth.loadSessions();
     CHECK(!auth.isAdminSession(adminToken));
+
+    // Re-enabling restores the operator's password, not the default: the digest
+    // survived the round trip.
+    auth.setRemoteAdminEnabled(true);
+    CHECK(!auth.isAdminPasswordDefault());
+    CHECK(auth.validateAdminPassword("192.168.5.32", "another-password").result ==
+          AuthManager::Valid);
     auth.destroyAllSessions();
 
     // ── LAN address classification (gates the unlock) ──────────────────────
@@ -167,6 +197,6 @@ void run_auth_manager_tests()
     CHECK_EQ(AuthManager::isPrivateIP("192.168.1.5"), QString("Local"));
     CHECK_EQ(AuthManager::isPrivateIP("10.0.0.1"), QString("Local"));
     CHECK_EQ(AuthManager::isPrivateIP("8.8.8.8"), QString("Remote"));
-    CHECK_EQ(AuthManager::rateLimitKey("8.8.8.8"), QString("8.8.8.8")); // IPv4 = raw
+    CHECK_EQ(AuthManager::rateLimitKey("8.8.8.8"), QString("8.8.8.8"));   // IPv4 = raw
     CHECK(!AuthManager::rateLimitKey("2001:db8:abcd:1234::1").isEmpty()); // IPv6 = /64-ish
 }

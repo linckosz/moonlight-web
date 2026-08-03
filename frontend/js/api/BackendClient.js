@@ -302,9 +302,10 @@ export class BackendClient {
     static async adminUnlock(password) {
         return this.post('/api/auth/admin-unlock', { password });
     }
-    /** Set, change or (with an empty string) remove the remote admin password. */
-    static async setAdminPassword(password) {
-        return this.post('/api/admin/password', { password });
+    /** Change the remote admin password and/or turn remote administration on
+     *  and off. Body may carry either or both of {password, enabled}. */
+    static async saveRemoteAdmin(body) {
+        return this.post('/api/admin/password', body);
     }
 
     // ── Certificate Authentication ─────────────────────────────────────────

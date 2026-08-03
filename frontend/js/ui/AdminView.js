@@ -43,6 +43,10 @@ export class AdminView {
         'configuring_ports',
     ];
 
+    // Mirrors AuthManager::MIN_ADMIN_PASSWORD_LEN — checked here only to fail
+    // fast; the backend refuses anything shorter regardless.
+    static MIN_ADMIN_PASSWORD_LEN = 8;
+
     constructor(container, onClose, options) {
         this.container = container;
         this.onClose = onClose || (() => {});
@@ -58,8 +62,10 @@ export class AdminView {
         // password — the view renders the prompt instead of the "host only"
         // notice. Set for exactly the clients /api/auth/admin-unlock accepts.
         this._adminUnlockAvailable = false;
-        // Admin view of the same setting: whether a password exists to hand out.
-        this._adminPasswordSet = false;
+        // Admin view of the same setting: whether the LAN may unlock at all, and
+        // whether it still takes the documented built-in password.
+        this._remoteAdminEnabled = true;
+        this._adminPasswordIsDefault = true;
         // Host key (host machine only) for the post-activation domain redirect.
         this._localKey = '';
 
@@ -212,7 +218,10 @@ export class AdminView {
             this._hasAdminAccess = !!status.is_localhost;
             this._isRealHostMachine = !!status.is_host_machine;
             this._adminUnlockAvailable = !!status.admin_unlock_available;
-            this._adminPasswordSet = !!status.admin_password_set;
+            if (status.remote_admin_enabled !== undefined) {
+                this._remoteAdminEnabled = !!status.remote_admin_enabled;
+                this._adminPasswordIsDefault = !!status.admin_password_is_default;
+            }
             if (status.pin) {
                 this._pin = status.pin;
             }
@@ -267,24 +276,49 @@ export class AdminView {
         }
     }
 
-    // Set, change or (empty password) remove the remote admin password.
-    // Every machine that unlocked with the previous one loses its access — that
-    // is the reset: change the password and the old holders are out.
+    // Replace the remote admin password. Every machine that unlocked with the
+    // previous one loses its access — that is the reset: change the password
+    // and the old holders are out.
     async _saveAdminPassword(password) {
-        if (password && password.length < 8) {
-            Toast.warning(t('admin.remoteAdminTooShort', { count: 8 }));
+        if (password.length < AdminView.MIN_ADMIN_PASSWORD_LEN) {
+            Toast.warning(
+                t('admin.remoteAdminTooShort', { count: AdminView.MIN_ADMIN_PASSWORD_LEN }),
+            );
             return;
         }
-        if (!password && !this._adminPasswordSet) return;
+        await this._postRemoteAdmin({ password }, t('admin.remoteAdminSaved'));
+    }
 
+    // Open or close the LAN door entirely. Closing it revokes every unlock.
+    async _toggleRemoteAdmin(enabled) {
+        await this._postRemoteAdmin(
+            { enabled },
+            enabled ? t('admin.remoteAdminOn') : t('admin.remoteAdminOff'),
+        );
+    }
+
+    async _postRemoteAdmin(body, successMessage) {
         try {
-            const result = await BackendClient.setAdminPassword(password);
-            this._adminPasswordSet = !!result.admin_password_set;
-            Toast.success(password ? t('admin.remoteAdminSaved') : t('admin.remoteAdminRemoved'));
+            const result = await BackendClient.saveRemoteAdmin(body);
+            this._remoteAdminEnabled = !!result.remote_admin_enabled;
+            this._adminPasswordIsDefault = !!result.admin_password_is_default;
+            Toast.success(successMessage);
+            // A remote admin who just closed the LAN door closed it on itself.
+            // Reload rather than leave an admin page whose every button 403s.
+            if (!this._remoteAdminEnabled && !this._isRealHostMachine) {
+                setTimeout(() => window.location.reload(), 600);
+                return;
+            }
         } catch (err) {
-            console.error('[Admin] Failed to save the admin password:', err);
-            Toast.error(t('admin.remoteAdminSaveFailed', { message: err.message }));
-            return;
+            console.error('[Admin] Failed to save the remote admin settings:', err);
+            const error = ((err && err.responseBody) || {}).error;
+            if (error === 'is_default') {
+                Toast.error(t('admin.remoteAdminIsDefault'));
+            } else {
+                Toast.error(t('admin.remoteAdminSaveFailed', { message: err.message }));
+            }
+            // Re-render anyway: the checkbox may be showing a state the backend
+            // refused, and the truth is in the fields above.
         }
         this.render();
         this.bindEvents();
@@ -639,6 +673,7 @@ export class AdminView {
                             <button class="btn btn-neutral u-mt-2" id="btn-admin-unlock">
                                 ${t('admin.unlockAction')}
                             </button>
+                            <p class="settings-hint u-mt-2">${t('admin.unlockDefaultHint')}</p>
                         </div>
                     </div>
                     `
@@ -758,35 +793,35 @@ export class AdminView {
                 <div class="settings-section">
                     <h3 class="settings-section-title">${t('admin.remoteAdmin')}</h3>
                     <div class="settings-field u-pt-0">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-remote-admin"
+                                   ${this._remoteAdminEnabled ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.remoteAdminEnable')}</span>
+                        </label>
                         <p class="setting-desc">${t('admin.remoteAdminDesc')}</p>
-                        <p class="settings-hint">
-                            ${
-                                this._adminPasswordSet
-                                    ? t('admin.remoteAdminSet')
-                                    : t('admin.remoteAdminUnset')
-                            }
-                        </p>
-                        <input type="password" id="admin-remote-password" class="settings-input"
+                        ${
+                            !this._remoteAdminEnabled
+                                ? ''
+                                : this._adminPasswordIsDefault
+                                  ? `<div class="settings-status settings-status-pending">
+                                         ${t('admin.remoteAdminDefaultWarning')}
+                                     </div>`
+                                  : `<p class="settings-hint">${t('admin.remoteAdminCustom')}</p>`
+                        }
+                        ${
+                            this._remoteAdminEnabled
+                                ? `
+                        <input type="password" id="admin-remote-password" class="settings-input u-mt-2"
                                autocomplete="new-password"
                                placeholder="${this.esc(t('admin.remoteAdminPlaceholder'))}" />
                         <div class="u-mt-2">
                             <button class="btn btn-neutral" id="btn-set-admin-password">
-                                ${
-                                    this._adminPasswordSet
-                                        ? t('admin.remoteAdminChange')
-                                        : t('admin.remoteAdminSetAction')
-                                }
+                                ${t('admin.remoteAdminChange')}
                             </button>
-                            ${
-                                this._adminPasswordSet
-                                    ? `<button class="btn btn-danger btn-small u-ml-2"
-                                               id="btn-clear-admin-password">
-                                           ${t('admin.remoteAdminRemove')}
-                                       </button>`
-                                    : ''
-                            }
                         </div>
-                        <p class="settings-hint u-mt-2">${t('admin.remoteAdminHint')}</p>
+                        <p class="settings-hint u-mt-2">${t('admin.remoteAdminHint')}</p>`
+                                : ''
+                        }
                     </div>
                 </div>
 
@@ -1226,7 +1261,11 @@ export class AdminView {
             });
         }
 
-        // Remote admin password: set / change / remove (admin only)
+        // Remote administration: the LAN door, and the password behind it
+        const remoteChk = this.container.querySelector('#chk-remote-admin');
+        if (remoteChk) {
+            remoteChk.addEventListener('change', () => this._toggleRemoteAdmin(remoteChk.checked));
+        }
         const setPassBtn = this.container.querySelector('#btn-set-admin-password');
         const passInput = this.container.querySelector('#admin-remote-password');
         if (setPassBtn && passInput) {
@@ -1237,10 +1276,6 @@ export class AdminView {
                     this._saveAdminPassword(passInput.value);
                 }
             });
-        }
-        const clearPassBtn = this.container.querySelector('#btn-clear-admin-password');
-        if (clearPassBtn) {
-            clearPassBtn.addEventListener('click', () => this._saveAdminPassword(''));
         }
 
         // Internet Access checkbox toggle

@@ -43,11 +43,11 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 | Method & path | Access | Description |
 |---|---|---|
 | `POST /api/auth/validate` | 🌐 | Body `{pin}` or certificate upload → sets `mw_session` cookie. Rate-limited (remaining attempts / lockout seconds in the response). Consumed PIN auto-regenerates. |
-| `GET /api/auth/status` | 🌐 | Session validity, `is_localhost` (has admin), `is_host_machine`, `admin_unlock_available`, `admin_password_set` (admin only), whether a PIN exists, cert-auth enabled. |
+| `GET /api/auth/status` | 🌐 | Session validity, `is_localhost` (has admin), `is_host_machine`, `admin_unlock_available`, `remote_admin_enabled` + `admin_password_is_default` (admin only), whether a PIN exists, cert-auth enabled. |
 | `POST /api/auth/regenerate` | 🏠 | New PIN + invalidate all sessions. |
 | `POST /api/admin/pin/generate` / `POST /api/admin/pin/clear` | 🏠 | Manage the PIN. |
-| `POST /api/auth/admin-unlock` | 🔑 LAN | Body `{password}` → promotes this session to admin. Requires a LAN peer **and** a trusted `Host`, an existing session, and a configured password; own rate-limit bucket (401 `invalid_password`, 429 `rate_limited`, 403 `lan_only`/`not_configured`). |
-| `POST /api/admin/password` | 🏠 | Body `{password}` sets or changes the remote admin password (min 8 chars, 400 `too_short`); an empty string removes it. Either way, every session unlocked with the old password loses admin — except the caller's. |
+| `POST /api/auth/admin-unlock` | 🔑 LAN | Body `{password}` → promotes this session to admin. Requires a LAN peer **and** a trusted `Host`, an existing session, and remote administration enabled; own rate-limit bucket (401 `invalid_password`, 429 `rate_limited`, 403 `lan_only`/`not_configured`). Answers `ok` without spending an attempt when the caller is already an admin. |
+| `POST /api/admin/password` | 🏠 | Body `{password}` and/or `{enabled}` — changes the remote admin password (min 8 chars, 400 `too_short`; the built-in default is refused with 400 `is_default`) and turns remote administration on or off. Either change revokes every session unlocked with the old password, except the caller's. |
 | `GET /api/auth/sessions` | 🏠 | Sessions table (opaque token hash ids, IP, geo, machine name, streaming flag). |
 | `POST /api/auth/sessions/revoke` | 🏠 | Revoke by opaque id; a streaming session's relay is torn down immediately. |
 | `GET /api/admin/certificate/download` / `POST /api/admin/certificate/regenerate` | 🏠 | Certificate-file auth token. |

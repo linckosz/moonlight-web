@@ -283,13 +283,25 @@ public:
     // same admin access (see AuthManager::validateAdminPassword). Stored only
     // as a PBKDF2 digest; the plaintext never touches disk and cannot be read
     // back, so a forgotten password is reset from the host, not recovered.
+    //
+    // Three states, because setting the password from the host is exactly what
+    // an unreachable host makes impossible:
+    //   enabled + no digest → the built-in default is in force (out of the box)
+    //   enabled + digest    → the operator chose their own
+    //   disabled            → no password is accepted, host-only admin
 
-    /// Encoded digest ("pbkdf2-sha256$<iters>$<salt>$<key>"), empty when unset.
+    /// Encoded digest ("pbkdf2-sha256$<iters>$<salt>$<key>"), empty when the
+    /// built-in default still applies.
     QString adminPasswordDigest() const;
 
-    /// Persist an encoded digest. An empty value removes the password, which
-    /// closes the second door entirely (host-only admin again).
+    /// Persist an encoded digest. An empty value falls back to the default.
     void setAdminPasswordDigest(const QString& digest);
+
+    /// Whether the LAN may unlock admin access at all. Default: true.
+    bool remoteAdminEnabled() const;
+
+    /// Turn remote administration on or off.
+    void setRemoteAdminEnabled(bool enabled);
 
     // ── DNS subdomain ownership ─────────────────────────────────────────────
     //
