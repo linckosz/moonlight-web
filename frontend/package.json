@@ -10,7 +10,8 @@
     "format": "prettier --check \"js/**/*.js\" \"scripts/**/*.{js,cjs}\"",
     "format:fix": "prettier --write \"js/**/*.js\" \"scripts/**/*.{js,cjs}\"",
     "typecheck": "tsc --noEmit",
-    "check": "npm run format && npm run lint",
+    "i18n": "node scripts/check-i18n.cjs",
+    "check": "npm run format && npm run lint && npm run i18n",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage"
