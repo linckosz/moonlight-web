@@ -60,7 +60,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - name: Prettier + ESLint
+      - name: Prettier + ESLint + i18n
         id: quality
         run: npm run check
       - name: Report quality
@@ -74,8 +74,10 @@ jobs:
             echo "cd frontend"
             echo "npm run format:fix   # auto-format with Prettier"
             echo "npm run lint:fix     # auto-fix ESLint issues"
+            echo "npm run i18n         # check the translation catalogs"
             echo '```'
             echo "Remaining ESLint errors must be fixed by hand — see the log above."
+            echo "i18n failures are fixed by adding the key to every locale in frontend/locales/."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Run tests with coverage
         run: npm run coverage
