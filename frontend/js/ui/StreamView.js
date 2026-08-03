@@ -28,6 +28,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
 import { JitterController } from '../stream/JitterController.js';
+import { FramePacer } from '../stream/FramePacer.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
 import {
     NalParser,
@@ -449,7 +450,11 @@ export class StreamView {
         // green-image fix. Frames are processed in arrival order.
 
         // Stats
-        this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0 };
+        // networkLost: frames the backend sent that never arrived (frameId gaps).
+        // Denominator for the loss rate is the frameId span, tracked separately
+        // because `received` counts only what the pipeline actually got.
+        this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0, networkLost: 0 };
+        this._firstFrameId = -1;
 
         // Overlay stats
         this._overlayEl = null;
@@ -486,7 +491,7 @@ export class StreamView {
         this._clientDecodeStats = new SlidingStats(2000); // decode() submit → decoder output
         this._clientQueueStats = new SlidingStats(2000); // decoder output → draw start
         this._clientRenderStats = new SlidingStats(2000); // draw start → draw done
-        this._chunkSubmitTimes = new Map(); // chunk timestamp (µs) → perf.now() at decode()
+        this._chunkSubmitTimes = new Map(); // chunk timestamp (µs) → { perf, backendTs }
         this._pingSeq = 0;
         this._pingInterval = null;
 
@@ -553,6 +558,22 @@ export class StreamView {
             this._jitterAuto = localStorage.getItem('mw_jitter_auto') === '1';
         } catch (e) {}
         this._jitterController = new JitterController();
+
+        // ── Adaptive presentation reserve (DataChannel paths, mw_pacing) ──────
+        // The DC/WebCodecs pipeline has no dejitter buffer at all: it presents on
+        // decode and drops to the freshest frame, so link jitter turns straight
+        // into "repeat + skip" judder. FramePacer rebuilds the reserve from the
+        // backendTs capture stamps. webrtc-media does NOT use it — there the
+        // browser's own buffer does the job (see _jitterAuto above).
+        this._pacingEnabled = false;
+        try {
+            this._pacingEnabled =
+                this._transport !== 'webrtc-media' && localStorage.getItem('mw_pacing') === '1';
+        } catch (e) {}
+        this._framePacer = this._pacingEnabled ? new FramePacer() : null;
+        this._pacerStats = null; // last snapshot (worker mode posts it with the counters)
+        this._pacingTimer = null;
+        this._pacingDue = 0;
 
         // Gamepad bridge (Xbox/PlayStation) — created lazily on first connect.
         this._gamepadManager = null;
@@ -1389,6 +1410,7 @@ export class StreamView {
                     webgpu: this._wantWebGpu,
                     algo: this._videoEnhancementAlgo,
                     hdr: this._hdrEnabled,
+                    pacing: this._pacingEnabled,
                 },
                 [offscreen],
             );
@@ -1478,6 +1500,8 @@ export class StreamView {
                 // Worker-side pipeline observations (queues, draw split, drop
                 // causes) — the overlay/console read the last snapshot posted.
                 if (m.diag) this._workerDiag = m.diag;
+                // Reserve the worker's pacer is currently holding (overlay only).
+                if (m.pacer) this._pacerStats = m.pacer;
                 break;
             }
             case 'enhancer':
@@ -1659,6 +1683,10 @@ export class StreamView {
             }
         }
         this.frameQueue = [];
+        // The recovery gap is not network jitter: re-priming keeps the pacer
+        // from reading it as one and pinning the reserve at MAX.
+        this._clearPacingTimer();
+        if (this._framePacer) this._framePacer.reset();
 
         // 3. Clear pending frames — they reference lost/corrupted reference
         //    frames and would produce more errors on the new decoder
@@ -2337,7 +2365,7 @@ export class StreamView {
                 duration: 16667,
                 data: avccData,
             });
-            this._trackChunkSubmit(timestamp);
+            this._trackChunkSubmit(timestamp, backendTs);
             this.decoder.decode(chunk);
             this.stats.received++;
             // Keyframe successfully submitted: reference is valid again.
@@ -2357,13 +2385,21 @@ export class StreamView {
 
     /**
      * Record the decode() submit time of a chunk for the client pipeline
-     * latency measurement. Entries are consumed in onDecodedFrame; frames the
-     * decoder never outputs (drops, decoder reset) would leak, so the map is
-     * cleared when it grows past a burst-sized bound.
+     * latency measurement, plus its capture stamp for the presentation pacer.
+     * Entries are consumed in onDecodedFrame; frames the decoder never outputs
+     * (drops, decoder reset) would leak, so the map is cleared when it grows
+     * past a burst-sized bound.
+     *
+     * backendTs is carried explicitly rather than recovered from the chunk
+     * timestamp: the H.264/HEVC path derives that timestamp from backendTs but
+     * nudges it to stay monotonic, and AV1 makes it up (frameCount * 16667).
      */
-    _trackChunkSubmit(timestamp) {
+    _trackChunkSubmit(timestamp, backendTs) {
         if (this._chunkSubmitTimes.size > 240) this._chunkSubmitTimes.clear();
-        this._chunkSubmitTimes.set(timestamp, performance.now());
+        this._chunkSubmitTimes.set(timestamp, {
+            perf: performance.now(),
+            backendTs: backendTs || 0,
+        });
     }
 
     onDecodedFrame(frame) {
@@ -2391,20 +2427,31 @@ export class StreamView {
         // timestamps and AV1's synthetic ones alike). This closes the first
         // stage (decode queue + decode); the frame carries its output time so
         // _pumpRender can close the queue and render stages too.
-        const submitPerf = this._chunkSubmitTimes.get(frame.timestamp);
-        if (submitPerf !== undefined) {
+        const submit = this._chunkSubmitTimes.get(frame.timestamp);
+        const outPerf = performance.now();
+        let backendTs = 0;
+        if (submit !== undefined) {
             this._chunkSubmitTimes.delete(frame.timestamp);
-            const outPerf = performance.now();
-            const decodeMs = outPerf - submitPerf;
+            const decodeMs = outPerf - submit.perf;
             if (decodeMs >= 0 && decodeMs < 5000) this._clientDecodeStats.addSample(decodeMs);
             frame._mwDecodedPerf = outPerf;
+            backendTs = submit.backendTs;
         }
+
+        // Presentation deadline (see FramePacer). Timed from the decoder output
+        // rather than network arrival on purpose: decode time varies too, and it
+        // is the cadence reaching the screen that has to be smooth.
+        frame._mwPresentAt = this._framePacer
+            ? this._framePacer.schedule(backendTs, outPerf)
+            : outPerf;
 
         // Limit queue depth to prevent unbounded memory growth.
         // Drop the NEW frame instead of closing an old one — the old frame
         // may still be rendering in the renderer's draw() (async + not awaited).
         // Closing it mid-render zeroes its NV12 buffer → green screen on Chrome.
-        if (this.frameQueue.length >= 3) {
+        // With a reserve, frames legitimately wait their turn, so the cap has to
+        // clear the deepest reserve (60ms ≈ 3.6 frames @60fps).
+        if (this.frameQueue.length >= (this._framePacer ? 6 : 3)) {
             frame.close();
             this.stats.dropped++;
             this._diag.noteDrop('queueFull');
@@ -2800,6 +2847,43 @@ export class StreamView {
      * copyTo race — report serialDrawsOnly and get a cap of 1 instead. Bursts
      * (DC mode) drop all but the freshest frame to keep latency low.
      */
+    /**
+     * Wake _pumpRender when the head frame comes due (immediate mode only — the
+     * rAF loop is its own heartbeat). Presentation is FIFO, so only the head's
+     * deadline governs and a single pending timer is enough. (Deadlines are NOT
+     * monotonic: a frame arriving past the whole reserve gets "now", which can
+     * precede the deadline of the frame ahead of it — it waits its turn, and the
+     * back-to-back pair that results is the underrun the pacer reacts to.)
+     * Re-arm only for an earlier deadline — a trim that drops the head makes one.
+     */
+    _armPacingTimer(delayMs) {
+        const due = performance.now() + delayMs;
+        if (this._pacingTimer !== null && this._pacingTimer !== undefined) {
+            if (this._pacingDue <= due) return;
+            clearTimeout(this._pacingTimer);
+        }
+        this._pacingDue = due;
+        this._pacingTimer = setTimeout(
+            () => {
+                this._pacingTimer = null;
+                // Nothing left to present: the reserve ran dry. That is the one
+                // signal the pacer cannot infer from the frames it does see.
+                if (this._framePacer && this.frameQueue.length === 0) {
+                    this._framePacer.noteUnderrun(performance.now());
+                }
+                this._pumpRender();
+            },
+            Math.max(0, delayMs),
+        );
+    }
+
+    _clearPacingTimer() {
+        if (this._pacingTimer) {
+            clearTimeout(this._pacingTimer);
+            this._pacingTimer = null;
+        }
+    }
+
     _pumpRender() {
         if (!this.renderRunning || !this._renderer) return;
 
@@ -2819,8 +2903,16 @@ export class StreamView {
         // present the FRESHEST frame, the only lever those platforms have to
         // shed the reserve latency. At low framerates the queue rarely holds two
         // frames, so this matches the reserve behaviour there anyway.
-        const useReserve = SUPPORTS_CANVAS_TEARING && !this._immediateRender;
-        const maxQueued = useReserve ? 2 : 1;
+        //
+        // With the adaptive pacer on (mw_pacing), the reserve stops being a fixed
+        // frame count: FramePacer sizes it in milliseconds from the measured
+        // jitter and stamps every frame with a deadline. The queue is then only
+        // trimmed to its memory bound — a queued frame is early, not stale — and
+        // the head is held until it comes due. That subsumes the fixed reserve
+        // below, including the framerate-near-refresh case it costs latency in.
+        const paced = !!this._framePacer;
+        const useReserve = !paced && SUPPORTS_CANVAS_TEARING && !this._immediateRender;
+        const maxQueued = paced ? 6 : useReserve ? 2 : 1;
 
         // Queue depth BEFORE any trim: a depth above the reserve means the draw
         // is not keeping up with the decoder.
@@ -2831,6 +2923,17 @@ export class StreamView {
             old.close();
             this.stats.dropped++;
             this._diag.noteDrop('stale');
+        }
+
+        if (paced && this.frameQueue.length > 0) {
+            const wait = this.frameQueue[0]._mwPresentAt - performance.now();
+            if (wait > 0) {
+                // The rAF loop re-pumps within a refresh, which is wakeup enough.
+                // Immediate mode has no such heartbeat — it only pumps on decode
+                // and on draw completion — so it has to arm its own.
+                if (this._immediateRender) this._armPacingTimer(wait);
+                return;
+            }
         }
 
         // At the in-flight cap: the queue is trimmed above and the draw's
@@ -3856,6 +3959,23 @@ export class StreamView {
                         '</div>',
                 );
             }
+            // Reserve currently held by the pacer. Not added to the total — the
+            // hold already lands in the render-queue leg above (decoder output →
+            // draw start), so counting it here would double it. It is shown so
+            // the adaptation is visible: 0 on a clean link, growing under jitter.
+            const pacer = this._framePacer ? this._framePacer.stats : this._pacerStats;
+            if (pacer) {
+                rows.push(
+                    '<div class="stats-leg-row">' +
+                        '<span class="stats-label">' +
+                        escapeHtml(t('stream.statLegReserve')) +
+                        '</span>' +
+                        '<span class="stats-value">' +
+                        pacer.targetMs.toFixed(1) +
+                        'ms</span>' +
+                        '</div>',
+                );
+            }
             if (haveLatency) {
                 avgLatency = latency.toFixed(1) + 'ms';
                 latencyDetail = rows.join('');
@@ -3875,6 +3995,49 @@ export class StreamView {
             html += '<div class="stats-latency-detail">' + latencyDetail + '</div>';
         }
 
+        // ── Frame loss, split by who lost them (mirrors moonlight-qt) ────────
+        // Two different faults that both read as "it stutters", and the fix for
+        // one does nothing for the other:
+        //
+        //   network — frames the host sent that never arrived (frameId gaps).
+        //             Packet loss. Costs a reference picture and an IDR round
+        //             trip, so it shows up as a visible glitch, not a hitch.
+        //   jitter  — frames that DID arrive and were decoded, then were thrown
+        //             away at the render stage because a newer one overtook
+        //             them. Nothing was lost on the wire: they just arrived too
+        //             unevenly to be shown in turn. This is the number the
+        //             presentation reserve exists to drive down.
+        //
+        // webrtc-media has neither counter (no frameId framing, no WebCodecs
+        // render queue) — the browser owns that pipeline.
+        // One snapshot per tick, shared with the pipeline line below (the worker
+        // path posts its own; the main-thread path prunes its windows on read).
+        const diagSnap = isMedia ? null : this._workerDiag || this._diag.snapshot();
+        if (!isMedia) {
+            const span =
+                this._lastFrameId >= 0 && this._firstFrameId >= 0
+                    ? this._lastFrameId - this._firstFrameId + 1
+                    : 0;
+            const lossPct = span > 0 ? (this.stats.networkLost / span) * 100 : 0;
+            const staleDrops = diagSnap.dropStale || 0;
+            const jitterPct = this.stats.decoded > 0 ? (staleDrops / this.stats.decoded) * 100 : 0;
+            const lossRows = [
+                { key: 'statLossNetwork', pct: lossPct },
+                { key: 'statLossJitter', pct: jitterPct },
+            ];
+            for (const row of lossRows) {
+                html +=
+                    '<div class="stats-row">' +
+                    '<span class="stats-label">' +
+                    escapeHtml(t('stream.' + row.key)) +
+                    '</span>' +
+                    '<span class="stats-value">' +
+                    row.pct.toFixed(2) +
+                    '%</span>' +
+                    '</div>';
+            }
+        }
+
         // ── Pipeline observations ───────────────────────────────────────────
         // The legs above say how long each stage took; this line says why they
         // move — arrival cadence, queue depths, how the draw splits between our
@@ -3885,7 +4048,6 @@ export class StreamView {
         // be reported without watching the overlay.
         // Not applicable to webrtc-media: no WebCodecs pipeline to observe.
         if (!isMedia) {
-            const diagSnap = this._workerDiag || this._diag.snapshot();
             // Main-thread path only: the worker applies its own ladder before
             // posting, so re-deciding here would fight it with stale numbers.
             // Runs whether or not the diagnostics are displayed.
@@ -4068,10 +4230,15 @@ export class StreamView {
                         frameId +
                         ' — invalidating reference, requesting IDR',
                 );
+                // Frames the network owes us and will never deliver. frameId is
+                // assigned in backend send order, so the size of the jump IS the
+                // count lost — this is the overlay's network-loss numerator.
+                this.stats.networkLost += frameId - this._lastFrameId - 1;
                 this._referenceValid = false;
                 if (this._videoWorker) this._videoWorker.postMessage({ type: 'frameloss' });
                 this._requestIdr('frame gap');
             }
+            if (this._firstFrameId === -1) this._firstFrameId = frameId;
             if (frameId > this._lastFrameId) {
                 this._lastFrameId = frameId;
             } else if (this._lastFrameId !== -1 && !(isKeyframe && !this._referenceValid)) {
@@ -4349,7 +4516,9 @@ export class StreamView {
                 duration: 16667,
                 data: obuData,
             });
-            this._trackChunkSubmit(timestamp);
+            // AV1 has no backendTs here (synthetic chunk timestamps), so the
+            // pacer sees 0 and this path keeps presenting on decode.
+            this._trackChunkSubmit(timestamp, 0);
             this.decoder.decode(chunk);
             this.stats.received++;
         } catch (err) {
@@ -6149,6 +6318,7 @@ export class StreamView {
         }
         this.frameQueue = [];
         this.pendingFrames = [];
+        this._clearPacingTimer();
 
         // Mark WebRTC as stopping before calling /quit so that DataChannel
         // "onclose" events from the backend closing its side are not treated
@@ -6301,6 +6471,7 @@ export class StreamView {
         }
         this.frameQueue = [];
         this.pendingFrames = [];
+        this._clearPacingTimer();
 
         const el = this._rootEl;
         if (el) el.remove();
