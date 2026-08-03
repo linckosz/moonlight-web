@@ -23,6 +23,24 @@
 
 namespace HttpParser {
 
+namespace {
+
+/// True when @p s carries a C0 control character or DEL.
+///
+/// QUrl::path() percent-decodes, so a request target of "/x%0d%0aEvil:1" yields
+/// a path with real CR/LF in it. Anything that later echoes the path into a
+/// response header — the HTTP→HTTPS redirect's Location does — would emit those
+/// bytes verbatim and let the caller append headers of their own (CWE-113).
+/// Detected here, at the only place that decodes, so every consumer is covered.
+bool hasControlChars(const QString& s)
+{
+    for (const QChar c : s)
+        if (c.unicode() < 0x20 || c.unicode() == 0x7F) return true;
+    return false;
+}
+
+} // namespace
+
 HttpRequest parse(const QByteArray& raw)
 {
     HttpRequest req;
@@ -36,9 +54,13 @@ HttpRequest parse(const QByteArray& raw)
             QUrl url(parts[1]);
             req.path = url.path();
             if (req.path.isEmpty()) req.path = "/";
+            if (hasControlChars(req.path)) req.malformed = true;
             QUrlQuery query(url);
-            for (const auto& item : query.queryItems())
+            for (const auto& item : query.queryItems()) {
+                if (hasControlChars(item.first) || hasControlChars(item.second))
+                    req.malformed = true;
                 req.queryParams[item.first] = item.second;
+            }
         }
     }
 

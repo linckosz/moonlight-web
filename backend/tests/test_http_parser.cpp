@@ -48,15 +48,14 @@ void run_http_parser_tests()
 
     // A body that itself contains CRLF must survive the header/body split.
     {
-        HttpRequest r =
-            HttpParser::parse(raw("POST /x HTTP/1.1\r\n\r\nline1\r\nline2"));
+        HttpRequest r = HttpParser::parse(raw("POST /x HTTP/1.1\r\n\r\nline1\r\nline2"));
         CHECK_EQ(QString::fromUtf8(r.body), QString("line1\r\nline2"));
     }
 
     // Header value with a colon (e.g. a URL) keeps everything after the first colon.
     {
-        HttpRequest r = HttpParser::parse(
-            raw("GET / HTTP/1.1\r\nReferer: https://host/p?q=1\r\n\r\n"));
+        HttpRequest r =
+            HttpParser::parse(raw("GET / HTTP/1.1\r\nReferer: https://host/p?q=1\r\n\r\n"));
         CHECK_EQ(r.headers.value("referer"), QString("https://host/p?q=1"));
     }
 
@@ -79,5 +78,43 @@ void run_http_parser_tests()
         CHECK(empty.method.isEmpty());
         HttpRequest garbage = HttpParser::parse(raw("not-a-request"));
         CHECK(garbage.method.isEmpty()); // single token → no method/path set
+    }
+
+    // ── Response splitting (CWE-113) ────────────────────────────────────────
+    // QUrl::path() percent-decodes, so %0d%0a in the request target comes back
+    // as a real CRLF. The HTTP→HTTPS redirect puts the path in a Location
+    // header, and before this was caught the caller could append headers of
+    // their own ("Set-Cookie: ..." was reproduced against a live instance).
+    // Flagging it here covers every consumer, because this is the only decoder.
+    {
+        HttpRequest ok = HttpParser::parse(raw("GET /api/hosts HTTP/1.1\r\n\r\n"));
+        CHECK(!ok.malformed);
+
+        HttpRequest crlf =
+            HttpParser::parse(raw("GET /x%0d%0aSet-Cookie:pwned=1 HTTP/1.1\r\n\r\n"));
+        CHECK(crlf.malformed);
+
+        // Either half alone is just as good for splitting a header line.
+        CHECK(HttpParser::parse(raw("GET /x%0d HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("GET /x%0a HTTP/1.1\r\n\r\n")).malformed);
+
+        // Other control characters have no business in a path either.
+        CHECK(HttpParser::parse(raw("GET /x%00 HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("GET /x%7f HTTP/1.1\r\n\r\n")).malformed);
+
+        // Query values are a different story, and the asymmetry is the point:
+        // QUrl decodes the path fully but leaves control characters escaped in
+        // query items, so a %0d%0a there stays four characters and can never
+        // become a header break. Pinned because it is the reason the path is the
+        // only vector — the parser screens query items too, which costs nothing
+        // and holds the line if that decoding ever changes.
+        HttpRequest q = HttpParser::parse(raw("GET /x?a=%0d%0aEvil:1 HTTP/1.1\r\n\r\n"));
+        CHECK_EQ(q.path, QString("/x"));
+        CHECK(!q.queryParams.value("a").contains(QLatin1Char('\r')));
+        CHECK(!q.queryParams.value("a").contains(QLatin1Char('\n')));
+
+        // Percent-encoding that is not a control character stays legitimate:
+        // a space in a filename must keep working.
+        CHECK(!HttpParser::parse(raw("GET /a%20b.png HTTP/1.1\r\n\r\n")).malformed);
     }
 }

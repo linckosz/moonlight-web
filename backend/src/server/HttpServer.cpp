@@ -47,6 +47,32 @@
 static constexpr int MAX_HEADER_BYTES = 32 * 1024;     // 32 KB of headers
 static constexpr int MAX_BODY_BYTES = 8 * 1024 * 1024; // 8 MB body
 
+// Drop anything that could end a header line early (CR, LF, NUL). Applied to
+// every header we emit so no value can ever inject a header of its own.
+static QString sanitizeHeaderValue(const QString& value)
+{
+    QString out;
+    out.reserve(value.size());
+    for (const QChar c : value)
+        if (c.unicode() >= 0x20 && c.unicode() != 0x7F) out.append(c);
+    return out;
+}
+
+// True when @p authority holds nothing but what a host[:port] is made of.
+// Guards the one place a request-supplied value reaches a policy header: a Host
+// of "example.com; connect-src *" would otherwise close the CSP's connect-src
+// directive and open a new one.
+static bool isPlainAuthority(const QString& authority)
+{
+    if (authority.isEmpty()) return false;
+    for (const QChar c : authority) {
+        const bool ok = c.isLetterOrNumber() || c == QLatin1Char('.') || c == QLatin1Char('-') ||
+                        c == QLatin1Char(':') || c == QLatin1Char('[') || c == QLatin1Char(']');
+        if (!ok) return false;
+    }
+    return true;
+}
+
 // --- SslServer: creates QSslSocket directly from native handle ----------------
 // Avoids descriptor-transfer hack (get descriptor → setSocketDescriptor(-1) →
 // recreate QSslSocket) which fails on Windows because QTcpSocket's
@@ -682,10 +708,45 @@ void HttpServer::onReadyReadSocket(QTcpSocket* socket)
     }
 
     int contentLength = 0;
-    for (const QString& line : headerPart.split("\r\n")) {
-        if (line.startsWith("Content-Length:", Qt::CaseInsensitive)) {
+    const QStringList headerLines = headerPart.split("\r\n");
+
+    bool haveContentLength = false;
+    bool haveTransferEncoding = false;
+    for (const QString& line : headerLines) {
+        if (!haveContentLength && line.startsWith("Content-Length:", Qt::CaseInsensitive)) {
             contentLength = line.mid(15).trimmed().toInt();
-            break;
+            haveContentLength = true;
+        } else if (line.startsWith("Transfer-Encoding:", Qt::CaseInsensitive)) {
+            const QString coding = line.section(QLatin1Char(':'), 1).trimmed();
+            if (coding.compare(QLatin1String("identity"), Qt::CaseInsensitive) != 0)
+                haveTransferEncoding = true;
+        }
+    }
+
+    // Bodies are framed by Content-Length alone — chunked coding is not
+    // implemented. Two cases must not be waved through:
+    //
+    //   Both headers present: the framing is ambiguous, and a front-end proxy
+    //   that honours Transfer-Encoding while we honour Content-Length is exactly
+    //   the disagreement request smuggling is built on. Nothing legitimate sends
+    //   both.
+    //
+    //   Transfer-Encoding alone on a request that carries a body: we would read
+    //   a zero-length body and hand the handler a truncated request. It has
+    //   never worked; say so rather than misparse it.
+    //
+    // A bodyless GET/HEAD carrying a stray Transfer-Encoding is left alone: some
+    // tunnels add it blanket-style, and there is no body for us to get wrong.
+    if (haveTransferEncoding) {
+        const QString method = headerPart.section(QLatin1Char(' '), 0, 0).trimmed().toUpper();
+        const bool bodyExpected = method != QLatin1String("GET") && method != QLatin1String("HEAD");
+        if (haveContentLength) {
+            sendResponse(socket, HttpResponse::error(400, "Ambiguous message framing"));
+            return;
+        }
+        if (bodyExpected) {
+            sendResponse(socket, HttpResponse::error(501, "Transfer coding not supported"));
+            return;
         }
     }
 
@@ -723,6 +784,17 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = HttpParser::parse(requestData);
     req.clientAddress = socket->peerAddress().toString();
+
+    // A request target carrying control characters is refused before anything
+    // reads it: the redirect below puts the path in a Location header, and a
+    // smuggled CR/LF would let the caller append headers of their own.
+    if (req.malformed) {
+        Logger::warning(QString("[HttpServer] Malformed request target refused from %1")
+                            .arg(req.clientAddress));
+        m_ConnGuard.reportAuthFailure(req.clientAddress);
+        sendResponse(socket, HttpResponse::error(400, "Bad Request"));
+        return;
+    }
 
     // ── Access decision ───────────────────────────────────────────────────────
     // The local privilege below is granted on the source IP alone, and a browser
@@ -839,6 +911,16 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     }
 
     if (!req.path.startsWith("/api/")) {
+        // Static assets answer reads and nothing else. Every write verb on them
+        // was already a no-op that returned the app shell with 200; saying 405
+        // states the contract instead of implying the request did something.
+        if (req.method != QLatin1String("GET") && req.method != QLatin1String("HEAD")) {
+            HttpResponse notAllowed = HttpResponse::error(405, "Method Not Allowed");
+            notAllowed.headers["Allow"] = "GET, HEAD";
+            sendResponse(socket, notAllowed);
+            return;
+        }
+
         // /version.json is synthesised from the running app version (single
         // source of truth: MW_VERSION, baked in at build from the git tag) so
         // it never needs hand-bumping. The frontend's VersionGuard polls it and
@@ -856,11 +938,19 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
         const QString ifNoneMatch = req.headers.value("if-none-match");
         HttpResponse resp = m_StaticFiles->serveFile(req.path, ifNoneMatch);
-        // SPA fallback: for any non-API path that doesn't match a real file,
-        // serve index.html so the frontend can handle its own routing via
-        // the History API (e.g. /admin, /settings).
-        if (resp.statusCode == 404) resp = m_StaticFiles->serveFile("/", ifNoneMatch);
-        sendResponse(socket, resp);
+        // SPA fallback: a path with no file extension is a frontend route
+        // (/admin, /settings) and gets index.html so the History API can pick it
+        // up on reload. A path that names a file is a genuine miss and must say
+        // so — answering 200 with the app shell for /settings.json or /.git/config
+        // makes every probe look like a hit, both to a scanner and to a reader
+        // trying to tell a real leak from the fallback.
+        const QString lastSegment = req.path.section(QLatin1Char('/'), -1);
+        const bool looksLikeFile = lastSegment.contains(QLatin1Char('.'));
+        if (resp.statusCode == 404 && !looksLikeFile)
+            resp = m_StaticFiles->serveFile("/", ifNoneMatch);
+        // HEAD is the same response without the representation.
+        if (req.method == QLatin1String("HEAD")) resp.body.clear();
+        sendResponse(socket, resp, req.headers.value("host"));
         return;
     }
 
@@ -923,6 +1013,16 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 {
     const HttpRequest up = HttpParser::parse(requestData);
     const QString peerAddr = clientSocket->peerAddress().toString();
+
+    // Same refusal as the REST path: a control character in the target means the
+    // handshake was crafted, and it is forwarded verbatim to the WS server below.
+    if (up.malformed) {
+        Logger::warning(QString("[HttpServer] Malformed WebSocket upgrade target refused from %1")
+                            .arg(peerAddr));
+        m_ConnGuard.reportAuthFailure(peerAddr);
+        sendResponse(clientSocket, HttpResponse::error(400, "Bad Request"));
+        return;
+    }
 
     // ── Origin check ──────────────────────────────────────────────────────────
     // WebSockets are not subject to the same-origin policy: any page may open
@@ -1054,7 +1154,8 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
     target->connectToHost(QHostAddress::LocalHost, targetPort);
 }
 
-void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
+void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response,
+                              const QString& hostHeader)
 {
     // Only log failures — per-request logging floods the console with the
     // periodic /api/hosts polling.
@@ -1072,42 +1173,73 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response)
     case 201: statusText = "Created"; break;
     case 204: statusText = "No Content"; break;
     case 304: statusText = "Not Modified"; break;
+    case 307: statusText = "Temporary Redirect"; break;
     case 400: statusText = "Bad Request"; break;
+    case 401: statusText = "Unauthorized"; break;
     case 403: statusText = "Forbidden"; break;
     case 404: statusText = "Not Found"; break;
+    case 405: statusText = "Method Not Allowed"; break;
+    case 413: statusText = "Payload Too Large"; break;
+    case 415: statusText = "Unsupported Media Type"; break;
+    case 429: statusText = "Too Many Requests"; break;
+    case 431: statusText = "Request Header Fields Too Large"; break;
     case 500: statusText = "Internal Server Error"; break;
+    case 501: statusText = "Not Implemented"; break;
+    case 504: statusText = "Gateway Timeout"; break;
     default: statusText = "Unknown"; break;
     }
+
+    // The page may only open a WebSocket back to the origin it was served from.
+    // Spelled out as wss://<host> rather than relying on 'self' to cover ws/wss:
+    // CSP3 says it does, but WebKit has historically not honoured that, and this
+    // header gates the streaming signaling channel on iOS.
+    const QString wsOrigin = RequestGuard::normalizeAuthority(hostHeader);
+    const QString connectSrc = isPlainAuthority(wsOrigin)
+                                   ? QStringLiteral("'self' wss://%1").arg(wsOrigin)
+                                   : QStringLiteral("'self'");
+
+    // Defaults first, then the handler's own headers on top: a handler that sets
+    // Cache-Control or a stricter policy wins, and neither can be emitted twice.
+    QMap<QString, QString> headers;
+    headers["Connection"] = "close";
+    // No Access-Control-Allow-Origin: the frontend is served same-origin by this
+    // server, so CORS is never needed. Omitting it prevents any cross-origin page
+    // from reading API responses.
+    headers["X-Content-Type-Options"] = "nosniff";
+    headers["X-Frame-Options"] = "DENY";
+    headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    // 'wasm-unsafe-eval' allows WebAssembly compilation only (not JS eval) —
+    // required by the WASM Opus decoder fallback used on iOS/WebKit.
+    // Google Fonts: stylesheet from fonts.googleapis.com, font files from
+    // fonts.gstatic.com (graceful fallback to system fonts if offline).
+    headers["Content-Security-Policy"] =
+        QStringLiteral(
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' "
+            "https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src %1; "
+            "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
+            "object-src 'none'")
+            .arg(connectSrc);
+    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload";
+
+    for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)
+        headers[it.key()] = it.value();
 
     respData.append("HTTP/1.1 " + QByteArray::number(response.statusCode) + " " +
                     statusText.toUtf8() + "\r\n");
     // 304 Not Modified carries no body and no content type (the browser reuses
     // its cached representation); other responses always describe their body.
     if (!response.contentType.isEmpty())
-        respData.append("Content-Type: " + response.contentType.toUtf8() + "\r\n");
+        respData.append("Content-Type: " + sanitizeHeaderValue(response.contentType).toUtf8() +
+                        "\r\n");
     respData.append("Content-Length: " + QByteArray::number(response.body.size()) + "\r\n");
-    // No Access-Control-Allow-Origin: the frontend is served same-origin by this
-    // server, so CORS is never needed. Omitting it prevents any cross-origin page
-    // from reading API responses.
-    respData.append("Connection: close\r\n");
 
-    // Security headers
-    respData.append("X-Content-Type-Options: nosniff\r\n");
-    respData.append("X-Frame-Options: DENY\r\n");
-    respData.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
-    // 'wasm-unsafe-eval' allows WebAssembly compilation only (not JS eval) —
-    // required by the WASM Opus decoder fallback used on iOS/WebKit.
-    // Google Fonts: stylesheet from fonts.googleapis.com, font files from
-    // fonts.gstatic.com (graceful fallback to system fonts if offline).
-    respData.append(
-        "Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' "
-        "https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' wss:; "
-        "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'\r\n");
-    respData.append("Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n");
-
-    for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)
-        respData.append(it.key().toUtf8() + ": " + it.value().toUtf8() + "\r\n");
+    // Last barrier against header injection: whatever a handler put in a header
+    // value, it cannot end the line and start one of its own. The request path is
+    // already refused at parse time, so this only ever fires on a bug.
+    for (auto it = headers.cbegin(); it != headers.cend(); ++it)
+        respData.append(sanitizeHeaderValue(it.key()).toUtf8() + ": " +
+                        sanitizeHeaderValue(it.value()).toUtf8() + "\r\n");
 
     respData.append("\r\n");
     respData.append(response.body);
