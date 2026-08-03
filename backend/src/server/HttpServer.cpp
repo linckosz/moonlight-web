@@ -945,10 +945,12 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     // ── Auth check: validate session cookie before proxying WS upgrade ────
     // Same Host requirement as the REST path: a rebound name must not inherit
-    // the local peer's exemption.
-    const bool localPrivilege =
-        HttpServer::isLocalRequest(peerAddr) &&
-        RequestGuard::isTrustedHost(up.headers.value("host"), m_Certs.domain());
+    // the local peer's exemption, and neither must the public domain — behind a
+    // TLS-terminating tunnel every visitor arrives from loopback under it, and
+    // this channel carries keyboard and mouse. The host machine reaching itself
+    // through the domain still passes: it holds a host-key session.
+    const bool localPrivilege = HttpServer::isLocalRequest(peerAddr) &&
+                                RequestGuard::isLocalHostName(up.headers.value("host"));
     if (m_AuthManager && !localPrivilege) {
         if (!m_AuthManager->validateSession(sessionTokenFromRequest(up))) {
             m_ConnGuard.reportAuthFailure(peerAddr);

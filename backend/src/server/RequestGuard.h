@@ -65,8 +65,20 @@ bool isWebSocketOriginAllowed(const QString& origin, const QString& hostHeader);
 /// Whether @p hostHeader is a name/address this machine legitimately answers
 /// to: loopback, a private LAN address, an mDNS name, or @p publicDomain.
 /// Anything else means we were reached under a name we do not own — the
-/// signature of DNS rebinding — and must not grant the local privilege.
+/// signature of DNS rebinding — and must not be treated as addressing us.
 bool isTrustedHost(const QString& hostHeader, const QString& publicDomain);
+
+/// Whether @p hostHeader can ONLY have been reached from this machine or its
+/// LAN: loopback, a private/link-local address, or an mDNS name. The public
+/// domain is deliberately excluded, which is the whole point — behind a
+/// TLS-terminating tunnel (cloudflared, nport) every visitor on earth reaches
+/// us from 127.0.0.1 under that very domain, so pairing "local peer" with
+/// "trusted Host" would hand the internet the host machine's privileges.
+/// Reaching us under the domain proves nothing about where the caller sits; the
+/// host machine proves it there with the host key instead (POST
+/// /api/auth/host-key), which is what the frontend already does on the parity
+/// redirect.
+bool isLocalHostName(const QString& hostHeader);
 
 /// Whether a request body may be accepted. Requires application/json for any
 /// non-empty body, which also forces a CORS preflight on cross-origin writes.

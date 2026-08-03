@@ -116,6 +116,31 @@ void run_request_guard_tests()
     CHECK(isTrustedHost("localhost", ""));
     CHECK(!isTrustedHost("evil.example", ""));
 
+    SECTION("RequestGuard — machine-local host name (tunnel)");
+
+    // Same set as above minus the public domain. Everything here names a place
+    // an outsider cannot address us at.
+    CHECK(isLocalHostName("localhost"));
+    CHECK(isLocalHostName("localhost:44729"));
+    CHECK(isLocalHostName("127.0.0.1"));
+    CHECK(isLocalHostName("[::1]:443"));
+    CHECK(isLocalHostName("192.168.1.40"));
+    CHECK(isLocalHostName("10.1.2.3"));
+    CHECK(isLocalHostName("172.16.0.9"));
+    CHECK(isLocalHostName("fc00::1"));
+    CHECK(isLocalHostName("169.254.7.7"));
+    CHECK(isLocalHostName("gaming-pc.local"));
+    CHECK(isLocalHostName(""));
+
+    // The whole point of the split: our own domain addresses this machine (so
+    // it is trusted, above) but says nothing about where the caller sits. A
+    // TLS-terminating tunnel forwards the entire internet from loopback under
+    // exactly this name.
+    CHECK(!isLocalHostName(domain));
+    CHECK(!isLocalHostName(domain + ":44729"));
+    CHECK(!isLocalHostName("evil.example"));
+    CHECK(!isLocalHostName("203.0.113.7"));
+
     SECTION("RequestGuard — body content type");
 
     CHECK(isBodyContentTypeAllowed("application/json", 12));
@@ -363,6 +388,33 @@ void run_request_guard_tests()
         CHECK(!d2.hostTrusted);
         CHECK(!d2.hostMachine);
         CHECK(d2.hostUntrusted);
+    }
+
+    // A TLS-terminating tunnel (cloudflared, nport) runs ON this machine and
+    // forwards every visitor on earth from loopback, under our own domain. Both
+    // halves of "local peer + trusted Host" are therefore satisfied by total
+    // strangers, which is why the local privilege now asks the stricter
+    // question: could this NAME only have been reached from here?
+    {
+        Request r;
+        r.method = "GET";
+        r.path = "/api/hosts";
+        r.headers = hdr({{"sec-fetch-site", "same-origin"}, {"host", "mw-abc123.example.com"}});
+        Context c;
+        c.peerLocal = true; // the tunnel process, not the visitor
+        c.publicDomain = "mw-abc123.example.com";
+        const Decision d = evaluate(r, c);
+        CHECK(d.outcome == Outcome::Allow); // it is a normal remote request…
+        CHECK(d.hostTrusted);               // …under a name we really do own…
+        CHECK(!d.hostUntrusted);
+        CHECK(!d.localPrivilege); // …which proves nothing about where it came from
+        CHECK(!d.hostMachine);
+        CHECK(!d.adminPrivilege);
+
+        // The host machine reaching itself through that same domain still
+        // passes: it redeems the host key on the parity redirect.
+        c.hostSession = true;
+        CHECK(evaluate(r, c).hostMachine);
     }
 
     // Static files are never gated: a cross-site load of the app shell (or a
