@@ -227,36 +227,74 @@ enable_internet() {
 # `systemctl get-default` is the discriminator rather than $DISPLAY alone: this
 # script is very often run over SSH on a machine that does have a desktop.
 # MW_HEADLESS=1 forces it either way.
+# Docker, Podman, LXC. Used for two different verdicts below — whether this is
+# a headless install, and whether the LAN can reach it at all.
+in_container() {
+    [ -f /.dockerenv ] || [ -f /run/.containerenv ] ||
+        grep -qE '(docker|lxc|containerd)' /proc/1/cgroup 2>/dev/null
+}
+
 is_headless() {
     [ "${MW_HEADLESS:-0}" = "1" ] && return 0
     [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && return 1
+    # A container has no desktop and nobody logged into one, whether or not it
+    # runs systemd. Without this the `have systemctl` line below calls a plain
+    # `debian:12` image a desktop machine — it has no systemctl, so the test
+    # gives up and returns "not headless" — and the install then promises a
+    # setup wizard in a browser that nothing ever opened.
+    in_container && return 0
     have systemctl || return 1
     [ "$(systemctl get-default 2>/dev/null)" = "graphical.target" ] && return 1
     return 0
 }
 
 done_banner_headless() {
-    say ""
-    say "${bold}MoonlightWeb installed and running as a system service.${reset}"
-    say ""
     # Real URLs, real PIN, real router verdict — straight from the running
     # server, so nothing here can drift from what it actually did. systemd has
     # only just been told to start it, and --status talks to a listening socket:
     # give the TLS listener a few seconds to come up before giving up on it.
+    _status=""
     if have moonlightweb; then
         _try=0
         while [ "$_try" -lt 15 ]; do
-            if moonlightweb --status 2>/dev/null; then break; fi
+            if _status="$(moonlightweb --status 2>/dev/null)"; then break; fi
             _try=$((_try + 1))
             sleep 1
         done
-        [ "$_try" -lt 15 ] || say "  ${dim}(server still starting — run 'moonlightweb --status')${reset}"
+        [ "$_try" -lt 15 ] || _status=""
     fi
+
+    say ""
+    if [ -n "$_status" ]; then
+        say "${bold}MoonlightWeb installed and running as a system service.${reset}"
+        say ""
+        say "$_status"
+    elif [ ! -d /run/systemd/system ]; then
+        # No systemd, so the postinstall had no service to register and nothing
+        # is running. Saying "installed and running" here — as this banner used
+        # to, unconditionally — sends the operator to a URL that answers
+        # nothing. Plain container images are the common case.
+        say "${bold}MoonlightWeb installed.${reset}"
+        say ""
+        say "  ${bold}It is not running yet${reset} — there is no systemd on this system to run"
+        say "  it as a service, so nothing started it. Start it yourself:"
+        say ""
+        say "      ${bold}moonlightweb &${reset}"
+        say ""
+        say "  ${dim}Then 'moonlightweb --status' prints the URLs and the access PIN.${reset}"
+        say ""
+    else
+        say "${bold}MoonlightWeb installed and running as a system service.${reset}"
+        say ""
+        say "  ${dim}(server still starting — run 'moonlightweb --status')${reset}"
+    fi
+
     say "  ${dim}Sunshine was not installed: this host has no display to capture and no${reset}"
     say "  ${dim}GPU to encode with. Add your streaming hosts by IP from the web UI.${reset}"
     say ""
     cli_hint
-    say "  ${dim}Service:  sudo systemctl {status,restart,stop} moonlightweb${reset}"
+    [ -d /run/systemd/system ] &&
+        say "  ${dim}Service:  sudo systemctl {status,restart,stop} moonlightweb${reset}"
     say ""
 }
 
@@ -412,6 +450,84 @@ EOF
     exit 0
 }
 
+# ── Can a device on the LAN actually get in? ───────────────────────────────
+# Whether a *remote* machine can open a TCP connection to this one is not
+# knowable from this one: only the far end can answer it, and there is nothing
+# here to ask. What is knowable is what stands in the way locally — so this
+# reports the blocker it finds, and says so plainly when it finds none, rather
+# than claiming a reachability it cannot verify.
+#
+# It replaces a flat "the ports are opened in firewalld/ufw when one of them is
+# active", which was true and yet useless: it never said whether either one was
+# active here, and it said nothing at all about the two cases that actually bite
+# — a container whose ports were never published, and a plain iptables/nftables
+# policy, which the postinstall does not touch.
+#
+# Root is available: need_root ran for every path that reaches this point.
+PORTS_HINT="443/tcp, 80/tcp and 47999/udp"
+
+lan_access_note() {
+    # A container is reached only through the ports its host published. The
+    # firewall *inside* it is irrelevant, and usually absent — so check first,
+    # or the branches below would happily report "nothing is blocking it".
+    if in_container; then
+        say "  ${bold}This is a container${reset} — nothing on your LAN reaches it unless the"
+        say "  ports were published when it was started:"
+        say ""
+        say "      ${dim}docker run -p 443:443 -p 80:80 -p 47999:47999/udp …${reset}"
+        say ""
+        say "  ${dim}Published ports cannot be added to a running container; it has to be${reset}"
+        say "  ${dim}recreated. --net=host sidesteps the question entirely.${reset}"
+        say ""
+        return 0
+    fi
+
+    if have firewall-cmd && $SUDO firewall-cmd --state > /dev/null 2>&1; then
+        if $SUDO firewall-cmd --list-ports 2>/dev/null | grep -q '443/tcp'; then
+            say "  ${dim}firewalld is active and lets $PORTS_HINT through.${reset}"
+        else
+            say "  ${red}firewalld is active and 443/tcp is closed${reset} — LAN devices will be"
+            say "  refused. Open the ports with:"
+            say ""
+            say "      ${dim}sudo firewall-cmd --permanent --add-port=443/tcp \\${reset}"
+            say "      ${dim}     --add-port=80/tcp --add-port=47999/udp${reset}"
+            say "      ${dim}sudo firewall-cmd --reload${reset}"
+        fi
+        say ""
+        return 0
+    fi
+
+    if have ufw && $SUDO ufw status 2>/dev/null | grep -qi '^Status: active'; then
+        if $SUDO ufw status 2>/dev/null | grep -q '443'; then
+            say "  ${dim}ufw is active and lets $PORTS_HINT through.${reset}"
+        else
+            say "  ${red}ufw is active and 443/tcp is closed${reset} — LAN devices will be refused."
+            say "  Open the ports with:"
+            say ""
+            say "      ${dim}sudo ufw allow 443/tcp${reset}"
+            say "      ${dim}sudo ufw allow 80/tcp${reset}"
+            say "      ${dim}sudo ufw allow 47999/udp${reset}"
+        fi
+        say ""
+        return 0
+    fi
+
+    # No managed firewall, but a bare netfilter policy of DROP/REJECT blocks
+    # just as effectively — and the postinstall, which only knows firewalld and
+    # ufw, left it alone. Worth naming, since nothing else would explain it.
+    if have iptables && $SUDO iptables -S INPUT 2>/dev/null | grep -qE '^-P INPUT (DROP|REJECT)'; then
+        say "  ${red}A packet filter is active${reset} (iptables/nftables, default policy DROP)"
+        say "  and neither firewalld nor ufw manages it, so nothing opened the ports"
+        say "  for you. Allow $PORTS_HINT, or LAN devices will be refused."
+        say ""
+        return 0
+    fi
+
+    say "  ${dim}Nothing on this machine blocks a LAN device from connecting. If one${reset}"
+    say "  ${dim}still cannot, the ports to open are $PORTS_HINT.${reset}"
+    say ""
+}
+
 # ── Linux ──────────────────────────────────────────────────────────────────
 install_linux() {
     [ "$(uname -m)" = "x86_64" ] || die "only x86_64 Linux is published — build from source:
@@ -465,9 +581,7 @@ install_linux() {
     else
         done_banner
     fi
-    say "  ${dim}Ports 443/tcp, 80/tcp and 47999/udp are opened in firewalld/ufw${reset}"
-    say "  ${dim}when one of them is active.${reset}"
-    say ""
+    lan_access_note
 }
 
 case "$(uname -s)" in
