@@ -104,9 +104,10 @@ export class FramePacer {
     }
 
     /**
-     * The queue was empty when a frame was due — the reserve was too short to
-     * cover what the network just did. Step up now; the tail estimate would only
-     * catch up on the next control tick, a frame or two too late.
+     * The reserve was too short to cover what the link just did — a frame blew
+     * through all of it (see schedule()), so the judder already happened. Step
+     * up now for the frames behind it; the tail estimate would only catch up on
+     * the next control tick, a frame or two too late.
      * @param {number} nowMs performance.now()-domain
      */
     noteUnderrun(nowMs) {

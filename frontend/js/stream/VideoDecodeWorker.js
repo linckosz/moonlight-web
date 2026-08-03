@@ -156,10 +156,14 @@ function armPacingTimer(delayMs) {
     S._pacingTimer = setTimeout(
         () => {
             S._pacingTimer = null;
-            // Nothing left to present: the reserve ran dry (a decoder flush, or the
-            // network simply stopped delivering). Tell the pacer — that is the one
-            // signal it cannot infer from the frames it does see.
-            if (S.pacer && S.frameQueue.length === 0) S.pacer.noteUnderrun(performance.now());
+            // Just pump. An empty queue here is NOT an underrun: the head can only
+            // leave the queue early by being presented (a pump that ran at/past the
+            // deadline while this callback sat behind decode/draw work) or by a
+            // clear that also cancels this timer. A real underrun — frame due but
+            // not arrived — never had a queued frame to arm a timer for in the
+            // first place, so it is detected in schedule() (excess > reserve), not
+            // here. Bumping on this fired-late timer only ratchets the reserve up
+            // on phantom evidence.
             pump();
         },
         Math.max(0, delayMs),
