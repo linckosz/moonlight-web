@@ -933,10 +933,13 @@ export class SettingsView {
         }
     }
 
-    // Block click-to-jump on the track: only a press on the thumb starts a drag.
+    // Block click-to-jump on the track for touch input: a fat finger landing on
+    // the track would otherwise yank the value. Mouse and pen keep the native
+    // jump-to-click, which is precise enough and expected on desktop.
     _dragOnlySlider(slider) {
         const THUMB = 20; // thumb diameter (CSS .settings-slider::-..-thumb)
         slider.addEventListener('pointerdown', (e) => {
+            if (e.pointerType !== 'touch') return;
             const rect = slider.getBoundingClientRect();
             const min = parseFloat(slider.min) || 0;
             const max = parseFloat(slider.max) || 100;
