@@ -564,11 +564,12 @@ export class StreamView {
         // decode and drops to the freshest frame, so link jitter turns straight
         // into "repeat + skip" judder. FramePacer rebuilds the reserve from the
         // backendTs capture stamps. webrtc-media does NOT use it — there the
-        // browser's own buffer does the job (see _jitterAuto above).
-        this._pacingEnabled = false;
+        // browser's own buffer does the job (see _jitterAuto above). On by
+        // default: a clean link measures a 0ms reserve (bit-for-bit the old
+        // immediate path), so opting out (`mw_pacing=0`) is only an escape hatch.
+        this._pacingEnabled = this._transport !== 'webrtc-media';
         try {
-            this._pacingEnabled =
-                this._transport !== 'webrtc-media' && localStorage.getItem('mw_pacing') === '1';
+            if (localStorage.getItem('mw_pacing') === '0') this._pacingEnabled = false;
         } catch (e) {}
         this._framePacer = this._pacingEnabled ? new FramePacer() : null;
         this._pacerStats = null; // last snapshot (worker mode posts it with the counters)
@@ -2450,7 +2451,7 @@ export class StreamView {
         // may still be rendering in the renderer's draw() (async + not awaited).
         // Closing it mid-render zeroes its NV12 buffer → green screen on Chrome.
         // With a reserve, frames legitimately wait their turn, so the cap has to
-        // clear the deepest reserve (60ms ≈ 3.6 frames @60fps).
+        // clear the deepest reserve (25ms = 3 frames @120fps) plus arrival bunching.
         if (this.frameQueue.length >= (this._framePacer ? 6 : 3)) {
             frame.close();
             this.stats.dropped++;
@@ -4021,8 +4022,10 @@ export class StreamView {
         // render queue) — the browser owns that pipeline.
         // One snapshot per tick, shared with the pipeline line below (the worker
         // path posts its own; the main-thread path prunes its windows on read).
+        // Diagnostic reading, not a health light — lives behind the same click
+        // that expands the latency breakdown.
         const diagSnap = isMedia ? null : this._workerDiag || this._diag.snapshot();
-        if (!isMedia) {
+        if (!isMedia && showDetail) {
             const span =
                 this._lastFrameId >= 0 && this._firstFrameId >= 0
                     ? this._lastFrameId - this._firstFrameId + 1
