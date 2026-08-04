@@ -466,9 +466,15 @@ jobs:
 
       # linuxdeploy-plugin-qt only bundles the xcb platform plugin; add the
       # Wayland client plugins so native Wayland sessions (GNOME/KDE defaults)
-      # don't warn and fall back to XWayland. Best-effort: Qt prebuilt plugins
-      # already carry $ORIGIN/../../lib rpaths matching the AppDir layout, and
-      # xcb remains the fallback if anything here is absent.
+      # get their own platform rather than going through XWayland. Best-effort:
+      # Qt prebuilt plugins already carry $ORIGIN/../../lib rpaths matching the
+      # AppDir layout, and xcb remains the fallback if anything here is absent.
+      #
+      # Genuinely optional: selectHeadlessPlatform() in main.cpp only asks Qt for
+      # wayland when the plugin is present, so a skip here costs nothing at
+      # runtime and produces no warning on the user's desktop. It must still be
+      # loud in the log — this step silently did nothing for an unknown number of
+      # releases because a plugin path moved, and a green build hid it.
       - name: Bundle Qt Wayland plugins (best effort)
         run: |
           P="$QT_ROOT_DIR/plugins"; L="$QT_ROOT_DIR/lib"
@@ -481,7 +487,12 @@ jobs:
             cp -a "$L"/libQt6WaylandEglClientHwIntegration.so* AppDir/usr/lib/ 2>/dev/null || true
             echo "Wayland client plugins bundled"
           else
-            echo "Qt Wayland plugins not present in this Qt install — skipped"
+            echo "::warning::No libqwayland-generic.so under $P/platforms — Wayland plugins not bundled, sessions will use XWayland. Check whether the Qt plugin layout moved."
+            echo "QT_ROOT_DIR=$QT_ROOT_DIR"
+            echo "--- platform plugins actually present ---"
+            ls -1 "$P/platforms" 2>&1 || echo "(no $P/platforms directory)"
+            echo "--- any libqwayland* under QT_ROOT_DIR ---"
+            find "$QT_ROOT_DIR" -name 'libqwayland*' -printf '%p\n' 2>/dev/null | head -10 || true
           fi
 
       # AppImage: portable fallback for distros without deb/rpm (Arch, and
