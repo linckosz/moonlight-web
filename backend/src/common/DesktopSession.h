@@ -22,15 +22,37 @@ namespace mw {
 /**
  * True when a display server is reachable — i.e. Qt can create real windows.
  *
- * Linux: DISPLAY (X11) or WAYLAND_DISPLAY (Wayland) is set. Everywhere else the
- * windowing system is always there. Deliberately blind to MW_SERVICE: this
- * answers "can Qt draw?", which is what picks the QPA platform plugin, and a
- * supervised launch inside a graphical session still has a display.
+ * Linux: the DISPLAY (X11) / WAYLAND_DISPLAY (Wayland) socket answers a
+ * connection. Presence of the variable is not enough: a gamescope session
+ * (Bazzite Gaming Mode, SteamOS) exports both before its Xwayland accepts
+ * clients, so an autostart launched there sees a DISPLAY that points at
+ * nothing. Everywhere else the windowing system is always there.
+ *
+ * Deliberately blind to MW_SERVICE: this answers "can Qt draw?", which is what
+ * picks the QPA platform plugin, and a supervised launch inside a graphical
+ * session still has a display.
  *
  * Must stay usable BEFORE QApplication exists (it selects the platform plugin),
  * so it reads the raw environment and touches no Qt GUI type.
+ *
+ * The answer is computed once and cached, then replaced by the platform plugin
+ * that actually loaded (see confirmDisplayServer): the QPA platform is frozen
+ * at QApplication construction, so a display appearing later cannot be used by
+ * this process anyway, and every caller must agree with what Qt really got.
  */
 bool hasDisplayServer();
+
+/**
+ * Record what Qt actually managed to load, once QApplication exists: an
+ * offscreen platform means no display, whatever the environment claimed.
+ *
+ * The socket probe above cannot see an X server that accepts the connection and
+ * then refuses the handshake (a missing xauth cookie under gamescope). Qt can:
+ * its xcb plugin fails to initialize and the QT_QPA_PLATFORM fallback list
+ * lands on offscreen. This is how that verdict reaches the tray, the browser
+ * auto-open, the Sunshine installer and the `headless` flag in the API.
+ */
+void confirmDisplayServer(bool present);
 
 /**
  * True when a desktop session can show a browser window, a tray icon or a

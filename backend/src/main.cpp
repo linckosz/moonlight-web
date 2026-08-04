@@ -280,10 +280,20 @@ static bool hasGuiSession()
 // windowless, but it is a QApplication (the tray needs QtWidgets), and Qt
 // aborts at construction when the default xcb plugin finds no display:
 //   "qt.qpa.plugin: Could not load the Qt platform plugin xcb"
-// On a headless Linux box (server, container, systemd unit before login) fall
-// back to the offscreen plugin so the whole HTTP/streaming stack runs with no
-// X11 or Wayland at all. An explicit QT_QPA_PLATFORM always wins — this only
-// fills in a default.
+// On a headless Linux box (server, container, systemd unit before login) the
+// offscreen plugin runs the whole HTTP/streaming stack with no X11 or Wayland
+// at all. An explicit QT_QPA_PLATFORM always wins — this only fills in a
+// default.
+//
+// What is written is a fallback *list* ("wayland;xcb;offscreen"), not a single
+// plugin: Qt walks it and keeps the first that initializes. Detecting the
+// display ourselves cannot be made airtight — an X server that accepts the
+// connection and then refuses the handshake (a gamescope session whose xauth
+// cookie the autostart process never got) looks alive to any probe short of
+// speaking X11 — and being wrong must not be fatal. With offscreen last, it
+// never is: the plugin that cannot reach its display returns nullptr and Qt
+// moves down the list instead of aborting. The order mirrors Qt's own
+// preference, so a desktop still gets the platform it would have picked anyway.
 //
 // The packages ship libqoffscreen.so alongside libqxcb.so (EXTRA_PLATFORM_PLUGINS
 // in .github/workflows/release.yml); if a hand-built Qt lacks it, Qt still emits
@@ -291,9 +301,15 @@ static bool hasGuiSession()
 static void selectHeadlessPlatform()
 {
 #if defined(Q_OS_LINUX)
-    if (mw::hasDisplayServer()) return;
     if (!qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) return;
-    qputenv("QT_QPA_PLATFORM", "offscreen");
+
+    QByteArray platforms;
+    if (mw::hasDisplayServer()) {
+        if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) platforms += "wayland;";
+        if (!qEnvironmentVariableIsEmpty("DISPLAY")) platforms += "xcb;";
+    }
+    platforms += "offscreen";
+    qputenv("QT_QPA_PLATFORM", platforms);
 #endif
 }
 
@@ -952,6 +968,10 @@ int main(int argc, char* argv[])
     selectHeadlessPlatform();
 
     QApplication app(argc, argv);
+    // The plugin that actually loaded is the last word on whether Qt can draw:
+    // it overrides the environment probe for the tray, the browser auto-open,
+    // the Sunshine installer and the `headless` flag the API reports.
+    mw::confirmDisplayServer(app.platformName() != QLatin1String("offscreen"));
     QCoreApplication::setApplicationName("MoonlightWeb");
     QCoreApplication::setApplicationVersion(QStringLiteral(MW_VERSION));
     QCoreApplication::setOrganizationName("MoonlightWeb");
@@ -1094,6 +1114,11 @@ int main(int argc, char* argv[])
 
     Logger::info("MoonlightWeb server starting...");
     Logger::info("Version: " + QCoreApplication::applicationVersion());
+    // Which QPA plugin won the fallback list — "offscreen" is the whole story
+    // behind a missing tray icon or an admin page that never opened by itself,
+    // and the first thing to ask for when a headless install misbehaves.
+    Logger::info("Qt platform: " + app.platformName() +
+                 (mw::hasDisplayServer() ? QString() : QStringLiteral(" (no display — headless)")));
 
     // Force Qt's TLS backend to OpenSSL. On Windows Qt defaults to Schannel,
     // which cannot import the public ACME cert's PEM private key — handshakes on
