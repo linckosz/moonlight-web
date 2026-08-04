@@ -40,7 +40,10 @@ SITE=$(realpath -m "$4")
 KEY=$5
 
 ORIGIN=moonlightweb
-BASEURL=https://linckosz.github.io/moonlight-web
+# The URL the generated .sources/.repo point back at. Overridable so the very
+# same repository can be built against a local http server and installed from
+# there before anything is published — see try-install.sh in this directory.
+BASEURL=${MW_BASEURL:-https://linckosz.github.io/moonlight-web}
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
