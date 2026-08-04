@@ -30,6 +30,10 @@
 #    MW_VERSION=0.2.4   pin a version (macOS and the AppImage fallback only;
 #                       apt/dnf always resolve the newest in the repository)
 #    MW_REPO=owner/name install from a fork
+#    MW_PAGES=<url>     take the apt/dnf repository from somewhere other than
+#                       that fork's Pages site — how a repository built from an
+#                       unpublished CI run is tried out, see
+#                       backend/packaging/linux/try-install.sh
 #    MW_INTERNET=1|0    answer the Internet Access question up front (default:
 #                       0 — LAN only — whenever there is no terminal to ask on)
 #
@@ -38,8 +42,12 @@
 set -eu
 
 REPO="${MW_REPO:-linckosz/moonlight-web}"
-# Where the `linux-repo` job publishes the signed apt/dnf repositories.
-PAGES="https://linckosz.github.io/moonlight-web"
+# Where the `linux-repo` job publishes the signed apt/dnf repositories: the
+# Pages site of $REPO, so MW_REPO redirects the packages as well as the release
+# downloads rather than sending a fork's user back to this repository. Pages
+# host names are lower-case; the path keeps the repository's own spelling.
+_owner="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
+PAGES="${MW_PAGES:-https://$_owner.github.io/${REPO#*/}}"
 
 bold=""; dim=""; red=""; reset=""
 if [ -t 1 ]; then
