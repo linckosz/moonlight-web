@@ -23,6 +23,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QEventLoop>
+#include <QLibraryInfo>
 #include <QLockFile>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -54,6 +55,7 @@
 #endif
 #include <array>
 #include <functional>
+#include <utility>
 #include "server/AppSettings.h"
 #include "server/CertManager.h"
 #include "server/Provisioning.h"
@@ -285,19 +287,42 @@ static bool hasGuiSession()
 // at all. An explicit QT_QPA_PLATFORM always wins — this only fills in a
 // default.
 //
-// What is written is a fallback *list* ("wayland;xcb;offscreen"), not a single
-// plugin: Qt walks it and keeps the first that initializes. Detecting the
-// display ourselves cannot be made airtight — an X server that accepts the
-// connection and then refuses the handshake (a gamescope session whose xauth
-// cookie the autostart process never got) looks alive to any probe short of
-// speaking X11 — and being wrong must not be fatal. With offscreen last, it
-// never is: the plugin that cannot reach its display returns nullptr and Qt
-// moves down the list instead of aborting. The order mirrors Qt's own
-// preference, so a desktop still gets the platform it would have picked anyway.
+// What is written is a fallback *list* ("xcb;offscreen"), not a single plugin:
+// Qt walks it and keeps the first that initializes. Detecting the display
+// ourselves cannot be made airtight — an X server that accepts the connection
+// and then refuses the handshake (a gamescope session whose xauth cookie the
+// autostart process never got) looks alive to any probe short of speaking X11 —
+// and being wrong must not be fatal. With offscreen last, it never is: the
+// plugin that cannot reach its display returns nullptr and Qt moves down the
+// list instead of aborting. The order mirrors Qt's own preference, so a desktop
+// still gets the platform it would have picked anyway.
 //
 // The packages ship libqoffscreen.so alongside libqxcb.so (EXTRA_PLATFORM_PLUGINS
 // in .github/workflows/release.yml); if a hand-built Qt lacks it, Qt still emits
 // its own diagnostic naming the plugins it did find.
+#if defined(Q_OS_LINUX)
+// Is a QPA platform plugin actually installed? Qt looks in
+// QT_QPA_PLATFORM_PLUGIN_PATH (which points straight at a platforms directory),
+// then QT_PLUGIN_PATH, then the plugins directory qt.conf names — inside an
+// AppImage that is the AppDir's, not the build machine's.
+static bool hasPlatformPlugin(const QString& name)
+{
+    const QString file = QStringLiteral("libq%1.so").arg(name);
+    QStringList dirs;
+    for (const char* var : {"QT_QPA_PLATFORM_PLUGIN_PATH", "QT_PLUGIN_PATH"}) {
+        const QString value = qEnvironmentVariable(var);
+        if (!value.isEmpty()) dirs += value.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+    }
+    dirs += QLibraryInfo::path(QLibraryInfo::PluginsPath);
+
+    for (const QString& dir : std::as_const(dirs)) {
+        if (QFile::exists(dir + QLatin1Char('/') + file)) return true;
+        if (QFile::exists(dir + QStringLiteral("/platforms/") + file)) return true;
+    }
+    return false;
+}
+#endif
+
 static void selectHeadlessPlatform()
 {
 #if defined(Q_OS_LINUX)
@@ -305,7 +330,21 @@ static void selectHeadlessPlatform()
 
     QByteArray platforms;
     if (mw::hasDisplayServer()) {
-        if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")) platforms += "wayland;";
+        // Naming a plugin Qt cannot find costs a warning line on every launch,
+        // and the Linux packages do not currently ship the Wayland client
+        // plugins — so ask for wayland only when it is really there. That keeps
+        // this function from having to agree with the packaging: whatever the
+        // .deb, the .rpm, the AppImage or a distro's system Qt happens to
+        // provide, the list adapts to it.
+        //
+        // Only wayland is gated this way, deliberately. A false negative here is
+        // free (xcb serves the same session through XWayland), while the same
+        // check on xcb would cost the tray on any Qt whose plugins sit somewhere
+        // this lookup does not know about — so xcb stays unconditional and Qt's
+        // own diagnostic remains the safety net for it.
+        if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")
+            && hasPlatformPlugin(QStringLiteral("wayland-generic")))
+            platforms += "wayland;";
         if (!qEnvironmentVariableIsEmpty("DISPLAY")) platforms += "xcb;";
     }
     platforms += "offscreen";
