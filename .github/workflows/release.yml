@@ -464,36 +464,22 @@ jobs:
           test -f AppDir/usr/plugins/platforms/libqoffscreen.so \
             || { echo "::error::offscreen QPA plugin missing from the AppDir — headless hosts cannot start"; exit 1; }
 
-      # linuxdeploy-plugin-qt only bundles the xcb platform plugin; add the
-      # Wayland client plugins so native Wayland sessions (GNOME/KDE defaults)
-      # get their own platform rather than going through XWayland. Best-effort:
-      # Qt prebuilt plugins already carry $ORIGIN/../../lib rpaths matching the
-      # AppDir layout, and xcb remains the fallback if anything here is absent.
+      # No Wayland client plugins here, on purpose. A step used to try, guarded
+      # on a file name Qt 6.11 had renamed, so it silently bundled nothing for
+      # an unknown number of releases and nobody noticed — the packages shipped
+      # xcb + offscreen the whole time and worked. Verified on Bazzite 44.
       #
-      # Genuinely optional: selectHeadlessPlatform() in main.cpp only asks Qt for
-      # wayland when the plugin is present, so a skip here costs nothing at
-      # runtime and produces no warning on the user's desktop. It must still be
-      # loud in the log — this step silently did nothing for an unknown number of
-      # releases because a plugin path moved, and a green build hid it.
-      - name: Bundle Qt Wayland plugins (best effort)
-        run: |
-          P="$QT_ROOT_DIR/plugins"; L="$QT_ROOT_DIR/lib"
-          if [ -f "$P/platforms/libqwayland-generic.so" ]; then
-            cp -a "$P"/platforms/libqwayland-*.so AppDir/usr/plugins/platforms/
-            for d in wayland-decoration-client wayland-graphics-integration-client wayland-shell-integration; do
-              if [ -d "$P/$d" ]; then cp -a "$P/$d" AppDir/usr/plugins/; fi
-            done
-            cp -a "$L"/libQt6WaylandClient.so* AppDir/usr/lib/ 2>/dev/null || true
-            cp -a "$L"/libQt6WaylandEglClientHwIntegration.so* AppDir/usr/lib/ 2>/dev/null || true
-            echo "Wayland client plugins bundled"
-          else
-            echo "::warning::No libqwayland-generic.so under $P/platforms — Wayland plugins not bundled, sessions will use XWayland. Check whether the Qt plugin layout moved."
-            echo "QT_ROOT_DIR=$QT_ROOT_DIR"
-            echo "--- platform plugins actually present ---"
-            ls -1 "$P/platforms" 2>&1 || echo "(no $P/platforms directory)"
-            echo "--- any libqwayland* under QT_ROOT_DIR ---"
-            find "$QT_ROOT_DIR" -name 'libqwayland*' -printf '%p\n' 2>/dev/null | head -10 || true
-          fi
+      # Shipping them was reconsidered and turned down: the process is
+      # windowless, so native Wayland buys nothing an XWayland session does not
+      # already give — the tray goes through StatusNotifierItem on DBus either
+      # way — while the extra shell-integration, graphics-integration and
+      # decoration plugins add a failure mode that lands when the first window
+      # is created, i.e. after the QT_QPA_PLATFORM fallback list can still
+      # recover. Wrong trade for a warning line.
+      #
+      # main.cpp asks Qt for wayland only when the plugin is actually installed,
+      # so nothing here has to stay in sync with it: bundle the plugins one day
+      # and the fallback list picks them up on its own.
 
       # AppImage: portable fallback for distros without deb/rpm (Arch, and
       # immutable gaming distros like SteamOS/Bazzite). Needs chmod +x once.
