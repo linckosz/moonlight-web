@@ -756,8 +756,8 @@ function onDecodedFrame(frame) {
     frame._mwPresentAt = S.pacer ? S.pacer.schedule(backendTs, outPerf) : outPerf;
 
     // Hard memory bound. With a reserve, frames legitimately wait their turn, so
-    // the cap has to clear the deepest reserve (60ms ≈ 3.6 frames @60fps) or we
-    // would drop exactly what we just decided to hold.
+    // the cap has to clear the deepest reserve (25ms = 3 frames @120fps) plus
+    // arrival bunching, or we would drop exactly what we just decided to hold.
     if (S.frameQueue.length >= (S.pacer ? 6 : 3)) {
         frame.close();
         S.stats.dropped++;

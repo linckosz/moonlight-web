@@ -52,8 +52,10 @@
 
 const DEFAULTS = {
     MIN: 0, // ms — clean-link floor (== today's behavior)
-    MAX: 60, // ms — cap on the reserve (~3.5 frames @60fps); past this, the
-    // quality ladder is the right lever, not more buffering.
+    MAX: 25, // ms — cap on the reserve (~1.5 frames @60fps). Deliberately tight:
+    // the target user is playing a shooter, where past this point the lag the
+    // reserve adds hurts more than the judder it removes. Jitter beyond the cap
+    // is the quality ladder's / bitrate's problem, not more buffering.
     QUANTILE: 0.95, // cover the late tail, not the mean
     SAFETY: 1.15, // small margin over the measured tail
     WINDOW_MS: 2000, // sliding window backing the tail estimate
