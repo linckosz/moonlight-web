@@ -114,6 +114,11 @@ public:
     /// Current public IP.
     QString publicIp() const { return m_PublicIp; }
 
+    /// Every IPv4 another machine on the LAN can reach this host on, best first
+    /// (default route, then gateway-carrying adapters). Filled in the
+    /// constructor, so it is usable before — and without — Internet Access.
+    QStringList localIps() const { return m_LocalIps; }
+
     /// External (router-side) HTTPS port this instance is reachable on from the
     /// internet. Equals the internal HTTPS port (443) for the first instance to
     /// claim it; a deterministic fallback port for further instances behind the

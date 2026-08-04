@@ -2843,9 +2843,41 @@ int main(int argc, char* argv[])
         qInfo() << "[main] Setup pending, browser not auto-opened — visit /setup";
     }
 
-    Logger::info("Server ready. Open https://localhost" +
-                 (httpsPort != 443 ? ":" + QString::number(server.activeHttpsPort()) : QString()) +
-                 " in your browser.");
+    // Every address the UI answers on, not just the loopback one. On a headless
+    // or autostarted instance this block is the only thing that ever tells the
+    // operator where to point a browser, and localhost is the one address that
+    // is useless from anywhere but the host itself. Same three sections as
+    // `moonlightweb --status`, so both agree on what is reachable.
+    //
+    // The port is taken from the ACTIVE listener rather than the configured one:
+    // a second instance behind the same NAT rebinds to a fallback port, and
+    // printing the configured 443 would send the user to the wrong place.
+    {
+        const quint16 activePort = server.activeHttpsPort();
+        const QString portSuffix =
+            activePort == 443 ? QString() : QStringLiteral(":%1").arg(activePort);
+
+        Logger::info("Server ready. Open https://localhost" + portSuffix + " in your browser.");
+
+        // Multi-homed hosts (Hyper-V, VirtualBox, WSL) get several: only one is
+        // on the shared LAN, the others reach their own VMs. Which is which is
+        // not ours to guess, so list them best-first and let the user pick.
+        for (const QString& ip : internetAccess.localIps())
+            Logger::info("  From another machine on this network: https://" + ip + portSuffix);
+
+        if (internetAccess.isActive() && !internetAccess.domain().isEmpty()) {
+            quint16 extPort = internetAccess.externalHttpsPort();
+            if (extPort == 0) extPort = activePort;
+            Logger::info("  From the internet: https://" + internetAccess.domain() +
+                         (extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort)) +
+                         (internetAccess.certificateIssuing()
+                              ? QStringLiteral(" (certificate still being issued — retry in a "
+                                               "minute)")
+                              : QString()));
+        }
+        // Nothing is printed when Internet Access is off: the operator turned it
+        // off, or never turned it on. --status is where that gets explained.
+    }
 
     return app.exec();
 }
