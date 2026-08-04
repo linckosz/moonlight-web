@@ -342,8 +342,14 @@ static void selectHeadlessPlatform()
         // check on xcb would cost the tray on any Qt whose plugins sit somewhere
         // this lookup does not know about — so xcb stays unconditional and Qt's
         // own diagnostic remains the safety net for it.
+        //
+        // Two file names, one plugin: Qt 6.11 renamed libqwayland-generic.so to
+        // libqwayland.so. Both register the platform name "wayland", and both
+        // are in the wild — 6.11 is what CI builds against, while a distro
+        // package still links whatever system Qt the distro ships.
         if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") &&
-            hasPlatformPlugin(QStringLiteral("wayland-generic")))
+            (hasPlatformPlugin(QStringLiteral("wayland")) ||
+             hasPlatformPlugin(QStringLiteral("wayland-generic"))))
             platforms += "wayland;";
         if (!qEnvironmentVariableIsEmpty("DISPLAY")) platforms += "xcb;";
     }
