@@ -342,8 +342,8 @@ static void selectHeadlessPlatform()
         // check on xcb would cost the tray on any Qt whose plugins sit somewhere
         // this lookup does not know about — so xcb stays unconditional and Qt's
         // own diagnostic remains the safety net for it.
-        if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY")
-            && hasPlatformPlugin(QStringLiteral("wayland-generic")))
+        if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") &&
+            hasPlatformPlugin(QStringLiteral("wayland-generic")))
             platforms += "wayland;";
         if (!qEnvironmentVariableIsEmpty("DISPLAY")) platforms += "xcb;";
     }
