@@ -24,6 +24,7 @@
 // how a (keyCode, code) pair maps to a host VK, and how the held-input
 // heartbeat is read — live here rather than in three copies that drift.
 
+#include "InputPolicy.h"
 #include "MoonlightShim.h"
 
 #include <QJsonArray>
@@ -36,6 +37,17 @@ extern "C" {
 }
 
 namespace InputMsg {
+
+/// Strip from an 'inputstate' heartbeat whatever @p p forbids, so a viewer's
+/// heartbeat cannot re-press keys the policy just dropped.
+inline void filterHeldState(const Policy& p, QVector<MoonlightShim::HeldKey>& keys,
+                            quint32& buttons)
+{
+    if (!p.keyboardMouse) {
+        keys.clear();
+        buttons = 0;
+    }
+}
 
 /// Resolve the browser's (keyCode, code) pair to the VK + flags sent to the
 /// host. International keys without standard US VK equivalents —

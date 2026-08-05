@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "InputPolicy.h"
+
 #include <QObject>
 #include <QWebSocketServer>
 #include <QWebSocket>
@@ -46,6 +48,16 @@ public:
     /// Notify the browser (over the WS) that its device access was revoked,
     /// just before stop() closes the socket. Flushed before returning.
     void notifyClientRevoked();
+
+    /// Notify an invited player (over the WS) that the owner ended the shared
+    /// session, just before stop(). Flushed before returning.
+    void notifyClientSessionEnded();
+
+    /// Restrict what this session's client may send to the host. Set once
+    /// before start(), from the share activation the player joined with; the
+    /// owner's own sessions leave it unrestricted. Mirrors RelayBase's, which
+    /// this legacy relay does not inherit.
+    void setInputPolicy(const InputMsg::Policy& policy) { m_InputPolicy = policy; }
 
     void setServerHost(const QString& host) { m_ServerHost = host; }
     void setHttpsPort(quint16 port) { m_HttpsPort = port; }
@@ -128,6 +140,9 @@ private:
     // machine). Written once on the main thread before the relay moves to
     // its dedicated thread.
     bool m_ClipboardEnabled = false;
+    // Same lifetime discipline as m_ClipboardEnabled: written before the move
+    // to the relay thread, read-only afterwards.
+    InputMsg::Policy m_InputPolicy;
     bool m_UseVideoFragmentation =
         false;              // WSS fragmentation OFF — full frames sent as single WS messages
     uint32_t m_FrameId = 0; // Monotonic frame ID for fragmentation

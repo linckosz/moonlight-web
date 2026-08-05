@@ -116,6 +116,10 @@ public:
                              unsigned char leftTrigger, unsigned char rightTrigger,
                              short leftStickX, short leftStickY, short rightStickX,
                              short rightStickY);
+    /// Shift this session's controller numbering (see applyControllerOffset).
+    /// Zero — the owner's own sessions — keeps the browser's numbering. Set
+    /// once before the connection starts.
+    void setControllerOffset(int offset) { m_ControllerOffset = offset; }
 
     // ── Input watchdog (dead-man switch) ────────────────────────────────────
     //
@@ -312,6 +316,10 @@ private:
     quint32 m_HeldButtons = 0; // 1 << (button - 1)
     bool m_HeldButtonsHold = false;
     QHash<short, short> m_ActiveGamepads; // controller index → active mask
+    /// Offset applied to every controller number this session sends, so
+    /// concurrent sessions do not collapse onto the host's controller 0.
+    int m_ControllerOffset = 0;
+    void applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const;
     bool m_ShortStaleFired = false;       // don't re-log/re-release each tick
     bool m_LongStaleFired = false;
     // The watchdog only arms once the client has proved it heartbeats its held

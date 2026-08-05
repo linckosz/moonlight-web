@@ -613,6 +613,9 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
     // dead-man switch (see MoonlightShim's input-watchdog section).
     if (m_Shim) m_Shim->noteClientAlive();
 
+    // An invited player only gets what the owner ticked. Dropped in silence.
+    if (!InputMsg::allowed(type, m_InputPolicy)) return;
+
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
         short keyCode;
@@ -760,6 +763,11 @@ void MediaTrackRelay::notifyClientTakenOver()
 void MediaTrackRelay::notifyClientRevoked()
 {
     sendExitNotice("revoked");
+}
+
+void MediaTrackRelay::notifyClientSessionEnded()
+{
+    sendExitNotice("session-ended");
 }
 
 void MediaTrackRelay::sendExitNotice(const char* type)

@@ -73,6 +73,7 @@ public:
     void notifyClientTakenOver() override;
 
     void notifyClientRevoked() override;
+    void notifyClientSessionEnded() override;
 
     void requestIdrFrame() override;
 

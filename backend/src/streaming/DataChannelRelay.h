@@ -73,6 +73,7 @@ public:
     void notifyClientTakenOver() override;
 
     void notifyClientRevoked() override;
+    void notifyClientSessionEnded() override;
 
     /// Retrieve and clear the buffered keyframe (if any).
     /// Used by SignalingServer before stop() to preserve the keyframe for

@@ -992,6 +992,9 @@ void DataChannelRelay::onInputMessage(const std::string& message)
     // dead-man switch, which releases held inputs when this goes silent.
     if (m_Shim) m_Shim->noteClientAlive();
 
+    // An invited player only gets what the owner ticked. Dropped in silence.
+    if (!InputMsg::allowed(type, m_InputPolicy)) return;
+
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
         short keyCode;
@@ -1005,9 +1008,10 @@ void DataChannelRelay::onInputMessage(const std::string& message)
         // Client heartbeat: its authoritative held-input state, sent while (and
         // only while) something is held. Re-presses whatever the watchdog
         // released during a stall but the user is genuinely still holding.
-        m_Shim->syncHeldInputs(InputMsg::parseHeldKeys(msg),
-                               static_cast<quint32>(msg["buttons"].toInt(0)),
-                               msg["buttonsHold"].toBool(false));
+        QVector<MoonlightShim::HeldKey> held = InputMsg::parseHeldKeys(msg);
+        quint32 buttons = static_cast<quint32>(msg["buttons"].toInt(0));
+        InputMsg::filterHeldState(m_InputPolicy, held, buttons);
+        m_Shim->syncHeldInputs(held, buttons, msg["buttonsHold"].toBool(false));
     } else if (type == "mousemove") {
         // Absolute mouse position (non-gaming mode)
         if (msg.contains("x") && msg.contains("y") && msg.contains("referenceWidth") &&
@@ -1293,6 +1297,11 @@ void DataChannelRelay::notifyClientTakenOver()
 void DataChannelRelay::notifyClientRevoked()
 {
     sendExitNotice("revoked");
+}
+
+void DataChannelRelay::notifyClientSessionEnded()
+{
+    sendExitNotice("session-ended");
 }
 
 void DataChannelRelay::sendExitNotice(const char* type)

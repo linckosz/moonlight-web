@@ -460,21 +460,31 @@ void StreamSession::onLaunchReplyFinished()
     // (standard installer deployment: backend runs next to Sunshine) — the
     // backend clipboard is then the host's. For remote Sunshine hosts the
     // relay stays clipboard-silent and the browser keeps today's behavior.
-    const bool clipboardLocal = ClipboardBridge::isSelfAddress(m_Host->activeAddress.address());
+    //
+    // A restricted session (an invited player) never gets it either, whatever
+    // the address: the host's clipboard is an exfiltration channel, and it is
+    // not a guest's to read.
+    const bool hostIsSelf = ClipboardBridge::isSelfAddress(m_Host->activeAddress.address());
+    const bool clipboardLocal = hostIsSelf && m_InputPolicy.unrestricted();
     qInfo() << "[Session] Clipboard sync" << (clipboardLocal ? "enabled" : "disabled")
-            << "(host address:" << m_Host->activeAddress.address() << ")";
+            << "(host address:" << m_Host->activeAddress.address()
+            << ", restricted:" << !m_InputPolicy.unrestricted() << ")";
     // Same gate for toggle-lock sync: when the streamed host is this machine,
     // snapshot its real NumLock/CapsLock/ScrollLock state so the browser's
     // 'locksync' aligns instead of assuming the host starts with locks off.
-    m_Shim->captureHostLockState(clipboardLocal);
+    m_Shim->captureHostLockState(hostIsSelf);
 
     // Same gate again: Sunshine loopback-captures its virtual sink POST-volume,
     // and that sink is the host's default output during the stream — volume
     // keys pressed on the host mid-stream silently attenuate every client and
     // the value persists. Normalize it back to 100% at each stream start.
-    if (clipboardLocal) {
+    if (hostIsSelf) {
         HostAudioSink::ensureFullVolume();
     }
+
+    // Concurrent sessions each start their controller numbering at 0, which on
+    // the host collapses every player's gamepad onto the same virtual pad.
+    m_Shim->setControllerOffset(m_GamepadOffset);
 
     // Branch: WSS (legacy StreamRelay) or WebRTC (DataChannelRelay + SignalingServer)
     if (m_Transport == "wss") {
@@ -486,6 +496,7 @@ void StreamSession::onLaunchReplyFinished()
         streamRelay->setHttpsPort(m_HttpsPort);
         streamRelay->setWsPath(m_WsPath);
         streamRelay->setClipboardEnabled(clipboardLocal);
+        streamRelay->setInputPolicy(m_InputPolicy);
 
         connect(m_Shim, &MoonlightShim::connectionStarted, this,
                 &StreamSession::onShimConnectionStarted);
@@ -533,6 +544,7 @@ void StreamSession::onLaunchReplyFinished()
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new MediaTrackRelay(m_Shim, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
+        relay->setInputPolicy(m_InputPolicy);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         auto* signaling = new SignalingServer(relay, m_WsPort, m_ServerHost, nullptr);
@@ -599,6 +611,7 @@ void StreamSession::onLaunchReplyFinished()
         // No QObject parent: it is moved onto a dedicated thread below.
         auto* relay = new DataChannelRelay(m_Shim, nullptr);
         relay->setClipboardEnabled(clipboardLocal);
+        relay->setInputPolicy(m_InputPolicy);
 
         // SignalingServer: WebSocket for SDP/ICE exchange only.
         // NonSecure mode: external tunnel or Cloudflare provides TLS termination.
