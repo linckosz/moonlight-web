@@ -40,6 +40,14 @@
         "username": "Username",
         "password": "Password",
         "credsRequired": "Please enter the Sunshine username and password so MoonlightWeb can pair automatically.",
+        "checkingCreds": "Checking the credentials…",
+        "sunshineCredsWrong": "Sunshine refused these credentials. Check the username and password of its web interface (https://localhost:47990), or click \"Skip for now\" to pair later.",
+        "sunshineUnreachable": "Sunshine is installed but is not answering on this machine. Start it, then try again — or click \"Skip for now\" to pair later.",
+        "displayTitle": "Display sleep",
+        "displayBody": "Sunshine can only stream a screen that is switched on. Once this machine blanks its display, there are no frames to capture and every stream fails — even from an unlocked session. Locking the screen stays fine.",
+        "displayOption": "Never let this machine's display blank or sleep",
+        "displayAlreadyAwake": "This machine's display is already set never to blank or sleep.",
+        "displayFailed": "The display setting could not be applied ({{error}}) — set \"Blank Screen\" to Never in your desktop's Power settings.",
         "autostartTitle": "Start at login",
         "autostartOption": "Launch MoonlightWeb automatically when you log in",
         "autostartInstalled": "MoonlightWeb already starts automatically at login.",
@@ -482,9 +490,11 @@
         "hdrFallback": "HDR unavailable — switched to {{to}} without HDR"
     },
     "permission": {
-        "screenRecording": {
-            "title": "Screen recording permission needed",
-            "body": "Sunshine on \"{{name}}\" can't capture the screen yet. On macOS, open System Settings → Privacy & Security → Screen Recording and turn on Sunshine, then use \"Restart Sunshine & retry\" below (macOS only applies the permission after Sunshine restarts). If there's no display, connect one or use an HDMI dummy plug.",
+        "videoCapture": {
+            "title": "The host can't capture its screen",
+            "bodyRemote": "Sunshine on \"{{name}}\" has no screen to capture. On that machine: wake the display and check it isn't blanked or asleep (a locked session with the screen off produces no frames), or plug in a display / HDMI dummy plug. If \"{{name}}\" is a Mac, also turn Sunshine on in System Settings → Privacy & Security → Screen Recording and restart Sunshine.",
+            "bodyLocal": "Sunshine on this machine has no screen to capture. Wake the display and check it isn't blanked or asleep (a locked session with the screen off produces no frames), or plug in a display / HDMI dummy plug, then use \"Restart Sunshine & retry\" below.",
+            "bodyMac": "Sunshine on this Mac can't capture the screen. Open System Settings → Privacy & Security → Screen Recording and turn on Sunshine, then use \"Restart Sunshine & retry\" below (macOS only applies the permission after Sunshine restarts). If there's no display, connect one or use an HDMI dummy plug.",
             "openSettings": "Open Screen Recording settings",
             "opened": "Opened Screen Recording settings on the host.",
             "openFailed": "Couldn't open the settings pane — open it manually.",

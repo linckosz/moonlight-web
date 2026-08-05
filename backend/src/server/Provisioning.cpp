@@ -111,15 +111,6 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
 
     NvComputer* host = computers.getHost(uuid);
 
-    // Sunshine's REST config API ("/api/pin", HTTP basic-auth web UI) listens on
-    // the base port + 1 (47990 by default). This is NOT the GameStream HTTPS port
-    // kept in activeHttpsPort, which does not serve /api/pin and drops the
-    // connection ("Connection closed"). Derive it from the host's base HTTP port.
-    quint16 basePort = MW_HTTP_PORT;
-    if (host && host->manualAddress.port() > 0) basePort = host->manualAddress.port();
-    const quint16 restPort = basePort + 1;
-    auto* rest = new SunshineRestClient(&computers);
-
     bool paired = false;
     if (host && host->pairState == NvComputer::PS_PAIRED) {
         Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
@@ -132,6 +123,16 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
             return false;
         }
         const QString pin = startResult.value(QStringLiteral("pin")).toString();
+
+        // Sunshine's REST config API ("/api/pin", HTTP basic-auth web UI) listens
+        // on the base port + 1 (47990 by default). This is NOT the GameStream
+        // HTTPS port kept in activeHttpsPort, which does not serve /api/pin and
+        // drops the connection ("Connection closed"). Derive it from the host's
+        // base HTTP port.
+        quint16 basePort = MW_HTTP_PORT;
+        if (host && host->manualAddress.port() > 0) basePort = host->manualAddress.port();
+        const quint16 restPort = basePort + 1;
+        auto* rest = new SunshineRestClient(&computers);
 
         // Pairing stage 1 (getservercert) stays in flight until Sunshine receives
         // the PIN. Schedule the REST push so it fires *after* the chain has started
@@ -149,21 +150,12 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
                          .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
     }
 
-    // Dual-stream seamless switching needs Sunshine to accept at least TWO
-    // concurrent sessions ("Maximum Connected Clients", config key `channels`,
-    // default 1). Raise it to 2 when lower; leave any higher value untouched.
-    // Best-effort — a refusal only means the runtime probe reports
-    // dual_unavailable and streaming falls back to the legacy relaunch.
-    //
-    // MUST come after pairing, never before: applying the new limit restarts
-    // Sunshine (it only reads its config at startup), and a fresh install is
-    // exactly the case that needs the bump — so running it first tore down the
-    // getservercert request the pairing was waiting on. Sunshine had already
-    // taken the PIN and reported success while our chain, left hanging, retried
-    // and raised a second "incoming pairing request" a minute later. The calls
-    // are asynchronous and complete under the main event loop after this returns.
-    rest->ensureMinChannels(2, user, pass, restPort);
-
+    // Nothing else to configure on Sunshine: its old "Maximum Connected Clients"
+    // setting (config key `channels`) is gone from current Sunshine, which tracks
+    // sessions without a numeric cap. Dual-stream capability is settled at
+    // runtime by the standby launch itself — a host that refuses the second
+    // session answers dual_unavailable and streaming falls back to the legacy
+    // relaunch.
     return paired;
 }
 

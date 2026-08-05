@@ -50,6 +50,13 @@ export class SetupView {
         this._internetAuth = false;
         this._installSunshine = true;
         this._autoStart = true;
+        // Keeping the display awake rewrites the user's own power settings, so it
+        // is opt-in like Internet Access — never pre-ticked, and only offered at
+        // all when the backend says this desktop exposes the knobs.
+        this._keepDisplayAwake = false;
+        this._displaySleepSupported = false;
+        this._displayKeptAwake = false;
+        this._displaySleepError = '';
 
         // Sunshine credentials, held here so they survive the re-render that a
         // checkbox toggle triggers. A fresh install is provisioned with
@@ -61,6 +68,10 @@ export class SetupView {
         this._userValue = '';
         this._passValue = '';
         this._passMasked = true;
+
+        // True while the typed credentials are being tried against the Sunshine
+        // already installed here (the config step waits, it does not advance).
+        this._checking = false;
 
         this._pollTimer = null;
         // Which checklist rows are relevant to the run in progress.
@@ -76,6 +87,8 @@ export class SetupView {
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             this._sunshinePaired = !!(status.sunshine && status.sunshine.paired);
             this._autostartInstalled = !!status.autostart_installed;
+            this._displaySleepSupported = !!(status.display_sleep && status.display_sleep.supported);
+            this._displayKeptAwake = !!(status.display_sleep && status.display_sleep.kept_awake);
             this._internetActive = !!(status.internet && status.internet.active);
             this._domain = (status.internet && status.internet.domain) || '';
             this._httpsPort = status.https_port || 443;
@@ -178,6 +191,29 @@ export class SetupView {
                     <span>${t('setup.autostartOption')}</span>
                 </label>`;
 
+        // Display-sleep section: the whole section disappears on a desktop whose
+        // settings we can't reach, rather than offering a box that would do
+        // nothing. Already configured → a green "done" row, no control.
+        let displayBlock = '';
+        if (this._displaySleepSupported) {
+            displayBlock = `
+            <div class="setup-section">
+                <h2 class="setup-section-title">${t('setup.displayTitle')}</h2>
+                ${
+                    this._displayKeptAwake
+                        ? this._okNote(t('setup.displayAlreadyAwake'))
+                        : `
+                <p class="setup-note">${t('setup.displayBody')}</p>
+                <label class="setup-check">
+                    <input type="checkbox" id="chk-display-awake" ${
+                        this._keepDisplayAwake ? 'checked' : ''
+                    } />
+                    <span>${t('setup.displayOption')}</span>
+                </label>`
+                }
+            </div>`;
+        }
+
         return `
             <p class="login-subtitle">${t('setup.intro')}</p>
 
@@ -190,6 +226,7 @@ export class SetupView {
                 <h2 class="setup-section-title">${t('setup.sunshineTitle')}</h2>
                 ${sunshineBlock}
             </div>
+            ${displayBlock}
 
             <div class="setup-section">
                 <h2 class="setup-section-title">${t('setup.autostartTitle')}</h2>
@@ -198,10 +235,16 @@ export class SetupView {
 
             ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
 
-            <button id="btn-setup-start" class="btn btn-neutral login-submit">
-                ${t('setup.start')}
+            <button id="btn-setup-start" class="btn btn-neutral login-submit"
+                    ${this._checking ? 'disabled' : ''}>
+                ${
+                    this._checking
+                        ? `<span class="tunnel-spinner"></span>${t('setup.checkingCreds')}`
+                        : t('setup.start')
+                }
             </button>
-            <button id="btn-setup-skip" class="btn btn-link u-mt-2">${t('setup.skip')}</button>`;
+            <button id="btn-setup-skip" class="btn btn-link u-mt-2"
+                    ${this._checking ? 'disabled' : ''}>${t('setup.skip')}</button>`;
     }
 
     // Green "already done" row shown in place of a step's controls.
@@ -212,7 +255,7 @@ export class SetupView {
     // Sunshine credential fields (shared by the "installed" and "install" cases).
     _credsFields() {
         const needed = this._sunshineInstalled || this._installSunshine;
-        const dis = needed ? '' : 'disabled';
+        const dis = needed && !this._checking ? '' : 'disabled';
         return `
             <div class="setup-creds">
                 <div class="login-field">
@@ -276,10 +319,19 @@ export class SetupView {
             (this._activeSteps.includes('install') || this._activeSteps.includes('pairing'))
                 ? `<p class="setup-note setup-warn">${t('setup.donePermissions')}</p>`
                 : '';
+        // The display setting is silent when it worked (the checkbox said what it
+        // would do) but must speak up when it didn't: the user would otherwise
+        // hit the 503 capture dialog later believing it was handled.
+        const displayLine = this._displaySleepError
+            ? `<p class="setup-note setup-warn">${t('setup.displayFailed', {
+                  error: this.esc(this._displaySleepError),
+              })}</p>`
+            : '';
         return `
             <p class="login-subtitle">${t('setup.doneTitle')}</p>
             ${domainLine}
             ${permsLine}
+            ${displayLine}
             <button id="btn-setup-finish" class="btn btn-neutral login-submit">
                 ${t('setup.finish')}
             </button>`;
@@ -322,6 +374,15 @@ export class SetupView {
                     passEl.type = 'password';
                 });
             }
+            // No re-render on toggle: nothing else in the form depends on it, and
+            // the value is read back in _apply() anyway. Kept in sync so a render
+            // triggered elsewhere (e.g. the install checkbox) preserves the tick.
+            const chkDisplay = this.container.querySelector('#chk-display-awake');
+            if (chkDisplay) {
+                chkDisplay.addEventListener('change', () => {
+                    this._keepDisplayAwake = chkDisplay.checked;
+                });
+            }
             const start = this.container.querySelector('#btn-setup-start');
             if (start) start.addEventListener('click', () => this._apply());
             const skip = this.container.querySelector('#btn-setup-skip');
@@ -342,6 +403,10 @@ export class SetupView {
             !this._internetActive && !!this.container.querySelector('#chk-internet')?.checked;
         this._autoStart =
             !this._autostartInstalled && !!this.container.querySelector('#chk-autostart')?.checked;
+        this._keepDisplayAwake =
+            this._displaySleepSupported &&
+            !this._displayKeptAwake &&
+            !!this.container.querySelector('#chk-display-awake')?.checked;
         const chkInstall = this.container.querySelector('#chk-install');
         if (chkInstall) this._installSunshine = chkInstall.checked;
         const user = (this.container.querySelector('#setup-user')?.value || '').trim();
@@ -359,6 +424,14 @@ export class SetupView {
             this.bindEvents();
             return;
         }
+
+        // A Sunshine that was already here has credentials we don't know, and a
+        // wrong pair only shows up much later as a failed PIN push. Try them
+        // against it now, with the button held on a spinner: the user stays on
+        // this page with a real error instead of a broken pairing, and can fix
+        // the fields or skip the Sunshine step altogether. A fresh install is not
+        // probed — those credentials are the ones we are about to create.
+        if (needPairing && haveCreds && !(await this._verifyCreds(user, pass))) return;
 
         // Compute the checklist rows that will run for live rendering.
         this._activeSteps = [];
@@ -380,6 +453,7 @@ export class SetupView {
                     ? t('setup.internetBody') + ' / ' + t('setup.internetOption')
                     : '',
                 autostart: this._autoStart,
+                keep_display_awake: this._keepDisplayAwake,
                 sunshine: {
                     install: willInstall,
                     username: user,
@@ -391,6 +465,8 @@ export class SetupView {
                 this._internetActive = !!result.internet_active;
                 this._domain = result.domain || '';
             }
+            this._displaySleepError = result.display_sleep_error || '';
+            if (result.display_kept_awake) this._displayKeptAwake = true;
             // Sunshine install can fail on its own (e.g. the user mistyped the OS
             // password in the polkit dialog) while /apply still returns 200. Don't
             // dead-end on the "done" screen: return to config with the error shown
@@ -432,6 +508,35 @@ export class SetupView {
             this.render();
             this.bindEvents();
         }
+    }
+
+    // Ask the backend to open the local Sunshine with these credentials. Returns
+    // true when the wizard may proceed; otherwise it has already re-rendered the
+    // config step with the reason. The re-render is harmless: every field's value
+    // lives on `this`, so nothing the user typed is lost.
+    async _verifyCreds(user, pass) {
+        this._checking = true;
+        this._error = '';
+        this.render();
+        this.bindEvents();
+
+        let result;
+        try {
+            result = await BackendClient.checkSunshineCredentials(user, pass);
+        } catch (err) {
+            console.error('[Setup] credential check failed:', err);
+            result = { ok: false, reason: 'unreachable' };
+        }
+        this._checking = false;
+        if (result && result.ok) return true;
+
+        this._error =
+            result && result.reason === 'unauthorized'
+                ? t('setup.sunshineCredsWrong')
+                : t('setup.sunshineUnreachable');
+        this.render();
+        this.bindEvents();
+        return false;
     }
 
     // Poll the checklist until `key` reaches a terminal state or `timeoutMs`

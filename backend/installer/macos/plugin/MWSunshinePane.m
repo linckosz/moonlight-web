@@ -55,6 +55,11 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
     NSURLSessionDownloadTask *_task;
     BOOL _started;
     BOOL _skipped;
+    // Credential check (MWSunshineUnpaired only): Continue starts it, the pane
+    // stays put until Sunshine has answered, and only an accepted pair advances.
+    NSURLSessionDataTask *_checkTask;
+    BOOL _checking;
+    BOOL _credsVerified;
 }
 
 // Sidebar label comes from InstallerSectionTitle; this is the pane title shown
@@ -152,6 +157,7 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
     // A fresh install gets admin/admin; an existing one must be told its real
     // username, so prefilling it there would only invite a failed PIN push.
     _userField.stringValue = (_case == MWSunshineAbsent) ? @"admin" : @"";
+    _userField.delegate = self;
     [view addSubview:_userField];
 
     [self labelAt:116 text:@"Password" in:view];
@@ -165,6 +171,7 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
         [view addSubview:_passPlain];
     } else {
         _passSecure = [[NSSecureTextField alloc] initWithFrame:passFrame];
+        _passSecure.delegate = self;
         [view addSubview:_passSecure];
     }
 
@@ -207,6 +214,11 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
 // field editor from inside its own change notification is not safe.
 - (void)controlTextDidChange:(NSNotification *)note
 {
+    // Any edit invalidates a previous check — Continue has to ask Sunshine again
+    // — and clears whatever verdict is still on screen.
+    _credsVerified = NO;
+    if (_case == MWSunshineUnpaired && !_checking) [self hideCheckStatus];
+
     if (note.object != _passPlain || _passSecure != nil) return;
     NSTextField *plain = _passPlain;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -249,6 +261,115 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
     [_task resume];
 }
 
+#pragma mark - Credential check
+
+// Layout note: the status label + progress bar are the download indicators of
+// the MWSunshineAbsent case, reused here — the two cases never run together.
+- (void)hideCheckStatus
+{
+    _statusLabel.hidden = YES;
+    _statusLabel.frame = NSMakeRect(0, 32, 360, 18);
+    _statusLabel.textColor = [NSColor secondaryLabelColor];
+}
+
+- (void)showCheckError:(NSString *)text
+{
+    // Two lines' worth of room: the sentence has to name a way out, and it can
+    // take the progress bar's space since the bar is gone by then.
+    _statusLabel.frame = NSMakeRect(0, 20, 360, 32);
+    _statusLabel.textColor = [NSColor systemRedColor];
+    _statusLabel.stringValue = text;
+    _statusLabel.hidden = NO;
+}
+
+- (void)setCredentialFieldsEnabled:(BOOL)enabled
+{
+    _userField.enabled = enabled;
+    _passPlain.enabled = enabled;
+    _passSecure.enabled = enabled;
+}
+
+// Basic-Auth GET on Sunshine's web-UI port with the credentials as typed. The
+// pane waits on the answer (spinner running, fields frozen) instead of walking
+// the user into a pairing that would fail minutes later, with nothing on screen
+// to explain it. Asynchronous on purpose: blocking shouldExitPane: would freeze
+// Installer.app and its progress bar with it.
+- (void)startCredentialCheck
+{
+    NSString *user = [_userField.stringValue
+        stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    NSString *pass = [self passwordValue];
+
+    _checking = YES;
+    [self setCredentialFieldsEnabled:NO];
+    [self hideCheckStatus];
+    _statusLabel.stringValue = @"Checking the Sunshine credentials…";
+    _statusLabel.hidden = NO;
+    _progress.indeterminate = YES;
+    _progress.hidden = NO;
+    [_progress startAnimation:nil];
+
+    NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    cfg.timeoutIntervalForRequest = 8.0;
+    cfg.timeoutIntervalForResource = 12.0;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:cfg delegate:self
+                                                    delegateQueue:nil];
+
+    NSMutableURLRequest *req = [NSMutableURLRequest
+        requestWithURL:[NSURL URLWithString:@"https://127.0.0.1:47990/api/apps"]];
+    NSString *basic = [[[NSString stringWithFormat:@"%@:%@", user, pass]
+        dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
+    [req setValue:[@"Basic " stringByAppendingString:basic] forHTTPHeaderField:@"Authorization"];
+
+    _checkTask = [session
+        dataTaskWithRequest:req
+          completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+              // 0 = never answered. Any real status means the header got past
+              // the guard, so only 401/403 can mean "wrong credentials" — a
+              // Sunshine whose API differs is never taken for a bad password.
+              NSInteger status =
+                  (!error && [response isKindOfClass:[NSHTTPURLResponse class]])
+                      ? ((NSHTTPURLResponse *)response).statusCode
+                      : 0;
+              // A delegate session holds its delegate — this one has done its
+              // one job, so let it go rather than pin the pane forever.
+              [session finishTasksAndInvalidate];
+              dispatch_async(dispatch_get_main_queue(), ^{
+                  [self finishCredentialCheck:status];
+              });
+          }];
+    [_checkTask resume];
+}
+
+- (void)finishCredentialCheck:(NSInteger)status
+{
+    if (!_checking) return; // Skip won the race
+    _checking = NO;
+    _checkTask = nil;
+    [_progress stopAnimation:nil];
+    _progress.indeterminate = NO;
+    _progress.hidden = YES;
+    [self setCredentialFieldsEnabled:YES];
+
+    if (status == 401 || status == 403) {
+        [self showCheckError:@"Sunshine refused these credentials. Check them in its web "
+                             @"interface (https://localhost:47990), or click Skip."];
+        return;
+    }
+    if (status == 0) {
+        [self showCheckError:@"Sunshine is installed but is not answering. Start it and try "
+                             @"again, or click Skip to pair later."];
+        return;
+    }
+
+    _credsVerified = YES;
+    [self hideCheckStatus];
+    // Same rule as Skip: hand off before leaving, gotoNextPane is not guaranteed
+    // to route through shouldExitPane:.
+    [self writeHandoff];
+    [self gotoNextPane];
+}
+
 #pragma mark - NSURLSessionDownloadDelegate
 
 - (void)URLSession:(NSURLSession *)session
@@ -286,10 +407,33 @@ didFinishDownloadingToURL:(NSURL *)location
     });
 }
 
+// Sunshine self-signs the certificate of its loopback web UI, so the credential
+// check has to accept it — for 127.0.0.1 and nothing else. Every other challenge
+// (the DMG download's real TLS, the 401 the check is looking for) falls through
+// to the default handling.
+- (void)URLSession:(NSURLSession *)session
+                   task:(NSURLSessionTask *)task
+    didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+      completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition,
+                                  NSURLCredential *))completionHandler
+{
+    NSURLProtectionSpace *space = challenge.protectionSpace;
+    if ([space.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust] &&
+        [space.host isEqualToString:@"127.0.0.1"] && space.serverTrust != NULL) {
+        completionHandler(NSURLSessionAuthChallengeUseCredential,
+                          [NSURLCredential credentialForTrust:space.serverTrust]);
+        return;
+    }
+    completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+}
+
 - (void)URLSession:(NSURLSession *)session
                     task:(NSURLSessionTask *)task
     didCompleteWithError:(NSError *)error
 {
+    // The credential check carries its own completion handler and owns the
+    // status label while it runs — this one only speaks for the DMG download.
+    if (task == _checkTask) return;
     if (!error) return;
     dispatch_async(dispatch_get_main_queue(), ^{
         self->_progress.doubleValue = 0.0;
@@ -330,6 +474,15 @@ didFinishDownloadingToURL:(NSURL *)location
     [_task cancel];
     _task = nil;
     _started = NO; // so coming back to the pane restarts the download
+    // Skipping is exactly the way out of a credential check that will not pass.
+    _checking = NO;
+    [_checkTask cancel];
+    _checkTask = nil;
+    [_progress stopAnimation:nil];
+    _progress.hidden = YES;
+    [self setCredentialFieldsEnabled:YES];
+    [self hideCheckStatus];
+    _statusLabel.hidden = NO;
     _statusLabel.stringValue = @"Sunshine setup skipped.";
     // Write it now: gotoNextPane is not guaranteed to route through
     // shouldExitPane:, and the hand-off must never be left half-written.
@@ -340,6 +493,11 @@ didFinishDownloadingToURL:(NSURL *)location
 // Credentials are only mandatory when they will actually be used: a fresh
 // install applies them via `sunshine --creds`, an existing install needs its
 // real ones to accept the PIN. Skip and the already-paired case need neither.
+//
+// For an existing install the pane also refuses to advance until Sunshine itself
+// has accepted the pair: the user is the only one who knows those credentials,
+// and someone who does not is better told here — where Skip is right there —
+// than left with a pairing that quietly failed.
 - (BOOL)shouldExitPane:(InstallerSectionDirection)dir
 {
     if (dir != InstallerDirectionForward) return YES;
@@ -353,6 +511,12 @@ didFinishDownloadingToURL:(NSURL *)location
             a.informativeText = @"Enter a username and password so MoonlightWeb can pair with "
                                 @"Sunshine automatically, or click Skip to do it later.";
             [a runModal];
+            return NO;
+        }
+        if (_case == MWSunshineUnpaired && !_credsVerified) {
+            // A check already in flight: let it finish — it advances the pane
+            // itself once Sunshine accepts.
+            if (!_checking) [self startCredentialCheck];
             return NO;
         }
     }

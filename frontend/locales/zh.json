@@ -40,6 +40,14 @@
         "username": "用户名",
         "password": "密码",
         "credsRequired": "请输入 Sunshine 的用户名和密码，以便 MoonlightWeb 自动配对。",
+        "checkingCreds": "正在验证凭据…",
+        "sunshineCredsWrong": "Sunshine 拒绝了这些凭据。请在其网页界面（https://localhost:47990）中核对用户名和密码，或点击“暂时跳过”以稍后配对。",
+        "sunshineUnreachable": "Sunshine 已安装，但在此计算机上没有响应。请先启动它再重试 — 或点击“暂时跳过”以稍后配对。",
+        "displayTitle": "屏幕休眠",
+        "displayBody": "Sunshine 只能串流处于开启状态的屏幕。一旦这台机器关闭显示输出，就没有任何画面可供捕获，所有串流都会失败——即使会话并未锁定。锁定屏幕本身没有问题。",
+        "displayOption": "永不关闭或休眠这台机器的屏幕",
+        "displayAlreadyAwake": "这台机器的屏幕已设置为永不关闭或休眠。",
+        "displayFailed": "无法应用屏幕设置（{{error}}）——请在桌面的电源设置中把“关闭屏幕”设为“永不”。",
         "autostartTitle": "登录时启动",
         "autostartOption": "登录时自动启动 MoonlightWeb",
         "autostartInstalled": "MoonlightWeb 已设置为登录时自动启动。",
@@ -482,9 +490,11 @@
         "hdrFallback": "HDR 不可用——已切换到不含 HDR 的 {{to}}"
     },
     "permission": {
-        "screenRecording": {
-            "title": "需要屏幕录制权限",
-            "body": "“{{name}}”上的 Sunshine 尚无法捕获屏幕。在 macOS 上，打开“系统设置 → 隐私与安全性 → 屏幕录制”并开启 Sunshine，然后使用下方的“重启 Sunshine 并重试”（macOS 仅在 Sunshine 重启后才应用该权限）。如果没有显示器，请连接一台或使用 HDMI 假负载。",
+        "videoCapture": {
+            "title": "主机无法捕获屏幕",
+            "bodyRemote": "“{{name}}”上的 Sunshine 没有可捕获的屏幕。请在那台机器上：唤醒显示器并确认它没有黑屏或休眠（锁定且屏幕关闭的会话不会产生任何画面），或者接上显示器 / HDMI 假负载。如果“{{name}}”是 Mac，还需在“系统设置 → 隐私与安全性 → 屏幕录制”中开启 Sunshine，然后重启 Sunshine。",
+            "bodyLocal": "本机上的 Sunshine 没有可捕获的屏幕。请唤醒显示器并确认它没有黑屏或休眠（锁定且屏幕关闭的会话不会产生任何画面），或者接上显示器 / HDMI 假负载，然后使用下方的“重启 Sunshine 并重试”。",
+            "bodyMac": "这台 Mac 上的 Sunshine 无法捕获屏幕。打开“系统设置 → 隐私与安全性 → 屏幕录制”并开启 Sunshine，然后使用下方的“重启 Sunshine 并重试”（macOS 仅在 Sunshine 重启后才应用该权限）。如果没有显示器，请连接一台或使用 HDMI 假负载。",
             "openSettings": "打开屏幕录制设置",
             "opened": "已在主机上打开屏幕录制设置。",
             "openFailed": "无法打开设置面板——请手动打开。",

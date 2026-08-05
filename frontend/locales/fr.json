@@ -40,6 +40,14 @@
         "username": "Identifiant",
         "password": "Mot de passe",
         "credsRequired": "Veuillez saisir l'identifiant et le mot de passe Sunshine pour que MoonlightWeb puisse appairer automatiquement.",
+        "checkingCreds": "Vérification des identifiants…",
+        "sunshineCredsWrong": "Sunshine a refusé ces identifiants. Vérifiez l'identifiant et le mot de passe de son interface web (https://localhost:47990), ou cliquez sur « Ignorer pour l'instant » pour appairer plus tard.",
+        "sunshineUnreachable": "Sunshine est installé mais ne répond pas sur cette machine. Démarrez-le puis réessayez — ou cliquez sur « Ignorer pour l'instant » pour appairer plus tard.",
+        "displayTitle": "Veille de l'écran",
+        "displayBody": "Sunshine ne peut diffuser qu'un écran allumé. Dès que cette machine éteint son écran, il n'y a plus aucune image à capturer et tout stream échoue — même depuis une session déverrouillée. Le verrouillage de l'écran, lui, ne pose aucun problème.",
+        "displayOption": "Ne jamais éteindre ni mettre en veille l'écran de cette machine",
+        "displayAlreadyAwake": "L'écran de cette machine est déjà réglé pour ne jamais s'éteindre ni se mettre en veille.",
+        "displayFailed": "Le réglage de l'écran n'a pas pu être appliqué ({{error}}) — mettez « Extinction de l'écran » sur Jamais dans les réglages d'alimentation de votre bureau.",
         "autostartTitle": "Démarrage automatique",
         "autostartOption": "Lancer MoonlightWeb automatiquement à l'ouverture de session",
         "autostartInstalled": "MoonlightWeb se lance déjà automatiquement à l'ouverture de session.",
@@ -482,9 +490,11 @@
         "hdrFallback": "HDR indisponible — bascule en {{to}} sans HDR"
     },
     "permission": {
-        "screenRecording": {
-            "title": "Autorisation d'enregistrement de l'écran requise",
-            "body": "Sunshine sur « {{name}} » ne peut pas encore capturer l'écran. Sur macOS, ouvre Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran et active Sunshine, puis utilise « Redémarrer Sunshine et réessayer » ci-dessous (macOS n'applique l'autorisation qu'après le redémarrage de Sunshine). S'il n'y a pas d'écran, branches-en un ou utilise un dummy plug HDMI.",
+        "videoCapture": {
+            "title": "L'hôte ne peut pas capturer son écran",
+            "bodyRemote": "Sunshine sur « {{name}} » n'a aucun écran à capturer. Sur cette machine : réveille l'écran et vérifie qu'il n'est pas éteint ou en veille (une session verrouillée avec l'écran éteint ne produit aucune image), ou branche un écran / un dummy plug HDMI. Si « {{name}} » est un Mac, active aussi Sunshine dans Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran, puis redémarre Sunshine.",
+            "bodyLocal": "Sunshine sur cette machine n'a aucun écran à capturer. Réveille l'écran et vérifie qu'il n'est pas éteint ou en veille (une session verrouillée avec l'écran éteint ne produit aucune image), ou branche un écran / un dummy plug HDMI, puis utilise « Redémarrer Sunshine et réessayer » ci-dessous.",
+            "bodyMac": "Sunshine sur ce Mac ne peut pas capturer l'écran. Ouvre Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran et active Sunshine, puis utilise « Redémarrer Sunshine et réessayer » ci-dessous (macOS n'applique l'autorisation qu'après le redémarrage de Sunshine). S'il n'y a pas d'écran, branches-en un ou utilise un dummy plug HDMI.",
             "openSettings": "Ouvrir les réglages d'enregistrement de l'écran",
             "opened": "Réglages d'enregistrement de l'écran ouverts sur l'hôte.",
             "openFailed": "Impossible d'ouvrir le panneau — ouvre-le manuellement.",
