@@ -50,6 +50,9 @@ public:
     void notifyTakenOver();
     /// Notify the browser its device was revoked, then teardown (worker side).
     void notifyRevoked();
+    /// Notify an invited player that the owner ended the shared session, then
+    /// teardown (worker side).
+    void notifySessionEnded();
 
     bool isRunning() const;
 

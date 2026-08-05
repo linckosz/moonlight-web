@@ -692,6 +692,10 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
     QJsonObject msg = doc.object();
     QString type = msg["type"].toString();
 
+    // The fallback path bypasses the relay's own switch, so it has to apply the
+    // same policy — read from the relay so the two can never drift apart.
+    if (m_Relay && !InputMsg::allowed(type, m_Relay->inputPolicy())) return;
+
     // Same input handling as DataChannelRelay::onInputMessage
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");

@@ -112,6 +112,14 @@ void StreamWorkerHost::notifyRevoked()
     });
 }
 
+void StreamWorkerHost::notifySessionEnded()
+{
+    sendCommand("sessionEnded");
+    QTimer::singleShot(5000, this, [this]() {
+        if (isRunning()) m_Proc->kill();
+    });
+}
+
 void StreamWorkerHost::onStdout()
 {
     m_Buf += m_Proc->readAllStandardOutput();

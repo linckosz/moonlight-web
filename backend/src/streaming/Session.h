@@ -23,6 +23,7 @@
 #include <QStringList>
 #include <QSet>
 
+#include "InputPolicy.h"
 #include "StreamConfig.h"
 #include "../common/Types.h"
 
@@ -129,6 +130,17 @@ public:
     /// HttpServer path→port routing.
     void setWsPath(const QString& path) { m_WsPath = path; }
 
+    /// What this session's client may send to the host. Unrestricted for the
+    /// owner; an invited player gets whatever the owner ticked when creating
+    /// their share link. Restricting it also shuts clipboard sync off — the
+    /// host's clipboard is not a guest's to read.
+    void setInputPolicy(const InputMsg::Policy& policy) { m_InputPolicy = policy; }
+
+    /// Shift this session's controller numbers so gamepads from concurrent
+    /// sessions land on distinct virtual pads instead of all arriving as
+    /// controller 0. Zero (the owner) keeps the browser's own numbering.
+    void setGamepadOffset(int offset) { m_GamepadOffset = offset; }
+
 signals:
     void relayCreated(DataChannelRelay* relay);
     void mediaTrackRelayCreated(MediaTrackRelay* relay);
@@ -214,6 +226,11 @@ private:
 
     /// Proxy path prefix for this session's WebSockets (see setWsPath).
     QString m_WsPath = QStringLiteral("/ws");
+
+    /// Input restrictions for a shared session (see setInputPolicy).
+    InputMsg::Policy m_InputPolicy;
+    /// Controller-number offset for a shared session (see setGamepadOffset).
+    int m_GamepadOffset = 0;
 
     /// Negotiated video format from drSetup (0=unknown, 0x0001=H.264, 0x0100=HEVC, 0x0200=AV1).
     /// Written by drSetup on the worker thread, read on the main thread during

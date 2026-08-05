@@ -740,17 +740,35 @@ static constexpr int kStandardGamepadButtons =
     A_FLAG | B_FLAG | X_FLAG | Y_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG | LB_FLAG |
     RB_FLAG | PLAY_FLAG | BACK_FLAG | LS_CLK_FLAG | RS_CLK_FLAG | SPECIAL_FLAG;
 
+// Shift a client's controller number (and its mask bit) into this session's own
+// range. Concurrent sessions each number their pads from 0, so without the
+// offset every invited player's gamepad lands on the host's controller 0 and
+// they fight over one virtual pad. Clamped to the four pads Limelight exposes.
+void MoonlightShim::applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const
+{
+    if (m_ControllerOffset <= 0) return;
+    const int shifted = qBound(0, controllerNumber + m_ControllerOffset, 3);
+    controllerNumber = static_cast<short>(shifted);
+    // The mask says which pads exist; move this session's bits with the number.
+    activeGamepadMask = static_cast<short>((static_cast<int>(activeGamepadMask) & 0xF)
+                                           << m_ControllerOffset);
+    activeGamepadMask = static_cast<short>(activeGamepadMask | (1 << shifted));
+}
+
 void MoonlightShim::sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask,
                                           uint8_t type, bool hasRumble)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
+    short num = static_cast<short>(controllerNumber);
+    short mask = static_cast<short>(activeGamepadMask);
+    applyControllerOffset(num, mask);
     // Browser triggers are always analog; rumble depends on the gamepad's
     // vibrationActuator (reported by the client). Gyro/touchpad/LED are not
     // reachable via the Gamepad API, so they are not advertised.
     uint16_t caps = LI_CCAP_ANALOG_TRIGGERS;
     if (hasRumble) caps |= LI_CCAP_RUMBLE;
-    LiSendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, kStandardGamepadButtons,
-                                 caps);
+    LiSendControllerArrivalEvent(static_cast<uint8_t>(num), static_cast<uint16_t>(mask), type,
+                                 kStandardGamepadButtons, caps);
 }
 
 void MoonlightShim::sendControllerState(short controllerNumber, short activeGamepadMask,
@@ -759,6 +777,7 @@ void MoonlightShim::sendControllerState(short controllerNumber, short activeGame
                                         short leftStickY, short rightStickX, short rightStickY)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
+    applyControllerOffset(controllerNumber, activeGamepadMask);
     // A pad only sends on change, so a stick pushed and left there goes silent
     // exactly like a held key. Track "not at rest" so the watchdog can zero it
     // out if the link dies mid-input (a removal — empty state with the mask bit

@@ -131,6 +131,11 @@ void StreamRelay::notifyClientRevoked()
     sendExitNotice("revoked");
 }
 
+void StreamRelay::notifyClientSessionEnded()
+{
+    sendExitNotice("session-ended");
+}
+
 void StreamRelay::sendExitNotice(const char* type)
 {
     // Exit notice over the WS before stop() closes it, so the browser can show
@@ -563,6 +568,9 @@ void StreamRelay::onWsTextMessage(const QString& message)
     // Any message at all proves the input link is alive — feeds the shim's
     // dead-man switch (see MoonlightShim's input-watchdog section).
     if (m_Shim) m_Shim->noteClientAlive();
+
+    // An invited player only gets what the owner ticked. Dropped in silence.
+    if (!InputMsg::allowed(type, m_InputPolicy)) return;
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");

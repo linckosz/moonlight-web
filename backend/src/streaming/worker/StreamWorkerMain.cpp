@@ -68,7 +68,7 @@ WorkerState* g_State = nullptr;
 /// Mirror of the /quit teardown in main.cpp: stop the shim FIRST (so moonlight
 /// stops calling back into a relay about to be destroyed), then stop + delete
 /// the relay. Exits the process once done (short grace for the relay thread).
-void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked*/)
+void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded*/)
 {
     if (!g_State || g_State->exiting) return;
     g_State->exiting = true;
@@ -78,6 +78,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked*/)
         g_State->relay = nullptr;
         if (notify == 1 && r->isConnected()) r->notifyClientTakenOver();
         if (notify == 2) r->notifyClientRevoked();
+        if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &DataChannelRelay::sessionEnded, nullptr, nullptr);
         if (r->moonlightShim()) r->moonlightShim()->stopConnection();
         r->stop();
@@ -88,6 +89,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked*/)
         g_State->mediaRelay = nullptr;
         if (notify == 1 && r->isConnected()) r->notifyClientTakenOver();
         if (notify == 2) r->notifyClientRevoked();
+        if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &MediaTrackRelay::sessionEnded, nullptr, nullptr);
         if (r->moonlightShim()) r->moonlightShim()->stopConnection();
         r->stop();
@@ -98,6 +100,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked*/)
         g_State->streamRelay = nullptr;
         if (notify == 1 && r->isClientConnected()) r->notifyClientTakenOver();
         if (notify == 2) r->notifyClientRevoked();
+        if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &StreamRelay::sessionEnded, nullptr, nullptr);
         if (r->moonlightShim()) r->moonlightShim()->stopConnection();
         r->stop();
@@ -198,6 +201,20 @@ int runStreamWorker(QCoreApplication& app)
     session->setClientIsLocal(cfg["clientIsLocal"].toBool());
     session->setAutoMode(cfg["autoMode"].toBool(true));
     session->setWsPath(cfg["wsPath"].toString(QStringLiteral("/ws")));
+    // A shared session (invited player) arrives with the permissions the owner
+    // ticked. Absent = the owner's own session: unrestricted. The policy is
+    // fixed for the life of this worker — the popin froze it before the link
+    // was ever usable, so there is nothing to update at runtime.
+    if (cfg.contains(QStringLiteral("inputPolicy"))) {
+        const QJsonObject pol = cfg["inputPolicy"].toObject();
+        InputMsg::Policy policy;
+        policy.gamepad = pol["gamepad"].toBool(false);
+        policy.keyboardMouse = pol["keyboardMouse"].toBool(false);
+        session->setInputPolicy(policy);
+        qInfo() << "[StreamWorker] Input policy: gamepad=" << policy.gamepad
+                << "keyboardMouse=" << policy.keyboardMouse;
+    }
+    session->setGamepadOffset(cfg["gamepadOffset"].toInt(0));
     if (!cfg["explicitWsUrl"].toString().isEmpty())
         session->setExplicitWsUrl(cfg["explicitWsUrl"].toString());
     if (cfg["codecOverridden"].toBool())
@@ -244,6 +261,8 @@ int runStreamWorker(QCoreApplication& app)
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(1); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("revoked")) {
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); }, Qt::QueuedConnection);
+            } else if (cmd == QLatin1String("sessionEnded")) {
+                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(3); }, Qt::QueuedConnection);
             }
         }
         // EOF: the parent is gone — never stream without a supervisor.

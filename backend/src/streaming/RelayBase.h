@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "InputPolicy.h"
+
 #include <QObject>
 #include <memory>
 #include <string>
@@ -69,6 +71,17 @@ public:
     /// close. Same delivery guarantee as notifyClientTakenOver().
     virtual void notifyClientRevoked() {}
 
+    /// Notify an invited player that the owner ended the shared session, so the
+    /// player's page can explain it rather than showing a connection error.
+    /// Same delivery guarantee as notifyClientTakenOver().
+    virtual void notifyClientSessionEnded() {}
+
+    /// Restrict what this session's client may send to the host. Set once,
+    /// before the relay starts, from the share activation the player joined
+    /// with; the owner's own sessions leave it unrestricted.
+    void setInputPolicy(const InputMsg::Policy& policy) { m_InputPolicy = policy; }
+    const InputMsg::Policy& inputPolicy() const { return m_InputPolicy; }
+
     /// Request an IDR frame from Sunshine (keyframe).
     virtual void requestIdrFrame() = 0;
 
@@ -103,4 +116,10 @@ signals:
 
     /// Session ended (disconnect / error).
     void sessionEnded();
+
+protected:
+    /// Written once on the main thread before the relay moves to its own
+    /// thread, read-only afterwards — same lifetime discipline as
+    /// m_ClipboardEnabled.
+    InputMsg::Policy m_InputPolicy;
 };
