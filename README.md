@@ -47,6 +47,7 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 - 🔐 Secure **pairing**, multi‑host, persistent sessions.
 - 🌍 **Internet access** in one click: auto sub‑domain + TLS certificate.
 - 🪄 **Video Enhancement** (bonus): GPU upscaling & sharpening in the browser.
+- 👥 **Session sharing**: invite up to 3 people into your stream, as viewer, gamepad player, or full control.
 
 <div align="center">
 
@@ -83,6 +84,51 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 | ![Stream settings](docs/screenshots/settings.png) | ![Advanced options (mobile)](docs/screenshots/advanced.png) |
 
 </div>
+
+---
+
+## Session sharing
+
+While you are streaming, the **Share** button (left of Stop) invites up to three
+people into the same session. Each of them gets their own stream — their own
+resolution, their own bitrate — on the app you already have running.
+
+Pick a player row and you get **a link and a 6‑digit PIN**. Send them
+separately: the link is expected to travel over chat and can leak, so on its own
+it opens nothing. The PIN is what the guest is asked for the moment they open
+the link, before they are even told which machine it is.
+
+In the same popin you choose what they may do:
+
+| Level | They can |
+|---|---|
+| **Viewer** (default) | watch and listen |
+| **Gamer** | watch and play with a gamepad |
+| **Full control** | watch, and use the keyboard and mouse of your PC |
+
+The choice **freezes when you close the popin** — from that moment the link is
+out in the world. To change it, turn the player off and share again, which mints
+a new link and PIN and kills the old ones. Permissions are enforced in the
+backend, not in the guest's page: a viewer's browser can send whatever it likes
+and nothing reaches the host. Clipboard sync is off for guests entirely.
+
+An invitation lasts **8 hours**. Nothing else ends it — a guest closing their
+tab, a dropped connection or a quality change on your side all leave it valid,
+and they can rejoin. It ends when you click the player row, when you press Stop,
+or when the 8 hours are up. One stream at a time per invitation: a second device
+on the same link is told the seat is taken rather than stealing it.
+
+Ten wrong PINs destroy the invitation outright, so a leaked link can at worst
+cost you a re‑share. Wrong PINs and dead links also feed the same per‑IP abuse
+ban as the login page.
+
+If a session is left running with no way to stop it — you closed the tab,
+another device holds it — the host card's **⋯ → Stop session** ends the app for
+everyone.
+
+> Session sharing is a build‑time switch (`kSessionSharingEnabled` in
+> `backend/src/server/ShareManager.h`). Turned off, every share route answers
+> 404 and no entry point appears in the UI.
 
 ---
 

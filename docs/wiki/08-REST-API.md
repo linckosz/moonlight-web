@@ -12,6 +12,7 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 - 🔑 *session* — localhost, or a valid `mw_session` cookie.
 - 🏠 *admin* — `req.isLocal`, i.e. a **loopback peer, a host-key session** (the host's own browser reaching the server through the public domain) **or a LAN session that unlocked the remote admin password** ([Security §6.2.1](06-Security.md#621-remote-admin-password-lan-only)), **and** the admin key on writes (below). `/api/admin/*` returns 403 otherwise; the setup/internet/system/local routes apply the same check inside their handlers.
 - 🖥️ *host machine* — `req.isHostMachine`: 🏠 minus the password unlock. Reserved for what needs the local desktop or identifies the host itself (`local_key`, the first-run wizard).
+- 🍪 *invited player* — the `mw_player` cookie bound to one live share activation ([§8.3b](#83b-session-sharing-sharoutescpp)). Not a session: it opens that player's own slot and nothing else, and is exempt from the 401 guard like 🌐.
 
 **Request requirements** (enforced in `RequestGuard` + `HttpServer::processRequest`, before routing)
 
@@ -68,6 +69,24 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 | `POST /api/hosts/:id/start` (async) | 🔑 | **The launch route.** Body: `appId` + per-browser overrides (`video_codec`, `stream_bitrate/height/fps/aspect`, `hdr_enabled`, `chroma_444_enabled`, `gaming_mode`, `mute_host_audio`, `video_enhancement`, `low_audio`, `client_uniqueid`, `transport_mode`, `transport_index`) + the dual-stream pair `standby` / `session_slot` (a `standby:true` launch adds the second slot instead of taking over). Performs take-over, launch/resume on Sunshine, worker spawn + relay creation. Response: `{signalingUrl\|wsUrl, transport_chain, transport_index, negotiated codec, codecOverridden, dual_supported…}`, or `{status:"dual_unavailable"}` when the host refuses a second concurrent session. |
 | `POST /api/hosts/:id/quit` (async) | 🔑 | Stop the stream (ownership-guarded by `client_uniqueid`) + quit the app on Sunshine. Body: `session_slot` targets one slot only (absent = every slot this `client_uniqueid` owns); `keep_host_session:true` **retires** the leg without the Sunshine `/cancel` — mandatory whenever a twin stream is still playing. |
 
+| `POST /api/hosts/:id/stop-session` (async) | 🔑 | Escape hatch: drop every slot and cancel every live Sunshine session on this host, unscoped. For when no browser holds a stream view any more (tab closed, another device, players keeping the app alive). |
+
+## 8.3b Session sharing (`ShareRoutes.cpp`)
+
+Owner routes need a normal session (any authenticated user — deliberately not admin-only). Player routes are exempt from the session gate and authenticate the device from the `mw_player` cookie the PIN buys. Everything answers **404** when `ShareManager::kSessionSharingEnabled` is false.
+
+| Method & path | Access | Description |
+|---|---|---|
+| `GET /api/share/status` | 🔑 | The three player rows: `{slot, state ∈ off\|shared\|streaming, permissions, access_level, locked, expires_at}` + `streaming` count. |
+| `POST /api/share/slots/:n/activate` | 🔑 | Mint a link + PIN, revoking the slot's previous pair. Returns `{url, pin, …}` — the only time either is ever readable. |
+| `POST /api/share/slots/:n/permissions` | 🔑 | `{gamepad, keyboardMouse}` while the popin is open. **409** once locked. |
+| `POST /api/share/slots/:n/lock` | 🔑 | Popin closed — the permissions are final for this activation. |
+| `POST /api/share/slots/:n/deactivate` | 🔑 | Disconnect the player and revoke link, PIN and cookies. |
+| `POST /api/share/player/pin` | 🌐 | `{token, pin}` → sets `mw_player` (HttpOnly, Secure, SameSite=Strict, 8 h). Rate-limited; 10 failures on one activation destroy it. |
+| `GET /api/share/player/info?token=` | 🍪 | `{needs_pin:true}` without the cookie; otherwise `{machine_name, state, access_level, expires_at, owner_streaming}`. **404** for a dead link. |
+| `POST /api/share/player/join` | 🍪 | `{token, height ∈ 720\|1080\|1440}` → starts the player's worker and answers like `/api/hosts/:id/start`. **409** `stream_in_progress` / `session_ended`. |
+| `POST /api/share/player/leave` | 🍪 | Frees the slot; the invitation stays valid. |
+
 ## 8.4 Admin, settings, internet, setup, system (`SystemRoutes.cpp`)
 
 | Method & path | Access | Description |
@@ -93,6 +112,7 @@ All are reached through the **single HTTPS port** — `HttpServer` recognizes th
 | `/ws` | 48001 (`--ws-port`) | **Signaling** for WebRTC: JSON SDP offers/answers + ICE candidates, per-session (stream slot 0). |
 | `/ws/stream` | 48002 | **Legacy WSS transport**: binary multiplexed video/audio/input when WebRTC can't connect (slot 0). |
 | `/ws1`, `/ws1/stream` | 48011, 48012 | The same two surfaces for **stream slot 1** — the standby leg of seamless quality switching. Both slots' worker children can listen at once. |
+| `/ws2`…`/ws4` (+ `/stream`) | 48021/48022, 48031/48032, 48041/48042 | One pair per **invited player** (slot *n* → 48001 + 10 × *n*). Gated on the `mw_player` cookie of *that* slot's live share activation — a session cookie and even a loopback peer are refused here. |
 | `/ws/control` | 48003 | **Control channel**: every open tab holds one; used to redirect a tab to `/admin` on a second app launch (single-tab dedup). |
 
 The frontend always builds WS URLs from `window.location.host` (page origin) — required for non-default external ports (port parity / multi-instance NAT).
