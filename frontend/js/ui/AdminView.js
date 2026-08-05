@@ -437,11 +437,17 @@ export class AdminView {
     async _loadSessions() {
         try {
             const result = await BackendClient.getAuthSessions();
-            const sessions = result.sessions || [];
+            // The browser reading this page is not a device to administer: its
+            // row offers a Revoke button that logs the reader out and, on the
+            // host machine, takes the admin access being used to click with it.
+            // The backend refuses that revocation anyway — don't offer it.
+            const sessions = (result.sessions || []).filter((s) => !s.current);
             // Streaming sessions float to the top so they're immediately visible.
             // Array.sort is stable, so the backend's newest-first order survives.
             sessions.sort((a, b) => (b.streaming ? 1 : 0) - (a.streaming ? 1 : 0));
             this._sessions = sessions;
+            // Count what the table shows, so the header and the rows agree.
+            this._activeSessions = this._sessions.length;
         } catch (err) {
             console.warn('[Admin] Failed to load sessions:', err);
             // Server is dead — no streaming sessions can be alive. Clear the
@@ -468,7 +474,6 @@ export class AdminView {
                 s.country,
                 s.created_at,
                 !!s.streaming,
-                !!s.current,
             ]),
         );
     }
@@ -1170,17 +1175,12 @@ export class AdminView {
                 const streamingBadge = s.streaming
                     ? `<span class="session-streaming-badge" title="${this.esc(t('admin.streamingTitle'))}">${t('admin.streaming')}</span>`
                     : '';
-                // The browser reading this page. Revoking it logs this device
-                // out — say so on the row, not after the fact.
-                const currentBadge = s.current
-                    ? `<span class="session-current-badge" title="${this.esc(t('admin.thisDeviceTitle'))}">${t('admin.thisDevice')}</span>`
-                    : '';
                 return `
-            <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}${s.current ? ' session-row-current' : ''}">
+            <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
                 <td><span class="session-name-edit" contenteditable="plaintext-only"
                           spellcheck="false"
                           data-token="${this.esc(s.token)}"
-                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${streamingBadge}${currentBadge}</td>
+                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${streamingBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>
@@ -1188,7 +1188,6 @@ export class AdminView {
                     <button class="btn btn-danger btn-small btn-session-revoke"
                             data-token="${this.esc(s.token)}"
                             data-machine="${this.esc(cells.machine)}"
-                            data-current="${s.current ? '1' : ''}"
                             title="${this.esc(t('admin.revokeTitle'))}">
                         ${t('admin.revoke')}
                     </button>
@@ -1736,27 +1735,14 @@ export class AdminView {
         if (!token) return;
 
         const machine = btn.dataset.machine || t('common.unknown');
-        const question = btn.dataset.current
-            ? t('admin.confirmRevokeCurrent', { name: machine })
-            : t('admin.confirmRevoke', { name: machine });
-        if (!confirm(question)) return;
+        if (!confirm(t('admin.confirmRevoke', { name: machine }))) return;
 
         btn.disabled = true;
         btn.textContent = t('admin.revoking');
 
-        const wasCurrent = !!btn.dataset.current;
-
         try {
             await BackendClient.revokeSession(token);
             Toast.success(t('admin.sessionRevoked'));
-
-            // Revoking our own session logged this browser out. Reload rather
-            // than leave an admin page whose every button 403s — the app then
-            // sends us wherever we now belong (login, or the local admin page).
-            if (wasCurrent) {
-                window.location.reload();
-                return;
-            }
 
             // Remove from local list and re-render
             this._sessions = this._sessions.filter((s) => s.token !== token);

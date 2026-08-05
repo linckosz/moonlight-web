@@ -829,21 +829,6 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     white-space: nowrap;
     animation: session-streaming-pulse 1.6s ease-in-out infinite;
 }
-/* "This device": the row whose Revoke button logs the reader out. Muted, not
-   alarming — it marks a row, it does not warn about one. */
-.session-current-badge {
-    display: inline-block;
-    margin-left: var(--space-2);
-    padding: 1px 8px;
-    border-radius: var(--radius-pill);
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--text-2);
-    background: rgba(255, 255, 255, 0.08);
-    vertical-align: middle;
-    white-space: nowrap;
-}
-
 @keyframes session-streaming-pulse {
     0%,
     100% {

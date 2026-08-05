@@ -383,10 +383,7 @@
         "sunshineStopped2": "Sunshine 已安装但未运行。",
         "openSunshineConfig": "打开 Sunshine 配置",
         "openSunshineConfigHint": "Sunshine 没有窗口：在 macOS 上它在后台运行（右上角菜单栏），在 Windows/Linux 上位于系统托盘。请从其网页界面进行配置。使用您设置的 Sunshine 用户名和密码登录。",
-        "thisDevice": "本设备",
-        "thisDeviceTitle": "正在显示此页面的浏览器",
-        "confirmRevoke": "确定撤销「{{name}}」的会话吗？该设备需要重新输入 PIN 码。",
-        "confirmRevokeCurrent": "「{{name}}」是您当前使用的设备。撤销后此浏览器将退出登录——在主机上需要从 localhost（或托盘图标）重新打开页面才能恢复管理员权限。是否继续？"
+        "confirmRevoke": "确定撤销「{{name}}」的会话吗？该设备需要重新输入 PIN 码。"
     },
     "stream": {
         "stop": "停止",
