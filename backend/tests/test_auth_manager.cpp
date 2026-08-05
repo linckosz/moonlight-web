@@ -88,6 +88,37 @@ void run_auth_manager_tests()
     CHECK_EQ(revokedFired, 2);   // destroy-all with a streaming session → teardown signal
     auth.purgeExpiredSessions(); // no-op, just exercised
 
+    // ── Session listing order and identity ─────────────────────────────────
+    // The admin table re-renders on a timer, so the order must come from the
+    // data and not from the hash layout: rows that move between two refreshes
+    // send a click to the wrong device's Revoke button. Ties (same second) fall
+    // back to the id, so the list is fully determined either way.
+    const QString tokA = auth.createSession("198.51.100.30", "A");
+    const QString tokB = auth.createSession("198.51.100.31", "B");
+    const QString tokC = auth.createSession("198.51.100.32", "C");
+    QList<SessionInfo> ordered = auth.sessions();
+    CHECK_EQ(ordered.size(), 3);
+    for (int i = 1; i < ordered.size(); ++i) {
+        const bool sorted = ordered[i - 1].createdAt > ordered[i].createdAt ||
+                            (ordered[i - 1].createdAt == ordered[i].createdAt &&
+                             ordered[i - 1].token < ordered[i].token);
+        CHECK(sorted);
+    }
+    CHECK_EQ(auth.sessions().first().token, ordered.first().token); // same list twice
+
+    // The raw cookie token maps back to the id the admin UI revokes by, so the
+    // caller's own row can be marked before it is clicked.
+    const QString idB = auth.sessionIdForToken(tokB);
+    CHECK(!idB.isEmpty());
+    CHECK(idB != tokB); // the id is the hash, never the cookie value
+    CHECK(auth.sessionIdForToken("bogus-token").isEmpty());
+    CHECK(auth.sessionIdForToken(QString()).isEmpty());
+    auth.destroySession(idB);
+    CHECK(auth.sessionIdForToken(tokB).isEmpty()); // gone with its session
+    auth.destroySession(auth.sessionIdForToken(tokA));
+    auth.destroySession(auth.sessionIdForToken(tokC));
+    CHECK_EQ(auth.activeSessionCount(), 0);
+
     // ── Certificate auth ───────────────────────────────────────────────────
     QString cert = auth.generateCertificateToken();
     CHECK(!cert.isEmpty());

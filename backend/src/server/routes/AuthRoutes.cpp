@@ -342,23 +342,30 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     });
 
     // GET /api/auth/sessions — list active sessions with metadata (localhost only)
-    server.router()->get("/api/auth/sessions",
-                         [&authManager, &geoIpService](const HttpRequest& req) {
-                             if (!req.isLocal)
-                                 return HttpResponse::error(403, "Only available from localhost");
+    server.router()->get(
+        "/api/auth/sessions", [&authManager, &geoIpService](const HttpRequest& req) {
+            if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
-                             QJsonArray arr;
-                             const auto sessions = authManager.sessions();
-                             for (const auto& s : sessions) {
-                                 QJsonObject entry = s.toJson();
-                                 // "Local" for private IPs, else city/country from stored geo data
-                                 entry["location"] = AuthManager::isPrivateIP(s.ip);
-                                 arr.append(entry);
-                             }
-                             QJsonObject obj;
-                             obj["sessions"] = arr;
-                             return HttpResponse::json(obj);
-                         });
+            // Which row is the caller itself. Revoking it logs this browser out
+            // — and for the host machine's own session, costs it its admin
+            // access until it redeems a fresh host key — so the UI must be able
+            // to say so before the click rather than after.
+            const QString currentId =
+                authManager.sessionIdForToken(HttpServer::sessionTokenFromRequest(req));
+
+            QJsonArray arr;
+            const auto sessions = authManager.sessions();
+            for (const auto& s : sessions) {
+                QJsonObject entry = s.toJson();
+                // "Local" for private IPs, else city/country from stored geo data
+                entry["location"] = AuthManager::isPrivateIP(s.ip);
+                entry["current"] = !currentId.isEmpty() && s.token == currentId;
+                arr.append(entry);
+            }
+            QJsonObject obj;
+            obj["sessions"] = arr;
+            return HttpResponse::json(obj);
+        });
 
     // POST /api/auth/sessions/revoke — revoke a session (token in JSON body, localhost only)
     server.router()->post("/api/auth/sessions/revoke", [&authManager](const HttpRequest& req) {

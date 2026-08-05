@@ -36,6 +36,8 @@
 #include <QTimer>
 #include <QUuid>
 
+#include <algorithm>
+
 AuthManager::AuthManager(AppSettings* settings, QObject* parent)
     : QObject(parent)
     , m_settings(settings)
@@ -781,7 +783,24 @@ void AuthManager::purgeExpiredSessions()
 
 QList<SessionInfo> AuthManager::sessions() const
 {
-    return m_sessions.values();
+    // Deterministic order, newest first. QHash iteration order is arbitrary and
+    // — worse — changes on every rehash, so an unsorted list made the admin
+    // table reshuffle between two polls: rows moved under the pointer and a
+    // click landed on another device's Revoke button. Sorting here rather than
+    // in the UI keeps every consumer (and the tests) on the same order.
+    QList<SessionInfo> list = m_sessions.values();
+    std::sort(list.begin(), list.end(), [](const SessionInfo& a, const SessionInfo& b) {
+        if (a.createdAt != b.createdAt) return a.createdAt > b.createdAt;
+        return a.token < b.token; // stable tie-break for same-second creations
+    });
+    return list;
+}
+
+QString AuthManager::sessionIdForToken(const QString& token) const
+{
+    if (token.isEmpty()) return {};
+    const QString id = hashToken(token);
+    return m_sessions.contains(id) ? id : QString();
 }
 
 int AuthManager::remainingAttempts(const QString& ip) const

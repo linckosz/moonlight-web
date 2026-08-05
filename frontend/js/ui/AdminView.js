@@ -116,6 +116,7 @@ export class AdminView {
         this._pinConsumed = false; // true when PIN was used by remote client
         this._activeSessions = 0;
         this._sessions = [];
+        this._sessionsRendered = ''; // signature of the rows currently on screen
         this._certAuthEnabled = false;
 
         // Dirty tracking: snapshot of values at load time
@@ -127,6 +128,10 @@ export class AdminView {
         // Pagination for sessions table
         this._sessionPage = 0;
         this._sessionsPerPage = 5;
+        // Column sort for the sessions table. Empty key = backend order, which
+        // puts the streaming sessions first; clicking a header takes over.
+        this._sessionSortKey = '';
+        this._sessionSortDir = 'asc';
     }
 
     async start() {
@@ -434,6 +439,7 @@ export class AdminView {
             const result = await BackendClient.getAuthSessions();
             const sessions = result.sessions || [];
             // Streaming sessions float to the top so they're immediately visible.
+            // Array.sort is stable, so the backend's newest-first order survives.
             sessions.sort((a, b) => (b.streaming ? 1 : 0) - (a.streaming ? 1 : 0));
             this._sessions = sessions;
         } catch (err) {
@@ -442,6 +448,29 @@ export class AdminView {
             // flag on all known sessions so the UI doesn't show stale badges.
             this._sessions.forEach((s) => (s.streaming = false));
         }
+    }
+
+    /**
+     * Everything the sessions table draws, in one comparable string. The poll
+     * re-renders every 3s and a re-render replaces the rows wholesale — do that
+     * when nothing changed and the Revoke button under the pointer is destroyed
+     * and rebuilt for no reason. Worse, when something *did* change the rows
+     * move, which is how a click meant for one device revoked another.
+     */
+    _sessionsSignature() {
+        return JSON.stringify(
+            this._sessions.map((s) => [
+                s.token,
+                s.machine_name,
+                s.ip,
+                s.location,
+                s.city,
+                s.country,
+                s.created_at,
+                !!s.streaming,
+                !!s.current,
+            ]),
+        );
     }
 
     destroy() {
@@ -465,7 +494,10 @@ export class AdminView {
             // Don't clobber an in-progress rename: skip the re-render while a
             // session name cell has focus.
             const editing = this.container.querySelector('.session-name-edit:focus');
-            if (sessionsDisplay && !editing) {
+            // Nor rebuild identical rows: the table is a click target, and every
+            // rebuild is a chance for the row under the pointer to change.
+            const signature = this._sessionsSignature();
+            if (sessionsDisplay && !editing && signature !== this._sessionsRendered) {
                 this._renderSessionsTable();
             }
             // Keep the session count header in the Active Sessions section in sync
@@ -1108,33 +1140,55 @@ export class AdminView {
             </div>`;
     }
 
+    // Text shown in each sortable cell. Sorting reads the same values, so the
+    // order always matches what the column displays (a "Local Network" row sorts
+    // under its label, not under the raw IP the backend sent).
+    _sessionDisplay(s) {
+        let location = s.location || '';
+        let ip = s.ip || '';
+        if (s.location === 'Local') {
+            location = t('admin.localNetwork');
+            ip = t('admin.localNetwork');
+        } else if (s.city) {
+            location = s.city + (s.country ? ', ' + s.country : '');
+        }
+        return {
+            machine: s.machine_name || t('common.unknown'),
+            authorized: s.created_at || 0,
+            ip,
+            location,
+        };
+    }
+
     _buildSessionsTableHtml(sessions) {
         const list = sessions || this._sessions;
         const rows = list
             .map((s) => {
-                let location = this.esc(s.location || '');
-                let ip = this.esc(s.ip || '');
-                if (s.location === 'Local') {
-                    location = t('admin.localNetwork');
-                    ip = t('admin.localNetwork');
-                } else if (s.city) {
-                    location = this.esc(s.city) + (s.country ? ', ' + this.esc(s.country) : '');
-                }
+                const cells = this._sessionDisplay(s);
+                const location = this.esc(cells.location);
+                const ip = this.esc(cells.ip);
                 const streamingBadge = s.streaming
                     ? `<span class="session-streaming-badge" title="${this.esc(t('admin.streamingTitle'))}">${t('admin.streaming')}</span>`
                     : '';
+                // The browser reading this page. Revoking it logs this device
+                // out — say so on the row, not after the fact.
+                const currentBadge = s.current
+                    ? `<span class="session-current-badge" title="${this.esc(t('admin.thisDeviceTitle'))}">${t('admin.thisDevice')}</span>`
+                    : '';
                 return `
-            <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
+            <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}${s.current ? ' session-row-current' : ''}">
                 <td><span class="session-name-edit" contenteditable="plaintext-only"
                           spellcheck="false"
                           data-token="${this.esc(s.token)}"
-                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(s.machine_name || t('common.unknown'))}</span>${streamingBadge}</td>
+                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${streamingBadge}${currentBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>
                 <td>
                     <button class="btn btn-danger btn-small btn-session-revoke"
                             data-token="${this.esc(s.token)}"
+                            data-machine="${this.esc(cells.machine)}"
+                            data-current="${s.current ? '1' : ''}"
                             title="${this.esc(t('admin.revokeTitle'))}">
                         ${t('admin.revoke')}
                     </button>
@@ -1143,14 +1197,29 @@ export class AdminView {
             })
             .join('');
 
+        const headers = [
+            ['machine', t('admin.colMachine')],
+            ['authorized', t('admin.colAuthorized')],
+            ['ip', t('admin.colIp')],
+            ['location', t('admin.colLocation')],
+        ]
+            .map(([key, label]) => {
+                const active = this._sessionSortKey === key;
+                const asc = this._sessionSortDir === 'asc';
+                // aria-sort so screen readers announce the ordering the arrow shows.
+                const aria = active ? (asc ? 'ascending' : 'descending') : 'none';
+                const arrow = active ? (asc ? '▲' : '▼') : '';
+                return `<th class="sessions-th-sortable${active ? ' sorted' : ''}"
+                            data-sort="${key}" aria-sort="${aria}" tabindex="0"
+                            title="${this.esc(t('admin.sortByColumn'))}">${label}<span class="sessions-sort-arrow">${arrow}</span></th>`;
+            })
+            .join('');
+
         return `
             <table class="sessions-table">
                 <thead>
                     <tr>
-                        <th>${t('admin.colMachine')}</th>
-                        <th>${t('admin.colAuthorized')}</th>
-                        <th>${t('admin.colIp')}</th>
-                        <th>${t('admin.colLocation')}</th>
+                        ${headers}
                         <th>${t('admin.colAction')}</th>
                     </tr>
                 </thead>
@@ -1161,9 +1230,76 @@ export class AdminView {
         `;
     }
 
+    // Sessions in display order: backend order (streaming first) until a column
+    // header is clicked. Returns a copy — _sessions stays in backend order so a
+    // poll refresh doesn't fight with the chosen sort.
+    _getSortedSessions() {
+        if (!this._sessionSortKey) return this._sessions;
+        const key = this._sessionSortKey;
+        const sign = this._sessionSortDir === 'asc' ? 1 : -1;
+        return this._sessions.slice().sort((a, b) => {
+            const va = this._sessionDisplay(a)[key];
+            const vb = this._sessionDisplay(b)[key];
+            return sign * this._compareSessionValues(key, va, vb);
+        });
+    }
+
+    _compareSessionValues(key, va, vb) {
+        if (key === 'authorized') return (va || 0) - (vb || 0);
+        if (key === 'ip') {
+            // Numeric octet order when both are IPv4, so .9 comes before .10.
+            const na = this._ipToNumber(va);
+            const nb = this._ipToNumber(vb);
+            if (na !== null && nb !== null) return na - nb;
+            // A label ("Local Network") against a real address: labels last.
+            if (na !== null) return -1;
+            if (nb !== null) return 1;
+        }
+        return String(va).localeCompare(String(vb), undefined, { sensitivity: 'base' });
+    }
+
+    _ipToNumber(value) {
+        const parts = String(value).split('.');
+        if (parts.length !== 4) return null;
+        let n = 0;
+        for (const part of parts) {
+            if (!/^\d{1,3}$/.test(part)) return null;
+            const octet = parseInt(part, 10);
+            if (octet > 255) return null;
+            n = n * 256 + octet;
+        }
+        return n;
+    }
+
+    // Click (or Enter/Space) on a header: first click sorts ascending, clicking
+    // the active column again flips the direction. Sorting reshuffles every page,
+    // so we jump back to the first one.
+    _sortSessionsBy(key) {
+        if (this._sessionSortKey === key) {
+            this._sessionSortDir = this._sessionSortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+            this._sessionSortKey = key;
+            this._sessionSortDir = 'asc';
+        }
+        this._sessionPage = 0;
+        this._renderSessionsTable();
+    }
+
+    _bindSessionSortHeaders(root) {
+        root.querySelectorAll('.sessions-th-sortable').forEach((th) => {
+            th.addEventListener('click', () => this._sortSessionsBy(th.dataset.sort));
+            th.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this._sortSessionsBy(th.dataset.sort);
+                }
+            });
+        });
+    }
+
     _getPaginatedSessions() {
         const start = this._sessionPage * this._sessionsPerPage;
-        return this._sessions.slice(start, start + this._sessionsPerPage);
+        return this._getSortedSessions().slice(start, start + this._sessionsPerPage);
     }
 
     _buildPaginationHtml() {
@@ -1185,6 +1321,9 @@ export class AdminView {
     }
 
     _buildSessionsAreaHtml() {
+        // Single point where the rows are turned into markup, so the signature
+        // the poll compares against is always the one actually on screen.
+        this._sessionsRendered = this._sessionsSignature();
         if (this._sessions.length === 0) {
             return `<p class="settings-hint">${t('admin.noActiveSessions')}</p>`;
         }
@@ -1202,15 +1341,30 @@ export class AdminView {
             this._sessionPage = totalPages - 1;
         }
 
+        // innerHTML drops the focused header; remember it so keyboard sorting
+        // survives the 5s poll refresh.
+        const focusedSort = container.querySelector('.sessions-th-sortable:focus');
+        const focusedSortKey = focusedSort ? focusedSort.dataset.sort : '';
+
         container.innerHTML = this._buildSessionsAreaHtml();
+
+        if (focusedSortKey) {
+            const th = container.querySelector(
+                `.sessions-th-sortable[data-sort="${focusedSortKey}"]`,
+            );
+            if (th) th.focus();
+        }
 
         // Re-bind revoke buttons
         container.querySelectorAll('.btn-session-revoke').forEach((btn) => {
-            btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
+            btn.addEventListener('click', () => this._revokeSession(btn));
         });
 
         // Re-bind editable session names
         this._bindSessionNameEdits(container);
+
+        // Re-bind sortable column headers
+        this._bindSessionSortHeaders(container);
 
         // Re-bind pagination buttons
         const prevBtn = container.querySelector('#btn-page-prev');
@@ -1532,11 +1686,14 @@ export class AdminView {
 
         // Revoke session buttons
         this.container.querySelectorAll('.btn-session-revoke').forEach((btn) => {
-            btn.addEventListener('click', () => this._revokeSession(btn.dataset.token));
+            btn.addEventListener('click', () => this._revokeSession(btn));
         });
 
         // Editable session names
         this._bindSessionNameEdits(this.container);
+
+        // Sortable column headers of the sessions table
+        this._bindSessionSortHeaders(this.container);
 
         // Install Sunshine button (localhost only)
         const installSunBtn = this.container.querySelector('#btn-install-sunshine');
@@ -1568,20 +1725,38 @@ export class AdminView {
         }
     }
 
-    async _revokeSession(token) {
+    /**
+     * Revoke the session the clicked button belongs to. Takes the button, not a
+     * token: the machine name has to come from the very element that was
+     * clicked, so the confirmation names the device the user actually hit even
+     * if the table moved under the pointer between reading it and clicking.
+     */
+    async _revokeSession(btn) {
+        const token = btn && btn.dataset.token;
         if (!token) return;
 
-        const btn = this.container.querySelector(
-            `.btn-session-revoke[data-token="${CSS.escape(token)}"]`,
-        );
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = t('admin.revoking');
-        }
+        const machine = btn.dataset.machine || t('common.unknown');
+        const question = btn.dataset.current
+            ? t('admin.confirmRevokeCurrent', { name: machine })
+            : t('admin.confirmRevoke', { name: machine });
+        if (!confirm(question)) return;
+
+        btn.disabled = true;
+        btn.textContent = t('admin.revoking');
+
+        const wasCurrent = !!btn.dataset.current;
 
         try {
             await BackendClient.revokeSession(token);
             Toast.success(t('admin.sessionRevoked'));
+
+            // Revoking our own session logged this browser out. Reload rather
+            // than leave an admin page whose every button 403s — the app then
+            // sends us wherever we now belong (login, or the local admin page).
+            if (wasCurrent) {
+                window.location.reload();
+                return;
+            }
 
             // Remove from local list and re-render
             this._sessions = this._sessions.filter((s) => s.token !== token);
@@ -1599,10 +1774,8 @@ export class AdminView {
         } catch (err) {
             console.error('[Admin] Failed to revoke session:', err);
             Toast.error(t('admin.revokeFailed', { message: err.message }));
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = t('admin.revoke');
-            }
+            btn.disabled = false;
+            btn.textContent = t('admin.revoke');
         }
     }
 

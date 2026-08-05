@@ -180,10 +180,17 @@ public:
     void setSessionStreaming(const QString& token, bool streaming);
 
     /**
-     * Returns detailed session info for all active sessions.
-     * Used by the admin UI to display the sessions table.
+     * Returns detailed session info for all active sessions, newest first.
+     * Used by the admin UI to display the sessions table — the order must not
+     * depend on the hash layout, or rows shuffle between two refreshes.
      */
     QList<SessionInfo> sessions() const;
+
+    /** The opaque id (the value carried in sessions()/toJson and expected by
+     *  destroySession/renameSession) of the session a raw cookie token belongs
+     *  to, or an empty string when the token matches none. Lets the admin UI
+     *  point at the row that is the caller's own device. */
+    QString sessionIdForToken(const QString& token) const;
 
     /** Returns true if the PIN was auto-regenerated after being consumed
      *  (i.e. a remote client validated it). When true, the admin UI should

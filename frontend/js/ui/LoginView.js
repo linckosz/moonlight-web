@@ -46,6 +46,7 @@ export class LoginView {
         this._certAuthAvailable = false; // Server has cert auth enabled
         this._certMode = false; // User chose cert upload mode
         this._selectedFileName = '';
+        this._localUrl = ''; // https://localhost[:port] — the host machine's way back in
     }
 
     async start() {
@@ -59,6 +60,9 @@ export class LoginView {
 
         // Build default machine name from client OS + browser
         this._suggestMachineName();
+
+        // Offer the host machine its way back in (see _buildLocalUrl).
+        await this._resolveLocalUrl();
 
         // Check auth status — maybe already authenticated
         try {
@@ -87,6 +91,33 @@ export class LoginView {
 
     destroy() {
         this._stopLockoutTimer();
+    }
+
+    /**
+     * The host machine reaches its own server under the public domain like
+     * everybody else, so once its host session is gone (revoked, expired) this
+     * PIN page is all it gets — even though it sits right in front of the
+     * machine. Loopback is the one address that proves where the browser runs,
+     * and a page loaded there hands the host key back and bounces to the domain
+     * (app.js _maybeRedirectToDomain), restoring admin access for every tab on
+     * that origin. So the way home is simply "open this on localhost".
+     *
+     * Best-effort: the port comes from the public /api/server/status, and the
+     * link is dropped entirely when it cannot be read.
+     */
+    async _resolveLocalUrl() {
+        const hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return;
+        try {
+            const status = await BackendClient.getServerStatus();
+            const port = status.https_port || 443;
+            this._localUrl =
+                'https://localhost' +
+                (port !== 443 ? ':' + port : '') +
+                (window.location.pathname || '/');
+        } catch (err) {
+            console.warn('[Login] Could not read the server ports:', err);
+        }
     }
 
     /**
@@ -157,6 +188,17 @@ export class LoginView {
                         !this._loading && !this._certMode
                             ? `
                         <p class="login-hint">${t('login.pinHint')}</p>
+                    `
+                            : ''
+                    }
+
+                    ${
+                        !this._loading && this._localUrl
+                            ? `
+                        <p class="login-hint login-host-hint">
+                            ${t('login.onHostMachine')}
+                            <a href="${this.esc(this._localUrl)}" id="login-host-link">${t('login.openLocally')}</a>
+                        </p>
                     `
                             : ''
                     }
