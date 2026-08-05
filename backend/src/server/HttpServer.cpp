@@ -604,19 +604,50 @@ bool HttpServer::isLocalRequest(const QString& addr)
     return false;
 }
 
-QString HttpServer::sessionTokenFromRequest(const HttpRequest& req)
+QString HttpServer::cookieFromRequest(const HttpRequest& req, const QString& name)
 {
     QString cookie = req.headers.value("cookie");
     if (cookie.isEmpty()) return {};
 
+    const QString prefix = name + QLatin1Char('=');
     // Cookies are separated by "; " or ";"
     QStringList cookies = cookie.split(";");
     for (const QString& c : cookies) {
         QString trimmed = c.trimmed();
-        if (trimmed.startsWith("mw_session=", Qt::CaseInsensitive))
-            return trimmed.mid(QStringLiteral("mw_session=").length());
+        if (trimmed.startsWith(prefix, Qt::CaseInsensitive)) return trimmed.mid(prefix.length());
     }
     return {};
+}
+
+QString HttpServer::sessionTokenFromRequest(const HttpRequest& req)
+{
+    return cookieFromRequest(req, QStringLiteral("mw_session"));
+}
+
+void HttpServer::reportAuthFailure(const QString& ip)
+{
+    m_ConnGuard.reportAuthFailure(ip);
+}
+
+int HttpServer::slotFromWsPath(const QString& path, bool* outIsRelay)
+{
+    // "/ws" and "/ws/stream" are slot 0; "/ws3" and "/ws3/stream" are slot 3.
+    // Anything else (including "/ws/control") is not a stream socket.
+    QString rest = path;
+    if (!rest.startsWith(QLatin1String("/ws"))) return -1;
+    rest = rest.mid(3);
+
+    bool isRelay = false;
+    if (rest.endsWith(QLatin1String("/stream"))) {
+        isRelay = true;
+        rest.chop(7);
+    }
+    if (outIsRelay) *outIsRelay = isRelay;
+
+    if (rest.isEmpty()) return 0;
+    bool ok = false;
+    const int slot = rest.toInt(&ok);
+    return (ok && slot > 0) ? slot : -1;
 }
 
 bool HttpServer::isAuthenticated(const HttpRequest& req) const
@@ -958,9 +989,12 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // Exemptions: localhost, /api/auth/*, /api/health, /api/server/hostname.
     // Only /api/server/hostname is public (the login screen displays the PC name
     // before authentication); /api/server/status (ports) now requires a session.
+    // /api/share/player/* is the one other public surface: a player has no
+    // MoonlightWeb session and never gets one — those routes authenticate the
+    // device from its own mw_player cookie and report their own failures.
     if (m_AuthManager && !localPrivilege && req.path != "/api/health" &&
         req.path != "/api/server/hostname" && !req.path.startsWith("/api/auth/") &&
-        !isAuthenticated(req)) {
+        !req.path.startsWith("/api/share/player/") && !isAuthenticated(req)) {
         // Unauthenticated remote API hit = credential scanning; feed the guard
         // so repeated failures ban the source IP.
         m_ConnGuard.reportAuthFailure(req.clientAddress);
@@ -1043,15 +1077,56 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
         return;
     }
 
-    // ── Auth check: validate session cookie before proxying WS upgrade ────
+    // Parse the WebSocket path from the upgrade request to determine the target.
+    //   GET /ws          → proxy to m_SignalingPort (WebRTC signaling, slot 0)
+    //   GET /ws/stream   → proxy to m_StreamRelayPort (legacy WSS, slot 0)
+    //   GET /ws/control  → proxy to m_ControlPort (single-tab dedup channel)
+    //   GET /wsN         → proxy to slot N's signaling (1 = owner standby,
+    //   GET /wsN/stream  → proxy to slot N's legacy relay   2.. = players)
+    QString firstLine = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n")));
+    QString path = firstLine.section(' ', 1, 1);
+
+    bool wsIsRelay = false;
+    const int wsSlot = slotFromWsPath(path, &wsIsRelay);
+    const bool playerSlot = wsSlot >= m_FirstPlayerSlot;
+
+    quint16 targetPort = m_SignalingPort;
+    if (path == QLatin1String("/ws/control")) {
+        targetPort = m_ControlPort;
+    } else if (wsSlot == 0) {
+        targetPort = wsIsRelay ? m_StreamRelayPort : m_SignalingPort;
+    } else if (wsSlot > 0) {
+        const SlotPorts ports = m_SlotPorts.value(wsSlot);
+        targetPort = wsIsRelay ? ports.relay : ports.signaling;
+        if (targetPort == 0) {
+            Logger::warning(QString("[HttpServer] WebSocket upgrade for unconfigured slot %1")
+                                .arg(wsSlot));
+            sendResponse(clientSocket, HttpResponse::error(404, "Not Found"));
+            return;
+        }
+    }
+
+    // ── Auth check: validate the caller before proxying the WS upgrade ────
     // Same Host requirement as the REST path: a rebound name must not inherit
     // the local peer's exemption, and neither must the public domain — behind a
     // TLS-terminating tunnel every visitor arrives from loopback under it, and
     // this channel carries keyboard and mouse. The host machine reaching itself
     // through the domain still passes: it holds a host-key session.
+    //
+    // A player's slot is the exception: those callers have no MoonlightWeb
+    // session and never will, so the mw_player cookie bound to that slot's
+    // activation is what opens it — and nothing else, not even a local peer.
     const bool localPrivilege = HttpServer::isLocalRequest(peerAddr) &&
                                 RequestGuard::isLocalHostName(up.headers.value("host"));
-    if (m_AuthManager && !localPrivilege) {
+    if (playerSlot) {
+        if (!m_PlayerSlotAuth || !m_PlayerSlotAuth(up, wsSlot)) {
+            m_ConnGuard.reportAuthFailure(peerAddr);
+            QJsonObject obj;
+            obj["error"] = "authentication_required";
+            sendResponse(clientSocket, HttpResponse::json(obj, 401));
+            return;
+        }
+    } else if (m_AuthManager && !localPrivilege) {
         if (!m_AuthManager->validateSession(sessionTokenFromRequest(up))) {
             m_ConnGuard.reportAuthFailure(peerAddr);
             QJsonObject obj;
@@ -1061,20 +1136,6 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
             return;
         }
     }
-
-    // Parse the WebSocket path from the upgrade request to determine the target.
-    //   GET /ws          → proxy to m_SignalingPort (WebRTC signaling, slot 0)
-    //   GET /ws/stream   → proxy to m_StreamRelayPort (legacy WSS, slot 0)
-    //   GET /ws/control  → proxy to m_ControlPort (single-tab dedup channel)
-    //   GET /ws1         → proxy to m_Slot1SignalingPort (stream slot 1)
-    //   GET /ws1/stream  → proxy to m_Slot1StreamRelayPort (stream slot 1)
-    QString firstLine = QString::fromUtf8(requestData.left(requestData.indexOf("\r\n")));
-    QString path = firstLine.section(' ', 1, 1);
-    quint16 targetPort = (path == "/ws/stream")    ? m_StreamRelayPort
-                         : (path == "/ws/control") ? m_ControlPort
-                         : (path == "/ws1")        ? m_Slot1SignalingPort
-                         : (path == "/ws1/stream") ? m_Slot1StreamRelayPort
-                                                   : m_SignalingPort;
 
     qInfo() << "[HttpServer] WebSocket upgrade detected, path=" << path
             << "targetPort=" << targetPort;

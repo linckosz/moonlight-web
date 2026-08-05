@@ -60,13 +60,27 @@ public:
     /// The HttpServer proxies wss://host/ws/control to this local port.
     void setControlPort(quint16 port) { m_ControlPort = port; }
 
-    /// Ports for the SECOND concurrent stream slot (dual-stream seamless
-    /// switching): wss://host/ws1 → signaling, wss://host/ws1/stream → relay.
-    void setSlot1Ports(quint16 signalingPort, quint16 streamRelayPort)
+    /// Ports for a concurrent stream slot above slot 0: wss://host/wsN →
+    /// signaling, wss://host/wsN/stream → relay. Slot 1 is the owner's standby
+    /// (seamless quality switching); slots 2 and up belong to invited players.
+    void setSlotPorts(int slot, quint16 signalingPort, quint16 streamRelayPort)
     {
-        m_Slot1SignalingPort = signalingPort;
-        m_Slot1StreamRelayPort = streamRelayPort;
+        if (slot <= 0) return; // slot 0 uses setSignalingPort/setStreamRelayPort
+        m_SlotPorts[slot] = {signalingPort, streamRelayPort};
     }
+
+    /// Decide whether a WebSocket upgrade may reach a player slot's signaling.
+    /// Player slots carry no MoonlightWeb session, so the generic cookie check
+    /// would refuse every one of them; this hands the question to ShareManager,
+    /// which answers from the mw_player cookie bound to that slot's activation.
+    /// Slots with no authorizer set stay closed.
+    void setPlayerSlotAuthorizer(std::function<bool(const HttpRequest&, int slot)> fn)
+    {
+        m_PlayerSlotAuth = std::move(fn);
+    }
+
+    /// Slots at or above this index belong to players, not to the owner.
+    void setFirstPlayerSlot(int slot) { m_FirstPlayerSlot = slot; }
 
     /// The port the HTTPS server actually bound to (0 if not started).
     quint16 activeHttpsPort() const { return m_ActiveHttpsPort; }
@@ -126,6 +140,16 @@ public:
     /// Extract the raw mw_session cookie token from a request ("" if absent).
     static QString sessionTokenFromRequest(const HttpRequest& req);
 
+    /// Extract any cookie by name ("" if absent). Session sharing reads its own
+    /// mw_player cookie through this.
+    static QString cookieFromRequest(const HttpRequest& req, const QString& name);
+
+    /// Count a failed credential check against @p ip. Routes that authenticate
+    /// callers themselves — the player-side share routes, which are exempt from
+    /// the generic session gate — feed the abuse guard through here, so a leaked
+    /// share link being hammered ends in the same ban as PIN scanning.
+    void reportAuthFailure(const QString& ip);
+
     /// Whether @p req carries the per-run admin key (X-MW-Admin-Key header),
     /// which admin writes require on top of coming from the host machine. The
     /// key is served by GET /api/admin/token to local callers only; a foreign
@@ -184,9 +208,23 @@ private:
     quint16 m_SignalingPort = 48001;
     quint16 m_StreamRelayPort = 48002;
     quint16 m_ControlPort = 48003;
-    // Second concurrent stream slot (dual-stream seamless switching).
-    quint16 m_Slot1SignalingPort = 48011;
-    quint16 m_Slot1StreamRelayPort = 48012;
+
+    /// Signaling + relay ports of the concurrent stream slots above slot 0,
+    /// keyed by slot: 1 = owner standby, 2.. = invited players.
+    struct SlotPorts
+    {
+        quint16 signaling = 0;
+        quint16 relay = 0;
+    };
+    QMap<int, SlotPorts> m_SlotPorts;
+
+    /// Player-slot gate (see setPlayerSlotAuthorizer). Null = closed.
+    std::function<bool(const HttpRequest&, int slot)> m_PlayerSlotAuth;
+    int m_FirstPlayerSlot = 2;
+
+    /// Parse "/wsN" or "/wsN/stream" into its slot and whether it targets the
+    /// legacy relay. Returns -1 for a path that is not a stream socket.
+    static int slotFromWsPath(const QString& path, bool* outIsRelay);
 
     QMap<QTcpSocket*, QByteArray> m_Buffers;
     QSet<QTcpSocket*> m_PendingAsyncSockets;

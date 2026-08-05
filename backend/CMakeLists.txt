@@ -170,8 +170,10 @@ add_executable(mw-server
     src/server/CertManager.cpp
     src/server/StaticFileHandler.cpp
     src/server/RestRouter.cpp
+    src/server/ShareManager.cpp
     src/server/routes/AuthRoutes.cpp
     src/server/routes/HostRoutes.cpp
+    src/server/routes/ShareRoutes.cpp
     src/server/routes/SystemRoutes.cpp
     src/common/Logger.cpp
     src/common/CrashHandler.cpp
@@ -350,10 +352,17 @@ if(MW_BUILD_TESTS)
         tests/test_connection_guard.cpp
         tests/test_request_guard.cpp
         tests/test_api_csrf.cpp
+        tests/test_share_manager.cpp
         src/server/ConnectionGuard.cpp
         src/server/HttpParser.cpp
         src/server/RequestGuard.cpp
+        # Session sharing: the link/PIN state machine is pure Qt Core logic on
+        # purpose, so the credentials guarding a shareable link are verified on
+        # every platform like the rest of the security units.
+        src/server/ShareManager.cpp
+        src/common/Logger.cpp
     )
+    set_target_properties(mw-security-tests PROPERTIES AUTOMOC ON)
     target_include_directories(mw-security-tests PRIVATE src tests)
     target_link_libraries(mw-security-tests PRIVATE Qt6::Core Qt6::Network)
     add_test(NAME security-tnr COMMAND mw-security-tests)
