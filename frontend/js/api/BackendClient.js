@@ -92,7 +92,11 @@ export class BackendClient {
         // Force page reload on auth errors — session expired or revoked.
         // Skip auth endpoints (expected to return 401) and use sessionStorage
         // guard to prevent infinite reload loops.
-        const isAuthEndpoint = path.startsWith('/api/auth/');
+        // Player routes answer 401 for a wrong PIN or a dead link — that is the
+        // normal path for a guest who has no session at all, and reloading the
+        // page would throw away the join screen instead of showing the error.
+        const isAuthEndpoint =
+            path.startsWith('/api/auth/') || path.startsWith('/api/share/player/');
         if (!isAuthEndpoint && (resp.status === 401 || msg === 'authentication_required')) {
             if (!sessionStorage.getItem('mw_auth_reload')) {
                 sessionStorage.setItem('mw_auth_reload', '1');
@@ -257,6 +261,55 @@ export class BackendClient {
             { client_uniqueid: this.clientUniqueId(), ...extra },
             { timeoutMs: 5000 },
         );
+    }
+
+    /**
+     * Force the host's running app down, whoever started it. The scoped
+     * quitApp above needs a live view to name its slot and uniqueid; this is
+     * the way out when there is none left.
+     */
+    static async stopHostSession(hostId) {
+        return this.post(`/api/hosts/${hostId}/stop-session`, {}, { timeoutMs: 15000 });
+    }
+
+    // ── Session sharing ────────────────────────────────────────────────────
+    // Owner side: the three player rows behind the Share button. Any
+    // authenticated user may share; no admin key involved.
+
+    static async getShareStatus() {
+        return this.get('/api/share/status');
+    }
+    /** Mint a fresh link + PIN for a player slot, revoking the previous pair. */
+    static async shareActivate(slot) {
+        return this.post(`/api/share/slots/${slot}/activate`);
+    }
+    /** Update input permissions while the popin is still open. */
+    static async sharePermissions(slot, permissions) {
+        return this.post(`/api/share/slots/${slot}/permissions`, permissions);
+    }
+    /** Freeze the permissions for the rest of this activation (popin closed). */
+    static async shareLock(slot) {
+        return this.post(`/api/share/slots/${slot}/lock`);
+    }
+    /** Revoke a share: link, PIN and any live stream on that slot. */
+    static async shareDeactivate(slot) {
+        return this.post(`/api/share/slots/${slot}/deactivate`);
+    }
+
+    // Player side: no session cookie, no admin key — the mw_player cookie the
+    // PIN buys is the only credential, and it only opens these four.
+
+    static async playerInfo(token) {
+        return this.get(`/api/share/player/info?token=${encodeURIComponent(token)}`);
+    }
+    static async playerPin(token, pin) {
+        return this.post('/api/share/player/pin', { token, pin });
+    }
+    static async playerJoin(token, height) {
+        return this.post('/api/share/player/join', { token, height }, { timeoutMs: 25000 });
+    }
+    static async playerLeave() {
+        return this.post('/api/share/player/leave', {}, { timeoutMs: 5000 });
     }
 
     // Open macOS' Screen Recording privacy pane on the host so the user can

@@ -116,6 +116,7 @@ export class WebRtcMedia {
         this.onStats = null; // (msg: object) stats/pong messages from backend
         this.onTakeover = null; // () session taken over by another device
         this.onRevoked = null; // () this device's access was revoked by the admin
+        this.onSessionEnded = null; // () the owner ended the session we were invited to
 
         // Stats
         this.stats = { framesReceived: 0, chunksReceived: 0, framesDropped: 0, framesAssembled: 0 };
@@ -582,6 +583,8 @@ export class WebRtcMedia {
                         if (this.onTakeover) this.onTakeover();
                     } else if (msg.type === 'revoked') {
                         if (this.onRevoked) this.onRevoked();
+                    } else if (msg.type === 'session-ended') {
+                        if (this.onSessionEnded) this.onSessionEnded();
                     } else {
                         console.log('[WebRtcMedia] Input DC message:', msg);
                     }

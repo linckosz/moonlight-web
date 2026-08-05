@@ -915,7 +915,8 @@ self.onmessage = (e) => {
                 S.renderer = r;
                 // The requested algo is the ceiling: the governor only steps
                 // below it, and only while the GPU cost does not fit a frame.
-                if (r.kind === 'webgpu') S.governor = new EnhancerGovernor(m.algo);
+                if (r.kind === 'webgpu')
+                    S.governor = new EnhancerGovernor(m.algo, m.enhancerProfile || {});
                 // Apply an output size that may have arrived before the renderer.
                 if (S.outW > 0 && S.outH > 0) r.setOutputSize(S.outW, S.outH);
                 console.log(

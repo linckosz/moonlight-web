@@ -150,3 +150,55 @@ describe('EnhancerGovernor', () => {
         expect(gov.level).toBe('fsr1');
     });
 });
+
+/**
+ * The profile an invited player streams under. Their session is fixed at 60fps
+ * and they chose none of it, so the promise is a flat cost cap rather than a
+ * share of a frame budget that depends on their own link.
+ */
+describe('EnhancerGovernor — invited player profile', () => {
+    const PLAYER = { fixedBudgetMs: 8, warmupMs: 10000, noRecovery: true };
+
+    it('ignores the first 10 seconds, however expensive', () => {
+        const gov = new EnhancerGovernor('sgsr', PLAYER);
+        // 20ms a frame is way over the cap, but this is shader compilation and
+        // a cold pipeline — not the steady cost.
+        expect(feed(gov, { serviceMs: 20, arrivalMs: 16.7 }, 9)).toEqual([]);
+        expect(gov.level).toBe('sgsr');
+    });
+
+    it('drops SGSR once it costs more than 8ms past the warm-up', () => {
+        const gov = new EnhancerGovernor('sgsr', PLAYER);
+        const steps = feed(gov, { serviceMs: 9, arrivalMs: 16.7 }, 20);
+        expect(steps.map((s) => s.algo)).toEqual(['off']);
+        expect(gov.degraded).toBe(true);
+    });
+
+    it('holds SGSR at a cost the owner ladder would also accept', () => {
+        const gov = new EnhancerGovernor('sgsr', PLAYER);
+        // 6ms fits the 8ms cap; the adaptive rule (0.8 x 16.7 = 13.4ms) would
+        // hold it too — this is the case where the two agree.
+        expect(feed(gov, { serviceMs: 6, arrivalMs: 16.7 }, 60)).toEqual([]);
+        expect(gov.level).toBe('sgsr');
+    });
+
+    it('applies the cap where the adaptive budget would not have', () => {
+        const gov = new EnhancerGovernor('sgsr', PLAYER);
+        // 11ms is under 0.8 x 16.7, so the owner's governor holds — but the
+        // player was promised 8ms.
+        const steps = feed(gov, { serviceMs: 11, arrivalMs: 16.7 }, 20);
+        expect(steps.map((s) => s.algo)).toEqual(['off']);
+
+        const owner = new EnhancerGovernor('sgsr');
+        expect(feed(owner, { serviceMs: 11, arrivalMs: 16.7 }, 20)).toEqual([]);
+    });
+
+    it('never comes back once dropped', () => {
+        const gov = new EnhancerGovernor('sgsr', PLAYER);
+        feed(gov, { serviceMs: 12, arrivalMs: 16.7 }, 20);
+        expect(gov.level).toBe('off');
+        // Idle GPU for five minutes: predictable beats optimal for a guest.
+        expect(feed(gov, { serviceMs: 0.5, arrivalMs: 16.7 }, 300, 40000)).toEqual([]);
+        expect(gov.level).toBe('off');
+    });
+});

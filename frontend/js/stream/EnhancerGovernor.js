@@ -68,8 +68,18 @@ const MAX_BUDGET_MS = 200;
 export class EnhancerGovernor {
     /**
      * @param {string} preferred The user's setting — the ceiling, never exceeded.
+     * @param {{fixedBudgetMs?: number, warmupMs?: number, noRecovery?: boolean}} [profile]
+     *   Overrides for a session that is not the owner's own:
+     *   - fixedBudgetMs replaces the frame-arrival budget with a flat cost cap.
+     *     An invited player's stream is fixed at 60fps and the guest never chose
+     *     any of this, so "does it fit in 8ms" is a promise we can state up
+     *     front, where the adaptive budget would depend on their link.
+     *   - warmupMs ignores everything before it: the first seconds include
+     *     shader compilation and pipeline warm-up, which are not the steady cost.
+     *   - noRecovery keeps the enhancer off once it has been dropped —
+     *     predictable beats optimal for someone who is only visiting.
      */
-    constructor(preferred) {
+    constructor(preferred, profile = {}) {
         const idx = ENHANCER_LADDER.indexOf(preferred);
         this._ceiling = idx >= 0 ? idx : 0;
         this._level = this._ceiling;
@@ -78,6 +88,11 @@ export class EnhancerGovernor {
         this._recoverAfterMs = RECOVER_BASE_MS;
         this._lastRecoveryMs = 0;
         this._settleUntil = 0;
+        this._fixedBudgetMs = profile.fixedBudgetMs > 0 ? profile.fixedBudgetMs : 0;
+        this._warmupMs = profile.warmupMs > 0 ? profile.warmupMs : 0;
+        this._noRecovery = profile.noRecovery === true;
+        /** First observation's timestamp — the warm-up is measured from there. */
+        this._firstObsMs = 0;
     }
 
     /** Current algo — what the renderer should be running. */
@@ -120,7 +135,22 @@ export class EnhancerGovernor {
             return null;
         }
 
-        if (wait > budget * DEGRADE_RATIO) {
+        // Warm-up: shader compilation and a cold pipeline are not the cost this
+        // is meant to judge.
+        if (this._warmupMs > 0) {
+            if (this._firstObsMs === 0) this._firstObsMs = now;
+            if (now - this._firstObsMs < this._warmupMs) {
+                this._degradeSince = 0;
+                this._recoverSince = 0;
+                return null;
+            }
+        }
+
+        // A flat cap replaces the frame-arrival budget when one was set.
+        const degradeAbove = this._fixedBudgetMs > 0 ? this._fixedBudgetMs : budget * DEGRADE_RATIO;
+        const recoverBelow = this._fixedBudgetMs > 0 ? -1 : budget * RECOVER_RATIO;
+
+        if (wait > degradeAbove) {
             this._recoverSince = 0;
             if (this._degradeSince === 0) this._degradeSince = now;
             if (now - this._degradeSince < DEGRADE_SUSTAIN_MS) return null;
@@ -135,7 +165,7 @@ export class EnhancerGovernor {
             return this.level;
         }
 
-        if (wait < budget * RECOVER_RATIO && this._level > this._ceiling) {
+        if (!this._noRecovery && wait < recoverBelow && this._level > this._ceiling) {
             this._degradeSince = 0;
             if (this._recoverSince === 0) this._recoverSince = now;
             if (now - this._recoverSince < this._recoverAfterMs) return null;
