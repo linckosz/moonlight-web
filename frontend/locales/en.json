@@ -154,7 +154,9 @@
         "unableToConnect": "Unable to connect to server",
         "invalidCert": "Invalid certificate. Check that you have the correct file.",
         "verificationFailed": "Verification failed",
-        "readFileError": "Failed to read file"
+        "readFileError": "Failed to read file",
+        "onHostMachine": "On the host machine itself?",
+        "openLocally": "Open it via localhost"
     },
     "pairing": {
         "title": "Pair with {{name}}",
@@ -316,6 +318,7 @@
         "colIp": "IP",
         "colLocation": "Location",
         "colAction": "Action",
+        "sortByColumn": "Sort by this column",
         "localNetwork": "Local Network",
         "prevPage": "« Previous",
         "nextPage": "Next »",
@@ -379,7 +382,11 @@
         "sunshineRunning": "Sunshine is installed and running.",
         "sunshineStopped2": "Sunshine is installed but not running.",
         "openSunshineConfig": "Open Sunshine configuration",
-        "openSunshineConfigHint": "Sunshine has no window: on macOS it runs in the background (top-right menu bar), on Windows/Linux in the tray. Configure it from its web interface. Sign in with the Sunshine username and password you set."
+        "openSunshineConfigHint": "Sunshine has no window: on macOS it runs in the background (top-right menu bar), on Windows/Linux in the tray. Configure it from its web interface. Sign in with the Sunshine username and password you set.",
+        "thisDevice": "This device",
+        "thisDeviceTitle": "The browser showing this page",
+        "confirmRevoke": "Revoke the session of \"{{name}}\"? That device will have to enter a PIN again.",
+        "confirmRevokeCurrent": "\"{{name}}\" is the device you are using right now. Revoking it signs this browser out — on the host machine you will have to reopen the page from localhost (or the tray icon) to get admin access back. Continue?"
     },
     "stream": {
         "stop": "Stop",

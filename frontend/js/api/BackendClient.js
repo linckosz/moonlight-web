@@ -348,6 +348,13 @@ export class BackendClient {
         return this.get('/api/server/hostname');
     }
 
+    /** Ports the server actually listens on: { http_port, https_port }. Public
+     *  (no session needed) — the login page uses it to build the https://localhost
+     *  URL that lets the host machine re-prove itself. */
+    static async getServerStatus() {
+        return this.get('/api/server/status');
+    }
+
     /** Check whether a newer MoonlightWeb release is available for this host.
      *  Returns { current, latest, update_available, download_url, release_url,
      *  asset_name, self_update: { supported, method, requires_host_confirmation } }.

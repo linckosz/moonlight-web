@@ -752,6 +752,29 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
+/* Sortable headers: plain until hovered, brighter once they drive the order. */
+.sessions-table th.sessions-th-sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    outline: none;
+    transition: color 0.12s ease;
+}
+.sessions-table th.sessions-th-sortable:hover,
+.sessions-table th.sessions-th-sortable.sorted {
+    color: var(--text-1);
+}
+.sessions-table th.sessions-th-sortable:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--c-accent, var(--border-1));
+    border-radius: var(--radius-1);
+}
+.sessions-sort-arrow {
+    display: inline-block;
+    width: 1em;
+    margin-left: 4px;
+    font-size: 0.75em;
+    color: var(--c-accent, var(--text-2));
+}
 .sessions-table td {
     padding: 8px 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -806,6 +829,21 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     white-space: nowrap;
     animation: session-streaming-pulse 1.6s ease-in-out infinite;
 }
+/* "This device": the row whose Revoke button logs the reader out. Muted, not
+   alarming — it marks a row, it does not warn about one. */
+.session-current-badge {
+    display: inline-block;
+    margin-left: var(--space-2);
+    padding: 1px 8px;
+    border-radius: var(--radius-pill);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-2);
+    background: rgba(255, 255, 255, 0.08);
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
 @keyframes session-streaming-pulse {
     0%,
     100% {

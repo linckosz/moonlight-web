@@ -147,6 +147,16 @@
     line-height: 1.5;
 }
 
+/* "On the host machine? Open it locally" — a way back in, not a second login
+   method: it sits below the PIN hint and stays as quiet as it. */
+.login-host-hint {
+    margin-top: var(--space-2);
+}
+.login-host-hint a {
+    color: var(--c-accent, var(--text-2));
+    text-decoration: underline;
+}
+
 /* Loading state (auth status check) */
 .login-loading {
     display: flex;
