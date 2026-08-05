@@ -66,6 +66,7 @@ import { t } from '../i18n/i18n.js';
 /** @typedef {import('../types/transport.js').StreamTransport} StreamTransport */
 import { escapeHtml } from '../util/escapeHtml.js';
 import { Icons } from './icons.js';
+import { ShareMenu } from './ShareMenu.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
@@ -188,6 +189,23 @@ export class StreamView {
         // retiring one leg of a dual stream never cancels the other.
         this._sessionSlot = typeof opts.sessionSlot === 'number' ? opts.sessionSlot : 0;
         this._slotUniqueId = opts.slotUniqueId || null;
+        // ── Player mode (invited guest) ─────────────────────────────────────
+        // A player's view is the same stream pipeline with the owner's controls
+        // taken away: Stop becomes Leave (their leaving must not end the game),
+        // there is no Share menu and no seamless quality switch — changing
+        // resolution means leaving and rejoining.
+        this._playerMode = opts.playerMode === true;
+        this._shareToken = opts.shareToken || null;
+        // A guest gets SGSR1 with a promise attached: it is dropped for good if
+        // it costs more than 8ms per frame, measured after a 10s warm-up. The
+        // owner's adaptive ladder (a share of their own frame budget) would make
+        // the answer depend on the visitor's link instead of on the GPU.
+        this._enhancerProfile = this._playerMode
+            ? { fixedBudgetMs: 8, warmupMs: 10000, noRecovery: true }
+            : {};
+        /** Called when the owner ended the shared session (backend notice). */
+        this.onSessionEnded = opts.onSessionEnded || null;
+        this._shareMenu = null;
         // Audio time-stretch (WSOLA) — server-controlled kill switch.
         this._audioTimeStretch = audioTimeStretch !== false;
         // Mobile only: direct touch-screen input (absolute finger position) in
@@ -589,6 +607,9 @@ export class StreamView {
         // Device access revoked by the admin → same forced-exit path.
         this.webrtc.onRevoked = () => this._handleRevoked();
 
+        // The owner stopped the session a player was invited to.
+        this.webrtc.onSessionEnded = () => this._handleSessionEnded();
+
         // Physical keys currently held down (e.code → keyup payload). Used to
         // release everything when the window loses focus: the OS can steal focus
         // mid-press (e.g. the Windows key opens the local Start menu), so the
@@ -743,8 +764,10 @@ export class StreamView {
         // beforeunload: fire-and-forget quit when tab/window is closed
         this._onBeforeUnload = () => {
             if (this._quitting) return;
+            // A player closing their tab only frees their own slot — the
+            // owner's game and their invitation both survive it.
             navigator.sendBeacon(
-                `/api/hosts/${this.host.uuid}/quit`,
+                this._playerMode ? '/api/share/player/leave' : `/api/hosts/${this.host.uuid}/quit`,
                 new Blob(['{}'], { type: 'application/json' }),
             );
         };
@@ -1049,7 +1072,13 @@ export class StreamView {
         }
         el.innerHTML = `
             <div class="stream-header">
-                <button class="btn stream-quit-btn" id="btn-stream-quit">${IS_MOBILE_OR_TABLET ? t('stream.stop') : t('stream.stopStreaming')}</button>
+                <button class="btn stream-quit-btn" id="btn-stream-quit">${
+                    this._playerMode
+                        ? t('player.leave')
+                        : IS_MOBILE_OR_TABLET
+                          ? t('stream.stop')
+                          : t('stream.stopStreaming')
+                }</button>
             </div>
             <div class="stream-canvas-area">
                 <canvas id="stream-canvas" class="stream-canvas"></canvas>
@@ -1142,6 +1171,18 @@ export class StreamView {
 
         /** @type {HTMLElement} */ (el.querySelector('#btn-stream-quit')).onclick = () =>
             this._handleManualQuit();
+
+        // ── Share menu (owner only) ────────────────────────────────────────
+        // A standby view is invisible and about to replace the live one, so it
+        // never grows its own menu; a player has nothing to share.
+        if (!this._standby && !this._playerMode) {
+            const header = /** @type {HTMLElement} */ (el.querySelector('.stream-header'));
+            const quitBtn = /** @type {HTMLElement} */ (el.querySelector('#btn-stream-quit'));
+            this._shareMenu = new ShareMenu(header, quitBtn);
+            this._shareMenu.mount().then((mounted) => {
+                if (!mounted) this._shareMenu = null;
+            });
+        }
 
         // ── Streaming stats overlay (top-center card, elegant styling) ─────
         this._overlayEl = document.createElement('div');
@@ -1410,6 +1451,7 @@ export class StreamView {
                     tearing: this._tearing,
                     webgpu: this._wantWebGpu,
                     algo: this._videoEnhancementAlgo,
+                    enhancerProfile: this._enhancerProfile,
                     hdr: this._hdrEnabled,
                     pacing: this._pacingEnabled,
                 },
@@ -3206,7 +3248,10 @@ export class StreamView {
                         // Enhancer ladder for the main-thread path (the worker
                         // runs its own): the setting is the ceiling.
                         if (r.kind === 'webgpu')
-                            this._governor = new EnhancerGovernor(this._videoEnhancementAlgo);
+                            this._governor = new EnhancerGovernor(
+                                this._videoEnhancementAlgo,
+                                this._enhancerProfile,
+                            );
                         console.log(
                             '[StreamView] renderer=' +
                                 r.kind +
@@ -6007,6 +6052,16 @@ export class StreamView {
     }
 
     /**
+     * The owner ended the session this player was invited to. Same graceful
+     * exit as a take-over, then the player page takes over and explains it —
+     * the guest did nothing wrong and should not see an error.
+     */
+    _handleSessionEnded() {
+        this._sessionEndedByOwner = true;
+        this._handleForcedExit(t('player.endedTitle'), t('player.endedBody'));
+    }
+
+    /**
      * Backend-initiated exit (take-over / revocation): show the 2s cyberpunk
      * "connection terminated" transition, then quit locally (no backend /quit).
      */
@@ -6341,6 +6396,16 @@ export class StreamView {
         if (takenOver) {
             // Session already reclaimed — just close our transport locally.
             this.webrtc.close();
+        } else if (this._playerMode) {
+            // A guest leaving frees their slot and nothing else: the owner's
+            // game keeps running and their invitation stays valid until the
+            // owner revokes it or the eight hours run out.
+            try {
+                await BackendClient.playerLeave();
+            } catch (err) {
+                console.warn('[StreamView] Leave failed:', err);
+            }
+            this.webrtc.close();
         } else {
             try {
                 // Scope the backend /quit to THIS view's slot + uniqueid so a
@@ -6378,6 +6443,11 @@ export class StreamView {
         this.stopRenderLoop();
         this.unbindEvents();
         this.webrtc.close();
+
+        if (this._shareMenu) {
+            this._shareMenu.destroy();
+            this._shareMenu = null;
+        }
 
         if (this._pingInterval) {
             clearInterval(this._pingInterval);

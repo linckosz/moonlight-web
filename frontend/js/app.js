@@ -51,6 +51,7 @@ import { SettingsView } from './ui/SettingsView.js';
 import { AdminView } from './ui/AdminView.js';
 import { LoginView } from './ui/LoginView.js';
 import { SetupView } from './ui/SetupView.js';
+import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
@@ -137,6 +138,15 @@ const MoonlightApp = {
 
         // Block browser zoom on the app UI (allowed only on the stream surfaces).
         this._initZoomGuard();
+
+        // ── Invited player (/p/<token>) ────────────────────────────────────
+        // A guest has no account and no host list: their page is the join
+        // screen and, after that, the stream. Handled before the auth check,
+        // which would otherwise bounce them to a login they cannot pass.
+        if (window.location.pathname.startsWith('/p/')) {
+            await this._initPlayerMode();
+            return;
+        }
 
         // iOS: pre-buffer the audio-session unlock element and authorize it on
         // the first user interaction, so the launch-click unlock reliably starts
@@ -268,6 +278,63 @@ const MoonlightApp = {
         // must not be disrupted) — nothing to navigate.
         if (this._nav.overlay === 'admin') return;
         this._openOverlay('admin');
+    },
+
+    // =========================================================================
+    // Invited player (/p/<token>)
+    // =========================================================================
+
+    /**
+     * The whole app for a guest: the join screen, then the stream, then one of
+     * the two dead ends (dead link, session ended by the owner). No session
+     * cookie is ever involved — the PIN buys a cookie scoped to this one
+     * invitation, and that is the guest's only credential.
+     */
+    async _initPlayerMode() {
+        const token = decodeURIComponent(window.location.pathname.slice('/p/'.length));
+        const container = document.getElementById('app');
+
+        // A guest sees no app chrome at all.
+        document.body.classList.add('player-mode');
+        document.querySelectorAll('header, footer').forEach((el) => {
+            /** @type {HTMLElement} */ (el).style.display = 'none';
+        });
+
+        const view = new PlayerJoinView(container, token, async ({ height }) => {
+            const result = await BackendClient.playerJoin(token, height);
+
+            // StreamView renders (and connects) from its constructor, so the
+            // join screen has to be gone first.
+            container.innerHTML = '';
+
+            // The launch payload is the same shape as the owner's, so the whole
+            // stream pipeline is reused verbatim — only the controls differ.
+            const streamView = this._createStreamView(
+                result,
+                { uuid: '', name: view.info.machine_name, displayName: view.info.machine_name },
+                {
+                    // A guest gets no say over the pipeline: the backend fixed
+                    // 60 fps, codec, bitrate and SDR. What is left is comfort.
+                    show_performance_stats: false,
+                    video_enhancement: 'on',
+                    video_enhancement_algo: 'sgsr',
+                },
+                {
+                    sessionSlot: typeof result.slot === 'number' ? result.slot : 2,
+                    playerMode: true,
+                    shareToken: token,
+                },
+            );
+            this.streamView = streamView;
+            streamView.onQuit = () => {
+                this.streamView = null;
+                // Back to the join screen: the invitation outlives the stream.
+                if (streamView._sessionEndedByOwner) view.renderEnded();
+                else view.refresh();
+            };
+        });
+
+        await view.start();
     },
 
     // =========================================================================

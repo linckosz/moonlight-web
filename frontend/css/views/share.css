@@ -1,0 +1,370 @@
+/* MoonlightWeb — Session sharing
+ *
+ * Two surfaces: the owner's Share menu in the stream header, and the invited
+ * player's page. Both follow the CP2077 tokens; the pale state colours asked
+ * for in the spec are tinted versions of the semantic neons, dimmed enough to
+ * read as "status" rather than "alarm" on the near-black header.
+ */
+
+/* ── Owner: Share button + dropdown ────────────────────────────────────── */
+
+.share-menu {
+    position: relative;
+    margin-right: 10px;
+}
+
+.share-btn {
+    padding: 7px 18px;
+    font-size: 12.5px;
+    background: var(--surface-3);
+    color: var(--text-1);
+    border: none;
+    box-shadow: var(--edge-cyan);
+    cursor: pointer;
+    transition:
+        background 0.15s,
+        color 0.15s,
+        filter 0.2s;
+}
+
+.share-btn:hover {
+    background: var(--surface-4);
+    color: var(--neon-cyan);
+    filter: var(--glow-cyan);
+}
+
+/* Someone is watching right now — the count is worth noticing. */
+.share-btn.has-streams {
+    color: var(--accent-1);
+}
+
+.share-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 30;
+    min-width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-1);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.share-dropdown[hidden] {
+    display: none;
+}
+
+.share-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    text-align: left;
+    color: var(--text-1);
+    background: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition:
+        background 0.15s,
+        border-color 0.15s;
+}
+
+.share-row:disabled {
+    cursor: progress;
+    opacity: 0.7;
+}
+
+.share-row-state {
+    font-size: 11px;
+    color: var(--text-2);
+    white-space: nowrap;
+}
+
+/* off / shared / streaming — pale red, pale green, pale blue. */
+.share-row-off {
+    background: rgba(255, 42, 109, 0.1);
+    border-left-color: rgba(255, 42, 109, 0.55);
+}
+.share-row-off:hover {
+    background: rgba(255, 42, 109, 0.18);
+}
+
+.share-row-shared {
+    background: rgba(42, 212, 160, 0.1);
+    border-left-color: rgba(42, 212, 160, 0.6);
+}
+.share-row-shared:hover {
+    background: rgba(42, 212, 160, 0.18);
+}
+
+.share-row-streaming {
+    background: rgba(0, 229, 255, 0.1);
+    border-left-color: rgba(0, 229, 255, 0.65);
+}
+.share-row-streaming:hover {
+    background: rgba(0, 229, 255, 0.18);
+}
+
+.share-row-busy {
+    background: var(--surface-3);
+    border-left-color: var(--text-3);
+}
+
+/* ── Owner: the share popin ────────────────────────────────────────────── */
+
+.share-popin-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(3px);
+}
+
+.share-popin {
+    width: min(480px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 22px 24px 20px;
+    background: var(--surface-1);
+    border: 1px solid var(--border-1);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.share-popin h3 {
+    margin: 0 0 16px;
+    font-size: 17px;
+    color: var(--text-1);
+}
+
+.share-field-label {
+    display: block;
+    margin: 14px 0 6px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-2);
+}
+
+.share-copy-row {
+    display: flex;
+    gap: 8px;
+}
+
+.share-link-input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12.5px;
+    color: var(--text-1);
+    background: var(--surface-0);
+    border: 1px solid var(--border-1);
+}
+
+.share-copy-btn {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    font-size: 12px;
+}
+
+.share-pin {
+    padding: 10px 14px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 30px;
+    letter-spacing: 0.32em;
+    text-align: center;
+    color: var(--accent-1);
+    background: var(--surface-0);
+    border: 1px solid var(--accent-ring);
+}
+
+.share-pin-hint,
+.share-expiry {
+    margin: 8px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-2);
+}
+
+.share-perms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 24px;
+}
+
+.share-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-1);
+    cursor: pointer;
+}
+
+.share-access {
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-left: 3px solid var(--text-3);
+    background: var(--surface-2);
+}
+
+.share-access-level {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+}
+
+.share-access-warning {
+    margin-top: 5px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-2);
+}
+
+/* Full control hands over the keyboard and mouse of this machine — the one
+   case where the popin should feel like a warning, not a label. */
+.share-access[data-level='gamer'] {
+    border-left-color: var(--c-warning);
+}
+.share-access[data-level='full'] {
+    border-left-color: var(--c-danger);
+    background: var(--c-danger-soft);
+}
+.share-access[data-level='full'] .share-access-warning {
+    color: var(--c-danger-text);
+}
+
+.share-popin-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 20px;
+}
+
+/* ── Invited player's page ─────────────────────────────────────────────── */
+
+body.player-mode {
+    background: var(--surface-0);
+}
+
+.player-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 100vh;
+    padding: 32px 20px;
+    text-align: center;
+}
+
+.player-art {
+    width: min(300px, 70vw);
+    color: var(--neon-cyan);
+    opacity: 0.85;
+}
+
+.player-art-svg {
+    width: 100%;
+    height: auto;
+}
+
+.player-card {
+    width: min(440px, 100%);
+    padding: 26px 24px;
+}
+
+.player-card h1 {
+    margin: 0 0 10px;
+    font-size: 22px;
+    color: var(--text-1);
+}
+
+.player-card p {
+    margin: 0 0 14px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text-2);
+}
+
+.player-muted {
+    color: var(--text-3);
+    font-size: 12.5px;
+}
+
+.player-access {
+    color: var(--accent-1);
+}
+
+.player-error {
+    color: var(--c-danger-text);
+    font-size: 13px;
+}
+
+.player-pin-form {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+
+.player-pin-input {
+    width: 190px;
+    padding: 10px 12px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 26px;
+    letter-spacing: 0.28em;
+    text-align: center;
+    color: var(--text-1);
+    background: var(--surface-0);
+    border: 1px solid var(--border-1);
+}
+
+.player-pin-input:focus {
+    outline: none;
+    border-color: var(--accent-ring);
+}
+
+.player-quality {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+.player-quality-btn {
+    padding: 8px 16px;
+    font-size: 13px;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border-1);
+    cursor: pointer;
+}
+
+.player-quality-btn.is-selected {
+    color: var(--on-accent);
+    background: var(--accent-1);
+    border-color: var(--accent-1);
+}
+
+.player-join-btn {
+    width: 100%;
+    padding: 12px 18px;
+    font-size: 15px;
+}
+
+.player-refresh {
+    margin-top: 18px;
+    padding: 7px 16px;
+    font-size: 12px;
+}

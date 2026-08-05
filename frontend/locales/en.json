@@ -94,7 +94,10 @@
         "unavailableMessage": "This host is on the network but MoonlightWeb isn't running",
         "remoteAccess": "Other computers can connect to this server at:",
         "internetAvailableHint": "This server can also be opened to the Internet:",
-        "enableInternetLink": "enable internet access"
+        "enableInternetLink": "enable internet access",
+        "stopSession": "Stop session",
+        "stopSessionWorking": "Stopping...",
+        "stopSessionConfirm": "Stop the running app on this host? Anyone streaming from it, including invited players, will be disconnected."
     },
     "selfStream": {
         "title": "Streaming your own PC?",
@@ -506,5 +509,64 @@
             "restarted": "Restarted Sunshine — retrying…",
             "restartFailed": "Couldn't restart Sunshine — quit and reopen it manually."
         }
+    },
+    "sharing": {
+        "share": "Share",
+        "shareCount": "Share ({{count}})",
+        "playerN": "Player {{n}}",
+        "working": "Working...",
+        "state": {
+            "off": "Not shared",
+            "shared": "Link active",
+            "streaming": "Streaming"
+        },
+        "popinTitle": "Invite {{player}}",
+        "linkLabel": "Link",
+        "pinLabel": "PIN code",
+        "pinHint": "Send the PIN separately from the link - together they let someone in, apart they are useless.",
+        "inputsLabel": "Inputs allowed",
+        "gamepad": "Gamepad",
+        "keyboardMouse": "Keyboard / Mouse",
+        "access": {
+            "viewer": "Viewer - can watch only",
+            "gamer": "Gamer - gamepad only",
+            "full": "Full control"
+        },
+        "warning": {
+            "viewer": "They will see your screen and hear your sound.",
+            "gamer": "They will see your screen and play with a gamepad.",
+            "full": "They will control the keyboard and mouse of this PC. Only share this with someone you trust completely."
+        },
+        "expiry": "The link works for 8 hours, or until you turn this player off.",
+        "done": "Done"
+    },
+    "player": {
+        "loading": "Loading...",
+        "leave": "Leave",
+        "thisPc": "this PC",
+        "quality": "Quality",
+        "refresh": "Refresh",
+        "joining": "Joining...",
+        "joinTitle": "Join {{machine}}",
+        "joinButton": "Join {{machine}}",
+        "joinFailed": "Could not join. Try again in a moment.",
+        "busy": "Someone is already streaming with this invitation. Only one screen at a time.",
+        "noSession": "Nothing is running on the host right now. Ask them to start a game.",
+        "access": {
+            "viewer": "You can watch, but not play.",
+            "gamer": "You can play with a gamepad.",
+            "full": "You have keyboard and mouse control."
+        },
+        "pinTitle": "Enter your PIN",
+        "pinBody": "The person who invited you sent a 6-digit code along with this link.",
+        "pinSubmit": "Enter",
+        "pinWrong": "Wrong code. Check the one you were sent.",
+        "pinLocked": "Too many attempts - try again in {{seconds}}s.",
+        "deadTitle": "Nothing here",
+        "deadBody": "This invitation has expired, or it was turned off. You have arrived in the void where old game links go.",
+        "deadHint": "Ask for a fresh link - they only last 8 hours.",
+        "endedTitle": "The session is over",
+        "endedBody": "Your host stopped the game, so the stream stopped with it. Nothing broke - you were just unplugged.",
+        "endedHint": "Give them a ring and ask for a new link."
     }
 }
