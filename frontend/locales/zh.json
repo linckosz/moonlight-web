@@ -94,7 +94,10 @@
         "unavailableMessage": "此主机在网络中，但 MoonlightWeb 未运行",
         "remoteAccess": "其他电脑可通过以下地址连接到此服务器：",
         "internetAvailableHint": "此服务器也可开放到互联网：",
-        "enableInternetLink": "启用互联网访问"
+        "enableInternetLink": "启用互联网访问",
+        "stopSession": "停止会话",
+        "stopSessionWorking": "正在停止...",
+        "stopSessionConfirm": "要停止该主机上正在运行的程序吗？所有正在串流的人（包括受邀玩家）都会被断开。"
     },
     "selfStream": {
         "title": "要串流你自己的电脑吗？",
@@ -506,5 +509,64 @@
             "restarted": "已重启 Sunshine——正在重试…",
             "restartFailed": "无法重启 Sunshine——请手动退出并重新打开。"
         }
+    },
+    "sharing": {
+        "share": "共享",
+        "shareCount": "共享 ({{count}})",
+        "playerN": "玩家 {{n}}",
+        "working": "处理中...",
+        "state": {
+            "off": "未共享",
+            "shared": "链接有效",
+            "streaming": "串流中"
+        },
+        "popinTitle": "邀请{{player}}",
+        "linkLabel": "链接",
+        "pinLabel": "PIN 码",
+        "pinHint": "请分开发送链接和 PIN 码——两者合起来才能进入，单独则无效。",
+        "inputsLabel": "允许的输入",
+        "gamepad": "手柄",
+        "keyboardMouse": "键盘 / 鼠标",
+        "access": {
+            "viewer": "观众 — 仅可观看",
+            "gamer": "玩家 — 仅限手柄",
+            "full": "完全控制"
+        },
+        "warning": {
+            "viewer": "对方将看到你的屏幕并听到你的声音。",
+            "gamer": "对方将看到你的屏幕并使用手柄游玩。",
+            "full": "对方将控制这台电脑的键盘和鼠标。请仅分享给你完全信任的人。"
+        },
+        "expiry": "链接有效期为 8 小时，或直到你关闭该玩家。",
+        "done": "完成"
+    },
+    "player": {
+        "loading": "加载中...",
+        "leave": "离开",
+        "thisPc": "这台电脑",
+        "quality": "画质",
+        "refresh": "刷新",
+        "joining": "正在加入...",
+        "joinTitle": "加入 {{machine}}",
+        "joinButton": "加入 {{machine}}",
+        "joinFailed": "无法加入，请稍后再试。",
+        "busy": "已经有人在使用此邀请串流。同一时间只能有一块屏幕。",
+        "noSession": "主机上目前没有运行任何程序。请让对方启动游戏。",
+        "access": {
+            "viewer": "你可以观看，但不能操作。",
+            "gamer": "你可以使用手柄游玩。",
+            "full": "你拥有键盘和鼠标控制权。"
+        },
+        "pinTitle": "输入你的 PIN 码",
+        "pinBody": "邀请你的人会随链接发送一个 6 位数字代码。",
+        "pinSubmit": "确认",
+        "pinWrong": "代码错误，请核对收到的代码。",
+        "pinLocked": "尝试次数过多——请在 {{seconds}} 秒后重试。",
+        "deadTitle": "这里什么都没有",
+        "deadBody": "此邀请已过期或已被关闭。你来到了旧游戏链接归宿的虚空。",
+        "deadHint": "请索取新链接——它们只有 8 小时有效期。",
+        "endedTitle": "会话已结束",
+        "endedBody": "主机停止了游戏，串流也随之结束。没有出错——只是被拔掉了插头。",
+        "endedHint": "打个电话，请对方给你一个新链接。"
     }
 }

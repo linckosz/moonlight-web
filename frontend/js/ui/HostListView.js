@@ -218,6 +218,23 @@ export class HostListView {
                 return;
             }
 
+            const stopSessionBtn = e.target.closest('.btn-stop-session');
+            if (stopSessionBtn) {
+                const uuid = stopSessionBtn.dataset.uuid;
+                // This closes the game for everyone, including any invited
+                // player — worth one confirmation.
+                if (!window.confirm(t('hosts.stopSessionConfirm'))) return;
+                stopSessionBtn.disabled = true;
+                stopSessionBtn.textContent = t('hosts.stopSessionWorking');
+                BackendClient.stopHostSession(uuid)
+                    .catch((err) => console.error('[MW] Stop session failed:', err))
+                    .finally(() => {
+                        this._closeAllMenus();
+                        this.refresh();
+                    });
+                return;
+            }
+
             const removeBtn = e.target.closest('.btn-remove');
             if (removeBtn) {
                 removeBtn.disabled = true;
@@ -813,6 +830,15 @@ export class HostListView {
                                 aria-haspopup="true" aria-expanded="false"
                                 aria-label="${this.esc(t('hosts.menuAria'))}">${Icons.menu}</button>
                         <div class="host-menu" hidden>
+                            ${
+                                // Escape hatch: an app is still running on the
+                                // host but this browser has no stream view to
+                                // stop it from (tab closed, another device, or
+                                // players holding the session open).
+                                host.currentGameId > 0
+                                    ? `<button class="host-menu-item btn-stop-session" data-uuid="${host.uuid}">${t('hosts.stopSession')}</button>`
+                                    : ''
+                            }
                             <button class="host-menu-item btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
                         </div>
                     </div>
