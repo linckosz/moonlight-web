@@ -78,7 +78,8 @@ ShareManager::Permissions ShareManager::Permissions::fromJson(const QJsonObject&
 
 // ── Construction ────────────────────────────────────────────────────────────
 
-ShareManager::ShareManager(QObject* parent) : QObject(parent)
+ShareManager::ShareManager(QObject* parent)
+    : QObject(parent)
 {
     for (int slot = kFirstSlot; slot <= kLastSlot; ++slot)
         m_Slots.insert(slot, Slot{});
@@ -257,8 +258,9 @@ bool ShareManager::deactivate(int slot, EndReason reason)
     Slot* s = slotFor(slot);
     if (!s || !s->activation.live()) return false;
 
-    Logger::info(
-        QStringLiteral("[Share] Slot %1 revoked (%2)").arg(slot).arg(QLatin1String(reasonName(reason))));
+    Logger::info(QStringLiteral("[Share] Slot %1 revoked (%2)")
+                     .arg(slot)
+                     .arg(QLatin1String(reasonName(reason))));
     clearActivation(slot, reason);
     save();
     return true;
@@ -273,7 +275,8 @@ void ShareManager::deactivateAll(EndReason reason)
         any = true;
     }
     if (any) {
-        Logger::info(QStringLiteral("[Share] All slots revoked (%1)").arg(QLatin1String(reasonName(reason))));
+        Logger::info(QStringLiteral("[Share] All slots revoked (%1)")
+                         .arg(QLatin1String(reasonName(reason))));
         save();
     }
 }
@@ -308,7 +311,8 @@ ShareManager::PinOutcome ShareManager::redeemPin(const QString& token, const QSt
 
     int slot = -1;
     Slot* s = slotForTokenHash(hash(token), &slot);
-    const bool matched = s && !pin.isEmpty() && constantTimeEquals(s->activation.pinHash, hash(pin));
+    const bool matched =
+        s && !pin.isEmpty() && constantTimeEquals(s->activation.pinHash, hash(pin));
 
     rateRecord(bucket, matched, out.remainingAttempts, out.lockoutSeconds);
 
@@ -341,7 +345,8 @@ ShareManager::PinOutcome ShareManager::redeemPin(const QString& token, const QSt
 
     out.result = PinResult::Ok;
     out.slot = slot;
-    Logger::info(QStringLiteral("[Share] Slot %1 PIN accepted — player device authorized").arg(slot));
+    Logger::info(
+        QStringLiteral("[Share] Slot %1 PIN accepted — player device authorized").arg(slot));
     return out;
 }
 
@@ -530,7 +535,8 @@ void ShareManager::load()
         const QJsonObject act = obj.value(QStringLiteral("activation")).toObject();
         if (act.isEmpty()) continue;
 
-        const qint64 activatedAt = static_cast<qint64>(act.value(QStringLiteral("activatedAt")).toDouble());
+        const qint64 activatedAt =
+            static_cast<qint64>(act.value(QStringLiteral("activatedAt")).toDouble());
         // A link handed out before a restart keeps working: only an owner action
         // or the eight hours end a share, and a restart is neither.
         if (activatedAt <= 0 || now - activatedAt >= kTtlSecs) continue;

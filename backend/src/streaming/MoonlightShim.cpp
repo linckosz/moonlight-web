@@ -750,8 +750,8 @@ void MoonlightShim::applyControllerOffset(short& controllerNumber, short& active
     const int shifted = qBound(0, controllerNumber + m_ControllerOffset, 3);
     controllerNumber = static_cast<short>(shifted);
     // The mask says which pads exist; move this session's bits with the number.
-    activeGamepadMask = static_cast<short>((static_cast<int>(activeGamepadMask) & 0xF)
-                                           << m_ControllerOffset);
+    activeGamepadMask =
+        static_cast<short>((static_cast<int>(activeGamepadMask) & 0xF) << m_ControllerOffset);
     activeGamepadMask = static_cast<short>(activeGamepadMask | (1 << shifted));
 }
 

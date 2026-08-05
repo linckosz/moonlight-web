@@ -108,8 +108,8 @@ public:
         int slot = 0;
         State state = State::Off;
         Permissions permissions;
-        bool locked = false;   ///< permissions frozen (popin closed or joined)
-        qint64 expiresAt = 0;  ///< unix secs, 0 when Off
+        bool locked = false;  ///< permissions frozen (popin closed or joined)
+        qint64 expiresAt = 0; ///< unix secs, 0 when Off
     };
 
     explicit ShareManager(QObject* parent = nullptr);
