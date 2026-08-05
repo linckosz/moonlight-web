@@ -413,8 +413,9 @@ install_macos() {
     enable_internet
 
     done_banner
-    say "  ${dim}macOS cannot grant screen capture programmatically: allow Sunshine in${reset}"
-    say "  ${dim}System Settings → Privacy & Security → Screen Recording when it asks.${reset}"
+    say "  ${dim}macOS cannot grant screen capture programmatically: the installer opened${reset}"
+    say "  ${dim}System Settings → Privacy & Security → Screen Recording — turn Sunshine on${reset}"
+    say "  ${dim}there, then quit and reopen Sunshine (macOS applies it on relaunch only).${reset}"
     say ""
 }
 

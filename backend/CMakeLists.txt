@@ -186,6 +186,7 @@ add_executable(mw-server
     src/network/SelfUpdater.cpp
     src/TrayManager.cpp
     src/Autostart.cpp
+    src/DisplaySleep.cpp
     src/backend/NvHTTP.cpp
     src/backend/NvComputer.cpp
     src/backend/ComputerManager.cpp

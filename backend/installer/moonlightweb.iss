@@ -131,6 +131,9 @@ en.ButtonSkip=&Skip
 en.SunshineUserLabel=Username
 en.SunshinePassLabel=Password
 en.SunshineCredsRequired=Please enter the Sunshine username and password so MoonlightWeb can pair automatically.
+en.SunshineCheckWait=Checking the Sunshine credentials...
+en.SunshineCredsWrong=Sunshine refused these credentials.%n%nCheck the username and password of its web interface (https://localhost:47990), or click Skip to pair later from the admin page.
+en.SunshineNoAnswer=Sunshine is installed but is not answering on this machine.%n%nStart Sunshine and try again, or click Skip to pair later from the admin page.
 en.RunApp=Launch MoonlightWeb
 en.RunAdmin=Open the admin page
 en.SunshineDownloadCaption=Downloading and installing Sunshine...
@@ -170,6 +173,9 @@ fr.ButtonSkip=&Ignorer
 fr.SunshineUserLabel=Identifiant
 fr.SunshinePassLabel=Mot de passe
 fr.SunshineCredsRequired=Veuillez saisir l'identifiant et le mot de passe Sunshine pour que MoonlightWeb puisse appairer automatiquement.
+fr.SunshineCheckWait=Vérification des identifiants Sunshine...
+fr.SunshineCredsWrong=Sunshine a refusé ces identifiants.%n%nVérifiez l'identifiant et le mot de passe de son interface web (https://localhost:47990), ou cliquez sur Ignorer pour appairer plus tard depuis la page admin.
+fr.SunshineNoAnswer=Sunshine est installé mais ne répond pas sur cette machine.%n%nDémarrez Sunshine puis réessayez, ou cliquez sur Ignorer pour appairer plus tard depuis la page admin.
 fr.RunApp=Lancer MoonlightWeb
 fr.RunAdmin=Ouvrir la page admin
 fr.SunshineDownloadCaption=Téléchargement et installation de Sunshine...
@@ -209,6 +215,9 @@ zh.ButtonSkip=跳过(&S)
 zh.SunshineUserLabel=用户名
 zh.SunshinePassLabel=密码
 zh.SunshineCredsRequired=请输入 Sunshine 的用户名和密码，以便 MoonlightWeb 自动配对。
+zh.SunshineCheckWait=正在验证 Sunshine 凭据...
+zh.SunshineCredsWrong=Sunshine 拒绝了这些凭据。%n%n请在其网页界面（https://localhost:47990）中核对用户名和密码，或点击“跳过”以稍后在管理页面配对。
+zh.SunshineNoAnswer=此计算机上已安装 Sunshine，但没有响应。%n%n请启动 Sunshine 后重试，或点击“跳过”以稍后在管理页面配对。
 zh.RunApp=启动 MoonlightWeb
 zh.RunAdmin=打开管理页面
 zh.SunshineDownloadCaption=正在下载并安装 Sunshine...
@@ -288,6 +297,9 @@ var
   SunshineUserLabel: TNewStaticText;
   SunshinePassLabel: TNewStaticText;
   SunshineStatusLabel: TNewStaticText;
+  // Shown only while Next probes an already-installed Sunshine with the typed
+  // credentials (ProbeSunshineCreds).
+  SunshineCheckLabel: TNewStaticText;
   SunshineDetected: Boolean;
   SunshineExePath: String;
   SunshineCase: Integer;
@@ -586,6 +598,13 @@ begin
   SunshinePassEdit.OnChange := @SunshinePassChange;
   SunshinePassMasked := True;
 
+  // Waiting line for the credential probe, under the two fields.
+  SunshineCheckLabel := TNewStaticText.Create(WizardForm);
+  SunshineCheckLabel.Parent := SunshinePage.Surface;
+  SunshineCheckLabel.Top := ScaleY(136);
+  SunshineCheckLabel.Width := SunshinePage.SurfaceWidth;
+  SunshineCheckLabel.Visible := False;
+
   // "Skip" — shown only on the Sunshine page, in the slot the Back button
   // occupies (which is hidden there): the page must offer Skip / Next / Cancel.
   SkipButton := TNewButton.Create(WizardForm);
@@ -809,6 +828,110 @@ begin
   end;
 end;
 
+// Base64 of the UTF-8 bytes of `s`, for the probe's Basic-Auth header. Inno's
+// strings are UTF-16 and its AnsiString conversions go through the system
+// codepage, so the UTF-8 encoding is spelled out here (BMP only — a credential
+// made of astral-plane characters is not a case worth carrying).
+function Base64OfUtf8(const s: String): String;
+var
+  alphabet: String;
+  bytes: array of Integer;
+  i, n, c, acc: Integer;
+begin
+  alphabet := 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  SetArrayLength(bytes, Length(s) * 3);
+  n := 0;
+  for i := 1 to Length(s) do begin
+    c := Ord(s[i]);
+    if c < $80 then begin
+      bytes[n] := c;
+      n := n + 1;
+    end else if c < $800 then begin
+      bytes[n] := $C0 or (c shr 6);
+      bytes[n + 1] := $80 or (c and $3F);
+      n := n + 2;
+    end else begin
+      bytes[n] := $E0 or (c shr 12);
+      bytes[n + 1] := $80 or ((c shr 6) and $3F);
+      bytes[n + 2] := $80 or (c and $3F);
+      n := n + 3;
+    end;
+  end;
+
+  Result := '';
+  i := 0;
+  while i < n do begin
+    acc := bytes[i] shl 16;
+    if i + 1 < n then acc := acc or (bytes[i + 1] shl 8);
+    if i + 2 < n then acc := acc or bytes[i + 2];
+    Result := Result + alphabet[((acc shr 18) and 63) + 1] + alphabet[((acc shr 12) and 63) + 1];
+    if i + 1 < n then Result := Result + alphabet[((acc shr 6) and 63) + 1]
+    else Result := Result + '=';
+    if i + 2 < n then Result := Result + alphabet[(acc and 63) + 1]
+    else Result := Result + '=';
+    i := i + 3;
+  end;
+end;
+
+// Try the typed credentials against the Sunshine already installed here: a
+// Basic-Auth GET on its web-UI port (47990). Returns False when the probe could
+// not run at all (no MSXML) — the wizard then lets the user through rather than
+// blocking on its own failure. Otherwise `httpStatus` is what Sunshine answered
+// with, or 0 when it did not answer.
+//
+// Only 401/403 means "wrong credentials": any other answer proves the header got
+// past the guard, so a Sunshine whose API differs is never mistaken for a bad
+// password.
+function ProbeSunshineCreds(const user, pass: String; var httpStatus: Integer): Boolean;
+var
+  req: Variant;
+begin
+  Result := False;
+  httpStatus := 0;
+  try
+    req := CreateOleObject('MSXML2.ServerXMLHTTP.6.0');
+  except
+    Exit;
+  end;
+  Result := True;
+
+  // The request below is synchronous — MSXML's asynchronous mode never leaves
+  // readyState 1 inside Setup's apartment — so the wait indicator has to be on
+  // screen BEFORE it starts. Update() forces the repaint that the blocked
+  // message loop would otherwise only get around to once the answer is in.
+  SunshineCheckLabel.Caption := ExpandConstant('{cm:SunshineCheckWait}');
+  SunshineCheckLabel.Visible := True;
+  WizardForm.NextButton.Enabled := False;
+  SkipButton.Enabled := False;
+  WizardForm.Cursor := crHourglass;
+  WizardForm.Update;
+  try
+    try
+      req.open('GET', 'https://127.0.0.1:47990/api/apps', False);
+      // Loopback: a Sunshine that is up answers in milliseconds. These caps are
+      // what turns "not running" into an error the user reads rather than a
+      // wizard that hangs.
+      req.setTimeouts(2000, 2000, 2000, 4000);
+      // Sunshine self-signs its web UI: ignore every server-certificate error.
+      req.setOption(2, 13056);
+      // SXH_PROXY_SET_DIRECT — a configured proxy must never see loopback.
+      req.setProxy(1);
+      req.setRequestHeader('Authorization', 'Basic ' + Base64OfUtf8(user + ':' + pass));
+      req.send('');
+      httpStatus := req.status;
+    except
+      // Refused connection, TLS failure, timeout: nothing answered, and reading
+      // .status would raise in turn. 0 is the "no answer" verdict.
+      httpStatus := 0;
+    end;
+  finally
+    WizardForm.Cursor := crDefault;
+    SunshineCheckLabel.Visible := False;
+    WizardForm.NextButton.Enabled := True;
+    SkipButton.Enabled := True;
+  end;
+end;
+
 // Credentials are only MANDATORY for a fresh auto-install: the silent installer
 // sets Sunshine's username/password via --creds, so both must be provided (they
 // come prefilled with admin/admin, so this only fires if the user empties them).
@@ -817,12 +940,37 @@ end;
 // If Sunshine is absent and install is declined, the grayed-out fields are
 // irrelevant.
 function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  user, pass: String;
+  httpStatus: Integer;
 begin
   Result := True;
-  if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
-    if (not SunshineSkipped) and (not SunshineDetected) and SunshineInstallCheck.Checked
-       and ((Trim(SunshineUserEdit.Text) = '') or (Trim(SunshinePassEdit.Text) = '')) then begin
-      MsgBox(ExpandConstant('{cm:SunshineCredsRequired}'), mbError, MB_OK);
+  if (SunshinePage = nil) or (CurPageID <> SunshinePage.ID) or SunshineSkipped then Exit;
+
+  // Probed and written exactly as typed: trimming here would validate one pair
+  // of credentials and hand another to provisioning.json.
+  user := SunshineUserEdit.Text;
+  pass := SunshinePassEdit.Text;
+
+  if (not SunshineDetected) and SunshineInstallCheck.Checked
+     and ((Trim(user) = '') or (Trim(pass) = '')) then begin
+    MsgBox(ExpandConstant('{cm:SunshineCredsRequired}'), mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+
+  // Sunshine was already on this machine, so its credentials are the user's to
+  // know — and a wrong pair fails silently much later (a pending pairing request
+  // in Sunshine, an unpaired host). Settle it here, while the page is still up
+  // and Skip is one click away. A fresh install is never probed: those
+  // credentials are the ones the installer is about to create.
+  if (SunshineCase = scUnpaired) and (Trim(user) <> '') and (Trim(pass) <> '') then begin
+    if not ProbeSunshineCreds(user, pass, httpStatus) then Exit;
+    if (httpStatus = 401) or (httpStatus = 403) then begin
+      MsgBox(ExpandConstant('{cm:SunshineCredsWrong}'), mbError, MB_OK);
+      Result := False;
+    end else if httpStatus = 0 then begin
+      MsgBox(ExpandConstant('{cm:SunshineNoAnswer}'), mbError, MB_OK);
       Result := False;
     end;
   end;

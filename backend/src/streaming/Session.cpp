@@ -359,25 +359,38 @@ void StreamSession::onLaunchReplyFinished()
             return;
         }
         // Sunshine 503 = the host could not initialize video capture/encoding.
-        // The most common macOS cause is a missing Screen Recording permission
-        // (Sunshine logs "No screen capture permission!"); elsewhere it's a
-        // sleeping/disconnected display with no dummy plug. Surface a clear,
-        // actionable message instead of the opaque "502 Launch error: HTTP 503".
+        // Almost always a display problem on the HOST: no display connected, or
+        // the session is locked with the screen asleep — a blanked output stops
+        // producing frames, so KMS/DXGI/CoreGraphics capture has nothing to grab
+        // and Sunshine's encoder probe fails. On macOS it can also be a missing
+        // Screen Recording permission. Surface a clear, actionable message
+        // instead of the opaque "502 Launch error: HTTP 503".
         QString reason = QString::fromUtf8(e.what());
         if (reason.contains("503")) {
-            // Machine-readable `code` lets the frontend show an explicit
-            // "grant Screen Recording" dialog (with a button to open the macOS
-            // settings pane) instead of a plain toast.
+            // Machine-readable `code` lets the frontend show an explicit dialog
+            // instead of a plain toast. `local_host` + `local_os` tell it whose
+            // machine failed: the repair buttons it offers (open the macOS
+            // privacy pane, restart Sunshine) act on the machine running
+            // MoonlightWeb, so they are only ever right when the failing host
+            // IS that machine — on a remote host they would poke the wrong PC.
             QJsonObject err;
             err["error"] =
-                QString("Host \"%1\" could not start video capture. On macOS, grant "
-                        "Sunshine the \"Screen Recording\" permission in System Settings "
-                        "> Privacy & Security > Screen Recording, then quit and reopen "
-                        "Sunshine. Otherwise, make sure a display is connected and powered "
-                        "on (or use an HDMI dummy plug).")
+                QString("Host \"%1\" could not start video capture. On that machine, make "
+                        "sure a display is connected and awake (a locked session with the "
+                        "screen asleep has nothing to capture) or use an HDMI dummy plug. "
+                        "On macOS, also grant Sunshine the \"Screen Recording\" permission "
+                        "in System Settings > Privacy & Security, then restart Sunshine.")
                     .arg(m_Host->name);
             err["code"] = QStringLiteral("video_capture_failed");
             err["status"] = 503;
+            err["local_host"] = m_Host->isLocalMachine();
+#if defined(Q_OS_WIN)
+            err["local_os"] = QStringLiteral("Windows");
+#elif defined(Q_OS_MACOS)
+            err["local_os"] = QStringLiteral("macOS");
+#else
+            err["local_os"] = QStringLiteral("Linux");
+#endif
             m_Respond(HttpResponse::json(err, 503));
         } else {
             m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(reason)));

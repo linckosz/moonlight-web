@@ -414,6 +414,11 @@ export class BackendClient {
         // No client timeout: a Sunshine DMG download + install can take minutes.
         return this.post('/api/setup/apply', options, { timeoutMs: 0 });
     }
+    // Are these the credentials of the Sunshine already installed here? Answers
+    // { ok, reason: 'unauthorized' | 'unreachable' | 'missing' }.
+    static async checkSunshineCredentials(username, password) {
+        return this.post('/api/setup/sunshine-check', { username, password }, { timeoutMs: 20000 });
+    }
 
     // ── Internet Access (PowerDNS) ───────────────────────────────────────────────────────
 

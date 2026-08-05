@@ -26,7 +26,9 @@
 #include "network/UPNPClient.h"
 #include "backend/ComputerManager.h"
 #include "backend/SunshineInstaller.h"
+#include "backend/SunshineRestClient.h"
 #include "Autostart.h"
+#include "DisplaySleep.h"
 #include "common/DesktopSession.h"
 #include "common/Logger.h"
 
@@ -244,6 +246,15 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         sunObj["paired"] = paired;
         obj["sunshine"] = sunObj;
 
+        // Keep-the-display-awake offer. Only shown when this desktop actually
+        // exposes the setting, and rendered as "already done" once it is set —
+        // the wizard must never re-apply what the user already has (or claim it
+        // can fix a desktop it has no knobs for). See DisplaySleep.h.
+        QJsonObject disp;
+        disp["supported"] = DisplaySleep::isSupported();
+        disp["kept_awake"] = DisplaySleep::isDisplayKeptAwake();
+        obj["display_sleep"] = disp;
+
         obj["autostart_installed"] = Autostart::isLoginItemInstalled();
         // The wizard is served over http://localhost (no cert warning); its
         // "Open MoonlightWeb" button switches to the HTTPS origin for streaming.
@@ -266,6 +277,40 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         return HttpResponse::json(obj);
     });
 
+    // POST /api/setup/sunshine-check — do these credentials open the Sunshine
+    // already installed on this machine? The wizard asks before moving on, so a
+    // user who does not know them is stopped on the page (where they can still
+    // skip the Sunshine step) instead of discovering a failed pairing at the end.
+    server.router()->post("/api/setup/sunshine-check", [&](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+
+        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        const QString user = body.value("username").toString();
+        const QString pass = body.value("password").toString();
+        QJsonObject result;
+        if (user.isEmpty() || pass.isEmpty()) {
+            result["ok"] = false;
+            result["reason"] = "missing";
+            return HttpResponse::json(result);
+        }
+
+        // Sunshine's web-UI/REST port is its GameStream base port + 1 (47990 by
+        // default) — the same derivation Provisioning::pairSunshine makes.
+        const int port = body.value("port").toInt(47990);
+        SunshineRestClient rest;
+        const SunshineRestClient::CredentialCheck check =
+            rest.checkCredentials(user, pass, static_cast<quint16>(port));
+
+        result["ok"] = check.outcome == SunshineRestClient::CredentialCheck::Accepted;
+        if (check.outcome == SunshineRestClient::CredentialCheck::Rejected)
+            result["reason"] = "unauthorized";
+        else if (check.outcome == SunshineRestClient::CredentialCheck::Unreachable) {
+            result["reason"] = "unreachable";
+            result["error"] = check.error;
+        }
+        return HttpResponse::json(result);
+    });
+
     // POST /api/setup/apply — run the wizard actions synchronously; the frontend
     // polls /api/setup/status meanwhile to animate the checklist.
     server.router()->post("/api/setup/apply", [&](const HttpRequest& req) {
@@ -274,6 +319,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         QJsonObject body = QJsonDocument::fromJson(req.body).object();
         const bool internetAuth = body.value("internet_access_authorized").toBool(false);
         const bool autostart = body.value("autostart").toBool(false);
+        const bool keepAwake = body.value("keep_display_awake").toBool(false);
         const QJsonObject sun = body.value("sunshine").toObject();
         const bool wantInstall = sun.value("install").toBool(false);
         const QString user = sun.value("username").toString();
@@ -351,6 +397,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // keeps the tray icon). Mirrors the Windows installer's logon-task
         // checkbox: only when the wizard's checkbox was ticked. Best-effort.
         result["autostart"] = autostart ? Autostart::installLoginItem() : false;
+
+        // Stop this desktop from blanking its screen, so Sunshine always has
+        // something to capture (a blanked output makes every /launch answer 503).
+        // Opt-in: it changes the user's own power settings, so only on an explicit
+        // tick. The reason travels back for the "done" screen to show.
+        if (keepAwake) {
+            const QString err = DisplaySleep::keepDisplayAwake();
+            result["display_kept_awake"] = err.isEmpty();
+            if (!err.isEmpty()) result["display_sleep_error"] = err;
+        }
 
         result["status"] = "completed";
         return HttpResponse::json(result);

@@ -142,6 +142,17 @@ if [ "$CONSOLE_UID" != "0" ] && [ -d "/Applications/Sunshine.app" ]; then
         /usr/bin/open -a "/Applications/Sunshine.app"; then
         echo "Sunshine launched"
         /bin/sleep 3 # let it open its GameStream port before the app pairs
+        # ── 2c) Screen Recording is the one thing an installer cannot grant
+        #    (TCC forbids it) and the one thing without which no stream will ever
+        #    start. Asking for it here — while the user is still sitting in front
+        #    of the installer — beats discovering it at the first launch attempt,
+        #    from another device, with nobody at this Mac to tick the box. The
+        #    startup above already made Sunshine ask for capture, so it is listed
+        #    in the pane by now. Best-effort: only the pane, never a click.
+        /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" \
+            /usr/bin/open \
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" \
+            || echo "WARN: could not open the Screen Recording pane"
     else
         echo "WARN: could not launch Sunshine"
     fi

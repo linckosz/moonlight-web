@@ -1269,12 +1269,12 @@ const MoonlightApp = {
                 this.hostListView.clearLaunching();
                 this.hostListView.start();
             }
-            // Sunshine couldn't start video capture (503). The dominant macOS
-            // cause is a missing Screen Recording permission, which can't be
-            // granted programmatically — show an explicit dialog telling the user
-            // exactly what to enable, with a button to open the settings pane.
+            // Sunshine couldn't start video capture (503) — usually no awake
+            // display on the host, sometimes a macOS permission it can't be
+            // granted programmatically. Show an explicit dialog whose wording and
+            // repair buttons follow the payload's local_host / local_os.
             if (err && err.responseBody && err.responseBody.code === 'video_capture_failed') {
-                this._showVideoCaptureHelp(host, app, err.message);
+                this._showVideoCaptureHelp(host, app, err.message, err.responseBody);
                 this.transition('app_list');
                 return;
             }
@@ -1361,39 +1361,60 @@ const MoonlightApp = {
     },
 
     /**
-     * Explicit modal shown when Sunshine can't start video capture. Leads with
-     * the macOS Screen Recording permission (the common cause) and offers two
-     * host-side actions — shown only when the browser is on the host itself
-     * (localhost), the only place the buttons can act:
+     * Explicit modal shown when Sunshine can't start video capture (503 on
+     * /launch). The dominant cause is a display problem on the HOST — none
+     * connected, or a locked session whose screen went to sleep: a blanked
+     * output stops producing frames, so the host's capture backend has nothing
+     * to grab. macOS adds a second cause of its own, a missing Screen Recording
+     * permission, so its wording is a separate branch instead of the headline.
+     *
+     * The two repair buttons drive /api/system/* , which act on the machine
+     * running MoonlightWeb — NOT on the Sunshine host being launched. They are
+     * therefore offered only when that host IS this machine (`local_host` from
+     * the backend) and this browser sits on it; for a remote host they would
+     * restart the wrong PC's Sunshine. Likewise the privacy pane exists only on
+     * macOS, so that button follows the host machine's real OS (`local_os`).
      *   1. Open the Screen Recording settings pane so the user can grant it.
      *   2. Restart Sunshine + retry the launch. macOS only applies a freshly
      *      granted TCC permission to a *relaunched* process, so a Sunshine that
      *      was already running keeps failing capture even after the user ticks
      *      the box — the reason the dialog "reappears even though I authorized
-     *      it". Restarting Sunshine is what actually clears the error.
+     *      it". Restarting Sunshine is what actually clears the error, and it
+     *      re-runs the encoder probe everywhere else too, which is the fix once
+     *      a display is back.
      * Buttons are stacked (column) so the long "Open Screen Recording settings"
      * label fits inside the narrow dialog instead of being clipped.
      */
-    _showVideoCaptureHelp(host, app, detail) {
-        const onHost = this._isHostLocal();
+    _showVideoCaptureHelp(host, app, detail, info) {
         const name = (host && (host.displayName || host.name)) || '';
+        // The failing host is this very machine, and this browser is on it —
+        // the only situation where the buttons below reach the right Sunshine.
+        const canAct = !!(info && info.local_host) && this._isHostMachine();
+        const isMac = canAct && info.local_os === 'macOS';
+        // Advice differs by whose machine (and which OS) needs the fixing.
+        const bodyKey = !canAct
+            ? 'permission.videoCapture.bodyRemote'
+            : isMac
+              ? 'permission.videoCapture.bodyMac'
+              : 'permission.videoCapture.bodyLocal';
 
         const overlay = document.createElement('div');
         overlay.className = 'pairing-overlay';
-        const hostBtns = onHost
+        const openBtn = isMac
             ? `<button class="btn btn-open btn-open-screenrec">${escapeHtml(
-                  t('permission.screenRecording.openSettings'),
-              )}</button>
+                  t('permission.videoCapture.openSettings'),
+              )}</button>`
+            : '';
+        const hostBtns = canAct
+            ? `${openBtn}
                <button class="btn btn-save btn-restart-sunshine">${escapeHtml(
-                   t('permission.screenRecording.restartRetry'),
+                   t('permission.videoCapture.restartRetry'),
                )}</button>`
             : '';
         overlay.innerHTML = `
             <div class="pairing-dialog">
-                <h3>${escapeHtml(t('permission.screenRecording.title'))}</h3>
-                <p class="pairing-instruction">${escapeHtml(
-                    t('permission.screenRecording.body', { name }),
-                )}</p>
+                <h3>${escapeHtml(t('permission.videoCapture.title'))}</h3>
+                <p class="pairing-instruction">${escapeHtml(t(bodyKey, { name }))}</p>
                 <div class="pairing-actions pairing-actions-stack">
                     ${hostBtns}
                     <button class="btn btn-secondary btn-dismiss">${escapeHtml(
@@ -1412,10 +1433,10 @@ const MoonlightApp = {
             ob.addEventListener('click', async () => {
                 try {
                     await BackendClient.openScreenRecordingSettings();
-                    Toast.info(t('permission.screenRecording.opened'));
+                    Toast.info(t('permission.videoCapture.opened'));
                 } catch (e) {
                     console.warn('[MW] open screen recording settings failed:', e);
-                    Toast.error(e.message || t('permission.screenRecording.openFailed'));
+                    Toast.error(e.message || t('permission.videoCapture.openFailed'));
                 }
             });
         }
@@ -1429,18 +1450,19 @@ const MoonlightApp = {
                 try {
                     // Stop then start so the new process reads the just-granted
                     // Screen Recording permission (TCC only applies it on
-                    // relaunch). Give the fresh process a moment to open its
-                    // GameStream port before retrying the launch.
+                    // relaunch) and re-runs its encoder probe against whatever
+                    // display is there now. Give the fresh process a moment to
+                    // open its GameStream port before retrying the launch.
                     await BackendClient.stopSunshine();
                     await new Promise((r) => setTimeout(r, 800));
                     await BackendClient.startSunshine();
                     await new Promise((r) => setTimeout(r, 3000));
-                    Toast.info(t('permission.screenRecording.restarted'));
+                    Toast.info(t('permission.videoCapture.restarted'));
                     close();
                     if (app) this.launchApp(host, app);
                 } catch (e) {
                     console.warn('[MW] restart Sunshine failed:', e);
-                    Toast.error(e.message || t('permission.screenRecording.restartFailed'));
+                    Toast.error(e.message || t('permission.videoCapture.restartFailed'));
                     rb.disabled = false;
                     rb.classList.remove('btn-loading');
                 }
