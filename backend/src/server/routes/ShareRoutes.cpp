@@ -111,51 +111,49 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     });
 
     // POST /api/share/slots/:n/activate — mint the link + PIN shown in the popin.
-    router->post(QStringLiteral("/api/share/slots/:n/activate"),
-                 [&share, &deps, &server](const HttpRequest& req) {
-                     const int slot = slotParam(req);
-                     if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+    router->post(QStringLiteral("/api/share/slots/:n/activate"), [&share, &deps,
+                                                                  &server](const HttpRequest& req) {
+        const int slot = slotParam(req);
+        if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
 
-                     QString token;
-                     QString pin;
-                     ShareManager::SlotStatus st;
-                     if (!share.activate(slot, token, pin, st))
-                         return HttpResponse::error(500, "Could not share this slot");
+        QString token;
+        QString pin;
+        ShareManager::SlotStatus st;
+        if (!share.activate(slot, token, pin, st))
+            return HttpResponse::error(500, "Could not share this slot");
 
-                     QString origin = deps.publicOrigin ? deps.publicOrigin() : QString();
-                     if (origin.isEmpty()) {
-                         const quint16 port = server.activeHttpsPort();
-                         origin = port == 443
-                                      ? QStringLiteral("https://%1").arg(lanIPv4())
-                                      : QStringLiteral("https://%1:%2").arg(lanIPv4()).arg(port);
-                     }
+        QString origin = deps.publicOrigin ? deps.publicOrigin() : QString();
+        if (origin.isEmpty()) {
+            const quint16 port = server.activeHttpsPort();
+            origin = port == 443 ? QStringLiteral("https://%1").arg(lanIPv4())
+                                 : QStringLiteral("https://%1:%2").arg(lanIPv4()).arg(port);
+        }
 
-                     QJsonObject obj = slotJson(st);
-                     // The raw token and PIN exist in this response and nowhere
-                     // else — only their digests are kept.
-                     obj[QStringLiteral("url")] = origin + QStringLiteral("/p/") + token;
-                     obj[QStringLiteral("pin")] = pin;
-                     return HttpResponse::json(obj);
-                 });
+        QJsonObject obj = slotJson(st);
+        // The raw token and PIN exist in this response and nowhere
+        // else — only their digests are kept.
+        obj[QStringLiteral("url")] = origin + QStringLiteral("/p/") + token;
+        obj[QStringLiteral("pin")] = pin;
+        return HttpResponse::json(obj);
+    });
 
     // POST /api/share/slots/:n/permissions — while the popin is open.
-    router->post(QStringLiteral("/api/share/slots/:n/permissions"),
-                 [&share](const HttpRequest& req) {
-                     const int slot = slotParam(req);
-                     if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+    router->post(
+        QStringLiteral("/api/share/slots/:n/permissions"), [&share](const HttpRequest& req) {
+            const int slot = slotParam(req);
+            if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
 
-                     const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-                     ShareManager::Permissions perms = ShareManager::Permissions::fromJson(body);
-                     if (!share.setPermissions(slot, perms)) {
-                         // Either nothing is shared, or the popin already closed
-                         // and a worker may be carrying this policy.
-                         QJsonObject obj;
-                         obj[QStringLiteral("error")] = QStringLiteral("permissions_locked");
-                         return HttpResponse::json(obj, 409);
-                     }
-                     return HttpResponse::json(slotJson(share.status().at(slot -
-                                                                         ShareManager::kFirstSlot)));
-                 });
+            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+            ShareManager::Permissions perms = ShareManager::Permissions::fromJson(body);
+            if (!share.setPermissions(slot, perms)) {
+                // Either nothing is shared, or the popin already closed
+                // and a worker may be carrying this policy.
+                QJsonObject obj;
+                obj[QStringLiteral("error")] = QStringLiteral("permissions_locked");
+                return HttpResponse::json(obj, 409);
+            }
+            return HttpResponse::json(slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
+        });
 
     // POST /api/share/slots/:n/lock — the popin closed; the choice is final.
     router->post(QStringLiteral("/api/share/slots/:n/lock"), [&share](const HttpRequest& req) {
@@ -166,18 +164,17 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     });
 
     // POST /api/share/slots/:n/deactivate — owner clicked a live player row.
-    router->post(QStringLiteral("/api/share/slots/:n/deactivate"),
-                 [&share, &deps](const HttpRequest& req) {
-                     const int slot = slotParam(req);
-                     if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+    router->post(
+        QStringLiteral("/api/share/slots/:n/deactivate"), [&share, &deps](const HttpRequest& req) {
+            const int slot = slotParam(req);
+            if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
 
-                     // Kill the worker first, then the credentials: the player
-                     // must not be able to rejoin between the two.
-                     if (deps.stopPlayerStream) deps.stopPlayerStream(slot, true);
-                     share.deactivate(slot, ShareManager::EndReason::OwnerToggle);
-                     return HttpResponse::json(
-                         slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
-                 });
+            // Kill the worker first, then the credentials: the player
+            // must not be able to rejoin between the two.
+            if (deps.stopPlayerStream) deps.stopPlayerStream(slot, true);
+            share.deactivate(slot, ShareManager::EndReason::OwnerToggle);
+            return HttpResponse::json(slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
+        });
 
     // ── Player side ─────────────────────────────────────────────────────────
     // Exempt from the session gate (see HttpServer::processRequest) — a player
@@ -185,47 +182,47 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     // the mw_player cookie, and feeds ConnectionGuard when that fails.
 
     // POST /api/share/player/pin — {token, pin} → the player cookie.
-    router->post(QStringLiteral("/api/share/player/pin"), [&share,
-                                                          &server](const HttpRequest& req) {
-        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-        const QString token = body.value(QStringLiteral("token")).toString();
-        const QString pin = body.value(QStringLiteral("pin")).toString();
+    router->post(
+        QStringLiteral("/api/share/player/pin"), [&share, &server](const HttpRequest& req) {
+            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+            const QString token = body.value(QStringLiteral("token")).toString();
+            const QString pin = body.value(QStringLiteral("pin")).toString();
 
-        const ShareManager::PinOutcome outcome = share.redeemPin(
-            token, pin, AuthManager::rateLimitKey(AuthManager::cleanClientAddress(req.clientAddress)));
+            const ShareManager::PinOutcome outcome = share.redeemPin(
+                token, pin,
+                AuthManager::rateLimitKey(AuthManager::cleanClientAddress(req.clientAddress)));
 
-        QJsonObject obj;
-        switch (outcome.result) {
-        case ShareManager::PinResult::Ok: {
-            obj[QStringLiteral("status")] = QStringLiteral("ok");
-            HttpResponse resp = HttpResponse::json(obj);
-            // Scoped to the join surface, so a stolen player cookie cannot be
-            // replayed against the app's own API. Max-Age matches the 8h lease.
-            resp.headers[QStringLiteral("Set-Cookie")] =
-                QStringLiteral("%1=%2; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=%3")
-                    .arg(QLatin1String(kPlayerCookie), outcome.cookie)
-                    .arg(ShareManager::kTtlSecs);
-            return resp;
-        }
-        case ShareManager::PinResult::RateLimited:
-            obj[QStringLiteral("error")] = QStringLiteral("rate_limited");
-            obj[QStringLiteral("lockout_seconds")] = outcome.lockoutSeconds;
-            server.reportAuthFailure(req.clientAddress);
-            return HttpResponse::json(obj, 429);
-        case ShareManager::PinResult::Invalid:
-            // One answer for a wrong PIN, an unknown token and an expired one.
-            obj[QStringLiteral("error")] = QStringLiteral("invalid_pin");
-            obj[QStringLiteral("remaining")] = outcome.remainingAttempts;
-            obj[QStringLiteral("lockout_seconds")] = outcome.lockoutSeconds;
-            server.reportAuthFailure(req.clientAddress);
-            return HttpResponse::json(obj, 401);
-        }
-        return HttpResponse::error(500, "Internal error");
-    });
+            QJsonObject obj;
+            switch (outcome.result) {
+            case ShareManager::PinResult::Ok: {
+                obj[QStringLiteral("status")] = QStringLiteral("ok");
+                HttpResponse resp = HttpResponse::json(obj);
+                // Scoped to the join surface, so a stolen player cookie cannot be
+                // replayed against the app's own API. Max-Age matches the 8h lease.
+                resp.headers[QStringLiteral("Set-Cookie")] =
+                    QStringLiteral("%1=%2; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=%3")
+                        .arg(QLatin1String(kPlayerCookie), outcome.cookie)
+                        .arg(ShareManager::kTtlSecs);
+                return resp;
+            }
+            case ShareManager::PinResult::RateLimited:
+                obj[QStringLiteral("error")] = QStringLiteral("rate_limited");
+                obj[QStringLiteral("lockout_seconds")] = outcome.lockoutSeconds;
+                server.reportAuthFailure(req.clientAddress);
+                return HttpResponse::json(obj, 429);
+            case ShareManager::PinResult::Invalid:
+                // One answer for a wrong PIN, an unknown token and an expired one.
+                obj[QStringLiteral("error")] = QStringLiteral("invalid_pin");
+                obj[QStringLiteral("remaining")] = outcome.remainingAttempts;
+                obj[QStringLiteral("lockout_seconds")] = outcome.lockoutSeconds;
+                server.reportAuthFailure(req.clientAddress);
+                return HttpResponse::json(obj, 401);
+            }
+            return HttpResponse::error(500, "Internal error");
+        });
 
     // GET /api/share/player/info?token=… — what the join page should display.
-    router->get(QStringLiteral("/api/share/player/info"), [&share,
-                                                          &deps](const HttpRequest& req) {
+    router->get(QStringLiteral("/api/share/player/info"), [&share, &deps](const HttpRequest& req) {
         const QString token = req.queryParams.value(QStringLiteral("token"));
 
         QJsonObject obj;
@@ -252,8 +249,8 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         obj[QStringLiteral("access_level")] = perms.accessLevel();
         obj[QStringLiteral("permissions")] = perms.toJson();
         obj[QStringLiteral("expires_at")] = share.expiresAt(slot);
-        obj[QStringLiteral("owner_streaming")] = deps.ownerStreamAlive ? deps.ownerStreamAlive()
-                                                                      : false;
+        obj[QStringLiteral("owner_streaming")] =
+            deps.ownerStreamAlive ? deps.ownerStreamAlive() : false;
         return HttpResponse::json(obj);
     });
 
@@ -267,8 +264,8 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
             const int slot = share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie));
             // Both factors, every time: the cookie proves the PIN was entered,
             // the token proves the owner's share is still the current one.
-            if (slot < 0 || !share.tokenIsLive(token) || share.state(slot) ==
-                                                             ShareManager::State::Off) {
+            if (slot < 0 || !share.tokenIsLive(token) ||
+                share.state(slot) == ShareManager::State::Off) {
                 server.reportAuthFailure(req.clientAddress);
                 QJsonObject obj;
                 obj[QStringLiteral("error")] = QStringLiteral("dead_link");
@@ -306,17 +303,17 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         });
 
     // POST /api/share/player/leave — the player pressed Leave.
-    router->post(QStringLiteral("/api/share/player/leave"), [&share,
-                                                            &deps](const HttpRequest& req) {
-        const int slot = share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie));
-        if (slot < 0) return HttpResponse::error(403, "Forbidden");
+    router->post(
+        QStringLiteral("/api/share/player/leave"), [&share, &deps](const HttpRequest& req) {
+            const int slot = share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie));
+            if (slot < 0) return HttpResponse::error(403, "Forbidden");
 
-        // Leaving frees the slot for a later join — it does NOT end the share.
-        if (deps.stopPlayerStream) deps.stopPlayerStream(slot, false);
-        QJsonObject obj;
-        obj[QStringLiteral("status")] = QStringLiteral("ok");
-        return HttpResponse::json(obj);
-    });
+            // Leaving frees the slot for a later join — it does NOT end the share.
+            if (deps.stopPlayerStream) deps.stopPlayerStream(slot, false);
+            QJsonObject obj;
+            obj[QStringLiteral("status")] = QStringLiteral("ok");
+            return HttpResponse::json(obj);
+        });
 
     Logger::info(QStringLiteral("[Share] Session sharing enabled (slots %1-%2)")
                      .arg(ShareManager::kFirstSlot)

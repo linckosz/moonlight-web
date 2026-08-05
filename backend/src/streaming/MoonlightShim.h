@@ -320,7 +320,7 @@ private:
     /// concurrent sessions do not collapse onto the host's controller 0.
     int m_ControllerOffset = 0;
     void applyControllerOffset(short& controllerNumber, short& activeGamepadMask) const;
-    bool m_ShortStaleFired = false;       // don't re-log/re-release each tick
+    bool m_ShortStaleFired = false; // don't re-log/re-release each tick
     bool m_LongStaleFired = false;
     // The watchdog only arms once the client has proved it heartbeats its held
     // state (first 'inputstate' message). Without that handshake an older

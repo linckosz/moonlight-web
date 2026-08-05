@@ -1490,7 +1490,8 @@ int main(int argc, char* argv[])
     // out, or too many wrong PINs). It knows nothing about workers — this does.
     QObject::connect(&shareManager, &ShareManager::playerMustDisconnect, qApp,
                      [&g_StreamSlots, &detachWorkerSlot](int slot, int) {
-                         if (slot >= kOwnerSlots && slot < kTotalSlots && g_StreamSlots[slot].worker)
+                         if (slot >= kOwnerSlots && slot < kTotalSlots &&
+                             g_StreamSlots[slot].worker)
                              detachWorkerSlot(slot, false, true);
                      });
 
@@ -2385,8 +2386,8 @@ int main(int argc, char* argv[])
             QObject::connect(
                 worker, &StreamWorkerHost::ended, qApp,
                 [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs, &g_LiveSunshineUids,
-                 &anyOtherSlotLive, &computerManager, &authManager, reqSlot, host, hostUuidCopy, uid,
-                 sessionToken]() {
+                 &anyOtherSlotLive, &computerManager, &authManager, reqSlot, host, hostUuidCopy,
+                 uid, sessionToken]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
                     // Pathological probe outcome: the LIVE stream died within
@@ -2806,8 +2807,8 @@ int main(int argc, char* argv[])
         return p == 443 ? QStringLiteral("https://%1").arg(internetAccess.domain())
                         : QStringLiteral("https://%1:%2").arg(internetAccess.domain()).arg(p);
     };
-    shareDeps.stopPlayerStream = [&g_StreamSlots, &detachWorkerSlot, &shareManager](
-                                     int slot, bool notifyEnded) {
+    shareDeps.stopPlayerStream = [&g_StreamSlots, &detachWorkerSlot,
+                                  &shareManager](int slot, bool notifyEnded) {
         if (slot < kOwnerSlots || slot >= kTotalSlots) return;
         if (!g_StreamSlots[slot].worker) return;
         detachWorkerSlot(slot, false, notifyEnded);
@@ -2917,11 +2918,10 @@ int main(int argc, char* argv[])
             QObject::connect(worker, &StreamWorkerHost::exited, worker, &QObject::deleteLater);
 
             QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,
-                             [respond, &g_LiveSunshineUids, &shareManager, slot, uid](
-                                 int code, QJsonObject bodyObj) {
-                                 const bool ok = code == 200 &&
-                                                 bodyObj["status"].toString() ==
-                                                     QLatin1String("streaming");
+                             [respond, &g_LiveSunshineUids, &shareManager, slot,
+                              uid](int code, QJsonObject bodyObj) {
+                                 const bool ok = code == 200 && bodyObj["status"].toString() ==
+                                                                    QLatin1String("streaming");
                                  if (ok) {
                                      bodyObj["slot"] = slot;
                                      g_LiveSunshineUids.insert(uid);
@@ -2930,34 +2930,34 @@ int main(int argc, char* argv[])
                                  respond(HttpResponse::json(bodyObj, ok ? 200 : code));
                              });
 
-            QObject::connect(
-                worker, &StreamWorkerHost::ended, qApp,
-                [worker, &g_StreamSlots, &g_LiveSunshineUids, &shareManager, &anyOtherSlotLive,
-                 &computerManager, slot, host, uid]() {
-                    qInfo() << "[main] Player worker ended (slot" << slot << ")";
-                    // The share survives the stream: a dropped connection must
-                    // not end the invitation, only an owner action does.
-                    shareManager.setStreaming(slot, false);
-                    // Same rule as the owner slots — the Sunshine app is shared,
-                    // so /cancel only once nothing else is streaming.
-                    if (!anyOtherSlotLive(slot)) {
-                        auto* identity = IdentityManager::get();
-                        auto* quitReply = computerManager.http()->quitAppAsync(
-                            host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                            identity->getPrivateKey(), uid);
-                        QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
-                                         &QNetworkReply::deleteLater);
-                    }
-                    g_LiveSunshineUids.remove(uid);
-                    StreamSlot& sl = g_StreamSlots[slot];
-                    if (sl.worker == worker) {
-                        sl.worker = nullptr;
-                        sl.clientUniqueId.clear();
-                        sl.hostUuid.clear();
-                        sl.sessionToken.clear();
-                        sl.appId = 0;
-                    }
-                });
+            QObject::connect(worker, &StreamWorkerHost::ended, qApp,
+                             [worker, &g_StreamSlots, &g_LiveSunshineUids, &shareManager,
+                              &anyOtherSlotLive, &computerManager, slot, host, uid]() {
+                                 qInfo() << "[main] Player worker ended (slot" << slot << ")";
+                                 // The share survives the stream: a dropped connection must
+                                 // not end the invitation, only an owner action does.
+                                 shareManager.setStreaming(slot, false);
+                                 // Same rule as the owner slots — the Sunshine app is shared,
+                                 // so /cancel only once nothing else is streaming.
+                                 if (!anyOtherSlotLive(slot)) {
+                                     auto* identity = IdentityManager::get();
+                                     auto* quitReply = computerManager.http()->quitAppAsync(
+                                         host->activeAddress, host->activeHttpsPort,
+                                         identity->getCertificate(), identity->getPrivateKey(),
+                                         uid);
+                                     QObject::connect(quitReply, &QNetworkReply::finished,
+                                                      quitReply, &QNetworkReply::deleteLater);
+                                 }
+                                 g_LiveSunshineUids.remove(uid);
+                                 StreamSlot& sl = g_StreamSlots[slot];
+                                 if (sl.worker == worker) {
+                                     sl.worker = nullptr;
+                                     sl.clientUniqueId.clear();
+                                     sl.hostUuid.clear();
+                                     sl.sessionToken.clear();
+                                     sl.appId = 0;
+                                 }
+                             });
 
             const QString hostUuidCopy = host->uuid;
             auto startWorker = [worker, cfg, respond, slot, appId, &g_StreamSlots, hostUuidCopy,

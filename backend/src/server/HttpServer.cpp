@@ -1099,8 +1099,8 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
         const SlotPorts ports = m_SlotPorts.value(wsSlot);
         targetPort = wsIsRelay ? ports.relay : ports.signaling;
         if (targetPort == 0) {
-            Logger::warning(QString("[HttpServer] WebSocket upgrade for unconfigured slot %1")
-                                .arg(wsSlot));
+            Logger::warning(
+                QString("[HttpServer] WebSocket upgrade for unconfigured slot %1").arg(wsSlot));
             sendResponse(clientSocket, HttpResponse::error(404, "Not Found"));
             return;
         }
