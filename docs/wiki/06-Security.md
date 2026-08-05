@@ -64,6 +64,19 @@ Two cooperating layers:
    - Both arm a **10-minute temporary ban**; entries idle 5 min are purged.
    - **Loopback and private addresses (RFC 1918 / ULA / link-local) are fully exempt** — LAN clients are trusted.
 
+## 6.4b Session sharing (invited players)
+
+A share link is *designed* to leave the machine — it travels over chat apps, gets screenshotted, ends up in someone's history. So it is never a credential on its own.
+
+- **Two factors, both ephemeral, both bound to one activation.** Clicking a player row mints a 256-bit link token *and* a 6-digit PIN, and revokes whatever the previous click produced. Token, PIN and the cookie the PIN buys are stored as SHA-256 digests and compared in constant time (`ShareManager`), like `mw_session`.
+- **The PIN is asked for first.** `/api/share/player/info` reveals nothing — not even the machine name — until the device holds the `mw_player` cookie. A wrong PIN, an unknown token and an expired one produce the same answer. Link *liveness* is deliberately not hidden (whoever holds a 256-bit token already knows it existed; hiding it would make every expired link look like a typo).
+- **Brute force costs the attacker the invitation.** Per-caller attempts follow the same tiered lockout as the PIN login on their own bucket, and **10 wrong PINs on one activation destroy it** — the owner sees the row go back to off and re-shares. Failures also feed `ConnectionGuard`, so a leaked link being hammered ends in the same 10-minute ban as credential scanning.
+- **`mw_player` is not a session.** It never satisfies `isAuthenticated()`; it opens `/api/share/player/*` and the WebSocket upgrade of *its own* slot (`/ws2`…`/ws4`) and nothing else. Those slots reject the session cookie and the local-peer exemption alike — the player cookie is the only key.
+- **Permissions are enforced in the worker.** The policy chosen in the popin travels in the worker's launch config and filters every input message in all three transports plus the WS fallback (`InputMsg::allowed`); refused messages are dropped silently. The guest's page can send whatever JSON it likes. `ClipboardBridge` is off for any restricted session whatever the host address.
+- **The policy is frozen** at the earlier of the popin closing or the first join, because from then on a worker may already be enforcing it and the guest was told what they were getting. Changing it means re-sharing, which invalidates the old link.
+- **8-hour lease, owner-controlled end.** Only an owner action (player row, Stop, ⋯ → Stop session) or the TTL ends an invitation; a dropped stream, a closed tab or a quality switch never do. The TTL is checked at join *and* swept every minute so a live stream is cut at the deadline.
+- **Build-time switch**: `ShareManager::kSessionSharingEnabled = false` unregisters every route, so the whole surface answers 404 — indistinguishable from a build without the feature.
+
 ## 6.5 TLS
 
 - **LAN**: a self-signed certificate is generated on first run (browser shows a one-time warning — inherent to self-signed TLS).
