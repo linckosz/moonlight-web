@@ -87,7 +87,9 @@ export class SetupView {
             this._sunshineInstalled = !!(status.sunshine && status.sunshine.installed);
             this._sunshinePaired = !!(status.sunshine && status.sunshine.paired);
             this._autostartInstalled = !!status.autostart_installed;
-            this._displaySleepSupported = !!(status.display_sleep && status.display_sleep.supported);
+            this._displaySleepSupported = !!(
+                status.display_sleep && status.display_sleep.supported
+            );
             this._displayKeptAwake = !!(status.display_sleep && status.display_sleep.kept_awake);
             this._internetActive = !!(status.internet && status.internet.active);
             this._domain = (status.internet && status.internet.domain) || '';
