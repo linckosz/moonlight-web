@@ -40,6 +40,8 @@ export type StreamTransport = (WebRtcDataChannel | WebRtcMedia) & {
     onTakeover?: (() => void) | null;
     /** This device's access was revoked by an admin. */
     onRevoked?: (() => void) | null;
+    /** The owner ended the shared session this player was invited to. */
+    onSessionEnded?: (() => void) | null;
 
     /**
      * Surface ICE failure as an error so MoonlightApp can relaunch on the next
