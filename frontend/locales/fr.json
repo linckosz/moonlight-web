@@ -383,10 +383,7 @@
         "sunshineStopped2": "Sunshine est installé mais pas démarré.",
         "openSunshineConfig": "Ouvrir la configuration de Sunshine",
         "openSunshineConfigHint": "Sunshine n'a pas de fenêtre : sur macOS il tourne en arrière-plan (barre de menus en haut à droite), sur Windows/Linux dans la zone de notification. Configurez-le depuis son interface web. Connectez-vous avec le nom d'utilisateur et le mot de passe Sunshine que vous avez définis.",
-        "thisDevice": "Cet appareil",
-        "thisDeviceTitle": "Le navigateur qui affiche cette page",
-        "confirmRevoke": "Révoquer la session de « {{name}} » ? Cet appareil devra saisir un PIN à nouveau.",
-        "confirmRevokeCurrent": "« {{name}} » est l'appareil que vous utilisez en ce moment. Le révoquer déconnecte ce navigateur — sur la machine hôte, il faudra rouvrir la page depuis localhost (ou l'icône de la zone de notification) pour retrouver l'accès admin. Continuer ?"
+        "confirmRevoke": "Révoquer la session de « {{name}} » ? Cet appareil devra saisir un PIN à nouveau."
     },
     "stream": {
         "stop": "Arrêter",

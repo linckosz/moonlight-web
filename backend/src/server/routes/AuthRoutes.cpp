@@ -377,6 +377,22 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                          .arg(token, QString::number(token.size())));
         if (token.isEmpty()) return HttpResponse::error(400, "Missing 'token' in request body");
 
+        // Never the session making the request. Revoking yourself is not an
+        // operation anyone wants — on the host machine's own session it costs
+        // the admin access that was being used to click, and takes the stream
+        // that session is flagged with down with it. The admin page does not
+        // even list that row; this is the half of the guard a stray or replayed
+        // request cannot get around.
+        const QString currentId =
+            authManager.sessionIdForToken(HttpServer::sessionTokenFromRequest(req));
+        if (!currentId.isEmpty() && token == currentId) {
+            Logger::warning("[Auth] Refused to revoke the caller's own session");
+            QJsonObject obj;
+            obj["status"] = "error";
+            obj["error"] = "cannot_revoke_self";
+            return HttpResponse::json(obj, 409);
+        }
+
         authManager.destroySession(token);
         QJsonObject obj;
         obj["status"] = "revoked";

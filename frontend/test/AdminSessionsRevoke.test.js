@@ -5,12 +5,15 @@
  * Revoking a session from the admin table. The table re-renders on a timer, so
  * the row under the pointer can change between reading it and clicking it —
  * these tests pin down that a click always revokes the row it landed on, and
- * that the user is told which device that is before anything is destroyed.
+ * that the browser reading the page is never one of those rows.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../js/api/BackendClient.js', () => ({
-    BackendClient: { revokeSession: vi.fn(async () => ({ status: 'revoked' })) },
+    BackendClient: {
+        getAuthSessions: vi.fn(),
+        revokeSession: vi.fn(async () => ({ status: 'revoked' })),
+    },
 }));
 vi.mock('../js/ui/Toast.js', () => ({
     Toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -28,9 +31,10 @@ describe('AdminView session revoke', () => {
     let view;
     let container;
 
-    const sessions = [
-        { token: 'tok-host', machine_name: 'Host machine', created_at: 300, current: true },
+    const payload = [
+        { token: 'tok-self', machine_name: 'Host machine', created_at: 300, current: true },
         { token: 'tok-linux', machine_name: 'Linux Chrome', created_at: 200 },
+        { token: 'tok-phone', machine_name: 'Android Chrome', created_at: 100 },
     ];
 
     const revokeButton = (name) =>
@@ -38,16 +42,31 @@ describe('AdminView session revoke', () => {
             (b) => b.dataset.machine === name,
         );
 
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.clearAllMocks();
+        BackendClient.getAuthSessions.mockResolvedValue({
+            sessions: payload.map((s) => ({ ...s })),
+        });
         document.body.innerHTML = '<div id="admin-sessions-table"></div>';
         container = document.body;
         view = new AdminView(container, () => {});
-        view._sessions = sessions.map((s) => ({ ...s }));
+        await view._loadSessions();
         view._renderSessionsTable();
     });
 
     afterEach(() => vi.unstubAllGlobals());
+
+    it('leaves the browser reading the page out of the table entirely', () => {
+        const names = Array.from(container.querySelectorAll('.session-name-edit')).map(
+            (el) => el.textContent,
+        );
+        expect(names).toEqual(['Linux Chrome', 'Android Chrome']);
+        expect(revokeButton('Host machine')).toBeUndefined();
+    });
+
+    it('counts what the table shows, not the hidden row', () => {
+        expect(view._activeSessions).toBe(2);
+    });
 
     it('revokes the session of the button that was clicked', async () => {
         vi.stubGlobal(
@@ -61,8 +80,8 @@ describe('AdminView session revoke', () => {
     it('names the clicked device in the confirmation', async () => {
         const confirmMock = vi.fn(() => true);
         vi.stubGlobal('confirm', confirmMock);
-        await view._revokeSession(revokeButton('Linux Chrome'));
-        expect(confirmMock.mock.calls[0][0]).toContain('Linux Chrome');
+        await view._revokeSession(revokeButton('Android Chrome'));
+        expect(confirmMock.mock.calls[0][0]).toContain('Android Chrome');
     });
 
     it('destroys nothing when the confirmation is declined', async () => {
@@ -74,31 +93,13 @@ describe('AdminView session revoke', () => {
         expect(BackendClient.revokeSession).not.toHaveBeenCalled();
     });
 
-    it('warns differently for the browser reading the page', async () => {
-        const confirmMock = vi.fn(() => false);
-        vi.stubGlobal('confirm', confirmMock);
-        await view._revokeSession(revokeButton('Host machine'));
-        const ownQuestion = confirmMock.mock.calls[0][0];
-
-        confirmMock.mockClear();
-        await view._revokeSession(revokeButton('Linux Chrome'));
-        expect(confirmMock.mock.calls[0][0]).not.toBe(ownQuestion);
-    });
-
-    it('marks its own session in the table', () => {
-        const rows = container.querySelectorAll('.sessions-table tbody tr');
-        expect(rows[0].classList.contains('session-row-current')).toBe(true);
-        expect(rows[0].querySelector('.session-current-badge')).not.toBeNull();
-        expect(rows[1].querySelector('.session-current-badge')).toBeNull();
-    });
-
     it('does not rebuild identical rows, so the click target stays put', () => {
         const before = revokeButton('Linux Chrome');
         // Same data → the poll must leave the DOM alone.
         expect(view._sessionsSignature()).toBe(view._sessionsRendered);
 
         // A change the table shows → the signature moves and a re-render is due.
-        view._sessions[1].streaming = true;
+        view._sessions[0].streaming = true;
         expect(view._sessionsSignature()).not.toBe(view._sessionsRendered);
         view._renderSessionsTable();
         expect(revokeButton('Linux Chrome')).not.toBe(before);

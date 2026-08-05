@@ -49,7 +49,7 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 | `POST /api/auth/admin-unlock` | 🔑 LAN | Body `{password}` → promotes this session to admin. Requires a LAN peer **and** a trusted `Host`, an existing session, remote administration enabled **and** a password actually set (there is no built-in default); own rate-limit bucket (401 `invalid_password`, 429 `rate_limited`, 403 `lan_only`/`not_configured`). Answers `ok` without spending an attempt when the caller is already an admin. |
 | `POST /api/admin/password` | 🏠 | Body `{password}` and/or `{enabled}` — changes the remote admin password (min 8 chars, 400 `too_short`) and turns remote administration on or off. Also reachable from a terminal as `moonlightweb --set-admin-password`. Either change revokes every session unlocked with the old password, except the caller's. |
 | `GET /api/auth/sessions` | 🏠 | Sessions table (opaque token hash ids, IP, geo, machine name, streaming flag), newest first. `current` marks the caller's own session. |
-| `POST /api/auth/sessions/revoke` | 🏠 | Revoke by opaque id; a streaming session's relay is torn down immediately. |
+| `POST /api/auth/sessions/revoke` | 🏠 | Revoke by opaque id; a streaming session's relay is torn down immediately. Refuses the caller's own session (409 `cannot_revoke_self`). |
 | `GET /api/admin/certificate/download` / `POST /api/admin/certificate/regenerate` | 🏠 | Certificate-file auth token. |
 | `POST /api/auth/host-key` | 🌐 | Redeem `?mwk=` host key → host session; rotates the key and rewrites entry points. |
 
