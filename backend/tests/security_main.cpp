@@ -10,6 +10,7 @@
 #include "test_framework.h"
 
 #include <QCoreApplication>
+#include <QStandardPaths>
 #include <cstdlib>
 
 TestStats g_stats;
@@ -17,14 +18,20 @@ TestStats g_stats;
 void run_connection_guard_tests();
 void run_request_guard_tests();
 void run_api_csrf_tests();
+void run_share_manager_tests();
 
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
+    // ShareManager persists its state under AppDataLocation. Test mode moves
+    // that to a throwaway directory so a test run never touches (or wipes) the
+    // share state of a real install on the developer's machine.
+    QStandardPaths::setTestModeEnabled(true);
 
     run_connection_guard_tests();
     run_request_guard_tests();
     run_api_csrf_tests();
+    run_share_manager_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");
