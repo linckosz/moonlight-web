@@ -582,9 +582,15 @@ export class StreamView {
         // decode and drops to the freshest frame, so link jitter turns straight
         // into "repeat + skip" judder. FramePacer rebuilds the reserve from the
         // backendTs capture stamps. webrtc-media does NOT use it — there the
-        // browser's own buffer does the job (see _jitterAuto above). On by
-        // default: a clean link measures a 0ms reserve (bit-for-bit the old
-        // immediate path), so opting out (`mw_pacing=0`) is only an escape hatch.
+        // browser's own buffer does the job (see _jitterAuto above).
+        //
+        // On by default, `mw_pacing=0` to opt out. The premise is that a clean
+        // link measures a 0ms reserve — which held only on loopback for as long
+        // as the underrun fast-path could bump past the quantile and postpone
+        // the decay, pinning the reserve at the 25ms cap on every other device.
+        // With that fixed (see FramePacer.noteUnderrun) the reserve tracks the
+        // measured p95 tail again: ~3ms on a Wi-Fi-shaped link. Read once per
+        // stream start, so a flag change needs a stream relaunch to take.
         this._pacingEnabled = this._transport !== 'webrtc-media';
         try {
             if (localStorage.getItem('mw_pacing') === '0') this._pacingEnabled = false;

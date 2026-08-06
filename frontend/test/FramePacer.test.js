@@ -64,13 +64,59 @@ describe('FramePacer', () => {
         expect(p.targetMs).toBeLessThanOrEqual(40);
     });
 
-    it('bumps immediately on an underrun', () => {
+    it('does not invent a reserve on an underrun with no evidence behind it', () => {
         const p = new FramePacer();
         p.noteUnderrun(1000);
-        expect(p.targetMs).toBe(8);
         p.noteUnderrun(1000);
-        expect(p.targetMs).toBe(16);
+        // Counted, but the sample window is empty: nothing justifies a hold.
         expect(p.stats.underruns).toBe(2);
+        expect(p.targetMs).toBe(0);
+    });
+
+    it('bumps toward the tail estimate without overshooting it', () => {
+        // CONTROL_INTERVAL so long that _control() never runs: whatever the
+        // target reaches here came from the bump path alone.
+        const p = new FramePacer({ CONTROL_INTERVAL_MS: 1e9 });
+        run(p, 120, (i) => (i % 2 ? 20 : 0));
+        expect(p.targetMs).toBe(0); // the statistic has not had a tick yet
+        p.noteUnderrun(9999);
+        expect(p.targetMs).toBe(8); // one BUMP_UNDERRUN step...
+        p.noteUnderrun(9999);
+        p.noteUnderrun(9999);
+        p.noteUnderrun(9999);
+        // ...and never past what the p95 tail (~20ms) plus SAFETY justifies,
+        // however many underruns fire. The bump sets WHEN the target moves,
+        // not WHERE it lands.
+        expect(p.targetMs).toBeLessThanOrEqual(20 * 1.15 + 0.5);
+    });
+
+    it('tracks the tail, not the outliers, on a Wi-Fi-shaped link', () => {
+        const p = new FramePacer();
+        // ~3ms of ambient noise on every frame plus a 30ms hiccup every 25th —
+        // the shape of any real Wi-Fi hop. The p95 tail is ~2.9ms, so that is
+        // what the reserve must cost.
+        //
+        // Regression: each hiccup used to add BUMP_UNDERRUN on top of the
+        // current target AND postpone the decay, so the reserve ratcheted to
+        // MAX and pinned there — a measured 24.6ms average reserve against that
+        // same 2.9ms tail, i.e. 25ms of latency on every frame to rescue 4% of
+        // them. It reproduced on every device except the host (loopback has no
+        // late frames at all, hence no underruns and a 0ms reserve).
+        run(p, 900, (i) => (i % 25 === 0 ? 30 : (i % 3) * 1.5));
+        expect(p.stats.lateTailMs).toBeLessThan(4);
+        expect(p.targetMs).toBeLessThan(5);
+    });
+
+    it('keeps decaying while sporadic late frames keep arriving', () => {
+        const p = new FramePacer();
+        run(p, 120, (i) => (i % 2 ? 20 : 0)); // earn a real reserve first
+        const peak = p.targetMs;
+        expect(peak).toBeGreaterThan(15);
+        // The link calms to the occasional outlier. An underrun still fires now
+        // and then, and used to reset the decay clock every time — the reserve
+        // could rise but never fall, whatever the tail estimate said.
+        run(p, 600, (i) => (i % 25 === 0 ? 30 : 0), 100000 + 120 * FRAME_MS, 5000 + 120 * FRAME_MS);
+        expect(p.targetMs).toBe(0);
     });
 
     it('decays back to exactly zero after sustained calm', () => {

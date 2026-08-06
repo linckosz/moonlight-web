@@ -110,12 +110,31 @@ export class FramePacer {
      * through all of it (see schedule()), so the judder already happened. Step
      * up now for the frames behind it; the tail estimate would only catch up on
      * the next control tick, a frame or two too late.
+     *
+     * The bump changes WHEN the target moves, never WHERE it moves to: it is
+     * capped by the same tail estimate _control() would apply, just evaluated
+     * now instead of up to CONTROL_INTERVAL_MS later. Uncapped it compounds —
+     * every late frame added BUMP_UNDERRUN(8ms) while decay sheds only
+     * DECAY_STEP/DECAY_INTERVAL (8ms/s), so any link with a few percent of late
+     * frames ratcheted to MAX and pinned there. That is not a rounding error:
+     * measured on a 4%-late link, 24ms of reserve held against a p95 late tail
+     * of 2.7ms — 25ms of latency on every frame, bought to rescue 4% of them.
+     * The quantile is the whole point of the control law (cover the tail, let
+     * the outliers hitch); reacting to each individual outlier overrode it.
+     *
+     * The decay clock is deliberately NOT reset here — the decay cadence belongs
+     * to _control(). Postponing it on every underrun was the other half of the
+     * latch: where a late frame lands more often than once per DECAY_INTERVAL_MS
+     * the decay branch never ran at all, so the reserve could rise but never
+     * fall, whatever the tail estimate said.
+     *
      * @param {number} nowMs performance.now()-domain
      */
     noteUnderrun(nowMs) {
         this._underruns++;
-        this._targetMs = Math.min(this.cfg.MAX, this._targetMs + this.cfg.BUMP_UNDERRUN);
-        this._lastDecay = nowMs;
+        const justified = this._tail() * this.cfg.SAFETY;
+        const desired = Math.min(this.cfg.MAX, this._targetMs + this.cfg.BUMP_UNDERRUN, justified);
+        if (desired > this._targetMs) this._targetMs = desired;
     }
 
     /**
