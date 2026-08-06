@@ -557,7 +557,7 @@
         "expiry": "Le lien fonctionne 8 heures, ou jusqu'à ce que tu coupes ce joueur.",
         "expiresInH": "Expire dans {{h}} h {{m}} min.",
         "expiresInM": "Expire dans {{m}} min.",
-        "secretOnce": "Le lien et son PIN n'ont été affichés qu'une fois et ne peuvent plus l'être.",
+        "secretsLost": "Le lien et le PIN de ce partage ont été oubliés au redémarrage du serveur. Arrêtez le partage et repartagez pour en obtenir de nouveaux.",
         "done": "Terminé",
         "unshare": "Arrêter le partage"
     },

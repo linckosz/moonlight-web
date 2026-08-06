@@ -234,7 +234,7 @@ export class ShareMenu {
         // A live row opens instead of firing: killing a link — and with it
         // someone else's picture, mid-game — is not something a stray click on
         // a menu should be able to do.
-        this._openManagePopin(slot, row);
+        await this._openManagePopin(slot, row);
     }
 
     async _activate(slot) {
@@ -268,6 +268,9 @@ export class ShareMenu {
 
     /** Mount the overlay around `inner` and remember it. */
     _mountPopin(inner, onDismiss) {
+        // Never stack two: a second click while one is opening would otherwise
+        // orphan the first overlay in the DOM with nothing left pointing at it.
+        this._closePopin();
         const overlay = document.createElement('div');
         overlay.className = 'share-popin-overlay';
         overlay.innerHTML = `<div class="share-popin" role="dialog" aria-modal="true">${inner}</div>`;
@@ -320,11 +323,7 @@ export class ShareMenu {
             `
                 <h3>${escapeHtml(t('sharing.popinTitle', { player: name }))}</h3>
 
-                <label class="share-field-label">${escapeHtml(t('sharing.linkLabel'))}</label>
-                <div class="share-copy-row">
-                    <input class="share-link-input" type="text" readonly value="${escapeHtml(data.url || '')}">
-                    <button class="btn btn-secondary share-copy-btn" type="button">${escapeHtml(t('common.copy'))}</button>
-                </div>
+                ${this._linkBlock(data.url || '')}
 
                 <label class="share-field-label">${escapeHtml(t('sharing.pinLabel'))}</label>
                 <div class="share-pin">${escapeHtml(data.pin || '')}</div>
@@ -393,10 +392,27 @@ export class ShareMenu {
         gamepadCb.addEventListener('change', push);
         kmCb.addEventListener('change', push);
 
+        this._wireCopyButton(overlay);
+        overlay.querySelector('.share-done-btn').addEventListener('click', close);
+    }
+
+    /** The link block: a read-only field and a copy button that says so. */
+    _linkBlock(url) {
+        return `
+            <label class="share-field-label">${escapeHtml(t('sharing.linkLabel'))}</label>
+            <div class="share-copy-row">
+                <input class="share-link-input" type="text" readonly value="${escapeHtml(url)}">
+                <button class="btn btn-secondary share-copy-btn" type="button">${escapeHtml(t('common.copy'))}</button>
+            </div>
+        `;
+    }
+
+    _wireCopyButton(overlay) {
         const copyBtn = /** @type {HTMLElement} */ (overlay.querySelector('.share-copy-btn'));
         const linkInput = /** @type {HTMLInputElement} */ (
             overlay.querySelector('.share-link-input')
         );
+        if (!copyBtn || !linkInput) return;
         copyBtn.addEventListener('click', async () => {
             try {
                 await navigator.clipboard.writeText(linkInput.value);
@@ -410,21 +426,43 @@ export class ShareMenu {
                 copyBtn.textContent = t('common.copy');
             }, 1500);
         });
-
-        overlay.querySelector('.share-done-btn').addEventListener('click', close);
     }
 
     /**
-     * The popin for a share that is already live. It cannot show the link or
-     * the PIN again — only their digests were kept — so what it offers is the
-     * state, what that guest is allowed to do, and the one destructive action,
-     * behind a button the user has to aim at.
+     * The popin for a share that is already live: everything the minting popin
+     * showed — link, PIN, permissions — plus the state, the time left and the
+     * one destructive action, behind a button the user has to aim at.
+     *
+     * The permissions are read-only here. They froze when the first popin
+     * closed, and the guest may already be running under them; changing your
+     * mind means unsharing and sharing again, which is also what invalidates
+     * the link they were given.
      */
-    _openManagePopin(slot, row) {
+    async _openManagePopin(slot, row) {
         const index = this.slots.findIndex((s) => s.slot === slot);
         const name = t('sharing.playerN', { n: (index < 0 ? 0 : index) + 1 });
         const streaming = row.state === 'streaming';
         const level = row.access_level || 'viewer';
+        const perms = row.permissions || { gamepad: false, keyboardMouse: false };
+
+        let creds = { available: false };
+        try {
+            creds = await BackendClient.shareCredentials(slot);
+        } catch (err) {
+            // Falls through to the "cannot show them again" copy: an owner who
+            // still has the link in their chat window is not blocked by this.
+            console.warn('[ShareMenu] credentials failed:', err);
+        }
+
+        const secretBlock = creds.available
+            ? `
+                ${this._linkBlock(creds.url || '')}
+
+                <label class="share-field-label">${escapeHtml(t('sharing.pinLabel'))}</label>
+                <div class="share-pin">${escapeHtml(creds.pin || '')}</div>
+                <p class="share-pin-hint">${escapeHtml(t('sharing.pinHint'))}</p>
+            `
+            : `<p class="share-pin-hint">${escapeHtml(t('sharing.secretsLost'))}</p>`;
 
         const overlay = this._mountPopin(
             `
@@ -434,14 +472,26 @@ export class ShareMenu {
                     ${escapeHtml(t(streaming ? 'sharing.manageStreaming' : 'sharing.manageShared'))}
                 </p>
 
+                ${secretBlock}
+
                 <label class="share-field-label">${escapeHtml(t('sharing.inputsLabel'))}</label>
+                <div class="share-perms">
+                    <label class="share-check is-locked">
+                        <input type="checkbox" disabled ${perms.gamepad ? 'checked' : ''}>
+                        <span>${escapeHtml(t('sharing.gamepad'))}</span>
+                    </label>
+                    <label class="share-check is-locked">
+                        <input type="checkbox" disabled ${perms.keyboardMouse ? 'checked' : ''}>
+                        <span>${escapeHtml(t('sharing.keyboardMouse'))}</span>
+                    </label>
+                </div>
+
                 <div class="share-access" data-level="${escapeHtml(level)}">
                     <div class="share-access-level">${escapeHtml(t(`sharing.access.${level}`))}</div>
                     <div class="share-access-warning">${escapeHtml(t('sharing.inputsLocked'))}</div>
                 </div>
 
                 <p class="share-expiry">${escapeHtml(this._remaining(row.expires_at))}</p>
-                <p class="share-pin-hint">${escapeHtml(t('sharing.secretOnce'))}</p>
 
                 <div class="share-popin-actions share-popin-actions-split">
                     <button class="btn btn-danger share-unshare-btn" type="button">${escapeHtml(t('sharing.unshare'))}</button>
@@ -450,6 +500,8 @@ export class ShareMenu {
             `,
             () => this._closePopin(),
         );
+
+        this._wireCopyButton(overlay);
 
         overlay.querySelector('.share-done-btn').addEventListener('click', () => {
             // Done is a pure dismiss: nothing to freeze, nothing to revoke.

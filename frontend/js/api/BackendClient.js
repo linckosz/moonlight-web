@@ -287,6 +287,14 @@ export class BackendClient {
     static async shareActivate(slot) {
         return this.post(`/api/share/slots/${slot}/activate`);
     }
+    /**
+     * The link and PIN of a share that is already live, for an owner reopening
+     * the popin. Answers {available:false} when the backend restarted since:
+     * only the digests are persisted.
+     */
+    static async shareCredentials(slot) {
+        return this.post(`/api/share/slots/${slot}/credentials`);
+    }
     /** Update input permissions while the popin is still open. */
     static async sharePermissions(slot, permissions) {
         return this.post(`/api/share/slots/${slot}/permissions`, permissions);

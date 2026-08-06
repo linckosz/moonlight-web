@@ -79,7 +79,8 @@ Owner routes need a normal session (any authenticated user — deliberately not 
 | Method & path | Access | Description |
 |---|---|---|
 | `GET /api/share/status` | 🔑 | The three player rows: `{slot, state ∈ off\|shared\|streaming, permissions, access_level, locked, expires_at}` + `streaming` count. |
-| `POST /api/share/slots/:n/activate` | 🔑 | Mint a link + PIN, revoking the slot's previous pair. Returns `{url, pin, …}` — the only time either is ever readable. |
+| `POST /api/share/slots/:n/activate` | 🔑 | Mint a link + PIN, revoking the slot's previous pair. Returns `{url, pin, …}`. |
+| `POST /api/share/slots/:n/credentials` | 🔑 | The same `{url, pin}` again, for an owner reopening the popin on a live share. `{available:false}` when the process restarted since — only the digests are persisted. POST, not GET: it hands out a credential, so it goes through the CSRF/origin gate. |
 | `POST /api/share/slots/:n/permissions` | 🔑 | `{gamepad, keyboardMouse}` while the popin is open. **409** once locked. |
 | `POST /api/share/slots/:n/lock` | 🔑 | Popin closed — the permissions are final for this activation. |
 | `POST /api/share/slots/:n/deactivate` | 🔑 | Disconnect the player and revoke link, PIN and cookies. |

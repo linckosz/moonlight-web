@@ -316,6 +316,41 @@ void test_persistence_survives_a_restart()
     delete again;
 }
 
+void test_clear_secrets_are_memory_only()
+{
+    SECTION("share: the clear link and PIN never touch the disk");
+    ShareManager* mgr = freshManager();
+
+    QString token, pin;
+    ShareManager::SlotStatus st;
+    mgr->activate(kSlot, token, pin, st);
+
+    // The owner reopening the popin gets the same pair back, not a new one.
+    QString again, againPin;
+    CHECK(mgr->secrets(kSlot, again, againPin));
+    CHECK_EQ(again, token);
+    CHECK_EQ(againPin, pin);
+
+    // Another slot has nothing to show.
+    QString other, otherPin;
+    CHECK(!mgr->secrets(ShareManager::kFirstSlot + 1, other, otherPin));
+    delete mgr;
+
+    // The invitation itself survives a restart — its clear pair does not,
+    // because share.json only ever held the digests.
+    auto* restarted = new ShareManager();
+    CHECK(restarted->tokenIsLive(token));
+    QString lostToken, lostPin;
+    CHECK(!restarted->secrets(kSlot, lostToken, lostPin));
+    CHECK(lostToken.isEmpty());
+    CHECK(lostPin.isEmpty());
+
+    // Revoking wipes them for good.
+    restarted->deactivateAll(ShareManager::EndReason::OwnerStop);
+    CHECK(!restarted->secrets(kSlot, lostToken, lostPin));
+    delete restarted;
+}
+
 } // namespace
 
 void run_share_manager_tests()
@@ -329,4 +364,5 @@ void run_share_manager_tests()
     test_revoking_a_live_stream_asks_for_a_disconnect();
     test_slots_are_independent();
     test_persistence_survives_a_restart();
+    test_clear_secrets_are_memory_only();
 }

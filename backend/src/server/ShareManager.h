@@ -122,10 +122,15 @@ public:
     /// Every player slot, always kSlotCount entries, lowest slot first.
     QList<SlotStatus> status();
 
-    /// Mint a new activation on @p slot, revoking any previous one. The raw
-    /// token and PIN are returned once and never again — only their digests are
-    /// kept. Returns false for a slot outside the player range.
+    /// Mint a new activation on @p slot, revoking any previous one. Returns
+    /// false for a slot outside the player range.
     bool activate(int slot, QString& outToken, QString& outPin, SlotStatus& outStatus);
+
+    /// The raw link token and PIN of a live activation, so the owner reopening
+    /// the popin can read what they already sent out. False when the slot is
+    /// Off, or when the process restarted since: the clear values live in
+    /// memory only, share.json keeps digests.
+    bool secrets(int slot, QString& outToken, QString& outPin);
 
     /// Update the input permissions while the popin is still open. Returns
     /// false when the slot is Off or already locked.
@@ -207,6 +212,13 @@ private:
         qint64 activatedAt = 0;
         int pinFailures = 0;
         bool streaming = false; ///< runtime only, never persisted
+
+        /// The clear link token and PIN, so the owner can reopen the popin and
+        /// read what they already handed out. Runtime only — share.json holds
+        /// digests, so the file on disk is never a usable invitation and a
+        /// restart simply forgets the pair while the share stays valid.
+        QString tokenClear;
+        QString pinClear;
 
         bool live() const { return !tokenHash.isEmpty(); }
     };

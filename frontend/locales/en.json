@@ -557,7 +557,7 @@
         "expiry": "The link works for 8 hours, or until you turn this player off.",
         "expiresInH": "Expires in {{h}} h {{m}} min.",
         "expiresInM": "Expires in {{m}} min.",
-        "secretOnce": "The link and its PIN were shown once and cannot be shown again.",
+        "secretsLost": "The link and PIN of this share were forgotten when the server restarted. Unshare and share again for a fresh pair.",
         "done": "Done",
         "unshare": "Unshare"
     },
