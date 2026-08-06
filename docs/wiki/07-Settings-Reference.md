@@ -108,7 +108,7 @@ CI bakes `MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_*` (from r
 | `mw-lang` | UI language (en/fr/zh). |
 | `mw_client_uniqueid` | Per-browser Sunshine identity (session isolation); the standby stream slot derives its own id from it. |
 | `mw_jitter_auto` | Adaptive jitterBufferTarget toggle (webrtc-media). |
-| `mw_pacing` | Adaptive presentation reserve (DataChannel/WSS paths — the `FramePacer` de-jitter clock). On by default; set to `0` to opt out. The reserve is shown live in the latency breakdown ("jitter reserve"), and is read once per stream start — set it, then relaunch the stream. |
+| `mw_pacing` | Adaptive presentation reserve (DataChannel/WSS paths — the `FramePacer` de-jitter clock). Off by default (freshest-frame-first: on real Wi-Fi the reserve legitimately sits near its 25ms cap, and latency wins over smoothness); set to `1` to opt in. The reserve is shown live in the latency breakdown ("jitter reserve" — the row only exists while the pacer runs), and is read once per stream start — set it, then relaunch the stream. |
 | `mw_hdr_tonemap` | `1/0` override of the automatic ACES tone-map; `mw_hdr_curve` / `mw_hdr_exposure` / `mw_hdr_refwhite` tune it. |
 | `mw_force_2d` | Force the Canvas2D renderer (skip the WebGPU probe). |
 | `mw_setup_dismissed` / `mw_update_dismissed` | Banner dismissals (setup nudge, update banner). |

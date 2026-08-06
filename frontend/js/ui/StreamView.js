@@ -584,16 +584,20 @@ export class StreamView {
         // backendTs capture stamps. webrtc-media does NOT use it — there the
         // browser's own buffer does the job (see _jitterAuto above).
         //
-        // On by default, `mw_pacing=0` to opt out. The premise is that a clean
-        // link measures a 0ms reserve — which held only on loopback for as long
-        // as the underrun fast-path could bump past the quantile and postpone
-        // the decay, pinning the reserve at the 25ms cap on every other device.
-        // With that fixed (see FramePacer.noteUnderrun) the reserve tracks the
-        // measured p95 tail again: ~3ms on a Wi-Fi-shaped link. Read once per
-        // stream start, so a flag change needs a stream relaunch to take.
-        this._pacingEnabled = this._transport !== 'webrtc-media';
+        // OFF by default — the project rule is freshest-frame-first: latency
+        // wins over smoothness, the newest decoded frame is presented and older
+        // ones are dropped. The pacer is the opposite trade by design: on real
+        // Wi-Fi, power-save delivers frames in 20-40ms bursts, so the p95 late
+        // tail — and therefore the reserve — legitimately sits near the 25ms
+        // cap. That is not the control-law bug (fixed in FramePacer.noteUnderrun,
+        // which pinned the cap even on near-clean links); it is what absorbing
+        // that jitter costs. Opt in with `mw_pacing=1` where smoothness matters
+        // more than the added frame of latency. Read once per stream start, so
+        // a flag change needs a stream relaunch to take.
+        this._pacingEnabled = false;
         try {
-            if (localStorage.getItem('mw_pacing') === '0') this._pacingEnabled = false;
+            if (localStorage.getItem('mw_pacing') === '1')
+                this._pacingEnabled = this._transport !== 'webrtc-media';
         } catch (e) {}
         this._framePacer = this._pacingEnabled ? new FramePacer() : null;
         this._pacerStats = null; // last snapshot (worker mode posts it with the counters)
