@@ -191,6 +191,10 @@ export class BackendClient {
     static async wakeHost(uuid) {
         return this.post(`/api/hosts/${uuid}/wol`);
     }
+    /** Set per-host quirks the protocol can't report (e.g. notchedScroll). */
+    static async setHostOptions(uuid, options) {
+        return this.post(`/api/hosts/${uuid}/options`, options);
+    }
     static async startPairing(hostId) {
         return this.post(`/api/hosts/${hostId}/pair/start`);
     }

@@ -730,15 +730,43 @@ void MoonlightShim::sendMouseButton(bool down, int button, bool hold)
                            static_cast<char>(button));
 }
 
+// Hold back everything that is not yet a whole notch, returning the amount to
+// send (0 = nothing yet). Mirrors what Sunshine itself does when its
+// `high_resolution_scrolling` option is off — done here so it can be decided
+// per host instead of per Sunshine install, and so it covers every client and
+// every input path (wheel, trackpad gesture, touch drag) at once.
+static short quantizeScroll(short amount, int& carry)
+{
+    constexpr int kWheelDelta = 120;
+    // Most notches that still fit the packet's signed 16-bit field. A burst
+    // large enough to hit this stays in the carry and rides the next event out.
+    constexpr int kMaxNotches = 32767 / kWheelDelta; // 273 → 32760
+
+    carry += amount;
+    int notches = carry / kWheelDelta; // truncates toward zero, so a reversal
+    if (notches == 0) return 0;        // never strands what the carry holds
+    notches = qBound(-kMaxNotches, notches, kMaxNotches);
+    carry -= notches * kWheelDelta;
+    return static_cast<short>(notches * kWheelDelta);
+}
+
 void MoonlightShim::sendMouseScroll(short scrollAmount)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
+    if (m_NotchedScroll) {
+        scrollAmount = quantizeScroll(scrollAmount, m_VScrollCarry);
+        if (scrollAmount == 0) return;
+    }
     LiSendHighResScrollEvent(scrollAmount);
 }
 
 void MoonlightShim::sendMouseHScroll(short scrollAmount)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
+    if (m_NotchedScroll) {
+        scrollAmount = quantizeScroll(scrollAmount, m_HScrollCarry);
+        if (scrollAmount == 0) return;
+    }
     // Sunshine-only extension: returns LI_ERR_UNSUPPORTED on other hosts, which
     // is fine — vertical scrolling keeps working either way.
     LiSendHighResHScrollEvent(scrollAmount);

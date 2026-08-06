@@ -43,6 +43,10 @@ export class Host {
         this.wakeSupported = data.wakeSupported === true;
         // Backend flag: this host is the very machine MoonlightWeb runs on.
         this.isLocalHost = data.isLocalHost === true;
+        // User-set quirk: quantize scroll to whole notches for a host that
+        // discards sub-notch amounts (Linux hosts — see the backend's
+        // NvComputer::notchedScroll). Applied server-side, per host.
+        this.notchedScroll = data.notchedScroll === true;
     }
 
     get isOnline() {
