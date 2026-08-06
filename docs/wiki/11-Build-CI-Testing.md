@@ -44,6 +44,7 @@ Gated pipeline — quality and tests **block** the packaging stage. Runs on **`v
 | `quality-cppcheck` | ubuntu | cppcheck static analysis |
 | `test-backend` | windows | Qt Test suites + OpenCppCoverage, 70% gate |
 | `package` | (reusable) | Calls `release.yml`: builds Windows x64 & ARM64, Linux x64, macOS arm64 **and** packages them into the real installers, uploaded as run artifacts. Skipped on `pull_request` |
+| `docker` | (reusable) | Calls `docker.yml` on a `v*` tag only: the multi-arch container image (11.3bis). Independent of `package` — a Debian container has nothing to wait on the desktop bundles for |
 
 There is **no compile-only build stage**: packaging compiles the same four targets and additionally exercises `cmake --install`, `windeployqt`, the Inno Setup script, linuxdeploy and `macdeployqt` — the parts a bare build never touches, and where breakage actually happens. To test any commit, open its run and download the `MoonlightWeb-windows-<arch>-v<version>` / `moonlightweb-linux-x64-v<version>` / `moonlightweb-macos-arm64-v<version>` artifact (GitHub serves each as a zip). Untagged versions read `<last v* tag>-<3-char sha>`, e.g. `0.2.0-a71`.
 
@@ -90,6 +91,25 @@ Four jobs run **after** the packaging matrix and only on a `refs/tags/` ref — 
 `github-pages` is created by GitHub on the first deployment and defaults to *"deployments from the default branch only"* — `linux-repo-deploy` runs on a **tag** ref, so it needs a `v*` rule of type *tag* under Settings → Environments → `github-pages` → Deployment branches and tags (or *No restriction*). Symptom when it is missing: `Branch "refs/tags/vX.Y.Z" is not allowed to deploy to github-pages due to environment protection rules` — add the rule and re-run the job; the release assets are already published at that point.
 
 The Windows crash minidumps (`crashes/*.dmp`) are symbolized with the archived PDBs + Qt PDBs via `cdb`.
+
+## 11.3bis Container images (`.github/workflows/docker.yml`)
+
+Publishes `ghcr.io/<owner>/moonlight-web` as a **multi-arch manifest** for `linux/amd64` and `linux/arm64`. Tags: `latest` (newest release only — never `main`, because pulling `latest` and getting an untested tip is how an image loses its users' trust), `X.Y.Z`, `X.Y`, `edge` (tip of the default branch) and `sha-<commit>`.
+
+**One job per architecture on its own native runner** — `ubuntu-latest` and `ubuntu-24.04-arm` (free for public repositories) — each pushing an *untagged* blob with `push-by-digest=true`; a `merge` job then stitches the two digests into one manifest list with `docker buildx imagetools create` and applies every tag once. Tagging from the per-arch jobs would have the two architectures overwrite each other. QEMU is deliberately not used: emulating a full Qt + libdatachannel C++ build turns 20 minutes into hours and regularly hits the job timeout. The BuildKit cache is scoped per architecture (`scope=docker-amd64` / `-arm64`) — one shared scope has the two runners evict each other's layers on every run.
+
+Triggers, and the reasoning behind each:
+
+| Trigger | Effect |
+|---|---|
+| `workflow_call` | How a `v*` tag publishes: `ci.yml`'s `docker` job calls this after the quality/test gates, exactly as it calls `release.yml`. There is deliberately **no `push: tags`** trigger — that would build every tag twice and race the two runs to the same manifest. |
+| `push` to `main` (paths-filtered) | The `edge` tag. The one place in this repository where a branch push spends CI minutes; `cancel-in-progress` makes a burst of commits cost one build, and the `paths` filter skips commits that cannot change the image (a README-only commit produces a byte-identical one). |
+| `pull_request` (paths-filtered) | Build only, `outputs: type=cacheonly`, never pushed, and only when the image's own files change — so a Dockerfile edit is never merged unbuilt. Both architectures build, so an arm64-only break is caught. `backend/**` is deliberately absent from this filter: it would spend two full C++ builds on every backend PR, and the push trigger already covers a backend dependency that breaks the image. |
+| `workflow_dispatch` | An image from any branch, on demand. |
+
+GHCR authenticates with the run's own `GITHUB_TOKEN` — no PAT, nothing to rotate. As with `package`, every scope this workflow requests (`contents: read`, `packages: write`) has to be granted by the calling job in `ci.yml` or the run dies at startup. `secrets: inherit` matters here too — the `MW_*` DNS/ACME secrets reach the build as **build-stage `ARG`s**, and without them the published image would be LAN-only. The `MoonlightWeb` environment that holds them is requested conditionally (`${{ github.event_name != 'pull_request' && 'MoonlightWeb' || '' }}`): a fork's PR cannot read environment secrets anyway, and an environment with a required reviewer would leave the PR check pending on a build that is thrown away. `${GITHUB_REPOSITORY@L}` lower-cases the image path, which `ghcr.io` requires and a fork's owner may well not have.
+
+The version string is computed exactly as `release.yml`'s `setup.ver` does — a `v*` tag ships `1.2.3`, anything else `<last tag>-<3-char sha>` — so `moonlightweb --version` inside a container names the commit the image came from. The image itself is documented in [Installers §9.3bis](09-Installers-and-Packaging.md) and [`docker/README.md`](../../docker/README.md).
 
 ## 11.4 Testing
 

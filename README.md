@@ -210,6 +210,46 @@ install Sunshine yourself, then pair from the UI.
 **Autostart** uses an XDG autostart entry; for a headless/server install use the systemd unit in
 [`backend/packaging/systemd/`](backend/packaging/systemd/).
 
+### Docker — servers, NAS boxes and mini PCs
+
+Official **`linux/amd64` + `linux/arm64`** images, built on official Debian and published to
+GHCR on every release. Ideal for a headless box (Raspberry Pi 4/5, N100 mini PC, NAS) that sits
+on the same LAN as the gaming PC.
+
+```sh
+docker run -d --name moonlightweb \
+  --network host \
+  --cap-drop ALL --cap-add NET_BIND_SERVICE \
+  -v mw-data:/data \
+  --restart unless-stopped \
+  ghcr.io/linckosz/moonlight-web:latest
+```
+
+Then open **`https://<server-ip>`** and accept the self‑signed certificate.
+`docker exec moonlightweb moonlightweb --status` prints the URLs and the access PIN.
+Compose files: [`docker/docker-compose.yml`](docker/docker-compose.yml) (host networking) and
+[`docker/docker-compose.bridge.yml`](docker/docker-compose.bridge.yml) (published ports, with
+caveats).
+
+| | |
+|---|---|
+| **Tags** | `latest` · `0.2.4` · `0.2` · `edge` (tip of `main`) · `sha-<commit>` |
+| **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (redirect + ACME challenge). WebRTC media takes **48010‑48014/udp** when UPnP maps it, an ephemeral UDP port otherwise. Sunshine is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
+| **Volume** | `/data` — settings, TLS material, paired hosts and the **client identity**. Losing it un‑pairs every host. |
+| **Env** | `MW_HTTPS_PORT` · `MW_HTTP_PORT` · `MW_UPNP` · `TZ` |
+| **GPU** | **None required.** The server never decodes or re‑encodes: Sunshine encodes on its GPU, the browser decodes on the viewer's. No `/dev/dri`, no NVIDIA runtime, no VA‑API. Gamepad/keyboard/mouse arrive over the data channel — no `/dev/input`, no privileged container. |
+
+> ⚠️ **Use `--network host`.** WebRTC binds an ephemeral UDP port (unpublishable), mDNS host
+> discovery is multicast, and UPnP needs SSDP — all three stop at a bridge. The bridged compose
+> file still works, but you add hosts by IP and the stream may fall back to its higher‑latency
+> TCP transport.
+
+**Sunshine cannot run in this image** — a container has no display to capture. Keep Sunshine on
+the gaming PC and add it here by IP.
+
+Full reference — every port, the volume layout, backups, non‑root operation, a systemd unit for
+the Compose project, and troubleshooting: **[`docker/README.md`](docker/README.md)**.
+
 ### First launch (all platforms)
 
 1. The server starts and shows a **tray icon**; a browser opens on the setup or admin page.
