@@ -51,10 +51,17 @@
                 <h1>MoonlightWeb</h1>
                 <span class="version" hidden></span>
                 <div class="header-actions">
+                    <!-- Both entry points start hidden and are revealed by
+                         _initNavButtons() once the app knows who is looking:
+                         Settings for an authenticated user, Server Settings only
+                         for someone who can actually reach the admin page. The
+                         shell paints long before that answer arrives, so a
+                         visible default flashes buttons a guest never gets. -->
                     <!-- Server Settings (localhost only) -->
                     <button
                         class="btn-icon"
                         id="btn-admin"
+                        style="display: none"
                         title="Server Settings"
                         data-i18n-attr="title:header.serverSettings"
                     >
@@ -77,6 +84,7 @@
                     <button
                         class="btn-icon"
                         id="btn-settings"
+                        style="display: none"
                         title="Streaming Settings"
                         data-i18n-attr="title:header.streamingSettings"
                     >

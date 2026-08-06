@@ -1009,25 +1009,22 @@ const MoonlightApp = {
     // =========================================================================
 
     /**
-     * Hide admin/settings buttons on non-localhost before auth.
-     * Called from init() before _checkAuth(). The settings button
-     * is revealed by _initNavButtons() once authenticated.
+     * Keep the admin/settings buttons hidden until the app knows who is
+     * looking. Both start hidden in index.html — nothing here has to run for
+     * the page to be safe — but a view that re-renders the header would drop
+     * that inline style, so the invariant is restated once at boot.
+     * _initNavButtons() is what reveals them, after the auth check.
      */
     _hideNavButtonsConditionally() {
-        // Always hide the Admin button upfront, regardless of whether we're on
-        // localhost — the button will be shown later by _initNavButtons() only
-        // when authenticated (and on localhost).
         const btnAdmin = document.getElementById('btn-admin');
         if (btnAdmin) btnAdmin.style.display = 'none';
-        const isLocal =
+        const btnSettings = document.getElementById('btn-settings');
+        if (btnSettings) btnSettings.style.display = 'none';
+        return (
             window.location.hostname === 'localhost' ||
             window.location.hostname === '127.0.0.1' ||
-            window.location.hostname === '[::1]';
-        const btnSettings = document.getElementById('btn-settings');
-        if (btnSettings) {
-            if (!isLocal) btnSettings.style.display = 'none';
-        }
-        return isLocal;
+            window.location.hostname === '[::1]'
+        );
     },
 
     _initNavButtons() {
