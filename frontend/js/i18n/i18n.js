@@ -72,7 +72,9 @@ function detectLanguage() {
 
 async function fetchLocale(code) {
     try {
-        const res = await fetch(`locales/${code}.json`, { cache: 'no-cache' });
+        // Root-absolute: the player page lives at /p/<token>, where a relative
+        // path would look for /p/locales/… and come back 404.
+        const res = await fetch(`/locales/${code}.json`, { cache: 'no-cache' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
     } catch (err) {

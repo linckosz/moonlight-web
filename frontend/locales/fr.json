@@ -520,12 +520,18 @@
     "sharing": {
         "share": "Partager",
         "shareCount": "Partager ({{count}})",
+        "dropdownTitle": "Inviter des joueurs",
         "playerN": "Joueur {{n}}",
         "working": "En cours...",
         "state": {
-            "off": "Non partagé",
-            "shared": "Lien actif",
-            "streaming": "En streaming"
+            "off": "Off",
+            "shared": "Partagé",
+            "streaming": "En direct"
+        },
+        "hint": {
+            "off": "Cliquez pour créer un lien",
+            "shared": "En attente de l'invité",
+            "streaming": "Cliquez pour déconnecter"
         },
         "popinTitle": "Inviter {{player}}",
         "linkLabel": "Lien",
