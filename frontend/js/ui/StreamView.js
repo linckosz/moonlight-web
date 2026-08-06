@@ -29,6 +29,7 @@ import { Toast } from './Toast.js';
 import { AudioPipeline } from '../audio/AudioPipeline.js';
 import { JitterController } from '../stream/JitterController.js';
 import { FramePacer } from '../stream/FramePacer.js';
+import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
 import {
     NalParser,
@@ -54,6 +55,7 @@ import {
 import {
     IS_TOUCH_DEVICE,
     IS_MOBILE_OR_TABLET,
+    IS_APPLE,
     SUPPORTS_CANVAS_TEARING,
     pickAutoEnhancer,
 } from '../util/BrowserDetect.js';
@@ -603,6 +605,13 @@ export class StreamView {
         this._pacerStats = null; // last snapshot (worker mode posts it with the counters)
         this._pacingTimer = null;
         this._pacingDue = 0;
+
+        // ── Periodic link-stall detection (all transports, all platforms) ─────
+        // Fed at frame arrival below, so it runs whatever the pacer and the
+        // worker are doing. Only the *advice* is Apple-specific (AWDL), and the
+        // user can silence it for good — see _notePeriodicStall.
+        this._stallDetector = new PeriodicStallDetector();
+        this._stallNoticeShown = false;
 
         // Gamepad bridge (Xbox/PlayStation) — created lazily on first connect.
         this._gamepadManager = null;
@@ -1741,9 +1750,11 @@ export class StreamView {
         }
         this.frameQueue = [];
         // The recovery gap is not network jitter: re-priming keeps the pacer
-        // from reading it as one and pinning the reserve at MAX.
+        // from reading it as one and pinning the reserve at MAX, and keeps the
+        // stall detector from scoring the decoder's own hiccup as a link event.
         this._clearPacingTimer();
         if (this._framePacer) this._framePacer.reset();
+        this._stallDetector.reset();
 
         // 3. Clear pending frames — they reference lost/corrupted reference
         //    frames and would produce more errors on the new decoder
@@ -4327,8 +4338,58 @@ export class StreamView {
         // Track cumulative video bytes for bitrate calculation
         this._totalBytes += data.length;
 
+        // Arrival cadence, sampled here rather than deeper in the pipeline: this
+        // is the last point that is common to every transport and to both the
+        // worker and main-thread decode paths, and the only one where the time
+        // measured is still purely the link's.
+        const stall = this._stallDetector.note(backendTs, performance.now(), isKeyframe);
+        if (stall) this._notePeriodicStall(stall);
+
         // Direct frame processing — no reordering.
         this._processVideoFrame(data, isKeyframe, backendTs);
+    }
+
+    /**
+     * A metronomic disturbance was proven on the link (see
+     * PeriodicStallDetector). Congestion is random, so a fixed cadence means
+     * something is taking the radio on a timer — on Apple hardware that is
+     * almost always AWDL (AirDrop, Handoff, AirPlay, Sidecar, Continuity),
+     * which the user can turn off in seconds.
+     *
+     * Logged everywhere because the period is a genuinely useful diagnostic,
+     * but only surfaced where there is advice to give and the user has not
+     * already said they know.
+     */
+    _notePeriodicStall(stall) {
+        console.warn(
+            '[StreamView] Periodic link stall: every ~' +
+                Math.round(stall.periodMs) +
+                'ms over ' +
+                stall.events +
+                ' events',
+        );
+        if (this._stallNoticeShown || !IS_APPLE) return;
+        try {
+            if (localStorage.getItem('mw_awdl_notice') === 'off') return;
+        } catch (e) {}
+        this._stallNoticeShown = true;
+        Toast.show(
+            t('stream.periodicStallWarning', { period: Math.round(stall.periodMs) }),
+            'warning',
+            {
+                // Long enough to read two sentences and act on them; the user can
+                // still dismiss it with a click like any other toast.
+                durationMs: 15000,
+                action: {
+                    label: t('stream.periodicStallDismiss'),
+                    onClick: () => {
+                        try {
+                            localStorage.setItem('mw_awdl_notice', 'off');
+                        } catch (e) {}
+                    },
+                },
+            },
+        );
     }
 
     /**

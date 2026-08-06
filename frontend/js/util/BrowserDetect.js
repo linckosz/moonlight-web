@@ -118,6 +118,18 @@ export const IS_IOS = (() => {
 export const IS_ANDROID = /android/i.test(navigator.userAgent || '');
 
 /**
+ * True on an Apple platform — macOS, iOS or iPadOS. Every one of them runs AWDL
+ * (AirDrop, Handoff, AirPlay, Sidecar, Continuity), which shares the Wi-Fi radio
+ * with the infrastructure link and periodically takes it away. That is the only
+ * platform family where PeriodicStallDetector's verdict has actionable advice
+ * attached, so it gates the hint rather than the detection itself.
+ *
+ * iPadOS 13+ reports a Mac UA, which IS_IOS already disambiguates by touch —
+ * both answers are "Apple" here, so the union needs no such care.
+ */
+export const IS_APPLE = /mac|iphone|ipad|ipod/i.test(navigator.userAgent || '') || IS_IOS;
+
+/**
  * Physical screen resolution in device pixels, orientation-independent.
  * screen.{width,height} are CSS pixels; multiplying by devicePixelRatio yields
  * physical pixels. We return both edges so callers can reason about the panel
