@@ -1,0 +1,251 @@
+# MoonlightWeb — official container images.
+#
+# Publishes a multi-architecture image to the GitHub Container Registry:
+#
+#     ghcr.io/<owner>/moonlight-web:latest      newest release
+#     ghcr.io/<owner>/moonlight-web:0.2.4       that exact release
+#     ghcr.io/<owner>/moonlight-web:0.2         newest 0.2.x
+#     ghcr.io/<owner>/moonlight-web:edge        current main
+#     ghcr.io/<owner>/moonlight-web:sha-abc1234 one commit, forever
+#
+# Triggers, and why each one is here:
+#
+#   workflow_call   — how a v* tag gets published. ci.yml calls this workflow
+#                     after the quality and test gates are green, exactly as it
+#                     calls release.yml, so a release image can never come off a
+#                     red commit. There is deliberately NO `push: tags` trigger:
+#                     that would build every tag twice and have the two runs
+#                     race to push the same manifest.
+#   push (main)     — the `edge` tag, so `docker pull …:edge` is always the tip
+#                     of main. This is the one place in this repository where a
+#                     branch push spends CI minutes (ci.yml deliberately does
+#                     not); the concurrency group below cancels superseded runs,
+#                     so a burst of commits costs one build, not one per commit.
+#   pull_request    — build only, never push, and only when the image's own
+#                     files change, so a Dockerfile edit is never merged
+#                     unbuilt. Both architectures build, so an arm64-only break
+#                     is caught. backend/** is deliberately NOT in this filter:
+#                     it would spend two full C++ builds on every backend PR,
+#                     and the push trigger above already covers a backend
+#                     dependency that breaks the image.
+#   workflow_dispatch — an image from any branch, on demand.
+#
+# One job per architecture on its own native runner (no QEMU: emulating a
+# full Qt + libdatachannel C++ build turns 20 minutes into hours), each pushing
+# an untagged blob identified by digest; a final job stitches the two digests
+# into one manifest list and applies the tags. This is Docker's documented
+# pattern for multi-arch without emulation.
+name: Docker
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    # Only what actually lands in the image, or builds it. A README-only commit
+    # produces a byte-identical image; there is nothing to publish.
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker/**"
+      - ".github/workflows/docker.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker/**"
+      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+
+# GHCR authenticates with the run's own GITHUB_TOKEN — no PAT, no secret to
+# rotate. `packages: write` is what lets it push, `contents: read` is the
+# checkout, and nothing here needs more than that.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a tag run: that one publishes the release image.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ── One image per architecture, pushed by digest ─────────────────────────
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    # Grants access to the MW_* DNS/ACME secrets, so the image can turn Internet
+    # Access on exactly like the .deb does — the same environment the packaging
+    # jobs in release.yml request. Not requested on a pull request: a fork's PR
+    # cannot read environment secrets anyway, and an environment with a required
+    # reviewer would leave the check pending until somebody approved a build
+    # that is thrown away. An empty string means "no environment".
+    environment: ${{ github.event_name != 'pull_request' && 'MoonlightWeb' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            # Digest files cannot collide in the shared artifact directory, and
+            # a slash is not legal in an artifact name.
+            slug: amd64
+          # GitHub's hosted arm64 runners are free for public repositories and
+          # native — a cross-build under QEMU takes hours for this dependency
+          # tree and regularly hits the job timeout.
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            slug: arm64
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive # moonlight-common-c, libdatachannel, miniupnpc, qmdnsengine
+          fetch-depth: 0 # `git describe` needs the last v* tag
+
+      # Same version string the installers carry (release.yml `setup.ver`):
+      # a v* tag ships 1.2.3, anything else <last tag>-<3-char sha>. Baked into
+      # the binary, so `moonlightweb --version` inside the container names the
+      # exact commit the image came from.
+      - id: ver
+        run: |
+          if [ "$GITHUB_REF" != "${GITHUB_REF#refs/tags/v}" ]; then
+            v="${GITHUB_REF_NAME#v}"
+          else
+            tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.2.1)
+            v="${tag#v}-$(git rev-parse HEAD | cut -c1-3)"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # ghcr.io rejects an upper-case path, and a fork's owner may well have
+      # one. github.repository is used verbatim everywhere else, so normalise it
+      # once here rather than hoping.
+      - id: img
+        run: echo "name=${GITHUB_REPOSITORY@L}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # Build-stage arguments only. The runtime stage starts from its own
+          # FROM, so none of this reaches the published layers or the image
+          # history — see the note next to the ARGs in the Dockerfile.
+          build-args: |
+            MW_VERSION=${{ steps.ver.outputs.version }}
+            MW_DOMAIN=${{ secrets.MW_DOMAIN }}
+            MW_PDNS_URL=${{ secrets.MW_PDNS_URL }}
+            MW_PDNS_TOKEN=${{ secrets.MW_PDNS_TOKEN }}
+            MW_ZEROSSL_EAB_KID=${{ secrets.MW_ZEROSSL_EAB_KID }}
+            MW_ZEROSSL_EAB_HMAC=${{ secrets.MW_ZEROSSL_EAB_HMAC }}
+          # Labels only — the tags are applied once, on the manifest list, by
+          # the merge job below. Pushing tags from here would have the two
+          # architectures overwrite each other.
+          labels: |
+            org.opencontainers.image.title=MoonlightWeb
+            org.opencontainers.image.description=Sunshine game-streaming server for the browser
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=GPL-3.0-or-later
+          outputs: >-
+            ${{ github.event_name == 'pull_request'
+                && 'type=cacheonly'
+                || format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, steps.img.outputs.name) }}
+          # Per-architecture cache scope: one shared scope would have the two
+          # runners evict each other's layers on every run.
+          cache-from: type=gha,scope=docker-${{ matrix.slug }}
+          cache-to: type=gha,scope=docker-${{ matrix.slug }},mode=max
+
+      # The digest is the whole payload: an empty file named after it is all the
+      # merge job needs to reference this architecture's image.
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v6
+        if: github.event_name != 'pull_request'
+        with:
+          name: digest-${{ matrix.slug }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── One manifest list from the per-arch digests ──────────────────────────
+  merge:
+    name: Publish manifest
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - id: img
+        run: echo "name=${GITHUB_REPOSITORY@L}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `latest` follows the newest release, never main — pulling `latest` and
+      # getting an untested tip of main is the classic way to lose a user's
+      # trust in an image. main is `edge`, which says what it is.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.img.outputs.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=sha
+
+      - name: Create and push manifest list
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ steps.img.outputs.name }}@sha256:%s ' *)
+        env:
+          DOCKER_METADATA_OUTPUT_JSON: ${{ steps.meta.outputs.json }}
+
+      - name: Inspect
+        run: |
+          docker buildx imagetools inspect \
+            "${{ env.REGISTRY }}/${{ steps.img.outputs.name }}:${{ steps.meta.outputs.version }}"
+          {
+            echo "### 🐳 Image published"
+            echo ""
+            echo '```'
+            echo "docker pull ${{ env.REGISTRY }}/${{ steps.img.outputs.name }}:${{ steps.meta.outputs.version }}"
+            echo '```'
+            echo ""
+            echo "Architectures: linux/amd64, linux/arm64"
+          } >> "$GITHUB_STEP_SUMMARY"

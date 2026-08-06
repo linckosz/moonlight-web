@@ -1,0 +1,58 @@
+# =============================================================================
+#  MoonlightWeb — recommended compose file (host networking).
+#
+#      docker compose up -d
+#      docker compose exec moonlightweb moonlightweb --status
+#
+#  Then open https://<this-machine-ip> from any device on the LAN and accept the
+#  self-signed certificate. The access PIN is printed by `--status`.
+#
+#  Why host networking rather than published ports: MoonlightWeb needs three
+#  things a bridge network does not give it —
+#
+#    • WebRTC. libdatachannel binds an ephemeral UDP port for the media/data
+#      transport unless UPnP mapped one for it, and an ephemeral port cannot be
+#      published in advance. On the host network there is nothing to publish.
+#    • mDNS. Sunshine hosts are discovered by multicast on UDP 5353, which does
+#      not cross the default bridge.
+#    • UPnP. The router is found by SSDP multicast — same story.
+#
+#  The bridged variant, and what you give up with it, is in
+#  docker-compose.bridge.yml.
+# =============================================================================
+services:
+  moonlightweb:
+    image: ghcr.io/linckosz/moonlight-web:latest
+    container_name: moonlightweb
+    restart: unless-stopped
+    network_mode: host
+
+    # Binding 80 and 443 is the only privilege this image wants. Drop every
+    # other capability rather than running an unrestricted root container.
+    # (Set MW_HTTP_PORT/MW_HTTPS_PORT above 1024 and you can drop this too —
+    # see docker-compose.bridge.yml.)
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+
+    volumes:
+      # settings.json, the TLS certificate and key, the access PIN, the paired
+      # hosts and the Moonlight client identity. Losing it un-pairs every host.
+      - mw-data:/data
+
+    environment:
+      TZ: Etc/UTC
+      # Defaults; uncomment to move the listeners off the privileged ports.
+      # MW_HTTP_PORT: 8080
+      # MW_HTTPS_PORT: 8443
+
+    # `moonlightweb --status` answers only once the TLS listener is up, so an
+    # unhealthy container really is one nothing can connect to.
+    healthcheck:
+      test: ["CMD", "moonlightweb", "--status"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  mw-data:

@@ -1,0 +1,25 @@
+# Docker build context — allowlist, not blocklist.
+#
+# The repository carries a local `build/` tree (hundreds of MB of objects, Qt
+# DLLs and a .pdb), `node_modules/`, generated graph output and the whole `.git`
+# history. A blocklist would have to be updated every time one of those grows a
+# sibling; excluding everything and naming the three directories the image
+# actually reads cannot drift.
+*
+
+!backend
+!frontend
+!docker
+
+# …minus what lives inside them and never belongs in an image: local build
+# trees, the frontend's dev tooling and the IDE's scratch files. cmake --install
+# already strips node_modules & friends from the staged frontend, but keeping
+# them out of the context is what makes the upload fast and the layer cache
+# stable.
+backend/build
+backend/.qtcreator
+backend/tests/build
+frontend/node_modules
+frontend/coverage
+frontend/build
+**/.DS_Store

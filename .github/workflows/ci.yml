@@ -10,6 +10,9 @@
 #      compile-only build stage, because packaging compiles the same four
 #      targets and then exercises what a bare build never touches (staging,
 #      windeployqt, the Inno Setup script, linuxdeploy, macdeployqt + signing).
+#   4. container image — docker.yml, also reused as a workflow, on a v* tag
+#      only. The `edge` tag comes off docker.yml's own push trigger; this call
+#      is what publishes a release image to GHCR behind the same gates.
 #
 # Packaging never runs on a broken commit, so the (expensive) multi-platform
 # matrix is only spent on validated code.
@@ -233,4 +236,29 @@ jobs:
       id-token: write
     # MW_* (DNS/ACME) live in the MoonlightWeb environment the packaging jobs
     # request; without inherit they'd resolve empty → LAN-only installers.
+    secrets: inherit
+
+  # ──────────────────────── 4. CONTAINER IMAGE ────────────────────────
+  # The release image for a v* tag, gated on the same green quality/tests as
+  # the installers. Tags only: `edge` (the tip of main) is published by
+  # docker.yml's own push trigger, and a manual CI run on a branch is about
+  # installers — an image from it would have no tag to answer to.
+  #
+  # Independent of `package`: a Debian container has nothing to do with the
+  # Windows/macOS/Linux desktop bundles, and making it wait would only delay
+  # the pull for no gain.
+  docker:
+    name: Container image
+    needs: [frontend, test-backend]
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/docker.yml
+    # Every scope docker.yml requests has to be granted here, or the run fails
+    # at startup before a step executes (see the note on `package` above):
+    # `packages` pushes to ghcr.io, `contents` is the checkout.
+    permissions:
+      contents: read
+      packages: write
+    # Same reason as `package`: the MW_* DNS/ACME secrets live in the
+    # MoonlightWeb environment, and without inherit they resolve empty → an
+    # image that cannot turn Internet Access on.
     secrets: inherit

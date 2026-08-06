@@ -1,0 +1,63 @@
+# =============================================================================
+#  MoonlightWeb — bridged variant, for hosts where `network_mode: host` is not
+#  available (Docker Desktop on macOS/Windows, Podman rootless, a NAS UI that
+#  only offers port mappings).
+#
+#      docker compose -f docker-compose.bridge.yml up -d
+#
+#  ⚠ Read this before choosing it. On a bridge network the web UI works, but two
+#  things do not, and neither can be fixed by publishing more ports:
+#
+#    • Host discovery. Sunshine is found by mDNS (multicast UDP 5353), which
+#      does not cross the bridge — add your hosts by IP address instead. That is
+#      a one-time inconvenience, not a limitation on streaming.
+#    • WebRTC media. libdatachannel binds an *ephemeral* UDP port unless UPnP
+#      handed it one, and an ephemeral port cannot be published up front. The
+#      published 48010-48014/udp below are the ports UPnP would have claimed
+#      (SignalingServer::kUpnpPort and its four fallbacks) — they are the right
+#      ports to open on a *router*, and they only match the container's choice
+#      when UPnP actually succeeded, which on a bridge network it will not.
+#
+#  So: expect the stream to fall back to its TCP/WebSocket transport here, which
+#  costs latency. Use host networking whenever the platform allows it.
+# =============================================================================
+services:
+  moonlightweb:
+    image: ghcr.io/linckosz/moonlight-web:latest
+    container_name: moonlightweb
+    restart: unless-stopped
+
+    ports:
+      # HTTPS — the web UI and the wss:// signaling upgrade. The one port a
+      # browser cannot do without.
+      - "443:8443/tcp"
+      # HTTP — the redirect to HTTPS, and the ACME http-01 challenge if you ever
+      # turn Internet Access on. Drop it if you always type https:// yourself.
+      - "80:8080/tcp"
+      # WebRTC media, on the assumption UPnP mapped it. See the warning above.
+      - "48010-48014:48010-48014/udp"
+
+    volumes:
+      - mw-data:/data
+
+    environment:
+      TZ: Etc/UTC
+      # Unprivileged ports inside the container, mapped to 80/443 outside — so
+      # the image needs no capabilities at all and the URL stays clean.
+      MW_HTTP_PORT: 8080
+      MW_HTTPS_PORT: 8443
+      # SSDP multicast does not reach the router from here; skip the discovery
+      # instead of waiting for it to time out on every start.
+      MW_UPNP: 0
+
+    cap_drop: ["ALL"]
+
+    healthcheck:
+      test: ["CMD", "moonlightweb", "--status"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+volumes:
+  mw-data:

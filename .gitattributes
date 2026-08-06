@@ -18,6 +18,12 @@ frontend/js/vendor/** linguist-vendored
 *.sh  text eol=lf
 *.bat text eol=crlf
 
+# Container build files must stay LF too. A CRLF .dockerignore is the sharp
+# edge: its patterns are matched verbatim, so `backend\r` excludes nothing and
+# the allowlist silently ships the whole working tree to the daemon.
+Dockerfile     text eol=lf
+.dockerignore  text eol=lf
+
 # JS must stay LF on every platform: .prettierrc pins `endOfLine: "lf"`, so a
 # CRLF checkout (core.autocrlf=true on Windows) makes `npm run format` fail on
 # every file while CI on Linux stays green.
