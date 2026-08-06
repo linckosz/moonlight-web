@@ -60,7 +60,16 @@ export class Toast {
         }
     }
 
-    static show(message, type = 'info') {
+    /**
+     * @param {string} message
+     * @param {'success'|'error'|'warning'|'info'} type
+     * @param {{durationMs?: number, action?: {label: string, onClick: () => void}}} [options]
+     *   durationMs overrides the 4s auto-fade — advice the user has to read and
+     *   act on needs longer than an acknowledgement does. `action` appends a
+     *   button; clicking it runs the callback and dismisses, and does NOT
+     *   bubble to the dismiss-on-click handler.
+     */
+    static show(message, type = 'info', options = {}) {
         const container = this._ensureContainer();
 
         // Trim oldest toasts before adding the new one (max 5 PC / 3 mobile).
@@ -68,7 +77,11 @@ export class Toast {
 
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
-        toast.textContent = message;
+        // textContent, not innerHTML: messages carry interpolated values.
+        const text = document.createElement('span');
+        text.className = 'toast-text';
+        text.textContent = message;
+        toast.appendChild(text);
 
         container.appendChild(toast);
 
@@ -82,11 +95,26 @@ export class Toast {
             }
         };
 
+        if (options.action) {
+            const btn = document.createElement('button');
+            btn.className = 'toast-action';
+            btn.type = 'button';
+            btn.textContent = options.action.label;
+            btn.addEventListener('click', (e) => {
+                // Without this the dismiss-on-click below also fires, which is
+                // harmless today but would double-run any future handler.
+                e.stopPropagation();
+                options.action.onClick();
+                remove();
+            });
+            toast.appendChild(btn);
+        }
+
         // Dismiss on click
         toast.addEventListener('click', remove);
 
-        // Auto-fade after 4s
-        setTimeout(remove, 4000);
+        // Auto-fade (4s unless the caller asked for longer)
+        setTimeout(remove, options.durationMs || 4000);
     }
 
     static success(message) {

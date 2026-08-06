@@ -564,6 +564,24 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 .toast-exit {
     animation: toastFadeOut 0.3s ease forwards;
 }
+/* Optional action button (see Toast.show options.action). Right-aligned on its
+   own row so a long advisory keeps its full width for the text. */
+.toast-action {
+    display: block;
+    margin: 10px 0 0 auto;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    background: rgba(255, 255, 255, 0.14);
+    color: inherit;
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    cursor: pointer;
+}
+.toast-action:hover {
+    background: rgba(255, 255, 255, 0.26);
+}
 .toast-success {
     background: rgba(36, 110, 79, 0.92);
     border-color: var(--c-success);

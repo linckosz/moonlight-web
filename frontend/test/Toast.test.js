@@ -66,6 +66,38 @@ describe('Toast', () => {
         vi.unstubAllGlobals();
     });
 
+    it('honours a custom lifetime', () => {
+        Toast.show('advice', 'warning', { durationMs: 15000 });
+        vi.advanceTimersByTime(4000); // the default would have gone here
+        vi.advanceTimersByTime(300);
+        expect(document.querySelectorAll('.toast').length).toBe(1);
+        vi.advanceTimersByTime(11000);
+        vi.advanceTimersByTime(300);
+        expect(document.querySelectorAll('.toast').length).toBe(0);
+    });
+
+    it('renders an action button that runs its callback and dismisses', () => {
+        const onClick = vi.fn();
+        Toast.show('advice', 'warning', { action: { label: 'Never again', onClick } });
+        const btn = document.querySelector('.toast-action');
+        expect(btn.textContent).toBe('Never again');
+        // The label must not leak into the message read by assistive tech.
+        expect(document.querySelector('.toast-text').textContent).toBe('advice');
+        btn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+        expect(onClick).toHaveBeenCalledTimes(1);
+        expect(document.querySelectorAll('.toast').length).toBe(0);
+    });
+
+    it('does not run the action when the toast itself is dismissed', () => {
+        const onClick = vi.fn();
+        Toast.show('advice', 'info', { action: { label: 'x', onClick } });
+        document.querySelector('.toast').dispatchEvent(new window.MouseEvent('click'));
+        vi.advanceTimersByTime(300);
+        expect(onClick).not.toHaveBeenCalled();
+        expect(document.querySelectorAll('.toast').length).toBe(0);
+    });
+
     it('dismissAll resolves and clears every toast', async () => {
         Toast.info('x');
         Toast.info('y');

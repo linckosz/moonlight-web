@@ -446,6 +446,8 @@
         "statLegReserve": "抖动储备",
         "statLossNetwork": "丢失帧（网络）",
         "statLossJitter": "丢弃帧（抖动）",
+        "periodicStallWarning": "检测到卡顿：本设备的 Wi-Fi 每隔 {{period}} 毫秒被规律性地打断一次。在苹果设备上这几乎总是 AirDrop 和「接力」造成的，它们与 Wi-Fi 共用同一颗芯片。串流期间关闭 AirDrop 通常即可解决。",
+        "periodicStallDismiss": "不再显示",
         "statLegRender": "渲染",
         "enhancerOff": "关闭",
         "iosFullscreenHint": "要获得真正的全屏：分享 → 添加到主屏幕，然后从图标启动 Moonlight。",
