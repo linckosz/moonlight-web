@@ -714,6 +714,10 @@ export class StreamView {
         this._scrollAccum = 0; // fractional vertical wheel-delta carry between frames
         this._scrollAccumX = 0; // same, horizontal
         this._scrollSamples = []; // recent {t, x, y} centroid samples (flick velocity)
+        // Same carry for the desktop wheel: a notch is 120 host units and a
+        // browser delta rarely lands on a whole one. See handleWheel().
+        this._wheelAccum = 0;
+        this._wheelAccumX = 0;
         this._scrollMomentumRaf = null; // rAF id for the inertial glide loop
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
         this._touchSensitivity =
@@ -5621,15 +5625,55 @@ export class StreamView {
         this._sendMouseButton(e.button + 1, false);
     }
 
+    /** One wheel notch, in the units the GameStream scroll packet carries. */
+    static WHEEL_DELTA = 120;
+
+    /**
+     * Browser wheel delta → notches, whatever unit the event is expressed in.
+     * Chromium reports pixels (100 per notch), Firefox lines (3 per notch),
+     * and pages only on rare configurations — where a page is one big step.
+     */
+    static _wheelNotches(delta, deltaMode) {
+        if (deltaMode === 1) return delta / 3; // DOM_DELTA_LINE
+        if (deltaMode === 2) return delta * 3; // DOM_DELTA_PAGE
+        return delta / 100; // DOM_DELTA_PIXEL
+    }
+
+    /**
+     * Queue one axis of wheel travel, in notches, and ship whole host units.
+     *
+     * The protocol counts WHEEL_DELTA units, not browser pixels — moonlight-qt
+     * sends preciseY * 120. Forwarding the raw deltaY made a notch 100 units,
+     * which Windows hosts absorb (SendInput accumulates leftovers) but Linux
+     * hosts drop: Sunshine's uinput backend emits REL_WHEEL = amount / 120, so
+     * anything short of a full notch scrolls by zero clicks and only survives
+     * if the compositor consumes the REL_WHEEL_HI_RES companion event.
+     *
+     * The fractional carry matters just as much: the backend reads the value
+     * with QJsonValue::toInt(), which yields the 0 default for a non-integer,
+     * so a trackpad's 53.33px delta used to vanish entirely.
+     */
+    _sendWheel(type, notches, axis) {
+        const key = axis === 'x' ? '_wheelAccumX' : '_wheelAccum';
+        const pending = this[key] + notches * StreamView.WHEEL_DELTA;
+        // Clamp to the packet's signed 16-bit field rather than letting a wild
+        // page-scroll wrap around into a scroll the other way.
+        const whole = Math.max(-32768, Math.min(32767, Math.trunc(pending)));
+        this[key] = pending - whole;
+        if (whole !== 0) this.webrtc.send({ type, delta: whole });
+    }
+
     handleWheel(e) {
         e.preventDefault();
         // Browser deltaY is positive scrolling down; LiSendHighResScrollEvent
         // expects positive = up. Negate so standard wheels scroll the right way
         // (macOS "natural scrolling" already flips the sign at the OS level).
-        if (e.deltaY) this.webrtc.send({ type: 'mousewheel', delta: -e.deltaY });
+        if (e.deltaY)
+            this._sendWheel('mousewheel', StreamView._wheelNotches(-e.deltaY, e.deltaMode), 'y');
         // Horizontal wheel (trackpad swipe, tilt wheel): browser deltaX is
         // positive scrolling right, same sign as the host's hscroll event.
-        if (e.deltaX) this.webrtc.send({ type: 'mousehwheel', delta: e.deltaX });
+        if (e.deltaX)
+            this._sendWheel('mousehwheel', StreamView._wheelNotches(e.deltaX, e.deltaMode), 'x');
     }
 
     // =========================================================================
