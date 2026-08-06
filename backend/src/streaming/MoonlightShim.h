@@ -87,8 +87,8 @@ public:
     // streamed host IS this machine (same gate as clipboard sync). Must run
     // on the main thread (GetKeyState reads the calling thread's input
     // state); Session calls it before the connection starts. Without a
-    // snapshot (remote host or non-Windows backend) syncLockKeys() assumes
-    // the host starts with every lock off — the pre-existing behavior.
+    // snapshot (remote host or non-Windows backend) syncLockKeys() falls back
+    // to each lock's hardware default: NumLock on, Caps and Scroll off.
     void captureHostLockState(bool hostIsSelf);
     // Align the host's toggle locks with the client's (browser 'locksync'
     // message): tap each lock whose captured host state differs from the

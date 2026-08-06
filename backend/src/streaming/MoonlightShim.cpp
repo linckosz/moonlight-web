@@ -656,23 +656,33 @@ void MoonlightShim::captureHostLockState(bool hostIsSelf)
 void MoonlightShim::syncLockKeys(bool numLock, bool capsLock, bool scrollLock)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    // -1 = no snapshot (remote host / unsupported platform): assume the host
-    // starts with every lock off — the common case, and all a client can do
-    // without a protocol-level lock-state field.
+    // -1 = no snapshot (remote host / unsupported platform): fall back to each
+    // lock's hardware default rather than to a blanket "all off". NumLock is on
+    // at boot on virtually every desktop — the BIOS sets it and the desktop
+    // environment restores it — while Caps and Scroll are off.
+    //
+    // Guessing OFF for NumLock is what broke numpads on Linux hosts: the
+    // client's NumLock is normally on too, so the sync tapped a host that was
+    // already aligned and turned its numpad into a cursor pad. Windows never
+    // showed it because Sunshine injects VK_NUMPAD1 literally there and the
+    // host's lock state never enters the picture; on Linux the same key becomes
+    // evdev KEY_KP1, which xkb reads as End while NumLock is off.
     const int hostState = m_HostLockState.load(std::memory_order_acquire);
+    const bool hostKnown = hostState >= 0;
     const struct
     {
         short vk;
         int bit;
         const char* name;
         bool client;
+        bool assumed; // state to presume when the host's is unreadable
     } locks[] = {
-        {0x90, 0x1, "NumLock", numLock},       // VK_NUMLOCK
-        {0x14, 0x2, "CapsLock", capsLock},     // VK_CAPITAL
-        {0x91, 0x4, "ScrollLock", scrollLock}, // VK_SCROLL
+        {0x90, 0x1, "NumLock", numLock, true},        // VK_NUMLOCK
+        {0x14, 0x2, "CapsLock", capsLock, false},     // VK_CAPITAL
+        {0x91, 0x4, "ScrollLock", scrollLock, false}, // VK_SCROLL
     };
     for (const auto& lock : locks) {
-        const bool host = hostState > 0 && (hostState & lock.bit);
+        const bool host = hostKnown ? bool(hostState & lock.bit) : lock.assumed;
         if (host == lock.client) continue;
         qInfo() << "[MoonlightShim] Lock sync:" << lock.name << "host" << host << "-> client"
                 << lock.client;
