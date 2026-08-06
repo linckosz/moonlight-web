@@ -63,6 +63,7 @@ WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entir
 | `POST /api/hosts/manual` | 🔑 | Add a host by IP/hostname. |
 | `DELETE /api/hosts/:id` | 🔑 | Forget a host. |
 | `POST /api/hosts/:id/wol` | 🔑 | Wake-on-LAN. |
+| `POST /api/hosts/:id/options` | 🔑 | Per-host quirks the GameStream protocol gives no way to detect, so the user sets them by hand. Only the keys present in the body are touched; persisted with the host, read at stream start. Today: `notchedScroll` (bool) — quantize scroll to whole 120-unit notches, needed by Linux hosts (see [§5.5](05-Streaming-and-Transports.md)). |
 | `POST /api/hosts/:id/pair/start` / `POST /api/hosts/:id/pair` (async) | 🔑 | Start pairing (returns the PIN to type into Sunshine) / poll status. Fully event-driven (no nested loop). Starting is a POST because it acts on the host: a GET gets fetched by link-preview bots, prefetchers and URL-following antivirus, and those arrive as ordinary navigations that no cross-site check can tell apart from the user. |
 | `GET /api/hosts/:id/apps` (async) | 🔑 | App list (with box-art fetched in background). |
 | `GET /api/hosts/:id/appasset` | 🔑 | Box-art image. |

@@ -474,6 +474,10 @@ void StreamSession::onLaunchReplyFinished()
     // 'locksync' aligns instead of assuming the host starts with locks off.
     m_Shim->captureHostLockState(hostIsSelf);
 
+    // Per-host scroll quirk: quantize to whole notches for a host that throws
+    // sub-notch amounts away (Linux/Sunshine — see NvComputer::notchedScroll).
+    m_Shim->setNotchedScroll(m_Host->notchedScroll);
+
     // Same gate again: Sunshine loopback-captures its virtual sink POST-volume,
     // and that sink is the host's default output during the stream — volume
     // keys pressed on the host mid-stream silently attenuate every client and

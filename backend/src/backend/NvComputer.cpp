@@ -106,6 +106,7 @@ NvComputer::NvComputer(QSettings& settings)
     activeHttpsPort = static_cast<quint16>(settings.value("httpsPort", MW_HTTPS_PORT).toUInt());
 
     pairState = pairStateFromString(settings.value("pairState").toString());
+    notchedScroll = settings.value("notchedScroll", false).toBool();
 }
 
 // --- Serialization ----------------------------------------------------------
@@ -124,6 +125,7 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("serverCert", serverCertPem);
     settings.setValue("httpsPort", static_cast<quint32>(activeHttpsPort));
     settings.setValue("pairState", pairStateToString(pairState));
+    settings.setValue("notchedScroll", notchedScroll);
 }
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
@@ -131,7 +133,7 @@ bool NvComputer::isEqualSerialized(const NvComputer& that) const
     return name == that.name && uuid == that.uuid && macAddress == that.macAddress &&
            localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
            manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
-           activeHttpsPort == that.activeHttpsPort;
+           activeHttpsPort == that.activeHttpsPort && notchedScroll == that.notchedScroll;
 }
 
 // --- Merge polling data -----------------------------------------------------
@@ -265,6 +267,9 @@ QJsonObject NvComputer::toJson() const
 
     // Frontend uses this to warn when a user streams the very PC they're on.
     obj["isLocalHost"] = isLocalMachine();
+
+    // Per-host scroll quirk — see NvComputer::notchedScroll.
+    obj["notchedScroll"] = notchedScroll;
 
     // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
     // itself never has to reach the browser — the UI only needs to know whether

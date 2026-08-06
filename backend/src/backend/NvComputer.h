@@ -114,4 +114,15 @@ public:
     // — Pairing state (persisted) —
     QByteArray serverCertPem;
     quint16 activeHttpsPort = 0;
+
+    // — Host quirks (persisted, user-set) —
+    // Emit scroll in whole 120-unit notches instead of the exact high-resolution
+    // amount. Sunshine's Linux backend computes REL_WHEEL = amount / 120 with no
+    // accumulator of its own, so every sub-notch delta a trackpad or a touch drag
+    // produces floors to zero clicks and only survives if the session consumes the
+    // REL_WHEEL_HI_RES companion event — which X11 sessions routinely do not.
+    // GameStream carries no OS field (see NvComputer(serverInfo)), so this cannot
+    // be detected: it is a per-host switch, off by default because Windows hosts
+    // accumulate leftovers themselves and scroll smoothly from the exact amount.
+    bool notchedScroll = false;
 };
