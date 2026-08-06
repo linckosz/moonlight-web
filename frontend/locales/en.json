@@ -534,10 +534,14 @@
             "streaming": "Click to disconnect"
         },
         "popinTitle": "Invite {{player}}",
+        "managePopinTitle": "Sharing with {{player}}",
+        "manageShared": "The link is live. Nobody has joined yet.",
+        "manageStreaming": "Someone is streaming through this link right now.",
         "linkLabel": "Link",
         "pinLabel": "PIN code",
         "pinHint": "Send the PIN separately from the link - together they let someone in, apart they are useless.",
         "inputsLabel": "Inputs allowed",
+        "inputsLocked": "Frozen for this link. To change it, unshare and share again.",
         "gamepad": "Gamepad",
         "keyboardMouse": "Keyboard / Mouse",
         "access": {
@@ -551,14 +555,18 @@
             "full": "They will control the keyboard and mouse of this PC. Only share this with someone you trust completely."
         },
         "expiry": "The link works for 8 hours, or until you turn this player off.",
-        "done": "Done"
+        "expiresInH": "Expires in {{h}} h {{m}} min.",
+        "expiresInM": "Expires in {{m}} min.",
+        "secretOnce": "The link and its PIN were shown once and cannot be shown again.",
+        "done": "Done",
+        "unshare": "Unshare"
     },
     "player": {
         "loading": "Loading...",
         "leave": "Leave",
         "thisPc": "this PC",
         "quality": "Quality",
-        "refresh": "Refresh",
+        "checkAgain": "Check again",
         "joining": "Joining...",
         "joinTitle": "Join {{machine}}",
         "joinButton": "Join {{machine}}",

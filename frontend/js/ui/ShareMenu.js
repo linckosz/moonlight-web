@@ -231,8 +231,27 @@ export class ShareMenu {
             return;
         }
 
-        // Live row: revoke. Disconnecting a player is a real action on someone
-        // else's screen, so the row shows a spinner until the backend confirms.
+        // A live row opens instead of firing: killing a link — and with it
+        // someone else's picture, mid-game — is not something a stray click on
+        // a menu should be able to do.
+        this._openManagePopin(slot, row);
+    }
+
+    async _activate(slot) {
+        this._busySlots.add(slot);
+        this._paint();
+        try {
+            const data = await BackendClient.shareActivate(slot);
+            this._openSharePopin(slot, data);
+        } catch (err) {
+            console.warn('[ShareMenu] activate failed:', err);
+        } finally {
+            this._busySlots.delete(slot);
+            await this.refresh();
+        }
+    }
+
+    async _unshare(slot) {
         this._busySlots.add(slot);
         this._paint();
         try {
@@ -245,31 +264,60 @@ export class ShareMenu {
         }
     }
 
-    async _activate(slot) {
-        this._busySlots.add(slot);
-        this._paint();
-        try {
-            const data = await BackendClient.shareActivate(slot);
-            this._openPopin(slot, data);
-        } catch (err) {
-            console.warn('[ShareMenu] activate failed:', err);
-        } finally {
-            this._busySlots.delete(slot);
-            await this.refresh();
-        }
-    }
-
     // ── Popin ───────────────────────────────────────────────────────────────
 
-    _openPopin(slot, data) {
+    /** Mount the overlay around `inner` and remember it. */
+    _mountPopin(inner, onDismiss) {
+        const overlay = document.createElement('div');
+        overlay.className = 'share-popin-overlay';
+        overlay.innerHTML = `<div class="share-popin" role="dialog" aria-modal="true">${inner}</div>`;
+        document.body.appendChild(overlay);
+        this._popin = overlay;
+        // Clicking the backdrop means the same thing as the closing button.
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) onDismiss();
+        });
+        return overlay;
+    }
+
+    _closePopin() {
+        if (!this._popin) return;
+        this._popin.remove();
+        this._popin = null;
+    }
+
+    /** Human "7 h 12 min left" from an epoch-seconds deadline. */
+    _remaining(expiresAt) {
+        const secs = Math.max(0, Math.round(Number(expiresAt) - Date.now() / 1000));
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        return h > 0 ? t('sharing.expiresInH', { h, m }) : t('sharing.expiresInM', { m });
+    }
+
+    /**
+     * The share popin: the link and the PIN, shown exactly once, plus the input
+     * permissions. They freeze when it closes — the link is out in the world
+     * from that moment, and a worker may already carry the policy.
+     */
+    _openSharePopin(slot, data) {
         const index = this.slots.findIndex((s) => s.slot === slot);
         const name = t('sharing.playerN', { n: (index < 0 ? 0 : index) + 1 });
         const perms = data.permissions || { gamepad: false, keyboardMouse: false };
 
-        const overlay = document.createElement('div');
-        overlay.className = 'share-popin-overlay';
-        overlay.innerHTML = `
-            <div class="share-popin" role="dialog" aria-modal="true">
+        const close = async () => {
+            if (!this._popin) return;
+            this._closePopin();
+            // Closing is what freezes the choice: the link is out there now.
+            try {
+                await BackendClient.shareLock(slot);
+            } catch (err) {
+                console.warn('[ShareMenu] lock failed:', err);
+            }
+            await this.refresh();
+        };
+
+        const overlay = this._mountPopin(
+            `
                 <h3>${escapeHtml(t('sharing.popinTitle', { player: name }))}</h3>
 
                 <label class="share-field-label">${escapeHtml(t('sharing.linkLabel'))}</label>
@@ -298,12 +346,11 @@ export class ShareMenu {
                 <p class="share-expiry">${escapeHtml(t('sharing.expiry'))}</p>
 
                 <div class="share-popin-actions">
-                    <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('sharing.done'))}</button>
+                    <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('sharing.share'))}</button>
                 </div>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-        this._popin = overlay;
+            `,
+            close,
+        );
 
         const gamepadCb = /** @type {HTMLInputElement} */ (
             overlay.querySelector('.share-perm-gamepad')
@@ -364,21 +411,59 @@ export class ShareMenu {
             }, 1500);
         });
 
-        const close = async () => {
-            if (!this._popin) return;
-            this._popin.remove();
-            this._popin = null;
-            // Closing is what freezes the choice: the link is out there now.
-            try {
-                await BackendClient.shareLock(slot);
-            } catch (err) {
-                console.warn('[ShareMenu] lock failed:', err);
-            }
-            await this.refresh();
-        };
         overlay.querySelector('.share-done-btn').addEventListener('click', close);
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) close();
+    }
+
+    /**
+     * The popin for a share that is already live. It cannot show the link or
+     * the PIN again — only their digests were kept — so what it offers is the
+     * state, what that guest is allowed to do, and the one destructive action,
+     * behind a button the user has to aim at.
+     */
+    _openManagePopin(slot, row) {
+        const index = this.slots.findIndex((s) => s.slot === slot);
+        const name = t('sharing.playerN', { n: (index < 0 ? 0 : index) + 1 });
+        const streaming = row.state === 'streaming';
+        const level = row.access_level || 'viewer';
+
+        const overlay = this._mountPopin(
+            `
+                <h3>${escapeHtml(t('sharing.managePopinTitle', { player: name }))}</h3>
+
+                <p class="share-manage-state" data-state="${escapeHtml(row.state)}">
+                    ${escapeHtml(t(streaming ? 'sharing.manageStreaming' : 'sharing.manageShared'))}
+                </p>
+
+                <label class="share-field-label">${escapeHtml(t('sharing.inputsLabel'))}</label>
+                <div class="share-access" data-level="${escapeHtml(level)}">
+                    <div class="share-access-level">${escapeHtml(t(`sharing.access.${level}`))}</div>
+                    <div class="share-access-warning">${escapeHtml(t('sharing.inputsLocked'))}</div>
+                </div>
+
+                <p class="share-expiry">${escapeHtml(this._remaining(row.expires_at))}</p>
+                <p class="share-pin-hint">${escapeHtml(t('sharing.secretOnce'))}</p>
+
+                <div class="share-popin-actions share-popin-actions-split">
+                    <button class="btn btn-danger share-unshare-btn" type="button">${escapeHtml(t('sharing.unshare'))}</button>
+                    <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('sharing.done'))}</button>
+                </div>
+            `,
+            () => this._closePopin(),
+        );
+
+        overlay.querySelector('.share-done-btn').addEventListener('click', () => {
+            // Done is a pure dismiss: nothing to freeze, nothing to revoke.
+            this._closePopin();
+        });
+
+        const unshareBtn = /** @type {HTMLButtonElement} */ (
+            overlay.querySelector('.share-unshare-btn')
+        );
+        unshareBtn.addEventListener('click', async () => {
+            unshareBtn.disabled = true;
+            unshareBtn.textContent = t('sharing.working');
+            await this._unshare(slot);
+            this._closePopin();
         });
     }
 }

@@ -534,10 +534,14 @@
             "streaming": "Cliquez pour déconnecter"
         },
         "popinTitle": "Inviter {{player}}",
+        "managePopinTitle": "Partage avec {{player}}",
+        "manageShared": "Le lien est actif. Personne n'a encore rejoint.",
+        "manageStreaming": "Quelqu'un est en train de streamer via ce lien.",
         "linkLabel": "Lien",
         "pinLabel": "Code PIN",
         "pinHint": "Envoie le code séparément du lien — ensemble ils ouvrent la session, séparés ils ne servent à rien.",
         "inputsLabel": "Entrées autorisées",
+        "inputsLocked": "Figé pour ce lien. Pour changer, arrêtez le partage et repartagez.",
         "gamepad": "Manette",
         "keyboardMouse": "Clavier / Souris",
         "access": {
@@ -551,14 +555,18 @@
             "full": "Cette personne contrôlera le clavier et la souris de ce PC. À ne partager qu'avec quelqu'un en qui tu as entièrement confiance."
         },
         "expiry": "Le lien fonctionne 8 heures, ou jusqu'à ce que tu coupes ce joueur.",
-        "done": "Terminé"
+        "expiresInH": "Expire dans {{h}} h {{m}} min.",
+        "expiresInM": "Expire dans {{m}} min.",
+        "secretOnce": "Le lien et son PIN n'ont été affichés qu'une fois et ne peuvent plus l'être.",
+        "done": "Terminé",
+        "unshare": "Arrêter le partage"
     },
     "player": {
         "loading": "Chargement...",
         "leave": "Quitter",
         "thisPc": "ce PC",
         "quality": "Qualité",
-        "refresh": "Actualiser",
+        "checkAgain": "Vérifier à nouveau",
         "joining": "Connexion...",
         "joinTitle": "Rejoindre {{machine}}",
         "joinButton": "Rejoindre {{machine}}",

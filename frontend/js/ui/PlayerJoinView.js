@@ -181,7 +181,15 @@ export class PlayerJoinView {
             `
             }
             <p class="player-error player-join-error" hidden></p>
-            <button class="btn btn-secondary player-refresh" type="button">${escapeHtml(t('player.refresh'))}</button>
+            ${
+                // Only worth offering while the guest is waiting on someone
+                // else: the other screen to let go, or the host to start a
+                // game. With a Join button on screen it was a second button
+                // that did nothing they wanted.
+                busy || noSession
+                    ? `<button class="btn btn-secondary player-refresh" type="button">${escapeHtml(t('player.checkAgain'))}</button>`
+                    : ''
+            }
         `);
 
         this.container.querySelectorAll('.player-quality-btn').forEach((b) => {
@@ -194,9 +202,8 @@ export class PlayerJoinView {
             });
         });
 
-        this.container
-            .querySelector('.player-refresh')
-            .addEventListener('click', () => this.refresh());
+        const refreshBtn = this.container.querySelector('.player-refresh');
+        if (refreshBtn) refreshBtn.addEventListener('click', () => this.refresh());
 
         const joinBtn = this.container.querySelector('.player-join-btn');
         if (!joinBtn) return;

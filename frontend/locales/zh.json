@@ -534,10 +534,14 @@
             "streaming": "点击断开连接"
         },
         "popinTitle": "邀请{{player}}",
+        "managePopinTitle": "与 {{player}} 共享中",
+        "manageShared": "链接已生效，还没有人加入。",
+        "manageStreaming": "有人正在通过此链接观看。",
         "linkLabel": "链接",
         "pinLabel": "PIN 码",
         "pinHint": "请分开发送链接和 PIN 码——两者合起来才能进入，单独则无效。",
         "inputsLabel": "允许的输入",
+        "inputsLocked": "此链接已锁定。如需更改，请停止共享后重新共享。",
         "gamepad": "手柄",
         "keyboardMouse": "键盘 / 鼠标",
         "access": {
@@ -551,14 +555,18 @@
             "full": "对方将控制这台电脑的键盘和鼠标。请仅分享给你完全信任的人。"
         },
         "expiry": "链接有效期为 8 小时，或直到你关闭该玩家。",
-        "done": "完成"
+        "expiresInH": "{{h}} 小时 {{m}} 分钟后过期。",
+        "expiresInM": "{{m}} 分钟后过期。",
+        "secretOnce": "链接和 PIN 码只显示一次，无法再次查看。",
+        "done": "完成",
+        "unshare": "停止共享"
     },
     "player": {
         "loading": "加载中...",
         "leave": "离开",
         "thisPc": "这台电脑",
         "quality": "画质",
-        "refresh": "刷新",
+        "checkAgain": "重新检查",
         "joining": "正在加入...",
         "joinTitle": "加入 {{machine}}",
         "joinButton": "加入 {{machine}}",
