@@ -327,7 +327,29 @@
 .share-popin-actions {
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
     margin-top: 20px;
+}
+
+/* Managing a live share: the destructive action goes to the far left, as far
+   from "Done" as the box allows. */
+.share-popin-actions-split {
+    justify-content: space-between;
+}
+
+.share-manage-state {
+    margin: 0;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-1);
+    background: var(--surface-2);
+    box-shadow: inset 3px 0 0 var(--c-success);
+}
+
+.share-manage-state[data-state='streaming'] {
+    box-shadow: inset 3px 0 0 var(--c-info);
+    color: var(--c-info);
 }
 
 /* ── Invited player's page ─────────────────────────────────────────────── */
