@@ -202,6 +202,8 @@ bool ShareManager::activate(int slot, QString& outToken, QString& outPin, SlotSt
     act.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     act.tokenHash = hash(outToken);
     act.pinHash = hash(outPin);
+    act.tokenClear = outToken;
+    act.pinClear = outPin;
     act.permissions = s->lastPermissions; // viewer on a fresh install
     act.locked = false;
     act.activatedAt = QDateTime::currentSecsSinceEpoch();
@@ -219,6 +221,19 @@ bool ShareManager::activate(int slot, QString& outToken, QString& outPin, SlotSt
     Logger::info(QStringLiteral("[Share] Slot %1 shared (access=%2, 8h)")
                      .arg(slot)
                      .arg(act.permissions.accessLevel()));
+    return true;
+}
+
+bool ShareManager::secrets(int slot, QString& outToken, QString& outPin)
+{
+    pruneExpired();
+    const Slot* s = slotFor(slot);
+    if (!s || !s->activation.live()) return false;
+    // Empty after a restart: the digests were reloaded, the clear pair was not.
+    if (s->activation.tokenClear.isEmpty() || s->activation.pinClear.isEmpty()) return false;
+
+    outToken = s->activation.tokenClear;
+    outPin = s->activation.pinClear;
     return true;
 }
 

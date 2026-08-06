@@ -92,6 +92,18 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
 
     RestRouter* router = server.router();
 
+    // The base a player's link is built on: the public domain once Internet
+    // Access is live, otherwise this machine's LAN address and HTTPS port.
+    // Copied into the route closures, and holds only references to objects that
+    // outlive them (both live in main).
+    auto shareOrigin = [&deps, &server]() -> QString {
+        QString origin = deps.publicOrigin ? deps.publicOrigin() : QString();
+        if (!origin.isEmpty()) return origin;
+        const quint16 port = server.activeHttpsPort();
+        return port == 443 ? QStringLiteral("https://%1").arg(lanIPv4())
+                           : QStringLiteral("https://%1:%2").arg(lanIPv4()).arg(port);
+    };
+
     // ── Owner side ──────────────────────────────────────────────────────────
     // Reachable by any authenticated MoonlightWeb user (the generic session gate
     // in HttpServer::processRequest covers these paths); deliberately NOT
@@ -111,31 +123,48 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     });
 
     // POST /api/share/slots/:n/activate — mint the link + PIN shown in the popin.
-    router->post(QStringLiteral("/api/share/slots/:n/activate"), [&share, &deps,
-                                                                  &server](const HttpRequest& req) {
-        const int slot = slotParam(req);
-        if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+    router->post(QStringLiteral("/api/share/slots/:n/activate"),
+                 [&share, shareOrigin](const HttpRequest& req) {
+                     const int slot = slotParam(req);
+                     if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
 
-        QString token;
-        QString pin;
-        ShareManager::SlotStatus st;
-        if (!share.activate(slot, token, pin, st))
-            return HttpResponse::error(500, "Could not share this slot");
+                     QString token;
+                     QString pin;
+                     ShareManager::SlotStatus st;
+                     if (!share.activate(slot, token, pin, st))
+                         return HttpResponse::error(500, "Could not share this slot");
 
-        QString origin = deps.publicOrigin ? deps.publicOrigin() : QString();
-        if (origin.isEmpty()) {
-            const quint16 port = server.activeHttpsPort();
-            origin = port == 443 ? QStringLiteral("https://%1").arg(lanIPv4())
-                                 : QStringLiteral("https://%1:%2").arg(lanIPv4()).arg(port);
-        }
+                     QJsonObject obj = slotJson(st);
+                     obj[QStringLiteral("url")] = shareOrigin() + QStringLiteral("/p/") + token;
+                     obj[QStringLiteral("pin")] = pin;
+                     return HttpResponse::json(obj);
+                 });
 
-        QJsonObject obj = slotJson(st);
-        // The raw token and PIN exist in this response and nowhere
-        // else — only their digests are kept.
-        obj[QStringLiteral("url")] = origin + QStringLiteral("/p/") + token;
-        obj[QStringLiteral("pin")] = pin;
-        return HttpResponse::json(obj);
-    });
+    // POST /api/share/slots/:n/credentials — the same link and PIN again, for an
+    // owner reopening the popin on a share that is already live. POST, not GET:
+    // it hands out a credential, so it goes through the full CSRF/origin gate
+    // rather than being reachable by a top-level navigation.
+    router->post(QStringLiteral("/api/share/slots/:n/credentials"),
+                 [&share, shareOrigin](const HttpRequest& req) {
+                     const int slot = slotParam(req);
+                     if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+
+                     QString token;
+                     QString pin;
+                     QJsonObject obj;
+                     if (!share.secrets(slot, token, pin)) {
+                         // Either nothing is shared, or the process restarted
+                         // since: the digests came back from share.json, the
+                         // clear pair did not. The popin says so instead of
+                         // pretending the link is gone.
+                         obj[QStringLiteral("available")] = false;
+                         return HttpResponse::json(obj);
+                     }
+                     obj[QStringLiteral("available")] = true;
+                     obj[QStringLiteral("url")] = shareOrigin() + QStringLiteral("/p/") + token;
+                     obj[QStringLiteral("pin")] = pin;
+                     return HttpResponse::json(obj);
+                 });
 
     // POST /api/share/slots/:n/permissions — while the popin is open.
     router->post(

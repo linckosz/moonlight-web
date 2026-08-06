@@ -291,6 +291,15 @@
     cursor: pointer;
 }
 
+/* Reopened share: the boxes report the frozen policy, they do not set it. */
+.share-check.is-locked {
+    cursor: default;
+    color: var(--text-2);
+}
+.share-check.is-locked input {
+    cursor: default;
+}
+
 .share-access {
     margin-top: 16px;
     padding: 12px 14px;
