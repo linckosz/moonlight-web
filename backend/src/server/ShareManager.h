@@ -182,6 +182,12 @@ public:
     /// the join page should ask for a PIN; it reveals nothing else.
     bool tokenIsLive(const QString& token);
 
+    /// The slot @p token belongs to, -1 when it names no live activation. The
+    /// player routes resolve the slot from the *link* and then require the
+    /// cookie to agree: a browser holding player 1's cookie must not be read as
+    /// player 1 when it opens player 2's link.
+    int slotForToken(const QString& token);
+
     // ── Stream lifecycle ────────────────────────────────────────────────────
 
     /// Mark a player's stream as up or down. Dropping to false keeps the

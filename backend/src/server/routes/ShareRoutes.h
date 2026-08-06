@@ -34,8 +34,9 @@ struct ShareRoutesDeps
     /// Start a player's stream on their slot. Answers with the same payload as
     /// POST /api/hosts/:id/start so the frontend reuses its pipeline verbatim.
     /// @p height is one of 720/1080/1440; everything else (fps, codec, bitrate)
-    /// is decided server-side.
-    std::function<void(int slot, int height, ShareManager::Permissions perms,
+    /// is decided server-side. @p serverHost is the hostname the player reached
+    /// us on, needed to build the signaling URL they must come back to.
+    std::function<void(int slot, int height, ShareManager::Permissions perms, QString serverHost,
                        ResponseCallback respond)>
         startPlayerStream;
 

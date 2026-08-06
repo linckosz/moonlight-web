@@ -383,8 +383,14 @@ int ShareManager::slotForCookie(const QString& cookie)
 
 bool ShareManager::tokenIsLive(const QString& token)
 {
+    return slotForToken(token) >= 0;
+}
+
+int ShareManager::slotForToken(const QString& token)
+{
     pruneExpired();
-    return slotForTokenHash(hash(token)) != nullptr;
+    int slot = -1;
+    return slotForTokenHash(hash(token), &slot) ? slot : -1;
 }
 
 // ── Stream lifecycle ────────────────────────────────────────────────────────

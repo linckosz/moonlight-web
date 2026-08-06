@@ -259,14 +259,17 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         // one already knows it existed, so this reveals nothing an attacker
         // could use — while hiding it would make every expired link look like a
         // wrong PIN. The PIN is the secret; liveness is not.
-        if (!share.tokenIsLive(token)) {
+        const int slot = share.slotForToken(token);
+        if (slot < 0) {
             obj[QStringLiteral("error")] = QStringLiteral("dead_link");
             return HttpResponse::json(obj, 404);
         }
 
-        const int slot = share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie));
-        if (slot < 0) {
-            // Live link, but this device has not proved anything yet.
+        // The slot comes from the *link*; the cookie only says whether this
+        // device already passed that link's PIN. A browser still carrying
+        // player 1's cookie opening player 2's link is a new guest, and must
+        // enter player 2's PIN — otherwise it would be shown player 1's state.
+        if (share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie)) != slot) {
             obj[QStringLiteral("needs_pin")] = true;
             return HttpResponse::json(obj);
         }
@@ -290,10 +293,12 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
             const QJsonObject body = QJsonDocument::fromJson(req.body).object();
             const QString token = body.value(QStringLiteral("token")).toString();
 
-            const int slot = share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie));
-            // Both factors, every time: the cookie proves the PIN was entered,
-            // the token proves the owner's share is still the current one.
-            if (slot < 0 || !share.tokenIsLive(token) ||
+            // Both factors, every time, and they must name the *same* slot: the
+            // link says which player this is, the cookie proves that link's PIN
+            // was entered on this device.
+            const int slot = share.slotForToken(token);
+            if (slot < 0 ||
+                share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie)) != slot ||
                 share.state(slot) == ShareManager::State::Off) {
                 server.reportAuthFailure(req.clientAddress);
                 QJsonObject obj;
@@ -328,7 +333,16 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
                 respond(HttpResponse::error(503, "Streaming unavailable"));
                 return;
             }
-            deps.startPlayerStream(slot, height, share.permissions(slot), respond);
+
+            // The signaling URL the worker hands back has to name the host this
+            // player actually reached — the public domain, the LAN IP, whatever
+            // is in their address bar. Leaving it empty produced an unparseable
+            // URL, and the browser fell back to /ws: the owner's slot.
+            QString serverHost = req.headers.value(QStringLiteral("host"));
+            const int colon = serverHost.indexOf(QLatin1Char(':'));
+            if (colon >= 0) serverHost = serverHost.left(colon);
+
+            deps.startPlayerStream(slot, height, share.permissions(slot), serverHost, respond);
         });
 
     // POST /api/share/player/leave — the player pressed Leave.

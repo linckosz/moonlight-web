@@ -274,6 +274,15 @@ void test_slots_are_independent()
     CHECK_EQ(mgr->slotForCookie(a.cookie), ShareManager::kFirstSlot);
     CHECK_EQ(mgr->slotForCookie(b.cookie), ShareManager::kFirstSlot + 1);
 
+    // The link, not the cookie, is what names the player: the routes resolve
+    // the slot from the token and then demand that the cookie agree. Without
+    // that, a browser still holding A's cookie would be read as A when it
+    // opens B's link — and shown A's state.
+    CHECK_EQ(mgr->slotForToken(tokenA), ShareManager::kFirstSlot);
+    CHECK_EQ(mgr->slotForToken(tokenB), ShareManager::kFirstSlot + 1);
+    CHECK(mgr->slotForCookie(a.cookie) != mgr->slotForToken(tokenB));
+    CHECK_EQ(mgr->slotForToken(QStringLiteral("not-a-token")), -1);
+
     // Ending everything ends everything.
     mgr->deactivateAll(ShareManager::EndReason::OwnerStop);
     CHECK_EQ(mgr->slotForCookie(a.cookie), -1);
