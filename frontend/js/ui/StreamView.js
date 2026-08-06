@@ -5052,6 +5052,20 @@ export class StreamView {
     // same keys so codeToWindowsVk(e.code) can be used as a fallback
     // when e.keyCode is 0.
     //
+    /**
+     * True when a keystroke belongs to the page, not the game: a text field, or
+     * anything inside a dialog layered over the stream (the share popin). The
+     * whole surface is a keyboard capture, so without this exclusion typing a
+     * link or copying a PIN sends the chord to the host and does nothing here.
+     */
+    static isLocalKeyboardTarget(target) {
+        const el = /** @type {Element|null} */ (target);
+        if (!el || typeof el.closest !== 'function') return false;
+        return !!el.closest(
+            'input, textarea, select, [contenteditable="true"], .share-popin-overlay',
+        );
+    }
+
     // IMPORTANT: The VK codes here do NOT include the 0x8000 modifier bit
     // (VK_RAW). MoonlightShim::sendKeyEvent() adds 0x8000 internally.
     static codeToWindowsVk(code) {
@@ -5252,6 +5266,10 @@ export class StreamView {
         // Soft-keyboard events on the capture element are handled by its own
         // listeners (beforeinput/keydown) — don't double-process here.
         if (e.target === this._kbdCapture) return;
+        // A dialog over the stream owns the keyboard. Forwarding its keystrokes
+        // to the host — and preventDefault-ing them — made Ctrl+C on the share
+        // popin's PIN do nothing locally while sending a copy chord to the game.
+        if (StreamView.isLocalKeyboardTarget(e.target)) return;
 
         // Ignore OS auto-repeat (e.repeat): a held key fires a burst of keydown
         // events. Forwarding them floods the host — and on a bad network the user
@@ -5421,6 +5439,9 @@ export class StreamView {
 
     handleKeyUp(e) {
         if (e.target === this._kbdCapture) return;
+        // Same exclusion as handleKeyDown: a release whose press was never sent
+        // would land on the host as an unmatched key-up.
+        if (StreamView.isLocalKeyboardTarget(e.target)) return;
         // Clipboard paste chord: the backend injected V down+up itself —
         // swallow the real keyup so the host doesn't get an unmatched release.
         if (this._suppressPasteKeyUpCode && e.code === this._suppressPasteKeyUpCode) {
