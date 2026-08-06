@@ -10,6 +10,12 @@
 
 .share-menu {
     position: relative;
+    /* The dropdown hangs below the header, over the picture — and the stream's
+       transparent input layer sits there at z-index 50. Without a stacking
+       context above it the rows would be painted underneath: visible (the
+       layer is transparent) but unclickable, every click landing in the game
+       as a mouse press on the host. */
+    z-index: 300;
     margin-right: 10px;
 }
 
@@ -33,88 +39,161 @@
     filter: var(--glow-cyan);
 }
 
-/* Someone is watching right now — the count is worth noticing. */
+/* Someone is watching right now — the count is worth noticing, in the same
+   cyan the "live" rows use. */
 .share-btn.has-streams {
-    color: var(--accent-1);
+    color: var(--c-info);
+    box-shadow: inset 0 0 0 1px var(--c-info);
 }
 
 .share-dropdown {
     position: absolute;
-    top: calc(100% + 8px);
+    top: calc(100% + 10px);
     right: 0;
-    z-index: 30;
-    min-width: 240px;
+    z-index: 1;
+    width: 320px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 6px;
-    background: var(--surface-2);
-    border: 1px solid var(--border-1);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    gap: 6px;
+    padding: 12px;
+    background:
+        var(--bg-grid) 0 0 / var(--bg-grid-size),
+        linear-gradient(160deg, var(--surface-2), var(--surface-1));
+    box-shadow:
+        var(--edge-cyan),
+        0 18px 44px rgba(0, 0, 0, 0.62);
+    clip-path: var(--notch-lg);
 }
 
 .share-dropdown[hidden] {
     display: none;
 }
 
+.share-dropdown-title {
+    margin: 2px 2px 4px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+/* One row per invitable player, built like a host card: round status glyph,
+   name + one-line hint, uppercase badge. */
 .share-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-3);
     width: 100%;
-    padding: 9px 12px;
-    font-size: 12.5px;
+    padding: 8px 12px 8px 10px;
+    font-family: inherit;
+    line-height: 1.35;
     text-align: left;
     color: var(--text-1);
-    background: transparent;
+    background: var(--surface-2);
     border: none;
-    border-left: 3px solid transparent;
+    /* Left tick in the state colour — the CP2077 status rail. */
+    box-shadow: inset 3px 0 0 var(--row-accent, var(--text-3));
+    clip-path: var(--notch-sm);
     cursor: pointer;
     transition:
         background 0.15s,
-        border-color 0.15s;
+        filter 0.2s;
+}
+
+.share-row:hover {
+    background: var(--surface-3);
+    filter: drop-shadow(0 0 7px var(--row-glow, transparent));
+}
+
+.share-row:active {
+    transform: translateY(1px);
 }
 
 .share-row:disabled {
     cursor: progress;
-    opacity: 0.7;
+    opacity: 0.72;
 }
 
-.share-row-state {
-    font-size: 11px;
-    color: var(--text-2);
+.share-row .status-icon {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    font-size: 0.95rem;
+}
+
+.share-row-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.share-row-name {
+    display: block;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.share-row-hint {
+    display: block;
+    margin-top: 1px;
+    font-size: var(--fs-xs);
+    color: var(--text-3);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-/* off / shared / streaming — pale red, pale green, pale blue. */
-.share-row-off {
-    background: rgba(255, 42, 109, 0.1);
-    border-left-color: rgba(255, 42, 109, 0.55);
-}
-.share-row-off:hover {
-    background: rgba(255, 42, 109, 0.18);
+.share-row .status-badge {
+    flex-shrink: 0;
 }
 
-.share-row-shared {
-    background: rgba(42, 212, 160, 0.1);
-    border-left-color: rgba(42, 212, 160, 0.6);
+/* off / shared / streaming — the semantic trio, same hues as the host list. */
+.share-row[data-state='off'] {
+    --row-accent: var(--c-danger);
+    --row-glow: rgba(255, 42, 109, 0.35);
 }
-.share-row-shared:hover {
-    background: rgba(42, 212, 160, 0.18);
+.share-row[data-state='shared'] {
+    --row-accent: var(--c-success);
+    --row-glow: rgba(42, 212, 160, 0.35);
+}
+.share-row[data-state='streaming'] {
+    --row-accent: var(--c-info);
+    --row-glow: rgba(0, 229, 255, 0.4);
+}
+.share-row[data-state='busy'] {
+    --row-accent: var(--text-3);
 }
 
-.share-row-streaming {
-    background: rgba(0, 229, 255, 0.1);
-    border-left-color: rgba(0, 229, 255, 0.65);
+/* "Live" is the one status the hosts page has no equivalent for. */
+.status-icon.live {
+    color: var(--c-info);
+    background-color: var(--c-info-soft);
 }
-.share-row-streaming:hover {
-    background: rgba(0, 229, 255, 0.18);
+.status-badge.live {
+    color: var(--c-info);
+    background-color: var(--c-info-soft);
 }
 
-.share-row-busy {
-    background: var(--surface-3);
-    border-left-color: var(--text-3);
+/* Someone is on the other end right now — the row should breathe. */
+.share-row[data-state='streaming'] .status-icon {
+    animation: shareLivePulse 1.8s ease-in-out infinite;
+}
+
+@keyframes shareLivePulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.35);
+    }
+    50% {
+        box-shadow: 0 0 0 5px rgba(0, 229, 255, 0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .share-row[data-state='streaming'] .status-icon {
+        animation: none;
+    }
 }
 
 /* ── Owner: the share popin ────────────────────────────────────────────── */

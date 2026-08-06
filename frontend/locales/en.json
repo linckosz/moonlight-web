@@ -520,12 +520,18 @@
     "sharing": {
         "share": "Share",
         "shareCount": "Share ({{count}})",
+        "dropdownTitle": "Invite players",
         "playerN": "Player {{n}}",
         "working": "Working...",
         "state": {
-            "off": "Not shared",
-            "shared": "Link active",
-            "streaming": "Streaming"
+            "off": "Off",
+            "shared": "Shared",
+            "streaming": "Live"
+        },
+        "hint": {
+            "off": "Click to create a link",
+            "shared": "Waiting for the guest",
+            "streaming": "Click to disconnect"
         },
         "popinTitle": "Invite {{player}}",
         "linkLabel": "Link",

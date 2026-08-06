@@ -520,12 +520,18 @@
     "sharing": {
         "share": "共享",
         "shareCount": "共享 ({{count}})",
+        "dropdownTitle": "邀请玩家",
         "playerN": "玩家 {{n}}",
         "working": "处理中...",
         "state": {
-            "off": "未共享",
-            "shared": "链接有效",
-            "streaming": "串流中"
+            "off": "关闭",
+            "shared": "已共享",
+            "streaming": "直播中"
+        },
+        "hint": {
+            "off": "点击创建链接",
+            "shared": "等待访客加入",
+            "streaming": "点击断开连接"
         },
         "popinTitle": "邀请{{player}}",
         "linkLabel": "链接",

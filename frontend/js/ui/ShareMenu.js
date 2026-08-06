@@ -15,11 +15,12 @@
 /**
  * MoonlightWeb — Share menu (owner side of session sharing)
  *
- * Sits in the stream header, left of Stop. One row per player slot:
+ * Sits in the stream header, left of Stop. One row per player slot, styled
+ * like the status lines of the hosts page:
  *
- *   off       (pale red)   → click mints a link + PIN and opens the popin
- *   shared    (pale green) → click revokes the link
- *   streaming (pale blue)  → click disconnects the player and revokes the link
+ *   off       (red)   → click mints a link + PIN and opens the popin
+ *   shared    (green) → click revokes the link
+ *   streaming (cyan)  → click disconnects the player and revokes the link
  *
  * The popin is the only place a share is configured: the input permissions are
  * chosen there and freeze when it closes, because from that moment the link is
@@ -30,8 +31,26 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { Icons } from './icons.js';
 
 const POLL_MS = 5000;
+
+/* Each row reads like a host card on the hosts page: a round status glyph, the
+   name, and an uppercase badge. The status classes are the ones already
+   defined for hosts (.status-icon / .status-badge) so the two lists share one
+   visual language; 'live' is the only addition, for a player mid-stream. */
+const ROW_ICON = {
+    off: Icons.userPlus,
+    shared: Icons.link,
+    streaming: Icons.play,
+    busy: Icons.unavailable,
+};
+const ROW_CLASS = {
+    off: 'offline',
+    shared: 'ready',
+    streaming: 'live',
+    busy: 'unavailable',
+};
 
 export class ShareMenu {
     /**
@@ -143,26 +162,44 @@ export class ShareMenu {
             streaming > 0 ? t('sharing.shareCount', { count: streaming }) : t('sharing.share');
         this.btn.classList.toggle('has-streams', streaming > 0);
 
-        this.dropdown.innerHTML = this.slots
+        const rows = this.slots
             .map((s, i) => {
                 const busy = this._busySlots.has(s.slot);
-                const label = t('sharing.playerN', { n: i + 2 });
                 const state = busy ? 'busy' : s.state;
+                // Slots are 2..4 on the wire (0 and 1 belong to the owner), but
+                // a list that starts at "Player 2" reads like something is
+                // missing — the guests are numbered from one.
+                const label = t('sharing.playerN', { n: i + 1 });
+                const cls = ROW_CLASS[state] || 'unavailable';
+                const badge = busy ? t('sharing.working') : t(`sharing.state.${state}`);
+                const hint = busy ? '' : t(`sharing.hint.${state}`);
                 return `
-                    <button class="share-row share-row-${escapeHtml(state)}"
-                            type="button" data-slot="${s.slot}" ${busy ? 'disabled' : ''}>
-                        <span class="share-row-name">${escapeHtml(label)}</span>
-                        <span class="share-row-state">${escapeHtml(
-                            busy ? t('sharing.working') : t(`sharing.state.${s.state}`),
-                        )}</span>
+                    <button class="share-row" type="button"
+                            data-slot="${s.slot}" data-state="${escapeHtml(state)}"
+                            ${busy ? 'disabled' : ''}>
+                        <span class="status-icon ${cls}">${ROW_ICON[state] || ''}</span>
+                        <span class="share-row-info">
+                            <span class="share-row-name">${escapeHtml(label)}</span>
+                            <span class="share-row-hint">${escapeHtml(hint)}</span>
+                        </span>
+                        <span class="status-badge ${cls}">${escapeHtml(badge)}</span>
                     </button>
                 `;
             })
             .join('');
 
+        this.dropdown.innerHTML = `
+            <div class="share-dropdown-title">${escapeHtml(t('sharing.dropdownTitle'))}</div>
+            ${rows}
+        `;
+
         this.dropdown.querySelectorAll('.share-row').forEach((row) => {
             row.addEventListener('click', (e) => {
+                // stopPropagation alone keeps the document handler from closing
+                // the menu; preventDefault keeps the browser from synthesising
+                // anything the stream's input layer could pick up underneath.
                 e.stopPropagation();
+                e.preventDefault();
                 const slot = Number(/** @type {HTMLElement} */ (row).dataset.slot);
                 this._onRowClick(slot);
             });
@@ -226,7 +263,7 @@ export class ShareMenu {
 
     _openPopin(slot, data) {
         const index = this.slots.findIndex((s) => s.slot === slot);
-        const name = t('sharing.playerN', { n: (index < 0 ? 0 : index) + 2 });
+        const name = t('sharing.playerN', { n: (index < 0 ? 0 : index) + 1 });
         const perms = data.permissions || { gamepad: false, keyboardMouse: false };
 
         const overlay = document.createElement('div');

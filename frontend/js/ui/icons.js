@@ -52,4 +52,16 @@ export const Icons = {
             '<circle cx="12" cy="12" r="1.4" fill="currentColor"/>' +
             '<circle cx="12" cy="19" r="1.4" fill="currentColor"/>',
     ),
+    // User-plus — a free player slot in the Share menu, nobody invited yet
+    userPlus: svg(
+        '<path d="M15 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>' +
+            '<line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>',
+    ),
+    // Link — an invite link is live, the guest has not joined yet
+    link: svg(
+        '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+            '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    ),
+    // Play — the invited player is streaming right now
+    play: svg('<polygon points="7 4 20 12 7 20 7 4" fill="currentColor" stroke-width="1.5"/>'),
 };
