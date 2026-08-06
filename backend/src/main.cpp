@@ -2821,7 +2821,7 @@ int main(int argc, char* argv[])
         [&computerManager, &g_StreamSlots, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
          &anyOtherSlotLive, &slotSignalingPort, &slotWsPath, &server, &appSettings, signalingPort,
          stunServer, &ownerContext](int slot, int height, ShareManager::Permissions perms,
-                                    ResponseCallback respond) {
+                                    QString serverHost, ResponseCallback respond) {
             const std::pair<QString, int> owner = ownerContext();
             const QString hostUuid = owner.first;
             const int appId = owner.second;
@@ -2897,7 +2897,10 @@ int main(int argc, char* argv[])
             // Never /launch: Sunshine refuses it while an app runs, and a player
             // has no business starting one anyway.
             cfg["preferResume"] = true;
-            cfg["serverHost"] = QString();
+            // The host the player typed, so the signaling URL they get back
+            // points at the same place — an empty one made the browser fall
+            // back to /ws and land on the owner's signaling server.
+            cfg["serverHost"] = serverHost;
             cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
             cfg["signalingPort"] = static_cast<int>(slotSignalingPort(slot));
             cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(slot) + 1);
