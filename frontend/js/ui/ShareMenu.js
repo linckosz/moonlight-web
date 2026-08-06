@@ -325,9 +325,7 @@ export class ShareMenu {
 
                 ${this._linkBlock(data.url || '')}
 
-                <label class="share-field-label">${escapeHtml(t('sharing.pinLabel'))}</label>
-                <div class="share-pin">${escapeHtml(data.pin || '')}</div>
-                <p class="share-pin-hint">${escapeHtml(t('sharing.pinHint'))}</p>
+                ${this._pinBlock(data.pin || '')}
 
                 <label class="share-field-label">${escapeHtml(t('sharing.inputsLabel'))}</label>
                 <div class="share-perms">
@@ -392,7 +390,7 @@ export class ShareMenu {
         gamepadCb.addEventListener('change', push);
         kmCb.addEventListener('change', push);
 
-        this._wireCopyButton(overlay);
+        this._wireCopyButtons(overlay);
         overlay.querySelector('.share-done-btn').addEventListener('click', close);
     }
 
@@ -407,24 +405,47 @@ export class ShareMenu {
         `;
     }
 
-    _wireCopyButton(overlay) {
-        const copyBtn = /** @type {HTMLElement} */ (overlay.querySelector('.share-copy-btn'));
-        const linkInput = /** @type {HTMLInputElement} */ (
-            overlay.querySelector('.share-link-input')
-        );
-        if (!copyBtn || !linkInput) return;
-        copyBtn.addEventListener('click', async () => {
-            try {
-                await navigator.clipboard.writeText(linkInput.value);
-            } catch (_) {
-                // Clipboard API needs a secure context and a permission the
-                // browser may withhold — select the text so Ctrl+C still works.
-                linkInput.select();
-            }
-            copyBtn.textContent = t('common.copied');
-            setTimeout(() => {
-                copyBtn.textContent = t('common.copy');
-            }, 1500);
+    /**
+     * The PIN block. A read-only field rather than a <div>, for the same reason
+     * as the link: it can be focused, selected and copied — with the button, or
+     * with Ctrl+C now that the stream stops swallowing keystrokes aimed at a
+     * dialog.
+     */
+    _pinBlock(pin) {
+        return `
+            <label class="share-field-label">${escapeHtml(t('sharing.pinLabel'))}</label>
+            <div class="share-copy-row">
+                <input class="share-pin" type="text" readonly value="${escapeHtml(pin)}"
+                       aria-label="${escapeHtml(t('sharing.pinLabel'))}">
+                <button class="btn btn-secondary share-copy-btn" type="button">${escapeHtml(t('common.copy'))}</button>
+            </div>
+            <p class="share-pin-hint">${escapeHtml(t('sharing.pinHint'))}</p>
+        `;
+    }
+
+    /** Wire every copy row in the popin: click to copy, focus to select all. */
+    _wireCopyButtons(overlay) {
+        overlay.querySelectorAll('.share-copy-row').forEach((row) => {
+            const input = /** @type {HTMLInputElement} */ (row.querySelector('input'));
+            const btn = /** @type {HTMLElement} */ (row.querySelector('.share-copy-btn'));
+            if (!input || !btn) return;
+
+            // Clicking the field selects the whole value: one Ctrl+C away.
+            input.addEventListener('focus', () => input.select());
+
+            btn.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(input.value);
+                } catch (_) {
+                    // Clipboard API needs a secure context and a permission the
+                    // browser may withhold — select the text so Ctrl+C works.
+                    input.select();
+                }
+                btn.textContent = t('common.copied');
+                setTimeout(() => {
+                    btn.textContent = t('common.copy');
+                }, 1500);
+            });
         });
     }
 
@@ -458,9 +479,7 @@ export class ShareMenu {
             ? `
                 ${this._linkBlock(creds.url || '')}
 
-                <label class="share-field-label">${escapeHtml(t('sharing.pinLabel'))}</label>
-                <div class="share-pin">${escapeHtml(creds.pin || '')}</div>
-                <p class="share-pin-hint">${escapeHtml(t('sharing.pinHint'))}</p>
+                ${this._pinBlock(creds.pin || '')}
             `
             : `<p class="share-pin-hint">${escapeHtml(t('sharing.secretsLost'))}</p>`;
 
@@ -501,7 +520,7 @@ export class ShareMenu {
             () => this._closePopin(),
         );
 
-        this._wireCopyButton(overlay);
+        this._wireCopyButtons(overlay);
 
         overlay.querySelector('.share-done-btn').addEventListener('click', () => {
             // Done is a pure dismiss: nothing to freeze, nothing to revoke.

@@ -237,6 +237,7 @@
 
 .share-copy-row {
     display: flex;
+    align-items: stretch;
     gap: 8px;
 }
 
@@ -257,7 +258,10 @@
     font-size: 12px;
 }
 
+/* A read-only field, not a <div>: focusable, selectable, Ctrl+C-able. */
 .share-pin {
+    flex: 1;
+    min-width: 0;
     padding: 10px 14px;
     font-family: 'Share Tech Mono', monospace;
     font-size: 30px;
@@ -266,6 +270,11 @@
     color: var(--accent-1);
     background: var(--surface-0);
     border: 1px solid var(--accent-ring);
+}
+
+.share-pin:focus {
+    outline: none;
+    border-color: var(--accent-1);
 }
 
 .share-pin-hint,
