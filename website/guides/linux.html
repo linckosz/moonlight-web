@@ -108,6 +108,20 @@ paru -S moonlightweb-bin</code></pre>
   <p data-i18n-html="repo.rest">SteamOS, Bazzite and other immutable systems have no package manager to add a repository to — they keep
      the portable AppImage, which the same command downloads for you. The manual route below still works everywhere.</p>
 
+  <h2 id="docker" data-i18n="docker.h">Prefer Docker? Headless servers, NAS and mini PCs</h2>
+  <p data-i18n-html="docker.p">Official multi-arch images (<code>amd64</code> + <code>arm64</code>) are published to the GitHub
+     Container Registry. One command on any Linux host with Docker — <code>--network host</code> puts the
+     container straight on your LAN so it discovers your Sunshine machines:</p>
+  <pre><code>docker run -d --name moonlightweb --network host \
+  -v mw-data:/data --restart unless-stopped \
+  ghcr.io/linckosz/moonlight-web:latest</code></pre>
+  <p data-i18n-html="docker.p2">A container has no trusted local browser, so set an access PIN once, then open
+     <code>https://&lt;server-ip&gt;</code> and enter it:</p>
+  <pre><code>docker exec moonlightweb moonlightweb --new-pin</code></pre>
+  <p data-i18n-html="docker.rest">Update with <code>docker pull</code> and recreate the container — the volume keeps your pairings and
+     certificate. Compose file, port table, macvlan and one-click Internet access are all in
+     <a href="https://github.com/linckosz/moonlight-web/blob/main/docker/README.md" target="_blank" rel="noopener">the Docker guide</a>.</p>
+
   <h2 data-i18n="steps.h">Installation, step by step</h2>
   <div class="gsteps">
     <div class="gstep cyb" id="step-download">
@@ -221,6 +235,10 @@ window.MW_DICTS = {
     'repo.p':'MoonlightWeb publie des dépôts <strong>APT</strong> et <strong>DNF</strong> signés. Installer depuis l’un d’eux, c’est laisser le gestionnaire de mises à jour du système garder MoonlightWeb à jour tout seul, et voir l’application apparaître dans <strong>GNOME Logiciels</strong>, <strong>KDE Discover</strong> et l’<strong>App Center</strong> d’Ubuntu comme n’importe quelle autre. Cette commande unique détecte votre distribution et fait ce qu’il faut :',
     'repo.manual':'Vous préférez le faire à la main ? Ce sont exactement ces étapes :',
     'repo.rest':'SteamOS, Bazzite et les autres systèmes immuables n’ont pas de gestionnaire de paquets auquel ajouter un dépôt : ils gardent l’AppImage portable, que la même commande télécharge pour vous. La méthode manuelle ci-dessous reste valable partout.',
+    'docker.h':'Vous préférez Docker ? Serveurs headless, NAS et mini-PC',
+    'docker.p':'Des images officielles multi-arch (<code>amd64</code> + <code>arm64</code>) sont publiées sur le GitHub Container Registry. Une seule commande sur n’importe quel hôte Linux avec Docker — <code>--network host</code> place le conteneur directement sur votre réseau local, pour qu’il découvre vos machines Sunshine :',
+    'docker.p2':'Un conteneur n’a pas de navigateur local de confiance : définissez donc une fois un code PIN d’accès, puis ouvrez <code>https://&lt;ip-du-serveur&gt;</code> et saisissez-le :',
+    'docker.rest':'Mettez à jour avec <code>docker pull</code> puis recréez le conteneur — le volume conserve vos appairages et votre certificat. Le fichier Compose, le tableau des ports, macvlan et l’accès Internet en un clic sont tous dans <a href="https://github.com/linckosz/moonlight-web/blob/main/docker/README.md" target="_blank" rel="noopener">le guide Docker</a>.',
     'steps.h':'Installation, étape par étape',
     'step1.h':'Téléchargez un paquet',
     'step1.p':'Depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a>, choisissez selon votre famille de distribution : <code>.deb</code> pour <strong>Debian, Ubuntu, Mint, Pop!_OS, elementary, Zorin</strong> ; <code>.rpm</code> pour <strong>Fedora, RHEL, CentOS Stream, Rocky, Alma, Nobara, openSUSE</strong> ; un <code>.AppImage</code> portable pour <strong>Arch, Manjaro, SteamOS, Bazzite</strong> et tout le reste. Chaque paquet est autonome (Qt et OpenSSL embarqués — aucune dépendance à installer).',
@@ -267,6 +285,10 @@ window.MW_DICTS = {
     'repo.p':'MoonlightWeb 提供经过签名的 <strong>APT</strong> 和 <strong>DNF</strong> 软件源。从软件源安装，意味着系统的更新程序会自动让 MoonlightWeb 保持最新，而且应用会像其他程序一样出现在 <strong>GNOME 软件</strong>、<strong>KDE Discover</strong> 和 Ubuntu 的 <strong>App Center</strong> 中。这一条命令会检测你的发行版并做正确的事：',
     'repo.manual':'想手动操作？那正是下面这些步骤：',
     'repo.rest':'SteamOS、Bazzite 及其他不可变系统没有可以添加软件源的包管理器——它们继续使用便携的 AppImage，同一条命令也会帮你下载。下面的手动方式在任何系统上依然有效。',
+    'docker.h':'更喜欢 Docker？无头服务器、NAS 与迷你 PC',
+    'docker.p':'官方多架构镜像（<code>amd64</code> + <code>arm64</code>）已发布到 GitHub Container Registry。在任何装有 Docker 的 Linux 主机上一条命令即可——<code>--network host</code> 让容器直接处于你的局域网中，从而发现你的 Sunshine 机器：',
+    'docker.p2':'容器没有可信任的本地浏览器，因此先设置一次访问 PIN 码，然后打开 <code>https://&lt;服务器-IP&gt;</code> 并输入：',
+    'docker.rest':'用 <code>docker pull</code> 更新并重建容器——数据卷会保留你的配对和证书。Compose 文件、端口表、macvlan 以及一键互联网访问都在 <a href="https://github.com/linckosz/moonlight-web/blob/main/docker/README.md" target="_blank" rel="noopener">Docker 指南</a>中。',
     'steps.h':'逐步安装',
     'step1.h':'下载一个软件包',
     'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>按你的发行版系列选择：<strong>Debian、Ubuntu、Mint、Pop!_OS、elementary、Zorin</strong> 用 <code>.deb</code>；<strong>Fedora、RHEL、CentOS Stream、Rocky、Alma、Nobara、openSUSE</strong> 用 <code>.rpm</code>；<strong>Arch、Manjaro、SteamOS、Bazzite</strong> 及其他一切用便携的 <code>.AppImage</code>。每个软件包都是自包含的（内置 Qt 和 OpenSSL——无需安装任何依赖）。',
