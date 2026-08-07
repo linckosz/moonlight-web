@@ -590,7 +590,7 @@
       <div class="card cyb reveal"><div class="ico">🔎</div><h3 data-i18n="card6.h3">Zero‑config discovery</h3><p data-i18n="card6.p">Sunshine hosts appear automatically via mDNS. PIN pairing, multi‑host, persistent sessions.</p></div>
       <div class="card cyb reveal"><div class="ico">🌍</div><h3 data-i18n="card7.h3">One‑click Internet play</h3><p data-i18n="card7.p">Auto sub‑domain, free TLS certificate and UPnP port mapping. Share a link, play from anywhere.</p></div>
       <div class="card cyb reveal"><div class="ico">🛟</div><h3 data-i18n="card8.h3">Never drops you</h3><p data-i18n="card8.p">Transport auto‑fallback (UDP → TCP → WSS) rides through hostile networks and strict firewalls.</p></div>
-      <div class="card cyb reveal"><div class="ico">👥</div><h3 data-i18n="card9.h3">Couch co‑op, any couch</h3><p data-i18n="card9.p">Invite up to three friends into the game already running on your PC. One session, one save, one screen each — they play from their own device, with their own gamepad, as if they were sitting next to you.</p></div>
+      <div class="card cyb reveal"><div class="ico">👥</div><h3 data-i18n="card9.h3">Up to 4‑player co‑op</h3><p data-i18n="card9.p">Invite up to three friends into the game already running on your PC — four players in one session. One save, one screen each: they play from their own device, with their own gamepad, as if they were sitting next to you.</p></div>
     </div>
   </div>
 </section>
@@ -801,6 +801,8 @@
           <button class="cmd" type="button" data-copy="curl -fsSL https://moonlightweb.top/install.sh | bash" data-umami-event="copy-command" data-umami-event-cmd="linux-curl"><span>curl -fsSL https://moonlightweb.top/install.sh | bash</span><svg class="ico-copy" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg><svg class="ico-ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button>
           <p class="cmd-lbl" data-i18n="dl.linux.aur">Arch · Manjaro (AUR)</p>
           <button class="cmd" type="button" data-copy="paru -S moonlightweb-bin" data-umami-event="copy-command" data-umami-event-cmd="linux-aur"><span>paru -S moonlightweb-bin</span><svg class="ico-copy" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg><svg class="ico-ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button>
+          <p class="cmd-lbl" data-i18n="dl.linux.docker">Docker</p>
+          <button class="cmd" type="button" data-copy="docker pull ghcr.io/linckosz/moonlight-web" data-umami-event="copy-command" data-umami-event-cmd="linux-docker"><span>docker pull ghcr.io/linckosz/moonlight-web</span><svg class="ico-copy" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg><svg class="ico-ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button>
           <!-- The repository has to be registered before `apt install moonlightweb`
                works, and that recipe is four lines — too much for a one-line .cmd
                button, so it stays in the guide. -->
@@ -1058,8 +1060,8 @@
     'card7.p':'Sous‑domaine auto, certificat TLS gratuit et redirection de ports UPnP. Partagez un lien, jouez de partout.',
     'card8.h3':'Ne vous lâche jamais',
     'card8.p':'Bascule de transport automatique (UDP → TCP → WSS) qui traverse les réseaux hostiles et les pare‑feux stricts.',
-    'card9.h3':'Le multi local, sur n’importe quel canapé',
-    'card9.p':'Invitez jusqu’à trois amis dans le jeu qui tourne déjà sur votre PC. Une seule session, une seule sauvegarde, un écran chacun — ils jouent depuis leur appareil, avec leur manette, comme s’ils étaient assis à côté de vous.',
+    'card9.h3':'Le multi jusqu’à 4 joueurs',
+    'card9.p':'Invitez jusqu’à trois amis dans le jeu qui tourne déjà sur votre PC — quatre joueurs dans une seule session. Une seule sauvegarde, un écran chacun : ils jouent depuis leur appareil, avec leur manette, comme s’ils étaient assis à côté de vous.',
 
     'show.kicker':'En images', 'show.h2':'Voyez‑le en action',
     'show.p':'Même PC, mêmes jeux, sur tous les écrans de la maison (et au‑delà).',
@@ -1112,7 +1114,7 @@
     'dl.mac':'Installeur Apple Silicon avec un assistant de configuration guidé.',
     'dl.mac.brew':'Homebrew', 'dl.mac.curl':'Terminal',
     'dl.linux':'.deb pour Debian et Ubuntu, .rpm pour Fedora et openSUSE, AppImage pour Arch, SteamOS et le reste.',
-    'dl.linux.repo':'Debian · Ubuntu · Fedora · openSUSE', 'dl.linux.aur':'Arch · Manjaro (AUR)',
+    'dl.linux.repo':'Debian · Ubuntu · Fedora · openSUSE', 'dl.linux.aur':'Arch · Manjaro (AUR)', 'dl.linux.docker':'Docker',
     'dl.linux.manual':'Plutôt apt/dnf à la main ? →',
     'dl.foot':'Vous jouez depuis un téléphone, une tablette ou une TV ? Rien à télécharger — le client, c’est votre navigateur. <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">Toutes les versions →</a>',
 
@@ -1154,8 +1156,8 @@
     'card7.p':'自动子域名、免费 TLS 证书和 UPnP 端口映射。分享一个链接，随处畅玩。',
     'card8.h3':'从不掉线',
     'card8.p':'传输自动回退（UDP → TCP → WSS），穿越恶劣网络和严格防火墙。',
-    'card9.h3':'局域多人，随处可玩',
-    'card9.p':'邀请最多三位好友加入你电脑上正在运行的游戏。同一个存档，同一局游戏，各自一块屏幕 —— 他们用自己的设备和手柄游玩，就像就坐在你身边。',
+    'card9.h3':'最多 4 人同乐',
+    'card9.p':'邀请最多三位好友加入你电脑上正在运行的游戏 —— 一局游戏，四名玩家。同一个存档，各自一块屏幕：他们用自己的设备和手柄游玩，就像就坐在你身边。',
 
     'show.kicker':'实拍', 'show.h2':'亲眼见证',
     'show.p':'同一台主机，同样的游戏——覆盖家中每块屏幕（乃至更远）。',
@@ -1208,7 +1210,7 @@
     'dl.mac':'Apple Silicon 安装程序，附带向导式配置。',
     'dl.mac.brew':'Homebrew', 'dl.mac.curl':'终端',
     'dl.linux':'Debian/Ubuntu 用 .deb，Fedora/openSUSE 用 .rpm，Arch、SteamOS 及其他用 AppImage。',
-    'dl.linux.repo':'Debian · Ubuntu · Fedora · openSUSE', 'dl.linux.aur':'Arch · Manjaro（AUR）',
+    'dl.linux.repo':'Debian · Ubuntu · Fedora · openSUSE', 'dl.linux.aur':'Arch · Manjaro（AUR）', 'dl.linux.docker':'Docker',
     'dl.linux.manual':'想手动用 apt/dnf？→',
     'dl.foot':'用手机、平板或电视畅玩？无需下载——你的浏览器就是客户端。<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">全部版本 →</a>',
 
