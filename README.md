@@ -114,13 +114,17 @@ and nothing reaches the host. Clipboard sync is off for guests entirely.
 
 Reopening a live player row shows the same link and PIN again, so you can send
 them to a second device without re‑sharing. They are held in memory only: a
-restart forgets them while the invitation itself keeps working.
+restart forgets them while the invitation itself keeps working. **Regenerate**
+in that same popin mints a fresh pair and kills the old one on the spot —
+whoever was streaming on it is disconnected — which is what to reach for when a
+link has gone somewhere you did not intend.
 
 An invitation lasts **8 hours**. Nothing else ends it — a guest closing their
 tab or a dropped connection leave it valid, and they can rejoin. It ends when
-you click the player row, when you press Stop, or when the 8 hours are up. One
-stream at a time per invitation: a second device on the same link is told the
-seat is taken rather than stealing it.
+you click the player row, when you press Stop, or when the 8 hours are up; the
+row then goes back to red on its own and is ready to share again. One stream at
+a time per invitation: a second device on the same link is told the seat is
+taken rather than stealing it.
 
 **While a link is live, your own quality stops moving.** The automatic ladder
 would relaunch your stream on the other slot to shave a few megabits, which on a

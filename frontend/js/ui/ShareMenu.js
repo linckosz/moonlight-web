@@ -520,9 +520,14 @@ export class ShareMenu {
 
                 <p class="share-expiry">${escapeHtml(this._remaining(row.expires_at))}</p>
 
+                <p class="share-pin-hint">${escapeHtml(t('sharing.regenerateHint'))}</p>
+
                 <div class="share-popin-actions share-popin-actions-split">
                     <button class="btn btn-danger share-unshare-btn" type="button">${escapeHtml(t('sharing.unshare'))}</button>
-                    <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('sharing.done'))}</button>
+                    <span class="share-popin-actions-right">
+                        <button class="btn btn-secondary share-regen-btn" type="button">${escapeHtml(t('sharing.regenerate'))}</button>
+                        <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('sharing.done'))}</button>
+                    </span>
                 </div>
             `,
             () => this._closePopin(),
@@ -543,6 +548,21 @@ export class ShareMenu {
             unshareBtn.textContent = t('sharing.working');
             await this._unshare(slot);
             this._closePopin();
+        });
+
+        const regenBtn = /** @type {HTMLButtonElement} */ (
+            overlay.querySelector('.share-regen-btn')
+        );
+        regenBtn.addEventListener('click', async () => {
+            regenBtn.disabled = true;
+            regenBtn.textContent = t('sharing.working');
+            // Minting is already destructive by design: the backend revokes the
+            // old activation — link, PIN, cookies and any live stream on it —
+            // before it hands back a new pair. So this is the same call the row
+            // makes from off, and it lands on the minting popin with the
+            // permissions unlocked again.
+            this._closePopin();
+            await this._activate(slot);
         });
     }
 }

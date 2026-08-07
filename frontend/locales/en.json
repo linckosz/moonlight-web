@@ -560,6 +560,8 @@
         "secretsLost": "The link and PIN of this share were forgotten when the server restarted. Unshare and share again for a fresh pair.",
         "done": "Done",
         "unshare": "Unshare",
+        "regenerate": "Regenerate",
+        "regenerateHint": "Regenerating mints a new link and PIN and kills these ones — anyone streaming on them is disconnected.",
         "exitTitle": "Stop, or just leave?",
         "exitBody": "People are connected through your invitations. What should happen to them?",
         "exitLeave": "Leave",
