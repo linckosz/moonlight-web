@@ -14,12 +14,41 @@ docker run -d --name moonlightweb \
   ghcr.io/linckosz/moonlight-web:latest
 ```
 
-Then open **`https://<server-ip>`** from any device on your network and accept
-the self-signed certificate. The access PIN and the URLs come from:
+Then issue an access PIN and open the URL it prints:
 
 ```sh
-docker exec moonlightweb moonlightweb --status
+docker exec moonlightweb moonlightweb --new-pin   # one PIN per device, single-use
+docker exec moonlightweb moonlightweb --status    # URLs, PIN, internet state
 ```
+
+## First run — the PIN is not optional here
+
+On a desktop install the app trusts the machine it runs on: a browser on
+`127.0.0.1` gets in without a PIN, and the setup wizard opens by itself. **A
+container never sees that loopback peer.** Behind a bridge every request
+arrives from the Docker gateway (`172.17.0.1`), and even on the host network a
+headless server has no local browser to be trusted — so the request is remote,
+`/api/setup/status` answers `401 authentication_required`, and the page loads
+into an authentication wall rather than the wizard.
+
+That is the design working as intended, not a bug: what would otherwise be a
+"trusted local machine" is, in a container, every device that can reach the
+port. So the first thing to do after `docker run` is `--new-pin`.
+
+Two other commands are worth running while you are there — both talk to the
+server over the container's own loopback, which is why they are allowed to:
+
+```sh
+docker exec -it moonlightweb moonlightweb --set-admin-password
+```
+
+Without an admin password **the admin page cannot be opened from anywhere** —
+there is no built-in default, and the usual "you are on the machine itself"
+exemption does not apply to a container. The PIN grants streaming; the password
+grants administration.
+
+Accept the self-signed certificate warning on first connection — expected on a
+LAN until Internet Access issues a real one.
 
 Prefer Compose: [`docker-compose.yml`](docker-compose.yml) is the same thing in
 a file. [`docker-compose.bridge.yml`](docker-compose.bridge.yml) is the fallback

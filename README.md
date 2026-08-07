@@ -225,11 +225,22 @@ docker run -d --name moonlightweb \
   ghcr.io/linckosz/moonlight-web:latest
 ```
 
+```sh
+docker exec moonlightweb moonlightweb --new-pin        # required — see below
+docker exec -it moonlightweb moonlightweb --set-admin-password
+docker exec moonlightweb moonlightweb --status         # URLs, PIN, internet state
+```
+
 Then open **`https://<server-ip>`** and accept the self‑signed certificate.
-`docker exec moonlightweb moonlightweb --status` prints the URLs and the access PIN.
 Compose files: [`docker/docker-compose.yml`](docker/docker-compose.yml) (host networking) and
 [`docker/docker-compose.bridge.yml`](docker/docker-compose.bridge.yml) (published ports, with
 caveats).
+
+> ⚠️ **The PIN is not optional in a container.** A desktop install trusts a browser on
+> `127.0.0.1` and opens the setup wizard by itself; a container never sees that loopback peer
+> (behind a bridge every request comes from the Docker gateway, and a headless server has no
+> local browser anyway). Without a PIN the page loads into an authentication wall, and without
+> an admin password the admin page cannot be opened from anywhere.
 
 | | |
 |---|---|
