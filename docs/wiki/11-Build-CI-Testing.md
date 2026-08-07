@@ -99,7 +99,7 @@ Publishes **two** GHCR packages as multi-arch manifests (`linux/amd64` + `linux/
 | Package | Visibility | Written by | Tags |
 |---|---|---|---|
 | `moonlight-web` | public | a `v*` tag, through `ci.yml` | `latest`, `X.Y.Z`, `X.Y`, `sha-<commit>` |
-| `moonlight-web-dev` | private (set once in the package settings) | `workflow_dispatch` with `publish` ticked | `dev`, `sha-<commit>` |
+| `moonlight-web-dev` | private — GHCR's default for a new package (measured: anonymous `tags/list` returns 403, against 200 for the public one) | `workflow_dispatch` with `publish` ticked | `dev`, `sha-<commit>` |
 
 There is no `edge` and no nightly: an ordinary day of commits publishes nothing, and nobody following `latest` can land on work in progress. Testing a development build is a deliberate manual run, and it goes to the private package — unreachable without `docker login ghcr.io`, not merely unadvertised.
 
