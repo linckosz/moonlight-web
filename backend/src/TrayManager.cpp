@@ -86,9 +86,10 @@ bool TrayManager::init()
 
     refreshTooltip();
 
-    // Build context menu. In client mode the server is a service this process
-    // neither owns nor can stop: the header says so, Restart is gone, and Quit
-    // is named for what it actually does — remove the icon, leave the server up.
+    // Build context menu. In client mode the server is a service in another
+    // session this process cannot see: the header says so, and Restart / Quit act
+    // on that server (over loopback, via the handlers) rather than on this bare
+    // tray — so they are named "… Server" to say whose lifetime they touch.
     if (m_ClientMode) {
         QAction* header = m_Menu->addAction(tr("Server runs as a system service"));
         header->setEnabled(false);
@@ -97,16 +98,13 @@ bool TrayManager::init()
     QAction* openAction = m_Menu->addAction(tr("&Open"));
     QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
     m_Menu->addSeparator();
-    QAction* restartAction = nullptr;
-    if (!m_ClientMode) {
-        restartAction = m_Menu->addAction(tr("&Restart"));
-        m_Menu->addSeparator();
-    }
-    QAction* quitAction = m_Menu->addAction(m_ClientMode ? tr("&Hide Tray Icon") : tr("&Quit"));
+    QAction* restartAction = m_Menu->addAction(m_ClientMode ? tr("&Restart Server") : tr("&Restart"));
+    m_Menu->addSeparator();
+    QAction* quitAction = m_Menu->addAction(m_ClientMode ? tr("&Quit Server") : tr("&Quit"));
 
     connect(openAction, &QAction::triggered, this, &TrayManager::onOpen);
     connect(controlPanelAction, &QAction::triggered, this, &TrayManager::onOpenSettings);
-    if (restartAction) connect(restartAction, &QAction::triggered, this, &TrayManager::onRestart);
+    connect(restartAction, &QAction::triggered, this, &TrayManager::onRestart);
     connect(quitAction, &QAction::triggered, this, &TrayManager::onQuit);
     connect(m_TrayIcon, &QSystemTrayIcon::activated, this, &TrayManager::onActivated);
 
@@ -207,6 +205,22 @@ void TrayManager::onOpenSettings()
 
 void TrayManager::onRestart()
 {
+    // Client mode: the "server" is a service in another session. Ask it to
+    // restart over loopback (its supervisor respawns it) and keep this tray alive
+    // to redecorate the new instance — the port poll in runTrayClient follows it.
+    if (m_ClientMode) {
+        if (!m_RestartServer) {
+            qWarning() << "[TrayManager] Restart requested but no server handler is set";
+            return;
+        }
+        qInfo() << "[TrayManager] Asking the server to restart...";
+        if (m_TrayIcon)
+            m_TrayIcon->showMessage(QStringLiteral("MoonlightWeb"), tr("Restarting the server…"),
+                                    QSystemTrayIcon::Information, 3000);
+        m_RestartServer();
+        return;
+    }
+
     qInfo() << "[TrayManager] Restarting application...";
 
     // Launch a new instance with the same arguments, then quit this one
@@ -225,6 +239,14 @@ void TrayManager::onRestart()
 
 void TrayManager::onQuit()
 {
-    qInfo() << "[TrayManager] Quitting on user request";
+    // Client mode: "Quit Server" stops the service over loopback, then this tray
+    // (which only decorated it) closes too. With no handler wired, fall back to
+    // just closing the tray — the old non-destructive "Hide Tray Icon" behavior.
+    if (m_ClientMode && m_QuitServer) {
+        qInfo() << "[TrayManager] Asking the server to stop...";
+        m_QuitServer();
+    } else {
+        qInfo() << "[TrayManager] Quitting on user request";
+    }
     QApplication::quit();
 }

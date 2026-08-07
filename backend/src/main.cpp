@@ -985,6 +985,25 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     TrayManager tray(nullptr);
     tray.setClientMode(true);
     tray.setUrlProvider([&port](const QString& path) { return trayClientUrl(port, path); });
+
+    // Restart / Quit act on the server we decorate, not on this tray. We reach it
+    // the same way the CLI reaches an admin route: a loopback POST carrying the
+    // per-run admin key (loopbackAdminPost fetches it). The server then exits on
+    // its own — its supervisor respawns it for a restart, or lets it stay down
+    // for a quit — so no elevation and no SCM rights are needed here. 127.0.0.1,
+    // not "localhost", so the admin-key exchange rides the loopback the guard
+    // already trusts. `port` is followed live by the poll below.
+    tray.setRestartHandler([&port]() {
+        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
+                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
+        loopbackAdminPost(base, QStringLiteral("/api/system/restart"), QByteArrayLiteral("{}"));
+    });
+    tray.setQuitHandler([&port]() {
+        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
+                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
+        loopbackAdminPost(base, QStringLiteral("/api/system/quit"), QByteArrayLiteral("{}"));
+    });
+
     if (!tray.init()) {
         Logger::warning("Tray client: no system tray available — exiting");
         return 0;

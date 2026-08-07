@@ -45,6 +45,11 @@
 #include <QThread>
 #include <QTimer>
 
+// Exit code the restart endpoint leaves with so the service supervisor treats it
+// as "come back": NSSM's `AppExit Default Restart` respawns on any code it hasn't
+// been told to Exit on, and only 0 is mapped to a real stop (install-service.bat).
+static constexpr int kServiceRestartExitCode = 79;
+
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
                           std::function<void()> onHostKeyRotated)
@@ -452,6 +457,55 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         const bool ok = SunshineInstaller::launch();
         QJsonObject obj;
         obj["status"] = ok ? "started" : "failed";
+        return HttpResponse::json(obj);
+    });
+
+    // POST /api/system/restart — restart this MoonlightWeb process. Localhost-only.
+    //
+    // This is what lets the desktop tray restart a server that runs where the tray
+    // cannot: the Windows service in session 0. The tray client (another session,
+    // unelevated) drives it over loopback — no UAC, no SCM rights needed — because
+    // the restart is the server exiting on its own and its supervisor bringing it
+    // back. install-service.bat maps `AppExit Default Restart` / `AppExit 0 Exit`,
+    // so any NON-zero exit means "come back". Off a supervisor (a plain desktop
+    // run) nothing would respawn us, so relaunch a fresh copy ourselves first.
+    server.router()->post("/api/system/restart", [](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+
+        const bool supervised = !qEnvironmentVariableIsEmpty("MW_SERVICE");
+        if (!supervised) {
+            QString appPath = QCoreApplication::applicationFilePath();
+            QStringList args = QCoreApplication::arguments();
+            if (!args.isEmpty()) args.removeFirst(); // argv[0]; startDetached re-adds it
+            QProcess::startDetached(appPath, args);
+        }
+        Logger::info(QStringLiteral("[System] Restart requested over loopback (%1)")
+                         .arg(supervised ? QStringLiteral("supervisor respawn")
+                                         : QStringLiteral("self relaunch")));
+
+        // Delay the exit so the HTTP response flushes over TLS before the socket
+        // dies under it — otherwise the caller sees a transport error, not a 200.
+        QTimer::singleShot(300, qApp, [supervised]() {
+            QCoreApplication::exit(supervised ? kServiceRestartExitCode : 0);
+        });
+
+        QJsonObject obj;
+        obj["status"] = "restarting";
+        return HttpResponse::json(obj);
+    });
+
+    // POST /api/system/quit — stop this MoonlightWeb process. Localhost-only.
+    //
+    // A clean exit(0): under the service supervisor `AppExit 0 Exit` is a real
+    // stop, so the server stays down (starting it again is `net start` / the
+    // Services panel). Off a supervisor it simply ends. Drives the tray client's
+    // "Quit Server" entry — the counterpart to Restart above.
+    server.router()->post("/api/system/quit", [](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+        Logger::info(QStringLiteral("[System] Quit requested over loopback"));
+        QTimer::singleShot(300, qApp, []() { QCoreApplication::exit(0); });
+        QJsonObject obj;
+        obj["status"] = "quitting";
         return HttpResponse::json(obj);
     });
 
