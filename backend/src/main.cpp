@@ -93,6 +93,16 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+// Host + app of the last stream the OWNER started, remembered after their
+// worker is gone. Leave (keep_host_session) ends the owner's leg without
+// cancelling the Sunshine app, precisely so invited players carry on — but a
+// player joining afterwards needs to know which app that is, and by then no
+// owner slot says. File scope rather than a local in main(): the /start
+// handler that sets it is a deeply nested lambda, and threading two more
+// captures through would re-wrap a 600-line capture list for nothing.
+static QString g_LastOwnerHostUuid;
+static int g_LastOwnerAppId = 0;
+
 // Load KEY=VALUE pairs from a .env file into the process environment.
 // Supports PEM blocks: if a value starts with "-----BEGIN", lines are
 // accumulated until "-----END" is found (multi-line key support).
@@ -2464,6 +2474,9 @@ int main(int argc, char* argv[])
                 sl.hostUuid = hostUuidCopy;
                 sl.sessionToken = sessionToken;
                 sl.appId = appId;
+                // Outlives the slot — see the declaration.
+                g_LastOwnerHostUuid = hostUuidCopy;
+                g_LastOwnerAppId = appId;
                 if (standby) g_LastStandbyStartMs = QDateTime::currentMSecsSinceEpoch();
             };
 
@@ -2783,13 +2796,24 @@ int main(int argc, char* argv[])
         for (int i = 0; i < kOwnerSlots; ++i)
             if (g_StreamSlots[i].worker && !g_StreamSlots[i].hostUuid.isEmpty())
                 return std::pair<QString, int>{g_StreamSlots[i].hostUuid, g_StreamSlots[i].appId};
+        // No owner leg left — they pressed Leave, or their stream dropped. The
+        // app is still on Sunshine, so fall back to what it was.
+        if (!g_LastOwnerHostUuid.isEmpty())
+            return std::pair<QString, int>{g_LastOwnerHostUuid, g_LastOwnerAppId};
         return std::pair<QString, int>{g_ActiveHostUuid, 0};
     };
 
-    auto ownerStreamAlive = [&g_StreamSlots, &g_ActiveRelay, &g_ActiveMediaTrackRelay,
-                             &g_ActiveStreamRelay]() {
+    // Is there a Sunshine app a player could resume into? Not "is the owner
+    // watching": Leave (keep_host_session) takes the owner's leg down without a
+    // /cancel exactly so the guests carry on, and a guest handed a link before
+    // that must still be able to use it. g_LiveSunshineUids is the registry of
+    // sessions we hold and have not cancelled, so it answers the question the
+    // owner's slots cannot.
+    auto ownerStreamAlive = [&g_StreamSlots, &g_LiveSunshineUids, &g_ActiveRelay,
+                             &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay]() {
         for (int i = 0; i < kOwnerSlots; ++i)
             if (!g_StreamSlots[i].worker.isNull()) return true;
+        if (!g_LiveSunshineUids.isEmpty()) return true;
         // Legacy in-process path (stream_worker_enabled off).
         return !g_ActiveRelay.isNull() || !g_ActiveMediaTrackRelay.isNull() ||
                !g_ActiveStreamRelay.isNull();
