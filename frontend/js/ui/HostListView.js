@@ -218,39 +218,6 @@ export class HostListView {
                 return;
             }
 
-            const notchBtn = e.target.closest('.btn-notched-scroll');
-            if (notchBtn) {
-                const uuid = notchBtn.dataset.uuid;
-                const host = this.hosts.find((h) => h.uuid === uuid);
-                if (!host) return;
-                const enabled = !host.notchedScroll;
-                notchBtn.disabled = true;
-                BackendClient.setHostOptions(uuid, { notchedScroll: enabled })
-                    .then(() => {
-                        // Optimistic: the poll that repaints the card can be a
-                        // few seconds out, and the menu item reads as a toggle.
-                        host.notchedScroll = enabled;
-                        notchBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-                        notchBtn.textContent = enabled
-                            ? t('hosts.notchedScrollOn')
-                            : t('hosts.notchedScrollOff');
-                        Toast.show(
-                            enabled
-                                ? t('hosts.notchedScrollEnabled')
-                                : t('hosts.notchedScrollDisabled'),
-                            'success',
-                        );
-                    })
-                    .catch((err) => {
-                        console.error('[MW] Host option update failed:', err);
-                        Toast.show(err.message, 'error');
-                    })
-                    .finally(() => {
-                        notchBtn.disabled = false;
-                    });
-                return;
-            }
-
             const stopSessionBtn = e.target.closest('.btn-stop-session');
             if (stopSessionBtn) {
                 const uuid = stopSessionBtn.dataset.uuid;
@@ -733,6 +700,10 @@ export class HostListView {
                 h.port,
                 h.gpuModel,
                 h.displayModes,
+                // A running session drives the kebab's "Stop session" entry;
+                // without it here the card never re-renders when a Leave leaves
+                // the Sunshine app paused-but-alive.
+                h.currentGameId > 0,
             ]),
         );
     }
@@ -747,8 +718,8 @@ export class HostListView {
             host.port,
             host.gpuModel,
             host.wakeSupported,
-            host.notchedScroll,
             JSON.stringify(host.displayModes),
+            host.currentGameId > 0,
         ].join('|');
     }
 
@@ -873,13 +844,6 @@ export class HostListView {
                                     ? `<button class="host-menu-item btn-stop-session" data-uuid="${host.uuid}">${t('hosts.stopSession')}</button>`
                                     : ''
                             }
-                            <button class="host-menu-item btn-notched-scroll" data-uuid="${host.uuid}"
-                                    aria-pressed="${host.notchedScroll ? 'true' : 'false'}"
-                                    title="${this.esc(t('hosts.notchedScrollTitle'))}">${
-                                        host.notchedScroll
-                                            ? t('hosts.notchedScrollOn')
-                                            : t('hosts.notchedScrollOff')
-                                    }</button>
                             <button class="host-menu-item btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
                         </div>
                     </div>
