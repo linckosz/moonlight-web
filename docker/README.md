@@ -240,6 +240,44 @@ Nothing to publish, but these paths have to exist. On the host network they do.
 
 ---
 
+## Streaming from outside the LAN (Internet Access)
+
+Works from the container exactly as it does from a `.deb` — **on host
+networking**. The official images carry the same DNS and ACME configuration the
+installers do (embedded at build time from the repository's secrets), so:
+
+```sh
+docker exec -it moonlightweb moonlightweb --enable-internet
+```
+
+claims a sub-domain of `moonlightweb.top` for this machine, points it at your
+public IP, obtains a real TLS certificate for it, and asks your router to
+forward the ports. After that the browser warning is gone and the URL works
+from anywhere.
+
+It is opt-in and reversible: the sub-domain and the IP live on the MoonlightWeb
+DNS server only while the link is on, and the admin page turns it off again.
+
+**Each of its three moving parts is a reason host networking is the supported
+mode:**
+
+| What it needs | `--network host` | bridge |
+|---|---|---|
+| UPnP to open 443 + 80 on the router (SSDP multicast) | works | never reaches the router — forward the ports by hand |
+| The ACME `http-01` challenge answered on port 80 | works | needs `-p 80:80` *and* a manual router rule |
+| Its own LAN address, for the URL it advertises and for NAT hairpin | correct | reports the bridge address (`172.17.0.x`) |
+
+So on a bridge you can still get there, but every step your router would have
+automated becomes a rule you write yourself. On a Linux host, use
+`--network host` and run the one command above.
+
+Pointing the feature at your own PowerDNS and ACME account instead: set
+`MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_KID` and
+`MW_ZEROSSL_EAB_HMAC` as environment variables — a runtime value always wins
+over the one compiled in.
+
+---
+
 ## Storage
 
 One volume, `/data`, mounted at the container's `$HOME`. Qt derives every path
