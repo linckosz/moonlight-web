@@ -26,15 +26,45 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { IS_MOBILE_OR_TABLET, IS_TOUCH_DEVICE } from '../util/BrowserDetect.js';
 import { PlayerArt } from './PlayerArt.js';
 
 const HEIGHTS = [720, 1080, 1440];
+
+/**
+ * The guest's input preferences, kept in this browser. A guest has no account
+ * and no server-side settings, but they do come back to the same link — and
+ * re-picking "trackpad" on every join gets old fast.
+ */
+const PREFS_KEY = 'mw_player_prefs';
+
+function loadPrefs() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+        return {
+            // Immersive captures the mouse and the whole keyboard; that is a lot
+            // to do to a guest without asking, so it is opt-in.
+            immersive: raw.immersive === true,
+            touchScreen: raw.touchScreen === true,
+        };
+    } catch (_) {
+        return { immersive: false, touchScreen: false };
+    }
+}
+
+function savePrefs(prefs) {
+    try {
+        localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    } catch (_) {
+        // Private mode with storage disabled: the choice just won't be remembered.
+    }
+}
 
 export class PlayerJoinView {
     /**
      * @param {HTMLElement} container
      * @param {string} token the share token from the URL
-     * @param {(info: {height: number}) => Promise<void>} onJoin
+     * @param {(info: {height: number, immersive: boolean, touchScreen: boolean}) => Promise<void>} onJoin
      */
     constructor(container, token, onJoin) {
         this.container = container;
@@ -42,6 +72,7 @@ export class PlayerJoinView {
         this.onJoin = onJoin;
         this.info = null;
         this._height = 1080;
+        this._prefs = loadPrefs();
     }
 
     async start() {
@@ -100,7 +131,7 @@ export class PlayerJoinView {
             <p>${escapeHtml(t('player.endedBody'))}</p>
             <p class="player-muted">${escapeHtml(t('player.endedHint'))}</p>
         `,
-            'phone',
+            'unplugged',
         );
     }
 
@@ -152,6 +183,69 @@ export class PlayerJoinView {
         });
     }
 
+    /**
+     * How the guest wants to drive the stream, remembered between visits. Each
+     * row is only offered where it means something: pointer capture needs a
+     * pointer, and the trackpad/touch model needs a touchscreen. A touch laptop
+     * legitimately gets both.
+     */
+    _inputToggles() {
+        const row = (key, labelKey, offKey, onKey, on) => `
+            <div class="player-toggle" data-pref="${key}">
+                <span class="player-toggle-label">${escapeHtml(t(labelKey))}</span>
+                <div class="player-toggle-choice" role="group">
+                    <button class="btn player-toggle-btn ${on ? '' : 'is-selected'}"
+                            type="button" data-value="off">${escapeHtml(t(offKey))}</button>
+                    <button class="btn player-toggle-btn ${on ? 'is-selected' : ''}"
+                            type="button" data-value="on">${escapeHtml(t(onKey))}</button>
+                </div>
+            </div>
+        `;
+
+        return `
+            <div class="player-toggles">
+                ${
+                    IS_MOBILE_OR_TABLET
+                        ? ''
+                        : row(
+                              'immersive',
+                              'player.desktopMode',
+                              'player.nonImmersive',
+                              'player.immersive',
+                              this._prefs.immersive,
+                          )
+                }
+                ${
+                    IS_TOUCH_DEVICE
+                        ? row(
+                              'touchScreen',
+                              'player.touchMode',
+                              'player.trackpad',
+                              'player.touch',
+                              this._prefs.touchScreen,
+                          )
+                        : ''
+                }
+            </div>
+        `;
+    }
+
+    _wireInputToggles() {
+        this.container.querySelectorAll('.player-toggle').forEach((row) => {
+            const key = /** @type {HTMLElement} */ (row).dataset.pref;
+            row.querySelectorAll('.player-toggle-btn').forEach((b) => {
+                b.addEventListener('click', () => {
+                    this._prefs[key] = /** @type {HTMLElement} */ (b).dataset.value === 'on';
+                    savePrefs(this._prefs);
+                    row.querySelectorAll('.player-toggle-btn').forEach((o) =>
+                        o.classList.remove('is-selected'),
+                    );
+                    b.classList.add('is-selected');
+                });
+            });
+        });
+    }
+
     _renderJoin() {
         const machine = this.info.machine_name || t('player.thisPc');
         const busy = this.info.state === 'streaming';
@@ -175,6 +269,7 @@ export class PlayerJoinView {
                     `,
                     ).join('')}
                 </div>
+                ${this._inputToggles()}
                 <button class="btn btn-primary player-join-btn" type="button">
                     ${escapeHtml(t('player.joinButton', { machine }))}
                 </button>
@@ -202,6 +297,8 @@ export class PlayerJoinView {
             });
         });
 
+        this._wireInputToggles();
+
         const refreshBtn = this.container.querySelector('.player-refresh');
         if (refreshBtn) refreshBtn.addEventListener('click', () => this.refresh());
 
@@ -215,7 +312,11 @@ export class PlayerJoinView {
             joinBtn.textContent = t('player.joining');
             err.hidden = true;
             try {
-                await this.onJoin({ height: this._height });
+                await this.onJoin({
+                    height: this._height,
+                    immersive: this._prefs.immersive,
+                    touchScreen: this._prefs.touchScreen,
+                });
             } catch (ex) {
                 const code = ex && ex.responseBody && ex.responseBody.error;
                 if (code === 'session_ended') {
