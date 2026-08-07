@@ -124,8 +124,9 @@ so `latest` can never hand you work in progress.
 Development builds exist, in a **separate and private** package —
 `ghcr.io/linckosz/moonlight-web-dev:dev`. It is produced only by running the
 Docker workflow by hand with `publish` ticked, and pulling it needs
-`docker login ghcr.io` with an account that has access. Nothing you do with
-`docker pull …/moonlight-web:latest` can reach it.
+`docker login ghcr.io` with an account that has access: an anonymous request
+for its tag list is refused with 403, where the public package answers 200.
+Nothing you do with `docker pull …/moonlight-web:latest` can reach it.
 
 **Architectures: `linux/amd64` and `linux/arm64` only.** Both are built on native
 runners; no 32-bit `armv7`/`armhf` image is published. There is no hosted 32-bit
