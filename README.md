@@ -134,7 +134,9 @@ to.
 
 Pressing **Stop** with guests connected asks which one you mean: **Leave** takes
 you out and lets the game — and your players — carry on, **Stop everything**
-closes the app and disconnects everybody.
+closes the app and disconnects everybody. After a Leave the invitations stay
+usable, including by someone who had not opened their link yet: the game is
+still there to join, which is the whole point of leaving rather than stopping.
 
 Each guest picks their own resolution when they join, plus how they want to
 drive: immersive or not on a desktop, trackpad or direct touch on a phone. Their
