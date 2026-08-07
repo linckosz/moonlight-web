@@ -355,6 +355,11 @@
     justify-content: space-between;
 }
 
+.share-popin-actions-right {
+    display: flex;
+    gap: 10px;
+}
+
 .share-manage-state {
     margin: 0;
     padding: 10px 14px;

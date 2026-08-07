@@ -560,6 +560,8 @@
         "secretsLost": "服务器重启后，此共享的链接和 PIN 码已被遗忘。请停止共享后重新共享以获取新的一对。",
         "done": "完成",
         "unshare": "停止共享",
+        "regenerate": "重新生成",
+        "regenerateHint": "重新生成会创建新的链接和 PIN 码并作废当前的 —— 正在使用它们观看的人会被断开。",
         "exitTitle": "停止，还是仅退出？",
         "exitBody": "有人正通过你的邀请连接。他们该怎么办？",
         "exitLeave": "退出",
