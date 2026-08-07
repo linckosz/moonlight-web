@@ -97,32 +97,46 @@ void setInfo(const QString& key, const QString& value)
 // through Sunshine's REST API (no manual entry in Sunshine's web UI).
 bool pairSunshine(ComputerManager& computers, const QString& user, const QString& pass)
 {
-    auto [addStatus, addResult] = computers.handleAddManualHost(QStringLiteral("127.0.0.1"));
-    if (addStatus != 200) {
-        Logger::warning(QStringLiteral("Provisioning: cannot reach local Sunshine: %1")
-                            .arg(addResult.value(QStringLiteral("message")).toString()));
-        return false;
-    }
+    // Wait until the freshly-launched Sunshine is actually ready to pair BEFORE
+    // emitting the GameStream getservercert — the request that pops Sunshine's
+    // "Pairing incoming" slider. Two conditions must hold, and both are probed
+    // without raising a slider: its GameStream port must answer (handleAddManualHost
+    // brings the host CS_ONLINE) and its REST API must accept our credentials (so
+    // the PIN push below can actually be delivered). Gating readiness here — rather
+    // than retrying the whole pairing — is what keeps a single slider on screen: a
+    // premature getservercert whose PIN never lands leaves an orphaned prompt, and
+    // a retry would raise a second one.
+    QString uuid;
+    NvComputer* host = nullptr;
+    quint16 restPort = MW_HTTP_PORT + 1;
 
-    const QJsonArray hosts = addResult.value(QStringLiteral("hosts")).toArray();
-    if (hosts.isEmpty()) return false;
-    const QString uuid = hosts.first().toObject().value(QStringLiteral("uuid")).toString();
-    if (uuid.isEmpty()) return false;
-
-    NvComputer* host = computers.getHost(uuid);
-
-    bool paired = false;
-    if (host && host->pairState == NvComputer::PS_PAIRED) {
-        Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
-        paired = true;
-    } else {
-        auto [startStatus, startResult] = computers.handleStartPairing(uuid);
-        if (startResult.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
-            Logger::warning(QStringLiteral("Provisioning: pairing could not start: %1")
-                                .arg(startResult.value(QStringLiteral("message")).toString()));
-            return false;
+    const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + 20000;
+    bool ready = false;
+    while (QDateTime::currentMSecsSinceEpoch() < deadline) {
+        auto [addStatus, addResult] = computers.handleAddManualHost(QStringLiteral("127.0.0.1"));
+        if (addStatus != 200) {
+            Logger::info(QStringLiteral("Provisioning: Sunshine GameStream port not ready yet — "
+                                        "waiting"));
+            QThread::sleep(1);
+            continue;
         }
-        const QString pin = startResult.value(QStringLiteral("pin")).toString();
+
+        const QJsonArray hosts = addResult.value(QStringLiteral("hosts")).toArray();
+        if (hosts.isEmpty()) {
+            QThread::sleep(1);
+            continue;
+        }
+        uuid = hosts.first().toObject().value(QStringLiteral("uuid")).toString();
+        if (uuid.isEmpty()) {
+            QThread::sleep(1);
+            continue;
+        }
+
+        host = computers.getHost(uuid);
+        if (host && host->pairState == NvComputer::PS_PAIRED) {
+            Logger::info(QStringLiteral("Provisioning: local Sunshine already paired"));
+            return true;
+        }
 
         // Sunshine's REST config API ("/api/pin", HTTP basic-auth web UI) listens
         // on the base port + 1 (47990 by default). This is NOT the GameStream
@@ -131,24 +145,56 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
         // base HTTP port.
         quint16 basePort = MW_HTTP_PORT;
         if (host && host->manualAddress.port() > 0) basePort = host->manualAddress.port();
-        const quint16 restPort = basePort + 1;
-        auto* rest = new SunshineRestClient(&computers);
+        restPort = basePort + 1;
 
-        // Pairing stage 1 (getservercert) stays in flight until Sunshine receives
-        // the PIN. Schedule the REST push so it fires *after* the chain has started
-        // and getservercert is already in flight, letting Sunshine attach the PIN to
-        // the pending request.
-        QTimer::singleShot(800, rest, [rest, pin, user, pass, restPort]() {
-            rest->sendPin(pin, user, pass, QStringLiteral("MoonlightWeb"), restPort);
-        });
-
-        // Drive the (asynchronous) pairing chain to completion under a local event
-        // loop. Safe here: provisioning runs once at startup, before the main event
-        // loop and outside the reentrant HTTP request path.
-        paired = computers.pairHostBlocking(uuid, 65000);
-        Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1")
-                         .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
+        // No slider: this is a plain GET /api/apps, not a GameStream getservercert.
+        SunshineRestClient probe;
+        const auto cred = probe.checkCredentials(user, pass, restPort);
+        if (cred.outcome == SunshineRestClient::CredentialCheck::Accepted) {
+            ready = true;
+            break;
+        }
+        if (cred.outcome == SunshineRestClient::CredentialCheck::Rejected) {
+            // Bad credentials: no point popping a slider that could never complete.
+            Logger::warning(QStringLiteral("Provisioning: Sunshine refused the provisioned "
+                                           "credentials — cannot auto-pair"));
+            return false;
+        }
+        // Unreachable: REST API is still coming up — retry.
+        QThread::sleep(1);
     }
+
+    if (!ready || uuid.isEmpty()) {
+        Logger::warning(QStringLiteral("Provisioning: Sunshine did not become ready to pair"));
+        return false;
+    }
+
+    // Sunshine is up and our credentials work: emitting getservercert now yields
+    // exactly one slider, and the scheduled PIN push is guaranteed deliverable.
+    auto [startStatus, startResult] = computers.handleStartPairing(uuid);
+    if (startResult.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
+        Logger::warning(QStringLiteral("Provisioning: pairing could not start: %1")
+                            .arg(startResult.value(QStringLiteral("message")).toString()));
+        return false;
+    }
+    const QString pin = startResult.value(QStringLiteral("pin")).toString();
+
+    auto* rest = new SunshineRestClient(&computers);
+
+    // Pairing stage 1 (getservercert) stays in flight until Sunshine receives
+    // the PIN. Schedule the REST push so it fires *after* the chain has started
+    // and getservercert is already in flight, letting Sunshine attach the PIN to
+    // the pending request.
+    QTimer::singleShot(800, rest, [rest, pin, user, pass, restPort]() {
+        rest->sendPin(pin, user, pass, QStringLiteral("MoonlightWeb"), restPort);
+    });
+
+    // Drive the (asynchronous) pairing chain to completion under a local event
+    // loop. Safe here: provisioning runs once at startup, before the main event
+    // loop and outside the reentrant HTTP request path.
+    const bool paired = computers.pairHostBlocking(uuid, 65000);
+    Logger::info(QStringLiteral("Provisioning: local Sunshine pairing -> %1")
+                     .arg(paired ? QStringLiteral("paired") : QStringLiteral("failed")));
 
     // Nothing else to configure on Sunshine: its old "Maximum Connected Clients"
     // setting (config key `channels`) is gone from current Sunshine, which tracks
@@ -213,13 +259,11 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
         const QString pass =
             sun.value(QStringLiteral("password")).toString(QStringLiteral("admin"));
         // The installer typically launched Sunshine moments before this app (the
-        // macOS postinstall starts both back-to-back): retry a couple of times so
-        // a Sunshine still opening its GameStream port doesn't fail the step.
-        bool ok = pairSunshine(computers, user, pass);
-        for (int attempt = 0; !ok && attempt < 2; ++attempt) {
-            QThread::sleep(3);
-            ok = pairSunshine(computers, user, pass);
-        }
+        // macOS postinstall starts both back-to-back). pairSunshine() now waits for
+        // Sunshine's GameStream and REST APIs to come up before emitting the
+        // getservercert, so a single call suffices — retrying here would only risk a
+        // second "Pairing incoming" slider.
+        const bool ok = pairSunshine(computers, user, pass);
         setStepStatus(QStringLiteral("pairing"),
                       ok ? QStringLiteral("done") : QStringLiteral("failed"));
     }
