@@ -93,6 +93,8 @@ While you are streaming, the **Share** button (left of Stop) invites up to three
 people into the same session. Each of them gets their own stream — their own
 resolution, their own bitrate — on the app you already have running.
 
+![Share popin — manage who is invited and what they may do](docs/screenshots/share.png)
+
 Pick a player row and you get **a link and a 6‑digit PIN**. Send them
 separately: the link is expected to travel over chat and can leak, so on its own
 it opens nothing. The PIN is what the guest is asked for the moment they open
@@ -105,6 +107,10 @@ In the same popin you choose what they may do:
 | **Viewer** (default) | watch and listen |
 | **Gamer** | watch and play with a gamepad |
 | **Full control** | watch, and use the keyboard and mouse of your PC |
+
+| ![A viewer's stream — watch and listen only](docs/screenshots/share_viewer.png) | ![Full control — the guest drives keyboard and mouse](docs/screenshots/share_fullcontrol.png) |
+|---|---|
+| A **Viewer** just watches and listens. | **Full control** hands over the keyboard and mouse. |
 
 The choice **freezes when you close the popin** — from that moment the link is
 out in the world. To change it, turn the player off and share again, which mints
