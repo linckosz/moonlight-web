@@ -323,6 +323,28 @@ void StreamSession::onLaunchReplyFinished()
         int code = static_cast<int>(reply->error());
         qWarning() << "[Session] Launch error code:" << code << "-" << reply->errorString();
 
+        // A /launch that TIMES OUT (Sunshine never answers) almost always means
+        // it still holds a half-torn-down session from a just-cancelled stream:
+        // the app is "running", so /launch blocks instead of erroring. The
+        // XML-rejection self-heal below can't help — a timeout yields no body to
+        // parse. Cancel our own session once (keyed by our uniqueid, so it never
+        // touches another client's), then relaunch. Bounded to a single retry.
+        if (reply->error() == QNetworkReply::TimeoutError && m_LaunchAttempted &&
+            !m_ResumeAttempted && !m_LaunchTimeoutRetried) {
+            m_LaunchTimeoutRetried = true;
+            qWarning() << "[Session] Launch timed out — cancelling stale session and retrying "
+                          "/launch once";
+            auto* identity = IdentityManager::get();
+            QNetworkReply* cancelReply = m_Http->quitAppAsync(
+                m_Host->activeAddress, m_Host->activeHttpsPort, identity->getCertificate(),
+                identity->getPrivateKey(), effectiveUniqueId());
+            connect(cancelReply, &QNetworkReply::finished, this, [this, cancelReply, identity]() {
+                cancelReply->deleteLater();
+                doLaunchApp(identity->getCertificate(), identity->getPrivateKey());
+            });
+            return;
+        }
+
         QString detail = QString("Launch failed: [code=%1] %2 (target: %3:%4)")
                              .arg(code)
                              .arg(reply->errorString())
