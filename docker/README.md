@@ -5,8 +5,17 @@ Official images for Linux servers, NAS boxes and mini PCs, built from the
 (`debian:trixie`), published to the GitHub Container Registry for
 **`linux/amd64`** and **`linux/arm64`**.
 
+---
+
+## Quick start — headless Linux server (Ubuntu x64, Debian, a VM, a NUC)
+
+Four steps. Copy them in order; the container prints the same list back at you
+in `docker logs` if you lose your place.
+
+### 1. Run it
+
 ```sh
-docker run -d --name moonlightweb \
+sudo docker run -d --name moonlightweb \
   --network host \
   --cap-drop ALL --cap-add NET_BIND_SERVICE \
   -v mw-data:/data \
@@ -14,12 +23,55 @@ docker run -d --name moonlightweb \
   ghcr.io/linckosz/moonlight-web:latest
 ```
 
-Then issue an access PIN and open the URL it prints:
+`--network host` is what puts the container on your LAN — without it, it can
+only reach machines by IP and will never discover them. See
+[Why `--network host`](#why---network-host).
+
+### 2. Open the ports — this is NOT automatic
+
+The `.deb` and `.rpm` add firewall rules for you in their postinstall. **A
+container cannot and must not touch the host's firewall**, so this one is
+yours:
 
 ```sh
-docker exec moonlightweb moonlightweb --new-pin   # one PIN per device, single-use
-docker exec moonlightweb moonlightweb --status    # URLs, PIN, internet state
+sudo ufw allow 443/tcp        # the web UI — required
+sudo ufw allow 80/tcp         # redirect + ACME challenge
+sudo ufw reload
 ```
+
+`firewall-cmd --permanent --add-port=443/tcp --add-port=80/tcp && firewall-cmd
+--reload` on Fedora/RHEL. If `ufw status` says *inactive*, nothing is blocking
+and there is nothing to do. Full table under [Ports](#ports).
+
+### 3. Set the two credentials
+
+```sh
+sudo docker exec -it moonlightweb moonlightweb --set-admin-password
+sudo docker exec     moonlightweb moonlightweb --new-pin
+sudo docker exec     moonlightweb moonlightweb --status
+```
+
+`--status` prints the URL to open, the PIN, and what is still missing. Neither
+credential has a default, and neither is optional — see
+[First run](#first-run--the-pin-is-not-optional-here) for why a container gets
+no free pass.
+
+### 4. Pair a Sunshine machine and stream
+
+1. Open **`https://<server-ip>`** in Chrome/Edge/Safari (use the IP, not
+   `localhost` — the server is not the machine you are sitting at).
+2. Accept the self-signed certificate warning. Expected on a LAN.
+3. Type the **PIN** from step 3. One PIN per device — re-run `--new-pin` for
+   the next phone or laptop.
+4. Your Sunshine machines appear by themselves (mDNS). If one does not, or you
+   are on a bridge network, **Add computer** → its IP address.
+5. Click the machine → MoonlightWeb shows a **4-digit pairing PIN**. Type
+   *that* one into Sunshine's own web UI at `https://<sunshine-machine>:47990`
+   → *PIN*. (This is the reverse direction from step 3, and the one people mix
+   up: MoonlightWeb issues it, Sunshine consumes it.)
+6. Pick a game and launch.
+
+---
 
 ## First run — the PIN is not optional here
 
@@ -50,16 +102,30 @@ grants administration.
 Accept the self-signed certificate warning on first connection — expected on a
 LAN until Internet Access issues a real one.
 
-Prefer Compose: [`docker-compose.yml`](docker-compose.yml) is the same thing in
+---
+
+## Tags
+
+Prefer Compose: [`docker-compose.yml`](docker-compose.yml) is the quick start in
 a file. [`docker-compose.bridge.yml`](docker-compose.bridge.yml) is the fallback
 for platforms with no host networking — read the caveats in it first.
 
 | Tag | What it is |
 |---|---|
-| `latest` | The newest release. |
-| `0.2.4` · `0.2` | That exact release · the newest `0.2.x`. |
-| `edge` | The current tip of `main`. Newer, less tested. |
+| `latest` | The newest release. What you want. |
+| `0.2.4` | That exact release, forever. |
+| `0.2` | The newest `0.2.x` — minor updates, no major jump. |
 | `sha-<commit>` | One commit, pinned forever. |
+
+**Every tag here is a release.** There is no `edge` and no nightly: an image is
+published only from a `v*` tag that already passed the quality and test gates,
+so `latest` can never hand you work in progress.
+
+Development builds exist, in a **separate and private** package —
+`ghcr.io/linckosz/moonlight-web-dev:dev`. It is produced only by running the
+Docker workflow by hand with `publish` ticked, and pulling it needs
+`docker login ghcr.io` with an account that has access. Nothing you do with
+`docker pull …/moonlight-web:latest` can reach it.
 
 **Architectures: `linux/amd64` and `linux/arm64` only.** Both are built on native
 runners; no 32-bit `armv7`/`armhf` image is published. There is no hosted 32-bit
@@ -91,9 +157,45 @@ ports fixes none of them:
   Internet Access cannot open your router's ports for you.
 
 Host networking removes all three at once, and there is nothing to gain from
-isolating a service whose whole job is to be reachable. If your platform has no
-host networking (Docker Desktop on macOS/Windows, some NAS UIs, rootless
-Podman), use `docker-compose.bridge.yml` and accept the two caveats above.
+isolating a service whose whole job is to be reachable.
+
+**This is not something the application can decide for itself.** A process
+cannot move into another network namespace after it has started, so there is no
+`--access-host-network` command to run and no setting to tick: it is chosen by
+`docker run`, before the binary exists. What the image *can* do is tell you
+which side of that line it landed on, which it does in the first lines of
+`docker logs`.
+
+### The three options, ranked
+
+| | LAN reach | mDNS discovery | WebRTC | When |
+|---|---|---|---|---|
+| **`--network host`** | full | ✅ | direct | **Default. Any Linux host.** |
+| **macvlan** | full, own LAN IP | ✅ | direct | You want the container isolated *and* on the LAN — a NAS with several services fighting over port 443. |
+| **bridge** (published ports) | by IP only | ❌ | may fall back to TCP | Docker Desktop on macOS/Windows, rootless Podman, a NAS UI that only offers port mappings. |
+
+macvlan gives the container its own MAC and its own address on your LAN, so
+multicast works and nothing collides with the host's ports:
+
+```sh
+# Adjust parent= to your NIC (ip -br link) and the subnet to your LAN.
+sudo docker network create -d macvlan \
+  --subnet=192.168.1.0/24 --gateway=192.168.1.1 \
+  -o parent=eth0 mw-lan
+
+sudo docker run -d --name moonlightweb \
+  --network mw-lan --ip 192.168.1.240 \
+  -v mw-data:/data --restart unless-stopped \
+  ghcr.io/linckosz/moonlight-web:latest
+```
+
+One caveat worth knowing before you pick it: by design, a macvlan container and
+its **own host** cannot talk to each other. Fine when Sunshine runs elsewhere;
+not fine when Sunshine runs on that same box — use host networking there.
+
+If none of these are available, `docker-compose.bridge.yml` states its two
+caveats up front and works for everything except discovery and the lowest
+latency.
 
 ---
 
@@ -196,9 +298,29 @@ The image's `HEALTHCHECK` is `moonlightweb --status`, which answers only once
 the TLS listener is up — so `docker ps` showing *healthy* means a browser can
 actually connect.
 
-**Updating** is `docker pull` + recreate; the in-app update button does not
-apply here (it installs a package onto the machine it runs on, which in a
-container the next `docker run` would throw away).
+### Updating
+
+`docker pull` + recreate. The volume carries the settings, the certificate and
+the pairings across, so nothing is re-entered:
+
+```sh
+sudo docker pull ghcr.io/linckosz/moonlight-web:latest
+sudo docker stop moonlightweb && sudo docker rm moonlightweb
+sudo docker run -d --name moonlightweb … # the same command as step 1
+```
+
+With Compose: `docker compose pull && docker compose up -d`.
+
+**The in-app update button is deliberately absent in a container.** On Windows
+and macOS it downloads the installer and runs it; here that would install a
+`.deb` into the image's writable layer, appear to work, and be discarded by the
+next `docker run` — the version would silently go *backwards* on the next
+restart. `SelfUpdater` detects the container and reports `supported: false`, so
+the UI never offers a button that cannot keep its promise.
+
+The update *check* still runs: you are told a new version exists, and the
+registry is where you get it. Pin `0.2` instead of `latest` if you would rather
+take minor releases and skip a major one, or a `sha-…` tag to freeze entirely.
 
 ---
 

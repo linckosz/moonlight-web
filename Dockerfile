@@ -1,4 +1,12 @@
 # syntax=docker/dockerfile:1
+# check=skip=SecretsUsedInArgOrEnv
+# =============================================================================
+#  (The lint skip above must sit in the parser-directive block, before any other
+#  comment, or BuildKit ignores it. It silences the warning about the MW_*
+#  build arguments further down: they are build-stage only, the runtime stage
+#  starts from its own FROM, and `docker history` on the published image was
+#  checked to contain none of them — the same exposure the .deb already has,
+#  which compiles the identical values into its binary.)
 # =============================================================================
 #  MoonlightWeb — official container image (Debian).
 #

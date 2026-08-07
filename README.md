@@ -244,7 +244,7 @@ caveats).
 
 | | |
 |---|---|
-| **Tags** | `latest` · `0.2.4` · `0.2` · `edge` (tip of `main`) · `sha-<commit>` |
+| **Tags** | `latest` · `0.2.4` · `0.2` · `sha-<commit>`. Release tags only — no `edge`, no nightly, so `latest` can never be work in progress. |
 | **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (redirect + ACME challenge). WebRTC media takes **48010‑48014/udp** when UPnP maps it, an ephemeral UDP port otherwise. Sunshine is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
 | **Volume** | `/data` — settings, TLS material, paired hosts and the **client identity**. Losing it un‑pairs every host. |
 | **Env** | `MW_HTTPS_PORT` · `MW_HTTP_PORT` · `MW_UPNP` · `TZ` |
