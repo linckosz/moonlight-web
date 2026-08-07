@@ -50,6 +50,12 @@ on:
       - ".dockerignore"
       - "docker/**"
       - ".github/workflows/docker.yml"
+      # …except the prose. Only entrypoint.sh is COPYed out of docker/, so a
+      # README or compose edit produces a byte-identical image — and would
+      # otherwise spend two full C++ builds saying so. Negations are evaluated
+      # last, so this wins over the docker/** line above.
+      - "!docker/README.md"
+      - "!docker/docker-compose*.yml"
   pull_request:
     paths:
       - "Dockerfile"
