@@ -443,6 +443,8 @@
         "statLossJitter": "Images jetées (gigue)",
         "periodicStallWarning": "Saccades détectées : quelque chose interrompt le Wi-Fi de cet appareil toutes les {{period}}ms, à intervalle régulier. Sur du matériel Apple c'est presque toujours AirDrop et Continuité, qui partagent la puce Wi-Fi. Désactiver AirDrop le temps de la session suffit en général.",
         "periodicStallDismiss": "Ne plus afficher",
+        "periodicStallTitle": "Saccades détectées",
+        "periodicStallOk": "J'ai compris",
         "statLegRender": "Rendu",
         "enhancerOff": "Désactivé",
         "iosFullscreenHint": "Pour un vrai plein écran : Partager → Sur l'écran d'accueil, puis lancez Moonlight depuis l'icône.",

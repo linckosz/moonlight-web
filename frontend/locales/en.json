@@ -443,6 +443,8 @@
         "statLossJitter": "Frames dropped (jitter)",
         "periodicStallWarning": "Stutter detected: something interrupts this device's Wi-Fi every {{period}}ms, on a timer. On Apple hardware that is almost always AirDrop and Continuity, which share the Wi-Fi chip. Turning AirDrop off for the session usually clears it.",
         "periodicStallDismiss": "Don't show again",
+        "periodicStallTitle": "Stutter detected",
+        "periodicStallOk": "Got it",
         "statLegRender": "Render",
         "enhancerOff": "Off",
         "iosFullscreenHint": "For true fullscreen: Share → Add to Home Screen, then launch Moonlight from the icon.",

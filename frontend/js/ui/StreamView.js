@@ -209,6 +209,7 @@ export class StreamView {
         this.onSessionEnded = opts.onSessionEnded || null;
         this._shareMenu = null;
         this._shareExitOverlay = null;
+        this._stallPopinOverlay = null;
         // Audio time-stretch (WSOLA) — server-controlled kill switch.
         this._audioTimeStretch = audioTimeStretch !== false;
         // Mobile only: direct touch-screen input (absolute finger position) in
@@ -4400,23 +4401,66 @@ export class StreamView {
             if (localStorage.getItem('mw_awdl_notice') === 'off') return;
         } catch (e) {}
         this._stallNoticeShown = true;
-        Toast.show(
-            t('stream.periodicStallWarning', { period: Math.round(stall.periodMs) }),
-            'warning',
-            {
-                // Long enough to read two sentences and act on them; the user can
-                // still dismiss it with a click like any other toast.
-                durationMs: 15000,
-                action: {
-                    label: t('stream.periodicStallDismiss'),
-                    onClick: () => {
-                        try {
-                            localStorage.setItem('mw_awdl_notice', 'off');
-                        } catch (e) {}
-                    },
-                },
-            },
-        );
+        this._showPeriodicStallPopin(stall);
+    }
+
+    /**
+     * Surface the AWDL advice as a modal popin, not a toast. The notice fires
+     * autonomously mid-game, where a toast is unreachable: gaming mode holds a
+     * pointer lock on the canvas, so the OS cursor is captured and can never
+     * land on the toast's button. The share popin is clickable during a stream
+     * for a different reason — it only ever opens from a header click, i.e. from
+     * an already-unlocked state — so we reuse its overlay AND release the lock
+     * ourselves here, which is the one thing the share flow gets for free.
+     *
+     * `.share-popin-overlay` also earns keyboard handling: isLocalKeyboardTarget
+     * matches it, so Escape and any typing go to the page, not the host.
+     */
+    _showPeriodicStallPopin(stall) {
+        if (this._stallPopinOverlay) return;
+        // Free the cursor so the dialog is actually reachable (see above).
+        if (document.pointerLockElement) document.exitPointerLock();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'share-popin-overlay';
+        overlay.innerHTML = `
+            <div class="share-popin" role="dialog" aria-modal="true">
+                <h3>${escapeHtml(t('stream.periodicStallTitle'))}</h3>
+                <p class="share-exit-body">${escapeHtml(t('stream.periodicStallWarning', { period: Math.round(stall.periodMs) }))}</p>
+                <div class="share-popin-actions share-popin-actions-split">
+                    <button class="btn btn-secondary share-stall-mute" type="button">${escapeHtml(t('stream.periodicStallDismiss'))}</button>
+                    <button class="btn share-stall-ok" type="button">${escapeHtml(t('stream.periodicStallOk'))}</button>
+                </div>
+            </div>
+        `;
+        (this._rootEl || document.body).appendChild(overlay);
+        this._stallPopinOverlay = overlay;
+
+        const close = () => {
+            if (!this._stallPopinOverlay) return;
+            this._stallPopinOverlay.remove();
+            this._stallPopinOverlay = null;
+            document.removeEventListener('keydown', onKey, true);
+        };
+        // Capture: the stream's own Escape handling must not see this one.
+        const onKey = (e) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+        };
+        document.addEventListener('keydown', onKey, true);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+        overlay.querySelector('.share-stall-ok').addEventListener('click', close);
+        overlay.querySelector('.share-stall-mute').addEventListener('click', () => {
+            try {
+                localStorage.setItem('mw_awdl_notice', 'off');
+            } catch (e) {}
+            close();
+        });
     }
 
     /**
@@ -6687,6 +6731,10 @@ export class StreamView {
         if (this._shareExitOverlay) {
             this._shareExitOverlay.remove();
             this._shareExitOverlay = null;
+        }
+        if (this._stallPopinOverlay) {
+            this._stallPopinOverlay.remove();
+            this._stallPopinOverlay = null;
         }
 
         if (this._pingInterval) {
