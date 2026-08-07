@@ -2804,8 +2804,7 @@ int main(int argc, char* argv[])
             *sendNext = [&computerManager, host, identity, cancelQueue, sendNext, respond,
                          idx = 0]() mutable {
                 if (idx >= cancelQueue.size()) {
-                    respond(HttpResponse::json(
-                        QJsonObject{{"status", QStringLiteral("stopped")}}));
+                    respond(HttpResponse::json(QJsonObject{{"status", QStringLiteral("stopped")}}));
                     return;
                 }
                 const QString uid = cancelQueue.at(idx++);

@@ -98,7 +98,8 @@ bool TrayManager::init()
     QAction* openAction = m_Menu->addAction(tr("&Open"));
     QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
     m_Menu->addSeparator();
-    QAction* restartAction = m_Menu->addAction(m_ClientMode ? tr("&Restart Server") : tr("&Restart"));
+    QAction* restartAction =
+        m_Menu->addAction(m_ClientMode ? tr("&Restart Server") : tr("&Restart"));
     m_Menu->addSeparator();
     QAction* quitAction = m_Menu->addAction(m_ClientMode ? tr("&Quit Server") : tr("&Quit"));
 
@@ -117,10 +118,8 @@ bool TrayManager::init()
     m_DockMenu = new QMenu();
     m_DockMenu->addAction(openAction);
     m_DockMenu->addAction(controlPanelAction);
-    if (restartAction) {
-        m_DockMenu->addSeparator();
-        m_DockMenu->addAction(restartAction);
-    }
+    m_DockMenu->addSeparator();
+    m_DockMenu->addAction(restartAction);
     m_DockMenu->setAsDockMenu();
 
     // Clicking the Dock icon re-activates the app; with no native window the
