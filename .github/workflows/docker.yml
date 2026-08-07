@@ -2,11 +2,27 @@
 #
 # Publishes a multi-architecture image to the GitHub Container Registry:
 #
-#     ghcr.io/<owner>/moonlight-web:latest      newest release
-#     ghcr.io/<owner>/moonlight-web:0.2.4       that exact release
-#     ghcr.io/<owner>/moonlight-web:0.2         newest 0.2.x
-#     ghcr.io/<owner>/moonlight-web:edge        current main
-#     ghcr.io/<owner>/moonlight-web:sha-abc1234 one commit, forever
+# TWO packages, and the split is the whole point:
+#
+#   ghcr.io/<owner>/moonlight-web       PUBLIC — releases only
+#       :latest      newest release
+#       :0.2.4       that exact release
+#       :0.2         newest 0.2.x
+#       :sha-abc1234 one commit, forever
+#
+#   ghcr.io/<owner>/moonlight-web-dev   PRIVATE — work in progress
+#       :dev         the last build you asked for
+#       :sha-abc1234 one commit, forever
+#
+# The public package is written ONLY by a v* tag. There is no `edge`, no
+# `nightly`, no image built from the tip of main — a day of ordinary commits
+# publishes nothing at all, and nobody following `latest` can end up on work in
+# progress. Testing a development build is a deliberate act: run this workflow
+# by hand with `publish` ticked, and it lands in the -dev package instead,
+# which is a separate GHCR package you set to private once (Packages →
+# moonlight-web-dev → Package settings → Change visibility). After that it
+# needs `docker login ghcr.io` to pull at all, so it is not merely unadvertised
+# — it is unreachable without your credentials.
 #
 # Triggers, and why each one is here:
 #
@@ -16,19 +32,19 @@
 #                     red commit. There is deliberately NO `push: tags` trigger:
 #                     that would build every tag twice and have the two runs
 #                     race to push the same manifest.
-#   push (main)     — the `edge` tag, so `docker pull …:edge` is always the tip
-#                     of main. This is the one place in this repository where a
-#                     branch push spends CI minutes (ci.yml deliberately does
-#                     not); the concurrency group below cancels superseded runs,
-#                     so a burst of commits costs one build, not one per commit.
 #   pull_request    — build only, never push, and only when the image's own
 #                     files change, so a Dockerfile edit is never merged
 #                     unbuilt. Both architectures build, so an arm64-only break
 #                     is caught. backend/** is deliberately NOT in this filter:
-#                     it would spend two full C++ builds on every backend PR,
-#                     and the push trigger above already covers a backend
-#                     dependency that breaks the image.
-#   workflow_dispatch — an image from any branch, on demand.
+#                     it would spend two full C++ builds on every backend PR.
+#   workflow_dispatch — from any branch. `publish` defaults to FALSE: both
+#                     architectures compile and nothing is pushed, which is the
+#                     "does it still build?" check. Tick it to get a real image
+#                     to test — always into the PRIVATE -dev package, never the
+#                     public one, whatever branch or tag you ran it from.
+#
+# There is deliberately no `push: branches` trigger, which also keeps this
+# repository's rule that an ordinary push spends no CI minutes.
 #
 # One job per architecture on its own native runner (no QEMU: emulating a
 # full Qt + libdatachannel C++ build turns 20 minutes into hours), each pushing
@@ -39,30 +55,23 @@ name: Docker
 
 on:
   workflow_call:
-  push:
-    branches: [main]
-    # Only what actually lands in the image, or builds it. A README-only commit
-    # produces a byte-identical image; there is nothing to publish.
-    paths:
-      - "backend/**"
-      - "frontend/**"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "docker/**"
-      - ".github/workflows/docker.yml"
-      # …except the prose. Only entrypoint.sh is COPYed out of docker/, so a
-      # README or compose edit produces a byte-identical image — and would
-      # otherwise spend two full C++ builds saying so. Negations are evaluated
-      # last, so this wins over the docker/** line above.
-      - "!docker/README.md"
-      - "!docker/docker-compose*.yml"
   pull_request:
     paths:
       - "Dockerfile"
       - ".dockerignore"
       - "docker/**"
       - ".github/workflows/docker.yml"
+      # Prose only: nothing but entrypoint.sh is COPYed out of docker/, so a
+      # README or compose edit produces a byte-identical image and would spend
+      # two full C++ builds saying so. Negations are evaluated last.
+      - "!docker/README.md"
+      - "!docker/docker-compose*.yml"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push the image to GHCR (leave off to only check it builds)"
+        type: boolean
+        default: false
 
 # GHCR authenticates with the run's own GITHUB_TOKEN — no PAT, no secret to
 # rotate. `packages: write` is what lets it push, `contents: read` is the
@@ -127,16 +136,26 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-      # ghcr.io rejects an upper-case path, and a fork's owner may well have
-      # one. github.repository is used verbatim everywhere else, so normalise it
-      # once here rather than hoping.
+      # Which package this run writes to, decided in one place so the build and
+      # the merge job cannot disagree. A manual run always goes to the private
+      # -dev package: that is what makes "test the real image" safe to do on any
+      # branch, at any time, without a user ever seeing it.
+      #
+      # ghcr.io rejects an upper-case path and a fork's owner may well have one,
+      # so ${...@L} lower-cases it rather than hoping.
       - id: img
-        run: echo "name=${GITHUB_REPOSITORY@L}" >> "$GITHUB_OUTPUT"
+        run: |
+          name="${GITHUB_REPOSITORY@L}"
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            name="$name-dev"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Publishing to ghcr.io/$name" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
+        if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -168,10 +187,13 @@ jobs:
             org.opencontainers.image.version=${{ steps.ver.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=GPL-3.0-or-later
+          # `type=cacheonly` builds the image and throws it away — that is
+          # what a pull_request run and an unticked `publish` dispatch do, so a
+          # "does it still build?" check never reaches the registry.
           outputs: >-
-            ${{ github.event_name == 'pull_request'
-                && 'type=cacheonly'
-                || format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, steps.img.outputs.name) }}
+            ${{ (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish))
+                && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', env.REGISTRY, steps.img.outputs.name)
+                || 'type=cacheonly' }}
           # Per-architecture cache scope: one shared scope would have the two
           # runners evict each other's layers on every run.
           cache-from: type=gha,scope=docker-${{ matrix.slug }}
@@ -180,7 +202,7 @@ jobs:
       # The digest is the whole payload: an empty file named after it is all the
       # merge job needs to reference this architecture's image.
       - name: Export digest
-        if: github.event_name != 'pull_request'
+        if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
@@ -188,7 +210,7 @@ jobs:
           touch "/tmp/digests/${DIGEST#sha256:}"
 
       - uses: actions/upload-artifact@v6
-        if: github.event_name != 'pull_request'
+        if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
         with:
           name: digest-${{ matrix.slug }}
           path: /tmp/digests/*
@@ -199,7 +221,7 @@ jobs:
   merge:
     name: Publish manifest
     needs: build
-    if: github.event_name != 'pull_request'
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -209,8 +231,14 @@ jobs:
           pattern: digest-*
           merge-multiple: true
 
+      # Must reach the same verdict as the build job's step of the same name.
       - id: img
-        run: echo "name=${GITHUB_REPOSITORY@L}" >> "$GITHUB_OUTPUT"
+        run: |
+          name="${GITHUB_REPOSITORY@L}"
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            name="$name-dev"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -220,9 +248,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `latest` follows the newest release, never main — pulling `latest` and
-      # getting an untested tip of main is the classic way to lose a user's
-      # trust in an image. main is `edge`, which says what it is.
+      # `latest` exists only in the public package and only on a release tag.
+      # A manual run is in the -dev package by then, where `dev` is the moving
+      # pointer and the sha- tag is the permanent one.
       - id: meta
         uses: docker/metadata-action@v5
         with:
@@ -230,8 +258,8 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=edge,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch' }}
+            type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=sha
 
       - name: Create and push manifest list

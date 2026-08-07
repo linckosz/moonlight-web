@@ -94,7 +94,14 @@ The Windows crash minidumps (`crashes/*.dmp`) are symbolized with the archived P
 
 ## 11.3bis Container images (`.github/workflows/docker.yml`)
 
-Publishes `ghcr.io/<owner>/moonlight-web` as a **multi-arch manifest** for `linux/amd64` and `linux/arm64`. Tags: `latest` (newest release only — never `main`, because pulling `latest` and getting an untested tip is how an image loses its users' trust), `X.Y.Z`, `X.Y`, `edge` (tip of the default branch) and `sha-<commit>`.
+Publishes **two** GHCR packages as multi-arch manifests (`linux/amd64` + `linux/arm64`), and the split is the design:
+
+| Package | Visibility | Written by | Tags |
+|---|---|---|---|
+| `moonlight-web` | public | a `v*` tag, through `ci.yml` | `latest`, `X.Y.Z`, `X.Y`, `sha-<commit>` |
+| `moonlight-web-dev` | private (set once in the package settings) | `workflow_dispatch` with `publish` ticked | `dev`, `sha-<commit>` |
+
+There is no `edge` and no nightly: an ordinary day of commits publishes nothing, and nobody following `latest` can land on work in progress. Testing a development build is a deliberate manual run, and it goes to the private package — unreachable without `docker login ghcr.io`, not merely unadvertised.
 
 **One job per architecture on its own native runner** — `ubuntu-latest` and `ubuntu-24.04-arm` (free for public repositories) — each pushing an *untagged* blob with `push-by-digest=true`; a `merge` job then stitches the two digests into one manifest list with `docker buildx imagetools create` and applies every tag once. Tagging from the per-arch jobs would have the two architectures overwrite each other. QEMU is deliberately not used: emulating a full Qt + libdatachannel C++ build turns 20 minutes into hours and regularly hits the job timeout. The BuildKit cache is scoped per architecture (`scope=docker-amd64` / `-arm64`) — one shared scope has the two runners evict each other's layers on every run.
 
@@ -103,7 +110,7 @@ Triggers, and the reasoning behind each:
 | Trigger | Effect |
 |---|---|
 | `workflow_call` | How a `v*` tag publishes: `ci.yml`'s `docker` job calls this after the quality/test gates, exactly as it calls `release.yml`. There is deliberately **no `push: tags`** trigger — that would build every tag twice and race the two runs to the same manifest. |
-| `push` to `main` (paths-filtered) | The `edge` tag. The one place in this repository where a branch push spends CI minutes; `cancel-in-progress` makes a burst of commits cost one build, and the `paths` filter skips commits that cannot change the image (a README-only commit produces a byte-identical one). |
+| `workflow_dispatch` | `publish` defaults to **false**: both architectures compile with `outputs: type=cacheonly` and nothing is pushed, which is the "does it still build?" check. Ticking it publishes to the private `-dev` package. There is deliberately no `push: branches` trigger, which also restores this repository's rule that an ordinary push spends no CI minutes. |
 | `pull_request` (paths-filtered) | Build only, `outputs: type=cacheonly`, never pushed, and only when the image's own files change — so a Dockerfile edit is never merged unbuilt. Both architectures build, so an arm64-only break is caught. `backend/**` is deliberately absent from this filter: it would spend two full C++ builds on every backend PR, and the push trigger already covers a backend dependency that breaks the image. |
 | `workflow_dispatch` | An image from any branch, on demand. |
 

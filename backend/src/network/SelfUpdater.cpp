@@ -88,6 +88,27 @@ bool runningAsRoot()
 {
     return ::geteuid() == 0;
 }
+
+#ifndef Q_OS_MACOS
+// A container's filesystem is not where this application lives — the image is.
+// Installing a .deb into it would appear to work and then vanish at the next
+// `docker run`, silently reverting the update and leaving the operator to
+// wonder why the version went backwards. The image registry is the update
+// mechanism here, so there is no in-place path to offer at all.
+//
+// Linux only, matching its single caller below: on macOS this would be an
+// unused static function and a warning in the packaging build.
+bool runningInContainer()
+{
+    if (QFile::exists(QStringLiteral("/.dockerenv")) ||
+        QFile::exists(QStringLiteral("/run/.containerenv")))
+        return true;
+    QFile cgroup(QStringLiteral("/proc/1/cgroup"));
+    if (!cgroup.open(QIODevice::ReadOnly)) return false;
+    const QByteArray content = cgroup.readAll();
+    return content.contains("docker") || content.contains("lxc") || content.contains("containerd");
+}
+#endif // !Q_OS_MACOS
 #endif
 
 } // namespace
@@ -161,6 +182,10 @@ QString SelfUpdater::elevationMethod()
         if (runningAsRoot()) return QStringLiteral("root");
         return QStringLiteral("osascript"); // password prompt on the host desktop
 #else
+        // Checked before root, precisely because a container usually IS root:
+        // without this the update would look supported, install into the image's
+        // writable layer, and be thrown away by the next `docker run`.
+        if (runningInContainer()) return QString();
         // An AppImage lives in the user's own filesystem — replacing it needs no
         // privilege at all, which makes it the only always-silent path on Linux.
         if (!qEnvironmentVariableIsEmpty("APPIMAGE")) return QStringLiteral("appimage");
