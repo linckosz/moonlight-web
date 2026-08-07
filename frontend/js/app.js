@@ -1167,6 +1167,7 @@ const MoonlightApp = {
             // Reset transport-chain fallback state for a fresh launch.
             this._transportIndex = 0;
             this._firstTransportRetried = false;
+            this._launchRetried = false;
             // Reset the congestion-degradation ladder. The overrides are
             // session-only (never persisted): a fresh launch always starts from
             // the user's own settings.
@@ -1715,6 +1716,37 @@ const MoonlightApp = {
         const chain = this._transportChain || [];
         const cur = this._transportIndex || 0;
 
+        // The launch itself never returned a session (timeout, 502, Sunshine
+        // refusal). Nothing was tried at the transport level — no offer, no ICE
+        // — so walking down the chain would spend the remaining transports on a
+        // host that is simply not answering, and end on "no transport works"
+        // when the truth is "the host never started the stream". Charge it to
+        // the host: one retry on the SAME transport, then say what happened.
+        // (2026-08-07: a wedged Sunshine ate all three rungs this way.)
+        if (reason === 'launch_failed') {
+            // The backend also 502s when the requested index no longer exists —
+            // the chain can shrink between attempts (a codec change drops the
+            // MediaTrack transports). That one really is chain exhaustion, and
+            // retrying an index that is gone would never resolve.
+            const exhausted = cur >= chain.length;
+            if (exhausted || this._launchRetried) {
+                console.error(
+                    `[MW] Launch failed on ${chain[cur] || '?'} — giving up`,
+                    exhausted ? '(chain exhausted)' : '(retried once)',
+                );
+                Toast.error(t(exhausted ? 'transport.allFailed' : 'transport.launchFailed'));
+                this._hideRelaunchLoader();
+                if (this.streamView) this.streamView.quit({ silent: true });
+                return;
+            }
+            this._launchRetried = true;
+            console.warn(
+                `[MW] Launch failed on ${chain[cur] || '?'} — retrying the same transport`,
+            );
+            this._relaunchTransport(cur);
+            return;
+        }
+
         // WebCodecs cannot decode anything on this machine/browser: retrying the
         // same transport (or any other WebCodecs-based one) is pointless.
         const decoderFail = reason === 'decoder_unsupported';
@@ -2012,6 +2044,10 @@ const MoonlightApp = {
                 return null;
             }
             if (result.status === 'streaming') {
+                // The host answered: whatever refused the previous launch is
+                // over, so a later one earns its retry again. (Loop-safe — this
+                // only resets after a session actually started.)
+                this._launchRetried = false;
                 // Transport relaunch (fallback chain / congestion degradation) —
                 // suppress the shortcuts slide so it doesn't re-pop each step.
                 // Pass the merged settings so the degradation overrides (reduced
@@ -2038,13 +2074,15 @@ const MoonlightApp = {
                     this._hideRelaunchLoader();
                 }
             } else {
-                return 'launch status ' + result.status;
+                console.warn('[MW] Relaunch rejected for index', nextIndex, result.status);
+                return 'launch_failed';
             }
         } catch (err) {
-            // HTTP error on this transport (e.g. backend 502 chain exhausted) →
-            // advance the chain / final error.
+            // The host never gave us a session — a timeout, a 502, a Sunshine
+            // refusal. That is a verdict on the HOST, not on this transport, so
+            // it must not be charged to the chain (see _onTransportFailed).
             console.warn('[MW] Relaunch failed for index', nextIndex, err);
-            return 'launch error';
+            return 'launch_failed';
         }
         return null;
     },

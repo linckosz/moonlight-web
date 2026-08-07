@@ -17,7 +17,7 @@ The backend is a single windowless executable (`MoonlightWeb` / `MoonlightWeb.ex
 | | `ControlChannel` | `/ws/control` single-tab dedup WebSocket server |
 | | `routes/` | `AuthRoutes`, `HostRoutes`, `SystemRoutes` — see [REST API](08-REST-API.md) |
 | `src/backend/` | `ComputerManager` | Host inventory: mDNS discovery, polling, box-art fetching, persistence. Polling is **suspended while a relay is active** (polling Sunshine's HTTP server mid-stream can wedge it). |
-| | `NvHTTP`, `NvComputer`, `NvApp`, `NvAddress` | Async GameStream HTTP client + host/app data model |
+| | `NvHTTP`, `NvComputer`, `NvApp`, `NvAddress` | Async GameStream HTTP client + host/app data model. **Never leave a socket to Sunshine pooled**: its HTTPS server is single-threaded and Qt holds finished TLS sockets ~120 s, which wedges it for every other client. Each request either sends `Connection: close` or calls `dropPooledConnections()` when it completes — `/cancel` is issued by the long-lived parent, so a pooled one silenced the host for a full minute on 2026-08-07 and made the transport chain collapse. |
 | | `NvPairingManager`, `IdentityManager` | GameStream pairing (challenge-response) + persistent RSA client identity |
 | | `SunshineInstaller`, `SunshineRestClient` | On-demand Sunshine install; REST pairing (`/api/pin`) for the wizard. Sunshine liveness is probed on **port 47989** (pgrep is unreliable on macOS). |
 | `src/streaming/` | see [§3.3](#33-streaming-layer) | The streaming bridge |

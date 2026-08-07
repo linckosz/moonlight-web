@@ -48,6 +48,14 @@ public:
     // makes the host appear offline to co-located native clients.
     static constexpr int FAST_FAIL_TIMEOUT_MS = 5000;
     static constexpr int REQUEST_TIMEOUT_MS = 5000;
+    // Deadline for launch/resume. The GameStream spec allows 120s, but the
+    // browser gives up on /start after 25s (BackendClient.launchApp) and
+    // relaunches — which takes the slot over and kills this worker mid-request,
+    // leaving no trace of WHY beyond a bare 502. Give up first instead: a
+    // bounded failure surfaces the real error code in the worker log and in the
+    // /start response. Sunshine answers a healthy launch in well under a second
+    // (a wedged one never answers at all), so the margin is generous.
+    static constexpr int LAUNCH_TIMEOUT_MS = 20000;
 
     explicit NvHTTP(QNetworkAccessManager* nam, QObject* parent = nullptr);
 

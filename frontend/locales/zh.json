@@ -493,7 +493,8 @@
         "webrtcMediaTcp": "WebRTC 媒体轨道（TCP）",
         "wss": "WebSocket Secure",
         "connectFailed": "{{from}} 连接失败——正在尝试 {{to}}…",
-        "allFailed": "连接失败——所有传输模式均失败"
+        "allFailed": "连接失败——所有传输模式均失败",
+        "launchFailed": "主机未启动串流——请稍后重试"
     },
     "launch": {
         "launching": "正在启动 {{name}}…",
