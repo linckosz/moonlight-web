@@ -575,7 +575,7 @@
         "thisPc": "这台电脑",
         "quality": "画质",
         "desktopMode": "桌面",
-        "nonImmersive": "非沉浸",
+        "seamless": "无缝",
         "immersive": "沉浸",
         "touchMode": "触控",
         "trackpad": "触控板",
