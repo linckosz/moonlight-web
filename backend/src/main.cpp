@@ -2410,8 +2410,21 @@ int main(int argc, char* argv[])
                         auto* quitReply = computerManager.http()->quitAppAsync(
                             host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
                             identity->getPrivateKey(), uid);
+                        // Report the outcome. This /cancel used to be pure
+                        // fire-and-forget, so a refused or failed one left
+                        // Sunshine holding the app with nothing in the log to
+                        // say so — and the next /launch (a transport fallback,
+                        // typically) stalled against a host we believed free.
                         QObject::connect(quitReply, &QNetworkReply::finished, quitReply,
-                                         &QNetworkReply::deleteLater);
+                                         [quitReply] {
+                                             quitReply->deleteLater();
+                                             if (quitReply->error() != QNetworkReply::NoError)
+                                                 qWarning() << "[main] Sunshine /cancel failed:"
+                                                            << quitReply->errorString();
+                                             else
+                                                 qInfo() << "[main] Sunshine /cancel OK, body="
+                                                         << quitReply->readAll().left(200);
+                                         });
                         g_LiveSunshineUids.remove(uid);
                     } else {
                         qInfo() << "[main] Sibling slot still streaming — skipping Sunshine "

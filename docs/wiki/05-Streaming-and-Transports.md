@@ -35,6 +35,8 @@ Rules applied when building the chain (`main.cpp`):
 
 **The browser owns the loop**: the `/start` response is sent *before* ICE connects, so only the client can observe a connection failure. The full `transport_chain` and current `transport_index` are echoed in the response; on failure the frontend relaunches with `transport_index + 1`. Manual transport selection precedes automatic fallback.
 
+**Only a transport failure costs a rung.** A `/start` that never yields a session — timeout, 502, Sunshine refusal — is a verdict on the host, not on the transport: nothing was offered, no ICE was gathered. It is retried once on the *same* index and then reported as such (`transport.launchFailed`). Charging it to the chain empties the ladder against an unresponsive host and ends on a "no transport works" that is simply false — the 2026-08-07 incident, where a wedged Sunshine consumed all three rungs in 60 s without a single ICE attempt. The worker's own launch deadline (`NvHTTP::LAUNCH_TIMEOUT_MS`, 20 s) is deliberately shorter than the browser's `/start` timeout (25 s) so the failure is *reported* rather than the worker being killed mid-request by the relaunch that takes its slot.
+
 ## 5.2 Video path
 
 ```

@@ -268,7 +268,7 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
     qDebug() << "[NvHTTP] launchApp URL:" << url.toString();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(120000); // launch can take up to 120s per spec
+    req.setTransferTimeout(LAUNCH_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
@@ -306,7 +306,7 @@ QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPor
     qDebug() << "[NvHTTP] resumeApp URL:" << url.toString();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(120000); // resume can take a while like launch
+    req.setTransferTimeout(LAUNCH_TIMEOUT_MS); // resume blocks like launch
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
@@ -333,6 +333,15 @@ QNetworkReply* NvHTTP::quitAppAsync(const NvAddress& address, quint16 httpsPort,
     QNetworkRequest req(url);
     req.setTransferTimeout(REQUEST_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
+    // Close immediately — see getServerInfoAsyncHttps. This one is the parent
+    // process's, and the parent outlives every stream: a pooled /cancel socket
+    // sits on Sunshine's single-threaded HTTPS server for the whole ~120s Qt
+    // keep-alive window. That is what wedged the host in the 2026-08-07 logs —
+    // the /cancel that ends a failed attempt silenced Sunshine, so every
+    // /launch of the transport chain that followed went unanswered and the
+    // browser burned the whole chain on launch timeouts without ever reaching
+    // ICE. The workers drop their own launch socket (Session::onLaunchReplyFinished).
+    req.setRawHeader("Connection", "close");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
     sslConfig.setLocalCertificate(QSslCertificate(clientCertPem, QSsl::Pem));

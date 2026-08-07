@@ -493,7 +493,8 @@
         "webrtcMediaTcp": "WebRTC MediaTrack (TCP)",
         "wss": "WebSocket Secure",
         "connectFailed": "{{from}} connection failed — trying {{to}}…",
-        "allFailed": "Connection failed — all transport modes failed"
+        "allFailed": "Connection failed — all transport modes failed",
+        "launchFailed": "The host did not start the stream — try again in a moment"
     },
     "launch": {
         "launching": "Launching {{name}}...",
