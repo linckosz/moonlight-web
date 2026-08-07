@@ -732,9 +732,17 @@ void MoonlightShim::sendMouseButton(bool down, int button, bool hold)
 
 // Hold back everything that is not yet a whole notch, returning the amount to
 // send (0 = nothing yet). Mirrors what Sunshine itself does when its
-// `high_resolution_scrolling` option is off — done here so it can be decided
-// per host instead of per Sunshine install, and so it covers every client and
+// `high_resolution_scrolling` option is off — done here so it holds for every
+// host regardless of that install's setting, and so it covers every client and
 // every input path (wheel, trackpad gesture, touch drag) at once.
+//
+// Always on: Sunshine's Linux backend computes REL_WHEEL = amount / 120 with no
+// accumulator of its own, so every sub-notch delta a trackpad or a touch drag
+// produces floors to zero clicks and only survives if the session consumes the
+// REL_WHEEL_HI_RES companion event — which X11 sessions routinely do not. And
+// GameStream carries no OS field (see NvComputer(serverInfo)), so the host that
+// needs this cannot be told apart from one that doesn't. Windows hosts lose
+// nothing by it: the carry below keeps the leftovers instead of the host.
 static short quantizeScroll(short amount, int& carry)
 {
     constexpr int kWheelDelta = 120;
@@ -753,20 +761,16 @@ static short quantizeScroll(short amount, int& carry)
 void MoonlightShim::sendMouseScroll(short scrollAmount)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    if (m_NotchedScroll) {
-        scrollAmount = quantizeScroll(scrollAmount, m_VScrollCarry);
-        if (scrollAmount == 0) return;
-    }
+    scrollAmount = quantizeScroll(scrollAmount, m_VScrollCarry);
+    if (scrollAmount == 0) return;
     LiSendHighResScrollEvent(scrollAmount);
 }
 
 void MoonlightShim::sendMouseHScroll(short scrollAmount)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    if (m_NotchedScroll) {
-        scrollAmount = quantizeScroll(scrollAmount, m_HScrollCarry);
-        if (scrollAmount == 0) return;
-    }
+    scrollAmount = quantizeScroll(scrollAmount, m_HScrollCarry);
+    if (scrollAmount == 0) return;
     // Sunshine-only extension: returns LI_ERR_UNSUPPORTED on other hosts, which
     // is fine — vertical scrolling keeps working either way.
     LiSendHighResHScrollEvent(scrollAmount);

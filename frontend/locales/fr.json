@@ -95,11 +95,6 @@
         "remoteAccess": "Les autres ordinateurs peuvent se connecter à ce serveur via :",
         "internetAvailableHint": "Ce serveur peut aussi être ouvert à Internet :",
         "enableInternetLink": "activer l'accès Internet",
-        "notchedScrollOn": "Scroll par crans : activé",
-        "notchedScrollOff": "Scroll par crans : désactivé",
-        "notchedScrollTitle": "Envoyer le scroll par crans entiers. À activer pour les hôtes Linux, qui jettent tout ce qui est plus fin et ignorent donc le scroll au trackpad et au doigt. À laisser désactivé pour les hôtes Windows, où le scroll fin fonctionne.",
-        "notchedScrollEnabled": "Scroll par crans activé — effectif au prochain stream",
-        "notchedScrollDisabled": "Scroll par crans désactivé — effectif au prochain stream",
         "stopSession": "Arrêter la session",
         "stopSessionWorking": "Arrêt...",
         "stopSessionConfirm": "Arrêter l'application en cours sur cet hôte ? Toute personne qui streame dessus, joueurs invités compris, sera déconnectée."

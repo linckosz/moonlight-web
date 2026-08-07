@@ -95,11 +95,6 @@
         "remoteAccess": "其他电脑可通过以下地址连接到此服务器：",
         "internetAvailableHint": "此服务器也可开放到互联网：",
         "enableInternetLink": "启用互联网访问",
-        "notchedScrollOn": "整格滚动：开启",
-        "notchedScrollOff": "整格滚动：关闭",
-        "notchedScrollTitle": "每次按一整格发送滚动。Linux 主机会丢弃不足一格的滚动量，因而完全忽略触控板和触摸滚动，请为其开启此项。Windows 主机的精细滚动正常，保持关闭即可。",
-        "notchedScrollEnabled": "已开启整格滚动 — 下次串流生效",
-        "notchedScrollDisabled": "已关闭整格滚动 — 下次串流生效",
         "stopSession": "停止会话",
         "stopSessionWorking": "正在停止...",
         "stopSessionConfirm": "要停止该主机上正在运行的程序吗？所有正在串流的人（包括受邀玩家）都会被断开。"
