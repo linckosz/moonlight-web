@@ -112,11 +112,29 @@ a new link and PIN and kills the old ones. Permissions are enforced in the
 backend, not in the guest's page: a viewer's browser can send whatever it likes
 and nothing reaches the host. Clipboard sync is off for guests entirely.
 
+Reopening a live player row shows the same link and PIN again, so you can send
+them to a second device without re‑sharing. They are held in memory only: a
+restart forgets them while the invitation itself keeps working.
+
 An invitation lasts **8 hours**. Nothing else ends it — a guest closing their
-tab, a dropped connection or a quality change on your side all leave it valid,
-and they can rejoin. It ends when you click the player row, when you press Stop,
-or when the 8 hours are up. One stream at a time per invitation: a second device
-on the same link is told the seat is taken rather than stealing it.
+tab or a dropped connection leave it valid, and they can rejoin. It ends when
+you click the player row, when you press Stop, or when the 8 hours are up. One
+stream at a time per invitation: a second device on the same link is told the
+seat is taken rather than stealing it.
+
+**While a link is live, your own quality stops moving.** The automatic ladder
+would relaunch your stream on the other slot to shave a few megabits, which on a
+jittery network means transitioning more than streaming — and your guests ride
+along. Sharing pins the profile; change it by hand in the settings if you need
+to.
+
+Pressing **Stop** with guests connected asks which one you mean: **Leave** takes
+you out and lets the game — and your players — carry on, **Stop everything**
+closes the app and disconnects everybody.
+
+Each guest picks their own resolution when they join, plus how they want to
+drive: immersive or not on a desktop, trackpad or direct touch on a phone. Their
+browser remembers the choice for next time.
 
 Ten wrong PINs destroy the invitation outright, so a leaked link can at worst
 cost you a re‑share. Wrong PINs and dead links also feed the same per‑IP abuse
