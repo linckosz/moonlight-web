@@ -583,7 +583,7 @@
         "checkAgain": "Check again",
         "joining": "Joining...",
         "joinTitle": "Join {{machine}}",
-        "joinButton": "Join {{machine}}",
+        "joinButton": "Join",
         "joinFailed": "Could not join. Try again in a moment.",
         "busy": "Someone is already streaming with this invitation. Only one screen at a time.",
         "noSession": "Nothing is running on the host right now. Ask them to start a game.",

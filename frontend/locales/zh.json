@@ -583,7 +583,7 @@
         "checkAgain": "重新检查",
         "joining": "正在加入...",
         "joinTitle": "加入 {{machine}}",
-        "joinButton": "加入 {{machine}}",
+        "joinButton": "加入",
         "joinFailed": "无法加入，请稍后再试。",
         "busy": "已经有人在使用此邀请串流。同一时间只能有一块屏幕。",
         "noSession": "主机上目前没有运行任何程序。请让对方启动游戏。",
