@@ -70,12 +70,6 @@ public:
     void handleScanRequest();
     std::pair<int, QJsonObject> handleAddManualHost(const QString& address);
     std::pair<int, QJsonObject> handleDeleteHost(const QString& uuid);
-    // Per-host quirks the user sets by hand (nothing in the GameStream
-    // protocol lets us detect them). Only the keys present in @p options are
-    // touched; takes effect on the next stream start.
-    std::pair<int, QJsonObject> handleSetHostOptions(const QString& uuid,
-                                                     const QJsonObject& options);
-
     // Wake-on-LAN — broadcasts a magic packet to the host's MAC on the LAN
     std::pair<int, QJsonObject> handleWakeHost(const QString& uuid);
 

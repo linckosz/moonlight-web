@@ -56,17 +56,6 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(result, status);
     });
 
-    server.router()->post("/api/hosts/:id/options", [&computerManager](const HttpRequest& req) {
-        QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
-
-        QJsonDocument doc = QJsonDocument::fromJson(req.body);
-        if (!doc.isObject()) return HttpResponse::error(400, "Expected a JSON object");
-
-        auto [status, result] = computerManager.handleSetHostOptions(uuid, doc.object());
-        return HttpResponse::json(result, status);
-    });
-
     server.router()->post("/api/hosts/:id/wol", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");

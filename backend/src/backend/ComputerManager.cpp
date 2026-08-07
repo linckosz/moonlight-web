@@ -772,30 +772,6 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
     return {200, result};
 }
 
-std::pair<int, QJsonObject> ComputerManager::handleSetHostOptions(const QString& uuid,
-                                                                  const QJsonObject& options)
-{
-    NvComputer* host = findHostByUuid(uuid);
-    if (!host) return {404, {{"status", "error"}, {"message", "Host not found"}}};
-
-    if (options.contains("notchedScroll")) {
-        const bool enabled = options["notchedScroll"].toBool();
-        if (host->notchedScroll != enabled) {
-            host->notchedScroll = enabled;
-            Logger::info(QString("Host %1: notched scroll %2")
-                             .arg(host->name, enabled ? "enabled" : "disabled"));
-        }
-    }
-
-    saveHosts();
-    emit hostsChanged();
-
-    QJsonObject result;
-    result["status"] = "ok";
-    result["host"] = host->toJson();
-    return {200, result};
-}
-
 // --- Wake-on-LAN -------------------------------------------------------------
 
 // Resolve a host's MAC from the OS ARP cache. Sunshine often omits the MAC in

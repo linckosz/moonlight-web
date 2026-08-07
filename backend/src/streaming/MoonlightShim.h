@@ -101,13 +101,12 @@ public:
     void sendMouseMove(short deltaX, short deltaY);
     void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
     void sendMouseButton(bool down, int button, bool hold = false);
+    // Both scroll axes are quantized to whole 120-unit notches, for hosts that
+    // discard sub-notch amounts (see quantizeScroll); the carry lives for the
+    // session.
     void sendMouseScroll(short scrollAmount);
     // Horizontal wheel — Sunshine protocol extension (no-op on GeForce Experience hosts).
     void sendMouseHScroll(short scrollAmount);
-    // Quantize scroll to whole 120-unit notches for a host that discards
-    // sub-notch amounts (see NvComputer::notchedScroll). Set before the
-    // connection starts; the carry lives for the session.
-    void setNotchedScroll(bool enabled) { m_NotchedScroll = enabled; }
 
     // --- Game controller (gamepad) ---
     // Announce a newly connected controller (preferred over an empty state event):
@@ -269,10 +268,9 @@ private:
     // the relay thread that performs the sync.
     std::atomic<int> m_HostLockState{-1};
 
-    // Scroll quantization (see setNotchedScroll). The carries hold the amount
+    // Scroll quantization (see quantizeScroll). The carries hold the amount
     // not yet worth a notch; both are only touched from the relay thread that
     // decodes input messages, so they need no synchronization of their own.
-    bool m_NotchedScroll = false;
     int m_VScrollCarry = 0;
     int m_HScrollCarry = 0;
 

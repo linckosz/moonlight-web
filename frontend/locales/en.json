@@ -95,11 +95,6 @@
         "remoteAccess": "Other computers can connect to this server at:",
         "internetAvailableHint": "This server can also be opened to the Internet:",
         "enableInternetLink": "enable internet access",
-        "notchedScrollOn": "Notched scrolling: on",
-        "notchedScrollOff": "Notched scrolling: off",
-        "notchedScrollTitle": "Send scrolling one full notch at a time. Turn this on for Linux hosts, which discard anything smaller and so ignore trackpad and touch scrolling. Leave it off for Windows hosts, where fine scrolling works.",
-        "notchedScrollEnabled": "Notched scrolling enabled — applies to the next stream",
-        "notchedScrollDisabled": "Notched scrolling disabled — applies to the next stream",
         "stopSession": "Stop session",
         "stopSessionWorking": "Stopping...",
         "stopSessionConfirm": "Stop the running app on this host? Anyone streaming from it, including invited players, will be disconnected."
