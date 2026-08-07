@@ -190,6 +190,11 @@ export class PlayerJoinView {
      * legitimately gets both.
      */
     _inputToggles() {
+        // Both toggles only shape how the mouse and keyboard reach the host, so
+        // they mean nothing to a viewer (no input) or a gamepad-only guest. Same
+        // on mobile: the touch model drives the pointer, which they can't use.
+        if (this.info.access_level !== 'full') return '';
+
         // The two choices name themselves — "Trackpad | Touch" needs no label
         // saying "Touch" above it. The group keeps one for screen readers.
         const row = (key, labelKey, offKey, onKey, on) => `
@@ -212,7 +217,7 @@ export class PlayerJoinView {
                         : row(
                               'immersive',
                               'player.desktopMode',
-                              'player.nonImmersive',
+                              'player.seamless',
                               'player.immersive',
                               this._prefs.immersive,
                           )
