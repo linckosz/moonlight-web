@@ -496,15 +496,7 @@ body.player-mode {
 .player-toggle {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-}
-
-.player-toggle-label {
-    font-size: 12px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-3);
+    justify-content: center;
 }
 
 .player-toggle-choice {

@@ -351,7 +351,7 @@ export class ShareMenu {
                 <p class="share-expiry">${escapeHtml(t('sharing.expiry'))}</p>
 
                 <div class="share-popin-actions">
-                    <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('sharing.share'))}</button>
+                    <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('common.close'))}</button>
                 </div>
             `,
             close,
@@ -526,7 +526,7 @@ export class ShareMenu {
                     <button class="btn btn-danger share-unshare-btn" type="button">${escapeHtml(t('sharing.unshare'))}</button>
                     <span class="share-popin-actions-right">
                         <button class="btn btn-secondary share-regen-btn" type="button">${escapeHtml(t('sharing.regenerate'))}</button>
-                        <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('sharing.done'))}</button>
+                        <button class="btn btn-primary share-done-btn" type="button">${escapeHtml(t('common.close'))}</button>
                     </span>
                 </div>
             `,

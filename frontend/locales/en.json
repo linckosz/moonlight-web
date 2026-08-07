@@ -559,7 +559,6 @@
         "expiresInH": "Expires in {{h}} h {{m}} min.",
         "expiresInM": "Expires in {{m}} min.",
         "secretsLost": "The link and PIN of this share were forgotten when the server restarted. Unshare and share again for a fresh pair.",
-        "done": "Done",
         "unshare": "Unshare",
         "regenerate": "Regenerate",
         "regenerateHint": "Regenerating mints a new link and PIN and kills these ones — anyone streaming on them is disconnected.",

@@ -559,7 +559,6 @@
         "expiresInH": "Expire dans {{h}} h {{m}} min.",
         "expiresInM": "Expire dans {{m}} min.",
         "secretsLost": "Le lien et le PIN de ce partage ont été oubliés au redémarrage du serveur. Arrêtez le partage et repartagez pour en obtenir de nouveaux.",
-        "done": "Terminé",
         "unshare": "Arrêter le partage",
         "regenerate": "Regénérer",
         "regenerateHint": "Regénérer crée un nouveau lien et un nouveau PIN et tue ceux-ci — quiconque streame dessus est déconnecté.",
