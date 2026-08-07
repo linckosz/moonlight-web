@@ -55,6 +55,7 @@
 #endif
 #include <array>
 #include <functional>
+#include <memory>
 #include <utility>
 #include "server/AppSettings.h"
 #include "server/CertManager.h"
@@ -2780,28 +2781,43 @@ int main(int argc, char* argv[])
 
             // Sunshine's /cancel is keyed by the uniqueid that launched the
             // session, so every live one has to be named. The set is emptied
-            // either way: whatever is left after this is not ours any more.
-            const QSet<QString> uids = g_LiveSunshineUids;
+            // either way: whatever is left after this is not ours any more. A
+            // trailing empty-uid /cancel sweeps a session this process never saw
+            // (a previous run, a crash) — the case the button exists for.
+            QStringList cancelQueue;
+            for (const QString& uid : g_LiveSunshineUids)
+                cancelQueue.append(uid);
+            cancelQueue.append(QString()); // unscoped sweep, always last
             g_LiveSunshineUids.clear();
             auto* identity = IdentityManager::get();
-            for (const QString& uid : uids) {
+
+            // Send the cancels SEQUENTIALLY, and only report "stopped" once the
+            // last one has come back. Sunshine's HTTPS server is single-threaded
+            // and its session teardown is not instant: firing the cancels
+            // concurrently races that teardown, so a leg can return before the
+            // app is actually gone. The frontend then re-enables the tile and the
+            // next /launch hits a still-running session — which Sunshine answers
+            // by blocking, not erroring, so it stalls for the full launch timeout.
+            // Serialising and awaiting means the host is genuinely free before the
+            // caller can relaunch.
+            auto sendNext = std::make_shared<std::function<void()>>();
+            *sendNext = [&computerManager, host, identity, cancelQueue, sendNext, respond,
+                         idx = 0]() mutable {
+                if (idx >= cancelQueue.size()) {
+                    respond(HttpResponse::json(
+                        QJsonObject{{"status", QStringLiteral("stopped")}}));
+                    return;
+                }
+                const QString uid = cancelQueue.at(idx++);
                 auto* reply = computerManager.http()->quitAppAsync(
                     host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
                     identity->getPrivateKey(), uid);
-                QObject::connect(reply, &QNetworkReply::finished, reply,
-                                 &QNetworkReply::deleteLater);
-            }
-            // One last unscoped cancel for a session this process never saw
-            // (a previous run, a crash) — this is the case the button exists for.
-            auto* reply = computerManager.http()->quitAppAsync(
-                host->activeAddress, host->activeHttpsPort, identity->getCertificate(),
-                identity->getPrivateKey(), QString());
-            QObject::connect(reply, &QNetworkReply::finished, reply, [reply, respond]() {
-                reply->deleteLater();
-                QJsonObject result;
-                result["status"] = QStringLiteral("stopped");
-                respond(HttpResponse::json(result));
-            });
+                QObject::connect(reply, &QNetworkReply::finished, reply, [reply, sendNext]() {
+                    reply->deleteLater();
+                    (*sendNext)();
+                });
+            };
+            (*sendNext)();
         });
 
     // ── Session sharing: the player side of the stream lifecycle ───────────

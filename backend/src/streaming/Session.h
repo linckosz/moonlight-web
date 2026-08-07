@@ -210,6 +210,9 @@ private:
     /// the registry hint is stale) terminates instead of looping.
     bool m_LaunchAttempted = false;
     bool m_ResumeAttempted = false;
+    /// A /launch that TIMES OUT means Sunshine still holds a stale session; we
+    /// /cancel and relaunch exactly once. This guards that single retry.
+    bool m_LaunchTimeoutRetried = false;
     QString m_SessionUrl;
 
     /// If non-empty, overrides SignalingServer::wsUrl() in the /start response.
