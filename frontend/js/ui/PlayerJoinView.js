@@ -278,7 +278,7 @@ export class PlayerJoinView {
                 </div>
                 ${this._inputToggles()}
                 <button class="btn btn-open player-join-btn" type="button">
-                    ${escapeHtml(t('player.joinButton', { machine }))}
+                    ${escapeHtml(t('player.joinButton'))}
                 </button>
             `
             }
@@ -334,9 +334,7 @@ export class PlayerJoinView {
                     code === 'stream_in_progress' ? t('player.busy') : t('player.joinFailed');
                 err.hidden = false;
                 /** @type {HTMLButtonElement} */ (joinBtn).disabled = false;
-                joinBtn.textContent = t('player.joinButton', {
-                    machine: this.info.machine_name || t('player.thisPc'),
-                });
+                joinBtn.textContent = t('player.joinButton');
             }
         });
     }

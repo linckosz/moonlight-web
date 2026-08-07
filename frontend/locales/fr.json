@@ -583,7 +583,7 @@
         "checkAgain": "Vérifier à nouveau",
         "joining": "Connexion...",
         "joinTitle": "Rejoindre {{machine}}",
-        "joinButton": "Rejoindre {{machine}}",
+        "joinButton": "Rejoindre",
         "joinFailed": "Connexion impossible. Réessaie dans un instant.",
         "busy": "Quelqu'un streame déjà avec cette invitation. Un seul écran à la fois.",
         "noSession": "Rien ne tourne sur le PC hôte pour l'instant. Demande-lui de lancer un jeu.",
