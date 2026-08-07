@@ -43,10 +43,18 @@ public:
 
     /// Tray-only mode: this process runs no server of its own, it decorates a
     /// MoonlightWeb instance that lives where nobody can see it (the Windows
-    /// service in session 0, a systemd unit). Drops the menu entries that would
-    /// act on a server we do not own — Restart would restart this bare tray, and
-    /// Quit cannot stop a service — and says so in the menu. Call before init().
+    /// service in session 0, a systemd unit). The menu says so, and its Restart /
+    /// Quit entries act on that remote server through the handlers below rather
+    /// than on this bare tray. Call before init().
     void setClientMode(bool on) { m_ClientMode = on; }
+
+    /// Client mode: how the menu drives the server it decorates. main.cpp wires
+    /// these to a loopback POST (/api/system/restart, /api/system/quit) so the
+    /// server exits on its own and its supervisor restarts it (Restart) or lets
+    /// it stay down (Quit) — no elevation, works against the session-0 service.
+    /// With no handler set, Restart is a no-op and Quit just closes this tray.
+    void setRestartHandler(std::function<void()> fn) { m_RestartServer = std::move(fn); }
+    void setQuitHandler(std::function<void()> fn) { m_QuitServer = std::move(fn); }
 
     /// Resolve the application icon from the shipped frontend assets (PNG
     /// preferred: QtGui decodes it without the imageformats .ico plugin).
@@ -82,6 +90,8 @@ private:
     HttpServer* m_Server; // null in client mode
     bool m_ClientMode = false;
     std::function<QUrl(const QString& path)> m_UrlProvider;
+    std::function<void()> m_RestartServer; // client mode: restart the remote server
+    std::function<void()> m_QuitServer;    // client mode: stop the remote server
     QSystemTrayIcon* m_TrayIcon;
     QMenu* m_Menu;
     QMenu* m_DockMenu;         // macOS Dock right-click menu (null elsewhere)
