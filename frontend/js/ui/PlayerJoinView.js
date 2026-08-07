@@ -190,10 +190,12 @@ export class PlayerJoinView {
      * legitimately gets both.
      */
     _inputToggles() {
+        // The two choices name themselves — "Trackpad | Touch" needs no label
+        // saying "Touch" above it. The group keeps one for screen readers.
         const row = (key, labelKey, offKey, onKey, on) => `
             <div class="player-toggle" data-pref="${key}">
-                <span class="player-toggle-label">${escapeHtml(t(labelKey))}</span>
-                <div class="player-toggle-choice" role="group">
+                <div class="player-toggle-choice" role="group"
+                     aria-label="${escapeHtml(t(labelKey))}">
                     <button class="btn player-toggle-btn ${on ? '' : 'is-selected'}"
                             type="button" data-value="off">${escapeHtml(t(offKey))}</button>
                     <button class="btn player-toggle-btn ${on ? 'is-selected' : ''}"
@@ -270,7 +272,7 @@ export class PlayerJoinView {
                     ).join('')}
                 </div>
                 ${this._inputToggles()}
-                <button class="btn btn-primary player-join-btn" type="button">
+                <button class="btn btn-open player-join-btn" type="button">
                     ${escapeHtml(t('player.joinButton', { machine }))}
                 </button>
             `
