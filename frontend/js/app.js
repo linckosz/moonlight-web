@@ -300,39 +300,46 @@ const MoonlightApp = {
             /** @type {HTMLElement} */ (el).style.display = 'none';
         });
 
-        const view = new PlayerJoinView(container, token, async ({ height }) => {
-            const result = await BackendClient.playerJoin(token, height);
+        const view = new PlayerJoinView(
+            container,
+            token,
+            async ({ height, immersive, touchScreen }) => {
+                const result = await BackendClient.playerJoin(token, height);
 
-            // StreamView renders (and connects) from its constructor, so the
-            // join screen has to be gone first.
-            container.innerHTML = '';
+                // StreamView renders (and connects) from its constructor, so the
+                // join screen has to be gone first.
+                container.innerHTML = '';
 
-            // The launch payload is the same shape as the owner's, so the whole
-            // stream pipeline is reused verbatim — only the controls differ.
-            const streamView = this._createStreamView(
-                result,
-                { uuid: '', name: view.info.machine_name, displayName: view.info.machine_name },
-                {
-                    // A guest gets no say over the pipeline: the backend fixed
-                    // 60 fps, codec, bitrate and SDR. What is left is comfort.
-                    show_performance_stats: false,
-                    video_enhancement: 'on',
-                    video_enhancement_algo: 'sgsr',
-                },
-                {
-                    sessionSlot: typeof result.slot === 'number' ? result.slot : 2,
-                    playerMode: true,
-                    shareToken: token,
-                },
-            );
-            this.streamView = streamView;
-            streamView.onQuit = () => {
-                this.streamView = null;
-                // Back to the join screen: the invitation outlives the stream.
-                if (streamView._sessionEndedByOwner) view.renderEnded();
-                else view.refresh();
-            };
-        });
+                // The launch payload is the same shape as the owner's, so the whole
+                // stream pipeline is reused verbatim — only the controls differ.
+                const streamView = this._createStreamView(
+                    // The two comfort choices the join screen offered. Everything
+                    // else about the pipeline was decided by the backend.
+                    { ...result, gamingMode: immersive === true },
+                    { uuid: '', name: view.info.machine_name, displayName: view.info.machine_name },
+                    {
+                        // A guest gets no say over the pipeline: the backend fixed
+                        // 60 fps, codec, bitrate and SDR. What is left is comfort.
+                        show_performance_stats: false,
+                        video_enhancement: 'on',
+                        video_enhancement_algo: 'sgsr',
+                        touch_screen: touchScreen === true,
+                    },
+                    {
+                        sessionSlot: typeof result.slot === 'number' ? result.slot : 2,
+                        playerMode: true,
+                        shareToken: token,
+                    },
+                );
+                this.streamView = streamView;
+                streamView.onQuit = () => {
+                    this.streamView = null;
+                    // Back to the join screen: the invitation outlives the stream.
+                    if (streamView._sessionEndedByOwner) view.renderEnded();
+                    else view.refresh();
+                };
+            },
+        );
 
         await view.start();
     },
@@ -2051,7 +2058,25 @@ const MoonlightApp = {
      * its first decoded frame — no loader, no interruption. Otherwise (or when
      * anything about the standby fails) fall back to the legacy relaunch.
      */
+    /**
+     * A live share pins the stream. The ladder reacts to the owner's own link,
+     * but a share adds guests whose links are their own problem — and the
+     * switch itself is disruptive: it relaunches on the other slot, so on a
+     * jittery network the owner spent more time transitioning than streaming,
+     * and the guests rode along. While a link is out there the settings are the
+     * owner's to change by hand.
+     */
+    _sharePinsQuality() {
+        return !!(this.streamView && this.streamView.hasActiveShare());
+    },
+
     _qualityRelaunch(relaunchIndex) {
+        // Belt and braces: both entry points already bail out, but nothing else
+        // should be able to relaunch a shared stream by accident.
+        if (this._sharePinsQuality()) {
+            console.log('[MW] Quality transition skipped: a share is active');
+            return;
+        }
         const canSeamless =
             this._dualSupported !== false &&
             this.streamView &&
@@ -2227,6 +2252,9 @@ const MoonlightApp = {
         if (this._nav.overlay !== 'streaming') return;
         // A seamless transition is already in flight — let it finish first.
         if (this._standbyView) return;
+        // Sharing pins the stream: see _qualityRelaunch. Bail out here rather
+        // than at the relaunch, so no toast promises a step that never happens.
+        if (this._sharePinsQuality()) return;
         const now = performance.now();
         // 15s floor between two ladder steps: enough for the relaunched stream
         // to show whether the previous step fixed the congestion, short enough
@@ -2353,6 +2381,8 @@ const MoonlightApp = {
         if (this._nav.overlay !== 'streaming') return;
         // A seamless transition is already in flight — let it finish first.
         if (this._standbyView) return;
+        // Sharing pins the stream: see _qualityRelaunch.
+        if (this._sharePinsQuality()) return;
         const sv = this.streamView;
         if (!sv || !sv._firstFrameRendered || sv._quitting || sv._manualQuitting) return;
         const o = this._degradeOverrides;

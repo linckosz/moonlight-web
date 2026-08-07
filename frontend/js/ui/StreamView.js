@@ -208,6 +208,7 @@ export class StreamView {
         /** Called when the owner ended the shared session (backend notice). */
         this.onSessionEnded = opts.onSessionEnded || null;
         this._shareMenu = null;
+        this._shareExitOverlay = null;
         // Audio time-stretch (WSOLA) — server-controlled kill switch.
         this._audioTimeStretch = audioTimeStretch !== false;
         // Mobile only: direct touch-screen input (absolute finger position) in
@@ -1197,15 +1198,11 @@ export class StreamView {
 
         // ── Share menu (owner only) ────────────────────────────────────────
         // A standby view is invisible and about to replace the live one, so it
-        // never grows its own menu; a player has nothing to share.
-        if (!this._standby && !this._playerMode) {
-            const header = /** @type {HTMLElement} */ (el.querySelector('.stream-header'));
-            const quitBtn = /** @type {HTMLElement} */ (el.querySelector('#btn-stream-quit'));
-            this._shareMenu = new ShareMenu(header, quitBtn);
-            this._shareMenu.mount().then((mounted) => {
-                if (!mounted) this._shareMenu = null;
-            });
-        }
+        // never grows its own menu here — activate() mounts it when the standby
+        // is promoted, or the owner would lose the button (and with it every
+        // way to manage their players) on a quality switch. A player has
+        // nothing to share.
+        if (!this._standby) this._mountShareMenu();
 
         // ── Streaming stats overlay (top-center card, elegant styling) ─────
         this._overlayEl = document.createElement('div');
@@ -2586,6 +2583,9 @@ export class StreamView {
         if (!this._standby) return;
         this._standby = false;
         if (this._rootEl) this._rootEl.style.visibility = '';
+        // This leg is the live stream now, so it needs the owner's Share menu:
+        // the retiring view takes its own away with its DOM.
+        this._mountShareMenu();
         this._acquireWakeLock();
         this.bindEvents();
         if (this._gamepadManager) this._gamepadManager.start();
@@ -2623,6 +2623,33 @@ export class StreamView {
                 setTimeout(() => document.removeEventListener('pointerlockchange', onChange), 3000);
             }
         }
+    }
+
+    /**
+     * Grow the owner's Share menu in this view's own header. Idempotent, and a
+     * no-op for a guest (nothing to share) or when the backend has session
+     * sharing switched off — mount() then answers false and the button never
+     * appears.
+     */
+    _mountShareMenu() {
+        if (this._playerMode || this._shareMenu || !this._rootEl) return;
+        const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
+        const quitBtn = /** @type {HTMLElement} */ (this._rootEl.querySelector('#btn-stream-quit'));
+        if (!header || !quitBtn) return;
+        const menu = new ShareMenu(header, quitBtn);
+        this._shareMenu = menu;
+        menu.mount().then((mounted) => {
+            if (!mounted && this._shareMenu === menu) this._shareMenu = null;
+        });
+    }
+
+    /**
+     * True while at least one player slot is shared or streaming. The quality
+     * ladder asks before switching legs: a share is a promise to other people,
+     * and re-launching under them for a few megabits is not worth it.
+     */
+    hasActiveShare() {
+        return !!(this._shareMenu && this._shareMenu.hasActiveShare());
     }
 
     // ── Display state carried across a stream replacement ──────────────────
@@ -6240,9 +6267,18 @@ export class StreamView {
      * User pressed Stop. Play a short cyberpunk "disconnecting" transition
      * (clean-exit variant — signature yellow/cyan, no alarm magenta), then
      * quit normally (backend /quit). Guarded so a double-tap is a no-op.
+     *
+     * @param {{keepHostSession?: boolean}} [opts] keepHostSession leaves the
+     *        game — and every guest on it — running; see _askShareExit().
      */
-    _handleManualQuit() {
+    _handleManualQuit(opts = {}) {
         if (this._quitting || this._takenOver || this._manualQuitting) return;
+        // With people watching, Stop is two different intentions. Ask which one
+        // before the exit animation starts, not after.
+        if (opts.keepHostSession === undefined && this.hasActiveShare()) {
+            this._askShareExit();
+            return;
+        }
         this._manualQuitting = true;
         this.connected = false;
 
@@ -6281,8 +6317,67 @@ export class StreamView {
             try {
                 el.classList.add('is-closing');
             } catch (e) {}
-            this._playPowerOff(() => this.quit());
+            this._playPowerOff(() => this.quit({ keepHostSession: opts.keepHostSession === true }));
         }, 1200);
+    }
+
+    /**
+     * Stop, with guests connected: leave or end it for everyone?
+     *
+     * Leave keeps the Sunshine app — and therefore every player — running; the
+     * owner walks away and the invitations stay valid. Stop is the old
+     * behaviour: the app is cancelled and everyone is disconnected. Neither is
+     * the obvious default, so the dialog has no primary action and no implicit
+     * dismiss: the backdrop and Escape cancel, they do not pick.
+     */
+    _askShareExit() {
+        if (this._shareExitOverlay) return;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'share-popin-overlay';
+        overlay.innerHTML = `
+            <div class="share-popin share-exit-popin" role="dialog" aria-modal="true">
+                <h3>${escapeHtml(t('sharing.exitTitle'))}</h3>
+                <p class="share-exit-body">${escapeHtml(t('sharing.exitBody'))}</p>
+                <ul class="share-exit-options">
+                    <li><strong>${escapeHtml(t('sharing.exitLeave'))}</strong> — ${escapeHtml(t('sharing.exitLeaveDesc'))}</li>
+                    <li><strong>${escapeHtml(t('sharing.exitStop'))}</strong> — ${escapeHtml(t('sharing.exitStopDesc'))}</li>
+                </ul>
+                <div class="share-popin-actions share-popin-actions-split">
+                    <button class="btn btn-secondary share-exit-leave" type="button">${escapeHtml(t('sharing.exitLeave'))}</button>
+                    <button class="btn btn-danger share-exit-stop" type="button">${escapeHtml(t('sharing.exitStop'))}</button>
+                </div>
+            </div>
+        `;
+        (this._rootEl || document.body).appendChild(overlay);
+        this._shareExitOverlay = overlay;
+
+        const close = () => {
+            if (!this._shareExitOverlay) return;
+            this._shareExitOverlay.remove();
+            this._shareExitOverlay = null;
+            document.removeEventListener('keydown', onKey, true);
+        };
+        const onKey = (e) => {
+            if (e.key !== 'Escape') return;
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+        };
+        // Capture: the stream's own Escape handling must not see this one.
+        document.addEventListener('keydown', onKey, true);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+        overlay.querySelector('.share-exit-leave').addEventListener('click', () => {
+            close();
+            this._handleManualQuit({ keepHostSession: true });
+        });
+        overlay.querySelector('.share-exit-stop').addEventListener('click', () => {
+            close();
+            this._handleManualQuit({ keepHostSession: false });
+        });
     }
 
     /**
@@ -6334,6 +6429,11 @@ export class StreamView {
         // one steps down quietly: keep the display state (fullscreen) for the
         // successor and never touch the successor's backend slot.
         const retire = opts.retire === true;
+        // keepHostSession: the owner chose Leave over Stop — a normal exit for
+        // them (fullscreen released, toast shown), but the Sunshine app and
+        // every guest on it carry on. Implied by retire, which is the same
+        // promise made by the seamless switcher.
+        const keepHostSession = retire || opts.keepHostSession === true;
         // Guard: prevent re-entrant calls (e.g. from WS onClose -> setTimeout)
         if (this._quitting) return;
         this._quitting = true;
@@ -6550,7 +6650,7 @@ export class StreamView {
                 // running app — a /cancel would kill the successor's stream).
                 const quitExtras = { session_slot: this._sessionSlot };
                 if (this._slotUniqueId) quitExtras.client_uniqueid = this._slotUniqueId;
-                if (retire) quitExtras.keep_host_session = true;
+                if (keepHostSession) quitExtras.keep_host_session = true;
                 await BackendClient.quitApp(this.host.uuid, quitExtras);
                 this.webrtc.close();
                 if (!silent) {
@@ -6583,6 +6683,10 @@ export class StreamView {
         if (this._shareMenu) {
             this._shareMenu.destroy();
             this._shareMenu = null;
+        }
+        if (this._shareExitOverlay) {
+            this._shareExitOverlay.remove();
+            this._shareExitOverlay = null;
         }
 
         if (this._pingInterval) {

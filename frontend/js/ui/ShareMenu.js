@@ -124,6 +124,14 @@ export class ShareMenu {
 
     // ── State ───────────────────────────────────────────────────────────────
 
+    /**
+     * True while at least one slot is shared or streaming — a link is out in
+     * the world, whether or not anybody is watching yet.
+     */
+    hasActiveShare() {
+        return this.slots.some((s) => s.state && s.state !== 'off');
+    }
+
     async refresh() {
         try {
             const data = await BackendClient.getShareStatus();
