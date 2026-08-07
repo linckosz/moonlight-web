@@ -37,11 +37,12 @@ export class StreamViewFullscreen {
 
         // Orientation change listener
         this._orientationMql = window.matchMedia('(orientation: landscape)');
-        this._onOrientationChange = (e) => {
+        this._onOrientationChange = () => {
             // Landscape: do NOT auto-enter fullscreen — just reveal the button
             // so the user keeps the header until they explicitly tap it.
-            // Portrait: always leave fullscreen.
-            if (!e.matches) {
+            // Portrait: always leave fullscreen. The query only tells us the
+            // event fired; _isDeviceLandscape() decides what it means.
+            if (!this._isDeviceLandscape()) {
                 this._exitMobileFullscreen();
             }
             this._updateMobileFsButtonVisibility();
@@ -353,6 +354,26 @@ export class StreamViewFullscreen {
     }
 
     /**
+     * How the device is being held — not the shape of the viewport.
+     *
+     * `matchMedia('(orientation: landscape)')` compares viewport width to
+     * height, and on iOS the soft keyboard shrinks the layout viewport until a
+     * phone held upright measures wider than tall. It then answers "landscape"
+     * in portrait, which is exactly how the Fullscreen button turned up on a
+     * portrait iPhone with the on-screen keyboard open. `screen.orientation`
+     * describes the device, so it is the one to ask; the older
+     * `window.orientation` angle covers iOS before 16.4, and the media query
+     * is the last resort.
+     * @this {StreamViewInstance}
+     */
+    _isDeviceLandscape() {
+        const type = ((window.screen && window.screen.orientation) || {}).type;
+        if (typeof type === 'string' && type) return type.startsWith('landscape');
+        if (typeof window.orientation === 'number') return Math.abs(window.orientation) === 90;
+        return !!(window.matchMedia && window.matchMedia('(orientation: landscape)').matches);
+    }
+
+    /**
      * Show/hide the header fullscreen button (placed next to the Stop button).
      *
      * Desktop: always visible (unless already in fullscreen).
@@ -373,9 +394,7 @@ export class StreamViewFullscreen {
             // Desktop: always available
             this._mobileFsBtn.style.display = '';
         } else {
-            const isLandscape =
-                window.matchMedia && window.matchMedia('(orientation: landscape)').matches;
-            this._mobileFsBtn.style.display = isLandscape ? '' : 'none';
+            this._mobileFsBtn.style.display = this._isDeviceLandscape() ? '' : 'none';
         }
 
         // Reposition the reminder (header vs top-center).
