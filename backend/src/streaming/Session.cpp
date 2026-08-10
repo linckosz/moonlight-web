@@ -26,6 +26,7 @@
 #include "../backend/NvHTTP.h"
 #include "../backend/NvComputer.h"
 #include "../backend/IdentityManager.h"
+#include "../backend/streambackend/MediaDescriptor.h"
 #include "../server/AppSettings.h"
 
 extern "C" {
@@ -444,15 +445,38 @@ void StreamSession::onLaunchReplyFinished()
     // reconnect (reload) resumes instead of relaunching. Cleared in quit().
     s_ActiveUniqueIds.insert(effectiveUniqueId());
 
-    // Build InitParams for MoonlightShim
+    // Everything the transport needs, gathered once. Nothing below this point
+    // reads GameStream specifics off the host: they travel in the descriptor.
+    MediaDescriptor media;
+    media.type = MediaType::GameStreamRtsp;
+    media.gameStream.rtspSessionUrl = m_SessionUrl;
+    media.gameStream.hostAddress = m_Host->activeAddress.address();
+    media.gameStream.appVersion = m_Host->appVersion;
+    media.gameStream.gfeVersion = m_Host->gfeVersion;
+    media.gameStream.serverCodecModeSupport = m_Host->serverCodecModeSupport;
+    media.gameStream.aesKey = m_Config.rikey;
+    media.gameStream.rikeyid = m_Config.rikeyid;
+
+    // ── Media engine selection ───────────────────────────────────────────────
+    // The single place a transport is chosen. Adding one (punktfunk's QUIC
+    // protocol is the expected next) means a case here plus a sibling of
+    // MoonlightShim — the relays below speak to the engine's signals, never to
+    // GameStream, so nothing downstream has to change.
     MoonlightShim::InitParams params;
-    params.hostAddress = m_Host->activeAddress.address();
-    params.appVersion = m_Host->appVersion;
-    params.gfeVersion = m_Host->gfeVersion;
-    params.rtspSessionUrl = m_SessionUrl;
-    params.serverCodecModeSupport = m_Host->serverCodecModeSupport;
-    params.aesKey = m_Config.rikey;
-    params.rikeyid = m_Config.rikeyid;
+    switch (media.type) {
+    case MediaType::GameStreamRtsp:
+        params.hostAddress = media.gameStream.hostAddress;
+        params.appVersion = media.gameStream.appVersion;
+        params.gfeVersion = media.gameStream.gfeVersion;
+        params.rtspSessionUrl = media.gameStream.rtspSessionUrl;
+        params.serverCodecModeSupport = media.gameStream.serverCodecModeSupport;
+        params.aesKey = media.gameStream.aesKey;
+        params.rikeyid = media.gameStream.rikeyid;
+        break;
+    }
+
+    // Session-level settings below are transport-agnostic: they describe what
+    // the browser asked for, not how we reach the host.
 
     // Video formats: codec preference bitmap computed from StreamConfig.
     // Default is HEVC preferred with H.264 fallback.
