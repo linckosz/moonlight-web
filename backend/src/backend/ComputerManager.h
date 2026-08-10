@@ -28,9 +28,11 @@
 #include <QJsonArray>
 
 #include <functional>
+#include <memory>
 
 #include "NvComputer.h"
 #include "NvHTTP.h"
+#include "streambackend/IStreamBackend.h"
 #include "../common/Types.h"
 
 class NvPairingManager;
@@ -119,6 +121,12 @@ private:
     void startMdnsDiscovery();
     void stopMdnsDiscovery();
     NvComputer* findHostByUuid(const QString& uuid) const;
+
+    // Registers the built-in "gamestream" provider. Called from the constructor.
+    void registerStreamBackends();
+
+    // A provider bound to one host. Returns nullptr for an unknown uuid.
+    std::unique_ptr<IStreamBackend> backendForHost(const QString& uuid) const;
 
     // Resolve a host MAC from the OS ARP cache (Windows). Empty if unavailable.
     static QByteArray resolveMacFromArp(const QString& ip);
