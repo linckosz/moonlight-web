@@ -1103,6 +1103,14 @@ static QStringList filterTransportsByCodec(const QStringList& transports, VideoC
     return result;
 }
 
+// Default ports for --dev, chosen to stay clear of the production 80/443 and of
+// the GameStream ranges (47984-48010 stock, 48100+ for MultiSeat seats).
+static constexpr quint16 kDevHttpPort = 48080;
+static constexpr quint16 kDevHttpsPort = 48443;
+// Signaling base for --dev. It also seeds the control channel (+2) and the
+// per-slot worker ports (+10 * slot), so it has to move as a block.
+static constexpr quint16 kDevSignalingPort = 48501;
+
 int main(int argc, char* argv[])
 {
     // Before QApplication: on a headless Linux host this swaps the xcb platform
@@ -1114,7 +1122,19 @@ int main(int argc, char* argv[])
     // it overrides the environment probe for the tray, the browser auto-open,
     // the Sunshine installer and the `headless` flag the API reports.
     mw::confirmDisplayServer(app.platformName() != QLatin1String("offscreen"));
-    QCoreApplication::setApplicationName("MoonlightWeb");
+    // --dev has to be read straight from argv: the application name decides where
+    // every piece of state lives (settings.json, the single-instance lock, logs,
+    // the QSettings host list and client identity), and it must be set before any
+    // of them is touched — long before QCommandLineParser runs.
+    const bool devMode = [argc, argv]() {
+        for (int i = 1; i < argc; ++i)
+            if (qstrcmp(argv[i], "--dev") == 0) return true;
+        return false;
+    }();
+
+    // A dev instance gets its own name, so AppDataLocation and QSettings both
+    // move as one: it can never read or corrupt the installed service's state.
+    QCoreApplication::setApplicationName(devMode ? "MoonlightWeb-dev" : "MoonlightWeb");
     QCoreApplication::setApplicationVersion(QStringLiteral(MW_VERSION));
     QCoreApplication::setOrganizationName("MoonlightWeb");
 
@@ -1233,6 +1253,14 @@ int main(int argc, char* argv[])
     QCommandLineOption yesOption("yes", "Accept the --enable-internet agreement non-interactively");
     parser.addOption(yesOption);
 
+    // Development instance: isolated state (see the applicationName switch at
+    // startup), no single-instance lock, and alternate default ports — so it can
+    // run alongside an installed service without touching it. Never for production.
+    QCommandLineOption devOption("dev",
+                                 "Run an isolated development instance (separate state, "
+                                 "alternate ports, no single-instance lock)");
+    parser.addOption(devOption);
+
     parser.process(app);
 
     // Configure logging
@@ -1302,7 +1330,7 @@ int main(int argc, char* argv[])
         return runEnableInternetCommand(appSettings.httpsPort(443), parser.isSet(yesOption));
 
     appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
-    quint16 httpPort = appSettings.httpPort(80);
+    quint16 httpPort = appSettings.httpPort(devMode ? kDevHttpPort : 80);
     if (parser.isSet("port")) httpPort = parser.value("port").toUShort();
 
     // ── Single instance ──────────────────────────────────────────────────────
@@ -1313,7 +1341,10 @@ int main(int argc, char* argv[])
     QLockFile instanceLock(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
                            "/moonlightweb.lock");
     instanceLock.setStaleLockTime(0); // stale detection by PID liveness only
-    if (!instanceLock.tryLock(100)) {
+    // A dev instance deliberately runs beside the installed one; it holds its own
+    // lock file anyway (isolated state), so this only skips the "surface the
+    // running admin page and exit" path.
+    if (!devMode && !instanceLock.tryLock(100)) {
         Logger::info("Another instance is already running");
         if (!hasGuiSession()) return 0;
         if (!parser.isSet(autostartOption)) {
@@ -1367,7 +1398,7 @@ int main(int argc, char* argv[])
     }
 
     // Read remaining persistent settings
-    quint16 httpsPort = appSettings.httpsPort(443);
+    quint16 httpsPort = appSettings.httpsPort(devMode ? kDevHttpsPort : 443);
     VideoCodec preferredCodec = appSettings.videoCodec();
     bool upnpEnabled = appSettings.upnpEnabled();
     QString stunServer = appSettings.stunServer();
@@ -1399,7 +1430,11 @@ int main(int argc, char* argv[])
     });
 
     // Phase 5b: WebRTC DataChannel relay + signaling tracking
+    // In --dev the whole block moves: the signaling base also seeds the control
+    // channel (base + 2) and the per-slot worker ports (base + 10 * slot), so
+    // leaving it at the default would collide with an installed instance.
     quint16 signalingPort = parser.value("ws-port").toUShort();
+    if (devMode && !parser.isSet(wsPortOption)) signalingPort = kDevSignalingPort;
     QPointer<DataChannelRelay> g_ActiveRelay;
     QPointer<MediaTrackRelay> g_ActiveMediaTrackRelay;
     QPointer<StreamRelay> g_ActiveStreamRelay;
