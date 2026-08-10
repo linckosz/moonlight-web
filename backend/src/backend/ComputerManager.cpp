@@ -16,6 +16,9 @@
  */
 
 #include "ComputerManager.h"
+
+#include "streambackend/GameStreamBackend.h"
+#include "streambackend/StreamBackendRegistry.h"
 #include "NvComputer.h"
 #include "NvPairingManager.h"
 #include "IdentityManager.h"
@@ -145,6 +148,38 @@ ComputerManager::ComputerManager(QObject* parent)
     , m_Http(new NvHTTP(m_Nam, this))
 {
     m_Nam->setProxy(QNetworkProxy::NoProxy);
+    registerStreamBackends();
+}
+
+void ComputerManager::registerStreamBackends()
+{
+    // The factory closure holds the app-level dependencies (NvHTTP, the network
+    // access manager, this manager); the JSON config only names the instance.
+    // Adding MultiSeat/Wolf/punktfunk later is one more registerFactory() call.
+    StreamBackendRegistry::instance().registerFactory(
+        QStringLiteral("gamestream"),
+        [this](const QJsonObject& config) -> std::unique_ptr<IStreamBackend> {
+            const QString uuid = config.value(QStringLiteral("hostUuid")).toString();
+            if (uuid.isEmpty()) {
+                Logger::warning(
+                    QStringLiteral("gamestream backend: config is missing 'hostUuid'"));
+                return nullptr;
+            }
+            // No QObject parent: the unique_ptr is the sole owner. Parenting to
+            // this manager as well would double-delete.
+            return std::make_unique<GameStreamBackend>(
+                uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam, nullptr);
+        });
+
+    Logger::info(QStringLiteral("Stream backends registered: [%1]")
+                     .arg(StreamBackendRegistry::instance().knownTypes().join(QStringLiteral(", "))));
+}
+
+std::unique_ptr<IStreamBackend> ComputerManager::backendForHost(const QString& uuid) const
+{
+    QJsonObject config;
+    config[QStringLiteral("hostUuid")] = uuid;
+    return StreamBackendRegistry::instance().create(QStringLiteral("gamestream"), config);
 }
 
 ComputerManager::~ComputerManager()
@@ -1334,100 +1369,92 @@ void ComputerManager::fetchNextBoxArtInBackground(const QString& uuid)
 
 // --- App list -----------------------------------------------------------------
 
+// HTTP shaping only: the GameStream conversation (request, TLS pool eviction,
+// timeout, XML parsing) lives in GameStreamBackend. What stays here is the host
+// bookkeeping the backend deliberately does not own — dropping the pair state on
+// a 401, caching the app list, kicking off box-art prefetch — plus the exact
+// response shapes this route has always returned.
 void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback respond)
 {
-    NvComputer* host = findHostByUuid(uuid);
-    if (!host) {
+    auto backend = std::shared_ptr<IStreamBackend>(backendForHost(uuid));
+    if (!backend) {
         respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
         return;
     }
 
-    if (host->pairState != NvComputer::PS_PAIRED || host->serverCertPem.isEmpty()) {
-        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not paired"}}, 400));
-        return;
-    }
+    // `backend` is captured so it outlives the async call.
+    backend->getAppList(uuid, [this, uuid, respond, backend](bool ok, const BackendError& err,
+                                                             const QVector<NvApp>& apps) {
+        if (!ok) {
+            // Pre-flight failure: the host was already gone when we looked.
+            if (err.kind == BackendError::NotFound) {
+                respond(
+                    HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+                return;
+            }
 
-    QVector<NvAddress> addrs = host->uniqueAddresses();
-    if (addrs.isEmpty()) {
-        respond(HttpResponse::json(
-            {{"status", "error"}, {"message", "Host has no reachable address"}}, 400));
-        return;
-    }
+            // The NvComputer may have been deleted (handleDeleteHost) during the
+            // async request.
+            NvComputer* host = findHostByUuid(uuid);
+            if (!host) {
+                respond(HttpResponse::error(404, "Host removed while fetching app list"));
+                return;
+            }
 
-    IdentityManager* im = IdentityManager::get();
-    QByteArray clientCertPem = im->getCertificate();
-    QByteArray clientKeyPem = im->getPrivateKey();
-    quint16 httpsPort = host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
-    const NvAddress& addr = addrs.first();
+            switch (err.kind) {
+            case BackendError::NotPaired:
+                // httpStatus 0 = we never sent the request; 401 = the host
+                // rejected our certificate mid-flight.
+                if (err.httpStatus != 401) {
+                    respond(HttpResponse::json(
+                        {{"status", "error"}, {"message", "Host not paired"}}, 400));
+                    return;
+                }
+                Logger::warning(
+                    QString("App list fetch failed for %1: %2").arg(host->name, err.message));
+                if (host->pairState == NvComputer::PS_PAIRED) {
+                    host->pairState = NvComputer::PS_NOT_PAIRED;
+                    host->serverCertPem.clear();
+                    saveHosts();
+                    emit hostsChanged();
+                    respond(HttpResponse::json(
+                        {{"status", "error"},
+                         {"message", "Host is no longer paired. Please pair again."}},
+                        401));
+                } else {
+                    respond(HttpResponse::error(502, err.message));
+                }
+                return;
 
-    QNetworkReply* reply = m_Http->getAppListAsync(addr, httpsPort, clientCertPem, clientKeyPem);
+            case BackendError::NoAddress:
+                respond(HttpResponse::json(
+                    {{"status", "error"}, {"message", "Host has no reachable address"}}, 400));
+                return;
 
-    auto responded = std::make_shared<bool>(false);
-    auto safeRespond = [responded, respond = std::move(respond)](HttpResponse resp) {
-        if (!*responded) {
-            *responded = true;
-            respond(std::move(resp));
+            case BackendError::Timeout:
+                respond(HttpResponse::error(504, "App list request timed out"));
+                return;
+
+            case BackendError::Protocol:
+                // Bad XML / non-OK status in the payload: no warning line here,
+                // matching the original behaviour.
+                respond(HttpResponse::error(502, err.message));
+                return;
+
+            default:
+                Logger::warning(
+                    QString("App list fetch failed for %1: %2").arg(host->name, err.message));
+                respond(HttpResponse::error(502, err.message));
+                return;
+            }
         }
-    };
 
-    // Timeout safety
-    QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS + 2000, reply, [safeRespond]() {
-        safeRespond(HttpResponse::error(504, "App list request timed out"));
-    });
-
-    connect(reply, &QNetworkReply::finished, this, [this, uuid, safeRespond, reply]() {
-        // Force-evict the pooled TLS socket — see onPairCheckFinished(). Without
-        // this, the applist socket sits Established ~120s holding Sunshine's
-        // single-threaded HTTPS server: any OTHER MoonlightWeb instance (or
-        // native client) polling the same Sunshine gets "Operation timed out"
-        // (502) for the whole window. Box-art prefetch used to clear the pool
-        // as a side effect, which masked this until the art cache filled up.
-        m_Nam->clearConnectionCache();
-
-        // Re-resolve host pointer — the NvComputer may have been deleted
-        // (via handleDeleteHost) since handleGetAppList was called. Capturing
-        // the raw host pointer would cause a use-after-free crash if the host
-        // was removed during the async HTTPS request.
         NvComputer* host = findHostByUuid(uuid);
         if (!host) {
-            safeRespond(HttpResponse::error(404, "Host removed while fetching app list"));
-            reply->deleteLater();
+            respond(HttpResponse::error(404, "Host removed while fetching app list"));
             return;
         }
 
-        int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            Logger::warning(
-                QString("App list fetch failed for %1: %2").arg(host->name, reply->errorString()));
-
-            if (httpStatus == 401 && host->pairState == NvComputer::PS_PAIRED) {
-                host->pairState = NvComputer::PS_NOT_PAIRED;
-                host->serverCertPem.clear();
-                saveHosts();
-                emit hostsChanged();
-                safeRespond(HttpResponse::json(
-                    {{"status", "error"},
-                     {"message", "Host is no longer paired. Please pair again."}},
-                    401));
-            } else {
-                safeRespond(HttpResponse::error(502, reply->errorString()));
-            }
-            reply->deleteLater();
-            return;
-        }
-
-        QString xml = QString::fromUtf8(reply->readAll());
-
-        try {
-            NvHTTP::verifyResponseStatus(xml);
-        } catch (const std::exception& e) {
-            safeRespond(HttpResponse::error(502, e.what()));
-            reply->deleteLater();
-            return;
-        }
-
-        QVector<NvApp> apps = NvHTTP::parseAppList(xml);
         host->appList = apps;
 
         // Start background box art pre-fetching
@@ -1440,9 +1467,7 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
         QJsonObject result;
         result["status"] = "ok";
         result["apps"] = appsArr;
-        safeRespond(HttpResponse::json(result));
-
-        reply->deleteLater();
+        respond(HttpResponse::json(result));
     });
 }
 
