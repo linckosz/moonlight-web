@@ -65,6 +65,7 @@
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/ShareManager.h"
+#include "server/SessionPool.h"
 #include "server/routes/AuthRoutes.h"
 #include "server/routes/HostRoutes.h"
 #include "server/routes/ShareRoutes.h"
@@ -1466,32 +1467,24 @@ int main(int argc, char* argv[])
     //
     // Ports follow the slot: signaling = base + 10 * slot, relay = that + 1.
     // Slot 0 keeps the historical pair, which is why the formula starts there.
-    struct StreamSlot
-    {
-        QPointer<StreamWorkerHost> worker;
-        QString clientUniqueId;
-        QString hostUuid;
-        QString sessionToken;
-        int appId = 0; ///< app this slot streams — players resume into it
-    };
     static constexpr int kOwnerSlots = 2; // 0 = primary, 1 = standby
     static constexpr int kTotalSlots = kOwnerSlots + ShareManager::kSlotCount;
-    std::array<StreamSlot, kTotalSlots> g_StreamSlots;
+    // Every slot up to kTotalSlots is addressed directly by index today: 0/1 by
+    // the owner paths, 2..4 by ShareManager when a player joins. So all of them
+    // are "reserved" and acquire() has nothing to hand out yet — that starts
+    // once sessions stop being owner-shaped.
+    SessionPool g_Pool(signalingPort, kTotalSlots, kTotalSlots);
 
-    auto slotSignalingPort = [signalingPort](int slot) -> quint16 {
-        return static_cast<quint16>(signalingPort + 10 * slot);
+    // Thin names kept over the pool: they read better at the call sites and
+    // leave the slot arithmetic in one place.
+    auto slotSignalingPort = [&g_Pool](int slot) -> quint16 {
+        return g_Pool.signalingPort(slot);
     };
-    auto slotWsPath = [](int slot) -> QString {
-        return slot == 0 ? QStringLiteral("/ws") : QStringLiteral("/ws%1").arg(slot);
-    };
+    auto slotWsPath = [](int slot) -> QString { return SessionPool::wsPath(slot); };
     // True when ANY slot other than @p slot still has a live worker. Sunshine
     // sessions share one running app, so a /cancel while this is true would
     // terminate the game for whoever is left.
-    auto anyOtherSlotLive = [&g_StreamSlots](int slot) {
-        for (int i = 0; i < kTotalSlots; ++i)
-            if (i != slot && !g_StreamSlots[i].worker.isNull()) return true;
-        return false;
-    };
+    auto anyOtherSlotLive = [&g_Pool](int slot) { return g_Pool.anyOtherLive(slot); };
     // Per-host result of the dual-stream capability probe (first standby
     // launch): missing = unknown (assume yes), false = host rejected a second
     // concurrent session → frontend falls back to the legacy relaunch.
@@ -1510,10 +1503,10 @@ int main(int argc, char* argv[])
     // down. Suppresses the slot's normal ended-cleanup (no Sunshine /cancel:
     // take-over and standby-restart both want the Sunshine session kept alive
     // for the /resume that follows). The host object self-deletes on exit.
-    auto detachWorkerSlot = [&g_StreamSlots, &authManager](int i, bool takenOver,
+    auto detachWorkerSlot = [&g_Pool, &authManager](int i, bool takenOver,
                                                            bool sessionEnded = false) {
-        StreamSlot& sl = g_StreamSlots[i];
-        StreamWorkerHost* old = sl.worker;
+        SessionPool::Slot& sl = g_Pool.at(i);
+        StreamWorkerHost* old = g_Pool.workerAs<StreamWorkerHost>(i);
         const QString token = sl.sessionToken;
         sl.worker = nullptr;
         sl.clientUniqueId.clear();
@@ -1544,19 +1537,19 @@ int main(int argc, char* argv[])
 
     // Tear every player worker down and revoke their shares. Called when the
     // owner really stops — their session is the one the players resumed into.
-    auto endPlayerSessions = [&g_StreamSlots, &detachWorkerSlot,
+    auto endPlayerSessions = [&g_Pool, &detachWorkerSlot,
                               &shareManager](ShareManager::EndReason reason) {
         for (int i = kOwnerSlots; i < kTotalSlots; ++i)
-            if (g_StreamSlots[i].worker) detachWorkerSlot(i, false, true);
+            if (g_Pool.at(i).worker) detachWorkerSlot(i, false, true);
         shareManager.deactivateAll(reason);
     };
 
     // The share manager decided a player's stream must end (the eight hours ran
     // out, or too many wrong PINs). It knows nothing about workers — this does.
     QObject::connect(&shareManager, &ShareManager::playerMustDisconnect, qApp,
-                     [&g_StreamSlots, &detachWorkerSlot](int slot, int) {
+                     [&g_Pool, &detachWorkerSlot](int slot, int) {
                          if (slot >= kOwnerSlots && slot < kTotalSlots &&
-                             g_StreamSlots[slot].worker)
+                             g_Pool.at(slot).worker)
                              detachWorkerSlot(slot, false, true);
                      });
 
@@ -1571,12 +1564,12 @@ int main(int argc, char* argv[])
     // clients.
     computerManager.setStreamActivePredicate([&g_ActiveRelay, &g_ActiveMediaTrackRelay,
                                               &g_ActiveStreamRelay, &g_ActiveRelayRoot,
-                                              &g_ActiveSession, &g_StreamSlots]() {
+                                              &g_ActiveSession, &g_Pool]() {
         if (!g_ActiveRelay.isNull() || !g_ActiveMediaTrackRelay.isNull() ||
             !g_ActiveStreamRelay.isNull() || !g_ActiveRelayRoot.isNull() ||
             !g_ActiveSession.isNull())
             return true;
-        for (const StreamSlot& sl : g_StreamSlots)
+        for (const auto& sl : g_Pool)
             if (!sl.worker.isNull()) return true;
         return false;
     });
@@ -1593,18 +1586,19 @@ int main(int argc, char* argv[])
     QObject::connect(
         &authManager, &AuthManager::streamingSessionRevoked, qApp,
         [&computerManager, &g_ActiveRelay, &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay,
-         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_StreamSlots]() {
+         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_Pool]() {
             qInfo() << "[main] Streaming session revoked — tearing down active stream";
             bool relayStopped = false;
 
             // Worker-mode sessions: notify + teardown each slot's child. The
             // slot's normal ended handler sends the Sunshine /cancel and clears
             // the streaming flag.
-            for (StreamSlot& sl : g_StreamSlots) {
-                if (!sl.worker) continue;
+            for (int i = 0; i < g_Pool.size(); ++i) {
+                auto* w = g_Pool.workerAs<StreamWorkerHost>(i);
+                if (!w) continue;
                 qInfo() << "[main] Revoke teardown: stopping stream worker (uid="
-                        << sl.clientUniqueId << ")";
-                sl.worker->notifyRevoked();
+                        << g_Pool.at(i).clientUniqueId << ")";
+                w->notifyRevoked();
                 relayStopped = true;
             }
 
@@ -1834,7 +1828,7 @@ int main(int argc, char* argv[])
                                                         &g_ActiveRelay, &g_ActiveStreamRelay,
                                                         &g_ActiveMediaTrackRelay, &g_ActiveSession,
                                                         &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                                                        &g_ActiveHostUuid, &g_StreamSlots,
+                                                        &g_ActiveHostUuid, &g_Pool,
                                                         &g_DualSupport, &g_LastStandbyStartMs,
                                                         &g_LiveSunshineUids, &detachWorkerSlot,
                                                         &slotSignalingPort, &slotWsPath,
@@ -2409,7 +2403,7 @@ int main(int argc, char* argv[])
             const QString uid = reqClientUniqueId;
             QObject::connect(
                 worker, &StreamWorkerHost::responseReady, qApp,
-                [respond, worker, &g_StreamSlots, &g_DualSupport, &g_LiveSunshineUids, &authManager,
+                [respond, worker, &g_Pool, &g_DualSupport, &g_LiveSunshineUids, &authManager,
                  reqSlot, standby, hostUuidCopy, uid, sessionToken](int code, QJsonObject bodyObj) {
                     const bool ok =
                         code == 200 && bodyObj["status"].toString() == QLatin1String("streaming");
@@ -2435,7 +2429,7 @@ int main(int argc, char* argv[])
                         r["reason"] = bodyObj.contains("error")
                                           ? bodyObj["error"].toString()
                                           : QStringLiteral("code %1").arg(code);
-                        StreamSlot& sl = g_StreamSlots[reqSlot];
+                        SessionPool::Slot& sl = g_Pool.at(reqSlot);
                         if (sl.worker == worker) {
                             sl.worker = nullptr;
                             sl.clientUniqueId.clear();
@@ -2450,7 +2444,7 @@ int main(int argc, char* argv[])
 
             QObject::connect(
                 worker, &StreamWorkerHost::ended, qApp,
-                [worker, &g_StreamSlots, &g_DualSupport, &g_LastStandbyStartMs, &g_LiveSunshineUids,
+                [worker, &g_Pool, &g_DualSupport, &g_LastStandbyStartMs, &g_LiveSunshineUids,
                  &anyOtherSlotLive, &computerManager, &authManager, reqSlot, host, hostUuidCopy,
                  uid, sessionToken]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
@@ -2495,7 +2489,7 @@ int main(int argc, char* argv[])
                         qInfo() << "[main] Sibling slot still streaming — skipping Sunshine "
                                    "/cancel (shared app session)";
                     }
-                    StreamSlot& sl = g_StreamSlots[reqSlot];
+                    SessionPool::Slot& sl = g_Pool.at(reqSlot);
                     if (sl.worker == worker) {
                         sl.worker = nullptr;
                         sl.clientUniqueId.clear();
@@ -2504,7 +2498,7 @@ int main(int argc, char* argv[])
                     }
                 });
 
-            auto startWorker = [worker, cfg, respond, standby, reqSlot, appId, &g_StreamSlots,
+            auto startWorker = [worker, cfg, respond, standby, reqSlot, appId, &g_Pool,
                                 &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken]() {
                 if (!worker->start(cfg)) {
                     worker->deleteLater();
@@ -2523,7 +2517,7 @@ int main(int argc, char* argv[])
                     }
                     return;
                 }
-                StreamSlot& sl = g_StreamSlots[reqSlot];
+                SessionPool::Slot& sl = g_Pool.at(reqSlot);
                 sl.worker = worker;
                 sl.clientUniqueId = uid;
                 sl.hostUuid = hostUuidCopy;
@@ -2614,7 +2608,7 @@ int main(int argc, char* argv[])
     server.router()->postAsync(
         "/api/hosts/:id/quit",
         [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
-         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_StreamSlots,
+         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveHostUuid, &g_Pool,
          &g_LiveSunshineUids, &detachWorkerSlot,
          &endPlayerSessions](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
@@ -2670,7 +2664,7 @@ int main(int argc, char* argv[])
 
             bool workerStopped = false;
             for (int i = 0; i < kOwnerSlots; ++i) {
-                StreamSlot& sl = g_StreamSlots[i];
+                SessionPool::Slot& sl = g_Pool.at(i);
                 if (!sl.worker) continue;
                 if (quitSlot >= 0 && i != quitSlot) continue;
                 const bool slotOwned = sl.clientUniqueId.isEmpty() || quitUniqueId.isEmpty() ||
@@ -2801,7 +2795,7 @@ int main(int argc, char* argv[])
     // Sunshine session we know to be live, whoever started it.
     server.router()->postAsync(
         "/api/hosts/:id/stop-session",
-        [&computerManager, &g_StreamSlots, &g_LiveSunshineUids, &detachWorkerSlot,
+        [&computerManager, &g_Pool, &g_LiveSunshineUids, &detachWorkerSlot,
          &endPlayerSessions](const HttpRequest& req, const ResponseCallback& respond) {
             NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
             if (!host) {
@@ -2861,10 +2855,10 @@ int main(int argc, char* argv[])
 
     // The owner's live context (host + app), taken from whichever owner slot is
     // up. Empty uuid means nothing is running and no player can join.
-    auto ownerContext = [&g_StreamSlots, &g_ActiveHostUuid]() {
+    auto ownerContext = [&g_Pool, &g_ActiveHostUuid]() {
         for (int i = 0; i < kOwnerSlots; ++i)
-            if (g_StreamSlots[i].worker && !g_StreamSlots[i].hostUuid.isEmpty())
-                return std::pair<QString, int>{g_StreamSlots[i].hostUuid, g_StreamSlots[i].appId};
+            if (g_Pool.at(i).worker && !g_Pool.at(i).hostUuid.isEmpty())
+                return std::pair<QString, int>{g_Pool.at(i).hostUuid, g_Pool.at(i).appId};
         // No owner leg left — they pressed Leave, or their stream dropped. The
         // app is still on Sunshine, so fall back to what it was.
         if (!g_LastOwnerHostUuid.isEmpty())
@@ -2878,10 +2872,10 @@ int main(int argc, char* argv[])
     // that must still be able to use it. g_LiveSunshineUids is the registry of
     // sessions we hold and have not cancelled, so it answers the question the
     // owner's slots cannot.
-    auto ownerStreamAlive = [&g_StreamSlots, &g_LiveSunshineUids, &g_ActiveRelay,
+    auto ownerStreamAlive = [&g_Pool, &g_LiveSunshineUids, &g_ActiveRelay,
                              &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay]() {
         for (int i = 0; i < kOwnerSlots; ++i)
-            if (!g_StreamSlots[i].worker.isNull()) return true;
+            if (!g_Pool.at(i).worker.isNull()) return true;
         if (!g_LiveSunshineUids.isEmpty()) return true;
         // Legacy in-process path (stream_worker_enabled off).
         return !g_ActiveRelay.isNull() || !g_ActiveMediaTrackRelay.isNull() ||
@@ -2913,10 +2907,10 @@ int main(int argc, char* argv[])
         return p == 443 ? QStringLiteral("https://%1").arg(internetAccess.domain())
                         : QStringLiteral("https://%1:%2").arg(internetAccess.domain()).arg(p);
     };
-    shareDeps.stopPlayerStream = [&g_StreamSlots, &detachWorkerSlot,
+    shareDeps.stopPlayerStream = [&g_Pool, &detachWorkerSlot,
                                   &shareManager](int slot, bool notifyEnded) {
         if (slot < kOwnerSlots || slot >= kTotalSlots) return;
-        if (!g_StreamSlots[slot].worker) return;
+        if (!g_Pool.at(slot).worker) return;
         detachWorkerSlot(slot, false, notifyEnded);
         // detachWorkerSlot severs the worker's ended() handlers, so the state
         // has to be settled here: without it a player who left would stay
@@ -2924,7 +2918,7 @@ int main(int argc, char* argv[])
         shareManager.setStreaming(slot, false);
     };
     shareDeps.startPlayerStream =
-        [&computerManager, &g_StreamSlots, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
+        [&computerManager, &g_Pool, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
          &anyOtherSlotLive, &slotSignalingPort, &slotWsPath, &server, &appSettings, signalingPort,
          stunServer, &ownerContext](int slot, int height, ShareManager::Permissions perms,
                                     QString serverHost, ResponseCallback respond) {
@@ -3040,7 +3034,7 @@ int main(int argc, char* argv[])
                              });
 
             QObject::connect(worker, &StreamWorkerHost::ended, qApp,
-                             [worker, &g_StreamSlots, &g_LiveSunshineUids, &shareManager,
+                             [worker, &g_Pool, &g_LiveSunshineUids, &shareManager,
                               &anyOtherSlotLive, &computerManager, slot, host, uid]() {
                                  qInfo() << "[main] Player worker ended (slot" << slot << ")";
                                  // The share survives the stream: a dropped connection must
@@ -3058,7 +3052,7 @@ int main(int argc, char* argv[])
                                                       quitReply, &QNetworkReply::deleteLater);
                                  }
                                  g_LiveSunshineUids.remove(uid);
-                                 StreamSlot& sl = g_StreamSlots[slot];
+                                 SessionPool::Slot& sl = g_Pool.at(slot);
                                  if (sl.worker == worker) {
                                      sl.worker = nullptr;
                                      sl.clientUniqueId.clear();
@@ -3069,14 +3063,14 @@ int main(int argc, char* argv[])
                              });
 
             const QString hostUuidCopy = host->uuid;
-            auto startWorker = [worker, cfg, respond, slot, appId, &g_StreamSlots, hostUuidCopy,
+            auto startWorker = [worker, cfg, respond, slot, appId, &g_Pool, hostUuidCopy,
                                 uid]() {
                 if (!worker->start(cfg)) {
                     worker->deleteLater();
                     respond(HttpResponse::error(500, "Failed to spawn stream worker"));
                     return;
                 }
-                StreamSlot& sl = g_StreamSlots[slot];
+                SessionPool::Slot& sl = g_Pool.at(slot);
                 sl.worker = worker;
                 sl.clientUniqueId = uid;
                 sl.hostUuid = hostUuidCopy;
