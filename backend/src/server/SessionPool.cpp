@@ -57,6 +57,18 @@ bool SessionPool::anyOtherLive(int index) const
     return false;
 }
 
+bool SessionPool::anyOtherLiveOnHost(int index, const QString& hostUuid) const
+{
+    for (int i = 0; i < m_Slots.size(); ++i) {
+        if (i == index || m_Slots[i].worker.isNull()) continue;
+        // A slot with no host recorded yet is still setting up; treat it as
+        // "same host" so the conservative answer wins and no /cancel slips
+        // through underneath it.
+        if (m_Slots[i].hostUuid.isEmpty() || m_Slots[i].hostUuid == hostUuid) return true;
+    }
+    return false;
+}
+
 // A slot counts as taken while it has a live worker OR still carries the
 // identity of a session being set up — the worker is attached slightly after
 // the slot is claimed, and handing the same index out twice in that window
