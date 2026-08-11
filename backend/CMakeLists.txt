@@ -171,6 +171,7 @@ add_executable(mw-server
     src/server/StaticFileHandler.cpp
     src/server/RestRouter.cpp
     src/server/ShareManager.cpp
+    src/server/SessionPool.cpp
     src/server/routes/AuthRoutes.cpp
     src/server/routes/HostRoutes.cpp
     src/server/routes/ShareRoutes.cpp

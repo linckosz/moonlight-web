@@ -41,7 +41,14 @@ bool StreamWorkerHost::start(const QJsonObject& config)
     Q_ASSERT(!m_Proc);
     m_Proc = new QProcess(this);
     m_Proc->setProgram(QCoreApplication::applicationFilePath());
-    m_Proc->setArguments({QStringLiteral("--stream-worker")});
+    QStringList args{QStringLiteral("--stream-worker")};
+    // Carry --dev into the child. The flag drives the application name, which
+    // is what moves the settings, logs and — the part that matters here — the
+    // client identity the worker presents to the host. Without it a dev run
+    // would launch streams as the installed instance.
+    if (QCoreApplication::applicationName().endsWith(QStringLiteral("-dev")))
+        args << QStringLiteral("--dev");
+    m_Proc->setArguments(args);
     // stdout carries the JSON event protocol; worker stderr joins ours so a
     // crashing worker still leaves a trace in the parent console/journal.
     m_Proc->setProcessChannelMode(QProcess::SeparateChannels);

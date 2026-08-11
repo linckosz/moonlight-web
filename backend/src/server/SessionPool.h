@@ -66,6 +66,19 @@ public:
     Slot& at(int index) { return m_Slots[index]; }
     const Slot& at(int index) const { return m_Slots[index]; }
 
+    // Range-for over every slot, reserved ones included.
+    QVector<Slot>::iterator begin() { return m_Slots.begin(); }
+    QVector<Slot>::iterator end() { return m_Slots.end(); }
+    QVector<Slot>::const_iterator begin() const { return m_Slots.begin(); }
+    QVector<Slot>::const_iterator end() const { return m_Slots.end(); }
+
+    // Typed view of the worker. The slot stores a QObject so this unit stays
+    // testable; callers that need the real type go through here.
+    template <class T> T* workerAs(int index) const
+    {
+        return isValid(index) ? qobject_cast<T*>(m_Slots[index].worker.data()) : nullptr;
+    }
+
     // signaling = base + 10 * index; the relay takes the next port up.
     quint16 signalingPort(int index) const;
     static QString wsPath(int index);
