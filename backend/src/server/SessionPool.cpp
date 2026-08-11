@@ -64,7 +64,7 @@ bool SessionPool::anyOtherLive(int index) const
 bool SessionPool::inUse(int index) const
 {
     const Slot& s = m_Slots[index];
-    return !s.worker.isNull() || !s.clientUniqueId.isEmpty() || !s.deviceSessionId.isEmpty();
+    return !s.worker.isNull() || !s.clientUniqueId.isEmpty() || !s.sessionToken.isEmpty();
 }
 
 int SessionPool::acquire()
@@ -93,10 +93,10 @@ int SessionPool::indexOfClientUniqueId(const QString& clientUniqueId) const
     return -1;
 }
 
-int SessionPool::indexOfDeviceSession(const QString& deviceSessionId) const
+int SessionPool::indexOfSessionToken(const QString& sessionToken) const
 {
-    if (deviceSessionId.isEmpty()) return -1;
+    if (sessionToken.isEmpty()) return -1;
     for (int i = 0; i < m_Slots.size(); ++i)
-        if (m_Slots[i].deviceSessionId == deviceSessionId) return i;
+        if (m_Slots[i].sessionToken == sessionToken) return i;
     return -1;
 }

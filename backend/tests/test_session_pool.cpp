@@ -38,7 +38,7 @@ void run_session_pool_tests()
 
     const int b = pool.acquire();
     CHECK_EQ(b, 3);
-    pool.at(b).deviceSessionId = QStringLiteral("device-b");
+    pool.at(b).sessionToken = QStringLiteral("device-b");
 
     const int c = pool.acquire();
     CHECK_EQ(c, 4);
@@ -49,14 +49,14 @@ void run_session_pool_tests()
 
     // Lookups.
     CHECK_EQ(pool.indexOfClientUniqueId(QStringLiteral("AAAA000000000001")), 2);
-    CHECK_EQ(pool.indexOfDeviceSession(QStringLiteral("device-b")), 3);
+    CHECK_EQ(pool.indexOfSessionToken(QStringLiteral("device-b")), 3);
     CHECK_EQ(pool.indexOfClientUniqueId(QStringLiteral("nope")), -1);
-    CHECK_EQ(pool.indexOfDeviceSession(QString()), -1); // empty never matches
+    CHECK_EQ(pool.indexOfSessionToken(QString()), -1); // empty never matches
 
     // release() frees the index for reuse rather than shrinking the pool.
     pool.release(b);
     CHECK_EQ(pool.size(), 5);
-    CHECK_EQ(pool.indexOfDeviceSession(QStringLiteral("device-b")), -1);
+    CHECK_EQ(pool.indexOfSessionToken(QStringLiteral("device-b")), -1);
     CHECK_EQ(pool.acquire(), 3); // the freed index comes back first
     pool.release(3);
 
@@ -64,7 +64,7 @@ void run_session_pool_tests()
     // otherwise two sessions would collide on the same port and /wsN path.
     const int d = pool.acquire();
     CHECK_EQ(d, 3);
-    pool.at(d).deviceSessionId = QStringLiteral("device-d");
+    pool.at(d).sessionToken = QStringLiteral("device-d");
     CHECK_EQ(pool.acquire(), -1); // full again, even with no workers attached
 
     // Liveness follows the worker pointer.
