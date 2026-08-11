@@ -82,7 +82,28 @@ void run_session_pool_tests()
     CHECK_EQ(pool.anyOtherLive(2), true);  // slot 0 is live
     CHECK_EQ(pool.anyOtherLive(1), true);  // both others are live
 
+    // Per-host scoping: "sessions share a running app" only holds within one
+    // host, so a live slot on another host must not vouch for this one.
+    pool.at(0).hostUuid = QStringLiteral("host-A");
+    pool.at(2).hostUuid = QStringLiteral("host-B");
+    CHECK_EQ(pool.anyOtherLive(0), true);                              // unscoped: sees host-B
+    CHECK_EQ(pool.anyOtherLiveOnHost(0, QStringLiteral("host-A")), false); // scoped: nothing on A
+    CHECK_EQ(pool.anyOtherLiveOnHost(2, QStringLiteral("host-B")), false);
+    pool.at(1).worker = &worker0;
+    pool.at(1).hostUuid = QStringLiteral("host-A");
+    CHECK_EQ(pool.anyOtherLiveOnHost(0, QStringLiteral("host-A")), true); // slot 1 shares host A
+    pool.at(1).worker = nullptr;
+    pool.at(1).hostUuid.clear();
+
+    // A slot still setting up (no host yet) counts as same-host: the safe
+    // answer, so no /cancel slips through underneath it.
+    pool.at(3).worker = &worker0;
+    CHECK_EQ(pool.anyOtherLiveOnHost(0, QStringLiteral("host-A")), true);
+    pool.at(3).worker = nullptr;
+
     pool.at(2).worker = nullptr;
+    pool.at(0).hostUuid.clear();
+    pool.at(2).hostUuid.clear();
     CHECK_EQ(pool.anyOtherLive(0), false); // slot 0 is now the only live one
     CHECK_EQ(pool.liveCount(), 1);
 

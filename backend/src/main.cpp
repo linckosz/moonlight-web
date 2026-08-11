@@ -1469,11 +1469,13 @@ int main(int argc, char* argv[])
     // Slot 0 keeps the historical pair, which is why the formula starts there.
     static constexpr int kOwnerSlots = 2; // 0 = primary, 1 = standby
     static constexpr int kTotalSlots = kOwnerSlots + ShareManager::kSlotCount;
-    // Every slot up to kTotalSlots is addressed directly by index today: 0/1 by
-    // the owner paths, 2..4 by ShareManager when a player joins. So all of them
-    // are "reserved" and acquire() has nothing to hand out yet — that starts
-    // once sessions stop being owner-shaped.
-    SessionPool g_Pool(signalingPort, kTotalSlots, kTotalSlots);
+    // Slots up to kTotalSlots are addressed directly by index: 0/1 by the owner
+    // paths, 2..4 by ShareManager when a player joins. Above that, acquire()
+    // hands out slots to devices streaming a DIFFERENT host, which is what lets
+    // independent sessions coexist instead of evicting each other.
+    static constexpr int kExtraSessionSlots = 4;
+    static constexpr int kMaxSlots = kTotalSlots + kExtraSessionSlots;
+    SessionPool g_Pool(signalingPort, kTotalSlots, kMaxSlots);
 
     // Thin names kept over the pool: they read better at the call sites and
     // leave the slot arithmetic in one place.
@@ -1484,7 +1486,12 @@ int main(int argc, char* argv[])
     // True when ANY slot other than @p slot still has a live worker. Sunshine
     // sessions share one running app, so a /cancel while this is true would
     // terminate the game for whoever is left.
-    auto anyOtherSlotLive = [&g_Pool](int slot) { return g_Pool.anyOtherLive(slot); };
+    // Takes the host explicitly: the answer only means anything within one
+    // host, and every caller uses it to decide whether a Sunshine /cancel is
+    // safe. Passing the host at the call site keeps that choice visible.
+    auto anyOtherSlotLive = [&g_Pool](int slot, const QString& hostUuid) {
+        return g_Pool.anyOtherLiveOnHost(slot, hostUuid);
+    };
     // Per-host result of the dual-stream capability probe (first standby
     // launch): missing = unknown (assume yes), false = host rejected a second
     // concurrent session → frontend falls back to the legacy relaunch.
@@ -1858,7 +1865,37 @@ int main(int argc, char* argv[])
         // seamless quality switching: it must NOT take over the live stream.
         const bool workerMode = appSettings.streamWorkerEnabled();
         const bool standby = workerMode && body["standby"].toBool(false);
-        const int reqSlot = standby ? qBound(0, body["session_slot"].toInt(1), 1) : 0;
+
+        // Slot selection.
+        //
+        // The owner pair (0 = primary, 1 = standby) is what the frontend's
+        // seamless quality switching drives, so a standby launch still names
+        // its own slot and a fresh launch still lands on 0 — that is the whole
+        // single-owner flow, unchanged.
+        //
+        // What changes: slot 0 is only claimed when it is free or already on
+        // THIS host. A device asking for a different host while someone streams
+        // another one gets a slot of its own instead of evicting them. Both
+        // sessions then run side by side, each with its own ports and /wsN.
+        int reqSlot = standby ? qBound(0, body["session_slot"].toInt(1), 1) : 0;
+        if (!standby && workerMode) {
+            const bool slot0Busy = g_Pool.live(0) && !g_Pool.at(0).hostUuid.isEmpty() &&
+                                   g_Pool.at(0).hostUuid != uuid;
+            if (slot0Busy) {
+                // Already streaming this host from this browser? Reuse that slot
+                // rather than opening a second one for the same viewer.
+                int mine = g_Pool.indexOfClientUniqueId(body["client_uniqueid"].toString());
+                if (mine < 0 || g_Pool.at(mine).hostUuid != uuid) mine = -1;
+                reqSlot = mine >= 0 ? mine : g_Pool.acquire();
+                if (reqSlot < 0) {
+                    respond(HttpResponse::error(
+                        503, "All stream slots are busy — stop a running session first"));
+                    return;
+                }
+                qInfo() << "[Session] Host" << uuid << "differs from slot 0 ("
+                        << g_Pool.at(0).hostUuid << ") — using slot" << reqSlot;
+            }
+        }
 
         // ── Take-over: this backend streams ONE session at a time ──────────────
         // moonlight-common-c is a process-global singleton and the signaling port
@@ -1896,11 +1933,19 @@ int main(int argc, char* argv[])
             previousWorker = detachWorkerSlot(reqSlot, false);
         } else {
             for (int i = 0; i < kOwnerSlots; ++i) {
+                // Take over only what streams the SAME host. A session on
+                // another host is somebody else's — evicting it was the old
+                // one-stream-at-a-time rule, not something callers want.
+                const QString slotHost = g_Pool.at(i).hostUuid;
+                if (g_Pool.live(i) && !slotHost.isEmpty() && slotHost != uuid) continue;
                 StreamWorkerHost* w = detachWorkerSlot(i, true);
-                // Serialize the new slot-0 worker behind whichever child still
-                // holds the slot-0 ports.
+                // Serialize the new worker behind whichever child still holds
+                // the ports for the slot we are about to use.
                 if (i == reqSlot) previousWorker = w;
             }
+            // Slot claimed above kOwnerSlots (a second host): only its own
+            // remnant is in the way.
+            if (reqSlot >= kOwnerSlots) previousWorker = detachWorkerSlot(reqSlot, true);
         }
         if (!standby && g_ActiveRelay) {
             DataChannelRelay* old = g_ActiveRelay;
@@ -2463,7 +2508,7 @@ int main(int argc, char* argv[])
                     // sessionEnded auto-quit) — but ONLY when no sibling slot
                     // is still streaming: Sunshine sessions share the running
                     // app, and a /cancel would terminate it for the survivor.
-                    const bool siblingLive = anyOtherSlotLive(reqSlot);
+                    const bool siblingLive = anyOtherSlotLive(reqSlot, hostUuidCopy);
                     if (!siblingLive) {
                         auto* identity = IdentityManager::get();
                         auto* quitReply = computerManager.http()->quitAppAsync(
@@ -3066,7 +3111,7 @@ int main(int argc, char* argv[])
                                  shareManager.setStreaming(slot, false);
                                  // Same rule as the owner slots — the Sunshine app is shared,
                                  // so /cancel only once nothing else is streaming.
-                                 if (!anyOtherSlotLive(slot)) {
+                                 if (!anyOtherSlotLive(slot, host->uuid)) {
                                      auto* identity = IdentityManager::get();
                                      auto* quitReply = computerManager.http()->quitAppAsync(
                                          host->activeAddress, host->activeHttpsPort,
@@ -3253,6 +3298,10 @@ int main(int argc, char* argv[])
     // seamless switching), slots 2.. belong to invited players. Each child
     // listens on +10*slot / +10*slot+1, proxied at /wsN and /wsN/stream.
     for (int slot = 1; slot < kTotalSlots; ++slot)
+        server.setSlotPorts(slot, slotSignalingPort(slot), slotSignalingPort(slot) + 1);
+    // Slots acquired for a second host live above kTotalSlots; register their
+    // ports up front so the proxy can route /wsN the moment one is handed out.
+    for (int slot = kTotalSlots; slot < kMaxSlots; ++slot)
         server.setSlotPorts(slot, slotSignalingPort(slot), slotSignalingPort(slot) + 1);
     server.setFirstPlayerSlot(kOwnerSlots);
 

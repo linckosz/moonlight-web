@@ -91,6 +91,11 @@ public:
     // on one host share a single running app, so a /cancel while this holds
     // would end the game for whoever is left.
     bool anyOtherLive(int index) const;
+    // Same question, restricted to one host. "Sessions share a running app" is
+    // only true per host: once independent sessions stream different hosts, a
+    // live slot on host B must not suppress the /cancel that ends host A's app,
+    // or that app keeps running with nobody attached.
+    bool anyOtherLiveOnHost(int index, const QString& hostUuid) const;
 
     // Lowest free index at or above reservedSlots, reusing released ones.
     // Returns -1 when every slot up to maxSlots is taken.
