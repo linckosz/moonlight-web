@@ -27,6 +27,7 @@ extern "C" {
 #include "network/UPNPClient.h"
 
 #include <rtc/rtc.hpp>
+#include <QCoreApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -867,6 +868,18 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     if (upnpMappedPort > 0) {
         config.portRangeBegin = upnpMappedPort;
         config.portRangeEnd = upnpMappedPort;
+    } else if (QCoreApplication::applicationName() == QLatin1String("MoonlightWeb-dev")) {
+        // In --dev (LAN, no UPnP), libdatachannel would otherwise bind an
+        // ephemeral UDP port, and each fresh test build listening on a new port
+        // triggers a Windows Defender Firewall popup. Pin the range to the fixed
+        // dev range the local firewall rule already allows (see
+        // scripts/dev-firewall-allow.ps1) so tests never prompt. 5 ports cover
+        // the 5 concurrent stream slots. The installed instance is unaffected:
+        // its applicationName is "MoonlightWeb".
+        config.portRangeBegin = kUpnpPort;
+        config.portRangeEnd = kUpnpPort + kUpnpMaxPortAttempts - 1;
+        qInfo() << "[SignalingServer] --dev: pinned UDP port range"
+                << config.portRangeBegin << "-" << config.portRangeEnd;
     }
 
     if (forceIceTcp) {

@@ -46,12 +46,14 @@ public:
         QPointer<QObject> worker;
         QString clientUniqueId;
         QString hostUuid;
+        // The authenticated device behind this stream (AuthManager session).
+        // Empty for localhost, which has no session row — and every scoping
+        // rule treats empty as "unknown, keep legacy behaviour".
         QString sessionToken;
         int appId = 0; ///< app this slot streams — players resume into it
 
-        // Multi-backend / multi-user routing. Unused by the GameStream path;
-        // filled once seats come from MultiSeat or Wolf.
-        QString deviceSessionId;
+        // Multi-backend routing. Unused by the GameStream path; filled once
+        // seats come from MultiSeat or Wolf.
         QString backendType;
         QString seatId;
     };
@@ -98,7 +100,8 @@ public:
     void release(int index);
 
     int indexOfClientUniqueId(const QString& clientUniqueId) const;
-    int indexOfDeviceSession(const QString& deviceSessionId) const;
+    // Slot held by an authenticated device (its AuthManager session token).
+    int indexOfSessionToken(const QString& sessionToken) const;
 
 private:
     bool inUse(int index) const;

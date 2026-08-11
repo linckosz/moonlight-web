@@ -2653,6 +2653,20 @@ int main(int argc, char* argv[])
                                      : -1;
             const bool keepHostSession = qbody["keep_host_session"].toBool(false);
 
+            // The authenticated device asking to quit, read the same way /start
+            // records it. Empty for localhost.
+            QString quitSessionToken;
+            {
+                const QString cookie = req.headers.value("cookie");
+                for (const QString& c : cookie.split(';')) {
+                    const QString t = c.trimmed();
+                    if (t.startsWith("mw_session=", Qt::CaseInsensitive)) {
+                        quitSessionToken = t.mid(QStringLiteral("mw_session=").length());
+                        break;
+                    }
+                }
+            }
+
             // Anything that is not a retire ends with a Sunshine /cancel, which
             // kills the app for everyone — so the invited players go first.
             // Their workers must be gone before the owner's last slot ends, or
@@ -2671,6 +2685,16 @@ int main(int argc, char* argv[])
                                        quitUniqueId == sl.clientUniqueId;
                 if (!slotOwned) {
                     qInfo() << "[quit] Slot" << i << "owned by another uniqueid — skipping";
+                    continue;
+                }
+                // Second, stronger guard: the authenticated device. A browser
+                // picks its own uniqueid, so it alone cannot keep one device
+                // from ending another's stream once sessions are independent.
+                // Either side empty means "unknown" (localhost has no session
+                // row), which keeps today's single-owner behaviour intact.
+                if (!quitSessionToken.isEmpty() && !sl.sessionToken.isEmpty() &&
+                    quitSessionToken != sl.sessionToken) {
+                    qInfo() << "[quit] Slot" << i << "belongs to another device session — skipping";
                     continue;
                 }
                 qInfo() << "[quit] Stopping stream worker slot" << i
