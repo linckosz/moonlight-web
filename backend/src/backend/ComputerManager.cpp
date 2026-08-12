@@ -21,6 +21,7 @@
 #include "streambackend/StreamBackendRegistry.h"
 #include "NvComputer.h"
 #include "NvPairingManager.h"
+#include "PairingChain.h"
 #include "IdentityManager.h"
 #include "common/Logger.h"
 
@@ -1038,8 +1039,14 @@ void ComputerManager::startPairingChain(const QString& uuid)
 
     m_SubmitInFlight.insert(uuid);
 
-    // Stage 1 — getservercert (blocks server-side until PIN entry, up to 60s).
-    pm->initiatePairing([this, uuid](NvPairingManager::InitResult initResult) {
+    // Sequencing lives in PairingChain, shared with the backends that pair
+    // without a human. Everything below is this manager's own policy: the
+    // wording the user sees, the NvComputer bookkeeping, and session teardown.
+    //
+    // No announcer: on a Sunshine host a person is already reading the PIN off
+    // our UI and typing it in.
+    PairingChain::run(pm, m_PairingPins.value(uuid), {},
+                      [this, uuid](const PairingChain::Result& result) {
         // Re-resolve the session: while in flight nothing frees it, but the host
         // could still be gone if the whole ComputerManager path changed.
         auto it = m_ActivePairings.find(uuid);
@@ -1049,66 +1056,45 @@ void ComputerManager::startPairingChain(const QString& uuid)
         }
         NvPairingManager* pm = it.value();
 
-        if (initResult == NvPairingManager::INIT_ALREADY_IN_PROGRESS) {
+        switch (result.outcome) {
+        case PairingChain::Outcome::Paired: {
+            NvComputer* host = findHostByUuid(uuid);
+            if (host) {
+                host->serverCertPem = result.serverCertPem;
+                host->pairState = NvComputer::PS_PAIRED;
+                host->state = NvComputer::CS_ONLINE;
+                saveHosts();
+                emit hostsChanged();
+            }
+            m_ActivePairings.erase(it);
+            m_PairingPins.remove(uuid);
+            delete pm;
+            break;
+        }
+
+        case PairingChain::Outcome::Retry:
+            // Stage 1 never landed, or the PIN was not accepted yet — keep the
+            // session so the next poll restarts the chain.
+            break;
+
+        case PairingChain::Outcome::HostBusy:
             m_ActivePairings.erase(it);
             m_PairingPins.remove(uuid);
             delete pm;
             m_PairingError[uuid] = "Pairing already in progress on host.";
-            m_SubmitInFlight.remove(uuid);
-            return;
+            break;
+
+        case PairingChain::Outcome::Failed:
+        default:
+            m_ActivePairings.erase(it);
+            m_PairingPins.remove(uuid);
+            delete pm;
+            m_PairingError[uuid] =
+                "Pairing failed. Close any running games on the host and try again.";
+            break;
         }
 
-        if (initResult != NvPairingManager::INIT_OK) {
-            // Stage 1 timed out or the host was unreachable — keep the session
-            // so the next poll restarts the chain.
-            m_SubmitInFlight.remove(uuid);
-            return;
-        }
-
-        const QString pin = m_PairingPins.value(uuid);
-
-        // Stages 2-5 — challenge/response.
-        pm->completePairing(
-            pin, [this, uuid](NvPairingManager::PairState result, const QByteArray& serverCertPem) {
-                auto it = m_ActivePairings.find(uuid);
-                if (it == m_ActivePairings.end()) {
-                    m_SubmitInFlight.remove(uuid);
-                    return;
-                }
-                NvPairingManager* pm = it.value();
-
-                switch (result) {
-                case NvPairingManager::PAIRED: {
-                    NvComputer* host = findHostByUuid(uuid);
-                    if (host) {
-                        host->serverCertPem = serverCertPem;
-                        host->pairState = NvComputer::PS_PAIRED;
-                        host->state = NvComputer::CS_ONLINE;
-                        saveHosts();
-                        emit hostsChanged();
-                    }
-                    m_ActivePairings.erase(it);
-                    m_PairingPins.remove(uuid);
-                    delete pm;
-                    break;
-                }
-                case NvPairingManager::PIN_WRONG:
-                    // PIN not accepted yet / stages 2-3 rejected — keep the
-                    // session so the next poll restarts the chain.
-                    break;
-                case NvPairingManager::ALREADY_IN_PROGRESS:
-                case NvPairingManager::FAILED:
-                default:
-                    m_ActivePairings.erase(it);
-                    m_PairingPins.remove(uuid);
-                    delete pm;
-                    m_PairingError[uuid] =
-                        "Pairing failed. Close any running games on the host and try again.";
-                    break;
-                }
-
-                m_SubmitInFlight.remove(uuid);
-            });
+        m_SubmitInFlight.remove(uuid);
     });
 }
 

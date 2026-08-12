@@ -195,6 +195,7 @@ add_executable(mw-server
     src/backend/ComputerManager.cpp
     src/backend/IdentityManager.cpp
     src/backend/NvPairingManager.cpp
+    src/backend/PairingChain.cpp
     src/backend/SunshineRestClient.cpp
     src/backend/WolfApiClient.cpp
     src/backend/streambackend/StreamBackendRegistry.cpp
