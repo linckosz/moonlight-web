@@ -81,6 +81,18 @@ public:
     std::pair<int, QJsonObject> handleStartPairing(const QString& uuid);
     void handleSubmitPin(const QString& uuid, ResponseCallback respond);
 
+    // Pair a Wolf host with no human in the loop: MoonlightWeb is the Moonlight
+    // client, so it posts the PIN it would have displayed straight to Wolf's
+    // control API. `proxyUrl`/`token` address the authenticated proxy fronting
+    // Wolf's Unix socket.
+    //
+    // TEMPORARY — this is the shortest path to exercising the handshake against
+    // a real Wolf. The backend registration this stands in for belongs in the
+    // host card's kebab menu (integration doc §5.3); delete this once that
+    // exists rather than letting it settle in.
+    void handleWolfPair(const QString& uuid, const QString& proxyUrl, const QString& token,
+                        ResponseCallback respond);
+
     // Provisioning-only: drive the pairing chain to a terminal state under a
     // local event loop. Safe because provisioning runs once at startup, before
     // the main loop and outside the reentrant HTTP request path. Returns true
