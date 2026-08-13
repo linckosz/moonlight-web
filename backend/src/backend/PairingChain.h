@@ -60,6 +60,11 @@ struct Result
 
 using ResultCallback = std::function<void(const Result&)>;
 
+/// A fresh 4-digit PIN, zero-padded. The *client* picks it in GameStream
+/// pairing — a human then relays it to Sunshine, while for Wolf we post it
+/// ourselves and nobody ever sees it.
+QString generatePin();
+
 /// Invoked once, right after stage 1 has been *dispatched* — not after it
 /// resolves. That ordering is the whole point: a Wolf host holds the stage-1
 /// response open until someone supplies the PIN, so an announcer that waited

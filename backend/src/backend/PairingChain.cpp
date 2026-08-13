@@ -19,9 +19,16 @@
 
 #include "NvPairingManager.h"
 
+#include <QRandomGenerator>
 #include <memory>
 
 namespace PairingChain {
+
+QString generatePin()
+{
+    int pin = QRandomGenerator::global()->bounded(10000);
+    return QString::asprintf("%04d", pin);
+}
 
 void run(NvPairingManager* pm, const QString& pin, PinAnnouncer announcer, ResultCallback cb)
 {
