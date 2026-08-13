@@ -901,11 +901,6 @@ QString ComputerManager::clientUniqueId()
 // --- Pairing ----------------------------------------------------------------
 // Client generates a random PIN, user enters it in Sunshine (stdin or Web UI).
 
-static QString generatePairingPin()
-{
-    int pin = QRandomGenerator::global()->bounded(10000);
-    return QString::asprintf("%04d", pin);
-}
 
 std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& uuid)
 {
@@ -959,7 +954,7 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
     const NvAddress& addr = addrs.first();
 
     // Generate PIN — returned immediately, no network call
-    QString pin = generatePairingPin();
+    QString pin = PairingChain::generatePin();
     m_PairingPins[uuid] = pin;
 
     // Create PairingManager (stage 1 runs later, in the background chain kicked
