@@ -88,6 +88,33 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         computerManager.handleSubmitPin(uuid, std::move(respond));
     });
 
+    // TEMPORARY — Wolf auto-pairing, straight to the handshake.
+    //
+    // Stands in for the backend registration UI (integration doc §5.3) purely so
+    // the choreography can be exercised against a real Wolf before that UI is
+    // built. Takes the proxy URL and token in the body for the same reason: no
+    // backend registry persists them yet. Delete with ComputerManager::
+    // handleWolfPair once hosts can be declared as Wolf backends properly.
+    server.router()->postAsync(
+        "/api/hosts/:id/wolf-pair",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+            QString uuid = req.pathParams.value("id");
+            if (uuid.isEmpty()) {
+                respond(HttpResponse::error(400, "Missing host ID"));
+                return;
+            }
+
+            QJsonObject body = QJsonDocument::fromJson(req.body).object();
+            const QString proxyUrl = body["proxyUrl"].toString();
+            const QString token = body["token"].toString();
+            if (proxyUrl.isEmpty()) {
+                respond(HttpResponse::error(400, "Missing 'proxyUrl' field"));
+                return;
+            }
+
+            computerManager.handleWolfPair(uuid, proxyUrl, token, std::move(respond));
+        });
+
     // Phase 4: App list (async — fetches from Sunshine via HTTPS)
     server.router()->getAsync("/api/hosts/:id/apps",
                               [&computerManager](const HttpRequest& req, ResponseCallback respond) {

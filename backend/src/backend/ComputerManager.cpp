@@ -22,6 +22,8 @@
 #include "NvComputer.h"
 #include "NvPairingManager.h"
 #include "PairingChain.h"
+#include "WolfApiClient.h"
+#include "streambackend/WolfBackend.h"
 #include "IdentityManager.h"
 #include "common/Logger.h"
 
@@ -1091,6 +1093,49 @@ void ComputerManager::startPairingChain(const QString& uuid)
 
         m_SubmitInFlight.remove(uuid);
     });
+}
+
+void ComputerManager::handleWolfPair(const QString& uuid, const QString& proxyUrl,
+                                     const QString& token, ResponseCallback respond)
+{
+    NvComputer* host = findHostByUuid(uuid);
+    if (!host) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+
+    // Both are kept alive by the callback's captures until the handshake ends.
+    auto api = std::make_shared<WolfApiClient>(proxyUrl, token, m_Nam);
+    auto backend = std::make_shared<WolfBackend>(
+        uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam, api.get(),
+        // Same bookkeeping as the Sunshine path: the backend performs the
+        // handshake, this manager owns what it means for the host.
+        [this, uuid](const QByteArray& serverCertPem) {
+            NvComputer* h = findHostByUuid(uuid);
+            if (!h) return;
+            h->serverCertPem = serverCertPem;
+            h->pairState = NvComputer::PS_PAIRED;
+            h->state = NvComputer::CS_ONLINE;
+            saveHosts();
+            emit hostsChanged();
+        });
+
+    backend->ensurePaired(
+        [respond = std::move(respond), api, backend](bool ok, const BackendError& err) {
+            if (ok) {
+                respond(HttpResponse::json(
+                    {{"status", "paired"}, {"message", "Paired with no user interaction"}}, 200));
+            } else {
+                respond(HttpResponse::json({{"status", "error"}, {"message", err.message}}, 502));
+            }
+
+            // Hand the last references to a later event-loop turn. Letting them
+            // die here would destroy WolfBackend — and the NvPairingManager it
+            // owns — from inside that manager's own callback, which is still on
+            // the stack. That is the lifetime rule NvPairingManager states and
+            // that m_SubmitInFlight enforces on the Sunshine path.
+            QTimer::singleShot(0, [api, backend]() {});
+        });
 }
 
 bool ComputerManager::pairHostBlocking(const QString& uuid, int timeoutMs)
