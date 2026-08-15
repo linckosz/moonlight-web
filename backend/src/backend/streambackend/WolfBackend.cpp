@@ -56,13 +56,13 @@ BackendError toBackendError(const WolfApiError& err)
 } // namespace
 
 WolfBackend::WolfBackend(QString hostUuid, HostResolver resolver, NvHTTP* http,
-                         QNetworkAccessManager* nam, WolfApiClient* api, PairingCommit commit,
-                         QObject* parent)
+                         QNetworkAccessManager* nam, const QString& apiUrl,
+                         const QString& apiToken, PairingCommit commit, QObject* parent)
     : QObject(parent)
     , m_HostUuid(std::move(hostUuid))
     , m_ResolveHost(std::move(resolver))
-    , m_Api(api)
     , m_Commit(std::move(commit))
+    , m_Api(new WolfApiClient(apiUrl, apiToken, nam, this))
     , m_GameStream(std::make_unique<GameStreamBackend>(m_HostUuid, m_ResolveHost, http, nam))
 {
 }

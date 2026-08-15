@@ -20,7 +20,9 @@
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "backend/ComputerManager.h"
+#include "backend/streambackend/StreamBackendRegistry.h"
 
+#include <QJsonArray>
 #include <QJsonObject>
 
 void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
@@ -88,15 +90,12 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         computerManager.handleSubmitPin(uuid, std::move(respond));
     });
 
-    // TEMPORARY — Wolf auto-pairing, straight to the handshake.
-    //
-    // Stands in for the backend registration UI (integration doc §5.3) purely so
-    // the choreography can be exercised against a real Wolf before that UI is
-    // built. Takes the proxy URL and token in the body for the same reason: no
-    // backend registry persists them yet. Delete with ComputerManager::
-    // handleWolfPair once hosts can be declared as Wolf backends properly.
+    // Backend management (integration doc §5.3). Deliberately scoped to the
+    // host, not to a session: which backend drives a host is an admin fact
+    // about that host. A plain Sunshine host never carries one, so its card and
+    // its flows stay exactly as they are.
     server.router()->postAsync(
-        "/api/hosts/:id/wolf-pair",
+        "/api/hosts/:id/backend",
         [&computerManager](const HttpRequest& req, ResponseCallback respond) {
             QString uuid = req.pathParams.value("id");
             if (uuid.isEmpty()) {
@@ -105,15 +104,38 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
             }
 
             QJsonObject body = QJsonDocument::fromJson(req.body).object();
-            const QString proxyUrl = body["proxyUrl"].toString();
-            const QString token = body["token"].toString();
-            if (proxyUrl.isEmpty()) {
-                respond(HttpResponse::error(400, "Missing 'proxyUrl' field"));
+            const QString type = body["type"].toString();
+            const QString apiUrl = body["apiUrl"].toString();
+            if (type.isEmpty()) {
+                respond(HttpResponse::error(400, "Missing 'type' field"));
+                return;
+            }
+            if (apiUrl.isEmpty()) {
+                respond(HttpResponse::error(400, "Missing 'apiUrl' field"));
                 return;
             }
 
-            computerManager.handleWolfPair(uuid, proxyUrl, token, std::move(respond));
+            // Absent token = keep the stored one; the browser is never sent it.
+            computerManager.handleSetBackend(uuid, type, apiUrl, body["apiToken"].toString(),
+                                             std::move(respond));
         });
+
+    server.router()->del("/api/hosts/:id/backend", [&computerManager](const HttpRequest& req) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
+
+        auto [status, result] = computerManager.handleClearBackend(uuid);
+        return HttpResponse::json(result, status);
+    });
+
+    // What the settings dialog offers, so the UI never hardcodes a backend list.
+    server.router()->get("/api/backends", [](const HttpRequest&) {
+        QJsonArray types;
+        for (const QString& t : StreamBackendRegistry::instance().knownTypes()) {
+            types.append(t);
+        }
+        return HttpResponse::json(QJsonObject{{"types", types}});
+    });
 
     // Phase 4: App list (async — fetches from Sunshine via HTTPS)
     server.router()->getAsync("/api/hosts/:id/apps",

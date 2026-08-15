@@ -174,6 +174,33 @@ void ComputerManager::registerStreamBackends()
                 uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam, nullptr);
         });
 
+    StreamBackendRegistry::instance().registerFactory(
+        QStringLiteral("wolf"),
+        [this](const QJsonObject& config) -> std::unique_ptr<IStreamBackend> {
+            const QString uuid = config.value(QStringLiteral("hostUuid")).toString();
+            if (uuid.isEmpty()) {
+                Logger::warning(QStringLiteral("wolf backend: config is missing 'hostUuid'"));
+                return nullptr;
+            }
+
+            return std::make_unique<WolfBackend>(
+                uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam,
+                config.value(QStringLiteral("apiUrl")).toString(),
+                config.value(QStringLiteral("apiToken")).toString(),
+                // The backend performs the handshake; what a pairing *means* for
+                // a host stays here, exactly as on the Sunshine path.
+                [this, uuid](const QByteArray& serverCertPem) {
+                    NvComputer* host = findHostByUuid(uuid);
+                    if (!host) return;
+                    host->serverCertPem = serverCertPem;
+                    host->pairState = NvComputer::PS_PAIRED;
+                    host->state = NvComputer::CS_ONLINE;
+                    saveHosts();
+                    emit hostsChanged();
+                },
+                nullptr);
+        });
+
     Logger::info(QStringLiteral("Stream backends registered: [%1]")
                      .arg(StreamBackendRegistry::instance().knownTypes().join(QStringLiteral(", "))));
 }
@@ -182,7 +209,17 @@ std::unique_ptr<IStreamBackend> ComputerManager::backendForHost(const QString& u
 {
     QJsonObject config;
     config[QStringLiteral("hostUuid")] = uuid;
-    return StreamBackendRegistry::instance().create(QStringLiteral("gamestream"), config);
+
+    // An unconfigured host is a plain GameStream host. Keeping that the default
+    // is what guarantees a Sunshine card behaves exactly as it does today.
+    QString type = QStringLiteral("gamestream");
+    if (NvComputer* host = findHostByUuid(uuid); host && !host->backendType.isEmpty()) {
+        type = host->backendType;
+        config[QStringLiteral("apiUrl")] = host->backendApiUrl;
+        config[QStringLiteral("apiToken")] = host->backendApiToken;
+    }
+
+    return StreamBackendRegistry::instance().create(type, config);
 }
 
 ComputerManager::~ComputerManager()
@@ -1095,8 +1132,9 @@ void ComputerManager::startPairingChain(const QString& uuid)
     });
 }
 
-void ComputerManager::handleWolfPair(const QString& uuid, const QString& proxyUrl,
-                                     const QString& token, ResponseCallback respond)
+void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
+                                       const QString& apiUrl, const QString& apiToken,
+                                       ResponseCallback respond)
 {
     NvComputer* host = findHostByUuid(uuid);
     if (!host) {
@@ -1104,38 +1142,69 @@ void ComputerManager::handleWolfPair(const QString& uuid, const QString& proxyUr
         return;
     }
 
-    // Both are kept alive by the callback's captures until the handshake ends.
-    auto api = std::make_shared<WolfApiClient>(proxyUrl, token, m_Nam);
-    auto backend = std::make_shared<WolfBackend>(
-        uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam, api.get(),
-        // Same bookkeeping as the Sunshine path: the backend performs the
-        // handshake, this manager owns what it means for the host.
-        [this, uuid](const QByteArray& serverCertPem) {
-            NvComputer* h = findHostByUuid(uuid);
-            if (!h) return;
-            h->serverCertPem = serverCertPem;
-            h->pairState = NvComputer::PS_PAIRED;
-            h->state = NvComputer::CS_ONLINE;
-            saveHosts();
-            emit hostsChanged();
-        });
+    if (!StreamBackendRegistry::instance().isRegistered(type)) {
+        respond(HttpResponse::json(
+            {{"status", "error"},
+             {"message", QStringLiteral("Unknown backend type '%1'. Known: %2")
+                             .arg(type, StreamBackendRegistry::instance().knownTypes().join(
+                                            QStringLiteral(", ")))}},
+            400));
+        return;
+    }
 
+    host->backendType = type;
+    host->backendApiUrl = apiUrl;
+    // An empty token means "keep the stored one", so the dialog can be reopened
+    // to fix a URL without making the admin retype a secret the browser was
+    // never shown.
+    if (!apiToken.isEmpty()) host->backendApiToken = apiToken;
+    saveHosts();
+    emit hostsChanged();
+
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json(
+            {{"status", "error"}, {"message", "Could not build a backend for this host"}}, 500));
+        return;
+    }
+
+    // Pair right away. Registering a backend is the one admin gesture allowed to
+    // involve a human, and it is precisely what spares every player a PIN.
     backend->ensurePaired(
-        [respond = std::move(respond), api, backend](bool ok, const BackendError& err) {
+        [respond = std::move(respond), backend](bool ok, const BackendError& err) {
             if (ok) {
                 respond(HttpResponse::json(
-                    {{"status", "paired"}, {"message", "Paired with no user interaction"}}, 200));
+                    {{"status", "paired"}, {"message", "Backend registered and paired"}}, 200));
             } else {
                 respond(HttpResponse::json({{"status", "error"}, {"message", err.message}}, 502));
             }
 
-            // Hand the last references to a later event-loop turn. Letting them
-            // die here would destroy WolfBackend — and the NvPairingManager it
-            // owns — from inside that manager's own callback, which is still on
-            // the stack. That is the lifetime rule NvPairingManager states and
-            // that m_SubmitInFlight enforces on the Sunshine path.
-            QTimer::singleShot(0, [api, backend]() {});
+            // Release a turn later. Dropping the last reference here would
+            // destroy the backend — and any NvPairingManager it owns — from
+            // inside that manager's own callback, which is still on the stack.
+            // That is the lifetime rule NvPairingManager states and that
+            // m_SubmitInFlight enforces on the Sunshine path.
+            QTimer::singleShot(0, [backend]() {});
         });
+}
+
+std::pair<int, QJsonObject> ComputerManager::handleClearBackend(const QString& uuid)
+{
+    NvComputer* host = findHostByUuid(uuid);
+    if (!host) {
+        return {404, QJsonObject{{"status", "error"}, {"message", "Host not found"}}};
+    }
+
+    host->backendType.clear();
+    host->backendApiUrl.clear();
+    host->backendApiToken.clear();
+    saveHosts();
+    emit hostsChanged();
+
+    // The GameStream pairing is left intact on purpose: the host carries on as
+    // a plain Sunshine-style host, which is the point of unmanaging it rather
+    // than deleting it.
+    return {200, QJsonObject{{"status", "ok"}, {"message", "Backend management removed"}}};
 }
 
 bool ComputerManager::pairHostBlocking(const QString& uuid, int timeoutMs)

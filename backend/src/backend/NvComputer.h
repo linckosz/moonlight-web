@@ -114,4 +114,16 @@ public:
     // — Pairing state (persisted) —
     QByteArray serverCertPem;
     quint16 activeHttpsPort = 0;
+
+    // — Stream backend (persisted) —
+    //
+    // Empty means a plain GameStream host: Sunshine, Apollo, anything speaking
+    // NvHTTP. That is the default and keeps those hosts on exactly today's code
+    // path. A non-empty type names a registered backend ("wolf") with its own
+    // control API, addressed through backendApiUrl.
+    //
+    // backendApiToken is a secret and must never reach toJson().
+    QString backendType;
+    QString backendApiUrl;
+    QString backendApiToken;
 };

@@ -106,6 +106,10 @@ NvComputer::NvComputer(QSettings& settings)
     activeHttpsPort = static_cast<quint16>(settings.value("httpsPort", MW_HTTPS_PORT).toUInt());
 
     pairState = pairStateFromString(settings.value("pairState").toString());
+
+    backendType = settings.value("backendType").toString();
+    backendApiUrl = settings.value("backendApiUrl").toString();
+    backendApiToken = settings.value("backendApiToken").toString();
 }
 
 // --- Serialization ----------------------------------------------------------
@@ -124,6 +128,9 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("serverCert", serverCertPem);
     settings.setValue("httpsPort", static_cast<quint32>(activeHttpsPort));
     settings.setValue("pairState", pairStateToString(pairState));
+    settings.setValue("backendType", backendType);
+    settings.setValue("backendApiUrl", backendApiUrl);
+    settings.setValue("backendApiToken", backendApiToken);
 }
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
@@ -265,6 +272,14 @@ QJsonObject NvComputer::toJson() const
 
     // Frontend uses this to warn when a user streams the very PC they're on.
     obj["isLocalHost"] = isLocalMachine();
+
+    // Which backend drives this host, so the UI can offer backend management on
+    // the hosts that have one and leave a plain Sunshine card untouched. The
+    // token is deliberately absent: it is a secret the browser never needs, and
+    // the settings dialog sends a new one rather than editing the old.
+    obj["backendType"] = backendType;
+    obj["backendApiUrl"] = backendApiUrl;
+    obj["backendConfigured"] = !backendApiToken.isEmpty();
 
     // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
     // itself never has to reach the browser — the UI only needs to know whether
