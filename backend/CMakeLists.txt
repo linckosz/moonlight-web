@@ -198,6 +198,7 @@ add_executable(mw-server
     src/backend/PairingChain.cpp
     src/backend/SunshineRestClient.cpp
     src/backend/WolfApiClient.cpp
+    src/backend/MultiSeatApiClient.cpp
     src/backend/streambackend/StreamBackendRegistry.cpp
     src/backend/streambackend/GameStreamBackend.cpp
     src/backend/streambackend/WolfBackend.cpp
