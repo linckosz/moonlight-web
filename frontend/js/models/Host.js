@@ -43,6 +43,13 @@ export class Host {
         this.wakeSupported = data.wakeSupported === true;
         // Backend flag: this host is the very machine MoonlightWeb runs on.
         this.isLocalHost = data.isLocalHost === true;
+
+        // Which backend drives this host. Empty for a plain GameStream host,
+        // which is the default and what every Sunshine card stays. The token is
+        // never sent to the browser — backendConfigured only says one is stored.
+        this.backendType = data.backendType || '';
+        this.backendApiUrl = data.backendApiUrl || '';
+        this.backendConfigured = data.backendConfigured === true;
     }
 
     get isOnline() {

@@ -97,7 +97,9 @@
         "enableInternetLink": "enable internet access",
         "stopSession": "Stop session",
         "stopSessionWorking": "Stopping...",
-        "stopSessionConfirm": "Stop the running app on this host? Anyone streaming from it, including invited players, will be disconnected."
+        "stopSessionConfirm": "Stop the running app on this host? Anyone streaming from it, including invited players, will be disconnected.",
+        "backendSetup": "Set up backend…",
+        "backendManage": "Backend: {type}"
     },
     "selfStream": {
         "title": "Streaming your own PC?",
@@ -600,5 +602,22 @@
         "endedTitle": "The session is over",
         "endedBody": "Your host stopped the game, so the stream stopped with it. Nothing broke - you were just unplugged.",
         "endedHint": "Give them a ring and ask for a new link."
+    },
+    "backend": {
+        "title": "Backend for {name}",
+        "instruction": "Point MoonlightWeb at this host’s control API. Saving pairs straight away, so players never have to enter a PIN.",
+        "type": "Backend type",
+        "apiUrl": "Control API URL",
+        "apiToken": "API token",
+        "tokenPlaceholder": "Token expected by the API",
+        "tokenKeep": "Leave empty to keep the stored token",
+        "ready": "Saving will register the backend and pair with it.",
+        "pairing": "Registering and pairing…",
+        "paired": "Registered and paired.",
+        "failed": "Could not register this backend.",
+        "urlRequired": "A control API URL is required.",
+        "typesFailed": "Could not load the list of backend types.",
+        "removing": "Removing…",
+        "remove": "Stop managing"
     }
 }

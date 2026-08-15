@@ -675,6 +675,42 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     color: var(--text-2);
     line-height: 1.5;
 }
+/* Backend management dialog — reuses .pairing-overlay/.pairing-dialog, but its
+   content is a form, so it reads left-aligned and needs a little more width. */
+.backend-dialog {
+    max-width: 460px;
+    text-align: left;
+}
+.backend-field {
+    display: block;
+    margin-bottom: var(--space-4);
+}
+.backend-field > span {
+    display: block;
+    margin-bottom: var(--space-1);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}
+.backend-field input,
+.backend-field select {
+    width: 100%;
+    padding: var(--space-2);
+    background-color: var(--surface-1);
+    color: var(--text-1);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    border-radius: 0;
+    font-size: var(--fs-sm);
+    font-family: inherit;
+}
+.backend-field input:disabled,
+.backend-field select:disabled {
+    opacity: 0.6;
+}
+.backend-status-text {
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+}
+
 /* Self-stream ("Inception") warning — the "reach me from elsewhere" URL. */
 .self-stream-url {
     margin-bottom: var(--space-5);

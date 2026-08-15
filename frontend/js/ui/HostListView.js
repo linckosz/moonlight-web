@@ -30,6 +30,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Host } from '../models/Host.js';
 import { App } from '../models/App.js';
 import { PairDialog } from './PairDialog.js';
+import { BackendDialog } from './BackendDialog.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
@@ -232,6 +233,16 @@ export class HostListView {
                         this._closeAllMenus();
                         this.refresh();
                     });
+                return;
+            }
+
+            const backendBtn = e.target.closest('.btn-backend');
+            if (backendBtn) {
+                this._closeAllMenus();
+                const host = this.hosts.find((h) => h.uuid === backendBtn.dataset.uuid);
+                if (host) {
+                    new BackendDialog(host, { onSaved: () => this.refresh() }).show();
+                }
                 return;
             }
 
@@ -844,6 +855,11 @@ export class HostListView {
                                     ? `<button class="host-menu-item btn-stop-session" data-uuid="${host.uuid}">${t('hosts.stopSession')}</button>`
                                     : ''
                             }
+                            <button class="host-menu-item btn-backend" data-uuid="${host.uuid}">${
+                                host.backendType
+                                    ? t('hosts.backendManage', { type: host.backendType })
+                                    : t('hosts.backendSetup')
+                            }</button>
                             <button class="host-menu-item btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
                         </div>
                     </div>

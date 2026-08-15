@@ -65,8 +65,13 @@ public:
     /// belong to ComputerManager, exactly as they do on the Sunshine path.
     using PairingCommit = std::function<void(const QByteArray& serverCertPem)>;
 
+    /// @param apiUrl   Base URL of the authenticated proxy fronting Wolf's Unix
+    ///                 socket, e.g. "http://192.168.1.50:8080".
+    /// @param apiToken Bearer token that proxy expects; may be empty when the
+    ///                 proxy authenticates some other way.
     WolfBackend(QString hostUuid, HostResolver resolver, NvHTTP* http, QNetworkAccessManager* nam,
-                WolfApiClient* api, PairingCommit commit, QObject* parent = nullptr);
+                const QString& apiUrl, const QString& apiToken, PairingCommit commit,
+                QObject* parent = nullptr);
     ~WolfBackend() override;
 
     QString type() const override { return QStringLiteral("wolf"); }
@@ -108,8 +113,10 @@ private:
 
     QString m_HostUuid;
     HostResolver m_ResolveHost;
-    WolfApiClient* m_Api = nullptr;
     PairingCommit m_Commit;
+
+    // Owned through the QObject parent-child relation (parent is this).
+    WolfApiClient* m_Api = nullptr;
 
     // Media half. Owned, and every GameStream call is forwarded to it.
     std::unique_ptr<GameStreamBackend> m_GameStream;

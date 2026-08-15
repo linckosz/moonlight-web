@@ -97,7 +97,9 @@
         "enableInternetLink": "activer l'accès Internet",
         "stopSession": "Arrêter la session",
         "stopSessionWorking": "Arrêt...",
-        "stopSessionConfirm": "Arrêter l'application en cours sur cet hôte ? Toute personne qui streame dessus, joueurs invités compris, sera déconnectée."
+        "stopSessionConfirm": "Arrêter l'application en cours sur cet hôte ? Toute personne qui streame dessus, joueurs invités compris, sera déconnectée.",
+        "backendSetup": "Configurer le backend…",
+        "backendManage": "Backend : {type}"
     },
     "selfStream": {
         "title": "Streamer ton propre PC ?",
@@ -600,5 +602,22 @@
         "endedTitle": "La session est terminée",
         "endedBody": "Ton hôte a arrêté le jeu, et le flux s'est arrêté avec lui. Rien n'est cassé — on t'a juste débranché.",
         "endedHint": "Passe-lui un coup de fil et demande un nouveau lien."
+    },
+    "backend": {
+        "title": "Backend de {name}",
+        "instruction": "Indiquez à MoonlightWeb l’API de contrôle de cet hôte. L’enregistrement appaire immédiatement, afin qu’aucun joueur n’ait à saisir de PIN.",
+        "type": "Type de backend",
+        "apiUrl": "URL de l’API de contrôle",
+        "apiToken": "Jeton d’API",
+        "tokenPlaceholder": "Jeton attendu par l’API",
+        "tokenKeep": "Laisser vide pour conserver le jeton enregistré",
+        "ready": "L’enregistrement déclenchera l’appairage.",
+        "pairing": "Enregistrement et appairage…",
+        "paired": "Enregistré et appairé.",
+        "failed": "Impossible d’enregistrer ce backend.",
+        "urlRequired": "Une URL d’API de contrôle est requise.",
+        "typesFailed": "Impossible de charger la liste des types de backend.",
+        "removing": "Retrait…",
+        "remove": "Ne plus gérer"
     }
 }

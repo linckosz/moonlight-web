@@ -200,6 +200,25 @@ export class BackendClient {
     static async getAppList(hostId) {
         return this.get(`/api/hosts/${hostId}/apps`);
     }
+    /** Backend types this server can drive, so the UI never hardcodes them. */
+    static async getBackendTypes() {
+        return this.get('/api/backends');
+    }
+    /**
+     * Declare which backend drives a host, then pair it. Answers only once the
+     * pairing has settled, so give it room: the handshake talks to the host.
+     *
+     * Omit apiToken to keep the stored one — the browser is never sent it back,
+     * so this is how the URL gets fixed without retyping the secret.
+     */
+    static async setHostBackend(hostId, { type, apiUrl, apiToken }) {
+        const body = { type, apiUrl };
+        if (apiToken) body.apiToken = apiToken;
+        return this.post(`/api/hosts/${hostId}/backend`, body, { timeoutMs: 90000 });
+    }
+    static async clearHostBackend(hostId) {
+        return this.del(`/api/hosts/${hostId}/backend`);
+    }
     /**
      * Per-browser Sunshine client unique ID, persisted in localStorage.
      * Each browser gets its own 16-hex-char ID so Sunshine treats their
