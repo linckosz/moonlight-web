@@ -36,11 +36,21 @@ class WolfApiClient;
  * reimplemented — this composes a GameStreamBackend and forwards to it. What
  * Wolf changes is *identity* and *pairing*.
  *
- * **Identity.** Wolf keys a running session by client certificate, so two
- * players arriving under one identity would land in the same session: player B
- * would take over player A's screen. A seat here is therefore a client
- * identity, derived from the device session id and pinned into
- * LaunchRequest::clientUniqueId, which GameStreamBackend already honours.
+ * **Identity — incomplete, read this before relying on it.** Wolf resolves the
+ * client from its *TLS certificate* (rest/servers.cpp get_client_if_paired →
+ * get_client_cert), and keys a running session on it
+ * (get_session_by_client). The uniqueid only ever keys the pairing cache
+ * (uniqueid + "@" + client_ip).
+ *
+ * seatIdFor() therefore pins LaunchRequest::clientUniqueId, which is *not* what
+ * Wolf keys sessions on. As long as MoonlightWeb presents one global client
+ * certificate (IdentityManager is a single-identity singleton), every seat looks
+ * like the same Wolf client and a second player's launch resumes the first
+ * player's session instead of starting their own.
+ *
+ * Real isolation needs one certificate per seat — cheap to pair now that
+ * pairing needs no human, and Session.cpp already passes clientCert/clientKey
+ * per call. Until that lands, treat this backend as single-player.
  *
  * **Pairing.** Wolf parks phase 1 on an unresolved `user_pin` promise and never
  * answers until someone supplies the PIN. Since MoonlightWeb is the Moonlight
@@ -76,11 +86,15 @@ public:
 
     QString type() const override { return QStringLiteral("wolf"); }
 
-    /// Concurrent independent sessions and native co-op, but no provisioning:
-    /// profiles are created by users inside Wolf UI, not conjured by us.
+    /// Native co-op, but no provisioning: profiles are created by users inside
+    /// Wolf UI, not conjured by us.
+    ///
+    /// multiUser stays false until seats get their own client certificates.
+    /// Claiming it now would invite callers to hand out concurrent seats that
+    /// Wolf would collapse onto one session — see the identity note above.
     BackendCapabilities capabilities() const override
     {
-        return BackendCapabilities{/*multiUser*/ true, /*provisioning*/ false, /*lobbies*/ true};
+        return BackendCapabilities{/*multiUser*/ false, /*provisioning*/ false, /*lobbies*/ true};
     }
 
     void ensurePaired(BackendVoidCallback cb) override;
@@ -103,9 +117,11 @@ private:
     /// and picks the secret that was not already pending when we started.
     void announcePin(const QString& pin, const QSet<QString>& knownSecrets, int attemptsLeft);
 
-    /// Wolf keys sessions by certificate, so a seat is an identity string. It
-    /// must be stable for a given device session or the player loses their
-    /// running session on reconnect.
+    /// A stable per-device-session identity string. Stable matters: a returning
+    /// device must land on its own seat rather than a fresh one.
+    ///
+    /// This currently only reaches Wolf as the pairing-cache uniqueid, not as
+    /// the session key — see the identity note on the class.
     static QString seatIdFor(const QString& deviceSessionId);
 
     /// Copy of `req` with clientUniqueId forced to the seat identity.
