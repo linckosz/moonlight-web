@@ -106,7 +106,8 @@ public:
 
     void launch(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb) override;
     void resume(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb) override;
-    void quit(const QString& seatId, BackendVoidCallback cb) override;
+    void quit(const QString& seatId, const QString& clientUniqueId,
+              BackendVoidCallback cb) override;
 
     void provisionSeat(const QJsonObject& params, BackendSeatCallback cb) override;
     void teardownSeat(const QString& seatId, BackendVoidCallback cb) override;
