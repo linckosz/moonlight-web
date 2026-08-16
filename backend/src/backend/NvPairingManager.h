@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "IdentityManager.h"
+
 #include <QString>
 #include <QByteArray>
 #include <QNetworkAccessManager>
@@ -54,8 +56,16 @@ public:
         INIT_ALREADY_IN_PROGRESS
     };
 
+    /// @param identity Which client identity to pair. Default-constructed means
+    ///                  the global one, which is what every Sunshine pairing uses.
+    ///                  A per-seat identity is what makes Wolf treat seats as
+    ///                  distinct clients.
+    /// @param uniqueId  Overrides the uniqueid sent upstream. Wolf's pairing
+    ///                  cache is keyed on uniqueid + "@" + client_ip, so two
+    ///                  seats pairing from one machine must not share it.
     NvPairingManager(const QString& appVersion, const QString& host, quint16 httpPort,
-                     quint16 httpsPort);
+                     quint16 httpsPort, ClientIdentity identity = {},
+                     const QString& uniqueId = QString());
     ~NvPairingManager();
 
     // Owns raw OpenSSL handles (X509*/EVP_PKEY*) and a QNetworkAccessManager*
@@ -99,6 +109,11 @@ private:
     QString m_Host;
     quint16 m_HttpPort;
     quint16 m_HttpsPort;
+
+    // The identity actually presented, so every stage uses the same one.
+    QByteArray m_CertPem;
+    QByteArray m_KeyPem;
+    QString m_UniqueId;
 
     X509* m_Cert = nullptr;
     EVP_PKEY* m_PrivateKey = nullptr;
