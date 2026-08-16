@@ -104,6 +104,19 @@ void RestRouter::postAsync(const QString& path, AsyncRouteHandler handler)
     }
 }
 
+void RestRouter::delAsync(const QString& path, AsyncRouteHandler handler)
+{
+    if (path.contains(':')) {
+        ParamRoute r;
+        r.method = "DELETE";
+        r.segments = path.split('/', Qt::SkipEmptyParts);
+        r.handler = std::move(handler);
+        m_ParamRoutes.append(std::move(r));
+    } else {
+        m_Routes[routeKey("DELETE", path)] = std::move(handler);
+    }
+}
+
 bool RestRouter::matchParamRoute(const QStringList& pathSegments, const ParamRoute& route,
                                  QMap<QString, QString>& outParams) const
 {

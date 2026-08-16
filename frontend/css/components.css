@@ -727,6 +727,53 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     color: var(--accent, #35c98f);
     opacity: 1;
 }
+.backend-seats {
+    margin-bottom: var(--space-4);
+    border-top: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    padding-top: var(--space-3);
+}
+.backend-seats-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-2);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}
+.backend-seat {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: var(--space-1) 0;
+    font-size: var(--fs-sm);
+}
+.backend-seat-name {
+    color: var(--text-1);
+    /* Wolf names a seat by its client id, which is long and has no spaces. */
+    overflow-wrap: anywhere;
+}
+.backend-seat-meta {
+    color: var(--text-2);
+    margin-left: auto;
+    white-space: nowrap;
+}
+.backend-seats-empty {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}
+.btn-seat-add,
+.btn-seat-remove {
+    background: none;
+    border: none;
+    color: var(--text-2);
+    cursor: pointer;
+    font-size: var(--fs-sm);
+    padding: 0 var(--space-1);
+}
+.btn-seat-add:hover,
+.btn-seat-remove:hover {
+    color: var(--text-1);
+}
 
 /* Self-stream ("Inception") warning — the "reach me from elsewhere" URL. */
 .self-stream-url {

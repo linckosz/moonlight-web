@@ -228,6 +228,21 @@ export class BackendClient {
         return this.get(`/api/hosts/${hostId}/backend`);
     }
     /**
+     * Seats as the host's backend defines them: a Windows account plus its
+     * Apollo on MultiSeat, a paired client on Wolf, the host itself on a plain
+     * GameStream host.
+     */
+    static async getHostSeats(hostId) {
+        return this.get(`/api/hosts/${hostId}/seats`);
+    }
+    /** Only meaningful where capabilities.provisioning is true. */
+    static async provisionHostSeat(hostId, params) {
+        return this.post(`/api/hosts/${hostId}/seats`, params, { timeoutMs: 120000 });
+    }
+    static async teardownHostSeat(hostId, seatId) {
+        return this.del(`/api/hosts/${hostId}/seats/${seatId}`);
+    }
+    /**
      * Per-browser Sunshine client unique ID, persisted in localStorage.
      * Each browser gets its own 16-hex-char ID so Sunshine treats their
      * sessions independently (one browser won't cancel/take over another's).

@@ -1221,6 +1221,110 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
         });
 }
 
+namespace {
+
+QJsonObject seatToJson(const SeatRef& seat)
+{
+    return QJsonObject{{"id", seat.id},
+                       {"name", seat.name},
+                       {"address", seat.address},
+                       {"httpPort", seat.httpPort},
+                       {"httpsPort", seat.httpsPort},
+                       {"busy", seat.busy}};
+}
+
+/// Answer a backend failure the way the rest of the API does, mapping the
+/// interface's error kinds onto the statuses the frontend already handles.
+HttpResponse backendFailure(const BackendError& err)
+{
+    int status = 502;
+    switch (err.kind) {
+    case BackendError::NotFound:
+        status = 404;
+        break;
+    case BackendError::Unsupported:
+        // The backend is fine; it just does not offer this. Distinct from a
+        // failure so the UI can hide the control rather than show an error.
+        status = 501;
+        break;
+    case BackendError::NotPaired:
+        status = 401;
+        break;
+    case BackendError::Timeout:
+        status = 504;
+        break;
+    default:
+        break;
+    }
+    return HttpResponse::json({{"status", "error"}, {"message", err.message}}, status);
+}
+
+} // namespace
+
+void ComputerManager::handleListSeats(const QString& uuid, ResponseCallback respond)
+{
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+
+    backend->listSeats([respond = std::move(respond), backend](bool ok, const BackendError& err,
+                                                               const QVector<SeatRef>& seats) {
+        if (!ok) {
+            respond(backendFailure(err));
+        } else {
+            QJsonArray arr;
+            for (const SeatRef& seat : seats) {
+                arr.append(seatToJson(seat));
+            }
+            respond(HttpResponse::json({{"seats", arr}}));
+        }
+        // Released a turn later: see handleSetBackend for why.
+        QTimer::singleShot(0, [backend]() {});
+    });
+}
+
+void ComputerManager::handleProvisionSeat(const QString& uuid, const QJsonObject& params,
+                                          ResponseCallback respond)
+{
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+
+    backend->provisionSeat(params, [respond = std::move(respond), backend](
+                                       bool ok, const BackendError& err, const SeatRef& seat) {
+        if (!ok) {
+            respond(backendFailure(err));
+        } else {
+            respond(HttpResponse::json({{"status", "ok"}, {"seat", seatToJson(seat)}}, 201));
+        }
+        QTimer::singleShot(0, [backend]() {});
+    });
+}
+
+void ComputerManager::handleTeardownSeat(const QString& uuid, const QString& seatId,
+                                         ResponseCallback respond)
+{
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+
+    backend->teardownSeat(seatId, [respond = std::move(respond), backend](bool ok,
+                                                                          const BackendError& err) {
+        if (!ok) {
+            respond(backendFailure(err));
+        } else {
+            respond(HttpResponse::json({{"status", "ok"}}));
+        }
+        QTimer::singleShot(0, [backend]() {});
+    });
+}
+
 std::pair<int, QJsonObject> ComputerManager::handleGetBackend(const QString& uuid) const
 {
     NvComputer* host = findHostByUuid(uuid);

@@ -621,6 +621,17 @@
         "remove": "Ne plus gérer",
         "capMultiUser": "Sièges concurrents indépendants",
         "capProvisioning": "Sièges créables à la demande",
-        "capLobbies": "Lobbies co-op natifs"
+        "capLobbies": "Lobbies co-op natifs",
+        "seats": "Sièges",
+        "seatsLoading": "Chargement des sièges…",
+        "seatsNone": "Aucun siège pour l’instant.",
+        "seatsUnsupported": "Ce backend n’expose pas de sièges.",
+        "seatBusy": "en cours de stream",
+        "seatAdd": "+ Ajouter",
+        "seatRemove": "Retirer ce siège",
+        "seatRemoving": "Retrait du siège…",
+        "seatAccountPrompt": "Quel compte ce siège doit-il utiliser ?",
+        "seatProvisioning": "Création du siège… cela peut prendre une minute.",
+        "seatProvisioned": "Siège créé."
     }
 }
