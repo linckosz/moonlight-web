@@ -26,12 +26,36 @@ struct evp_pkey_st;
 typedef struct x509_st X509;
 typedef struct evp_pkey_st EVP_PKEY;
 
+/// One client identity: the PEM pair presented to a GameStream host.
+struct ClientIdentity
+{
+    QByteArray certPem;
+    QByteArray keyPem;
+
+    bool isValid() const { return !certPem.isEmpty() && !keyPem.isEmpty(); }
+};
+
 class IdentityManager
 {
 public:
     // PEM certificate and private key bytes
     QByteArray getCertificate();
     QByteArray getPrivateKey();
+
+    /// A distinct identity per seat, minted on first use and persisted.
+    ///
+    /// Wolf resolves a client from its TLS certificate and keys running
+    /// sessions on it, so two seats sharing one certificate share one session —
+    /// player B would take over player A's screen. A seat therefore needs its
+    /// own certificate, and each has to be paired separately (cheap, since
+    /// pairing needs no human).
+    ///
+    /// The default identity is deliberately left alone. Sunshine keys sessions
+    /// by uniqueid and every browser already has its own, so giving plain hosts
+    /// per-seat certificates would force each browser to pair again.
+    ///
+    /// An empty seatId returns the default identity.
+    ClientIdentity identityForSeat(const QString& seatId);
 
     // Unique client ID, persisted in QSettings
     QString getUniqueId();
@@ -48,6 +72,11 @@ private:
 
     void createCredentials();
     void loadOrGenerate();
+
+    /// Mint a fresh self-signed GameStream client identity. Pure: it persists
+    /// nothing and touches no member, so both the default identity and per-seat
+    /// ones are produced by the same code.
+    static ClientIdentity generateIdentity();
 
     QByteArray m_CachedPemCert;
     QByteArray m_CachedPrivateKey;

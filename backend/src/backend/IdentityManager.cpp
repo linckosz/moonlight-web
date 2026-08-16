@@ -98,7 +98,7 @@ void IdentityManager::loadOrGenerate()
     }
 }
 
-void IdentityManager::createCredentials()
+ClientIdentity IdentityManager::generateIdentity()
 {
     // Generate RSA 2048-bit keypair
     EVP_PKEY* pk = EVP_RSA_gen(2048);
@@ -128,13 +128,15 @@ void IdentityManager::createCredentials()
 
     X509_sign(cert, pk, EVP_sha256());
 
+    ClientIdentity identity;
+
     // Export private key PEM
     BIO* biokey = BIO_new(BIO_s_mem());
     PEM_write_bio_PrivateKey(biokey, pk, nullptr, nullptr, 0, nullptr, nullptr);
 
     BUF_MEM* mem;
     BIO_get_mem_ptr(biokey, &mem);
-    m_CachedPrivateKey = QByteArray(mem->data, static_cast<int>(mem->length));
+    identity.keyPem = QByteArray(mem->data, static_cast<int>(mem->length));
     BIO_free(biokey);
 
     // Export certificate PEM
@@ -142,11 +144,20 @@ void IdentityManager::createCredentials()
     PEM_write_bio_X509(biocert, cert);
 
     BIO_get_mem_ptr(biocert, &mem);
-    m_CachedPemCert = QByteArray(mem->data, static_cast<int>(mem->length));
+    identity.certPem = QByteArray(mem->data, static_cast<int>(mem->length));
     BIO_free(biocert);
 
     X509_free(cert);
     EVP_PKEY_free(pk);
+
+    return identity;
+}
+
+void IdentityManager::createCredentials()
+{
+    const ClientIdentity identity = generateIdentity();
+    m_CachedPemCert = identity.certPem;
+    m_CachedPrivateKey = identity.keyPem;
 
     // Use fixed Moonlight common unique ID to enable cross-client session management
     // (quit games launched by other Moonlight clients on the same host)
@@ -160,6 +171,30 @@ void IdentityManager::createCredentials()
 
     m_CredentialsLoaded = true;
     Logger::info("New identity credentials generated and persisted");
+}
+
+ClientIdentity IdentityManager::identityForSeat(const QString& seatId)
+{
+    if (seatId.isEmpty()) {
+        return ClientIdentity{getCertificate(), getPrivateKey()};
+    }
+
+    // Keyed by seat so the same seat always presents the same certificate --
+    // a returning player must land back in their own session, and on Wolf the
+    // certificate is what decides that.
+    QSettings settings;
+    const QString group = QStringLiteral("seatIdentities/%1/").arg(seatId);
+
+    ClientIdentity identity;
+    identity.certPem = settings.value(group + QStringLiteral("cert")).toByteArray();
+    identity.keyPem = settings.value(group + QStringLiteral("key")).toByteArray();
+    if (identity.isValid()) return identity;
+
+    identity = generateIdentity();
+    settings.setValue(group + QStringLiteral("cert"), identity.certPem);
+    settings.setValue(group + QStringLiteral("key"), identity.keyPem);
+    Logger::info(QStringLiteral("Minted a client identity for seat %1").arg(seatId));
+    return identity;
 }
 
 QByteArray IdentityManager::getCertificate()
