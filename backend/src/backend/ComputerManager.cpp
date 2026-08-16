@@ -23,8 +23,7 @@
 #include "NvPairingManager.h"
 #include "PairingChain.h"
 #include "WolfApiClient.h"
-#include "streambackend/MultiSeatBackend.h"
-#include "streambackend/WolfBackend.h"
+#include "streambackend/StreamBackendSetup.h"
 #include "IdentityManager.h"
 #include "common/Logger.h"
 
@@ -157,70 +156,20 @@ ComputerManager::ComputerManager(QObject* parent)
 
 void ComputerManager::registerStreamBackends()
 {
-    // The factory closure holds the app-level dependencies (NvHTTP, the network
-    // access manager, this manager); the JSON config only names the instance.
-    // Adding MultiSeat/Wolf/punktfunk later is one more registerFactory() call.
-    StreamBackendRegistry::instance().registerFactory(
-        QStringLiteral("gamestream"),
-        [this](const QJsonObject& config) -> std::unique_ptr<IStreamBackend> {
-            const QString uuid = config.value(QStringLiteral("hostUuid")).toString();
-            if (uuid.isEmpty()) {
-                Logger::warning(
-                    QStringLiteral("gamestream backend: config is missing 'hostUuid'"));
-                return nullptr;
-            }
-            // No QObject parent: the unique_ptr is the sole owner. Parenting to
-            // this manager as well would double-delete.
-            return std::make_unique<GameStreamBackend>(
-                uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam, nullptr);
+    // The factories live in StreamBackendSetup because the stream worker — a
+    // separate process with no ComputerManager — needs the same ones. Only the
+    // two dependencies that genuinely differ are supplied here.
+    StreamBackendSetup::registerAll(
+        m_Http, m_Nam, [this](const QString& uuid) { return findHostByUuid(uuid); },
+        [this](const QString& uuid, const QByteArray& serverCertPem) {
+            NvComputer* host = findHostByUuid(uuid);
+            if (!host) return;
+            host->serverCertPem = serverCertPem;
+            host->pairState = NvComputer::PS_PAIRED;
+            host->state = NvComputer::CS_ONLINE;
+            saveHosts();
+            emit hostsChanged();
         });
-
-    StreamBackendRegistry::instance().registerFactory(
-        QStringLiteral("wolf"),
-        [this](const QJsonObject& config) -> std::unique_ptr<IStreamBackend> {
-            const QString uuid = config.value(QStringLiteral("hostUuid")).toString();
-            if (uuid.isEmpty()) {
-                Logger::warning(QStringLiteral("wolf backend: config is missing 'hostUuid'"));
-                return nullptr;
-            }
-
-            return std::make_unique<WolfBackend>(
-                uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam,
-                config.value(QStringLiteral("apiUrl")).toString(),
-                config.value(QStringLiteral("apiToken")).toString(),
-                // The backend performs the handshake; what a pairing *means* for
-                // a host stays here, exactly as on the Sunshine path.
-                [this, uuid](const QByteArray& serverCertPem) {
-                    NvComputer* host = findHostByUuid(uuid);
-                    if (!host) return;
-                    host->serverCertPem = serverCertPem;
-                    host->pairState = NvComputer::PS_PAIRED;
-                    host->state = NvComputer::CS_ONLINE;
-                    saveHosts();
-                    emit hostsChanged();
-                },
-                nullptr);
-        });
-
-    StreamBackendRegistry::instance().registerFactory(
-        QStringLiteral("multiseat"),
-        [this](const QJsonObject& config) -> std::unique_ptr<IStreamBackend> {
-            const QString uuid = config.value(QStringLiteral("hostUuid")).toString();
-            if (uuid.isEmpty()) {
-                Logger::warning(QStringLiteral("multiseat backend: config is missing 'hostUuid'"));
-                return nullptr;
-            }
-
-            // No pairing commit: MultiSeat's control API is key-authenticated,
-            // so there is no certificate to write back to the host.
-            return std::make_unique<MultiSeatBackend>(
-                uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam,
-                config.value(QStringLiteral("apiUrl")).toString(),
-                config.value(QStringLiteral("apiToken")).toString(), nullptr);
-        });
-
-    Logger::info(QStringLiteral("Stream backends registered: [%1]")
-                     .arg(StreamBackendRegistry::instance().knownTypes().join(QStringLiteral(", "))));
 }
 
 std::unique_ptr<IStreamBackend> ComputerManager::backendForHost(const QString& uuid) const
