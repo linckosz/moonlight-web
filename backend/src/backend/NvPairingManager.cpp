@@ -44,21 +44,32 @@
 #define PAIRING_PIN_WAIT_MS 60000 // Stage 1 blocks until user enters PIN in Sunshine
 
 NvPairingManager::NvPairingManager(const QString& appVersion, const QString& host, quint16 httpPort,
-                                   quint16 httpsPort)
+                                   quint16 httpsPort, ClientIdentity identity,
+                                   const QString& uniqueId)
     : m_ServerVersion(appVersion.toUtf8())
     , m_Host(host)
     , m_HttpPort(httpPort)
     , m_HttpsPort(httpsPort)
 {
+    // An invalid identity means "the global one" — the Sunshine path passes
+    // nothing and must behave exactly as it always has.
+    if (!identity.isValid()) {
+        identity = ClientIdentity{IdentityManager::get()->getCertificate(),
+                                  IdentityManager::get()->getPrivateKey()};
+    }
+    m_CertPem = identity.certPem;
+    m_KeyPem = identity.keyPem;
+    m_UniqueId = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
+
     // Load client cert
-    QByteArray certPem = IdentityManager::get()->getCertificate();
+    QByteArray certPem = m_CertPem;
     BIO* bio = BIO_new_mem_buf(certPem.data(), certPem.size());
     m_Cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
     if (!m_Cert) throw std::runtime_error("Unable to load client certificate");
 
     // Load private key
-    QByteArray keyPem = IdentityManager::get()->getPrivateKey();
+    QByteArray keyPem = m_KeyPem;
     bio = BIO_new_mem_buf(keyPem.data(), keyPem.size());
     m_PrivateKey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
     BIO_free(bio);
@@ -98,7 +109,7 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
     url.setPort(scheme == "https" ? m_HttpsPort : m_HttpPort);
     url.setPath("/" + command);
 
-    QString query = "uniqueid=" + IdentityManager::get()->getUniqueId() +
+    QString query = "uniqueid=" + m_UniqueId +
                     "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     if (!arguments.isEmpty()) query += "&" + arguments;
     url.setQuery(query);
@@ -114,10 +125,9 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
 
     if (scheme == "https") {
         // Mutual TLS: present client certificate as expected by Sunshine
-        auto* identity = IdentityManager::get();
         QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
-        ssl.setLocalCertificate(QSslCertificate(identity->getCertificate(), QSsl::Pem));
-        ssl.setPrivateKey(QSslKey(identity->getPrivateKey(), QSsl::Rsa, QSsl::Pem));
+        ssl.setLocalCertificate(QSslCertificate(m_CertPem, QSsl::Pem));
+        ssl.setPrivateKey(QSslKey(m_KeyPem, QSsl::Rsa, QSsl::Pem));
         ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
         req.setSslConfiguration(ssl);
     }
@@ -278,7 +288,7 @@ void NvPairingManager::initiatePairing(std::function<void(InitResult)> cb)
     m_Salt = generateRandomBytes(16);
 
     QString args = "devicename=roth&updateState=1&phrase=getservercert&salt=" + m_Salt.toHex() +
-                   "&clientcert=" + IdentityManager::get()->getCertificate().toHex();
+                   "&clientcert=" + m_CertPem.toHex();
 
     openConnection(
         "http", "pair", args, PAIRING_PIN_WAIT_MS,
