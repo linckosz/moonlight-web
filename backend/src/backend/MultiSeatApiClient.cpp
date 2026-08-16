@@ -62,6 +62,8 @@ MultiSeatSeat MultiSeatApiClient::parseSeat(const QJsonObject& obj)
     seat.fps = obj.value(QStringLiteral("fps")).toInt();
     seat.portBase = obj.value(QStringLiteral("portBase")).toInt();
     seat.apolloProcessId = obj.value(QStringLiteral("apolloProcessId")).toInt();
+    seat.errorMessage = obj.value(QStringLiteral("errorMessage")).toString();
+    seat.provisioningStep = obj.value(QStringLiteral("provisioningStep")).toString();
     return seat;
 }
 
@@ -104,12 +106,19 @@ void MultiSeatApiClient::finish(QNetworkReply* reply, RawCallback cb)
 
         if (status < 200 || status >= 300) {
             QString message = QStringLiteral("MultiSeat returned HTTP %1").arg(status);
-            // Minimal-API failures carry an RFC 7807 body; its "detail" says far
-            // more than the status line.
+            // MultiSeat's own failures answer {"error": "..."} — verified
+            // against the live service, whose text is long and genuinely
+            // actionable (which prerequisite to re-run, which registry value to
+            // check). "detail" is the fallback for framework-level failures,
+            // which use RFC 7807 instead.
             const QJsonDocument problem = QJsonDocument::fromJson(body);
             if (problem.isObject()) {
-                const QString detail = problem.object().value(QStringLiteral("detail")).toString();
-                if (!detail.isEmpty()) message = detail;
+                const QJsonObject obj = problem.object();
+                QString upstream = obj.value(QStringLiteral("error")).toString();
+                if (upstream.isEmpty()) {
+                    upstream = obj.value(QStringLiteral("detail")).toString();
+                }
+                if (!upstream.isEmpty()) message = upstream;
             }
             cb(false, MultiSeatApiError::make(MultiSeatApiError::HttpError, message, status),
                problem);
