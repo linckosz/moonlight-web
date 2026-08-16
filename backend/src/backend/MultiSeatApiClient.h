@@ -46,6 +46,17 @@ struct MultiSeatSeat
     int portBase = 0;
     int apolloProcessId = 0;
 
+    /// Why a seat is in Error, straight from the service. Worth surfacing
+    /// rather than reducing to "unusable": MultiSeat writes genuinely
+    /// actionable text here (which prerequisite to re-run, which registry value
+    /// to check), and a seat that failed to provision is the single most likely
+    /// thing an admin will be staring at.
+    QString errorMessage;
+
+    /// How far provisioning got — Session, Display, Audio, Apollo… Read with
+    /// errorMessage, it says which step failed.
+    QString provisioningStep;
+
     /// Apollo's GFE ports for this seat, from Constants.cs. Offsets are -5 and
     /// 0; the rest of the block (video, control, audio, mic, RTSP) is Apollo's
     /// own business and never dialled from here.
