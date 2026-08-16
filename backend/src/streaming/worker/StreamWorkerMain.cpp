@@ -18,6 +18,8 @@
 #include "StreamWorkerMain.h"
 
 #include "../Session.h"
+#include "../../backend/streambackend/StreamBackendRegistry.h"
+#include "../../backend/streambackend/StreamBackendSetup.h"
 #include "../DataChannelRelay.h"
 #include "../MediaTrackRelay.h"
 #include "../StreamRelay.h"
@@ -164,9 +166,27 @@ int runStreamWorker(QCoreApplication& app)
     host->appVersion = cfg["appVersion"].toString();
     host->gfeVersion = cfg["gfeVersion"].toString();
     host->serverCodecModeSupport = cfg["serverCodecModeSupport"].toInt();
+    // Without these a backend's readiness check rejects the host as unpaired.
+    host->pairState = NvComputer::pairStateFromString(cfg["hostPairState"].toString());
+    host->serverCertPem = cfg["hostServerCert"].toString().toUtf8();
 
     auto* nam = new QNetworkAccessManager(&app);
     auto* http = new NvHTTP(nam, &app);
+
+    // This process has no ComputerManager, so it registers the providers itself
+    // with a lookup that only ever knows the one host it was handed, and no
+    // pairing commit — a worker has no host list to write back to.
+    StreamBackendSetup::registerAll(http, nam, [host](const QString&) { return host; }, {});
+
+    QJsonObject backendConfig;
+    backendConfig[QStringLiteral("hostUuid")] = host->uuid;
+    backendConfig[QStringLiteral("apiUrl")] = cfg["backendApiUrl"].toString();
+    backendConfig[QStringLiteral("apiToken")] = cfg["backendApiToken"].toString();
+
+    QString backendType = cfg["backendType"].toString();
+    if (backendType.isEmpty()) backendType = QStringLiteral("gamestream");
+    std::shared_ptr<IStreamBackend> backend(
+        StreamBackendRegistry::instance().create(backendType, backendConfig).release());
 
     // ── The /start HTTP reply is marshalled back to the parent ───────────────
     ResponseCallback respond = [](HttpResponse resp) {
@@ -196,6 +216,7 @@ int runStreamWorker(QCoreApplication& app)
     session->setEnableIceTcp(cfg["iceTcp"].toBool());
     session->setLowAudio(cfg["lowAudio"].toBool());
     session->setMuteHostAudio(cfg["muteHostAudio"].toBool(true));
+    session->setBackend(backend);
     session->setClientUniqueId(cfg["clientUniqueId"].toString());
     session->setPreferResume(cfg["preferResume"].toBool(false));
     session->setClientIsLocal(cfg["clientIsLocal"].toBool());

@@ -27,6 +27,10 @@
 #include "StreamConfig.h"
 #include "../common/Types.h"
 
+#include "../backend/streambackend/IStreamBackend.h"
+
+#include <memory>
+
 class NvHTTP;
 class NvComputer;
 class DataChannelRelay;
@@ -108,6 +112,11 @@ public:
     /// over / cancel another's session. Empty → shared IdentityManager id.
     void setClientUniqueId(const QString& id) { m_ClientUniqueId = id; }
 
+    /// The provider this session launches through. Required: set it before
+    /// start(). It is what decides which host/seat is dialled and, for a
+    /// multi-seat backend, which identity is presented.
+    void setBackend(std::shared_ptr<IStreamBackend> backend) { m_Backend = std::move(backend); }
+
     /// Go straight to /resume instead of /launch. Sunshine rejects /launch
     /// while an app is running ("An app is already running on this host"), so
     /// a standby stream — which by definition joins the LIVE app session —
@@ -149,13 +158,18 @@ signals:
     void sessionFailed(const QString& error);
 
 private slots:
-    void onLaunchReplyFinished();
     void onShimConnectionStarted();
     void onShimConnectionFailed(const QString& error);
 
 private:
-    void doLaunchApp(const QByteArray& clientCert, const QByteArray& clientKey);
-    void doResumeApp(const QByteArray& clientCert, const QByteArray& clientKey);
+    void doLaunchApp();
+    void doResumeApp();
+
+    /// Single landing point for launch and resume, whichever produced it.
+    void onLaunchResult(bool ok, const BackendError& err, const MediaDescriptor& media);
+
+    /// Everything a launch/resume needs, gathered from this session.
+    LaunchRequest buildLaunchRequest() const;
 
     /// Effective Sunshine uniqueid (m_ClientUniqueId or the shared id).
     QString effectiveUniqueId() const;
@@ -168,6 +182,10 @@ private:
     NvComputer* m_Host;
     int m_AppId;
     NvHTTP* m_Http;
+
+    // Owns the launch: kept alive for the whole session because its async
+    // callbacks reference it.
+    std::shared_ptr<IStreamBackend> m_Backend;
     ResponseCallback m_Respond;
     quint16 m_WsPort = 48001;
     QString m_ServerHost;

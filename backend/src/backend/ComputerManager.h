@@ -94,6 +94,11 @@ public:
     // it simply reverts to a plain host.
     std::pair<int, QJsonObject> handleClearBackend(const QString& uuid);
 
+    /// The provider that drives a host: plain GameStream unless the host was
+    /// registered as a Wolf or MultiSeat backend. Callers own the result.
+    /// Public because the stream path builds one per session.
+    std::unique_ptr<IStreamBackend> backendForHost(const QString& uuid) const;
+
     // A host's backend configuration and what that backend can do. Capabilities
     // are read off a real instance rather than a table, so they cannot drift
     // from the provider. Never returns the API token.
@@ -153,7 +158,6 @@ private:
     void registerStreamBackends();
 
     // A provider bound to one host. Returns nullptr for an unknown uuid.
-    std::unique_ptr<IStreamBackend> backendForHost(const QString& uuid) const;
 
     // Resolve a host MAC from the OS ARP cache (Windows). Empty if unavailable.
     static QByteArray resolveMacFromArp(const QString& ip);

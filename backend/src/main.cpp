@@ -2362,6 +2362,10 @@ int main(int argc, char* argv[])
             s->setMuteHostAudio(reqMuteHost);
             s->setClientUniqueId(reqClientUniqueId);
             s->setClientIsLocal(clientIsLocal);
+            // Which provider drives this host: plain GameStream unless it was
+            // registered as a Wolf or MultiSeat backend.
+            s->setBackend(std::shared_ptr<IStreamBackend>(
+                computerManager.backendForHost(host->uuid).release()));
             attachRelayTracking(s);
             // Track the active session so a later take-over can quit() it (stops
             // the SignalingServer first → frees the fixed port). QPointer auto-
@@ -2400,6 +2404,16 @@ int main(int argc, char* argv[])
             cfg["appVersion"] = host->appVersion;
             cfg["gfeVersion"] = host->gfeVersion;
             cfg["serverCodecModeSupport"] = host->serverCodecModeSupport;
+            // Which provider the worker should launch through. Empty means a
+            // plain GameStream host, which is what the worker defaults to.
+            cfg["backendType"] = host->backendType;
+            cfg["backendApiUrl"] = host->backendApiUrl;
+            cfg["backendApiToken"] = host->backendApiToken;
+            // The worker rebuilds a bare NvComputer, and a backend refuses to
+            // dial a host it believes unpaired. The pair state and the server
+            // certificate have to travel with it.
+            cfg["hostPairState"] = NvComputer::pairStateToString(host->pairState);
+            cfg["hostServerCert"] = QString::fromUtf8(host->serverCertPem);
             cfg["appId"] = appId;
             cfg["codec"] = static_cast<int>(effectiveCodec);
             cfg["codecOverridden"] = codecOverridden;
@@ -3038,6 +3052,16 @@ int main(int argc, char* argv[])
             cfg["appVersion"] = host->appVersion;
             cfg["gfeVersion"] = host->gfeVersion;
             cfg["serverCodecModeSupport"] = host->serverCodecModeSupport;
+            // Which provider the worker should launch through. Empty means a
+            // plain GameStream host, which is what the worker defaults to.
+            cfg["backendType"] = host->backendType;
+            cfg["backendApiUrl"] = host->backendApiUrl;
+            cfg["backendApiToken"] = host->backendApiToken;
+            // The worker rebuilds a bare NvComputer, and a backend refuses to
+            // dial a host it believes unpaired. The pair state and the server
+            // certificate have to travel with it.
+            cfg["hostPairState"] = NvComputer::pairStateToString(host->pairState);
+            cfg["hostServerCert"] = QString::fromUtf8(host->serverCertPem);
             cfg["appId"] = appId;
             cfg["codec"] = static_cast<int>(VideoCodec::Auto);
             cfg["codecOverridden"] = false;

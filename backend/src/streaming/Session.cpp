@@ -149,9 +149,14 @@ void StreamSession::start()
     // Generate per-session encryption keys
     m_Config.generateKeys();
 
-    auto* identity = IdentityManager::get();
-    QByteArray clientCert = identity->getCertificate();
-    QByteArray clientKey = identity->getPrivateKey();
+    if (!m_Backend) {
+        // A programming error, not a user-facing condition: every construction
+        // site sets a backend before start().
+        m_Respond(HttpResponse::error(500, "No stream backend for this session"));
+        emit sessionFailed("No stream backend");
+        deleteLater();
+        return;
+    }
 
     // Start the app without force-quitting other sessions.
     //
@@ -168,9 +173,9 @@ void StreamSession::start()
     if (m_PreferResume || s_ActiveUniqueIds.contains(effectiveUniqueId())) {
         qInfo() << "[Session] Resuming (preferResume=" << m_PreferResume << ") on" << m_Host->name
                 << m_Host->activeAddress.address();
-        doResumeApp(clientCert, clientKey);
+        doResumeApp();
     } else {
-        doLaunchApp(clientCert, clientKey);
+        doLaunchApp();
     }
 }
 
@@ -179,18 +184,42 @@ QString StreamSession::effectiveUniqueId() const
     return m_ClientUniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : m_ClientUniqueId;
 }
 
-void StreamSession::doResumeApp(const QByteArray& clientCert, const QByteArray& clientKey)
+LaunchRequest StreamSession::buildLaunchRequest() const
+{
+    LaunchRequest req;
+    req.appId = m_AppId;
+    req.width = m_StreamWidth;
+    req.height = m_StreamHeight;
+    req.fps = m_StreamFps;
+    req.bitrateKbps = m_StreamBitrateKbps;
+    req.hdrEnabled = m_Config.hdrEnabled;
+    req.muteHostAudio = m_Config.muteHostAudio;
+    req.rikey = m_Config.rikey;
+    req.rikeyid = m_Config.rikeyid;
+    // Empty means "the provider's default identity"; effectiveUniqueId() would
+    // resolve it here and rob a multi-seat backend of the chance to substitute
+    // the seat's own.
+    req.clientUniqueId = m_ClientUniqueId;
+    return req;
+}
+
+void StreamSession::doResumeApp()
 {
     qInfo() << "[Session] Resuming session on" << m_Host->name << "appid=" << m_AppId;
     m_ResumeAttempted = true;
-    m_LaunchReply = m_Http->resumeAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort,
-                                           effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
-                                           clientCert, clientKey, m_Config.muteHostAudio ? 0 : 1);
 
-    connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
+    QPointer<StreamSession> self(this);
+    m_Backend->resume(m_Host->uuid, buildLaunchRequest(),
+                      [self](bool ok, const BackendError& err, const MediaDescriptor& media) {
+                          // The backend answers through a plain std::function, which
+                          // — unlike a Qt connection — does not detach when this
+                          // object dies mid-request.
+                          if (!self) return;
+                          self->onLaunchResult(ok, err, media);
+                      });
 }
 
-void StreamSession::doLaunchApp(const QByteArray& clientCert, const QByteArray& clientKey)
+void StreamSession::doLaunchApp()
 {
     qDebug() << "[Session] Launching app" << m_AppId << "on" << m_Host->name;
     qDebug() << "[Session]   address:" << m_Host->activeAddress.address()
@@ -200,14 +229,13 @@ void StreamSession::doLaunchApp(const QByteArray& clientCert, const QByteArray& 
              << "hdr:" << m_Config.hdrEnabled;
 
     m_LaunchAttempted = true;
-    m_LaunchReply = m_Http->launchAppAsync(m_Host->activeAddress, m_Host->activeHttpsPort, m_AppId,
-                                           effectiveUniqueId(), m_Config.rikey, m_Config.rikeyid,
-                                           m_StreamWidth, m_StreamHeight, m_StreamFps,
-                                           m_StreamBitrateKbps, clientCert, clientKey,
-                                           m_Config.hdrEnabled ? 1 : 0,     // hdrMode: 1=HDR, 0=SDR
-                                           m_Config.muteHostAudio ? 0 : 1); // localAudioPlayMode
 
-    connect(m_LaunchReply, &QNetworkReply::finished, this, &StreamSession::onLaunchReplyFinished);
+    QPointer<StreamSession> self(this);
+    m_Backend->launch(m_Host->uuid, buildLaunchRequest(),
+                      [self](bool ok, const BackendError& err, const MediaDescriptor& media) {
+                          if (!self) return;
+                          self->onLaunchResult(ok, err, media);
+                      });
 }
 
 void StreamSession::quit()
@@ -307,80 +335,60 @@ void StreamSession::quit()
     qInfo() << "[Session::quit] EXIT";
 }
 
-void StreamSession::onLaunchReplyFinished()
+void StreamSession::onLaunchResult(bool ok, const BackendError& err, const MediaDescriptor& media)
 {
-    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
-
-    reply->deleteLater();
-    m_LaunchReply = nullptr;
-
     // Drop the launch/resume TLS socket now: leaving it pooled ~120s would hold
     // Sunshine's single-threaded HTTPS server and block new iOS/Qt connections
     // for the whole stream. Polling is suspended during a stream, so this is safe.
     m_Http->dropPooledConnections();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        int code = static_cast<int>(reply->error());
-        qWarning() << "[Session] Launch error code:" << code << "-" << reply->errorString();
+    if (!ok) {
+        qWarning() << "[Session] Launch failed:" << err.message << "kind=" << int(err.kind)
+                   << "status=" << err.httpStatus;
 
-        // A /launch that TIMES OUT (Sunshine never answers) almost always means
+        // A /launch that TIMES OUT (the host never answers) almost always means
         // it still holds a half-torn-down session from a just-cancelled stream:
         // the app is "running", so /launch blocks instead of erroring. The
-        // XML-rejection self-heal below can't help — a timeout yields no body to
-        // parse. Cancel our own session once (keyed by our uniqueid, so it never
-        // touches another client's), then relaunch. Bounded to a single retry.
-        if (reply->error() == QNetworkReply::TimeoutError && m_LaunchAttempted &&
-            !m_ResumeAttempted && !m_LaunchTimeoutRetried) {
+        // rejection self-heal below cannot help — a timeout yields no answer to
+        // read. Cancel our own session once, scoped to our uniqueid so it never
+        // touches another client's, then relaunch. Bounded to a single retry.
+        if (err.kind == BackendError::Timeout && m_LaunchAttempted && !m_ResumeAttempted &&
+            !m_LaunchTimeoutRetried) {
             m_LaunchTimeoutRetried = true;
             qWarning() << "[Session] Launch timed out — cancelling stale session and retrying "
                           "/launch once";
-            auto* identity = IdentityManager::get();
-            QNetworkReply* cancelReply = m_Http->quitAppAsync(
-                m_Host->activeAddress, m_Host->activeHttpsPort, identity->getCertificate(),
-                identity->getPrivateKey(), effectiveUniqueId());
-            connect(cancelReply, &QNetworkReply::finished, this, [this, cancelReply, identity]() {
-                cancelReply->deleteLater();
-                doLaunchApp(identity->getCertificate(), identity->getPrivateKey());
-            });
+            QPointer<StreamSession> self(this);
+            m_Backend->quit(m_Host->uuid, effectiveUniqueId(),
+                            [self](bool, const BackendError&) {
+                                if (self) self->doLaunchApp();
+                            });
             return;
         }
 
-        QString detail = QString("Launch failed: [code=%1] %2 (target: %3:%4)")
-                             .arg(code)
-                             .arg(reply->errorString())
-                             .arg(m_Host->activeAddress.address())
-                             .arg(m_Host->activeHttpsPort);
-        m_Respond(HttpResponse::error(502, detail));
-        emit sessionFailed(reply->errorString());
-        deleteLater();
-        return;
-    }
-
-    QByteArray data = reply->readAll();
-    QString xml = QString::fromUtf8(data);
-
-    try {
-        NvHTTP::verifyResponseStatus(xml);
-    } catch (const std::runtime_error& e) {
         // The registry hint can be stale (orphaned session after a backend
-        // restart, or a cleared entry whose Sunshine session is gone). Self-heal
-        // by trying the other path once. Both are keyed by our uniqueid, so a
+        // restart, or a cleared entry whose host session is gone). Self-heal by
+        // trying the other verb once. Both are keyed by our uniqueid, so a
         // /resume can only reconnect to OUR session, never another client's.
-        auto* identity = IdentityManager::get();
-        if (!m_ResumeAttempted) {
-            qWarning() << "[Session] Launch rejected (" << e.what()
-                       << ") — falling back to /resume for our uniqueid";
-            doResumeApp(identity->getCertificate(), identity->getPrivateKey());
-            return;
+        //
+        // Protocol also covers a 2xx that carried no session URL. That is
+        // vanishingly rare, and one extra attempt of the other verb is harmless
+        // self-healing rather than a wrong answer.
+        if (err.kind == BackendError::Protocol) {
+            if (!m_ResumeAttempted) {
+                qWarning() << "[Session] Launch rejected (" << err.message
+                           << ") — falling back to /resume for our uniqueid";
+                doResumeApp();
+                return;
+            }
+            if (!m_LaunchAttempted) {
+                qWarning() << "[Session] Resume rejected (" << err.message
+                           << ") — falling back to /launch";
+                s_ActiveUniqueIds.remove(effectiveUniqueId()); // stale hint
+                doLaunchApp();
+                return;
+            }
         }
-        if (!m_LaunchAttempted) {
-            qWarning() << "[Session] Resume rejected (" << e.what()
-                       << ") — falling back to /launch";
-            s_ActiveUniqueIds.remove(effectiveUniqueId()); // stale hint
-            doLaunchApp(identity->getCertificate(), identity->getPrivateKey());
-            return;
-        }
+
         // Sunshine 503 = the host could not initialize video capture/encoding.
         // Almost always a display problem on the HOST: no display connected, or
         // the session is locked with the screen asleep — a blanked output stops
@@ -388,49 +396,49 @@ void StreamSession::onLaunchReplyFinished()
         // and Sunshine's encoder probe fails. On macOS it can also be a missing
         // Screen Recording permission. Surface a clear, actionable message
         // instead of the opaque "502 Launch error: HTTP 503".
-        QString reason = QString::fromUtf8(e.what());
-        if (reason.contains("503")) {
+        if (err.httpStatus == 503 || err.message.contains(QStringLiteral("503"))) {
             // Machine-readable `code` lets the frontend show an explicit dialog
             // instead of a plain toast. `local_host` + `local_os` tell it whose
             // machine failed: the repair buttons it offers (open the macOS
             // privacy pane, restart Sunshine) act on the machine running
             // MoonlightWeb, so they are only ever right when the failing host
             // IS that machine — on a remote host they would poke the wrong PC.
-            QJsonObject err;
-            err["error"] =
+            QJsonObject errObj;
+            errObj["error"] =
                 QString("Host \"%1\" could not start video capture. On that machine, make "
                         "sure a display is connected and awake (a locked session with the "
                         "screen asleep has nothing to capture) or use an HDMI dummy plug. "
                         "On macOS, also grant Sunshine the \"Screen Recording\" permission "
                         "in System Settings > Privacy & Security, then restart Sunshine.")
                     .arg(m_Host->name);
-            err["code"] = QStringLiteral("video_capture_failed");
-            err["status"] = 503;
-            err["local_host"] = m_Host->isLocalMachine();
+            errObj["code"] = QStringLiteral("video_capture_failed");
+            errObj["status"] = 503;
+            errObj["local_host"] = m_Host->isLocalMachine();
 #if defined(Q_OS_WIN)
-            err["local_os"] = QStringLiteral("Windows");
+            errObj["local_os"] = QStringLiteral("Windows");
 #elif defined(Q_OS_MACOS)
-            err["local_os"] = QStringLiteral("macOS");
+            errObj["local_os"] = QStringLiteral("macOS");
 #else
-            err["local_os"] = QStringLiteral("Linux");
+            errObj["local_os"] = QStringLiteral("Linux");
 #endif
-            m_Respond(HttpResponse::json(err, 503));
+            m_Respond(HttpResponse::json(errObj, 503));
+        } else if (err.kind == BackendError::Protocol) {
+            m_Respond(
+                HttpResponse::error(502, QString("Launch error: %1").arg(err.message)));
         } else {
-            m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(reason)));
+            m_Respond(HttpResponse::error(
+                502, QString("Launch failed: %1 (target: %2:%3)")
+                         .arg(err.message)
+                         .arg(m_Host->activeAddress.address())
+                         .arg(m_Host->activeHttpsPort)));
         }
-        emit sessionFailed(e.what());
+
+        emit sessionFailed(err.message);
         deleteLater();
         return;
     }
 
-    QString sessionUrl = NvHTTP::parseSessionUrl(xml);
-    if (sessionUrl.isEmpty()) {
-        m_Respond(HttpResponse::error(502, "No session URL in launch response"));
-        emit sessionFailed("No session URL");
-        deleteLater();
-        return;
-    }
-
+    const QString sessionUrl = media.gameStream.rtspSessionUrl;
     QUrl rtspUrl(sessionUrl);
     if (!rtspUrl.isValid()) {
         m_Respond(HttpResponse::error(502, "Invalid RTSP URL: " + sessionUrl));
@@ -441,21 +449,10 @@ void StreamSession::onLaunchReplyFinished()
 
     m_SessionUrl = sessionUrl;
 
-    // Session is now live on Sunshine for this uniqueid: remember it so a later
+    // Session is now live on the host for this uniqueid: remember it so a later
     // reconnect (reload) resumes instead of relaunching. Cleared in quit().
     s_ActiveUniqueIds.insert(effectiveUniqueId());
 
-    // Everything the transport needs, gathered once. Nothing below this point
-    // reads GameStream specifics off the host: they travel in the descriptor.
-    MediaDescriptor media;
-    media.type = MediaType::GameStreamRtsp;
-    media.gameStream.rtspSessionUrl = m_SessionUrl;
-    media.gameStream.hostAddress = m_Host->activeAddress.address();
-    media.gameStream.appVersion = m_Host->appVersion;
-    media.gameStream.gfeVersion = m_Host->gfeVersion;
-    media.gameStream.serverCodecModeSupport = m_Host->serverCodecModeSupport;
-    media.gameStream.aesKey = m_Config.rikey;
-    media.gameStream.rikeyid = m_Config.rikeyid;
 
     // ── Media engine selection ───────────────────────────────────────────────
     // The single place a transport is chosen. Adding one (punktfunk's QUIC
