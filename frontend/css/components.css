@@ -710,6 +710,23 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     font-size: var(--fs-sm);
     line-height: 1.5;
 }
+/* What the backend supports. Unsupported entries stay visible but dimmed:
+   knowing a backend does NOT do lobbies is as useful as knowing it does. */
+.backend-caps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+.backend-cap {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    opacity: 0.55;
+}
+.backend-cap.is-on {
+    color: var(--accent, #35c98f);
+    opacity: 1;
+}
 
 /* Self-stream ("Inception") warning — the "reach me from elsewhere" URL. */
 .self-stream-url {

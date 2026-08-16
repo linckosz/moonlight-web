@@ -220,6 +220,14 @@ export class BackendClient {
         return this.del(`/api/hosts/${hostId}/backend`);
     }
     /**
+     * A host's backend configuration plus what that backend can do
+     * (multiUser / provisioning / lobbies). Capabilities are absent on an
+     * unmanaged host. Never includes the token.
+     */
+    static async getHostBackend(hostId) {
+        return this.get(`/api/hosts/${hostId}/backend`);
+    }
+    /**
      * Per-browser Sunshine client unique ID, persisted in localStorage.
      * Each browser gets its own 16-hex-char ID so Sunshine treats their
      * sessions independently (one browser won't cancel/take over another's).

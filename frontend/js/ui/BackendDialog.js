@@ -53,6 +53,39 @@ export class BackendDialog {
         } catch {
             this.setStatus(t('backend.typesFailed'), 'error');
         }
+
+        // What this host's backend actually supports, read from the provider
+        // itself. Shown rather than inferred from the type name, so the panel
+        // cannot claim a capability the code does not implement.
+        if (this.host.backendType) {
+            try {
+                const { capabilities } = await BackendClient.getHostBackend(this.host.uuid);
+                this.renderCapabilities(capabilities);
+            } catch {
+                /* Not fatal: the form still works without the summary. */
+            }
+        }
+    }
+
+    renderCapabilities(caps) {
+        const el = this.overlay?.querySelector('.backend-caps');
+        if (!el || !caps) return;
+
+        const labels = [
+            [caps.multiUser, t('backend.capMultiUser')],
+            [caps.provisioning, t('backend.capProvisioning')],
+            [caps.lobbies, t('backend.capLobbies')],
+        ];
+
+        el.innerHTML = labels
+            .map(
+                ([on, label]) =>
+                    `<span class="backend-cap${on ? ' is-on' : ''}">${on ? '✓' : '·'} ${this.esc(
+                        label
+                    )}</span>`
+            )
+            .join('');
+        el.hidden = false;
     }
 
     close() {
@@ -150,6 +183,8 @@ export class BackendDialog {
                                    : t('backend.tokenPlaceholder')
                            }">
                 </label>
+
+                <div class="backend-caps" hidden></div>
 
                 <div class="pairing-status">
                     <p class="backend-status-text pairing-info">${t('backend.ready')}</p>
