@@ -215,10 +215,13 @@ void GameStreamBackend::launch(const QString& seatId, const LaunchRequest& req,
     IdentityManager* im = IdentityManager::get();
     const QString uniqueId =
         req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
+    // Empty seat = the default identity, so a plain host is dialled exactly as
+    // before and no browser has to pair again.
+    const ClientIdentity identity = im->identityForSeat(req.clientIdentitySeat);
 
     QNetworkReply* reply = m_Http->launchAppAsync(
         host->activeAddress, host->activeHttpsPort, req.appId, uniqueId, req.rikey, req.rikeyid,
-        req.width, req.height, req.fps, req.bitrateKbps, im->getCertificate(), im->getPrivateKey(),
+        req.width, req.height, req.fps, req.bitrateKbps, identity.certPem, identity.keyPem,
         req.hdrEnabled ? 1 : 0, req.muteHostAudio ? 0 : 1);
 
     finishLaunchReply(reply, req, std::move(cb));
@@ -239,10 +242,13 @@ void GameStreamBackend::resume(const QString& seatId, const LaunchRequest& req,
     IdentityManager* im = IdentityManager::get();
     const QString uniqueId =
         req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
+    // Empty seat = the default identity, so a plain host is dialled exactly as
+    // before and no browser has to pair again.
+    const ClientIdentity identity = im->identityForSeat(req.clientIdentitySeat);
 
     QNetworkReply* reply = m_Http->resumeAppAsync(
         host->activeAddress, host->activeHttpsPort, uniqueId, req.rikey, req.rikeyid,
-        im->getCertificate(), im->getPrivateKey(), req.muteHostAudio ? 0 : 1);
+        identity.certPem, identity.keyPem, req.muteHostAudio ? 0 : 1);
 
     finishLaunchReply(reply, req, std::move(cb));
 }

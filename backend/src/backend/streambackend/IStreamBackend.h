@@ -45,6 +45,14 @@ struct LaunchRequest
     QByteArray rikey;
     int rikeyid = 0;
     QString clientUniqueId;
+
+    // Whose certificate to present. Empty means the default identity, which is
+    // what every plain GameStream host uses and must keep using.
+    //
+    // It is separate from clientUniqueId because the two are not interchangeable:
+    // Sunshine keys sessions by uniqueid, Wolf by client certificate. Only a
+    // backend that keys on the certificate has any reason to set this.
+    QString clientIdentitySeat;
 };
 
 // One streamable slot on a backend.
