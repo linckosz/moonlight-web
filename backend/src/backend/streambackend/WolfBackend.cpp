@@ -317,10 +317,12 @@ void WolfBackend::resume(const QString& seatId, const LaunchRequest& req, Backen
     m_GameStream->resume(m_GameStream->seatId(), withSeatIdentity(seatId, req), std::move(cb));
 }
 
-void WolfBackend::quit(const QString& seatId, BackendVoidCallback cb)
+void WolfBackend::quit(const QString& seatId, const QString& clientUniqueId,
+                       BackendVoidCallback cb)
 {
-    Q_UNUSED(seatId);
-    m_GameStream->quit(m_GameStream->seatId(), std::move(cb));
+    Q_UNUSED(clientUniqueId);
+    // The seat IS the identity here, so it is what scopes the quit.
+    m_GameStream->quit(m_GameStream->seatId(), seatId, std::move(cb));
 }
 
 // --- Provisioning ------------------------------------------------------------

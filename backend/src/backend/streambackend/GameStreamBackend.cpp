@@ -323,7 +323,8 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
     });
 }
 
-void GameStreamBackend::quit(const QString& seatId, BackendVoidCallback cb)
+void GameStreamBackend::quit(const QString& seatId, const QString& clientUniqueId,
+                             BackendVoidCallback cb)
 {
     Q_UNUSED(seatId);
 
@@ -337,9 +338,13 @@ void GameStreamBackend::quit(const QString& seatId, BackendVoidCallback cb)
     IdentityManager* im = IdentityManager::get();
     quint16 httpsPort = host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
 
+    // Scoped to the caller's identity: an unscoped /cancel targets whatever
+    // session the default identity owns, which may belong to another player.
+    const QString uniqueId = clientUniqueId.isEmpty() ? im->getUniqueId() : clientUniqueId;
+
     QNetworkReply* reply =
         m_Http->quitAppAsync(host->uniqueAddresses().first(), httpsPort, im->getCertificate(),
-                             im->getPrivateKey());
+                             im->getPrivateKey(), uniqueId);
 
     auto answered = std::make_shared<bool>(false);
     auto answer = [answered, cb](bool ok, const BackendError& e) {

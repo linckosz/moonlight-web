@@ -220,9 +220,11 @@ void MultiSeatBackend::resume(const QString& seatId, const LaunchRequest& req,
     cb(false, perSeatGameStreamUnsupported(), MediaDescriptor{});
 }
 
-void MultiSeatBackend::quit(const QString& seatId, BackendVoidCallback cb)
+void MultiSeatBackend::quit(const QString& seatId, const QString& clientUniqueId,
+                            BackendVoidCallback cb)
 {
     Q_UNUSED(seatId);
+    Q_UNUSED(clientUniqueId);
     cb(false, perSeatGameStreamUnsupported());
 }
 

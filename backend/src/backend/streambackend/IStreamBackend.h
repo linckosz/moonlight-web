@@ -147,7 +147,14 @@ public:
                         BackendMediaCallback cb) = 0;
     virtual void resume(const QString& seatId, const LaunchRequest& req,
                         BackendMediaCallback cb) = 0;
-    virtual void quit(const QString& seatId, BackendVoidCallback cb) = 0;
+    // `clientUniqueId` scopes the quit to one client's session, exactly as it
+    // scopes a launch. Empty means the provider's default identity.
+    //
+    // It is not optional in practice: a GameStream /cancel without it targets
+    // whatever session the default identity owns, so an unscoped quit can tear
+    // down a *different* player's stream. StreamSession has always passed it.
+    virtual void quit(const QString& seatId, const QString& clientUniqueId,
+                      BackendVoidCallback cb) = 0;
 
     // Only meaningful when capabilities().provisioning is true; others answer
     // ok == false with an explanatory error.
