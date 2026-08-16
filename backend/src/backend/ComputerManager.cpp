@@ -23,6 +23,7 @@
 #include "NvPairingManager.h"
 #include "PairingChain.h"
 #include "WolfApiClient.h"
+#include "streambackend/MultiSeatBackend.h"
 #include "streambackend/WolfBackend.h"
 #include "IdentityManager.h"
 #include "common/Logger.h"
@@ -199,6 +200,23 @@ void ComputerManager::registerStreamBackends()
                     emit hostsChanged();
                 },
                 nullptr);
+        });
+
+    StreamBackendRegistry::instance().registerFactory(
+        QStringLiteral("multiseat"),
+        [this](const QJsonObject& config) -> std::unique_ptr<IStreamBackend> {
+            const QString uuid = config.value(QStringLiteral("hostUuid")).toString();
+            if (uuid.isEmpty()) {
+                Logger::warning(QStringLiteral("multiseat backend: config is missing 'hostUuid'"));
+                return nullptr;
+            }
+
+            // No pairing commit: MultiSeat's control API is key-authenticated,
+            // so there is no certificate to write back to the host.
+            return std::make_unique<MultiSeatBackend>(
+                uuid, [this, uuid]() { return findHostByUuid(uuid); }, m_Http, m_Nam,
+                config.value(QStringLiteral("apiUrl")).toString(),
+                config.value(QStringLiteral("apiToken")).toString(), nullptr);
         });
 
     Logger::info(QStringLiteral("Stream backends registered: [%1]")
@@ -1152,16 +1170,21 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
         return;
     }
 
-    host->backendType = type;
-    host->backendApiUrl = apiUrl;
     // An empty token means "keep the stored one", so the dialog can be reopened
     // to fix a URL without making the admin retype a secret the browser was
     // never shown.
-    if (!apiToken.isEmpty()) host->backendApiToken = apiToken;
-    saveHosts();
-    emit hostsChanged();
+    const QString effectiveToken = apiToken.isEmpty() ? host->backendApiToken : apiToken;
 
-    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    // Build the candidate from the values being proposed, WITHOUT storing them
+    // yet. Persisting first would let a failed attempt — a mistyped key is the
+    // obvious one — overwrite a configuration that was working.
+    QJsonObject config;
+    config[QStringLiteral("hostUuid")] = uuid;
+    config[QStringLiteral("apiUrl")] = apiUrl;
+    config[QStringLiteral("apiToken")] = effectiveToken;
+
+    std::shared_ptr<IStreamBackend> backend(
+        StreamBackendRegistry::instance().create(type, config).release());
     if (!backend) {
         respond(HttpResponse::json(
             {{"status", "error"}, {"message", "Could not build a backend for this host"}}, 500));
@@ -1171,8 +1194,18 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     // Pair right away. Registering a backend is the one admin gesture allowed to
     // involve a human, and it is precisely what spares every player a PIN.
     backend->ensurePaired(
-        [respond = std::move(respond), backend](bool ok, const BackendError& err) {
+        [this, uuid, type, apiUrl, effectiveToken, respond = std::move(respond), backend](
+            bool ok, const BackendError& err) {
             if (ok) {
+                // Only now is the configuration known to work. The host may have
+                // been deleted while we were talking to the backend.
+                if (NvComputer* h = findHostByUuid(uuid)) {
+                    h->backendType = type;
+                    h->backendApiUrl = apiUrl;
+                    h->backendApiToken = effectiveToken;
+                    saveHosts();
+                    emit hostsChanged();
+                }
                 respond(HttpResponse::json(
                     {{"status", "paired"}, {"message", "Backend registered and paired"}}, 200));
             } else {

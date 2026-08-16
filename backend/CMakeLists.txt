@@ -202,6 +202,7 @@ add_executable(mw-server
     src/backend/streambackend/StreamBackendRegistry.cpp
     src/backend/streambackend/GameStreamBackend.cpp
     src/backend/streambackend/WolfBackend.cpp
+    src/backend/streambackend/MultiSeatBackend.cpp
     src/backend/SunshineInstaller.cpp
     src/streaming/RelayBase.h # QObject base with no .cpp; listed so AUTOMOC mocs it
     src/streaming/StreamConfig.cpp
