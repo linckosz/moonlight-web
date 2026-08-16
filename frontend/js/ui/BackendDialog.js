@@ -60,10 +60,107 @@ export class BackendDialog {
         if (this.host.backendType) {
             try {
                 const { capabilities } = await BackendClient.getHostBackend(this.host.uuid);
+                this.capabilities = capabilities || {};
                 this.renderCapabilities(capabilities);
             } catch {
                 /* Not fatal: the form still works without the summary. */
             }
+            this.loadSeats();
+        }
+    }
+
+    async loadSeats() {
+        const panel = this.overlay?.querySelector('.backend-seats');
+        if (!panel) return;
+        panel.hidden = false;
+        panel.innerHTML = `<p class="backend-seats-empty">${t('backend.seatsLoading')}</p>`;
+
+        try {
+            const { seats } = await BackendClient.getHostSeats(this.host.uuid);
+            if (!this.overlay) return;
+            this.renderSeats(seats || []);
+        } catch (err) {
+            if (!this.overlay) return;
+            // 501 means the backend simply has no seat concept — not a failure
+            // worth alarming anyone about.
+            const msg = err?.statusCode === 501 ? t('backend.seatsUnsupported') : err?.message;
+            panel.innerHTML = `<p class="backend-seats-empty">${this.esc(msg || '')}</p>`;
+        }
+    }
+
+    renderSeats(seats) {
+        const panel = this.overlay?.querySelector('.backend-seats');
+        if (!panel) return;
+
+        const canProvision = !!this.capabilities?.provisioning;
+        const rows = seats.length
+            ? seats
+                  .map(
+                      (s) => `
+                <div class="backend-seat">
+                    <span class="backend-seat-name">${this.esc(s.name || s.id)}</span>
+                    <span class="backend-seat-meta">${this.esc(s.address)}:${s.httpPort}${
+                        s.busy ? ` · ${this.esc(t('backend.seatBusy'))}` : ''
+                    }</span>
+                    ${
+                        canProvision
+                            ? `<button class="btn-seat-remove" data-seat="${this.esc(
+                                  s.id
+                              )}" title="${this.esc(t('backend.seatRemove'))}">✕</button>`
+                            : ''
+                    }
+                </div>`
+                  )
+                  .join('')
+            : `<p class="backend-seats-empty">${t('backend.seatsNone')}</p>`;
+
+        panel.innerHTML = `
+            <div class="backend-seats-head">
+                <span>${t('backend.seats')}</span>
+                ${
+                    canProvision
+                        ? `<button class="btn-seat-add">${t('backend.seatAdd')}</button>`
+                        : ''
+                }
+            </div>
+            ${rows}`;
+    }
+
+    async provisionSeat() {
+        // accountName is SeatRequest's only required field; the service defaults
+        // the rest. Asking for more here would bake a MultiSeat-shaped form into
+        // a dialog that is meant to serve every backend.
+        const account = prompt(t('backend.seatAccountPrompt'));
+        if (!account) return;
+
+        this.setBusy(true);
+        this.setStatus(t('backend.seatProvisioning'));
+        try {
+            await BackendClient.provisionHostSeat(this.host.uuid, { accountName: account });
+            if (!this.overlay) return;
+            this.setStatus(t('backend.seatProvisioned'), 'success');
+            this.loadSeats();
+        } catch (err) {
+            if (!this.overlay) return;
+            this.setStatus(err?.message || t('backend.failed'), 'error');
+        } finally {
+            this.setBusy(false);
+        }
+    }
+
+    async teardownSeat(seatId) {
+        this.setBusy(true);
+        this.setStatus(t('backend.seatRemoving'));
+        try {
+            await BackendClient.teardownHostSeat(this.host.uuid, seatId);
+            if (!this.overlay) return;
+            this.setStatus(t('backend.ready'));
+            this.loadSeats();
+        } catch (err) {
+            if (!this.overlay) return;
+            this.setStatus(err?.message || t('backend.failed'), 'error');
+        } finally {
+            this.setBusy(false);
         }
     }
 
@@ -185,6 +282,7 @@ export class BackendDialog {
                 </label>
 
                 <div class="backend-caps" hidden></div>
+                <div class="backend-seats" hidden></div>
 
                 <div class="pairing-status">
                     <p class="backend-status-text pairing-info">${t('backend.ready')}</p>
@@ -214,9 +312,22 @@ export class BackendDialog {
             .querySelector('.btn-backend-clear')
             ?.addEventListener('click', () => this.clear());
 
-        // Click-outside closes, but not mid-pairing: the handshake is already in
-        // flight on the host and the result is worth seeing.
+        // Seat controls are rendered after load, so they are handled by
+        // delegation rather than bound per row.
         this.overlay.addEventListener('click', (e) => {
+            const add = e.target.closest('.btn-seat-add');
+            if (add) {
+                this.provisionSeat();
+                return;
+            }
+            const remove = e.target.closest('.btn-seat-remove');
+            if (remove) {
+                this.teardownSeat(remove.dataset.seat);
+                return;
+            }
+
+            // Click-outside closes, but not mid-pairing: the handshake is
+            // already in flight on the host and the result is worth seeing.
             if (e.target === this.overlay && !this.busy) this.close();
         });
     }

@@ -41,6 +41,7 @@ public:
     // Async handlers — for routes that need deferred responses
     void getAsync(const QString& path, AsyncRouteHandler handler);
     void postAsync(const QString& path, AsyncRouteHandler handler);
+    void delAsync(const QString& path, AsyncRouteHandler handler);
 
     // Dispatch — calls respond() synchronously for sync routes, asynchronously otherwise
     void dispatchAsync(const HttpRequest& request, ResponseCallback respond) const;

@@ -99,6 +99,15 @@ public:
     // from the provider. Never returns the API token.
     std::pair<int, QJsonObject> handleGetBackend(const QString& uuid) const;
 
+    // Seat administration, expressed purely through IStreamBackend so one set
+    // of routes serves every backend. A seat means what the provider says it
+    // means: a Windows account plus its Apollo on MultiSeat, a paired client on
+    // Wolf. All three are async — they talk to the backend.
+    void handleListSeats(const QString& uuid, ResponseCallback respond);
+    void handleProvisionSeat(const QString& uuid, const QJsonObject& params,
+                             ResponseCallback respond);
+    void handleTeardownSeat(const QString& uuid, const QString& seatId, ResponseCallback respond);
+
     // Provisioning-only: drive the pairing chain to a terminal state under a
     // local event loop. Safe because provisioning runs once at startup, before
     // the main loop and outside the reentrant HTTP request path. Returns true

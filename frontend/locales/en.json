@@ -621,6 +621,17 @@
         "remove": "Stop managing",
         "capMultiUser": "Independent concurrent seats",
         "capProvisioning": "Seats can be created on demand",
-        "capLobbies": "Native co-op lobbies"
+        "capLobbies": "Native co-op lobbies",
+        "seats": "Seats",
+        "seatsLoading": "Loading seats…",
+        "seatsNone": "No seat yet.",
+        "seatsUnsupported": "This backend does not expose seats.",
+        "seatBusy": "streaming",
+        "seatAdd": "+ Add",
+        "seatRemove": "Remove this seat",
+        "seatRemoving": "Removing the seat…",
+        "seatAccountPrompt": "Which account should this seat use?",
+        "seatProvisioning": "Creating the seat… this can take a minute.",
+        "seatProvisioned": "Seat created."
     }
 }
