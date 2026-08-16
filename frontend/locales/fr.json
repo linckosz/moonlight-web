@@ -618,6 +618,9 @@
         "urlRequired": "Une URL d’API de contrôle est requise.",
         "typesFailed": "Impossible de charger la liste des types de backend.",
         "removing": "Retrait…",
-        "remove": "Ne plus gérer"
+        "remove": "Ne plus gérer",
+        "capMultiUser": "Sièges concurrents indépendants",
+        "capProvisioning": "Sièges créables à la demande",
+        "capLobbies": "Lobbies co-op natifs"
     }
 }

@@ -120,6 +120,14 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
                                              std::move(respond));
         });
 
+    server.router()->get("/api/hosts/:id/backend", [&computerManager](const HttpRequest& req) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
+
+        auto [status, result] = computerManager.handleGetBackend(uuid);
+        return HttpResponse::json(result, status);
+    });
+
     server.router()->del("/api/hosts/:id/backend", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");

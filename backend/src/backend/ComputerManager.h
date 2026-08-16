@@ -94,6 +94,11 @@ public:
     // it simply reverts to a plain host.
     std::pair<int, QJsonObject> handleClearBackend(const QString& uuid);
 
+    // A host's backend configuration and what that backend can do. Capabilities
+    // are read off a real instance rather than a table, so they cannot drift
+    // from the provider. Never returns the API token.
+    std::pair<int, QJsonObject> handleGetBackend(const QString& uuid) const;
+
     // Provisioning-only: drive the pairing chain to a terminal state under a
     // local event loop. Safe because provisioning runs once at startup, before
     // the main loop and outside the reentrant HTTP request path. Returns true

@@ -1221,6 +1221,34 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
         });
 }
 
+std::pair<int, QJsonObject> ComputerManager::handleGetBackend(const QString& uuid) const
+{
+    NvComputer* host = findHostByUuid(uuid);
+    if (!host) {
+        return {404, QJsonObject{{"status", "error"}, {"message", "Host not found"}}};
+    }
+
+    QJsonObject obj;
+    obj["type"] = host->backendType;
+    obj["apiUrl"] = host->backendApiUrl;
+    // The token is write-only; the browser only ever learns that one is stored.
+    obj["configured"] = !host->backendApiToken.isEmpty();
+
+    // Capabilities come from an actual provider instance rather than a lookup
+    // table, so a backend cannot advertise something its code does not do. An
+    // unmanaged host has none, which is what keeps a Sunshine card plain.
+    if (!host->backendType.isEmpty()) {
+        if (std::unique_ptr<IStreamBackend> backend = backendForHost(uuid)) {
+            const BackendCapabilities caps = backend->capabilities();
+            obj["capabilities"] = QJsonObject{{"multiUser", caps.multiUser},
+                                              {"provisioning", caps.provisioning},
+                                              {"lobbies", caps.lobbies}};
+        }
+    }
+
+    return {200, obj};
+}
+
 std::pair<int, QJsonObject> ComputerManager::handleClearBackend(const QString& uuid)
 {
     NvComputer* host = findHostByUuid(uuid);

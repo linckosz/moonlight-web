@@ -618,6 +618,9 @@
         "urlRequired": "A control API URL is required.",
         "typesFailed": "Could not load the list of backend types.",
         "removing": "Removing…",
-        "remove": "Stop managing"
+        "remove": "Stop managing",
+        "capMultiUser": "Independent concurrent seats",
+        "capProvisioning": "Seats can be created on demand",
+        "capLobbies": "Native co-op lobbies"
     }
 }
