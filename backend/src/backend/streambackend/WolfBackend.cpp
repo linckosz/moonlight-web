@@ -412,6 +412,23 @@ void WolfBackend::provisionSeat(const QJsonObject& params, BackendSeatCallback c
        SeatRef{});
 }
 
+void WolfBackend::listProfiles(BackendJsonCallback cb)
+{
+    // Straight from Wolf. A profile is the user-facing world; which one a player
+    // uses stays their choice inside Wolf UI, so this only ever informs the
+    // overlay — it never picks one for them.
+    m_Api->listProfiles([cb](bool ok, const WolfApiError& err, const QJsonArray& items) {
+        cb(ok, ok ? BackendError{} : toBackendError(err), items);
+    });
+}
+
+void WolfBackend::listLobbies(BackendJsonCallback cb)
+{
+    m_Api->listLobbies([cb](bool ok, const WolfApiError& err, const QJsonArray& items) {
+        cb(ok, ok ? BackendError{} : toBackendError(err), items);
+    });
+}
+
 void WolfBackend::teardownSeat(const QString& seatId, BackendVoidCallback cb)
 {
     Q_UNUSED(seatId);
