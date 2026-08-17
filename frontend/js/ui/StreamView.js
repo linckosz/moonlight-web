@@ -1097,6 +1097,19 @@ export class StreamView {
         }
         el.innerHTML = `
             <div class="stream-header">
+                ${
+                    // Wolf's console is reached with Ctrl+Alt+Shift+W, which a
+                    // browser can swallow before it ever leaves the page. A
+                    // native button is the only reliable way back, so it is
+                    // offered wherever that console exists.
+                    this._hasConsoleHotkey()
+                        ? `<button class="btn btn-secondary stream-console-btn"
+                                   id="btn-stream-console"
+                                   title="${escapeHtml(t('stream.consoleHint'))}">${escapeHtml(
+                              t('stream.console')
+                          )}</button>`
+                        : ''
+                }
                 <button class="btn stream-quit-btn" id="btn-stream-quit">${
                     this._playerMode
                         ? t('player.leave')
@@ -1193,6 +1206,13 @@ export class StreamView {
         // statusEl kept for backward compatibility — setStatus() is now a no-op
         this.statusEl = null;
         this.hintEl = /** @type {HTMLElement} */ (el.querySelector('#stream-hint'));
+
+        const consoleBtn = /** @type {HTMLElement} */ (el.querySelector('#btn-stream-console'));
+        if (consoleBtn) {
+            // The console takes over the stream in place: no navigation, no
+            // teardown, just the keystroke Wolf is listening for.
+            consoleBtn.onclick = () => this.sendConsoleHotkey();
+        }
 
         /** @type {HTMLElement} */ (el.querySelector('#btn-stream-quit')).onclick = () =>
             this._handleManualQuit();
@@ -5605,6 +5625,50 @@ export class StreamView {
      *
      * @param {object} msg a `keydown` or `keyup` input message
      */
+    /**
+     * Whether this host runs a console reached by a keyboard shortcut the
+     * browser may intercept. Today that is Wolf: its UI is an app like any
+     * other, and Ctrl+Alt+Shift+W is how a player gets back to it.
+     *
+     * A player joining a shared session never sees the button — the console
+     * belongs to whoever owns the session, not to a guest.
+     */
+    _hasConsoleHotkey() {
+        return !this._playerMode && this.host?.backendType === 'wolf';
+    }
+
+    /**
+     * Press Ctrl+Alt+Shift+W on the host.
+     *
+     * The modifiers are pressed and released explicitly rather than relying on
+     * whatever the user happens to be holding: this is a synthetic combo, and
+     * the host has to see the modifiers go down before the W arrives. Order
+     * matters on release too — letting go of W first keeps the host from
+     * reading a stray modifier chord.
+     *
+     * Routed through _sendKeyEvent, not the transport directly, so the held-key
+     * bookkeeping stays exact: the heartbeat releases anything it stops seeing.
+     */
+    sendConsoleHotkey() {
+        const VK_CONTROL = 0x11;
+        const VK_SHIFT = 0x10;
+        const VK_MENU = 0x12; // Alt
+        const VK_W = 0x57;
+
+        const mods = { ctrlKey: true, shiftKey: true, altKey: true, metaKey: false };
+        const key = (type, keyCode) =>
+            this._sendKeyEvent({ type, keyCode, code: '', key: '', ...mods });
+
+        key('keydown', VK_CONTROL);
+        key('keydown', VK_MENU);
+        key('keydown', VK_SHIFT);
+        key('keydown', VK_W);
+        key('keyup', VK_W);
+        key('keyup', VK_SHIFT);
+        key('keyup', VK_MENU);
+        key('keyup', VK_CONTROL);
+    }
+
     _sendKeyEvent(msg) {
         const id = msg.code || msg.keyCode;
         if (msg.type === 'keydown') {

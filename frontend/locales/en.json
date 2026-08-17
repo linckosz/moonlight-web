@@ -483,7 +483,9 @@
         "tsMoveCursorVal": "Touch the picture",
         "tsLeftClickVal": "Tap where you want",
         "tsDragVal": "Long press, then move",
-        "tsScrollVal": "1 finger drag"
+        "tsScrollVal": "1 finger drag",
+        "console": "Wolf UI",
+        "consoleHint": "Back to Wolf UI (Ctrl+Alt+Shift+W, which the browser may swallow)"
     },
     "transport": {
         "webrtcDcUdp": "WebRTC DataChannel (UDP)",
