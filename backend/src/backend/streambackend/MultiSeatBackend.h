@@ -22,6 +22,7 @@
 #include "IStreamBackend.h"
 
 #include <QMap>
+#include <QSet>
 #include <QObject>
 #include <QString>
 #include <memory>
@@ -125,6 +126,14 @@ private:
 
     QString seatPairingKey(const QString& seatId, const char* field) const;
 
+    /// Seat ownership, persisted so it survives a restart: a user keeps their
+    /// seat, and with it the Windows account holding their saves.
+    QString ownershipKey(const QString& deviceSessionId) const;
+    QString ownedSeat(const QString& deviceSessionId) const;
+    void claimOwnership(const QString& deviceSessionId, const QString& seatId);
+    void releaseOwnership(const QString& deviceSessionId);
+    QSet<QString> ownedSeats() const;
+
     QString m_HostUuid;
     HostResolver m_ResolveHost;
     NvHTTP* m_Http = nullptr;
@@ -150,7 +159,5 @@ private:
     std::unique_ptr<NvPairingManager> m_Pairing;
     SunshineRestClient* m_PinPusher = nullptr;
 
-    /// deviceSessionId → seat id. Sticky so a returning player lands back on
-    /// their own Windows account, with their saves and settings.
-    QMap<QString, QString> m_Assignments;
+
 };
