@@ -632,6 +632,10 @@
         "seatRemoving": "Retrait du siège…",
         "seatAccountPrompt": "Quel compte ce siège doit-il utiliser ?",
         "seatProvisioning": "Création du siège… cela peut prendre une minute.",
-        "seatProvisioned": "Siège créé."
+        "seatProvisioned": "Siège créé.",
+        "pairUser": "Utilisateur admin des sièges",
+        "pairPassword": "Mot de passe admin des sièges",
+        "pairPasswordPlaceholder": "Mot de passe de l’interface web du siège",
+        "pairHint": "MultiSeat ne sait pas appairer un siège via sa propre API : MoonlightWeb pousse donc le PIN vers l’interface web Apollo de chaque siège. Ce sont les identifiants que vous y avez définis — un seul couple couvre tous les sièges."
     }
 }

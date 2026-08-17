@@ -65,12 +65,15 @@ SeatRef toSeatRef(const MultiSeatSeat& seat, const QString& address)
 
 MultiSeatBackend::MultiSeatBackend(QString hostUuid, HostResolver resolver, NvHTTP* http,
                                    QNetworkAccessManager* nam, const QString& apiUrl,
-                                   const QString& apiKey, QObject* parent)
+                                   const QString& apiKey, const QString& pairUser,
+                                   const QString& pairPassword, QObject* parent)
     : QObject(parent)
     , m_HostUuid(std::move(hostUuid))
     , m_ResolveHost(std::move(resolver))
     , m_Http(http)
     , m_Api(new MultiSeatApiClient(apiUrl, apiKey, nam, this))
+    , m_PairUser(pairUser)
+    , m_PairPassword(pairPassword)
 {
 }
 

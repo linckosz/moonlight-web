@@ -211,9 +211,11 @@ export class BackendClient {
      * Omit apiToken to keep the stored one — the browser is never sent it back,
      * so this is how the URL gets fixed without retyping the secret.
      */
-    static async setHostBackend(hostId, { type, apiUrl, apiToken }) {
+    static async setHostBackend(hostId, { type, apiUrl, apiToken, pairUser, pairPassword }) {
         const body = { type, apiUrl };
         if (apiToken) body.apiToken = apiToken;
+        if (pairUser) body.pairUser = pairUser;
+        if (pairPassword) body.pairPassword = pairPassword;
         return this.post(`/api/hosts/${hostId}/backend`, body, { timeoutMs: 90000 });
     }
     static async clearHostBackend(hostId) {

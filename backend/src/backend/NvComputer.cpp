@@ -110,6 +110,8 @@ NvComputer::NvComputer(QSettings& settings)
     backendType = settings.value("backendType").toString();
     backendApiUrl = settings.value("backendApiUrl").toString();
     backendApiToken = settings.value("backendApiToken").toString();
+    backendPairUser = settings.value("backendPairUser").toString();
+    backendPairPassword = settings.value("backendPairPassword").toString();
 }
 
 // --- Serialization ----------------------------------------------------------
@@ -131,6 +133,8 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("backendType", backendType);
     settings.setValue("backendApiUrl", backendApiUrl);
     settings.setValue("backendApiToken", backendApiToken);
+    settings.setValue("backendPairUser", backendPairUser);
+    settings.setValue("backendPairPassword", backendPairPassword);
 }
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
@@ -280,6 +284,10 @@ QJsonObject NvComputer::toJson() const
     obj["backendType"] = backendType;
     obj["backendApiUrl"] = backendApiUrl;
     obj["backendConfigured"] = !backendApiToken.isEmpty();
+    // The user name is not a secret and the dialog needs it to show what is
+    // stored; the password only ever surfaces as a boolean.
+    obj["backendPairUser"] = backendPairUser;
+    obj["backendPairConfigured"] = !backendPairPassword.isEmpty();
 
     // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
     // itself never has to reach the browser — the UI only needs to know whether

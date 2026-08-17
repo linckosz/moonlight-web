@@ -632,6 +632,10 @@
         "seatRemoving": "Removing the seat…",
         "seatAccountPrompt": "Which account should this seat use?",
         "seatProvisioning": "Creating the seat… this can take a minute.",
-        "seatProvisioned": "Seat created."
+        "seatProvisioned": "Seat created.",
+        "pairUser": "Seat admin user",
+        "pairPassword": "Seat admin password",
+        "pairPasswordPlaceholder": "Password for the seat web UI",
+        "pairHint": "MultiSeat cannot pair a seat through its own API, so MoonlightWeb pushes the PIN to each seat’s Apollo web interface. These are the credentials you set there — one pair covers every seat."
     }
 }

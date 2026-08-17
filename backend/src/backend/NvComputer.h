@@ -126,4 +126,15 @@ public:
     QString backendType;
     QString backendApiUrl;
     QString backendApiToken;
+
+    // Credentials used to push a pairing PIN to whatever the backend puts in
+    // front of each seat. MultiSeat needs them: its own API can read and unpair
+    // clients but never pair one, so a seat is paired through its Apollo web UI
+    // — and MultiSeat does not generate those credentials, it expects an admin
+    // to have set them. All seats share one credentials file, so one pair
+    // covers every seat. Empty for backends that pair without them, like Wolf.
+    //
+    // backendPairPassword is a secret and must never reach toJson().
+    QString backendPairUser;
+    QString backendPairPassword;
 };

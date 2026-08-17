@@ -61,8 +61,15 @@ public:
     /// @param apiUrl Base URL of the MultiSeat service, e.g.
     ///               "http://192.168.1.9:9550".
     /// @param apiKey Value for the X-MultiSeat-Key header.
+    /// @param pairUser/pairPassword Credentials for each seat's Apollo web UI.
+    ///        MultiSeat's own API can read and unpair clients but never pair
+    ///        one, so a seat is paired by pushing the PIN there — and MultiSeat
+    ///        does not generate those credentials, it expects an admin to have
+    ///        set them. One pair covers every seat, since they share a
+    ///        credentials file.
     MultiSeatBackend(QString hostUuid, HostResolver resolver, NvHTTP* http,
                      QNetworkAccessManager* nam, const QString& apiUrl, const QString& apiKey,
+                     const QString& pairUser, const QString& pairPassword,
                      QObject* parent = nullptr);
     ~MultiSeatBackend() override;
 
@@ -105,6 +112,9 @@ private:
 
     // Owned through the QObject parent-child relation (parent is this).
     MultiSeatApiClient* m_Api = nullptr;
+
+    QString m_PairUser;
+    QString m_PairPassword;
 
     /// deviceSessionId → seat id. Sticky so a returning player lands back on
     /// their own Windows account, with their saves and settings.

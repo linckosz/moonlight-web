@@ -87,8 +87,11 @@ public:
     //
     // Async because registering pairs immediately: that one admin gesture is
     // what spares every player a PIN afterwards.
+    // `pairUser`/`pairPassword` are the credentials used to push a pairing PIN
+    // to each seat; only MultiSeat needs them. Empty values keep the stored ones.
     void handleSetBackend(const QString& uuid, const QString& type, const QString& apiUrl,
-                          const QString& apiToken, ResponseCallback respond);
+                          const QString& apiToken, const QString& pairUser,
+                          const QString& pairPassword, ResponseCallback respond);
 
     // Stop managing a host as a backend. Leaves its GameStream pairing alone —
     // it simply reverts to a plain host.
