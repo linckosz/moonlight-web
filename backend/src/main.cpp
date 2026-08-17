@@ -1878,9 +1878,28 @@ int main(int argc, char* argv[])
         // another one gets a slot of its own instead of evicting them. Both
         // sessions then run side by side, each with its own ports and /wsN.
         int reqSlot = standby ? qBound(0, body["session_slot"].toInt(1), 1) : 0;
+
+        // A multi-user backend gives each device its own identity and its own
+        // session upstream — Wolf pairs a certificate per device — so one
+        // device's launch must not evict another's. Same-device take-over is
+        // untouched: the frontend relies on it for quality switches and
+        // transport fallback.
+        bool backendIsMultiUser = false;
+        if (auto probe = computerManager.backendForHost(uuid)) {
+            backendIsMultiUser = probe->capabilities().multiUser;
+        }
+        // The pool stores the raw request value, so compare against the same.
+        const QString reqDevice = body["client_uniqueid"].toString();
+        auto slotHeldByAnotherDevice = [&](int i) {
+            return backendIsMultiUser && g_Pool.live(i) && g_Pool.at(i).hostUuid == uuid &&
+                   !g_Pool.at(i).clientUniqueId.isEmpty() &&
+                   g_Pool.at(i).clientUniqueId != reqDevice;
+        };
+
         if (!standby && workerMode) {
-            const bool slot0Busy = g_Pool.live(0) && !g_Pool.at(0).hostUuid.isEmpty() &&
-                                   g_Pool.at(0).hostUuid != uuid;
+            const bool slot0Busy = (g_Pool.live(0) && !g_Pool.at(0).hostUuid.isEmpty() &&
+                                    g_Pool.at(0).hostUuid != uuid) ||
+                                   slotHeldByAnotherDevice(0);
             if (slot0Busy) {
                 // Already streaming this host from this browser? Reuse that slot
                 // rather than opening a second one for the same viewer.
@@ -1938,6 +1957,10 @@ int main(int argc, char* argv[])
                 // one-stream-at-a-time rule, not something callers want.
                 const QString slotHost = g_Pool.at(i).hostUuid;
                 if (g_Pool.live(i) && !slotHost.isEmpty() && slotHost != uuid) continue;
+                // Same host, but another device on a multi-user backend: it owns
+                // a separate session upstream, so tearing it down would be taking
+                // over a stranger's stream rather than reclaiming our own.
+                if (slotHeldByAnotherDevice(i)) continue;
                 StreamWorkerHost* w = detachWorkerSlot(i, true);
                 // Serialize the new worker behind whichever child still holds
                 // the ports for the slot we are about to use.
