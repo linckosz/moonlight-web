@@ -213,7 +213,11 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
                                       respond(HttpResponse::error(400, "Missing host ID"));
                                       return;
                                   }
-                                  computerManager.handleGetAppList(uuid, std::move(respond));
+                                  // Same field the browser already sends on /start, so one identity
+                                  // follows a user through the whole flow.
+                                  computerManager.handleGetAppList(
+                                      uuid, req.queryParams.value("client_uniqueid"),
+                                      std::move(respond));
                               });
 
     // Phase 4: App asset proxy — PNG (async, fetches on demand if not cached)
