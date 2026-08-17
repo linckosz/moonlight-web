@@ -66,9 +66,16 @@ public:
                                      int timeoutMs = 8000);
 
     /// POST /api/pin {"pin","name"} with Basic Auth. Fire-and-forget: result is
-    /// logged. Targets https://127.0.0.1:<port>/api/pin (port = Sunshine HTTPS).
+    /// logged. Targets https://<host>:<port>/api/pin.
+    ///
+    /// `host` defaults to loopback, which is what the install-time provisioning
+    /// uses. A MultiSeat seat needs a real address: its Apollo runs on the
+    /// MultiSeat machine, one web UI per seat at PortBase + 1, and that is the
+    /// only way to pair a seat at all — MultiSeat's own API can unpair clients
+    /// but never pair one.
     void sendPin(const QString& pin, const QString& user, const QString& pass,
-                 const QString& deviceName = QStringLiteral("moonlightweb"), quint16 port = 47990);
+                 const QString& deviceName = QStringLiteral("moonlightweb"), quint16 port = 47990,
+                 const QString& host = QStringLiteral("127.0.0.1"));
 
 private:
     QNetworkAccessManager* m_Nam = nullptr;

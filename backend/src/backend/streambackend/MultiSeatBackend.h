@@ -17,14 +17,18 @@
 
 #pragma once
 
+#include "../MultiSeatApiClient.h"
+#include "../NvComputer.h"
 #include "IStreamBackend.h"
 
 #include <QMap>
 #include <QObject>
 #include <QString>
+#include <memory>
 
-class MultiSeatApiClient;
-class NvComputer;
+class GameStreamBackend;
+class NvPairingManager;
+class SunshineRestClient;
 class NvHTTP;
 class QNetworkAccessManager;
 
@@ -42,14 +46,18 @@ class QNetworkAccessManager;
  * own — the control API authenticates with a key, so ensurePaired() only has to
  * prove that key works.
  *
- * **What is not implemented yet, and why.** getAppList/launch/resume/quit are
- * GameStream calls that must go to a *seat's* Apollo, not to the machine's own
- * address — a different port per seat, and a pairing per seat, since each
- * Apollo instance holds its own client list. That needs a host record per seat
- * (address + ports + certificate + pair state), which is exactly what
- * SeatManager is meant to own. Rather than fake it here, those calls report
- * Unsupported with that explanation. listSeats/allocateSeat/provisionSeat/
- * teardownSeat are complete and usable today.
+ * **Per-seat GameStream.** getAppList/launch/resume/quit must reach a *seat's*
+ * Apollo rather than the machine's own address, so each seat gets a synthetic
+ * host record (the machine's address, the seat's GFE ports) and its own
+ * GameStreamBackend over it. Each Apollo keeps its own client list, so each
+ * seat is paired separately — with its own certificate, so seats stay distinct
+ * clients, and with the PIN pushed to that seat's Apollo web UI, since
+ * MultiSeat's API can unpair a client but never pair one.
+ *
+ * ⚠️ Written against MultiSeat's source and NOT exercised: provisioning a seat
+ * needs a free Windows session, which the bench cannot offer (Windows Pro
+ * allows one session, console or remote). Treat the per-seat stream path as
+ * unverified until a seat has actually reached Ready.
  */
 class MultiSeatBackend : public QObject, public IStreamBackend
 {
@@ -102,9 +110,20 @@ public:
     void teardownSeat(const QString& seatId, BackendVoidCallback cb) override;
 
 private:
-    /// The one place that says why the per-seat GameStream half is missing, so
-    /// the four calls that share the limitation cannot drift apart.
-    static BackendError perSeatGameStreamUnsupported();
+    /// Resolve a seat, then hand back a GameStreamBackend bound to its Apollo,
+    /// pairing it first if we have never paired that seat. `cb` gets nullptr on
+    /// failure, with the reason.
+    using SeatBackendCallback =
+        std::function<void(GameStreamBackend* backend, const BackendError& err)>;
+    void withSeatBackend(const QString& seatId, SeatBackendCallback cb);
+
+    /// The synthetic host for a seat: the machine's address with the seat's own
+    /// GFE ports, plus whatever pairing we have recorded for it.
+    NvComputer* seatHost(const MultiSeatSeat& seat, const QString& address);
+
+    void pairSeat(const MultiSeatSeat& seat, const QString& address, BackendVoidCallback cb);
+
+    QString seatPairingKey(const QString& seatId, const char* field) const;
 
     QString m_HostUuid;
     HostResolver m_ResolveHost;
@@ -115,6 +134,21 @@ private:
 
     QString m_PairUser;
     QString m_PairPassword;
+
+    NvHTTP* m_SeatHttp = nullptr;
+    QNetworkAccessManager* m_Nam = nullptr;
+
+    // One synthetic host and one provider per seat, kept for the life of this
+    // backend: their async callbacks reference them. Hosts are held by value —
+    // Qt 6 backs QMap with std::map, so references to values stay valid across
+    // inserts, which the resolver closures depend on. Backends are QObjects
+    // parented to this, so Qt owns them.
+    QMap<QString, NvComputer> m_SeatHosts;
+    QMap<QString, GameStreamBackend*> m_SeatBackends;
+
+    // Kept alive for the whole handshake, like WolfBackend does.
+    std::unique_ptr<NvPairingManager> m_Pairing;
+    SunshineRestClient* m_PinPusher = nullptr;
 
     /// deviceSessionId → seat id. Sticky so a returning player lands back on
     /// their own Windows account, with their saves and settings.

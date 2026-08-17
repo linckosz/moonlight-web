@@ -95,11 +95,11 @@ SunshineRestClient::CredentialCheck SunshineRestClient::checkCredentials(const Q
 }
 
 void SunshineRestClient::sendPin(const QString& pin, const QString& user, const QString& pass,
-                                 const QString& deviceName, quint16 port)
+                                 const QString& deviceName, quint16 port, const QString& host)
 {
     QUrl url;
     url.setScheme(QStringLiteral("https"));
-    url.setHost(QStringLiteral("127.0.0.1"));
+    url.setHost(host);
     url.setPort(port);
     url.setPath(QStringLiteral("/api/pin"));
 
