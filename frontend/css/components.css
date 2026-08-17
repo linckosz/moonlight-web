@@ -727,6 +727,12 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     color: var(--accent, #35c98f);
     opacity: 1;
 }
+/* Back-to-console button: sits beside Stop in the stream header, so it stays
+   reachable whatever the stream is showing. */
+.stream-console-btn {
+    margin-right: var(--space-2);
+}
+
 /* Only MultiSeat asks for these, so they sit apart from the main fields. */
 .backend-hint {
     font-size: var(--fs-xs, 0.78rem);
