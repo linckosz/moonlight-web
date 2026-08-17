@@ -302,9 +302,9 @@ void MultiSeatBackend::allocateSeat(const QString& deviceSessionId, BackendSeatC
             return;
         }
 
-        // Sticky first: a returning device must land back on its own Windows
-        // account, or the player loses their saves and settings.
-        const QString remembered = m_Assignments.value(deviceSessionId);
+        // Ownership is durable: a user keeps their seat across restarts, so the
+        // assignment is read from settings rather than from memory alone.
+        const QString remembered = ownedSeat(deviceSessionId);
         if (!remembered.isEmpty()) {
             for (const SeatRef& seat : seats) {
                 if (seat.id == remembered) {
@@ -314,13 +314,13 @@ void MultiSeatBackend::allocateSeat(const QString& deviceSessionId, BackendSeatC
             }
             // The seat was torn down while they were away; fall through and
             // give them a fresh one rather than failing.
-            m_Assignments.remove(deviceSessionId);
+            releaseOwnership(deviceSessionId);
         }
 
-        const QSet<QString> taken(m_Assignments.cbegin(), m_Assignments.cend());
+        const QSet<QString> taken = ownedSeats();
         for (const SeatRef& seat : seats) {
             if (seat.busy || taken.contains(seat.id)) continue;
-            m_Assignments.insert(deviceSessionId, seat.id);
+            claimOwnership(deviceSessionId, seat.id);
             cb(true, BackendError{}, seat);
             return;
         }
@@ -335,14 +335,50 @@ void MultiSeatBackend::allocateSeat(const QString& deviceSessionId, BackendSeatC
 
 void MultiSeatBackend::releaseSeat(const QString& seatId)
 {
-    // Drop the assignment but leave the seat provisioned: tearing it down would
-    // destroy the player's Windows session, and they are likely to come back.
-    // Reclaiming idle seats is a policy decision for SeatManager, not a
-    // side effect of one player closing a tab.
-    const QList<QString> owners = m_Assignments.keys(seatId);
-    for (const QString& owner : owners) {
-        m_Assignments.remove(owner);
+    // Deliberately does nothing. Ownership is durable: a user keeps their seat,
+    // and its Windows account keeps their saves and settings. Closing a tab is
+    // not a reason to hand that account to somebody else — reassigning is an
+    // admin decision, made by tearing the seat down.
+    Q_UNUSED(seatId);
+}
+
+QString MultiSeatBackend::ownershipKey(const QString& deviceSessionId) const
+{
+    return QStringLiteral("multiSeatOwners/%1/%2").arg(m_HostUuid, deviceSessionId);
+}
+
+QString MultiSeatBackend::ownedSeat(const QString& deviceSessionId) const
+{
+    if (deviceSessionId.isEmpty()) return QString();
+    return QSettings().value(ownershipKey(deviceSessionId)).toString();
+}
+
+void MultiSeatBackend::claimOwnership(const QString& deviceSessionId, const QString& seatId)
+{
+    if (deviceSessionId.isEmpty()) return;
+    QSettings().setValue(ownershipKey(deviceSessionId), seatId);
+    Logger::info(QStringLiteral("MultiSeat: seat %1 now belongs to %2").arg(seatId, deviceSessionId));
+}
+
+void MultiSeatBackend::releaseOwnership(const QString& deviceSessionId)
+{
+    if (deviceSessionId.isEmpty()) return;
+    QSettings().remove(ownershipKey(deviceSessionId));
+}
+
+QSet<QString> MultiSeatBackend::ownedSeats() const
+{
+    // Every seat already spoken for, so a newcomer never takes one that has an
+    // owner — even an owner who is currently away.
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("multiSeatOwners/%1").arg(m_HostUuid));
+    QSet<QString> owned;
+    for (const QString& key : settings.childKeys()) {
+        const QString seatId = settings.value(key).toString();
+        if (!seatId.isEmpty()) owned.insert(seatId);
     }
+    settings.endGroup();
+    return owned;
 }
 
 void MultiSeatBackend::getAppList(const QString& seatId, BackendAppListCallback cb)
