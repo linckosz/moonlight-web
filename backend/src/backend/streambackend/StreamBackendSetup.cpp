@@ -87,7 +87,9 @@ void registerAll(NvHTTP* http, QNetworkAccessManager* nam, HostLookup lookup, Pa
             return std::make_unique<MultiSeatBackend>(
                 uuid, [lookup, uuid]() { return lookup(uuid); }, http, nam,
                 config.value(QStringLiteral("apiUrl")).toString(),
-                config.value(QStringLiteral("apiToken")).toString(), nullptr);
+                config.value(QStringLiteral("apiToken")).toString(),
+                config.value(QStringLiteral("pairUser")).toString(),
+                config.value(QStringLiteral("pairPassword")).toString(), nullptr);
         });
 
     Logger::info(QStringLiteral("Stream backends registered: [%1]")

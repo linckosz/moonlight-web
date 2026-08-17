@@ -184,6 +184,8 @@ std::unique_ptr<IStreamBackend> ComputerManager::backendForHost(const QString& u
         type = host->backendType;
         config[QStringLiteral("apiUrl")] = host->backendApiUrl;
         config[QStringLiteral("apiToken")] = host->backendApiToken;
+        config[QStringLiteral("pairUser")] = host->backendPairUser;
+        config[QStringLiteral("pairPassword")] = host->backendPairPassword;
     }
 
     return StreamBackendRegistry::instance().create(type, config);
@@ -1101,6 +1103,7 @@ void ComputerManager::startPairingChain(const QString& uuid)
 
 void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
                                        const QString& apiUrl, const QString& apiToken,
+                                       const QString& pairUser, const QString& pairPassword,
                                        ResponseCallback respond)
 {
     NvComputer* host = findHostByUuid(uuid);
@@ -1123,6 +1126,8 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     // to fix a URL without making the admin retype a secret the browser was
     // never shown.
     const QString effectiveToken = apiToken.isEmpty() ? host->backendApiToken : apiToken;
+    const QString effectivePairPassword =
+        pairPassword.isEmpty() ? host->backendPairPassword : pairPassword;
 
     // Build the candidate from the values being proposed, WITHOUT storing them
     // yet. Persisting first would let a failed attempt — a mistyped key is the
@@ -1131,6 +1136,8 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     config[QStringLiteral("hostUuid")] = uuid;
     config[QStringLiteral("apiUrl")] = apiUrl;
     config[QStringLiteral("apiToken")] = effectiveToken;
+    config[QStringLiteral("pairUser")] = pairUser;
+    config[QStringLiteral("pairPassword")] = effectivePairPassword;
 
     std::shared_ptr<IStreamBackend> backend(
         StreamBackendRegistry::instance().create(type, config).release());
@@ -1143,8 +1150,8 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     // Pair right away. Registering a backend is the one admin gesture allowed to
     // involve a human, and it is precisely what spares every player a PIN.
     backend->ensurePaired(
-        [this, uuid, type, apiUrl, effectiveToken, respond = std::move(respond), backend](
-            bool ok, const BackendError& err) {
+        [this, uuid, type, apiUrl, effectiveToken, pairUser, effectivePairPassword,
+         respond = std::move(respond), backend](bool ok, const BackendError& err) {
             if (ok) {
                 // Only now is the configuration known to work. The host may have
                 // been deleted while we were talking to the backend.
@@ -1152,6 +1159,8 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
                     h->backendType = type;
                     h->backendApiUrl = apiUrl;
                     h->backendApiToken = effectiveToken;
+                    h->backendPairUser = pairUser;
+                    h->backendPairPassword = effectivePairPassword;
                     saveHosts();
                     emit hostsChanged();
                 }
@@ -1312,6 +1321,8 @@ std::pair<int, QJsonObject> ComputerManager::handleClearBackend(const QString& u
     host->backendType.clear();
     host->backendApiUrl.clear();
     host->backendApiToken.clear();
+    host->backendPairUser.clear();
+    host->backendPairPassword.clear();
     saveHosts();
     emit hostsChanged();
 

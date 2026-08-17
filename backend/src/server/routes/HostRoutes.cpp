@@ -117,7 +117,8 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
 
             // Absent token = keep the stored one; the browser is never sent it.
             computerManager.handleSetBackend(uuid, type, apiUrl, body["apiToken"].toString(),
-                                             std::move(respond));
+                                             body["pairUser"].toString(),
+                                             body["pairPassword"].toString(), std::move(respond));
         });
 
     server.router()->get("/api/hosts/:id/backend", [&computerManager](const HttpRequest& req) {

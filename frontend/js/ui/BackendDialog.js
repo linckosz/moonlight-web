@@ -50,6 +50,7 @@ export class BackendDialog {
                         }>${this.esc(ty)}</option>`
                 )
                 .join('');
+            this.syncPairCredsVisibility();
         } catch {
             this.setStatus(t('backend.typesFailed'), 'error');
         }
@@ -185,6 +186,16 @@ export class BackendDialog {
         el.hidden = false;
     }
 
+    /// MultiSeat pairs a seat through its Apollo web UI, so it needs those
+    /// credentials; Wolf pairs through its own API and needs none. Asking every
+    /// backend for them would be noise.
+    syncPairCredsVisibility() {
+        const select = this.overlay?.querySelector('.backend-type');
+        const panel = this.overlay?.querySelector('.backend-pair-creds');
+        if (!select || !panel) return;
+        panel.hidden = select.value !== 'multiseat';
+    }
+
     close() {
         if (this.overlay) {
             this.overlay.remove();
@@ -212,6 +223,8 @@ export class BackendDialog {
         const type = this.overlay.querySelector('.backend-type').value;
         const apiUrl = this.overlay.querySelector('.backend-url').value.trim();
         const apiToken = this.overlay.querySelector('.backend-token').value;
+        const pairUser = this.overlay.querySelector('.backend-pair-user')?.value.trim() || '';
+        const pairPassword = this.overlay.querySelector('.backend-pair-password')?.value || '';
 
         if (!apiUrl) {
             this.setStatus(t('backend.urlRequired'), 'error');
@@ -221,7 +234,13 @@ export class BackendDialog {
         this.setBusy(true);
         this.setStatus(t('backend.pairing'));
         try {
-            await BackendClient.setHostBackend(this.host.uuid, { type, apiUrl, apiToken });
+            await BackendClient.setHostBackend(this.host.uuid, {
+                type,
+                apiUrl,
+                apiToken,
+                pairUser,
+                pairPassword,
+            });
             if (!this.overlay) return;
             this.setStatus(t('backend.paired'), 'success');
             if (this.onSaved) this.onSaved();
@@ -281,6 +300,25 @@ export class BackendDialog {
                            }">
                 </label>
 
+                <div class="backend-pair-creds" hidden>
+                    <label class="backend-field">
+                        <span>${t('backend.pairUser')}</span>
+                        <input class="backend-pair-user" type="text" autocomplete="off"
+                               spellcheck="false"
+                               value="${this.esc(this.host.backendPairUser || '')}">
+                    </label>
+                    <label class="backend-field">
+                        <span>${t('backend.pairPassword')}</span>
+                        <input class="backend-pair-password" type="password" autocomplete="off"
+                               placeholder="${
+                                   this.host.backendPairConfigured
+                                       ? t('backend.tokenKeep')
+                                       : t('backend.pairPasswordPlaceholder')
+                               }">
+                    </label>
+                    <p class="backend-hint">${t('backend.pairHint')}</p>
+                </div>
+
                 <div class="backend-caps" hidden></div>
                 <div class="backend-seats" hidden></div>
 
@@ -307,6 +345,10 @@ export class BackendDialog {
             .addEventListener('click', () => this.close());
 
         this.overlay.querySelector('.btn-backend-save').addEventListener('click', () => this.save());
+
+        this.overlay
+            .querySelector('.backend-type')
+            .addEventListener('change', () => this.syncPairCredsVisibility());
 
         this.overlay
             .querySelector('.btn-backend-clear')
