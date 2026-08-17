@@ -23,7 +23,10 @@
 #include "../NvHTTP.h"
 #include "../NvPairingManager.h"
 #include "../PairingChain.h"
+#include "../IdentityManager.h"
 #include "../WolfApiClient.h"
+
+#include <QSettings>
 
 #include <QCryptographicHash>
 #include <QSet>
@@ -83,13 +86,6 @@ QString WolfBackend::seatIdFor(const QString& deviceSessionId)
     return QString::fromLatin1(digest.toHex().left(16));
 }
 
-LaunchRequest WolfBackend::withSeatIdentity(const QString& seatId, const LaunchRequest& req) const
-{
-    LaunchRequest scoped = req;
-    scoped.clientUniqueId = seatId;
-    return scoped;
-}
-
 // --- Pairing -----------------------------------------------------------------
 
 void WolfBackend::announcePin(const QString& pin, const QSet<QString>& knownSecrets,
@@ -130,7 +126,7 @@ void WolfBackend::announcePin(const QString& pin, const QSet<QString>& knownSecr
     });
 }
 
-void WolfBackend::ensurePaired(BackendVoidCallback cb)
+void WolfBackend::pairIdentity(const QString& seatId, BackendVoidCallback cb)
 {
     NvComputer* host = m_ResolveHost ? m_ResolveHost() : nullptr;
     if (!host) {
@@ -138,8 +134,15 @@ void WolfBackend::ensurePaired(BackendVoidCallback cb)
         return;
     }
 
-    // Idempotent, like every other provider's ensurePaired().
-    if (host->pairState == NvComputer::PS_PAIRED && !host->serverCertPem.isEmpty()) {
+    // Idempotent. The default identity is judged by the host's own pair state;
+    // a seat by our record of it, since Wolf gives us no way to ask "is this
+    // certificate known?" without deriving its client id.
+    if (seatId.isEmpty()) {
+        if (host->pairState == NvComputer::PS_PAIRED && !host->serverCertPem.isEmpty()) {
+            cb(true, BackendError{});
+            return;
+        }
+    } else if (isSeatPaired(seatId)) {
         cb(true, BackendError{});
         return;
     }
@@ -160,7 +163,7 @@ void WolfBackend::ensurePaired(BackendVoidCallback cb)
 
     // Snapshot what is already parked on the host. Anything appearing after
     // this that we did not know about is ours — see announcePin().
-    m_Api->pendingPairRequests([this, host, addr, cb = std::move(cb)](
+    m_Api->pendingPairRequests([this, host, addr, seatId, cb = std::move(cb)](
                                    bool ok, const WolfApiError& err,
                                    const QVector<WolfPendingPair>& pending) mutable {
         if (!ok) {
@@ -176,9 +179,13 @@ void WolfBackend::ensurePaired(BackendVoidCallback cb)
             knownSecrets.insert(entry.pairSecret);
         }
 
+        // The seat's own certificate, and its id as the uniqueid: Wolf keys its
+        // pairing cache on uniqueid + "@" + client_ip, so seats pairing from one
+        // machine must not collide there either.
         m_Pairing = std::make_unique<NvPairingManager>(
             host->appVersion, addr.address(), addr.port(),
-            host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT);
+            host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT,
+            IdentityManager::get()->identityForSeat(seatId), seatId);
         m_PairingInFlight = true;
 
         const QString pin = PairingChain::generatePin();
@@ -188,13 +195,21 @@ void WolfBackend::ensurePaired(BackendVoidCallback cb)
             [this, knownSecrets](const QString& announced) {
                 announcePin(announced, knownSecrets, kPendingPollAttempts);
             },
-            [this, cb = std::move(cb)](const PairingChain::Result& result) {
+            [this, seatId, cb = std::move(cb)](const PairingChain::Result& result) {
                 m_PairingInFlight = false;
 
                 switch (result.outcome) {
                 case PairingChain::Outcome::Paired:
-                    if (m_Commit) m_Commit(result.serverCertPem);
-                    Logger::info(QStringLiteral("Wolf auto-pair: paired with no user interaction"));
+                    if (seatId.isEmpty()) {
+                        // Only the default identity's pairing describes the host.
+                        if (m_Commit) m_Commit(result.serverCertPem);
+                    } else {
+                        markSeatPaired(seatId);
+                    }
+                    Logger::info(
+                        QStringLiteral("Wolf auto-pair: paired %1 with no user interaction")
+                            .arg(seatId.isEmpty() ? QStringLiteral("the default identity")
+                                                  : QStringLiteral("seat ") + seatId));
                     cb(true, BackendError{});
                     break;
 
@@ -217,6 +232,29 @@ void WolfBackend::ensurePaired(BackendVoidCallback cb)
                 }
             });
     });
+}
+
+void WolfBackend::ensurePaired(BackendVoidCallback cb)
+{
+    pairIdentity(QString(), std::move(cb));
+}
+
+QString WolfBackend::seatPairingKey(const QString& seatId) const
+{
+    return QStringLiteral("wolfSeatPairings/%1/%2").arg(m_HostUuid, seatId);
+}
+
+bool WolfBackend::isSeatPaired(const QString& seatId) const
+{
+    return QSettings().value(seatPairingKey(seatId), false).toBool();
+}
+
+void WolfBackend::markSeatPaired(const QString& seatId)
+{
+    // Persisted per host: the same seat facing a different Wolf is a different
+    // pairing, and replaying a handshake Wolf already accepted would leave a
+    // duplicate client behind.
+    QSettings().setValue(seatPairingKey(seatId), true);
 }
 
 // --- Seats -------------------------------------------------------------------
@@ -309,12 +347,50 @@ void WolfBackend::getAppList(const QString& seatId, BackendAppListCallback cb)
 
 void WolfBackend::launch(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb)
 {
-    m_GameStream->launch(m_GameStream->seatId(), withSeatIdentity(seatId, req), std::move(cb));
+    Q_UNUSED(seatId);
+    withPairedSeat(req, [this, cb](bool ok, const BackendError& err, const LaunchRequest& scoped) {
+        if (!ok) {
+            cb(false, err, MediaDescriptor{});
+            return;
+        }
+        m_GameStream->launch(m_GameStream->seatId(), scoped, cb);
+    });
 }
 
 void WolfBackend::resume(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb)
 {
-    m_GameStream->resume(m_GameStream->seatId(), withSeatIdentity(seatId, req), std::move(cb));
+    Q_UNUSED(seatId);
+    withPairedSeat(req, [this, cb](bool ok, const BackendError& err, const LaunchRequest& scoped) {
+        if (!ok) {
+            cb(false, err, MediaDescriptor{});
+            return;
+        }
+        m_GameStream->resume(m_GameStream->seatId(), scoped, cb);
+    });
+}
+
+void WolfBackend::withPairedSeat(const LaunchRequest& req, PreparedLaunchCallback cb)
+{
+    // The seat is derived from the device's own id, which is what distinguishes
+    // one player from another all the way from the browser.
+    const QString seat = seatIdFor(req.clientUniqueId);
+    if (seat.isEmpty()) {
+        // No device id: nothing to isolate, so present the default identity and
+        // behave exactly as before.
+        cb(true, BackendError{}, req);
+        return;
+    }
+
+    pairIdentity(seat, [this, req, seat, cb](bool ok, const BackendError& err) {
+        if (!ok) {
+            cb(false, err, req);
+            return;
+        }
+        LaunchRequest scoped = req;
+        scoped.clientIdentitySeat = seat;
+        scoped.clientUniqueId = seat;
+        cb(true, BackendError{}, scoped);
+    });
 }
 
 void WolfBackend::quit(const QString& seatId, const QString& clientUniqueId,

@@ -36,21 +36,16 @@ class WolfApiClient;
  * reimplemented — this composes a GameStreamBackend and forwards to it. What
  * Wolf changes is *identity* and *pairing*.
  *
- * **Identity — incomplete, read this before relying on it.** Wolf resolves the
- * client from its *TLS certificate* (rest/servers.cpp get_client_if_paired →
- * get_client_cert), and keys a running session on it
- * (get_session_by_client). The uniqueid only ever keys the pairing cache
- * (uniqueid + "@" + client_ip).
+ * **Identity.** Wolf resolves the client from its *TLS certificate*
+ * (rest/servers.cpp get_client_if_paired → get_client_cert) and keys a running
+ * session on it (get_session_by_client); the uniqueid only ever keys the
+ * pairing cache (uniqueid + "@" + client_ip). So isolation is a matter of
+ * certificates, not ids.
  *
- * seatIdFor() therefore pins LaunchRequest::clientUniqueId, which is *not* what
- * Wolf keys sessions on. As long as MoonlightWeb presents one global client
- * certificate (IdentityManager is a single-identity singleton), every seat looks
- * like the same Wolf client and a second player's launch resumes the first
- * player's session instead of starting their own.
- *
- * Real isolation needs one certificate per seat — cheap to pair now that
- * pairing needs no human, and Session.cpp already passes clientCert/clientKey
- * per call. Until that lands, treat this backend as single-player.
+ * Each device therefore gets its own certificate, derived from the id the
+ * browser already carries, and each is paired separately — which costs nothing
+ * now that pairing needs no human. Two players are two Wolf clients, and
+ * neither can resume the other's session.
  *
  * **Pairing.** Wolf parks phase 1 on an unresolved `user_pin` promise and never
  * answers until someone supplies the PIN. Since MoonlightWeb is the Moonlight
@@ -89,12 +84,9 @@ public:
     /// Native co-op, but no provisioning: profiles are created by users inside
     /// Wolf UI, not conjured by us.
     ///
-    /// multiUser stays false until seats get their own client certificates.
-    /// Claiming it now would invite callers to hand out concurrent seats that
-    /// Wolf would collapse onto one session — see the identity note above.
     BackendCapabilities capabilities() const override
     {
-        return BackendCapabilities{/*multiUser*/ false, /*provisioning*/ false, /*lobbies*/ true};
+        return BackendCapabilities{/*multiUser*/ true, /*provisioning*/ false, /*lobbies*/ true};
     }
 
     void ensurePaired(BackendVoidCallback cb) override;
@@ -125,8 +117,24 @@ private:
     /// the session key — see the identity note on the class.
     static QString seatIdFor(const QString& deviceSessionId);
 
-    /// Copy of `req` with clientUniqueId forced to the seat identity.
-    LaunchRequest withSeatIdentity(const QString& seatId, const LaunchRequest& req) const;
+    /// Pair one identity: the default one when seatId is empty, otherwise the
+    /// seat's own certificate. Idempotent.
+    void pairIdentity(const QString& seatId, BackendVoidCallback cb);
+
+    using PreparedLaunchCallback =
+        std::function<void(bool ok, const BackendError& err, const LaunchRequest& req)>;
+
+    /// Ensure the calling device's seat is paired, then hand back a request that
+    /// presents that seat's certificate. Wolf keys sessions on the certificate,
+    /// so this is what keeps two players apart.
+    void withPairedSeat(const LaunchRequest& req, PreparedLaunchCallback cb);
+
+    /// Which seats we have already paired with THIS host. Wolf offers no way to
+    /// ask whether it knows a certificate without deriving its client id, and
+    /// replaying an accepted handshake would leave a duplicate client behind.
+    QString seatPairingKey(const QString& seatId) const;
+    bool isSeatPaired(const QString& seatId) const;
+    void markSeatPaired(const QString& seatId);
 
     QString m_HostUuid;
     HostResolver m_ResolveHost;
