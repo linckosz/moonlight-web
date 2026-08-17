@@ -638,6 +638,10 @@
         "pairUser": "Utilisateur admin des sièges",
         "pairPassword": "Mot de passe admin des sièges",
         "pairPasswordPlaceholder": "Mot de passe de l’interface web du siège",
-        "pairHint": "MultiSeat ne sait pas appairer un siège via sa propre API : MoonlightWeb pousse donc le PIN vers l’interface web Apollo de chaque siège. Ce sont les identifiants que vous y avez définis — un seul couple couvre tous les sièges."
+        "pairHint": "MultiSeat ne sait pas appairer un siège via sa propre API : MoonlightWeb pousse donc le PIN vers l’interface web Apollo de chaque siège. Ce sont les identifiants que vous y avez définis — un seul couple couvre tous les sièges.",
+        "seatFree": "Libérer",
+        "seatFreeHint": "Détacher ce siège de son propriétaire, sans le supprimer",
+        "seatFreeing": "Libération du siège…",
+        "seatFreed": "Siège libéré — il peut être repris."
     }
 }
