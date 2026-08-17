@@ -105,9 +105,14 @@ export class BackendDialog {
                     }</span>
                     ${
                         canProvision
-                            ? `<button class="btn-seat-remove" data-seat="${this.esc(
+                            ? `<button class="btn-seat-free" data-seat="${this.esc(
                                   s.id
-                              )}" title="${this.esc(t('backend.seatRemove'))}">✕</button>`
+                              )}" title="${this.esc(t('backend.seatFreeHint'))}">${this.esc(
+                                  t('backend.seatFree')
+                              )}</button>
+                               <button class="btn-seat-remove" data-seat="${this.esc(
+                                   s.id
+                               )}" title="${this.esc(t('backend.seatRemove'))}">✕</button>`
                             : ''
                     }
                 </div>`
@@ -143,6 +148,24 @@ export class BackendDialog {
             this.loadSeats();
         } catch (err) {
             if (!this.overlay) return;
+            this.setStatus(err?.message || t('backend.failed'), 'error');
+        } finally {
+            this.setBusy(false);
+        }
+    }
+
+    async releaseSeatOwner(seatId) {
+        this.setBusy(true);
+        this.setStatus(t('backend.seatFreeing'));
+        try {
+            await BackendClient.releaseHostSeatOwner(this.host.uuid, seatId);
+            if (!this.overlay) return;
+            this.setStatus(t('backend.seatFreed'), 'success');
+            this.loadSeats();
+        } catch (err) {
+            if (!this.overlay) return;
+            // 404 here is not a failure worth alarming about: it just means the
+            // seat was already free.
             this.setStatus(err?.message || t('backend.failed'), 'error');
         } finally {
             this.setBusy(false);
@@ -362,6 +385,12 @@ export class BackendDialog {
                 this.provisionSeat();
                 return;
             }
+            const free = e.target.closest('.btn-seat-free');
+            if (free) {
+                this.releaseSeatOwner(free.dataset.seat);
+                return;
+            }
+
             const remove = e.target.closest('.btn-seat-remove');
             if (remove) {
                 this.teardownSeat(remove.dataset.seat);

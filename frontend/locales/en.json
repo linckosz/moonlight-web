@@ -638,6 +638,10 @@
         "pairUser": "Seat admin user",
         "pairPassword": "Seat admin password",
         "pairPasswordPlaceholder": "Password for the seat web UI",
-        "pairHint": "MultiSeat cannot pair a seat through its own API, so MoonlightWeb pushes the PIN to each seat’s Apollo web interface. These are the credentials you set there — one pair covers every seat."
+        "pairHint": "MultiSeat cannot pair a seat through its own API, so MoonlightWeb pushes the PIN to each seat’s Apollo web interface. These are the credentials you set there — one pair covers every seat.",
+        "seatFree": "Free",
+        "seatFreeHint": "Release this seat from its owner, keeping the seat itself",
+        "seatFreeing": "Releasing the seat…",
+        "seatFreed": "Seat released — it can be claimed again."
     }
 }

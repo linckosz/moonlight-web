@@ -245,6 +245,14 @@ export class BackendClient {
         return this.del(`/api/hosts/${hostId}/seats/${seatId}`);
     }
     /**
+     * Free a seat from whoever owns it, leaving the seat itself intact. For a
+     * seat stranded by a device that never came back — ownership is durable on
+     * purpose, so nothing else releases it.
+     */
+    static async releaseHostSeatOwner(hostId, seatId) {
+        return this.del(`/api/hosts/${hostId}/seats/${seatId}/owner`);
+    }
+    /**
      * Per-browser Sunshine client unique ID, persisted in localStorage.
      * Each browser gets its own 16-hex-char ID so Sunshine treats their
      * sessions independently (one browser won't cancel/take over another's).

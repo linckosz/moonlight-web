@@ -775,6 +775,7 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     color: var(--text-2);
 }
 .btn-seat-add,
+.btn-seat-free,
 .btn-seat-remove {
     background: none;
     border: none;
@@ -784,6 +785,7 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     padding: 0 var(--space-1);
 }
 .btn-seat-add:hover,
+.btn-seat-free:hover,
 .btn-seat-remove:hover {
     color: var(--text-1);
 }
