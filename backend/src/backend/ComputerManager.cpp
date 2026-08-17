@@ -1283,6 +1283,50 @@ void ComputerManager::handleTeardownSeat(const QString& uuid, const QString& sea
     });
 }
 
+namespace {
+
+/// Both listings answer the same shape, so they share one adapter.
+void respondWithJsonArray(ResponseCallback respond, const QString& key,
+                          std::shared_ptr<IStreamBackend> backend, bool ok,
+                          const BackendError& err, const QJsonArray& items)
+{
+    if (!ok) {
+        respond(backendFailure(err));
+    } else {
+        respond(HttpResponse::json({{key, items}}));
+    }
+    QTimer::singleShot(0, [backend]() {});
+}
+
+} // namespace
+
+void ComputerManager::handleListProfiles(const QString& uuid, ResponseCallback respond)
+{
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+    backend->listProfiles([respond = std::move(respond), backend](
+                              bool ok, const BackendError& err, const QJsonArray& items) mutable {
+        respondWithJsonArray(std::move(respond), QStringLiteral("profiles"), backend, ok, err,
+                             items);
+    });
+}
+
+void ComputerManager::handleListLobbies(const QString& uuid, ResponseCallback respond)
+{
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+    backend->listLobbies([respond = std::move(respond), backend](
+                             bool ok, const BackendError& err, const QJsonArray& items) mutable {
+        respondWithJsonArray(std::move(respond), QStringLiteral("lobbies"), backend, ok, err, items);
+    });
+}
+
 std::pair<int, QJsonObject> ComputerManager::handleGetBackend(const QString& uuid) const
 {
     NvComputer* host = findHostByUuid(uuid);

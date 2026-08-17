@@ -176,6 +176,26 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
             computerManager.handleTeardownSeat(uuid, seatId, std::move(respond));
         });
 
+    server.router()->getAsync("/api/hosts/:id/profiles",
+                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+                                  QString uuid = req.pathParams.value("id");
+                                  if (uuid.isEmpty()) {
+                                      respond(HttpResponse::error(400, "Missing host ID"));
+                                      return;
+                                  }
+                                  computerManager.handleListProfiles(uuid, std::move(respond));
+                              });
+
+    server.router()->getAsync("/api/hosts/:id/lobbies",
+                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+                                  QString uuid = req.pathParams.value("id");
+                                  if (uuid.isEmpty()) {
+                                      respond(HttpResponse::error(400, "Missing host ID"));
+                                      return;
+                                  }
+                                  computerManager.handleListLobbies(uuid, std::move(respond));
+                              });
+
     // What the settings dialog offers, so the UI never hardcodes a backend list.
     server.router()->get("/api/backends", [](const HttpRequest&) {
         QJsonArray types;

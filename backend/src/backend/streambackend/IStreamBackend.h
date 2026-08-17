@@ -20,6 +20,7 @@
 #include "MediaDescriptor.h"
 #include "../NvApp.h"
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <QVector>
@@ -119,6 +120,8 @@ using BackendAppListCallback =
     std::function<void(bool ok, const BackendError& error, const QVector<NvApp>& apps)>;
 using BackendMediaCallback =
     std::function<void(bool ok, const BackendError& error, const MediaDescriptor& media)>;
+using BackendJsonCallback =
+    std::function<void(bool ok, const BackendError& error, const QJsonArray& items)>;
 
 // A source of streamable seats and apps.
 //
@@ -168,4 +171,27 @@ public:
     // ok == false with an explanatory error.
     virtual void provisionSeat(const QJsonObject& params, BackendSeatCallback cb) = 0;
     virtual void teardownSeat(const QString& seatId, BackendVoidCallback cb) = 0;
+
+    // Wolf's console concepts, passed through as the provider reports them.
+    // Not pure: most backends have neither, and the default says so rather than
+    // making every provider write the same refusal.
+    //
+    // These exist for the overlay to offer what the browser does better than a
+    // streamed UI — switching profile, joining a lobby — never to replace the
+    // console itself.
+    virtual void listProfiles(BackendJsonCallback cb)
+    {
+        cb(false,
+           BackendError::make(BackendError::Unsupported,
+                              QStringLiteral("This backend has no profiles")),
+           QJsonArray());
+    }
+
+    virtual void listLobbies(BackendJsonCallback cb)
+    {
+        cb(false,
+           BackendError::make(BackendError::Unsupported,
+                              QStringLiteral("This backend has no lobbies")),
+           QJsonArray());
+    }
 };

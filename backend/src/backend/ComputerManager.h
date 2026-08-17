@@ -116,6 +116,11 @@ public:
                              ResponseCallback respond);
     void handleTeardownSeat(const QString& uuid, const QString& seatId, ResponseCallback respond);
 
+    // Wolf's console concepts, for the overlay. Backends without them answer
+    // 501, which lets the UI hide the control instead of showing an error.
+    void handleListProfiles(const QString& uuid, ResponseCallback respond);
+    void handleListLobbies(const QString& uuid, ResponseCallback respond);
+
     // Provisioning-only: drive the pairing chain to a terminal state under a
     // local event loop. Safe because provisioning runs once at startup, before
     // the main loop and outside the reentrant HTTP request path. Returns true

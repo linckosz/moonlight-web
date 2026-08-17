@@ -104,6 +104,9 @@ public:
     void provisionSeat(const QJsonObject& params, BackendSeatCallback cb) override;
     void teardownSeat(const QString& seatId, BackendVoidCallback cb) override;
 
+    void listProfiles(BackendJsonCallback cb) override;
+    void listLobbies(BackendJsonCallback cb) override;
+
 private:
     /// Resolve the PIN into Wolf once stage 1 is parked on it. Polls
     /// /pair/pending because our GET can outrun Wolf registering the request,
