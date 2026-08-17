@@ -18,9 +18,17 @@
 #include "MultiSeatBackend.h"
 
 #include "../../common/Logger.h"
+#include "../IdentityManager.h"
 #include "../MultiSeatApiClient.h"
 #include "../NvAddress.h"
 #include "../NvComputer.h"
+#include "../NvHTTP.h"
+#include "../NvPairingManager.h"
+#include "../PairingChain.h"
+#include "../SunshineRestClient.h"
+#include "GameStreamBackend.h"
+
+#include <QSettings>
 
 namespace {
 
@@ -74,18 +82,154 @@ MultiSeatBackend::MultiSeatBackend(QString hostUuid, HostResolver resolver, NvHT
     , m_Api(new MultiSeatApiClient(apiUrl, apiKey, nam, this))
     , m_PairUser(pairUser)
     , m_PairPassword(pairPassword)
+    , m_SeatHttp(http)
+    , m_Nam(nam)
+    , m_PinPusher(new SunshineRestClient(this))
 {
 }
 
 MultiSeatBackend::~MultiSeatBackend() = default;
 
-BackendError MultiSeatBackend::perSeatGameStreamUnsupported()
+QString MultiSeatBackend::seatPairingKey(const QString& seatId, const char* field) const
 {
-    return BackendError::make(
-        BackendError::Unsupported,
-        QStringLiteral("MultiSeat seats stream through their own Apollo instance, which needs a "
-                       "per-seat host record (ports, certificate, pair state). That is "
-                       "SeatManager's job and is not wired yet."));
+    return QStringLiteral("multiSeatPairings/%1/%2/%3")
+        .arg(m_HostUuid, seatId, QLatin1String(field));
+}
+
+NvComputer* MultiSeatBackend::seatHost(const MultiSeatSeat& seat, const QString& address)
+{
+    NvComputer* host = &m_SeatHosts[seat.id];
+
+    // A seat is an ordinary GameStream host that happens to share a machine
+    // with its siblings — only the ports differ.
+    host->uuid = seat.id;
+    host->name = seat.accountName;
+    host->activeAddress = NvAddress(address, seat.gfeHttpPort());
+    host->activeHttpsPort = seat.gfeHttpsPort();
+    host->state = NvComputer::CS_ONLINE;
+
+    QSettings settings;
+    host->serverCertPem = settings.value(seatPairingKey(seat.id, "serverCert")).toByteArray();
+    host->pairState =
+        host->serverCertPem.isEmpty() ? NvComputer::PS_NOT_PAIRED : NvComputer::PS_PAIRED;
+
+    return host;
+}
+
+void MultiSeatBackend::pairSeat(const MultiSeatSeat& seat, const QString& address,
+                                BackendVoidCallback cb)
+{
+    if (m_PairUser.isEmpty() || m_PairPassword.isEmpty()) {
+        cb(false,
+           BackendError::make(
+               BackendError::NotPaired,
+               QStringLiteral("Seat %1 is not paired and no seat admin credentials are "
+                              "configured. MultiSeat cannot pair a seat through its own API, "
+                              "so the PIN has to reach that seat via its Apollo web UI.")
+                   .arg(seat.accountName)));
+        return;
+    }
+
+    // Its own certificate, so seats stay distinct clients to their Apollo.
+    m_Pairing = std::make_unique<NvPairingManager>(
+        QString(), address, seat.gfeHttpPort(), seat.gfeHttpsPort(),
+        IdentityManager::get()->identityForSeat(seat.id), seat.id);
+
+    const QString pin = PairingChain::generatePin();
+    const QString seatId = seat.id;
+    const QString accountName = seat.accountName;
+    const quint16 webUiPort = static_cast<quint16>(seat.portBase + 1);
+
+    PairingChain::run(
+        m_Pairing.get(), pin,
+        [this, address, webUiPort, accountName](const QString& announced) {
+            // Stage 1 is parked on the host waiting for a PIN, and the seat
+            // Apollo web UI is the only way to deliver it.
+            Logger::info(QStringLiteral("MultiSeat: pushing PIN to the Apollo web UI of seat %1")
+                             .arg(accountName));
+            m_PinPusher->sendPin(announced, m_PairUser, m_PairPassword,
+                                 QStringLiteral("moonlightweb"), webUiPort, address);
+        },
+        [this, seatId, accountName, cb](const PairingChain::Result& result) {
+            if (result.outcome == PairingChain::Outcome::Paired) {
+                QSettings().setValue(seatPairingKey(seatId, "serverCert"), result.serverCertPem);
+                Logger::info(QStringLiteral("MultiSeat: paired seat %1 with no user interaction")
+                                 .arg(accountName));
+                cb(true, BackendError{});
+                return;
+            }
+
+            // Unlike Sunshine, nobody is typing here: a refused PIN means the
+            // credentials are wrong, not that a human is slow.
+            cb(false, BackendError::make(
+                          BackendError::NotPaired,
+                          QStringLiteral("Could not pair seat %1. Check the seat admin "
+                                         "credentials, which are what authorise the PIN.")
+                              .arg(accountName)));
+        });
+}
+
+void MultiSeatBackend::withSeatBackend(const QString& seatId, SeatBackendCallback cb)
+{
+    NvComputer* host = m_ResolveHost ? m_ResolveHost() : nullptr;
+    if (!host) {
+        cb(nullptr, BackendError::make(BackendError::NotFound, QStringLiteral("Host not found")));
+        return;
+    }
+    const QVector<NvAddress> addrs = host->uniqueAddresses();
+    if (addrs.isEmpty()) {
+        cb(nullptr, BackendError::make(BackendError::NoAddress,
+                                       QStringLiteral("Host has no reachable address")));
+        return;
+    }
+    const QString address = addrs.first().address();
+
+    // Always re-read the seat: its portBase and status live in the service, and
+    // a seat can be torn down between two launches.
+    m_Api->getSeat(seatId, [this, address, cb](bool ok, const MultiSeatApiError& err,
+                                               const MultiSeatSeat& seat) {
+        if (!ok) {
+            cb(nullptr, toBackendError(err));
+            return;
+        }
+        if (!seat.isUsable()) {
+            QString why = seat.errorMessage;
+            if (why.isEmpty()) why = QStringLiteral("Seat is in state %1").arg(seat.status);
+            cb(nullptr, BackendError::make(BackendError::NotFound, why));
+            return;
+        }
+
+        NvComputer* synthetic = seatHost(seat, address);
+
+        auto ready = [this, id = seat.id, cb]() {
+            GameStreamBackend*& slot = m_SeatBackends[id];
+            if (!slot) {
+                slot = new GameStreamBackend(
+                    id,
+                    [this, id]() -> NvComputer* {
+                        auto it = m_SeatHosts.find(id);
+                        return it == m_SeatHosts.end() ? nullptr : &it.value();
+                    },
+                    m_SeatHttp, m_Nam, this);
+            }
+            cb(slot, BackendError{});
+        };
+
+        if (synthetic->pairState == NvComputer::PS_PAIRED) {
+            ready();
+            return;
+        }
+
+        pairSeat(seat, address,
+                 [this, seat, address, ready, cb](bool paired, const BackendError& perr) {
+                     if (!paired) {
+                         cb(nullptr, perr);
+                         return;
+                     }
+                     seatHost(seat, address); // pick up the certificate just stored
+                     ready();
+                 });
+    });
 }
 
 void MultiSeatBackend::ensurePaired(BackendVoidCallback cb)
@@ -203,32 +347,56 @@ void MultiSeatBackend::releaseSeat(const QString& seatId)
 
 void MultiSeatBackend::getAppList(const QString& seatId, BackendAppListCallback cb)
 {
-    Q_UNUSED(seatId);
-    cb(false, perSeatGameStreamUnsupported(), {});
+    withSeatBackend(seatId, [seatId, cb](GameStreamBackend* backend, const BackendError& err) {
+        if (!backend) {
+            cb(false, err, {});
+            return;
+        }
+        backend->getAppList(seatId, cb);
+    });
 }
 
 void MultiSeatBackend::launch(const QString& seatId, const LaunchRequest& req,
                               BackendMediaCallback cb)
 {
-    Q_UNUSED(seatId);
-    Q_UNUSED(req);
-    cb(false, perSeatGameStreamUnsupported(), MediaDescriptor{});
+    withSeatBackend(seatId, [seatId, req, cb](GameStreamBackend* backend, const BackendError& err) {
+        if (!backend) {
+            cb(false, err, MediaDescriptor{});
+            return;
+        }
+        // Present the seat certificate: each Apollo keeps its own client list,
+        // so seats must not look like one another.
+        LaunchRequest scoped = req;
+        scoped.clientIdentitySeat = seatId;
+        backend->launch(seatId, scoped, cb);
+    });
 }
 
 void MultiSeatBackend::resume(const QString& seatId, const LaunchRequest& req,
                               BackendMediaCallback cb)
 {
-    Q_UNUSED(seatId);
-    Q_UNUSED(req);
-    cb(false, perSeatGameStreamUnsupported(), MediaDescriptor{});
+    withSeatBackend(seatId, [seatId, req, cb](GameStreamBackend* backend, const BackendError& err) {
+        if (!backend) {
+            cb(false, err, MediaDescriptor{});
+            return;
+        }
+        LaunchRequest scoped = req;
+        scoped.clientIdentitySeat = seatId;
+        backend->resume(seatId, scoped, cb);
+    });
 }
 
 void MultiSeatBackend::quit(const QString& seatId, const QString& clientUniqueId,
                             BackendVoidCallback cb)
 {
-    Q_UNUSED(seatId);
-    Q_UNUSED(clientUniqueId);
-    cb(false, perSeatGameStreamUnsupported());
+    withSeatBackend(seatId, [seatId, clientUniqueId, cb](GameStreamBackend* backend,
+                                                         const BackendError& err) {
+        if (!backend) {
+            cb(false, err);
+            return;
+        }
+        backend->quit(seatId, clientUniqueId, cb);
+    });
 }
 
 void MultiSeatBackend::provisionSeat(const QJsonObject& params, BackendSeatCallback cb)
