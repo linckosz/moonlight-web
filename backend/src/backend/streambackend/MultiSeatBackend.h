@@ -109,6 +109,7 @@ public:
 
     void provisionSeat(const QJsonObject& params, BackendSeatCallback cb) override;
     void teardownSeat(const QString& seatId, BackendVoidCallback cb) override;
+    void releaseSeatOwner(const QString& seatId, BackendVoidCallback cb) override;
 
 private:
     /// Resolve a seat, then hand back a GameStreamBackend bound to its Apollo,
