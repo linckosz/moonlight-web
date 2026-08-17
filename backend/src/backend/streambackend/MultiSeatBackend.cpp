@@ -473,6 +473,33 @@ void MultiSeatBackend::provisionSeat(const QJsonObject& params, BackendSeatCallb
     });
 }
 
+void MultiSeatBackend::releaseSeatOwner(const QString& seatId, BackendVoidCallback cb)
+{
+    // Find whoever holds this seat and forget them. The seat itself is left
+    // provisioned: the point is to hand a working seat to somebody else, not to
+    // destroy the Windows account and the saves inside it.
+    QSettings settings;
+    const QString group = QStringLiteral("multiSeatOwners/%1").arg(m_HostUuid);
+    settings.beginGroup(group);
+    QStringList freed;
+    for (const QString& key : settings.childKeys()) {
+        if (settings.value(key).toString() == seatId) freed.append(key);
+    }
+    for (const QString& key : freed) {
+        settings.remove(key);
+    }
+    settings.endGroup();
+
+    if (freed.isEmpty()) {
+        cb(false, BackendError::make(BackendError::NotFound,
+                                     QStringLiteral("That seat has no owner to release")));
+        return;
+    }
+
+    Logger::info(QStringLiteral("MultiSeat: seat %1 released, it can be claimed again").arg(seatId));
+    cb(true, BackendError{});
+}
+
 void MultiSeatBackend::teardownSeat(const QString& seatId, BackendVoidCallback cb)
 {
     m_Api->teardownSeat(seatId, [this, seatId, cb = std::move(cb)](bool ok,

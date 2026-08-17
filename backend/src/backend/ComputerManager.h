@@ -116,6 +116,11 @@ public:
                              ResponseCallback respond);
     void handleTeardownSeat(const QString& uuid, const QString& seatId, ResponseCallback respond);
 
+    // Free a seat from its owner without destroying it, so a seat left behind
+    // by a device that never came back can be claimed again.
+    void handleReleaseSeatOwner(const QString& uuid, const QString& seatId,
+                                ResponseCallback respond);
+
     // Wolf's console concepts, for the overlay. Backends without them answer
     // 501, which lets the UI hide the control instead of showing an error.
     void handleListProfiles(const QString& uuid, ResponseCallback respond);

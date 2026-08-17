@@ -176,6 +176,18 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
             computerManager.handleTeardownSeat(uuid, seatId, std::move(respond));
         });
 
+    server.router()->delAsync(
+        "/api/hosts/:id/seats/:seatId/owner",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+            QString uuid = req.pathParams.value("id");
+            QString seatId = req.pathParams.value("seatId");
+            if (uuid.isEmpty() || seatId.isEmpty()) {
+                respond(HttpResponse::error(400, "Missing host or seat ID"));
+                return;
+            }
+            computerManager.handleReleaseSeatOwner(uuid, seatId, std::move(respond));
+        });
+
     server.router()->getAsync("/api/hosts/:id/profiles",
                               [&computerManager](const HttpRequest& req, ResponseCallback respond) {
                                   QString uuid = req.pathParams.value("id");

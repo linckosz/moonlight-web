@@ -1263,6 +1263,26 @@ void ComputerManager::handleProvisionSeat(const QString& uuid, const QJsonObject
     });
 }
 
+void ComputerManager::handleReleaseSeatOwner(const QString& uuid, const QString& seatId,
+                                             ResponseCallback respond)
+{
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+
+    backend->releaseSeatOwner(seatId, [respond = std::move(respond), backend](
+                                          bool ok, const BackendError& err) {
+        if (!ok) {
+            respond(backendFailure(err));
+        } else {
+            respond(HttpResponse::json({{"status", "ok"}}));
+        }
+        QTimer::singleShot(0, [backend]() {});
+    });
+}
+
 void ComputerManager::handleTeardownSeat(const QString& uuid, const QString& seatId,
                                          ResponseCallback respond)
 {

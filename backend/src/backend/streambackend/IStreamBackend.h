@@ -172,6 +172,19 @@ public:
     virtual void provisionSeat(const QJsonObject& params, BackendSeatCallback cb) = 0;
     virtual void teardownSeat(const QString& seatId, BackendVoidCallback cb) = 0;
 
+    // Break the durable association between a seat and whoever owns it, without
+    // destroying the seat. Ownership deliberately survives a disconnect, which
+    // means a device that never comes back — a reinstalled browser, cleared
+    // storage — would otherwise hold its seat forever. On a backend with a
+    // finite number of seats that is a slow leak with no way out, so an admin
+    // needs this. Backends whose seats are not a finite resource say Unsupported.
+    virtual void releaseSeatOwner(const QString& seatId, BackendVoidCallback cb)
+    {
+        Q_UNUSED(seatId);
+        cb(false, BackendError::make(BackendError::Unsupported,
+                                     QStringLiteral("This backend does not own seats")));
+    }
+
     // Wolf's console concepts, passed through as the provider reports them.
     // Not pure: most backends have neither, and the default says so rather than
     // making every provider write the same refusal.
