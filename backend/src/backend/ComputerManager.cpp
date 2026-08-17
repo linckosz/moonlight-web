@@ -1638,7 +1638,8 @@ void ComputerManager::fetchNextBoxArtInBackground(const QString& uuid)
 // bookkeeping the backend deliberately does not own — dropping the pair state on
 // a 401, caching the app list, kicking off box-art prefetch — plus the exact
 // response shapes this route has always returned.
-void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback respond)
+void ComputerManager::handleGetAppList(const QString& uuid, const QString& deviceSessionId,
+                                      ResponseCallback respond)
 {
     auto backend = std::shared_ptr<IStreamBackend>(backendForHost(uuid));
     if (!backend) {
@@ -1646,8 +1647,19 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
         return;
     }
 
+    // Whose app list this is. A plain host answers with itself, so this is the
+    // same call it has always made; a multi-seat backend resolves the seat the
+    // asking user owns, because its apps live on that seat's own Apollo.
+    backend->allocateSeat(deviceSessionId, [this, uuid, respond, backend](
+                                               bool seatOk, const BackendError& seatErr,
+                                               const SeatRef& seat) {
+    if (!seatOk) {
+        respond(backendFailure(seatErr));
+        return;
+    }
+
     // `backend` is captured so it outlives the async call.
-    backend->getAppList(uuid, [this, uuid, respond, backend](bool ok, const BackendError& err,
+    backend->getAppList(seat.id, [this, uuid, respond, backend](bool ok, const BackendError& err,
                                                              const QVector<NvApp>& apps) {
         if (!ok) {
             // Pre-flight failure: the host was already gone when we looked.
@@ -1732,6 +1744,7 @@ void ComputerManager::handleGetAppList(const QString& uuid, ResponseCallback res
         result["status"] = "ok";
         result["apps"] = appsArr;
         respond(HttpResponse::json(result));
+    });
     });
 }
 

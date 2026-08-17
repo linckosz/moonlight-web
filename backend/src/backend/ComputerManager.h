@@ -131,8 +131,14 @@ public:
     NvComputer* getHost(const QString& uuid) const;
     NvHTTP* http() const { return m_Http; }
 
-    // App list — HTTPS fetch from paired host, async
-    void handleGetAppList(const QString& uuid, ResponseCallback respond);
+    // App list — HTTPS fetch from paired host, async.
+    //
+    // `deviceSessionId` names who is asking. On a plain host it is ignored: the
+    // backend answers with the host itself, exactly as before. On a multi-seat
+    // backend the app list belongs to a seat, and this is what resolves which
+    // one — the seat that user durably owns.
+    void handleGetAppList(const QString& uuid, const QString& deviceSessionId,
+                          ResponseCallback respond);
 
     // Box art — proxy PNG from Sunshine, async (fetches on demand if not cached)
     void handleGetBoxArt(const QString& uuid, int appId, ResponseCallback respond);
