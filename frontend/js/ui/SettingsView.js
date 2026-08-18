@@ -31,7 +31,11 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
-import { SUPPORTS_CANVAS_TEARING, IS_MOBILE_OR_TABLET } from '../util/BrowserDetect.js';
+import {
+    SUPPORTS_CANVAS_TEARING,
+    IS_MOBILE_OR_TABLET,
+    clientAspectString,
+} from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
@@ -185,8 +189,10 @@ export class SettingsView {
         const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10);
         const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
         const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked === true;
-        const aspect =
-            this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
+        // Aspect is not user-selectable — it is always the client monitor's (or
+        // 16:9 on mobile), resolved at launch. Use it here so the auto-bitrate
+        // estimate matches the ratio that will actually be streamed.
+        const aspect = clientAspectString();
         const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
         const mbps = this._computeAutoBitrate(
             isNaN(height) ? this._streamHeight : height,

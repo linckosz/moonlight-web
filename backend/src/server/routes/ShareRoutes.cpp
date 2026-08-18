@@ -324,10 +324,12 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
                 return;
             }
 
-            // Only the resolution comes from the player, and only from a fixed
-            // set. Everything else — fps, codec, bitrate — is decided here.
+            // Only the resolution comes from the player: the height from a fixed
+            // set, plus their screen aspect ("W:H") so the stream fills their
+            // display. Everything else — fps, codec, bitrate — is decided here.
             const int requested = body.value(QStringLiteral("height")).toInt(1080);
             const int height = (requested == 720 || requested == 1440) ? requested : 1080;
+            const QString aspect = body.value(QStringLiteral("aspect")).toString();
 
             if (!deps.startPlayerStream) {
                 respond(HttpResponse::error(503, "Streaming unavailable"));
@@ -342,7 +344,8 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
             const int colon = serverHost.indexOf(QLatin1Char(':'));
             if (colon >= 0) serverHost = serverHost.left(colon);
 
-            deps.startPlayerStream(slot, height, share.permissions(slot), serverHost, respond);
+            deps.startPlayerStream(slot, height, aspect, share.permissions(slot), serverHost,
+                                   respond);
         });
 
     // POST /api/share/player/leave — the player pressed Leave.

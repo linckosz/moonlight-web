@@ -55,7 +55,7 @@ import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
-import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
+import { IS_MOBILE_OR_TABLET, clientAspectString } from './util/BrowserDetect.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
@@ -303,8 +303,8 @@ const MoonlightApp = {
         const view = new PlayerJoinView(
             container,
             token,
-            async ({ height, immersive, touchScreen }) => {
-                const result = await BackendClient.playerJoin(token, height);
+            async ({ height, aspect, immersive, touchScreen }) => {
+                const result = await BackendClient.playerJoin(token, height, aspect);
 
                 // StreamView renders (and connects) from its constructor, so the
                 // join screen has to be gone first.
@@ -1249,6 +1249,12 @@ const MoonlightApp = {
         if (streamingSettings.power_save) {
             streamingSettings.transport_mode = 'webrtc-media-udp';
         }
+
+        // Aspect ratio is always the client monitor's (desktop) or 16:9 (mobile),
+        // resolved here at launch so the host receives the exact ratio and fills
+        // the screen — no black bars. Overrides any stored/degradation value; the
+        // backend derives the even width from this "W:H" string.
+        streamingSettings.stream_aspect = clientAspectString();
 
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id, streamingSettings);
