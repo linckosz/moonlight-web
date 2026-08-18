@@ -110,8 +110,6 @@ private slots:
     void onRelayIceTimedOut();
 
 private:
-    bool isPrivateAddress(const QString& ip) const;
-
     // ── WS Fallback mode ────────────────────────────────────────────────────
     // When ICE negotiation times out (UDP blocked by corporate firewall),
     // video/audio data is forwarded over the existing signaling WebSocket
@@ -192,11 +190,15 @@ public:
     QString upnpPublicIP() const { return m_UpnpPublicIP; }
 
 private:
-    /// Discover IGD and add a UDP port mapping via UPnP.
+    /// Discover IGD and add the UDP and TCP port mappings via UPnP.
     /// Called async (QTimer::singleShot(0)) so it doesn't block start().
     bool setupUPnP();
 
-    /// Remove the UPnP port mapping and clean up resources.
+    /// Add or refresh one mapping, retrying without a lease if the router
+    /// rejects the leased form. Uses m_UpnpLeaseSec, which it may latch to 0.
+    bool addUpnpMapping(uint16_t port, const std::string& protocol);
+
+    /// Remove the UPnP port mappings and clean up resources.
     void cleanupUPnP();
 
     /// Build the rtc::Configuration with ICE servers and port range.
@@ -212,8 +214,19 @@ private:
     uint16_t m_UpnpMappedPort = 0;
     QString m_UpnpPublicIP;
     QTimer* m_UpnpRenewTimer = nullptr;
+    /// TCP mapped alongside UDP? Best effort: losing it only costs the ICE-TCP
+    /// transports, while UDP carries the vast majority of sessions.
+    bool m_UpnpTcpMapped = false;
+    /// Lease currently in effect. Latched to 0 (permanent) when the router
+    /// rejects a leased mapping, or when renewal keeps failing.
+    uint32_t m_UpnpLeaseSec = kUpnpLeaseDurationSec;
+    /// Consecutive renewal failures; two is enough to stop trusting the lease.
+    int m_UpnpRenewFailures = 0;
 
-    /// Default UDP port for UPnP mapping (must match libdatachannel port range).
+    /// Default port for UPnP mapping (must match libdatachannel port range).
+    /// Mapped in both UDP and TCP: the ICE-TCP transports need an inbound TCP
+    /// port to be reachable from the internet, since browsers only ever open
+    /// ICE-TCP connections outbound.
     static constexpr uint16_t kUpnpPort = 48010;
     /// Max number of port+1 fallback attempts if the default port is taken.
     static constexpr int kUpnpMaxPortAttempts = 5;

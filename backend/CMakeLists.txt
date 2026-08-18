@@ -205,7 +205,7 @@ add_executable(mw-server
     src/backend/streambackend/MultiSeatBackend.cpp
     src/backend/streambackend/StreamBackendSetup.cpp
     src/backend/SunshineInstaller.cpp
-    src/streaming/RelayBase.h # QObject base with no .cpp; listed so AUTOMOC mocs it
+    src/streaming/RelayBase.cpp
     src/streaming/StreamConfig.cpp
     src/streaming/Session.cpp
     src/streaming/MoonlightShim.cpp

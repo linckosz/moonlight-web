@@ -571,65 +571,7 @@ void DataChannelRelay::setupPeerConnection(const rtc::Configuration& config)
 
     // --- Local ICE candidate callback ---
     m_Pc->onLocalCandidate([this](const rtc::Candidate& candidate) {
-        rtc::Candidate modCandidate = candidate;
-
-        // If UPnP is active and this is a host candidate, rewrite it with the
-        // public IP and mapped port. This gives the browser a reachable UDP
-        // endpoint through the UPnP-opened router port.
-        if (m_ForceHostPublic && !m_PublicIP.empty() && m_PublicPort > 0 &&
-            candidate.type() == rtc::Candidate::Type::Host) {
-            // Only rewrite IPv4 candidates — parsing the candidate string
-            // to check the address field. IPv6 addresses contain ':' in the
-            // address part; rewriting them with an IPv4 public IP produces
-            // an invalid candidate that breaks ICE.
-            std::string candStr = candidate.candidate();
-            size_t firstSpace = candStr.find(' ');
-            bool isIpv4 = true;
-            if (firstSpace != std::string::npos &&
-                candStr.find(':', firstSpace + 1) != std::string::npos) {
-                isIpv4 = false;
-            }
-
-            if (isIpv4) {
-                // For a client on our own LAN (incl. one reaching us through the
-                // public URL via NAT hairpin), also advertise the original
-                // private host candidate so it can connect directly to
-                // 192.168.x.x — many routers don't hairpin UDP, so a public-only
-                // candidate never becomes reachable locally. Gated on
-                // m_EmitLanCandidate (false for internet clients) so the private
-                // IP is never leaked outside the LAN.
-                if (m_EmitLanCandidate)
-                    emit signalingIceCandidate(candStr, std::string(candidate.mid()));
-                try {
-                    modCandidate.changeAddress(m_PublicIP, m_PublicPort);
-                    qInfo() << "[DataChannelRelay] Host candidate ->"
-                            << QString::fromStdString(m_PublicIP) << ":" << m_PublicPort
-                            << (m_EmitLanCandidate ? "(+ LAN)" : "");
-                } catch (const std::exception& e) {
-                    qWarning() << "[DataChannelRelay] Failed to rewrite candidate:" << e.what();
-                }
-            } else {
-                qInfo() << "[DataChannelRelay] Skipping IPv6 candidate (cannot rewrite to IPv4):"
-                        << QString::fromStdString(candidate.candidate());
-            }
-        }
-
-        // When UPnP is active, suppress IPv6 candidates entirely so the
-        // browser's ICE agent is forced to use the IPv4 UPnP path.
-        // Residential IPv6 often fails because the router firewall blocks
-        // unsolicited inbound IPv6 traffic (DTLS/SCTP timeout).
-        if (m_SuppressIPv6) {
-            std::string candStr = std::string(modCandidate.candidate());
-            size_t space = candStr.find(' ');
-            if (space != std::string::npos && candStr.find(':', space + 1) != std::string::npos) {
-                qInfo() << "[DataChannelRelay] Suppressing IPv6 candidate (UPnP active):"
-                        << QString::fromStdString(candStr).left(80);
-                return; // Skip — don't emit this candidate
-            }
-        }
-
-        emit signalingIceCandidate(std::string(modCandidate.candidate()),
-                                   std::string(modCandidate.mid()));
+        emitLocalCandidate(candidate, "[DataChannelRelay]");
     });
 
     // --- State change callback ---
@@ -1460,12 +1402,4 @@ void DataChannelRelay::onIceCheckTimeout()
     if (!m_Stopping.exchange(true)) {
         emit sessionEnded();
     }
-}
-
-void DataChannelRelay::setPublicAddress(const std::string& publicIP, uint16_t publicPort)
-{
-    m_PublicIP = publicIP;
-    m_PublicPort = publicPort;
-    qInfo() << "[DataChannelRelay] UPnP public address set:" << QString::fromStdString(publicIP)
-            << ":" << publicPort;
 }

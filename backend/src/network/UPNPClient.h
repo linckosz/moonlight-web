@@ -28,8 +28,8 @@ struct UPNPUrls;
 struct IGDdatas;
 
 // UPnP-IGD port mapping client using miniupnpc.
-// Discovers the Internet Gateway Device on the LAN and manages UDP port mappings
-// for WebRTC NAT traversal.
+// Discovers the Internet Gateway Device on the LAN and manages the UDP and TCP
+// port mappings for WebRTC NAT traversal.
 //
 // Thread safety: all methods should be called from the Qt main thread only.
 class UPNPClient : public QObject

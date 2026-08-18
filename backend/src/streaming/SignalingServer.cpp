@@ -25,6 +25,7 @@ extern "C" {
 }
 #include "MoonlightShim.h"
 #include "network/UPNPClient.h"
+#include "server/NetClassify.h"
 
 #include <rtc/rtc.hpp>
 #include <QCoreApplication>
@@ -234,18 +235,15 @@ void SignalingServer::onNewWsConnection()
         return;
     }
 
-    // Check if this is a local or remote connection (for STUN)
-    QHostAddress peerAddr = m_WsClient->peerAddress();
-    // Normalize IPv4-mapped IPv6 (::ffff:x.x.x.x -> x.x.x.x) so that
-    // isPrivateAddress() sees a clean IPv4 string instead of an IPv6 one.
-    QString peerAddrStr = peerAddr.toString();
-    if (peerAddrStr.startsWith("::ffff:") && peerAddrStr.count('.') == 3)
-        peerAddrStr = peerAddrStr.mid(7);
-    bool isInternet = !isPrivateAddress(peerAddrStr);
-    // Force LAN mode for loopback (more robust than classification alone)
-    if (peerAddrStr == "127.0.0.1" || peerAddrStr == "::1") isInternet = false;
-    qInfo() << "[SignalingServer] Client connected from" << peerAddrStr
-            << "(isInternet=" << isInternet << ")";
+    // Classify the peer once. A tunnel peer (mesh VPN) still counts as
+    // "internet" here so STUN stays available: if the tunnel path fails, its
+    // srflx address is the fallback. Whether we may show it our internal host
+    // candidates is a separate question, answered by m_ClientIsLocal below.
+    const QString peerAddrStr = m_WsClient->peerAddress().toString();
+    const NetClassify::Kind peerKind = NetClassify::classify(peerAddrStr);
+    const bool isInternet = !NetClassify::isPrivateOrLoopback(peerKind);
+    qInfo() << "[SignalingServer] Client connected from" << peerAddrStr << "kind="
+            << NetClassify::toString(peerKind) << "(isInternet=" << isInternet << ")";
 
     connect(m_WsClient, &QWebSocket::textMessageReceived, this, &SignalingServer::onWsTextMessage);
     connect(m_WsClient, &QWebSocket::disconnected, this, &SignalingServer::onWsDisconnected);
@@ -802,45 +800,6 @@ void SignalingServer::onDataChannelsOpen()
 
 // --- Private helpers ---
 
-bool SignalingServer::isPrivateAddress(const QString& ip) const
-{
-    // Localhost
-    if (ip == "127.0.0.1" || ip == "::1" || ip == "localhost") return true;
-
-    // Parse IPv4
-    QHostAddress addr(ip);
-    if (addr.protocol() == QAbstractSocket::IPv4Protocol) {
-        quint32 ipv4 = addr.toIPv4Address();
-        // 10.0.0.0/8
-        if ((ipv4 & 0xFF000000) == 0x0A000000) return true;
-        // 172.16.0.0/12
-        if ((ipv4 & 0xFFF00000) == 0xAC100000) return true;
-        // 192.168.0.0/16
-        if ((ipv4 & 0xFFFF0000) == 0xC0A80000) return true;
-        // 169.254.0.0/16 (link-local)
-        if ((ipv4 & 0xFFFF0000) == 0xA9FE0000) return true;
-    }
-
-    // Check IPv4-mapped IPv6 addresses (::ffff:x.x.x.x).
-    // QHostAddress reports IPv6Protocol for these, but toIPv4Address()
-    // correctly returns the embedded IPv4 address portion.
-    // Without this check, clients connecting via IPv6 from a private IPv4
-    // subnet (e.g. a tunnel relaying IPv6 to localhost) would be classified
-    // as "internet", forcing STUN/TURN unnecessarily.
-    if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
-        quint32 ipv4 = addr.toIPv4Address();
-        if (ipv4 != 0) {
-            // Same private range checks against the embedded IPv4 address
-            if ((ipv4 & 0xFF000000) == 0x0A000000) return true;
-            if ((ipv4 & 0xFFF00000) == 0xAC100000) return true;
-            if ((ipv4 & 0xFFFF0000) == 0xC0A80000) return true;
-            if ((ipv4 & 0xFFFF0000) == 0xA9FE0000) return true;
-        }
-    }
-
-    return false;
-}
-
 // ── UPnP NAT traversal ─────────────────────────────────────────────────────────
 
 rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
@@ -945,12 +904,14 @@ bool SignalingServer::setupUPnP()
         qInfo() << "[UPNP] Public IP:" << m_UpnpPublicIP;
     }
 
-    // Try to add port mapping with fallback on port range
-    uint16_t port = kUpnpPort;
+    // Published before the mappings so addUpnpMapping() can use it.
+    m_Upnp = upnp;
+
+    // UDP first: it is what the media path actually requires.
     bool mappingOk = false;
     for (int attempt = 0; attempt < kUpnpMaxPortAttempts; attempt++) {
-        uint16_t tryPort = port + static_cast<uint16_t>(attempt);
-        if (upnp->addPortMapping(tryPort, tryPort, kUpnpLeaseDurationSec, "MoonlightWeb WebRTC")) {
+        uint16_t tryPort = kUpnpPort + static_cast<uint16_t>(attempt);
+        if (addUpnpMapping(tryPort, "UDP")) {
             m_UpnpMappedPort = tryPort;
             mappingOk = true;
             break;
@@ -961,28 +922,77 @@ bool SignalingServer::setupUPnP()
     if (!mappingOk) {
         qWarning() << "[UPNP] All ports in range" << kUpnpPort << "-"
                    << (kUpnpPort + kUpnpMaxPortAttempts - 1) << "failed";
+        m_Upnp = nullptr;
         delete upnp;
         return false;
     }
 
-    // Store the UPNPClient instance — it will be cleaned up in cleanupUPnP()
-    m_Upnp = upnp;
+    // TCP on the same port, for the ICE-TCP transports: browsers only ever open
+    // ICE-TCP connections outbound, so reaching this host from the internet
+    // needs an inbound TCP port. Best effort — a router that refuses it only
+    // costs the -tcp fallback modes.
+    m_UpnpTcpMapped = addUpnpMapping(m_UpnpMappedPort, "TCP");
+    if (!m_UpnpTcpMapped) {
+        qWarning() << "[UPNP] TCP mapping failed on port" << m_UpnpMappedPort
+                   << "— ICE-TCP transports will not be reachable from the internet";
+    }
 
-    // Schedule periodic renewal for routers without persistent mappings
+    // Schedule periodic renewal for routers without persistent mappings.
+    // Re-adding also re-establishes the mappings after a router reboot, so this
+    // stays worthwhile even once the lease has been latched to permanent.
     m_UpnpRenewTimer = new QTimer(this);
     connect(m_UpnpRenewTimer, &QTimer::timeout, this, [this]() {
-        if (m_Upnp && m_UpnpMappedPort > 0) {
-            qInfo() << "[UPNP] Renewing port mapping (every" << (kUpnpRenewIntervalMs / 60000)
-                    << "min)";
-            m_Upnp->addPortMapping(m_UpnpMappedPort, m_UpnpMappedPort, kUpnpLeaseDurationSec,
-                                   "MoonlightWeb WebRTC");
+        if (!m_Upnp || m_UpnpMappedPort == 0) return;
+
+        bool ok = addUpnpMapping(m_UpnpMappedPort, "UDP");
+        if (m_UpnpTcpMapped && !addUpnpMapping(m_UpnpMappedPort, "TCP")) ok = false;
+        if (ok) {
+            m_UpnpRenewFailures = 0;
+            return;
+        }
+
+        // A lease expiring mid-session pulls the mapping out from under a live
+        // stream. Two misses is enough to stop betting on the next one — a
+        // permanent mapping is the lesser evil, and cleanupUPnP() still removes
+        // it at shutdown.
+        if (++m_UpnpRenewFailures >= 2 && m_UpnpLeaseSec > 0) {
+            qWarning() << "[UPNP] Renewal failed twice — switching to a permanent mapping so a "
+                          "long session cannot outlive its lease";
+            m_UpnpLeaseSec = 0;
+            addUpnpMapping(m_UpnpMappedPort, "UDP");
+            if (m_UpnpTcpMapped) addUpnpMapping(m_UpnpMappedPort, "TCP");
         }
     });
     m_UpnpRenewTimer->start(kUpnpRenewIntervalMs);
 
-    qInfo() << "[UPNP] Setup complete: port" << m_UpnpMappedPort
-            << "mapped, public IP:" << m_UpnpPublicIP;
+    qInfo() << "[UPNP] Setup complete: port" << m_UpnpMappedPort << "mapped (UDP"
+            << (m_UpnpTcpMapped ? "+ TCP)" : "only)") << "lease=" << m_UpnpLeaseSec
+            << "s, public IP:" << m_UpnpPublicIP;
     return true;
+}
+
+bool SignalingServer::addUpnpMapping(uint16_t port, const std::string& protocol)
+{
+    if (!m_Upnp) return false;
+
+    const std::string desc = "MoonlightWeb WebRTC";
+    if (m_UpnpLeaseSec > 0) {
+        if (m_Upnp->addPortMapping(port, port, m_UpnpLeaseSec, desc, protocol)) return true;
+
+        // Plenty of IGDs — v1 especially — reject a non-zero lease outright,
+        // and would otherwise cost the user UPnP entirely. Only conclude that
+        // from a permanent retry actually succeeding: a plain "port busy"
+        // failure fails either way and must not drop everyone's lease.
+        if (m_Upnp->addPortMapping(port, port, 0, desc, protocol)) {
+            qWarning() << "[UPNP] Router refused a" << m_UpnpLeaseSec
+                       << "s lease — falling back to permanent mappings";
+            m_UpnpLeaseSec = 0;
+            return true;
+        }
+        return false;
+    }
+
+    return m_Upnp->addPortMapping(port, port, 0, desc, protocol);
 }
 
 void SignalingServer::cleanupUPnP()
@@ -994,8 +1004,9 @@ void SignalingServer::cleanupUPnP()
     }
 
     if (m_Upnp && m_UpnpMappedPort > 0) {
-        qInfo() << "[UPNP] Removing port mapping" << m_UpnpMappedPort;
-        m_Upnp->removePortMapping(m_UpnpMappedPort);
+        qInfo() << "[UPNP] Removing port mappings" << m_UpnpMappedPort;
+        m_Upnp->removePortMapping(m_UpnpMappedPort, "UDP");
+        if (m_UpnpTcpMapped) m_Upnp->removePortMapping(m_UpnpMappedPort, "TCP");
     }
 
     if (m_Upnp) {
@@ -1005,4 +1016,7 @@ void SignalingServer::cleanupUPnP()
 
     m_UpnpMappedPort = 0;
     m_UpnpPublicIP.clear();
+    m_UpnpTcpMapped = false;
+    m_UpnpLeaseSec = kUpnpLeaseDurationSec;
+    m_UpnpRenewFailures = 0;
 }
