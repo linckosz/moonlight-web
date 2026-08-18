@@ -25,6 +25,7 @@
 #include <cstdint>
 
 namespace rtc {
+class Candidate;
 class PeerConnection;
 struct Configuration;
 } // namespace rtc
@@ -87,15 +88,16 @@ public:
 
     // ── UPnP NAT traversal ────────────────────────────────────────────────────
 
-    virtual void setPublicAddress(const std::string& publicIP, uint16_t publicPort) = 0;
-    virtual void setForceHostCandidatePublic(bool force) = 0;
-    virtual void setSuppressIPv6Candidates(bool suppress) = 0;
+    void setPublicAddress(const std::string& publicIP, uint16_t publicPort);
+    void setForceHostCandidatePublic(bool force) { m_ForceHostPublic = force; }
+    void setSuppressIPv6Candidates(bool suppress) { m_SuppressIPv6 = suppress; }
     // When host candidates are rewritten to the public IP, also advertise the
-    // original private LAN candidate — but ONLY for a client that is itself on
-    // the LAN (loopback/RFC1918, incl. NAT-hairpinned access via the public
-    // URL), so the private IP is never leaked to internet peers. Lets a same-LAN
-    // client connect directly when the router doesn't hairpin UDP.
-    virtual void setEmitLanHostCandidate(bool enable) = 0;
+    // original internal candidate — but ONLY for a peer inside a network we
+    // control (loopback/RFC1918/mesh VPN, incl. NAT-hairpinned access via the
+    // public URL), so the internal topology is never leaked to a public peer.
+    // Lets a same-LAN client connect directly when the router doesn't hairpin
+    // UDP, and keeps a tunnel peer on the tunnel.
+    void setEmitLanHostCandidate(bool enable) { m_EmitLanCandidate = enable; }
 
     // ── Status ────────────────────────────────────────────────────────────────
 
@@ -118,8 +120,23 @@ signals:
     void sessionEnded();
 
 protected:
+    /// Apply the UPnP host-candidate rewrite and the IPv6 suppression, then
+    /// emit signalingIceCandidate. Both relays call this from their
+    /// onLocalCandidate handler; the logic used to be duplicated verbatim in
+    /// each and had already drifted in its logging.
+    ///
+    /// @param logTag prefix for this relay's log lines, e.g. "[MediaTrackRelay]".
+    void emitLocalCandidate(const rtc::Candidate& candidate, const char* logTag);
+
     /// Written once on the main thread before the relay moves to its own
     /// thread, read-only afterwards — same lifetime discipline as
     /// m_ClipboardEnabled.
     InputMsg::Policy m_InputPolicy;
+
+    // ── UPnP NAT traversal ──────────────────────────────────────────────────
+    std::string m_PublicIP;    ///< Public IP discovered via UPnP (or empty)
+    uint16_t m_PublicPort = 0; ///< Mapped port from UPnP (0 = not mapped)
+    bool m_ForceHostPublic = false;
+    bool m_SuppressIPv6 = false;     ///< Suppress IPv6 candidates when UPnP active
+    bool m_EmitLanCandidate = false; ///< Also emit the internal host candidate
 };

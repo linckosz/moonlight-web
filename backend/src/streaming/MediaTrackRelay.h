@@ -43,12 +43,11 @@ class MoonlightShim;
 //
 // Architecture:
 //   - 1 rtc::Track for video (H.264 over RTP, hardware-decoded by browser)
-//   - 1 rtc::DataChannel for audio (PCM16, same as DataChannelRelay — hybrid mode)
-//   - 1 rtc::DataChannel for input (JSON, bidirectionnel)
+//   - 1 rtc::Track for audio (Opus over RTP, relayed without decoding)
+//   - 1 rtc::DataChannel for input (JSON, bidirectional, negotiated id=1)
 //
 // The H.264 RTP packetizer (H264RtpPacketizer with LongStartSequence separator)
 // handles Annex B -> RTP fragmentation automatically.
-// Audio and input remain on DataChannels for v1 (no Opus encoder dependency).
 class MediaTrackRelay : public RelayBase
 {
     Q_OBJECT
@@ -76,12 +75,6 @@ public:
     void notifyClientSessionEnded() override;
 
     void requestIdrFrame() override;
-
-    // UPnP NAT traversal
-    void setPublicAddress(const std::string& publicIP, uint16_t publicPort) override;
-    void setForceHostCandidatePublic(bool force) override { m_ForceHostPublic = force; }
-    void setSuppressIPv6Candidates(bool suppress) override { m_SuppressIPv6 = suppress; }
-    void setEmitLanHostCandidate(bool enable) override { m_EmitLanCandidate = enable; }
 
     bool isConnected() const override { return m_Connected; }
 
@@ -184,13 +177,6 @@ private:
     // sent (session start, or after a worker-side delta drop broke the
     // reference chain). Guarded by m_VideoMutex.
     bool m_SentKeyframeOnTrack = false;
-
-    // ── UPnP NAT traversal ──────────────────────────────────────────────────
-    std::string m_PublicIP;
-    uint16_t m_PublicPort = 0;
-    bool m_ForceHostPublic = false;
-    bool m_SuppressIPv6 = false;
-    bool m_EmitLanCandidate = false; // Also emit the private host candidate (LAN client only)
 
     // ── ICE connection timeout ──────────────────────────────────────────────
     // Starts on setRemoteDescription(), cancelled on PC Connected or stop().

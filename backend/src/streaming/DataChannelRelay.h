@@ -40,8 +40,11 @@ class Track;
 class MoonlightShim;
 
 // WebRTC DataChannel relay that replaces StreamRelay.
-// Uses libdatachannel to establish 3 DataChannels (video, audio, input)
-// and forwards video/audio from MoonlightShim + input from browser.
+// Forwards video/audio from MoonlightShim + input from the browser over a
+// hybrid PeerConnection:
+//   - video: DataChannel (SCTP, negotiated id=0, ordered, maxRetransmits=3)
+//   - audio: rtc::Track (Opus over RTP) — not a DataChannel, despite the name
+//   - input: DataChannel (SCTP, negotiated id=2, reliable + ordered)
 //
 // Thread safety:
 // - MoonlightShim signals arrive on Qt main thread (AutoConnection).
@@ -90,12 +93,6 @@ public:
     }
 
     void requestIdrFrame() override;
-
-    // UPnP NAT traversal
-    void setPublicAddress(const std::string& publicIP, uint16_t publicPort) override;
-    void setForceHostCandidatePublic(bool force) override { m_ForceHostPublic = force; }
-    void setSuppressIPv6Candidates(bool suppress) override { m_SuppressIPv6 = suppress; }
-    void setEmitLanHostCandidate(bool enable) override { m_EmitLanCandidate = enable; }
 
     bool isConnected() const override { return m_Connected; }
 
@@ -233,13 +230,6 @@ private:
     qint64 m_BufferedKeyframePresUs = -1; // presentationTimeUs of the buffered keyframe
     bool m_HaveBufferedKeyframe = false;
     bool m_NewKeyframeArrived = false; // True if a new keyframe was sent directly while buffer held
-
-    // ── UPnP NAT traversal ──────────────────────────────────────────────────
-    std::string m_PublicIP;    // Public IP discovered via UPnP (or empty)
-    uint16_t m_PublicPort = 0; // Mapped port from UPnP (0 = not mapped)
-    bool m_ForceHostPublic = false;
-    bool m_SuppressIPv6 = false;     // Suppress IPv6 candidates when UPnP active
-    bool m_EmitLanCandidate = false; // Also emit the private host candidate (LAN client only)
 
     // ── HEVC VPS/SPS patching ──────────────────────────────────────────────
     // Applied once to the first HEVC keyframe.  Patches level_idc and

@@ -17,10 +17,14 @@
 
 #include "NvComputer.h"
 
+#include "server/NetClassify.h"
+
 #include <QHostAddress>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QNetworkInterface>
+
+#include <algorithm>
 
 // --- Construction from serverInfo XML ---------------------------------------
 
@@ -212,6 +216,28 @@ bool NvComputer::update(const NvComputer& that)
 
 // --- Unique addresses for polling -------------------------------------------
 
+namespace {
+
+/// Ordering key for the candidate addresses: the less exposed the path, the
+/// earlier it is tried. The MoonlightWeb ↔ Sunshine link carries the GameStream
+/// pairing and /serverinfo in cleartext on port 47989, so whenever both a
+/// private (or mesh-VPN) and a routable address are known for the same host, the
+/// cleartext exchange should not be the one crossing the internet.
+/// An address that does not parse as an IP — a hostname — ranks with the public
+/// ones: we cannot tell where it leads.
+int exposureRank(const NvAddress& na)
+{
+    switch (NetClassify::classify(na.address())) {
+    case NetClassify::Kind::Loopback: return 0;
+    case NetClassify::Kind::Private: return 1;
+    case NetClassify::Kind::Tunnel: return 2;
+    case NetClassify::Kind::Public: return 3;
+    }
+    return 3;
+}
+
+} // namespace
+
 QVector<NvAddress> NvComputer::uniqueAddresses() const
 {
     QVector<NvAddress> addrs;
@@ -220,11 +246,25 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
     // (updated in onPollReplyFinished from the URL used in the poll request).
     // It is more reliable than localAddress (from XML <LocalIP>) which may differ
     // from the mDNS-resolved address in multi-homed / Docker / VPN setups.
+    //
+    // Deliberately not demoted, even when a less exposed candidate exists: every
+    // caller takes only first() and polling never falls through to the next
+    // entry, so moving a known-good address down would strand a host that is
+    // reachable only the "worse" way.
     if (!activeAddress.isNull()) addrs.append(activeAddress);
-    if (!localAddress.isNull()) addrs.append(localAddress);
-    if (!manualAddress.isNull()) addrs.append(manualAddress);
-    if (!remoteAddress.isNull()) addrs.append(remoteAddress);
 
+    // The rest, least exposed first — this is what decides the initial pick, and
+    // any pick made after the active address is cleared.
+    QVector<NvAddress> rest;
+    if (!localAddress.isNull()) rest.append(localAddress);
+    if (!manualAddress.isNull()) rest.append(manualAddress);
+    if (!remoteAddress.isNull()) rest.append(remoteAddress);
+
+    std::stable_sort(rest.begin(), rest.end(), [](const NvAddress& a, const NvAddress& b) {
+        return exposureRank(a) < exposureRank(b);
+    });
+
+    addrs += rest;
     return addrs;
 }
 

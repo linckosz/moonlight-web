@@ -61,6 +61,22 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
     connect(m_Shim, &MoonlightShim::connectionTerminated, this,
             &MediaTrackRelay::onShimConnectionTerminated);
 
+    // Forward host rumble requests to the browser over the input DC.
+    // 'this' as context → runs on the relay thread (signal is emitted from the
+    // moonlight worker thread).
+    connect(m_Shim, &MoonlightShim::rumble, this, [this](int controller, int low, int high) {
+        if (m_Stopping.load() || !m_InputDc) return;
+        QJsonObject m;
+        m["type"] = "rumble";
+        m["index"] = controller;
+        m["low"] = low;
+        m["high"] = high;
+        QByteArray j = QJsonDocument(m).toJson(QJsonDocument::Compact);
+        try {
+            m_InputDc->send(std::string(j.constData(), j.size()));
+        } catch (const std::exception&) {}
+    });
+
     // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
     // Connected within 3s after setRemoteDescription().
     m_IceCheckTimer = new QTimer(this);
@@ -159,48 +175,7 @@ void MediaTrackRelay::setupPeerConnection(const rtc::Configuration& config)
 
     // --- Local ICE candidate callback ---
     m_Pc->onLocalCandidate([this](const rtc::Candidate& candidate) {
-        rtc::Candidate modCandidate = candidate;
-
-        // UPnP: rewrite host candidates with public IP
-        if (m_ForceHostPublic && !m_PublicIP.empty() && m_PublicPort > 0 &&
-            candidate.type() == rtc::Candidate::Type::Host) {
-            std::string candStr = candidate.candidate();
-            size_t firstSpace = candStr.find(' ');
-            bool isIpv4 = true;
-            if (firstSpace != std::string::npos &&
-                candStr.find(':', firstSpace + 1) != std::string::npos) {
-                isIpv4 = false;
-            }
-
-            if (isIpv4) {
-                // Same-LAN client (incl. NAT-hairpinned public URL): also emit
-                // the private host candidate for a direct connection. Gated on
-                // m_EmitLanCandidate (false for internet clients) — see
-                // DataChannelRelay for the full rationale.
-                if (m_EmitLanCandidate)
-                    emit signalingIceCandidate(candStr, std::string(candidate.mid()));
-                try {
-                    modCandidate.changeAddress(m_PublicIP, m_PublicPort);
-                    qInfo() << "[MediaTrackRelay] Host candidate ->"
-                            << QString::fromStdString(m_PublicIP) << ":" << m_PublicPort
-                            << (m_EmitLanCandidate ? "(+ LAN)" : "");
-                } catch (const std::exception& e) {
-                    qWarning() << "[MediaTrackRelay] Failed to rewrite candidate:" << e.what();
-                }
-            }
-        }
-
-        // UPnP: suppress IPv6 candidates
-        if (m_SuppressIPv6) {
-            std::string candStr = std::string(modCandidate.candidate());
-            size_t space = candStr.find(' ');
-            if (space != std::string::npos && candStr.find(':', space + 1) != std::string::npos) {
-                return; // Skip IPv6
-            }
-        }
-
-        emit signalingIceCandidate(std::string(modCandidate.candidate()),
-                                   std::string(modCandidate.mid()));
+        emitLocalCandidate(candidate, "[MediaTrackRelay]");
     });
 
     // --- State change callback ---
@@ -697,6 +672,23 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
                 }
             }
         }
+    } else if (type == "gamepad") {
+        // Full controller state snapshot from the browser Gamepad API.
+        m_Shim->sendControllerState(
+            static_cast<short>(msg["index"].toInt(0)), static_cast<short>(msg["mask"].toInt(0)),
+            msg["buttons"].toInt(0), static_cast<unsigned char>(msg["lt"].toInt(0)),
+            static_cast<unsigned char>(msg["rt"].toInt(0)), static_cast<short>(msg["lx"].toInt(0)),
+            static_cast<short>(msg["ly"].toInt(0)), static_cast<short>(msg["rx"].toInt(0)),
+            static_cast<short>(msg["ry"].toInt(0)));
+    } else if (type == "gamepadconnect") {
+        m_Shim->sendControllerArrival(static_cast<uint8_t>(msg["index"].toInt(0)),
+                                      static_cast<uint16_t>(msg["mask"].toInt(0)),
+                                      static_cast<uint8_t>(msg["ctype"].toInt(0)),
+                                      msg["rumble"].toBool(false));
+    } else if (type == "gamepaddisconnect") {
+        // Empty state with this controller's mask bit cleared = removal.
+        m_Shim->sendControllerState(static_cast<short>(msg["index"].toInt(0)),
+                                    static_cast<short>(msg["mask"].toInt(0)), 0, 0, 0, 0, 0, 0, 0);
     } else {
         qWarning() << "[MediaTrackRelay] Unknown input type:" << type;
     }
@@ -905,12 +897,4 @@ void MediaTrackRelay::sendIdrRequestThrottled()
                               std::memory_order_release);
     }
     m_Shim->requestIdrFrame();
-}
-
-void MediaTrackRelay::setPublicAddress(const std::string& publicIP, uint16_t publicPort)
-{
-    m_PublicIP = publicIP;
-    m_PublicPort = publicPort;
-    qInfo() << "[MediaTrackRelay] UPnP public address set:" << QString::fromStdString(publicIP)
-            << ":" << publicPort;
 }
