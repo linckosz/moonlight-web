@@ -3026,8 +3026,9 @@ int main(int argc, char* argv[])
     shareDeps.startPlayerStream =
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
          &anyOtherSlotLive, &slotSignalingPort, &slotWsPath, &server, &appSettings, signalingPort,
-         stunServer, &ownerContext](int slot, int height, ShareManager::Permissions perms,
-                                    QString serverHost, ResponseCallback respond) {
+         stunServer, &ownerContext](int slot, int height, QString aspect,
+                                    ShareManager::Permissions perms, QString serverHost,
+                                    ResponseCallback respond) {
             const std::pair<QString, int> owner = ownerContext();
             const QString hostUuid = owner.first;
             const int appId = owner.second;
@@ -3044,10 +3045,18 @@ int main(int argc, char* argv[])
             StreamWorkerHost* previousWorker = detachWorkerSlot(slot, false);
             if (previousWorker) shareManager.setStreaming(slot, false);
 
-            // Fixed profile: 60 fps, 16:9, SDR, 4:2:0, HEVC→H.264 (Auto never
-            // resolves to AV1). The bitrate is the standard auto estimate for
-            // that resolution, halved — a guest should not eat the whole uplink.
-            const int width = height * 16 / 9;
+            // Fixed profile: 60 fps, SDR, 4:2:0, HEVC→H.264 (Auto never resolves
+            // to AV1). The width follows the player's own screen aspect ("W:H",
+            // 16:9 fallback) so the stream fills their display. The bitrate is the
+            // standard auto estimate for the height, halved — a guest should not
+            // eat the whole uplink.
+            double aspectRatio = 16.0 / 9.0;
+            if (aspect.contains(':')) {
+                const QStringList parts = aspect.split(':');
+                int aw = parts.value(0).toInt(), ah = parts.value(1).toInt();
+                if (aw > 0 && ah > 0) aspectRatio = static_cast<double>(aw) / ah;
+            }
+            const int width = static_cast<int>(height * aspectRatio + 0.5) & ~1;
             const int autoKbps =
                 qRound(20000.0 * (static_cast<double>(height) * height) / (1080.0 * 1080.0));
             const int bitrateKbps = qMax(1000, autoKbps / 2);

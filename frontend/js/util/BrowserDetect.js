@@ -144,6 +144,27 @@ export function physicalScreenSize() {
 }
 
 /**
+ * Aspect ratio to request from the host, as a "W:H" string the backend parses
+ * into an exact even width (see main.cpp launch handler). Taken from the client
+ * so the host fills the screen without letterbox/pillarbox — combined with
+ * Sunshine's always-on SOPS, a display-managed host adopts this resolution.
+ *
+ *  - Mobile / tablet → "16:9" fixed. screen.{width,height} report the panel in
+ *    portrait (a very tall ratio) while the stream always plays landscape-
+ *    fullscreen, and 16:9 is a mode every host supports.
+ *  - Desktop → the monitor the window is on. Under Chromium screen.{width,height}
+ *    track the current monitor (updated when the window is moved between screens);
+ *    the ratio is display-scale independent. Falls back to "16:9" if unreadable.
+ * @returns {string} e.g. "1920:1080", "1920:1200", "16:9"
+ */
+export function clientAspectString() {
+    if (IS_MOBILE_OR_TABLET) return '16:9';
+    const w = screen.width || 0;
+    const h = screen.height || 0;
+    return w > 0 && h > 0 ? `${w}:${h}` : '16:9';
+}
+
+/**
  * Pick the auto Video-Enhancement upscaler for this device: 'fsr1' (sharper,
  * heavier) or 'sgsr' (lighter). WebGPU availability is handled separately by the
  * renderer, which falls back to Canvas2D (no enhancement) when absent.

@@ -33,11 +33,12 @@ struct ShareRoutesDeps
 {
     /// Start a player's stream on their slot. Answers with the same payload as
     /// POST /api/hosts/:id/start so the frontend reuses its pipeline verbatim.
-    /// @p height is one of 720/1080/1440; everything else (fps, codec, bitrate)
+    /// @p height is one of 720/1080/1440; @p aspect is the player's "W:H" screen
+    /// ratio (width is derived from it) — everything else (fps, codec, bitrate)
     /// is decided server-side. @p serverHost is the hostname the player reached
     /// us on, needed to build the signaling URL they must come back to.
-    std::function<void(int slot, int height, ShareManager::Permissions perms, QString serverHost,
-                       ResponseCallback respond)>
+    std::function<void(int slot, int height, QString aspect, ShareManager::Permissions perms,
+                       QString serverHost, ResponseCallback respond)>
         startPlayerStream;
 
     /// Tear a player's worker down without touching Sunshine or other slots.

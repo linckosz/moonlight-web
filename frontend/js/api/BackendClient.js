@@ -365,8 +365,12 @@ export class BackendClient {
     static async playerPin(token, pin) {
         return this.post('/api/share/player/pin', { token, pin });
     }
-    static async playerJoin(token, height) {
-        return this.post('/api/share/player/join', { token, height }, { timeoutMs: 25000 });
+    static async playerJoin(token, height, aspect) {
+        return this.post(
+            '/api/share/player/join',
+            { token, height, aspect },
+            { timeoutMs: 25000 },
+        );
     }
     static async playerLeave() {
         return this.post('/api/share/player/leave', {}, { timeoutMs: 5000 });

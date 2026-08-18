@@ -26,7 +26,7 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
-import { IS_MOBILE_OR_TABLET, IS_TOUCH_DEVICE } from '../util/BrowserDetect.js';
+import { IS_MOBILE_OR_TABLET, IS_TOUCH_DEVICE, clientAspectString } from '../util/BrowserDetect.js';
 import { PlayerArt } from './PlayerArt.js';
 
 const HEIGHTS = [720, 1080, 1440];
@@ -64,7 +64,7 @@ export class PlayerJoinView {
     /**
      * @param {HTMLElement} container
      * @param {string} token the share token from the URL
-     * @param {(info: {height: number, immersive: boolean, touchScreen: boolean}) => Promise<void>} onJoin
+     * @param {(info: {height: number, aspect: string, immersive: boolean, touchScreen: boolean}) => Promise<void>} onJoin
      */
     constructor(container, token, onJoin) {
         this.container = container;
@@ -321,6 +321,7 @@ export class PlayerJoinView {
             try {
                 await this.onJoin({
                     height: this._height,
+                    aspect: clientAspectString(),
                     immersive: this._prefs.immersive,
                     touchScreen: this._prefs.touchScreen,
                 });
