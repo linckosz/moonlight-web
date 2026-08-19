@@ -6,7 +6,8 @@
 
 **Stream your PC games from any browser.**\
 A 100% web [Sunshine](https://github.com/LizardByte/Sunshine) / GameStream client\
-Nothing to install on the client, just a URL.
+Nothing to install on the client, just a URL.\
+Under **20 ms** glass‑to‑glass over Wi‑Fi on a LAN, ~**25 ms** over the Internet.
 
 **🌐 Website: [moonlightweb.top](https://moonlightweb.top/)** — screenshots, [install guides](https://moonlightweb.top/guides/windows.html) & [FAQ](https://moonlightweb.top/faq.html)
 
@@ -15,21 +16,6 @@ Nothing to install on the client, just a URL.
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
 ![WebRTC](https://img.shields.io/badge/Transport-WebRTC-333?logo=webrtc)
 ![Platforms](https://img.shields.io/badge/Server-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-success)
-
-</div>
-
----
-
-## Support
-
-If MoonlightWeb is useful to you,\
-a coffee helps keep the shared DNS domain server online and the domain running 🙏
-
-<div align="center">
-
-<a href="https://buymeacoffee.com/brunoocto">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48">
-</a>
 
 </div>
 
@@ -444,6 +430,21 @@ high‑quality streaming on *any* device with a browser, no native app, just a U
 | **Android** | [moonlight‑android #1567](https://github.com/moonlight-stream/moonlight-android/pull/1567) |
 | **iOS & tvOS** | [moonlight‑ios #704](https://github.com/moonlight-stream/moonlight-ios/pull/704) |
 | **Xbox** | [moonlight‑xbox #267](https://github.com/TheElixZammuto/moonlight-xbox/pull/267) |
+
+---
+
+## Support
+
+If MoonlightWeb is useful to you,\
+a coffee helps keep the shared DNS domain server online and the domain running 🙏
+
+<div align="center">
+
+<a href="https://buymeacoffee.com/brunoocto">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48">
+</a>
+
+</div>
 
 ---
 
