@@ -133,6 +133,11 @@ public:
     /// Set the port for the legacy WSS StreamRelay (separate from signaling WS port).
     void setStreamRelayPort(quint16 port) { m_StreamRelayPort = port; }
 
+    /// Distinct WebRTC/UPnP media UDP port for this stream slot (base + slot).
+    /// Forwarded to the SignalingServer so concurrent workers never collide on
+    /// the media port. Defaults to the base for the single-stream path.
+    void setMediaPort(quint16 port) { m_MediaPort = port; }
+
     /// Proxy path prefix for this session's WebSockets ("/ws" by default;
     /// "/ws1" for the second concurrent stream slot). Forwarded to the
     /// SignalingServer / StreamRelay so the advertised wsUrl matches the
@@ -244,6 +249,8 @@ private:
 
     /// Port for legacy WSS StreamRelay (separate from m_WsPort used for signaling).
     quint16 m_StreamRelayPort = 48002;
+    /// WebRTC/UPnP media UDP port for this slot; 48010 (slot 0 base) by default.
+    quint16 m_MediaPort = 48010;
 
     /// Proxy path prefix for this session's WebSockets (see setWsPath).
     QString m_WsPath = QStringLiteral("/ws");

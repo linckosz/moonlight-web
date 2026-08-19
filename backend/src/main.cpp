@@ -1112,6 +1112,11 @@ static constexpr quint16 kDevHttpsPort = 48443;
 // Signaling base for --dev. It also seeds the control channel (+2) and the
 // per-slot worker ports (+10 * slot), so it has to move as a block.
 static constexpr quint16 kDevSignalingPort = 48501;
+// WebRTC media UDP port base (all modes). Each concurrent slot binds a distinct
+// port (base + slot) so simultaneous streams never collide on it, and UPnP maps
+// exactly that port. Slot 0 keeps the historical 48010; mirrors
+// SignalingServer::kUpnpPort. The dev firewall rule opens base..base+kMaxSlots-1.
+static constexpr quint16 kMediaBasePort = 48010;
 
 int main(int argc, char* argv[])
 {
@@ -2461,6 +2466,7 @@ int main(int argc, char* argv[])
             // (HttpServer proxies /ws1../ws4 to them).
             cfg["signalingPort"] = static_cast<int>(slotSignalingPort(reqSlot));
             cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(reqSlot) + 1);
+            cfg["mediaPort"] = static_cast<int>(kMediaBasePort + reqSlot);
             cfg["wsPath"] = slotWsPath(reqSlot);
             QJsonArray chainArr;
             for (const QString& m : transportChain)
@@ -3121,6 +3127,7 @@ int main(int argc, char* argv[])
             cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
             cfg["signalingPort"] = static_cast<int>(slotSignalingPort(slot));
             cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(slot) + 1);
+            cfg["mediaPort"] = static_cast<int>(kMediaBasePort + slot);
             cfg["wsPath"] = slotWsPath(slot);
             // What this player may send. Enforced in the worker, where a forged
             // datachannel message cannot get around it.
@@ -3352,6 +3359,10 @@ int main(int argc, char* argv[])
     for (int slot = kTotalSlots; slot < kMaxSlots; ++slot)
         server.setSlotPorts(slot, slotSignalingPort(slot), slotSignalingPort(slot) + 1);
     server.setFirstPlayerSlot(kOwnerSlots);
+    // Player slots end at kTotalSlots; slots above it are the owner's own extra
+    // sessions on a second host, so the WS-upgrade auth treats them as the owner
+    // (session / local privilege), not as players demanding an mw_player cookie.
+    server.setFirstExtraSlot(kTotalSlots);
 
     // Single-tab dedup control channel: every open app tab keeps a WebSocket
     // (proxied at /ws/control) open here. A second launch asks us — over
