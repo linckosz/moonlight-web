@@ -99,7 +99,7 @@
         "stopSessionWorking": "Stopping...",
         "stopSessionConfirm": "Stop the running app on this host? Anyone streaming from it, including invited players, will be disconnected.",
         "backendSetup": "Set up backend…",
-        "backendManage": "Backend: {type}"
+        "backendManage": "Backend: {{type}}"
     },
     "selfStream": {
         "title": "Streaming your own PC?",
@@ -606,7 +606,7 @@
         "endedHint": "Give them a ring and ask for a new link."
     },
     "backend": {
-        "title": "Backend for {name}",
+        "title": "Backend for {{name}}",
         "instruction": "Point MoonlightWeb at this host’s control API. Saving pairs straight away, so players never have to enter a PIN.",
         "type": "Backend type",
         "apiUrl": "Control API URL",

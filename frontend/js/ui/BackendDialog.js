@@ -55,6 +55,10 @@ export class BackendDialog {
             this.setStatus(t('backend.typesFailed'), 'error');
         }
 
+        // The form now reflects the stored config: snapshot it as the clean
+        // baseline so SAVE starts disabled and only lights up on a real change.
+        this.captureBaseline();
+
         // What this host's backend actually supports, read from the provider
         // itself. Shown rather than inferred from the type name, so the panel
         // cannot claim a capability the code does not implement.
@@ -219,6 +223,34 @@ export class BackendDialog {
         panel.hidden = select.value !== 'multiseat';
     }
 
+    /// Current form values, as the tuple that decides whether anything changed.
+    snapshotForm() {
+        const q = (sel) => this.overlay?.querySelector(sel);
+        return JSON.stringify({
+            type: q('.backend-type')?.value || '',
+            url: q('.backend-url')?.value.trim() || '',
+            token: q('.backend-token')?.value || '',
+            pairUser: q('.backend-pair-user')?.value.trim() || '',
+            pairPassword: q('.backend-pair-password')?.value || '',
+        });
+    }
+
+    /// Mark the current form state as the clean reference (on open, and again
+    /// after a successful save so the button greys back out).
+    captureBaseline() {
+        this._baseline = this.snapshotForm();
+        this.updateSaveEnabled();
+    }
+
+    /// SAVE is enabled only when the form differs from the baseline and no
+    /// request is in flight. A URL is required, so an empty one never enables it.
+    updateSaveEnabled() {
+        const save = this.overlay?.querySelector('.btn-backend-save');
+        if (!save) return;
+        const hasUrl = !!this.overlay.querySelector('.backend-url')?.value.trim();
+        save.disabled = this.busy || !hasUrl || this.snapshotForm() === this._baseline;
+    }
+
     close() {
         if (this.overlay) {
             this.overlay.remove();
@@ -229,8 +261,10 @@ export class BackendDialog {
     setStatus(message, kind = 'info') {
         const el = this.overlay?.querySelector('.backend-status-text');
         if (!el) return;
+        // 'loading' shows a spinner but is otherwise styled like info.
+        const tone = kind === 'loading' ? 'info' : kind;
+        el.className = `backend-status-text pairing-${tone}${kind === 'loading' ? ' is-loading' : ''}`;
         el.textContent = message;
-        el.className = `backend-status-text pairing-${kind}`;
     }
 
     setBusy(busy) {
@@ -255,7 +289,7 @@ export class BackendDialog {
         }
 
         this.setBusy(true);
-        this.setStatus(t('backend.pairing'));
+        this.setStatus(t('backend.pairing'), 'loading');
         try {
             await BackendClient.setHostBackend(this.host.uuid, {
                 type,
@@ -266,33 +300,24 @@ export class BackendDialog {
             });
             if (!this.overlay) return;
             this.setStatus(t('backend.paired'), 'success');
-            if (this.onSaved) this.onSaved();
-            setTimeout(() => this.close(), 900);
         } catch (err) {
             if (!this.overlay) return;
-            this.setBusy(false);
             this.setStatus(err?.message || t('backend.failed'), 'error');
-        }
-    }
-
-    async clear() {
-        if (this.busy) return;
-        this.setBusy(true);
-        this.setStatus(t('backend.removing'));
-        try {
-            await BackendClient.clearHostBackend(this.host.uuid);
-            if (this.onSaved) this.onSaved();
-            this.close();
-        } catch (err) {
-            if (!this.overlay) return;
-            this.setBusy(false);
-            this.setStatus(err?.message || t('backend.failed'), 'error');
+        } finally {
+            if (this.overlay) {
+                this.setBusy(false);
+                // The entered config is persisted either way now, so tell the host
+                // list to refresh and re-pull the seat panel — it reflects reality:
+                // the real seats on success, empty/unreachable on a failed URL. The
+                // dialog stays open; closing is the admin's own CLOSE click.
+                if (this.onSaved) this.onSaved();
+                this.captureBaseline();
+                this.loadSeats();
+            }
         }
     }
 
     render() {
-        const configured = !!this.host.backendType;
-
         this.overlay = document.createElement('div');
         this.overlay.className = 'pairing-overlay';
         this.overlay.innerHTML = `
@@ -350,12 +375,7 @@ export class BackendDialog {
                 </div>
 
                 <div class="pairing-actions">
-                    ${
-                        configured
-                            ? `<button class="btn btn-danger btn-backend-clear">${t('backend.remove')}</button>`
-                            : ''
-                    }
-                    <button class="btn btn-secondary btn-backend-cancel">${t('common.cancel')}</button>
+                    <button class="btn btn-secondary btn-backend-cancel">${t('common.close')}</button>
                     <button class="btn btn-primary btn-backend-save">${t('common.save')}</button>
                 </div>
             </div>
@@ -369,13 +389,28 @@ export class BackendDialog {
 
         this.overlay.querySelector('.btn-backend-save').addEventListener('click', () => this.save());
 
-        this.overlay
-            .querySelector('.backend-type')
-            .addEventListener('change', () => this.syncPairCredsVisibility());
+        this.overlay.querySelector('.backend-type').addEventListener('change', () => {
+            this.syncPairCredsVisibility();
+            this.updateSaveEnabled();
+        });
 
+        // SAVE stays disabled until the form differs from what is stored, so an
+        // accidental click cannot re-pair with unchanged values. Any edit to a
+        // field re-evaluates it.
         this.overlay
-            .querySelector('.btn-backend-clear')
-            ?.addEventListener('click', () => this.clear());
+            .querySelectorAll('.backend-url, .backend-token, .backend-pair-user, .backend-pair-password')
+            .forEach((el) => {
+                el.addEventListener('input', () => this.updateSaveEnabled());
+                // Enter in any field triggers SAVE, but only when it is a valid
+                // action (dirty + reachable URL + not mid-pairing) — same gate as
+                // the button, so Enter never re-pairs unchanged values.
+                el.addEventListener('keydown', (e) => {
+                    if (e.key !== 'Enter') return;
+                    e.preventDefault();
+                    const save = this.overlay.querySelector('.btn-backend-save');
+                    if (save && !save.disabled) this.save();
+                });
+            });
 
         // Seat controls are rendered after load, so they are handled by
         // delegation rather than bound per row.

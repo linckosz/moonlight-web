@@ -46,7 +46,14 @@ BackendError toBackendError(const WolfApiError& err)
     case WolfApiError::Unreachable:
         return BackendError::make(BackendError::Unreachable, err.message, err.httpStatus);
     case WolfApiError::Timeout:
-        return BackendError::make(BackendError::Timeout, err.message, err.httpStatus);
+        // The raw Qt string here is "Operation canceled" (we abort on our own
+        // short deadline), which reads as a bug rather than what it is. Say plainly
+        // that the control API never answered — the usual cause is a wrong or
+        // unreachable URL.
+        return BackendError::make(
+            BackendError::Timeout,
+            QStringLiteral("Control API did not respond — is the URL reachable?"),
+            err.httpStatus);
     case WolfApiError::HttpError:
     case WolfApiError::Protocol:
         return BackendError::make(BackendError::Protocol, err.message, err.httpStatus);
@@ -139,7 +146,23 @@ void WolfBackend::pairIdentity(const QString& seatId, BackendVoidCallback cb)
     // certificate known?" without deriving its client id.
     if (seatId.isEmpty()) {
         if (host->pairState == NvComputer::PS_PAIRED && !host->serverCertPem.isEmpty()) {
-            cb(true, BackendError{});
+            // Already paired for streaming — but this is also the admin gesture that
+            // (re)points us at a control-API URL, and a prior pairing says nothing
+            // about whether THAT URL answers. Probe the control API before reporting
+            // success: a bad URL must fail here (dialog stays open, stored config
+            // untouched) instead of being committed on the strength of an old
+            // pairing. A Wolf backend whose control API is unreachable is
+            // non-functional anyway — no seat list, no player auto-pair — even when
+            // the stream certificate is still valid. This runs only on the
+            // admin-initiated ensurePaired() path, never on the launch hot path.
+            m_Api->pairedClients(
+                [cb = std::move(cb)](bool ok, const WolfApiError& err,
+                                     const QVector<WolfPairedClient>&) mutable {
+                    if (ok)
+                        cb(true, BackendError{});
+                    else
+                        cb(false, toBackendError(err));
+                });
             return;
         }
     } else if (isSeatPaired(seatId)) {
