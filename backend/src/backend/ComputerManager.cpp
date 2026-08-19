@@ -1147,23 +1147,29 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
         return;
     }
 
+    // Persist the entered configuration right away, whether or not the control
+    // API answers. The admin asked to point this host at this URL; recording it
+    // and then reporting reachability — with the seat panel reflecting an
+    // unreachable backend as empty — is clearer than silently keeping the old
+    // value. The trade-off is that a mistyped URL replaces the working one; the
+    // escape hatch is "Stop managing", which clears the config entirely.
+    if (NvComputer* h = findHostByUuid(uuid)) {
+        h->backendType = type;
+        h->backendApiUrl = apiUrl;
+        h->backendApiToken = effectiveToken;
+        h->backendPairUser = pairUser;
+        h->backendPairPassword = effectivePairPassword;
+        saveHosts();
+        emit hostsChanged();
+    }
+
     // Pair right away. Registering a backend is the one admin gesture allowed to
-    // involve a human, and it is precisely what spares every player a PIN.
+    // involve a human, and it is precisely what spares every player a PIN. A new
+    // host's server certificate is committed by the backend itself (m_Commit)
+    // when the handshake succeeds; the config above is already stored regardless.
     backend->ensurePaired(
-        [this, uuid, type, apiUrl, effectiveToken, pairUser, effectivePairPassword,
-         respond = std::move(respond), backend](bool ok, const BackendError& err) {
+        [respond = std::move(respond), backend](bool ok, const BackendError& err) {
             if (ok) {
-                // Only now is the configuration known to work. The host may have
-                // been deleted while we were talking to the backend.
-                if (NvComputer* h = findHostByUuid(uuid)) {
-                    h->backendType = type;
-                    h->backendApiUrl = apiUrl;
-                    h->backendApiToken = effectiveToken;
-                    h->backendPairUser = pairUser;
-                    h->backendPairPassword = effectivePairPassword;
-                    saveHosts();
-                    emit hostsChanged();
-                }
                 respond(HttpResponse::json(
                     {{"status", "paired"}, {"message", "Backend registered and paired"}}, 200));
             } else {

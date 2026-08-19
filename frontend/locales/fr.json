@@ -99,7 +99,7 @@
         "stopSessionWorking": "Arrêt...",
         "stopSessionConfirm": "Arrêter l'application en cours sur cet hôte ? Toute personne qui streame dessus, joueurs invités compris, sera déconnectée.",
         "backendSetup": "Configurer le backend…",
-        "backendManage": "Backend : {type}"
+        "backendManage": "Backend : {{type}}"
     },
     "selfStream": {
         "title": "Streamer ton propre PC ?",
@@ -606,7 +606,7 @@
         "endedHint": "Passe-lui un coup de fil et demande un nouveau lien."
     },
     "backend": {
-        "title": "Backend de {name}",
+        "title": "Backend de {{name}}",
         "instruction": "Indiquez à MoonlightWeb l’API de contrôle de cet hôte. L’enregistrement appaire immédiatement, afin qu’aucun joueur n’ait à saisir de PIN.",
         "type": "Type de backend",
         "apiUrl": "URL de l’API de contrôle",
