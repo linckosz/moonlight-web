@@ -1088,7 +1088,12 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     bool wsIsRelay = false;
     const int wsSlot = slotFromWsPath(path, &wsIsRelay);
-    const bool playerSlot = wsSlot >= m_FirstPlayerSlot;
+    // Player slots are the bounded range [firstPlayerSlot, firstExtraSlot): those
+    // callers hold an mw_player cookie and nothing else. An "extra" slot at or
+    // above firstExtraSlot is the OWNER streaming a second host, so it must be
+    // authenticated as the owner (session / local privilege), NOT gated behind a
+    // player cookie it will never have — which otherwise 401s its /wsN upgrade.
+    const bool playerSlot = wsSlot >= m_FirstPlayerSlot && wsSlot < m_FirstExtraSlot;
 
     quint16 targetPort = m_SignalingPort;
     if (path == QLatin1String("/ws/control")) {

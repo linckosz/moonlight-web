@@ -25,6 +25,7 @@
 #include <QNetworkInterface>
 #include <QList>
 #include <functional>
+#include <limits>
 #include "common/Types.h"
 #include "server/ConnectionGuard.h"
 #include "server/CertManager.h"
@@ -81,6 +82,13 @@ public:
 
     /// Slots at or above this index belong to players, not to the owner.
     void setFirstPlayerSlot(int slot) { m_FirstPlayerSlot = slot; }
+
+    /// First "extra" slot: an independent OWNER session on a second host, handed
+    /// out above the player range. Player-slot auth (the mw_player cookie) applies
+    /// only to [firstPlayerSlot, firstExtraSlot); at or above this index the caller
+    /// is the owner and is authenticated as such (session / local privilege), not
+    /// as a player. Left at INT_MAX when unset so the range stays open-ended.
+    void setFirstExtraSlot(int slot) { m_FirstExtraSlot = slot; }
 
     /// The port the HTTPS server actually bound to (0 if not started).
     quint16 activeHttpsPort() const { return m_ActiveHttpsPort; }
@@ -221,6 +229,9 @@ private:
     /// Player-slot gate (see setPlayerSlotAuthorizer). Null = closed.
     std::function<bool(const HttpRequest&, int slot)> m_PlayerSlotAuth;
     int m_FirstPlayerSlot = 2;
+    /// Upper bound of the player-slot range (exclusive). Slots at or above this
+    /// index are owner "extra" sessions, not players. INT_MAX = no extra range.
+    int m_FirstExtraSlot = std::numeric_limits<int>::max();
 
     /// Parse "/wsN" or "/wsN/stream" into its slot and whether it targets the
     /// legacy relay. Returns -1 for a path that is not a stream socket.

@@ -212,6 +212,7 @@ int runStreamWorker(QCoreApplication& app)
         cfg["hdr"].toBool());
     session->setHttpsPort(static_cast<quint16>(cfg["serverHttpsPort"].toInt(443)));
     session->setStreamRelayPort(static_cast<quint16>(cfg["streamRelayPort"].toInt(48002)));
+    session->setMediaPort(static_cast<quint16>(cfg["mediaPort"].toInt(48010)));
     session->setTransportMode(cfg["transportMode"].toString());
     session->setEnableIceTcp(cfg["iceTcp"].toBool());
     session->setLowAudio(cfg["lowAudio"].toBool());

@@ -268,7 +268,7 @@ void SignalingServer::onNewWsConnection()
     // m_ForceIceTcp controls whether ICE-TCP candidates are generated
     // (true = UDP + TCP, false = UDP only).
     rtc::Configuration config =
-        buildIceConfig(isInternet, m_UpnpMappedPort, m_StunServerUrl, m_ForceIceTcp);
+        buildIceConfig(isInternet, m_UpnpMappedPort, m_MediaPort, m_StunServerUrl, m_ForceIceTcp);
 
     // If UPnP is active, tell the relay to rewrite host candidates with the
     // public IP and mapped port so the browser sees a "host" candidate at
@@ -803,7 +803,8 @@ void SignalingServer::onDataChannelsOpen()
 // ── UPnP NAT traversal ─────────────────────────────────────────────────────────
 
 rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
-                                                   const QString& stunServerUrl, bool forceIceTcp)
+                                                   uint16_t mediaPort, const QString& stunServerUrl,
+                                                   bool forceIceTcp)
 {
     rtc::Configuration config;
     config.iceTransportPolicy = rtc::TransportPolicy::All;
@@ -830,15 +831,14 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, uint16_t upn
     } else if (QCoreApplication::applicationName() == QLatin1String("MoonlightWeb-dev")) {
         // In --dev (LAN, no UPnP), libdatachannel would otherwise bind an
         // ephemeral UDP port, and each fresh test build listening on a new port
-        // triggers a Windows Defender Firewall popup. Pin the range to the fixed
-        // dev range the local firewall rule already allows (see
-        // scripts/dev-firewall-allow.ps1) so tests never prompt. 5 ports cover
-        // the 5 concurrent stream slots. The installed instance is unaffected:
-        // its applicationName is "MoonlightWeb".
-        config.portRangeBegin = kUpnpPort;
-        config.portRangeEnd = kUpnpPort + kUpnpMaxPortAttempts - 1;
-        qInfo() << "[SignalingServer] --dev: pinned UDP port range"
-                << config.portRangeBegin << "-" << config.portRangeEnd;
+        // triggers a Windows Defender Firewall popup. Pin to this slot's fixed
+        // media port — distinct per slot (base + slot), so concurrent streams
+        // never collide — which the local firewall rule already allows (see
+        // scripts/dev-firewall-allow.ps1) so tests never prompt. The installed
+        // instance is unaffected: its applicationName is "MoonlightWeb".
+        config.portRangeBegin = mediaPort;
+        config.portRangeEnd = mediaPort;
+        qInfo() << "[SignalingServer] --dev: pinned UDP media port" << mediaPort;
     }
 
     if (forceIceTcp) {
@@ -907,21 +907,14 @@ bool SignalingServer::setupUPnP()
     // Published before the mappings so addUpnpMapping() can use it.
     m_Upnp = upnp;
 
-    // UDP first: it is what the media path actually requires.
-    bool mappingOk = false;
-    for (int attempt = 0; attempt < kUpnpMaxPortAttempts; attempt++) {
-        uint16_t tryPort = kUpnpPort + static_cast<uint16_t>(attempt);
-        if (addUpnpMapping(tryPort, "UDP")) {
-            m_UpnpMappedPort = tryPort;
-            mappingOk = true;
-            break;
-        }
-        qWarning() << "[UPNP] Port" << tryPort << "failed, trying next...";
-    }
-
-    if (!mappingOk) {
-        qWarning() << "[UPNP] All ports in range" << kUpnpPort << "-"
-                   << (kUpnpPort + kUpnpMaxPortAttempts - 1) << "failed";
+    // UDP first: it is what the media path actually requires. Map exactly this
+    // slot's media port — it is distinct per slot (base + slot), so workers
+    // never contend for it, and trying a neighbour would collide with the
+    // adjacent slot's own mapping/bind.
+    if (addUpnpMapping(m_MediaPort, "UDP")) {
+        m_UpnpMappedPort = m_MediaPort;
+    } else {
+        qWarning() << "[UPNP] Port" << m_MediaPort << "mapping failed — STUN fallback only";
         m_Upnp = nullptr;
         delete upnp;
         return false;

@@ -16,7 +16,8 @@
     instance binds:
 
         TCP 48080 / 48443   dev HTTP / HTTPS  (kDevHttpPort / kDevHttpsPort)
-        TCP+UDP 48010-48014  WebRTC media range in internet/UPnP mode (kUpnpPort +4)
+        TCP+UDP 48010-48018  WebRTC media ports, one per concurrent stream slot
+                             (kMediaBasePort .. kMediaBasePort + kMaxSlots-1)
 
     It is idempotent (removes its own rules first) and self-elevates (one UAC prompt).
     It also cleans up dead auto-created rules that point at a now-deleted scratchpad
@@ -62,11 +63,11 @@ $common = @{
 New-NetFirewallRule @common -DisplayName 'MoonlightWeb dev HTTP/HTTPS (TCP 48080/48443)' `
     -Protocol TCP -LocalPort 48080, 48443 | Out-Null
 
-New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC media UPnP (UDP 48010-48014)' `
-    -Protocol UDP -LocalPort '48010-48014' | Out-Null
+New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC media UPnP (UDP 48010-48018)' `
+    -Protocol UDP -LocalPort '48010-48018' | Out-Null
 
-New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC ICE-TCP UPnP (TCP 48010-48014)' `
-    -Protocol TCP -LocalPort '48010-48014' | Out-Null
+New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC ICE-TCP UPnP (TCP 48010-48018)' `
+    -Protocol TCP -LocalPort '48010-48018' | Out-Null
 
 Write-Host "Created port-based allow rules in group '$Group'." -ForegroundColor Green
 

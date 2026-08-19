@@ -80,6 +80,12 @@ public:
     /// Default: "stun:stun.l.google.com:19302"
     void setStunServer(const QString& url) { m_StunServerUrl = url; }
 
+    /// WebRTC/UPnP media UDP port for this stream slot. Each concurrent slot
+    /// binds a distinct port (base + slot) so simultaneous streams never
+    /// collide on it, and UPnP maps exactly that port. Defaults to the base
+    /// (kUpnpPort) for the single-stream path.
+    void setMediaPort(quint16 port) { m_MediaPort = port; }
+
     /// Enable/disable ICE-TCP candidates.
     /// When true, ICE-TCP is enabled (UDP + TCP candidates).
     /// When false (default), only UDP candidates are used.
@@ -205,10 +211,14 @@ private:
     /// ICE-TCP is always enabled as fallback. STUN is always present in
     /// Internet mode. UPnP sets a fixed port range and rewrites host candidates.
     static rtc::Configuration buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
-                                             const QString& stunServerUrl,
+                                             uint16_t mediaPort, const QString& stunServerUrl,
                                              bool forceIceTcp = false);
 
     bool m_UseUPnP = true;
+    /// Distinct WebRTC/UPnP media UDP port for this slot (base + slot). Keeps
+    /// concurrent workers off each other's port; slot 0 keeps 48010. See
+    /// setMediaPort().
+    quint16 m_MediaPort = kUpnpPort;
     bool m_ClientIsLocal = false; // Streaming client is on our LAN (see setClientIsLocal)
     UPNPClient* m_Upnp = nullptr;
     uint16_t m_UpnpMappedPort = 0;
@@ -228,8 +238,6 @@ private:
     /// port to be reachable from the internet, since browsers only ever open
     /// ICE-TCP connections outbound.
     static constexpr uint16_t kUpnpPort = 48010;
-    /// Max number of port+1 fallback attempts if the default port is taken.
-    static constexpr int kUpnpMaxPortAttempts = 5;
     /// Lease duration in seconds (1 hour). Renew timer fires at half this interval.
     static constexpr uint32_t kUpnpLeaseDurationSec = 3600;
     /// Renew timer interval (ms): every 30 minutes.
