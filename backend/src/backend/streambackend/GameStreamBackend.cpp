@@ -273,8 +273,18 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
         const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
         if (reply->error() != QNetworkReply::NoError) {
-            answer(false,
-                   BackendError::make(BackendError::Unreachable, reply->errorString(), httpStatus),
+            // A real HTTP status means the host answered and rejected the
+            // request, not that it was unreachable. A 401 is a dropped pairing;
+            // any other 4xx/5xx (e.g. a 400 to a stale /resume after the host
+            // restarted and dropped our session) is a Protocol-level answer the
+            // launch<->resume self-heal can act on. Only a status-less failure
+            // (connection refused, DNS, timeout) is a genuine transport error.
+            BackendError::Kind kind = BackendError::Unreachable;
+            if (httpStatus == 401)
+                kind = BackendError::NotPaired;
+            else if (httpStatus >= 400)
+                kind = BackendError::Protocol;
+            answer(false, BackendError::make(kind, reply->errorString(), httpStatus),
                    MediaDescriptor{});
             reply->deleteLater();
             return;
