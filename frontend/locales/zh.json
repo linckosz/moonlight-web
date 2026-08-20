@@ -97,7 +97,9 @@
         "enableInternetLink": "启用互联网访问",
         "stopSession": "停止会话",
         "stopSessionWorking": "正在停止...",
-        "stopSessionConfirm": "要停止该主机上正在运行的程序吗？所有正在串流的人（包括受邀玩家）都会被断开。"
+        "stopSessionConfirm": "要停止该主机上正在运行的程序吗？所有正在串流的人（包括受邀玩家）都会被断开。",
+        "backendSetup": "设置后端…",
+        "backendManage": "后端：{{type}}"
     },
     "selfStream": {
         "title": "要串流你自己的电脑吗？",
@@ -484,7 +486,9 @@
         "tsMoveCursorVal": "触摸画面",
         "tsLeftClickVal": "轻点你想要的位置",
         "tsDragVal": "长按，然后移动",
-        "tsScrollVal": "单指拖动"
+        "tsScrollVal": "单指拖动",
+        "console": "Wolf UI",
+        "consoleHint": "返回 Wolf UI（Ctrl+Alt+Shift+W，浏览器可能会拦截该组合键）"
     },
     "transport": {
         "webrtcDcUdp": "WebRTC 数据通道（UDP）",
@@ -603,5 +607,44 @@
         "endedTitle": "会话已结束",
         "endedBody": "主机停止了游戏，串流也随之结束。没有出错——只是被拔掉了插头。",
         "endedHint": "打个电话，请对方给你一个新链接。"
+    },
+    "backend": {
+        "title": "{{name}} 的后端",
+        "instruction": "将 MoonlightWeb 指向该主机的控制 API。保存时会立即完成配对，玩家无需输入 PIN。",
+        "type": "后端类型",
+        "apiUrl": "控制 API 地址",
+        "apiToken": "API 令牌",
+        "tokenPlaceholder": "该 API 所需的令牌",
+        "tokenKeep": "留空则保留已存储的令牌",
+        "ready": "保存后将注册该后端并与之配对。",
+        "pairing": "正在注册并配对…",
+        "paired": "已注册并配对。",
+        "failed": "无法注册该后端。",
+        "urlRequired": "必须填写控制 API 地址。",
+        "typesFailed": "无法加载后端类型列表。",
+        "removing": "正在移除…",
+        "remove": "停止管理",
+        "capMultiUser": "多个互不干扰的并发席位",
+        "capProvisioning": "可按需创建席位",
+        "capLobbies": "原生联机大厅",
+        "seats": "席位",
+        "seatsLoading": "正在加载席位…",
+        "seatsNone": "暂无席位。",
+        "seatsUnsupported": "该后端不提供席位。",
+        "seatBusy": "串流中",
+        "seatAdd": "+ 添加",
+        "seatRemove": "移除该席位",
+        "seatRemoving": "正在移除席位…",
+        "seatAccountPrompt": "该席位使用哪个账户？",
+        "seatProvisioning": "正在创建席位…可能需要一分钟。",
+        "seatProvisioned": "席位已创建。",
+        "pairUser": "席位管理员用户名",
+        "pairPassword": "席位管理员密码",
+        "pairPasswordPlaceholder": "席位网页界面的密码",
+        "pairHint": "MultiSeat 无法通过自身 API 配对席位，因此 MoonlightWeb 会把 PIN 推送到各席位的 Apollo 网页界面。这里填写你在那里设置的凭据——一组凭据适用于所有席位。",
+        "seatFree": "释放",
+        "seatFreeHint": "将该席位从其占用者手中释放，席位本身保留",
+        "seatFreeing": "正在释放席位…",
+        "seatFreed": "席位已释放——可以重新占用。"
     }
 }
