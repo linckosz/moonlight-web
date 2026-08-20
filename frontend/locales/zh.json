@@ -161,7 +161,9 @@
         "verificationFailed": "验证失败",
         "readFileError": "文件读取失败",
         "onHostMachine": "就在主机上？",
-        "openLocally": "通过 localhost 打开"
+        "openLocally": "通过 localhost 打开",
+        "rememberMe": "在此设备上保持登录",
+        "rememberMeHint": "在共用或公共电脑上请取消勾选：会话将在浏览器关闭时结束，闲置数小时后也会自动失效。"
     },
     "pairing": {
         "title": "与 {{name}} 配对",
@@ -221,6 +223,10 @@
         "pointerSensitivityDesc": "触控板/触摸光标速度（越高指针移动越快）。",
         "resetDefaults": "恢复默认参数",
         "resetDefaultsDesc": "将所有串流设置恢复为默认值。",
+        "session": "会话",
+        "logout": "退出登录",
+        "logoutDesc": "结束此浏览器的会话并停止正在进行的串流。此设备下次访问需要重新输入 PIN 码。您的其他设备仍保持登录。",
+        "logoutConfirm": "要退出此服务器吗？正在进行的串流将停止，此设备需要新的 PIN 码才能重新连接。",
         "saved": "已保存",
         "settingsReset": "设置已恢复为默认值",
         "powerSave": "省电",

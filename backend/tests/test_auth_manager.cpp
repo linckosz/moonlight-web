@@ -119,6 +119,44 @@ void run_auth_manager_tests()
     auth.destroySession(auth.sessionIdForToken(tokC));
     CHECK_EQ(auth.activeSessionCount(), 0);
 
+    // ── Logging yourself out ───────────────────────────────────────────────
+    // A visitor holds nothing but the raw cookie, so that is what logoutSession
+    // takes — and it can only ever reach their own session. Without this, the
+    // only way out is the admin page, which someone in an internet café cannot
+    // open: they would walk away leaving a 90-day session on a public machine.
+    const QString mine = auth.createSession("198.51.100.40", "Bar PC");
+    const QString theirs = auth.createSession("198.51.100.41", "Someone else");
+    CHECK(auth.logoutSession(mine));
+    CHECK(!auth.validateSession(mine));
+    CHECK(auth.validateSession(theirs));   // the neighbour is untouched
+    CHECK(!auth.logoutSession(mine));      // already gone
+    CHECK(!auth.logoutSession(QString())); // no cookie at all
+    CHECK(!auth.logoutSession("bogus-token"));
+    CHECK(!auth.logoutSession(auth.sessionIdForToken(theirs))); // the id is not a cookie
+    CHECK(auth.validateSession(theirs));                        // …so it revokes nothing
+    auth.destroyAllSessions();
+
+    // ── "Remember me" declined ─────────────────────────────────────────────
+    // Same session object, two differences: it never reaches the disk, and it
+    // expires in hours rather than months.
+    const QString temp = auth.createSession("198.51.100.42", "Kiosk", false, /*ephemeral=*/true);
+    CHECK(auth.validateSession(temp));
+    CHECK(auth.isEphemeralSession(temp));
+    CHECK_EQ(auth.sessions().size(), 1);
+    CHECK(auth.sessions().first().ephemeral);
+
+    const QString kept = auth.createSession("198.51.100.43", "Home PC");
+    CHECK(!auth.isEphemeralSession(kept));
+    CHECK(!auth.isEphemeralSession("bogus-token"));
+
+    // The round-trip is the assertion: only the remembered session comes back.
+    auth.saveSessions();
+    auth.loadSessions();
+    CHECK_EQ(auth.activeSessionCount(), 1);
+    CHECK(!auth.sessions().first().ephemeral);
+    CHECK_EQ(auth.sessions().first().machineName, QStringLiteral("Home PC"));
+    auth.destroyAllSessions();
+
     // ── Certificate auth ───────────────────────────────────────────────────
     QString cert = auth.generateCertificateToken();
     CHECK(!cert.isEmpty());

@@ -161,7 +161,9 @@
         "verificationFailed": "Verification failed",
         "readFileError": "Failed to read file",
         "onHostMachine": "On the host machine itself?",
-        "openLocally": "Open it via localhost"
+        "openLocally": "Open it via localhost",
+        "rememberMe": "Keep me signed in on this device",
+        "rememberMeHint": "Uncheck on a shared or public computer: the session then ends when the browser closes, and after a few idle hours in any case."
     },
     "pairing": {
         "title": "Pair with {{name}}",
@@ -221,6 +223,10 @@
         "pointerSensitivityDesc": "Trackpad/touch cursor speed (higher = faster pointer movement).",
         "resetDefaults": "Reset Default Parameters",
         "resetDefaultsDesc": "Restore all streaming settings to their default values.",
+        "session": "Session",
+        "logout": "Log out",
+        "logoutDesc": "Ends this browser's session and stops any running stream. The next visit from this device asks for a PIN again. Your other devices stay signed in.",
+        "logoutConfirm": "Log out of this server? Any running stream stops and this device will need a new PIN to come back.",
         "saved": "Saved",
         "settingsReset": "Settings reset to defaults",
         "powerSave": "Power Saving",

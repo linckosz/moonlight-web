@@ -393,8 +393,15 @@ export class BackendClient {
 
     // ── Auth API ───────────────────────────────────────────────────────────
 
-    static async validatePin(pin, machineName) {
-        return this.post('/api/auth/validate', { pin, machine_name: machineName });
+    /** @param {boolean} remember Keep the session across browser restarts (the
+     *  default). False asks the server for a session-scoped cookie and a short
+     *  server-side lifetime — for a machine the visitor does not own. */
+    static async validatePin(pin, machineName, remember = true) {
+        return this.post('/api/auth/validate', {
+            pin,
+            machine_name: machineName,
+            remember: remember !== false,
+        });
     }
     static async generatePin() {
         return this.post('/api/admin/pin/generate');
@@ -407,6 +414,11 @@ export class BackendClient {
     }
     static async getAuthStatus() {
         return this.get('/api/auth/status');
+    }
+    /** End this browser's own session and clear its cookie. Works from anywhere
+     *  (no localhost gate) — it is the visitor's way out of a public machine. */
+    static async logout() {
+        return this.post('/api/auth/logout');
     }
     /** Redeem the host key (?mwk=... from the host machine's own entry points)
      *  for a localhost-equivalent session over the public domain. */
@@ -434,10 +446,11 @@ export class BackendClient {
     }
 
     /** Validate a certificate token (alternative to PIN). Sends the raw token content. */
-    static async validateCertificate(certificateContent, machineName) {
+    static async validateCertificate(certificateContent, machineName, remember = true) {
         return this.post('/api/auth/validate', {
             certificate: certificateContent,
             machine_name: machineName,
+            remember: remember !== false,
         });
     }
 

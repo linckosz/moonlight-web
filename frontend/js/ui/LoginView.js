@@ -47,6 +47,12 @@ export class LoginView {
         this._certMode = false; // User chose cert upload mode
         this._selectedFileName = '';
         this._localUrl = ''; // https://localhost[:port] — the host machine's way back in
+        // Keep the session across browser restarts. On by default: most people
+        // log in from their own device and should never see this page twice.
+        // Unchecking it is what someone on a borrowed machine wants — the cookie
+        // then dies with the browser and the server expires the session in hours
+        // rather than 90 days.
+        this._remember = true;
     }
 
     async start() {
@@ -234,6 +240,8 @@ export class LoginView {
                     </div>
                 </div>
 
+                ${this._renderRememberField()}
+
                 ${this._error ? `<p id="login-error" class="login-error">${this.esc(this._error)}</p>` : '<p id="login-error" class="login-error"></p>'}
                 <p id="login-remaining" class="login-remaining">${this._remaining > 0 && this._remaining <= 3 ? this.esc(t('login.attemptsRemaining', { count: this._remaining })) : ''}</p>
                 ${
@@ -250,6 +258,23 @@ export class LoginView {
                         ${this._lockoutRemaining > 0 || this._submitting ? 'disabled' : ''}>
                     ${this._submitting ? t('common.verifying') : t('login.unlock')}
                 </button>
+            </div>
+        `;
+    }
+
+    /**
+     * "Remember me", shared by both authentication forms. Checked by default —
+     * unchecking is the deliberate act of someone on a machine they are about to
+     * walk away from, and the hint spells out what they get for it.
+     */
+    _renderRememberField() {
+        return `
+            <div class="login-field login-remember">
+                <label class="login-remember-label" for="login-remember">
+                    <input type="checkbox" id="login-remember" ${this._remember ? 'checked' : ''} />
+                    <span>${t('login.rememberMe')}</span>
+                </label>
+                <span class="login-remember-hint">${t('login.rememberMeHint')}</span>
             </div>
         `;
     }
@@ -288,6 +313,8 @@ export class LoginView {
                     }
                 </div>
 
+                ${this._renderRememberField()}
+
                 ${this._error ? `<p id="login-error" class="login-error">${this.esc(this._error)}</p>` : '<p id="login-error" class="login-error"></p>'}
                 <button id="btn-login-cert-auth" class="btn btn-neutral login-submit"
                         disabled
@@ -306,6 +333,15 @@ export class LoginView {
             this._bindCertEvents();
         } else {
             this._bindPinEvents();
+        }
+
+        // "Remember me" — shared by both forms, kept in state so a failed
+        // attempt (which re-renders) does not silently flip it back on.
+        const rememberCheck = this.container.querySelector('#login-remember');
+        if (rememberCheck) {
+            rememberCheck.addEventListener('change', () => {
+                this._remember = rememberCheck.checked;
+            });
         }
 
         // Auth method toggle button
@@ -441,7 +477,7 @@ export class LoginView {
         const machineName = machineInput ? machineInput.value.trim() : '';
 
         try {
-            const result = await BackendClient.validatePin(pin, machineName);
+            const result = await BackendClient.validatePin(pin, machineName, this._remember);
 
             if (result.status === 'ok') {
                 Toast.success(t('login.authSuccess'));
@@ -466,7 +502,11 @@ export class LoginView {
             const content = await this._readFileAsText(file);
 
             // Send to server for validation
-            const result = await BackendClient.validateCertificate(content, machineName);
+            const result = await BackendClient.validateCertificate(
+                content,
+                machineName,
+                this._remember,
+            );
 
             if (result.status === 'ok') {
                 Toast.success(t('login.authSuccess'));

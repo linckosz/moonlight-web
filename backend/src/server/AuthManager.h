@@ -47,6 +47,10 @@ struct SessionInfo
     bool isAdmin = false;   // unlocked admin access from the LAN with the remote
                             // admin password; same privileges as isHost, but this
                             // browser is on another machine
+    bool ephemeral = false; // the visitor unchecked "remember me" at login: this
+                            // session is never written to sessions.json and dies
+                            // after EPHEMERAL_SESSION_TTL_SECS of inactivity
+                            // instead of the usual 90 days
 
     QJsonObject toJson() const
     {
@@ -61,6 +65,7 @@ struct SessionInfo
         obj["streaming"] = streaming;
         obj["is_host"] = isHost;
         obj["is_admin"] = isAdmin;
+        obj["ephemeral"] = ephemeral;
         return obj;
     }
 };
@@ -136,9 +141,22 @@ public:
     static constexpr int MIN_ADMIN_PASSWORD_LEN = 8;
 
     // ── Session management ─────────────────────────────────────────────────
+    /// @param ephemeral The visitor declined "remember me": keep the session out
+    ///                  of sessions.json and expire it after
+    ///                  EPHEMERAL_SESSION_TTL_SECS of inactivity. Meant for a
+    ///                  browser that is not the visitor's own (public machine).
     QString createSession(const QString& ip, const QString& machineName = QString(),
-                          bool isHost = false);
+                          bool isHost = false, bool ephemeral = false);
     bool validateSession(const QString& token) const;
+    /** True when the raw cookie token belongs to a valid session created without
+     *  "remember me". The caller must then keep the cookie session-scoped: a
+     *  Max-Age on the refresh would silently promote it back to 90 days. */
+    bool isEphemeralSession(const QString& token) const;
+    /** Destroy the session a raw cookie token belongs to — the visitor logging
+     *  themselves out. Unlike destroySession() this takes the raw token, so a
+     *  browser can only ever end its own session. Returns false when the token
+     *  matches none. */
+    bool logoutSession(const QString& token);
     /** True when the raw cookie token belongs to a valid *host* session (created
      *  by redeeming the host key — the browser runs on the host machine). */
     bool isHostSession(const QString& token) const;
@@ -318,4 +336,16 @@ private:
     // user must re-enter a PIN. Activity (any authenticated request that touches
     // the session) resets the clock, so active users are never prompted again.
     static constexpr qint64 SESSION_TTL_SECS = 90LL * 24 * 3600; // 90 days
+
+    // Same sliding rule, much shorter, for a session the visitor asked not to be
+    // remembered — typically a browser they do not own. The cookie is already
+    // session-scoped (it dies with the browser process), but a public machine is
+    // rarely closed: this is what actually ends an abandoned session there.
+    static constexpr qint64 EPHEMERAL_SESSION_TTL_SECS = 8LL * 3600; // 8 hours
+
+    /// Inactivity budget of a session, which depends on whether it is remembered.
+    static constexpr qint64 ttlFor(const SessionInfo& s)
+    {
+        return s.ephemeral ? EPHEMERAL_SESSION_TTL_SECS : SESSION_TTL_SECS;
+    }
 };
