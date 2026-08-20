@@ -157,6 +157,22 @@ public:
     /// concurrent sessions). File-only kill switch, default true.
     bool streamWorkerEnabled() const;
 
+    // ── Update relay ──────────────────────────────────────────────────────────
+    //
+    // Whether the periodic update check goes through the project's relay
+    // (https://updates.{MW_DOMAIN}) rather than straight to api.github.com.
+    // Stored as JSON bool "update_relay_enabled", DEFAULT true, file-only.
+    //
+    // The relay returns the same GitHub release payload from a shared cache, and
+    // records version/OS/arch in aggregate so migrations can be planned on real
+    // numbers instead of download counts. Set it to false (or set MW_NO_TELEMETRY
+    // in the environment) to check GitHub directly and report nothing; updates
+    // keep working either way. Self-built binaries never use the relay at all —
+    // it needs the MW_PDNS_TOKEN only official builds carry. Documented in the
+    // README (the JSON holds no comment keys).
+
+    bool updateRelayEnabled() const;
+
     // Seed documented file-only default keys into settings.json if absent, so they
     // are discoverable/editable in the file. Idempotent.
     void seedDocumentedDefaults();

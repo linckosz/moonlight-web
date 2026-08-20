@@ -48,6 +48,23 @@ dnsapi.@MW_DOMAIN@ {
 	reverse_proxy mw-proxy:8080
 }
 
+# Update relay (0.3.0+) — the cached mirror of the project's latest GitHub
+# release, on the same mw-proxy container (exact path /v1/update, see update.go).
+# Instances point their periodic update check here instead of api.github.com, so
+# the installed-version census lands in Umami. Every client falls back to GitHub
+# when this host is unreachable, so an outage here delays nothing.
+updates.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	rate_limit {
+		zone mw_updates {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
+	reverse_proxy mw-proxy:8080
+}
+
 # Analytics dashboard — self-hosted Umami (privacy-friendly, cookieless).
 # Serves both the tracker script (/script.js) and the admin dashboard.
 stats.@MW_DOMAIN@ {

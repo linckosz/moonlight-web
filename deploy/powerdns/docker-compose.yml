@@ -3,6 +3,7 @@
 #   dnsdist  public DNS entry point :53  → pdns:5300  (anti-amplification, rate-limit)
 #   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)
 #   caddy    public :80/:443 → pdns:8081 / umami:3000  (HTTPS API + site + stats, auto-TLS)
+#            also updates.{domain} → mw-proxy:8080 (cached release mirror + census)
 #   umami    web analytics (stats.{domain}), internal  → umami-db (Postgres)
 #   umami-db Postgres for Umami, internal only
 #
@@ -64,6 +65,12 @@ services:
       MW_PDNS_OWNER_SECRET: ${MW_PDNS_OWNER_SECRET}
       # New-subdomain rate limit per client IP per hour (0 = unlimited).
       MW_PROXY_MAX_NEW_PER_HOUR: ${MW_PROXY_MAX_NEW_PER_HOUR:-20}
+      # Update relay (updates.${MW_DOMAIN} → /v1/update). Counts which versions
+      # are still running, so migrations can be planned on data. Leave
+      # MW_UMAMI_WEBSITE_ID empty and the relay still serves updates, counting
+      # nothing — see mw-proxy/update.go and README.md §Update relay.
+      MW_UMAMI_URL: http://umami:3000
+      MW_UMAMI_WEBSITE_ID: ${MW_UMAMI_TELEMETRY_WEBSITE_ID:-}
     volumes:
       - mwproxy_data:/data                          # ownership store persists
     networks: [mwnet]
@@ -139,6 +146,11 @@ services:
       # Signs the auth cookies / API tokens of the Umami DASHBOARD (admin login),
       # not the tracked visitors (analytics stays cookieless). Keep it secret.
       APP_SECRET: ${MW_UMAMI_SECRET}
+      # Trust the forwarded address instead of the socket peer. Everything
+      # reaching Umami is proxied — caddy for the website, mw-proxy for the
+      # update relay — so without this every event would carry the proxy's
+      # container IP and collapse the whole fleet into one "visitor".
+      CLIENT_IP_HEADER: x-forwarded-for
     networks: [mwnet]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 200

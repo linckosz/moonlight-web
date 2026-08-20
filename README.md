@@ -367,8 +367,14 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 | **macOS** | `~/Library/Application Support/MoonlightWeb/MoonlightWeb/settings.json` |
 | **Linux** | `~/.local/share/MoonlightWeb/MoonlightWeb/settings.json` |
 
-Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`.\
+Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`.\
 Restart the server after a manual edit.
+
+#### Update check & version counts
+
+Every few hours the server asks whether a newer MoonlightWeb exists. In official builds that question goes to `https://updates.{MW_DOMAIN}`, which mirrors the GitHub release and records **version, OS and architecture** — nothing else: no identifier, no account, no per-machine history. It is what tells us how many people still run an old version, so a release can drop support for one without stranding anyone.
+
+Set `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, and the check goes straight to GitHub instead, reporting nothing. Updates work identically either way. Builds you compiled yourself never contact the relay at all.
 
 ### SSL — your own domain & certificate
 

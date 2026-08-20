@@ -12,6 +12,7 @@ The DNS stack is the infrastructure side of **Internet Access**: an authoritativ
 Internet ─:53──────► [dnsdist] ──► pdns:5300          anti-amplification + DNS rate-limit
 Internet ─:80/:443─► [caddy] ┬─ api.{domain} ───────► pdns:8081         direct PowerDNS API (compatibility)
                              ├─ dnsapi.{domain} ────► mw-proxy:8080 ──► pdns:8081  restricted API (0.2.0+)
+                             ├─ updates.{domain} ───► mw-proxy:8080 ──► GitHub     release relay + census (0.3.0+)
                              └─ stats.{domain} ─────► umami:3000       analytics dashboard
                      [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
                      [mw-proxy] (internal)            least-privilege filtering gateway
@@ -23,9 +24,9 @@ Six containers (one process each — the idiomatic Docker layout), defined in `d
 | Container | Image | Exposure | Role |
 |---|---|---|---|
 | `pdns` | official `powerdns/pdns-auth-49`, **unmodified** | internal only (DNS :5300, API :8081, fixed IP 172.28.0.10) | Authoritative zone (SQLite in the `pdns_data` volume) + REST API. Runs non-root, `cap_drop: ALL`. |
-| `mw-proxy` | custom build: small Go gateway (stdlib only) | internal only (:8080) | Least-privilege filter in front of the pdns API: holds the full key, exposes a restricted key that can only manage a client's own A/TXT records. Store in `mwproxy_data`. See §10.8. |
+| `mw-proxy` | custom build: small Go gateway (stdlib only) | internal only (:8080) | Least-privilege filter in front of the pdns API: holds the full key, exposes a restricted key that can only manage a client's own A/TXT records. Store in `mwproxy_data`. See §10.7. Also serves the update relay on `/v1/update` (§10.8). |
 | `dnsdist` | official `powerdns/dnsdist-19` | public :53 UDP+TCP | DNS front: per-client rate limit, ANY→TCP, forwards to pdns. |
-| `caddy` | custom build: Caddy + `caddy-ratelimit` (xcaddy) | public :80/:443 | `api.{domain}` → pdns API (compatibility); `dnsapi.{domain}` → mw-proxy (restricted); apex/`www`/`stream` → static `website/`; `stats.` → Umami. Auto Let's Encrypt. |
+| `caddy` | custom build: Caddy + `caddy-ratelimit` (xcaddy) | public :80/:443 | `api.{domain}` → pdns API (compatibility); `dnsapi.{domain}` → mw-proxy (restricted); `updates.{domain}` → mw-proxy (release relay); apex/`www`/`stream` → static `website/`; `stats.` → Umami. Auto Let's Encrypt. |
 | `umami` | official Umami (postgres flavor) | internal (via caddy) | Cookieless analytics for the landing page. |
 | `umami-db` | postgres 16-alpine | internal | Umami storage (`umami_db` volume). |
 
@@ -37,11 +38,11 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
 
 - **`pdns/zz-mw.conf`** — hardening snippet merged via include-dir: `disable-axfr`, `version-string=anonymous`, default SOA content, internal ports.
 - **`pdns/init.sh`** — idempotent zone bootstrap run as entrypoint (then `exec`s the official wrapper):
-  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `ns1`, `ns2`, `api`, `dnsapi` → `MW_PUBLIC_IP`, NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
+  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `ns1`, `ns2`, `api`, `dnsapi`, `updates` → `MW_PUBLIC_IP`, NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
   - **backfills** missing records on pre-existing zones (`ensure_a` guards — note: a bare re-`add-record` would duplicate, hence the greps);
   - replaces the image's placeholder SOA when found.
 
-`MW_PDNS_API_KEY` from `.env` maps to `PDNS_AUTH_API_KEY`, so the key reaches the official mechanism unchanged. This **full** key now stays server-side: pdns uses it, and `mw-proxy` injects it toward pdns. MoonlightWeb 0.2.0+ instead holds the **restricted** `MW_PDNS_PROXY_KEY` (§10.8). Per-instance subdomains (`{uid}` A records, `_acme-challenge.*` TXT) are managed at runtime by MoonlightWeb through the API — the stack never touches them.
+`MW_PDNS_API_KEY` from `.env` maps to `PDNS_AUTH_API_KEY`, so the key reaches the official mechanism unchanged. This **full** key now stays server-side: pdns uses it, and `mw-proxy` injects it toward pdns. MoonlightWeb 0.2.0+ instead holds the **restricted** `MW_PDNS_PROXY_KEY` (§10.7). Per-instance subdomains (`{uid}` A records, `_acme-challenge.*` TXT) are managed at runtime by MoonlightWeb through the API — the stack never touches them.
 
 ## 10.3 dnsdist configuration (`dnsdist/dnsdist.conf`)
 
@@ -54,7 +55,7 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
 
 - **Dockerfile**: xcaddy build adding the `caddy-ratelimit` plugin (this Go build is why the installer adds swap on 1 GiB VMs).
 - **`entrypoint.sh`** renders `Caddyfile.tmpl` from env at boot: `@MW_DOMAIN@`, `@TLS_LINE@` (api vhost: empty = auto Let's Encrypt, or `tls /certs/...` when `MW_TLS_CERT`+`MW_TLS_KEY` are both set — user files take priority), `@SITE_TLS_LINE@` (site vhosts always get their own ACME cert, never the api-only files).
-- Vhosts: `api.` → `reverse_proxy pdns:8081` (compatibility, 60 req/min/IP); `dnsapi.` → `reverse_proxy mw-proxy:8080` (restricted, 60 req/min/IP — §10.7); `stats.` → Umami; apex+`www`+`stream` → static site with `www`/`stream` 301-redirected to the apex (`stream.` is a marketing vanity alias).
+- Vhosts: `api.` → `reverse_proxy pdns:8081` (compatibility, 60 req/min/IP); `dnsapi.` → `reverse_proxy mw-proxy:8080` (restricted, 60 req/min/IP — §10.7); `updates.` → the same mw-proxy, serving the release relay (§10.8); `stats.` → Umami; apex+`www`+`stream` → static site with `www`/`stream` 301-redirected to the apex (`stream.` is a marketing vanity alias).
 - Certificates persist in the `caddy_data` volume.
 
 ## 10.5 The installer (`install.sh`)
@@ -110,13 +111,29 @@ Secrets (`.env`, generated by `install.sh`): `MW_PDNS_API_KEY` (full, server-sid
 
 **Endpoints.** MoonlightWeb registers through the restricted `dnsapi.` gateway. A direct `api.` → pdns route is also present for backward compatibility and is retired in a later release.
 
-## 10.8 Hardening & limits
+## 10.8 Update relay & installed-version census
+
+Version-migration decisions ("can 0.2.x be dropped?") need to know what is still running. GitHub download counts cannot answer that: cumulative, downloads ≠ installs, silent about who upgraded since.
+
+`updates.{domain}` (`mw-proxy/update.go`, path `/v1/update`, same container as §10.7) answers it by taking over a request the app already makes. MoonlightWeb 0.3.0+ sends its 6-hourly update check here instead of to `api.github.com`, with `?v=&os=&arch=`, authenticating with the same restricted key.
+
+- **Serves**: the *verbatim* GitHub release JSON — the client parser is untouched — from a fleet-wide cache (`MW_UPDATE_CACHE_SECONDS`, default 600). One upstream fetch per window for every instance on Earth, versus GitHub's 60 req/h unauthenticated budget.
+- **Records**: version/OS/arch as an Umami event, nothing else — no identifier, no account, no per-machine history. Each value is matched against an allowlist and collapsed to `unknown`/`other` otherwise, so a forged client cannot inject strings into the dashboard or blow up its cardinality.
+- **Never load-bearing**: on any failure (unreachable, 502, unusable body) the client immediately retries `api.github.com`; the relay itself serves a *stale* cached release rather than an error when GitHub is down. An outage here costs a round trip, never an update.
+- **Opt-out**: `update_relay_enabled: false` or `MW_NO_TELEMETRY` in the app ([Settings §7](07-Settings-Reference.md)). Self-built binaries never reach it — the relay requires the `MW_PDNS_TOKEN` only official builds carry.
+- **Cannot escalate into a binary**: the client refuses a relayed payload whose `download_url` is not on a GitHub host and re-asks `api.github.com` (`UpdateChecker::isGitHubUrl`). `SelfUpdater` *executes* what that URL names, and the same payload supplies the digest it is checked against — so this pin is what stops "controls the DNS VM" from becoming "installs code on every host". A compromised relay is left able only to lie about which release exists.
+
+**Dashboard.** Set `MW_UMAMI_TELEMETRY_WEBSITE_ID` to a *second* Umami website (suggested `MoonlightWeb clients` / `updates.{domain}`) so fleet data stays out of the marketing stats; leave it empty and the relay serves updates while counting nothing. Events are recorded at `/uc/{version}/{os}-{arch}`, which makes Umami's built-in **Pages** report the version histogram, date filter included, with zero configuration.
+
+Two properties of that number to keep in mind: Umami's visitor hash uses a **daily-rotating salt**, so "unique visitors / 30 days" approximates machine count rather than counting distinct machines; and since the version is part of the hash input, an upgraded machine moves to its new version's bucket the same day — which is exactly the signal a migration wants.
+
+## 10.9 Hardening & limits
 
 Built-in: DNS rate-limit + ANY→TCP (dnsdist), API key + 60 req/min/IP (Caddy), least-privilege restricted key (mw-proxy, §10.7), non-root/no-caps containers, resource limits, API port never published, `disable-axfr`, anonymous version string, host fail2ban + auto-updates.
 
 Explicit non-goals: **volumetric DDoS** absorption (needs upstream scrubbing/anycast/managed secondary DNS) and in-container IP banning (fail2ban belongs on the Docker host, watching Caddy's access log; the in-container mitigation is the HTTP 429 rate limit).
 
-## 10.9 Operations cheat-sheet
+## 10.10 Operations cheat-sheet
 
 ```bash
 docker compose logs -f pdns|mw-proxy|caddy|dnsdist   # logs
