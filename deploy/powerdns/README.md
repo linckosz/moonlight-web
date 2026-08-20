@@ -141,7 +141,12 @@ at most lie about which GitHub release exists.
    `updates.{MW_DOMAIN}`. Keeping it separate stops fleet data from polluting
    the marketing site's stats.
 2. Put its ID in `.env` → `MW_UMAMI_TELEMETRY_WEBSITE_ID=<id>`, then
-   `docker compose up -d mw-proxy`.
+   `docker compose up -d --force-recreate mw-proxy`. On a `.env` created before
+   this feature the key is simply absent, so **append** it rather than editing
+   in place (`install.sh` backfills it too). `mw-proxy` says which way it went
+   at startup: `version census → http://umami:3000 (website 76ce66ce…)`, or
+   `version census DISABLED (MW_UMAMI_WEBSITE_ID is empty)` — check with
+   `docker compose logs mw-proxy | tail -2`.
 
 **Reading it.** Each check is recorded at `/uc/{version}/{os}-{arch}`, so the
 dashboard's ordinary **Pages** report *is* the version histogram, with its date

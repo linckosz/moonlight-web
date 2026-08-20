@@ -551,6 +551,21 @@ func main() {
 	// Update relay (updates.{domain} in the Caddyfile). Exact path, so it is
 	// matched ahead of the catch-all DNS gateway above.
 	mux.Handle("/v1/update", newUpdateRelay(cfg.update, cfg.proxyKey))
+	// Say out loud whether the census is on. Silence is ambiguous here — the
+	// relay serves updates identically either way, and a missing website id
+	// (an .env predating the feature, a typo) otherwise looks exactly like a
+	// working install until someone wonders why the dashboard stays empty.
+	if cfg.update.umamiWebsite == "" || cfg.update.umamiURL == "" {
+		log.Printf("[mw-proxy] update relay on /v1/update — version census DISABLED " +
+			"(MW_UMAMI_WEBSITE_ID is empty)")
+	} else {
+		id := cfg.update.umamiWebsite
+		if len(id) > 8 {
+			id = id[:8] + "…"
+		}
+		log.Printf("[mw-proxy] update relay on /v1/update — version census → %s (website %s)",
+			cfg.update.umamiURL, id)
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
