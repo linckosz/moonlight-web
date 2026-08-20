@@ -365,12 +365,11 @@ export class BackendClient {
     static async playerPin(token, pin) {
         return this.post('/api/share/player/pin', { token, pin });
     }
+    /** @param {string} [aspect] "W:H" override; omitted, the backend reuses the
+     *  ratio the owner's session settled on for that host. */
     static async playerJoin(token, height, aspect) {
-        return this.post(
-            '/api/share/player/join',
-            { token, height, aspect },
-            { timeoutMs: 25000 },
-        );
+        const body = aspect ? { token, height, aspect } : { token, height };
+        return this.post('/api/share/player/join', body, { timeoutMs: 25000 });
     }
     static async playerLeave() {
         return this.post('/api/share/player/leave', {}, { timeoutMs: 5000 });

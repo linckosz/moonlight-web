@@ -244,9 +244,11 @@ QString AppSettings::streamAspect() const
 void AppSettings::setStreamAspect(const QString& aspect)
 {
     QJsonObject obj = readAll();
-    // "auto" = derive width from the host's reported screen format; the explicit
-    // ratios are manual overrides (ultrawide-aware).
-    const QStringList valid = {"auto", "16:9", "21:9", "32:9"};
+    // "auto" = the client probes the host's real format from the black bars
+    // Sunshine encodes and asks again with it; the explicit ratios are manual
+    // overrides, ordered by market share in the Settings dropdown.
+    const QStringList valid = {"auto",  "16:9", "16:10", "21:9",
+                               "4:3",   "3:2",  "32:9",  "5:4"};
     obj["stream_aspect"] = valid.contains(aspect) ? aspect : QStringLiteral("auto");
     writeAll(obj);
 }

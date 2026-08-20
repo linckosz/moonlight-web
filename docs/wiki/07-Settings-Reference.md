@@ -36,7 +36,7 @@ Access is single-threaded, synchronous I/O. **Restart the server after a manual 
 | `video_codec` | string | `"auto"` | `auto` \| `h264` \| `hevc` \| `av1`. `auto` resolves to HEVC if the host supports it, else H.264. |
 | `stream_bitrate` | int (kbps) | `20000` | 5 000–150 000. |
 | `stream_height` | int | `1080` | 720/1080/1440/2160, or `0` = *Native Host* (largest reported display mode). Width is derived. |
-| `stream_aspect` | string | `"auto"` | `auto` (host's native format) or explicit `16:9` / `21:9` / `32:9`. |
+| `stream_aspect` | string | `"auto"` | `auto` (the browser measures the host's real format from the bars Sunshine encodes, then relaunches at it) or explicit `16:9` / `16:10` / `21:9` / `4:3` / `3:2` / `32:9` / `5:4`. Width is derived from the height. |
 | `stream_fps` | int | `60` | 15–240. |
 | `hdr_enabled` | bool | `false` | Request HDR10 encode (see [HDR limitations](05-Streaming-and-Transports.md#53-hdr--support-and-limitations)). |
 | `chroma_444_enabled` | bool | `false` | YUV 4:4:4 (needs bandwidth + a browser decoding the 4:4:4 profile). |

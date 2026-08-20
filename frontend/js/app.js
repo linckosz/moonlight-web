@@ -55,8 +55,10 @@ import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { VersionGuard } from './util/VersionGuard.js';
-import { IS_MOBILE_OR_TABLET, clientAspectString } from './util/BrowserDetect.js';
+import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
+import { DEFAULT_ASPECT, loadHostAspect, saveHostAspect } from './util/AspectRatio.js';
+import { startAspectProbe } from './stream/AspectProbe.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
@@ -303,8 +305,8 @@ const MoonlightApp = {
         const view = new PlayerJoinView(
             container,
             token,
-            async ({ height, aspect, immersive, touchScreen }) => {
-                const result = await BackendClient.playerJoin(token, height, aspect);
+            async ({ height, immersive, touchScreen }) => {
+                const result = await BackendClient.playerJoin(token, height);
 
                 // StreamView renders (and connects) from its constructor, so the
                 // join screen has to be gone first.
@@ -1180,6 +1182,12 @@ const MoonlightApp = {
             this._lastUpgradeTime = 0;
             this._upgradeStableMs = 75000;
             this._originalStreamHeight = undefined;
+            // Aspect probe: one measurement per user-initiated launch (see
+            // _startAspectProbe). A relaunch inside the same session — codec
+            // fallback, degradation, the aspect correction itself — inherits
+            // the verdict instead of measuring again.
+            this._stopAspectProbe();
+            this._aspectProbeDone = false;
             // Dual-stream state: fresh launch starts on slot 0 with an unknown
             // (assumed possible) dual capability; any stale standby dies here.
             this._abortStandby('fresh launch');
@@ -1250,11 +1258,22 @@ const MoonlightApp = {
             streamingSettings.transport_mode = 'webrtc-media-udp';
         }
 
-        // Aspect ratio is always the client monitor's (desktop) or 16:9 (mobile),
-        // resolved here at launch so the host receives the exact ratio and fills
-        // the screen — no black bars. Overrides any stored/degradation value; the
-        // backend derives the even width from this "W:H" string.
-        streamingSettings.stream_aspect = clientAspectString();
+        // Aspect ratio → the backend derives the even width from this "W:H"
+        // string. The goal is a frame the HOST fills edge to edge, since anything
+        // else comes back with black bars encoded into the picture.
+        //
+        //   1. an explicit Settings choice wins, and the probe stays out of it;
+        //   2. otherwise the ratio the last session measured for this host, so a
+        //      known host starts correct from its first frame;
+        //   3. otherwise 16:9, corrected within seconds by the probe.
+        //
+        // Sunshine publishes no display format, so this is the only way to know
+        // (see stream/AspectProbe.js).
+        const chosenAspect = streamingSettings.stream_aspect;
+        this._aspectAuto = !chosenAspect || chosenAspect === 'auto';
+        if (this._aspectAuto) {
+            streamingSettings.stream_aspect = loadHostAspect(host.uuid) || DEFAULT_ASPECT;
+        }
 
         try {
             const result = await BackendClient.launchApp(host.uuid, app.id, streamingSettings);
@@ -1592,6 +1611,66 @@ const MoonlightApp = {
             this._lastCongSignal = performance.now();
         };
         this._armUpgradeTimer();
+        this._startAspectProbe();
+    },
+
+    // ── Host aspect probe ─────────────────────────────────────────────────
+
+    /**
+     * Measure the host's real screen format from the black bars Sunshine
+     * encodes, and relaunch once at that format if we guessed wrong.
+     *
+     * Runs only in "Auto", only on the first stream view of a user-initiated
+     * launch, and only for the few seconds after the first frame — see
+     * stream/AspectProbe.js for why that window is what keeps a letterboxed
+     * video from being mistaken for a 4:3 host.
+     */
+    _startAspectProbe() {
+        if (!this._aspectAuto || this._aspectProbeDone) return;
+        this._stopAspectProbe();
+        this._aspectProbeStop = startAspectProbe({
+            getSurface: () => (this.streamView ? this.streamView.getProbeSurface() : null),
+            onResult: (aspect, reason) => this._onAspectMeasured(aspect, reason),
+        });
+    },
+
+    /** Drop a probe still in flight (quit, or a fresh launch superseding it). */
+    _stopAspectProbe() {
+        if (this._aspectProbeStop) {
+            this._aspectProbeStop();
+            this._aspectProbeStop = null;
+        }
+    },
+
+    /**
+     * Verdict of the probe: one correction at most, then the format is settled
+     * for the rest of the session.
+     */
+    _onAspectMeasured(aspect, reason) {
+        this._aspectProbeStop = null;
+        this._aspectProbeDone = true;
+        if (!aspect) return;
+
+        const host = this._lastStreamHost;
+        // Remembered for the next launch on this host, which then starts at the
+        // right format instead of spending its first seconds at 16:9. Always
+        // re-measured, so a wrong reading never outlives one session.
+        if (host) saveHostAspect(host.uuid, aspect);
+
+        const settings = this._lastStreamingSettings;
+        if (!settings || settings.stream_aspect === aspect) return;
+        // The stream has to still be ours to relaunch.
+        if (this._nav.overlay !== 'streaming' || !this.streamView) return;
+        if (this._standbyView) return;
+        // A share pins the stream: guests would ride along on a transition they
+        // never asked for (same reasoning as the quality ladder).
+        if (this._sharePinsQuality()) return;
+
+        console.log('[MW] Host aspect ' + reason + ': ' + settings.stream_aspect + ' → ' + aspect);
+        // Session-only, like the degradation overrides: the next fresh launch
+        // reads the user's settings again (and the memory above).
+        settings.stream_aspect = aspect;
+        this._qualityRelaunch(this._transportIndex || 0);
     },
 
     /**
@@ -2510,6 +2589,7 @@ const MoonlightApp = {
         // and any standby leg of a seamless transition (the live stream ended).
         this._hideRelaunchLoader();
         this._stopUpgradeTimer();
+        this._stopAspectProbe();
         this._abortStandby('active stream ended');
         // The session is over — no successor will claim the inherited display
         // state, and a bridged soft keyboard must not outlive the stream.

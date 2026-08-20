@@ -4810,6 +4810,18 @@ export class StreamView {
         return this._videoIsDisplay() ? this.videoEl : this.canvas;
     }
 
+    /** Display surface and its INTRINSIC size, for the AspectProbe. Deliberately
+     *  not the element box: object-fit: contain adds client-side bars of its
+     *  own, and the probe must only see what the host encoded. */
+    getProbeSurface() {
+        if (!this._firstFrameRendered) return null;
+        const el = this._displayEl();
+        if (!el) return null;
+        const width = this._videoIsDisplay() ? this.videoEl.videoWidth : this.canvas.width;
+        const height = this._videoIsDisplay() ? this.videoEl.videoHeight : this.canvas.height;
+        return width > 0 && height > 0 ? { el, width, height } : null;
+    }
+
     /** Displayed media rectangle in client coordinates, accounting for
      *  object-fit: contain (letterbox/pillarbox bars). The <video> element box
      *  fills the whole canvas area, so its real content rect must be derived

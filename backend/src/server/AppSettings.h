@@ -89,8 +89,9 @@ public:
     // ── Stream aspect ratio ────────────────────────────────────────────────────
     //
     // Aspect ratio used to derive width from a fixed height. Stored as JSON
-    // string "stream_aspect", default "auto" (derive from the host's reported
-    // screen format). Manual overrides: "16:9", "21:9", "32:9".
+    // string "stream_aspect", default "auto" (the browser measures the host's
+    // real format at stream start and relaunches with it). Manual overrides:
+    // "16:9", "16:10", "21:9", "4:3", "3:2", "32:9", "5:4".
 
     QString streamAspect() const;
     void setStreamAspect(const QString& aspect);
