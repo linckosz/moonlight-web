@@ -21,6 +21,13 @@ import { IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetec
 /** @typedef {import('./StreamView.js').StreamView} StreamViewInstance */
 
 /**
+ * When to re-read the device orientation after a rotation signal, in ms.
+ * Rotation animations run ~300ms; the last probe is the safety net for slow
+ * devices. See _scheduleOrientationSync().
+ */
+const ORIENTATION_SYNC_DELAYS = [60, 160, 320, 600];
+
+/**
  * Fullscreen / wake-lock / immersive-exit subsystem for StreamView.
  *
  * Covers the standard Fullscreen API, the iOS CSS fallback, the Screen Wake
@@ -35,19 +42,32 @@ export class StreamViewFullscreen {
         // Mobile or tablet only (excludes touchscreen laptops via User-Agent detection)
         if (!IS_MOBILE_OR_TABLET) return;
 
-        // Orientation change listener
+        // Baseline for the rotation diffing in _syncOrientationState(): the
+        // orientation the stream starts in. Every later sync compares against
+        // it, so a read taken before the rotation settled is a no-op instead of
+        // a wrong decision.
+        this._lastLandscape = this._isDeviceLandscape();
+
+        // Orientation change: three signals, all funnelled into one deferred
+        // re-check (see _scheduleOrientationSync() for why it is deferred).
+        this._onOrientationChange = () => this._scheduleOrientationSync();
+
+        // 1. Media query — fires on every viewport reshape, rotation included.
         this._orientationMql = window.matchMedia('(orientation: landscape)');
-        this._onOrientationChange = () => {
-            // Landscape: do NOT auto-enter fullscreen — just reveal the button
-            // so the user keeps the header until they explicitly tap it.
-            // Portrait: always leave fullscreen. The query only tells us the
-            // event fired; _isDeviceLandscape() decides what it means.
-            if (!this._isDeviceLandscape()) {
-                this._exitMobileFullscreen();
-            }
-            this._updateMobileFsButtonVisibility();
-        };
         this._orientationMql.addEventListener('change', this._onOrientationChange);
+        // 2. screen.orientation — the device signal, and the source
+        //    _isDeviceLandscape() actually reads. Absent on iOS before 16.4.
+        const screenOrientation = (window.screen || {}).orientation;
+        if (screenOrientation && typeof screenOrientation.addEventListener === 'function') {
+            try {
+                screenOrientation.addEventListener('change', this._onOrientationChange);
+                this._screenOrientation = screenOrientation;
+            } catch (e) {
+                /* older WebKit exposes the object without the event */
+            }
+        }
+        // 3. window.orientationchange — legacy fallback for those iOS versions.
+        window.addEventListener('orientationchange', this._onOrientationChange);
 
         // Fullscreen change listener (for button visibility)
         this._onFullscreenChange = () => {
@@ -62,6 +82,98 @@ export class StreamViewFullscreen {
         // No auto-fullscreen on launch: the user enters fullscreen only by
         // tapping the button (shown in landscape). Just set the initial state.
         this._updateMobileFsButtonVisibility();
+    }
+
+    /**
+     * Re-check the device orientation after a rotation signal — deferred, and
+     * more than once.
+     *
+     * The media query flips as soon as the viewport is reshaped, and the
+     * viewport is reshaped BEFORE `screen.orientation.type` is updated. Reading
+     * it straight from the handler therefore answers with the orientation the
+     * device has just left, which is how the Fullscreen button ended up one
+     * rotation behind: still hidden after turning to landscape, then shown
+     * after turning back to portrait. Re-reading over the next few hundred
+     * milliseconds catches the settled value whichever signal fired first, and
+     * _syncOrientationState() discards the reads that still show the old one.
+     * @this {StreamViewInstance}
+     */
+    _scheduleOrientationSync() {
+        this._clearOrientationSync();
+
+        const step = () => {
+            // Applied: the remaining probes have nothing left to do.
+            if (this._syncOrientationState()) this._clearOrientationSync();
+        };
+
+        this._orientationSyncTimers = ORIENTATION_SYNC_DELAYS.map((ms) => setTimeout(step, ms));
+        if (typeof requestAnimationFrame === 'function') {
+            this._orientationSyncRaf = requestAnimationFrame(step);
+        }
+    }
+
+    /**
+     * Drop any pending orientation re-check.
+     * @this {StreamViewInstance}
+     */
+    _clearOrientationSync() {
+        if (this._orientationSyncRaf) {
+            cancelAnimationFrame(this._orientationSyncRaf);
+            this._orientationSyncRaf = null;
+        }
+        for (const id of this._orientationSyncTimers || []) clearTimeout(id);
+        this._orientationSyncTimers = null;
+    }
+
+    /**
+     * Apply the device orientation — but only when it actually changed since
+     * the last one we applied, so a probe that fired too early (still reading
+     * the previous orientation) does nothing.
+     *
+     * Landscape: do NOT auto-enter fullscreen — just reveal the button so the
+     * user keeps the header until they explicitly tap it. Portrait: always
+     * leave fullscreen.
+     *
+     * @returns {boolean} true when the orientation changed and was applied.
+     * @this {StreamViewInstance}
+     */
+    _syncOrientationState() {
+        const landscape = this._isDeviceLandscape();
+        if (landscape === this._lastLandscape) return false;
+        this._lastLandscape = landscape;
+
+        if (!landscape) this._exitMobileFullscreen();
+        this._updateMobileFsButtonVisibility();
+        return true;
+    }
+
+    /**
+     * Drop the orientation listeners and any pending re-check. Called from both
+     * teardown paths (quit and standby retire).
+     * @this {StreamViewInstance}
+     */
+    _teardownOrientation() {
+        this._clearOrientationSync();
+        if (this._onOrientationChange) {
+            if (this._orientationMql) {
+                this._orientationMql.removeEventListener('change', this._onOrientationChange);
+            }
+            if (this._screenOrientation) {
+                try {
+                    this._screenOrientation.removeEventListener(
+                        'change',
+                        this._onOrientationChange,
+                    );
+                } catch (e) {
+                    /* silently ignored */
+                }
+            }
+            window.removeEventListener('orientationchange', this._onOrientationChange);
+        }
+        this._orientationMql = null;
+        this._screenOrientation = null;
+        this._onOrientationChange = null;
+        this._lastLandscape = null;
     }
 
     /**
