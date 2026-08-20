@@ -47,7 +47,7 @@ export class BackendDialog {
                     (ty) =>
                         `<option value="${this.esc(ty)}"${
                             ty === this.host.backendType ? ' selected' : ''
-                        }>${this.esc(ty)}</option>`
+                        }>${this.esc(ty)}</option>`,
                 )
                 .join('');
             this.syncPairCredsVisibility();
@@ -110,16 +110,16 @@ export class BackendDialog {
                     ${
                         canProvision
                             ? `<button class="btn-seat-free" data-seat="${this.esc(
-                                  s.id
+                                  s.id,
                               )}" title="${this.esc(t('backend.seatFreeHint'))}">${this.esc(
-                                  t('backend.seatFree')
+                                  t('backend.seatFree'),
                               )}</button>
                                <button class="btn-seat-remove" data-seat="${this.esc(
-                                   s.id
+                                   s.id,
                                )}" title="${this.esc(t('backend.seatRemove'))}">✕</button>`
                             : ''
                     }
-                </div>`
+                </div>`,
                   )
                   .join('')
             : `<p class="backend-seats-empty">${t('backend.seatsNone')}</p>`;
@@ -206,8 +206,8 @@ export class BackendDialog {
             .map(
                 ([on, label]) =>
                     `<span class="backend-cap${on ? ' is-on' : ''}">${on ? '✓' : '·'} ${this.esc(
-                        label
-                    )}</span>`
+                        label,
+                    )}</span>`,
             )
             .join('');
         el.hidden = false;
@@ -387,7 +387,9 @@ export class BackendDialog {
             .querySelector('.btn-backend-cancel')
             .addEventListener('click', () => this.close());
 
-        this.overlay.querySelector('.btn-backend-save').addEventListener('click', () => this.save());
+        this.overlay
+            .querySelector('.btn-backend-save')
+            .addEventListener('click', () => this.save());
 
         this.overlay.querySelector('.backend-type').addEventListener('change', () => {
             this.syncPairCredsVisibility();
@@ -398,7 +400,9 @@ export class BackendDialog {
         // accidental click cannot re-pair with unchanged values. Any edit to a
         // field re-evaluates it.
         this.overlay
-            .querySelectorAll('.backend-url, .backend-token, .backend-pair-user, .backend-pair-password')
+            .querySelectorAll(
+                '.backend-url, .backend-token, .backend-pair-user, .backend-pair-password',
+            )
             .forEach((el) => {
                 el.addEventListener('input', () => this.updateSaveEnabled());
                 // Enter in any field triggers SAVE, but only when it is a valid
