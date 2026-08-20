@@ -28,6 +28,41 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+namespace {
+
+/**
+ * The session cookie handed back to the browser.
+ *
+ * Remembered sessions carry a 90-day Max-Age, matching the server-side sliding
+ * TTL. A session the visitor asked not to remember deliberately carries none:
+ * a cookie without Max-Age/Expires is session-scoped and dies with the browser
+ * process, which is what someone on a public machine expects. Never add one
+ * later either — the periodic refresh in /api/auth/status would otherwise
+ * promote a temporary login to 90 days behind the user's back.
+ */
+QString sessionCookie(const QString& token, bool remember)
+{
+    QString cookie =
+        QStringLiteral("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict").arg(token);
+    if (remember) cookie += QStringLiteral("; Max-Age=7776000");
+    return cookie;
+}
+
+/// Expire the session cookie immediately (logout).
+QString clearedSessionCookie()
+{
+    return QStringLiteral("mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0");
+}
+
+/// "remember me" is opt-out: a body without the field keeps the old 90-day
+/// behaviour, so older clients and the share flow are unaffected.
+bool wantsRemember(const QJsonObject& body)
+{
+    return body.value(QStringLiteral("remember")).toBool(true);
+}
+
+} // namespace
+
 void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpService& geoIpService)
 {
     // ── Auth routes ─────────────────────────────────────────────────────────
@@ -39,12 +74,14 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QString pin = body["pin"].toString();
         QString certificate = body["certificate"].toString();
         QString machineName = body["machine_name"].toString();
+        const bool remember = wantsRemember(body);
 
         // ── Certificate authentication (alternative to PIN) ────────────
         if (!certificate.isEmpty() && authManager.certAuthEnabled()) {
             if (authManager.validateCertificate(certificate)) {
                 // Certificate valid — create session (same flow as PIN success)
-                QString token = authManager.createSession(req.clientAddress, machineName);
+                QString token =
+                    authManager.createSession(req.clientAddress, machineName, false, !remember);
                 geoIpService.lookupIp(
                     req.clientAddress,
                     [&authManager, token](const QString& city, const QString& country) {
@@ -54,11 +91,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 QJsonObject obj;
                 obj["status"] = "ok";
                 obj["auth_method"] = "certificate";
+                obj["remembered"] = remember;
                 HttpResponse resp = HttpResponse::json(obj);
-                resp.headers["Set-Cookie"] =
-                    QString(
-                        "mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
-                        .arg(token);
+                resp.headers["Set-Cookie"] = sessionCookie(token, remember);
                 return resp;
             } else {
                 // Certificate invalid
@@ -78,7 +113,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject obj;
         switch (result.result) {
         case AuthManager::Valid: {
-            QString token = authManager.createSession(req.clientAddress, machineName);
+            QString token =
+                authManager.createSession(req.clientAddress, machineName, false, !remember);
 
             // Look up the IP geolocation asynchronously and store in the session
             geoIpService.lookupIp(req.clientAddress, [&authManager, token](const QString& city,
@@ -91,12 +127,9 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
             obj["status"] = "ok";
             obj["pin_regenerated"] = true;
+            obj["remembered"] = remember;
             HttpResponse resp = HttpResponse::json(obj);
-            // Set HttpOnly session cookie, 90-day expiry, Strict SameSite
-            // (Max-Age=7776000s; matches the server-side sliding TTL).
-            resp.headers["Set-Cookie"] =
-                QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
-                    .arg(token);
+            resp.headers["Set-Cookie"] = sessionCookie(token, remember);
             return resp;
         }
         case AuthManager::InvalidPin:
@@ -330,14 +363,40 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             authManager.adminPasswordSet() && AuthManager::isLanAddress(req.clientAddress) &&
             req.hostTrusted;
 
+        // Whether this browser holds a session cookie at all — true even on
+        // localhost, where authenticated is hardcoded. It is what tells the UI
+        // that there is something to log out of: the loopback page has no
+        // session, a host-key browser on the public domain has one.
+        obj["has_session"] = authManager.validateSession(HttpServer::sessionTokenFromRequest(req));
+
         HttpResponse resp = HttpResponse::json(obj);
-        // Slide the cookie browser-side too, so an active client keeps a
-        // fresh 90-day window without ever re-entering the PIN.
+        // Slide the cookie browser-side too, so an active client keeps a fresh
+        // 90-day window without ever re-entering the PIN. A session the visitor
+        // asked not to remember stays session-scoped — see sessionCookie().
         if (!authedToken.isEmpty()) {
             resp.headers["Set-Cookie"] =
-                QString("mw_session=%1; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000")
-                    .arg(authedToken);
+                sessionCookie(authedToken, !authManager.isEphemeralSession(authedToken));
         }
+        return resp;
+    });
+
+    // POST /api/auth/logout — end *this* browser's session.
+    //
+    // Deliberately not localhost-gated, unlike /api/auth/sessions/revoke: a
+    // visitor holds nothing but their own cookie, so the worst they can do is
+    // lock themselves out. That is the whole point — leaving a public machine
+    // must not require reaching the host's admin page.
+    server.router()->post("/api/auth/logout", [&authManager](const HttpRequest& req) {
+        const QString token = HttpServer::sessionTokenFromRequest(req);
+        const bool destroyed = authManager.logoutSession(token);
+
+        QJsonObject obj;
+        obj["status"] = "ok";
+        obj["had_session"] = destroyed;
+        HttpResponse resp = HttpResponse::json(obj);
+        // Clear the cookie either way: a token the server does not know is
+        // exactly what a stale cookie looks like, and it should go too.
+        resp.headers["Set-Cookie"] = clearedSessionCookie();
         return resp;
     });
 

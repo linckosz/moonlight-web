@@ -83,6 +83,11 @@ export class SettingsView {
         // Per-codec browser support map: { h264:bool, hevc:bool, av1:bool } or null
         this._codecSupport = null;
 
+        // True when this browser holds a session worth ending — see
+        // _checkSession(). False for the host machine's own browser, whichever
+        // address it reached us under.
+        this._canLogout = false;
+
         // Debounce timer to avoid rapid repeated saves
         this._saveTimer = null;
     }
@@ -91,8 +96,35 @@ export class SettingsView {
         await this._loadState();
         this._codecSupport = await this._checkCodecSupport();
         this._webgpuUsable = await this._checkWebGpuSupport();
+        this._canLogout = await this._checkSession();
         this.render();
         this.bindEvents();
+    }
+
+    /**
+     * Does this browser hold a session it has any reason to end?
+     *
+     * Two conditions, and the second is the one that is easy to get wrong. The
+     * browser must hold a session cookie at all (`has_session` — the host's own
+     * loopback page is authenticated by its address and has nothing to end), and
+     * it must not be the host machine's own browser (`is_host_machine`, true for
+     * the loopback origin *and* for a host-key session reached through the public
+     * domain). Signing the host out protects nothing — the credential is the
+     * machine itself — and costs the admin access being used to click, dropping
+     * it onto a PIN prompt on the very machine that owns the server. A LAN device
+     * that unlocked admin with the password is not the host and keeps the button:
+     * it is somebody else's computer, which is the whole point.
+     *
+     * Best-effort: on any failure the Log out section is simply not offered.
+     */
+    async _checkSession() {
+        try {
+            const status = await BackendClient.getAuthStatus();
+            return status.has_session === true && status.is_host_machine !== true;
+        } catch (err) {
+            console.warn('[Settings] Could not read the auth status:', err);
+            return false;
+        }
     }
 
     async _loadState() {
@@ -933,6 +965,20 @@ export class SettingsView {
                     </button>
                     <span class="setting-desc">${t('settings.resetDefaultsDesc')}</span>
                 </div>
+
+                ${
+                    this._canLogout
+                        ? `
+                <!-- ── Session (last: it ends the visit) ──────────────────── -->
+                <div class="settings-section settings-section-logout">
+                    <h3 class="settings-section-title">${t('settings.session')}</h3>
+                    <button class="btn btn-danger" id="btn-settings-logout">
+                        ${t('settings.logout')}
+                    </button>
+                    <span class="setting-desc">${t('settings.logoutDesc')}</span>
+                </div>`
+                        : ''
+                }
             </div>
         `;
 
@@ -1051,8 +1097,33 @@ export class SettingsView {
         const resetBtn = this.container.querySelector('#btn-settings-reset');
         if (resetBtn) resetBtn.addEventListener('click', () => this._resetDefaults());
 
+        const logoutBtn = this.container.querySelector('#btn-settings-logout');
+        if (logoutBtn) logoutBtn.addEventListener('click', () => this._logout(logoutBtn));
+
         const closeBtn = this.container.querySelector('#btn-settings-close');
         if (closeBtn) closeBtn.addEventListener('click', () => this.onClose());
+    }
+
+    /**
+     * End this browser's session and go back to the PIN page.
+     *
+     * The reload is not cosmetic: the backend only checks the session cookie
+     * when a WebSocket is upgraded, so a stream already running would survive
+     * the logout. Reloading drops every open socket and re-enters the app
+     * through _checkAuth(), which now finds no session.
+     */
+    async _logout(btn) {
+        if (!window.confirm(t('settings.logoutConfirm'))) return;
+
+        btn.disabled = true;
+        try {
+            await BackendClient.logout();
+        } catch (err) {
+            // The cookie may be gone anyway (expired, already revoked). Reload
+            // regardless: if it is not, the login page is what comes back.
+            console.warn('[Settings] Logout request failed:', err);
+        }
+        window.location.replace(window.location.pathname);
     }
 
     // --- Helpers ---

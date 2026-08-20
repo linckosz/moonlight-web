@@ -25,6 +25,12 @@
     margin-top: var(--space-6);
     border-top: 1px solid var(--border-1);
 }
+/* Last section of the page, and the only one that ends the visit — kept apart
+   from the preference blocks so nobody reaches it while scanning for a toggle. */
+.settings-section-logout {
+    margin-top: var(--space-6);
+    border-top: 1px solid var(--border-1);
+}
 .settings-section-title {
     font-size: var(--fs-lg);
     font-weight: 600;

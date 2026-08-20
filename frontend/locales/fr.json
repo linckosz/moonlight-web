@@ -161,7 +161,9 @@
         "verificationFailed": "Échec de la vérification",
         "readFileError": "Échec de la lecture du fichier",
         "onHostMachine": "Vous êtes sur la machine hôte ?",
-        "openLocally": "Ouvrir via localhost"
+        "openLocally": "Ouvrir via localhost",
+        "rememberMe": "Rester connecté sur cet appareil",
+        "rememberMeHint": "Décochez sur un ordinateur partagé ou public : la session prend fin à la fermeture du navigateur, et de toute façon après quelques heures d'inactivité."
     },
     "pairing": {
         "title": "Appairer avec {{name}}",
@@ -221,6 +223,10 @@
         "pointerSensitivityDesc": "Vitesse du curseur trackpad/tactile (plus élevé = déplacement plus rapide).",
         "resetDefaults": "Réinitialiser les paramètres",
         "resetDefaultsDesc": "Restaure tous les paramètres de streaming à leurs valeurs par défaut.",
+        "session": "Session",
+        "logout": "Se déconnecter",
+        "logoutDesc": "Met fin à la session de ce navigateur et arrête le stream en cours. La prochaine visite depuis cet appareil redemandera un code PIN. Vos autres appareils restent connectés.",
+        "logoutConfirm": "Se déconnecter de ce serveur ? Le stream en cours s'arrête et cet appareil aura besoin d'un nouveau code PIN pour revenir.",
         "saved": "Enregistré",
         "settingsReset": "Paramètres réinitialisés par défaut",
         "powerSave": "Économie d'énergie",

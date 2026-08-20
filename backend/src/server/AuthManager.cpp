@@ -119,8 +119,12 @@ void AuthManager::saveSessions()
     QString path = dir + QStringLiteral("/sessions.json");
 
     QJsonArray arr;
-    for (const auto& s : m_sessions)
+    for (const auto& s : m_sessions) {
+        // Sessions the visitor asked not to remember never touch the disk, so a
+        // restart ends them too — that is half of what "do not remember me" buys.
+        if (s.ephemeral) continue;
         arr.append(s.toJson());
+    }
 
     QJsonObject root;
     root["sessions"] = arr;
@@ -535,7 +539,8 @@ AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip
     return recordAttempt(bucket, matched, ip, QStringLiteral("admin password"));
 }
 
-QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost)
+QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost,
+                                   bool ephemeral)
 {
     // Clean IPv4-mapped IPv6 addresses before storing
     QString cleanIp = cleanClientAddress(ip);
@@ -559,12 +564,14 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     info.createdAt = QDateTime::currentSecsSinceEpoch();
     info.lastSeen = info.createdAt;
     info.isHost = isHost;
+    info.ephemeral = ephemeral;
 
     m_sessions[id] = info;
-    saveSessions();
+    if (!ephemeral) saveSessions();
     emit sessionCreated(ip, machineName);
     emit sessionsChanged();
-    Logger::info(QString("[Auth] Session created for %1 (machine='%2', total: %3)")
+    Logger::info(QString("[Auth] %1 session created for %2 (machine='%3', total: %4)")
+                     .arg(ephemeral ? QStringLiteral("Temporary") : QStringLiteral("Persistent"))
                      .arg(ip, machineName)
                      .arg(m_sessions.size()));
     return token; // raw token for the cookie
@@ -579,7 +586,23 @@ bool AuthManager::validateSession(const QString& token) const
     // inactive past the TTL — the periodic purge removes them.
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const qint64 last = it->lastSeen > 0 ? it->lastSeen : it->createdAt;
-    return now - last <= SESSION_TTL_SECS;
+    return now - last <= ttlFor(*it);
+}
+
+bool AuthManager::isEphemeralSession(const QString& token) const
+{
+    if (!validateSession(token)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    return it != m_sessions.end() && it->ephemeral;
+}
+
+bool AuthManager::logoutSession(const QString& token)
+{
+    if (token.isEmpty()) return false;
+    const QString id = hashToken(token);
+    if (!m_sessions.contains(id)) return false;
+    destroySession(id);
+    return true;
 }
 
 bool AuthManager::isHostSession(const QString& token) const
@@ -635,8 +658,9 @@ void AuthManager::touchSession(const QString& token)
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const qint64 prev = it->lastSeen;
     it->lastSeen = now;
-    // Throttle disk writes: only persist when the clock advanced by >1h.
-    if (now - prev >= 3600) saveSessions();
+    // Throttle disk writes: only persist when the clock advanced by >1h. A
+    // temporary session has nothing on disk to refresh.
+    if (!it->ephemeral && now - prev >= 3600) saveSessions();
 }
 
 void AuthManager::setSessionGeo(const QString& token, const QString& city, const QString& country)
@@ -769,7 +793,7 @@ void AuthManager::purgeExpiredSessions()
     while (it.hasNext()) {
         it.next();
         const qint64 last = it.value().lastSeen > 0 ? it.value().lastSeen : it.value().createdAt;
-        if (now - last > SESSION_TTL_SECS) {
+        if (now - last > ttlFor(it.value())) {
             it.remove();
             removed++;
         }
