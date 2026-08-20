@@ -711,6 +711,8 @@ export class StreamView {
         this._zoom = 1; // current display scale (1..8)
         this._panX = 0; // pan offset in CSS px (applied before scale)
         this._panY = 0;
+        this._panSamples = []; // recent {t, x, y} centroid samples (3-finger pan flick)
+        this._panMomentumRaf = null; // rAF id for the inertial pan glide loop
         // Display state inherited from the view this one replaces (quality /
         // transport switch). Applied on the first decoded frame — the pan clamp
         // needs the real frame size. See restoreViewState().
@@ -5107,6 +5109,7 @@ export class StreamView {
             this.streamEl.removeEventListener('touchend', this._onTouchEnd);
             this.streamEl.removeEventListener('touchcancel', this._onTouchEnd);
             this._stopScrollMomentum();
+            this._stopPanMomentum();
         }
         if (this.inputEl) {
             this.inputEl.removeEventListener('wheel', this._onWheel);

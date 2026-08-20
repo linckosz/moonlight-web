@@ -61,8 +61,9 @@ export class StreamViewTouch {
         e.preventDefault();
         const newCount = e.touches.length;
 
-        // Any new touch interrupts an ongoing inertial scroll glide.
+        // Any new touch interrupts an ongoing inertial scroll/pan glide.
         this._stopScrollMomentum();
+        this._stopPanMomentum();
 
         // New sequence: first finger of the gesture goes down.
         if (!this._touchActive) {
@@ -75,6 +76,7 @@ export class StreamViewTouch {
             this._scrollAccumX = 0;
             this._touchScrollAnchored = false;
             this._scrollSamples.length = 0;
+            this._panSamples.length = 0;
             const t = e.touches[0];
             this._touchStartX = t.clientX;
             this._touchStartY = t.clientY;
@@ -441,7 +443,9 @@ export class StreamViewTouch {
                 this._applyZoomTransform();
                 // Re-render the enhancer backing at the new zoom step (crisp pinch-zoom).
                 if (this._outputZoomScale() !== this._lastOutputZoomScale) this._applyOutputSize();
-                this._scrollSamples.length = 0; // pinching cancels pending inertia
+                // Pinching cancels pending inertia (scroll and pan alike).
+                this._scrollSamples.length = 0;
+                this._panSamples.length = 0;
             } else if (this._twoFingerMode === 'scroll' && drag > 0.1) {
                 // Parallel two-finger drag → scroll wheel on both axes.
                 this._emitScroll(dCx, dCy, cx, cy);
@@ -469,6 +473,12 @@ export class StreamViewTouch {
                 this._panX += dCx;
                 this._panY += dCy;
                 this._applyZoomTransform();
+                // Sample the centroid for the release flick (inertial glide).
+                const now = performance.now();
+                this._panSamples.push({ t: now, x: cx, y: cy });
+                while (this._panSamples.length > 2 && now - this._panSamples[0].t > 120) {
+                    this._panSamples.shift();
+                }
             }
             this._pinchPrevCx = cx;
             this._pinchPrevCy = cy;
@@ -581,6 +591,11 @@ export class StreamViewTouch {
         if (!isTap && !this._touchDragging && wasScrollDrag) {
             this._startScrollMomentum();
         }
+        // Same for a 3-finger pan on a zoomed display: the picture keeps
+        // sliding after the fingers leave, like a zoomed photo on a phone.
+        if (!isTap && this._touchMaxFingers >= 3 && this._zoom > 1.01) {
+            this._startPanMomentum();
+        }
 
         // Reset sequence state.
         this._touchActive = false;
@@ -593,6 +608,7 @@ export class StreamViewTouch {
         this._scrollAccumX = 0;
         this._touchScrollAnchored = false;
         this._scrollSamples.length = 0;
+        this._panSamples.length = 0;
         this._pinchPrevDist = 0;
         this._pinchPrevCx = null;
         this._pinchPrevCy = null;
@@ -646,6 +662,73 @@ export class StreamViewTouch {
             this._scrollMomentumRaf = requestAnimationFrame(step);
         };
         this._scrollMomentumRaf = requestAnimationFrame(step);
+    }
+
+    /** Start the inertial pan glide (3-finger pan on a zoomed display). The
+     *  picture keeps sliding after the fingers leave, with a decaying velocity
+     *  taken from the recent centroid samples — the way a zoomed photo behaves
+     *  on a phone. Decay and travel are time-based, so the glide lasts the same
+     *  wall-clock time at 60 or 120 Hz.
+     * @this {StreamViewInstance} */
+    _startPanMomentum() {
+        this._stopPanMomentum();
+
+        const s = this._panSamples;
+        if (s.length < 2) return;
+        const a = s[0],
+            b = s[s.length - 1];
+        const dt = b.t - a.t;
+        // Only glide on a fresh flick (last sample very recent, real movement).
+        if (dt <= 0 || performance.now() - b.t > 80) return;
+        const clamp = (v) => Math.max(-90, Math.min(90, v)); // clamp wild flicks
+        let vx = clamp(((b.x - a.x) / dt) * 16.67); // px per 60 Hz frame
+        let vy = clamp(((b.y - a.y) / dt) * 16.67);
+        if (Math.hypot(vx, vy) < 1.2) return; // too slow → no glide
+
+        const friction = 0.955; // decay per 60 Hz frame (higher = longer glide)
+        let prev = performance.now();
+        const step = () => {
+            const now = performance.now();
+            // Frames elapsed since the last step, capped so a stalled tab (or a
+            // background frame) cannot teleport the picture across the screen.
+            const frames = Math.min(4, (now - prev) / 16.67);
+            prev = now;
+            const decay = Math.pow(friction, frames);
+            if (Math.hypot(vx, vy) * decay < 0.15 || this._zoom <= 1.01) {
+                this._panMomentumRaf = null;
+                return;
+            }
+            // Travel over this slice: the integral of the decaying velocity.
+            const travel = (decay - 1) / Math.log(friction);
+            const wantX = this._panX + vx * travel;
+            const wantY = this._panY + vy * travel;
+            this._panX = wantX;
+            this._panY = wantY;
+            this._applyZoomTransform(); // clamps the pan to the image edges
+            // An axis that hit its clamp is done — stop pushing against the edge.
+            if (Math.abs(this._panX - wantX) > 0.01) vx = 0;
+            if (Math.abs(this._panY - wantY) > 0.01) vy = 0;
+            if (vx === 0 && vy === 0) {
+                this._panMomentumRaf = null;
+                return;
+            }
+            vx *= decay;
+            vy *= decay;
+            this._panMomentumRaf = requestAnimationFrame(step);
+        };
+        this._panMomentumRaf = requestAnimationFrame(step);
+    }
+
+    /**
+     * Cancel any running inertial pan glide.
+     *
+     * @this {StreamViewInstance}
+     */
+    _stopPanMomentum() {
+        if (this._panMomentumRaf != null) {
+            cancelAnimationFrame(this._panMomentumRaf);
+            this._panMomentumRaf = null;
+        }
     }
 
     /**
