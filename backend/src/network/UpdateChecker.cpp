@@ -28,6 +28,7 @@
 #include <QScopeGuard>
 #include <QSysInfo>
 #include <QUrl>
+#include <QUrlQuery>
 
 namespace {
 
@@ -43,13 +44,74 @@ bool isArm64()
     return a.contains(QLatin1String("arm"), Qt::CaseInsensitive);
 }
 
+// Compile-time platform token, matching the allowlist the relay validates
+// against (deploy/powerdns/mw-proxy/update.go). Deliberately not
+// QSysInfo::productType(), which returns the distro name on Linux and would
+// turn one bucket into a dozen.
+QString platformToken()
+{
+#if defined(Q_OS_WIN)
+    return QStringLiteral("windows");
+#elif defined(Q_OS_MACOS)
+    return QStringLiteral("macos");
+#else
+    return QStringLiteral("linux");
+#endif
+}
+
+// Whether a URL out of a release payload points at GitHub's own hosts.
+//
+// This is what keeps the relay from being able to escalate. It answers with a
+// release payload, and SelfUpdater downloads and RUNS what download_url names —
+// so an unconstrained relay could hand every host an arbitrary installer (it
+// supplies the digest too, so digest verification would not catch it). Pinning
+// the host means the worst a compromised relay can do is lie about *which*
+// GitHub release exists, exactly like GitHub itself could.
+bool isGitHubUrl(const QString& url)
+{
+    if (url.isEmpty()) return false;
+    const QUrl u(url);
+    if (u.scheme() != QLatin1String("https")) return false;
+    const QString host = u.host().toLower();
+    return host == QLatin1String("github.com") || host.endsWith(QLatin1String(".github.com")) ||
+           host == QLatin1String("objects.githubusercontent.com") ||
+           host.endsWith(QLatin1String(".githubusercontent.com"));
+}
+
+// The relay endpoint for this build, or empty to check GitHub directly.
+//
+// Empty means: the user opted out (MW_NO_TELEMETRY), or the build has no
+// MW_PDNS_TOKEN/MW_DOMAIN — the case for anyone who compiled MoonlightWeb
+// themselves, who therefore never phones our infrastructure at all.
+QString buildRelayUrl(const QString& version)
+{
+    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY")) return {};
+
+    const QString domain = QString::fromUtf8(qgetenv("MW_DOMAIN")).trimmed();
+    const QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN")).trimmed();
+    if (domain.isEmpty() || token.isEmpty()) return {};
+
+    QUrl url(QStringLiteral("https://updates.%1/v1/update").arg(domain));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("v"), version);
+    query.addQueryItem(QStringLiteral("os"), platformToken());
+    query.addQueryItem(QStringLiteral("arch"),
+                       isArm64() ? QStringLiteral("arm64") : QStringLiteral("x64"));
+    url.setQuery(query);
+    return url.toString();
+}
+
 } // namespace
 
-UpdateChecker::UpdateChecker(QString currentVersion, QObject* parent)
+UpdateChecker::UpdateChecker(QString currentVersion, bool relayEnabled, QObject* parent)
     : QObject(parent)
     , m_current(std::move(currentVersion))
+    , m_relayUrl(relayEnabled ? buildRelayUrl(m_current) : QString())
     , m_nam(new QNetworkAccessManager(this))
-{}
+{
+    if (!m_relayUrl.isEmpty())
+        Logger::info(QStringLiteral("[Update] checking via the MoonlightWeb update relay"));
+}
 
 QJsonObject UpdateChecker::statusJson()
 {
@@ -78,26 +140,53 @@ void UpdateChecker::refresh()
 
 void UpdateChecker::doFetch()
 {
+    // The relay when this build has one, GitHub otherwise. Either way a single
+    // release JSON comes back in the same shape, so nothing downstream cares
+    // which one answered.
+    if (m_relayUrl.isEmpty())
+        fetchFrom(QString::fromLatin1(kReleasesApi), false);
+    else
+        fetchFrom(m_relayUrl, true);
+}
+
+void UpdateChecker::fetchFrom(const QString& url, bool viaRelay)
+{
     m_inFlight = true;
 
-    QNetworkRequest req{QUrl(QString::fromLatin1(kReleasesApi))};
+    QNetworkRequest req{QUrl(url)};
     // GitHub rejects requests without a User-Agent; the Accept header pins the
-    // stable v3 media type.
+    // stable v3 media type. The relay answers with GitHub's own payload, so it
+    // takes the same headers.
     req.setRawHeader("User-Agent", "MoonlightWeb-UpdateChecker");
     req.setRawHeader("Accept", "application/vnd.github+json");
+    // The relay gates on the same restricted key as the DNS API. A build
+    // without that key never reaches here — buildRelayUrl() returns empty and
+    // the check goes straight to GitHub.
+    if (viaRelay) req.setRawHeader("X-API-Key", qgetenv("MW_PDNS_TOKEN"));
     req.setTransferTimeout(8000);
 
     QNetworkReply* reply = m_nam->get(req);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, viaRelay]() {
         reply->deleteLater();
         m_inFlight = false;
         m_lastCheck = QDateTime::currentDateTimeUtc();
         // Signalled on the way out of every branch below, including the ones
         // that keep the previous result: whoever is waiting on this check has to
         // be released whether or not it learned anything.
-        const auto done = qScopeGuard([this] { emit checkFinished(); });
+        auto done = qScopeGuard([this] { emit checkFinished(); });
 
         if (reply->error() != QNetworkReply::NoError) {
+            if (viaRelay) {
+                // The relay is a convenience, never a dependency: retry against
+                // GitHub before reporting anything. checkFinished() must wait
+                // for that second attempt, or SelfUpdater would act on a check
+                // that has not actually finished.
+                Logger::info(QStringLiteral("[Update] relay unreachable (%1) — asking GitHub")
+                                 .arg(reply->errorString()));
+                done.dismiss();
+                fetchFrom(QString::fromLatin1(kReleasesApi), false);
+                return;
+            }
             Logger::warning(QStringLiteral("[Update] check failed: %1").arg(reply->errorString()));
             // Keep any previous good result; on the very first failure, record
             // the error so the UI can stay silent but debuggable.
@@ -112,14 +201,25 @@ void UpdateChecker::doFetch()
 
         const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
         if (!doc.isObject()) {
+            if (viaRelay) {
+                Logger::info(QStringLiteral("[Update] relay sent an unusable body — asking GitHub"));
+                done.dismiss();
+                fetchFrom(QString::fromLatin1(kReleasesApi), false);
+                return;
+            }
             Logger::warning(QStringLiteral("[Update] check: unexpected response"));
             return;
         }
-        applyResult(doc.object());
+        if (!applyResult(doc.object(), viaRelay) && viaRelay) {
+            // The relay answered with something we refuse to act on. Ask the
+            // authoritative source instead of stalling on a rejected payload.
+            done.dismiss();
+            fetchFrom(QString::fromLatin1(kReleasesApi), false);
+        }
     });
 }
 
-void UpdateChecker::applyResult(const QJsonObject& release)
+bool UpdateChecker::applyResult(const QJsonObject& release, bool viaRelay)
 {
     const QString tag = release.value("tag_name").toString();
     QString latest = tag;
@@ -136,6 +236,15 @@ void UpdateChecker::applyResult(const QJsonObject& release)
     // No matching asset for this platform → send the user to the release page.
     if (downloadUrl.isEmpty()) downloadUrl = releaseUrl;
 
+    // Nothing is written to m_result before this check: a payload that would
+    // send the updater off GitHub is discarded whole, not partially applied.
+    if (viaRelay && !isGitHubUrl(downloadUrl)) {
+        Logger::warning(
+            QStringLiteral("[Update] relay pointed the download off GitHub (%1) — ignoring it")
+                .arg(downloadUrl));
+        return false;
+    }
+
     QJsonObject obj;
     obj["current"] = m_current;
     obj["latest"] = latest;
@@ -151,6 +260,7 @@ void UpdateChecker::applyResult(const QJsonObject& release)
     if (available)
         Logger::info(QStringLiteral("[Update] new version available: %1 (current %2)")
                          .arg(latest, m_current));
+    return true;
 }
 
 bool UpdateChecker::isNewer(const QString& latest, const QString& current)

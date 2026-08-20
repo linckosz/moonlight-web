@@ -28,6 +28,7 @@ Access is single-threaded, synchronous I/O. **Restart the server after a manual 
 | `stun_server` | string | `"stun:stun.l.google.com:19302"` | Used by both libdatachannel and the browser's `RTCPeerConnection`. |
 | `upnp_enabled` | bool | `true` | UPnP port mapping for NAT traversal. |
 | `stream_worker_enabled` | bool | `true` | **File-only** (no UI), seeded at startup. Each session runs in a `--stream-worker` child process → two concurrent stream slots + crash isolation (see [Streaming §5.6](05-Streaming-and-Transports.md#56-session-lifecycle--teardown-discipline)). `false` = legacy in-process mode, single stream. |
+| `update_relay_enabled` | bool | `true` | **File-only** (no UI), seeded at startup. Routes the 6-hourly update check through `https://updates.{MW_DOMAIN}` instead of `api.github.com`; the relay returns the same release JSON and counts version/OS/arch in aggregate (see [PowerDNS Stack §10.8](10-PowerDNS-Stack.md#108-update-relay--installed-version-census)). `false` — or `MW_NO_TELEMETRY` set in the environment — checks GitHub directly and reports nothing. Self-built binaries never use the relay: it needs the `MW_PDNS_TOKEN` only official builds carry. |
 
 ### Streaming defaults (overridable per-request by the browser)
 

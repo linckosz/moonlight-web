@@ -183,6 +183,17 @@ bool AppSettings::streamWorkerEnabled() const
     return obj.value("stream_worker_enabled").toBool(true);
 }
 
+// ── Update relay ─────────────────────────────────────────────────────────────
+// Routes the update check through https://updates.{MW_DOMAIN}, which mirrors the
+// GitHub release and counts installed versions in aggregate. Opt-out, file-only;
+// MW_NO_TELEMETRY in the environment overrides it (UpdateChecker reads both).
+
+bool AppSettings::updateRelayEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("update_relay_enabled").toBool(true);
+}
+
 void AppSettings::seedDocumentedDefaults()
 {
     QJsonObject obj = readAll();
@@ -195,6 +206,10 @@ void AppSettings::seedDocumentedDefaults()
     }
     if (!obj.contains("stream_worker_enabled")) {
         obj["stream_worker_enabled"] = true;
+        changed = true;
+    }
+    if (!obj.contains("update_relay_enabled")) {
+        obj["update_relay_enabled"] = true;
         changed = true;
     }
     if (changed) writeAll(obj);

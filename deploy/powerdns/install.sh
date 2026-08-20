@@ -260,6 +260,9 @@ if [ -f .env ]; then
     ensure_env MW_PDNS_PROXY_KEY        "$(gen_secret)"
     ensure_env MW_PDNS_OWNER_SECRET     "$(gen_secret)"
     ensure_env MW_PROXY_MAX_NEW_PER_HOUR "20"
+    # Update relay (0.3.0+): empty until the operator creates the second Umami
+    # website and pastes its ID — the relay serves updates either way.
+    ensure_env MW_UMAMI_TELEMETRY_WEBSITE_ID ""
 else
     detected_ip="$(curl -fsS https://api.ipify.org 2>/dev/null || true)"
 
@@ -309,6 +312,7 @@ MW_TLS_CERT=${MW_TLS_CERT}
 MW_TLS_KEY=${MW_TLS_KEY}
 MW_UMAMI_DB_PASSWORD=${MW_UMAMI_DB_PASSWORD}
 MW_UMAMI_SECRET=${MW_UMAMI_SECRET}
+MW_UMAMI_TELEMETRY_WEBSITE_ID=
 EOF
     [ "$TARGET_USER" != "root" ] && chown "$TARGET_USER" .env 2>/dev/null || true
     ok ".env written"
@@ -385,6 +389,7 @@ echo "   mw-proxy restricted DNS API https://dnsapi.${MW_DOMAIN:-<MW_DOMAIN>} (i
 echo "   dnsdist  public DNS front on :53 (UDP/TCP)"
 echo "   caddy    public API https://api.${MW_DOMAIN:-<MW_DOMAIN>} (:80/:443)"
 echo "   umami    web analytics  https://stats.${MW_DOMAIN:-<MW_DOMAIN>} (internal, via caddy)"
+echo "   mw-proxy update relay   https://updates.${MW_DOMAIN:-<MW_DOMAIN>} (cached release + version census)"
 echo "   umami-db Postgres for Umami (internal only)"
 echo
 echo " Current DNS records in your zone (${MW_DOMAIN:-<MW_DOMAIN>}):"
@@ -457,6 +462,18 @@ echo "         d) copy the website's ID and paste it into the data-website-id"
 echo "            attribute in $HERE/../../website/index.html, then: $COMPOSE restart caddy"
 echo "         Visits, regions and clicks (Download / GitHub / Buy me a coffee)"
 echo "         then show up in the Umami dashboard."
+echo
+echo "  [ ] 7. Turn ON the installed-version census (optional, for migrations):"
+echo "         a) in Umami, add a SECOND website: name 'MoonlightWeb clients',"
+echo "            domain 'updates.${MW_DOMAIN:-<MW_DOMAIN>}' — keeping the fleet"
+echo "            data out of the marketing site's stats"
+echo "         b) copy its ID into $HERE/.env:"
+echo "               MW_UMAMI_TELEMETRY_WEBSITE_ID=<that id>"
+echo "         c) $COMPOSE up -d mw-proxy"
+echo "         Instances running 0.3.0+ point their update check at"
+echo "         https://updates.${MW_DOMAIN:-<MW_DOMAIN>}, and the dashboard's"
+echo "         'Pages' report becomes the version histogram (/uc/<version>/<os>-<arch>)."
+echo "         Until then the relay just serves releases and counts nothing."
 echo
 echo " This list is saved to: $HERE/$SUMMARY"
 echo "============================================================"

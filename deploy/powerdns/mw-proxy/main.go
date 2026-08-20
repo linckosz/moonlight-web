@@ -64,6 +64,9 @@ type config struct {
 	storePath    string // MW_PROXY_STORE             (default "/data/owners.json")
 	maxNewPerHr  int    // MW_PROXY_MAX_NEW_PER_HOUR  (default 20; 0 = unlimited)
 	maxBodyBytes int64  // MW_PROXY_MAX_BODY_BYTES    (default 64 KiB)
+
+	// The update relay served on /v1/update — see update.go.
+	update updateConfig
 }
 
 func mustEnv(name string) string {
@@ -93,10 +96,24 @@ func loadConfig() config {
 		storePath:    envOr("MW_PROXY_STORE", "/data/owners.json"),
 		maxNewPerHr:  20,
 		maxBodyBytes: 64 * 1024,
+		// Analytics stays optional: an empty website id (the default in
+		// .env.sample) leaves the relay serving updates and counting nothing.
+		update: updateConfig{
+			releaseURL:   envOr("MW_GITHUB_RELEASE_URL", defaultReleaseURL),
+			cacheTTL:     10 * time.Minute,
+			umamiURL:     strings.TrimRight(envOr("MW_UMAMI_URL", "http://umami:3000"), "/"),
+			umamiWebsite: os.Getenv("MW_UMAMI_WEBSITE_ID"),
+			hostname:     "updates." + domain,
+		},
 	}
 	if v := os.Getenv("MW_PROXY_MAX_NEW_PER_HOUR"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			c.maxNewPerHr = n
+		}
+	}
+	if v := os.Getenv("MW_UPDATE_CACHE_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.update.cacheTTL = time.Duration(n) * time.Second
 		}
 	}
 	return c
@@ -531,6 +548,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", p)
+	// Update relay (updates.{domain} in the Caddyfile). Exact path, so it is
+	// matched ahead of the catch-all DNS gateway above.
+	mux.Handle("/v1/update", newUpdateRelay(cfg.update, cfg.proxyKey))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

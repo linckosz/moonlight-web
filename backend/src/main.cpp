@@ -1677,7 +1677,8 @@ int main(int argc, char* argv[])
 
     InternetAccessManager internetAccess(&appSettings);
     GeoIpService geoIpService;
-    UpdateChecker updateChecker(QCoreApplication::applicationVersion());
+    UpdateChecker updateChecker(QCoreApplication::applicationVersion(),
+                                appSettings.updateRelayEnabled());
     SelfUpdater selfUpdater(&updateChecker);
 
     // Keep the release cache warm on our own clock instead of on client traffic.

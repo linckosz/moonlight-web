@@ -37,6 +37,19 @@ class QNetworkAccessManager;
  * Payload is public info only (version strings + GitHub URLs), so the route is
  * not localhost-gated: a remote session may legitimately see that an update is
  * available on the host.
+ *
+ * Where the release comes from
+ * ----------------------------
+ * Official builds ask the project's own relay (https://updates.{MW_DOMAIN}),
+ * which mirrors the very same GitHub release JSON from a shared cache and, in
+ * doing so, records which version asked — the only source of data behind
+ * "who is still running 0.2.x?" when planning a migration. See
+ * deploy/powerdns/mw-proxy/update.go.
+ *
+ * The relay is never load-bearing: any failure falls straight back to
+ * api.github.com, and the relay is skipped entirely when the instance opts out
+ * (settings key "update_relay_enabled" / MW_NO_TELEMETRY) or when the build
+ * carries no MW_PDNS_TOKEN — i.e. self-built binaries always go to GitHub.
  */
 class UpdateChecker : public QObject
 {
@@ -48,7 +61,11 @@ public:
     // clients — GitHub allows 60/h unauthenticated, we spend 8/day.
     static constexpr int kCacheHours = 6;
 
-    explicit UpdateChecker(QString currentVersion, QObject* parent = nullptr);
+    // relayEnabled: whether this instance may route the check through the
+    // project's relay (AppSettings::updateRelayEnabled()). Even when true, the
+    // relay is only used if the build carries the credentials for it.
+    explicit UpdateChecker(QString currentVersion, bool relayEnabled = true,
+                           QObject* parent = nullptr);
 
     // Cached result as JSON:
     //   { current, latest, update_available, download_url, release_url,
@@ -67,7 +84,15 @@ signals:
 
 private:
     void doFetch();
-    void applyResult(const QJsonObject& release);
+
+    // One attempt against `url`. viaRelay marks the request as going to our own
+    // relay: it gets the restricted key, and any failure silently retries
+    // against api.github.com instead of surfacing an error.
+    void fetchFrom(const QString& url, bool viaRelay);
+    // Adopt a release payload as the current result. Returns false when the
+    // payload is refused — a relay answer whose download URL is not on GitHub —
+    // in which case nothing is written and the caller retries against GitHub.
+    bool applyResult(const QJsonObject& release, bool viaRelay);
 
     // Numeric dotted-version compare ("1.2.10" > "1.2.9"). Tolerant of a leading
     // 'v' and trailing pre-release suffixes; returns false if unparseable so a
@@ -84,6 +109,7 @@ private:
                              QString& outDigest);
 
     QString m_current;
+    QString m_relayUrl; // empty when the relay is unavailable or opted out
     QNetworkAccessManager* m_nam;
     QJsonObject m_result;  // last computed result (empty until first fetch)
     QDateTime m_lastCheck; // when m_result was last refreshed (invalid = never)

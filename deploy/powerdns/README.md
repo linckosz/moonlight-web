@@ -6,6 +6,7 @@ Three dedicated containers (one process each — the idiomatic Docker layout):
 Internet ─:53──────> [dnsdist] ──> pdns:5300         anti-amplification + DNS rate-limit
 Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:8081        direct PowerDNS API (compatibility)
                              ├─ dnsapi.{domain} ───> mw-proxy:8080 ─> pdns:8081   restricted API (0.2.0+)
+                             ├─ updates.{domain} ──> mw-proxy:8080 ─> GitHub      release relay + version census (0.3.0+)
                              └─ stats.{domain} ────> umami:3000      analytics dashboard
                      [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
                      [mw-proxy] (internal)            least-privilege filtering gateway
@@ -21,6 +22,9 @@ Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:80
   **only its own** A record (+ `_owner` / `_acme-challenge` TXT), authenticating
   with a **restricted** key. Never published; Caddy fronts it as
   `https://dnsapi.{MW_DOMAIN}`. See [Least-privilege API key](#least-privilege-api-key-mw-proxy).
+  The same container also serves the **update relay** at
+  `https://updates.{MW_DOMAIN}` — see
+  [Update relay](#update-relay--installed-version-census).
 - **caddy** — official Caddy + the `caddy-ratelimit` plugin (built via xcaddy).
   Exposes the APIs (`api.{MW_DOMAIN}` compatibility, `dnsapi.{MW_DOMAIN}` restricted)
   with automatic TLS and request rate limiting, **and serves the static
@@ -94,6 +98,64 @@ ignored) — completely harmless. The two Umami secrets (`MW_UMAMI_DB_PASSWORD`,
 `MW_UMAMI_SECRET`) are generated automatically by `install.sh`; set them yourself
 in `.env` for a manual install.
 
+## Update relay & installed-version census
+
+Planning a migration ("can 0.2.x be dropped?") needs to know what is actually
+running out there. GitHub download counts cannot answer that — they are
+cumulative, count downloads rather than installs, and say nothing about who
+upgraded since.
+
+So the stack serves an **update relay** at `https://updates.{MW_DOMAIN}`
+(`mw-proxy/update.go`, same container as the DNS gateway, path `/v1/update`).
+MoonlightWeb **0.3.0+** points its periodic update check there instead of at
+`api.github.com`:
+
+- the relay returns the **same GitHub release JSON**, from a cache shared by the
+  whole fleet (default 10 min, `MW_UPDATE_CACHE_SECONDS`) — so thousands of
+  instances cost a handful of upstream requests per hour instead of hammering
+  GitHub's 60/h unauthenticated budget;
+- it records **version, OS, architecture** as an Umami event — and nothing else.
+  No identifier, no account, no per-machine history. Values are matched against
+  allowlists first, so a forged client cannot inject arbitrary strings into the
+  dashboard;
+- clients present the restricted `MW_PDNS_PROXY_KEY`, the same key as the DNS
+  path.
+
+**The relay is never load-bearing.** Any failure — unreachable, 502, unusable
+body — makes the client retry against `api.github.com` immediately, and the
+relay itself serves a stale cached release rather than an error whenever GitHub
+is down. Users can opt out (`update_relay_enabled: false` or `MW_NO_TELEMETRY`),
+and self-built binaries never use it: they carry no `MW_PDNS_TOKEN`.
+
+**The relay cannot ship you a binary.** The client only accepts a relayed
+payload whose `download_url` is on GitHub's own hosts, and falls back to
+`api.github.com` otherwise (`UpdateChecker::isGitHubUrl`). This matters because
+the self-updater *runs* what that URL names, and the payload also carries the
+digest it is verified against — so without the host pin, whoever controls this
+VM would control what every instance installs. With it, a compromised relay can
+at most lie about which GitHub release exists.
+
+**Turning the census on** (the relay works without it, counting nothing):
+
+1. In Umami, add a **second website**: name `MoonlightWeb clients`, domain
+   `updates.{MW_DOMAIN}`. Keeping it separate stops fleet data from polluting
+   the marketing site's stats.
+2. Put its ID in `.env` → `MW_UMAMI_TELEMETRY_WEBSITE_ID=<id>`, then
+   `docker compose up -d mw-proxy`.
+
+**Reading it.** Each check is recorded at `/uc/{version}/{os}-{arch}`, so the
+dashboard's ordinary **Pages** report *is* the version histogram, with its date
+filter — no configuration. Set the range to the last 30 days and read unique
+visitors per version: that is your fleet. Two caveats worth knowing:
+
+- Umami identifies a visitor by a hash that includes a **daily-rotating salt**,
+  so "unique visitors over 30 days" is an approximation of machine count, not a
+  census of distinct machines. Good enough to decide whether a version still has
+  users; not a basis for cohort or retention analysis.
+- A machine that upgrades starts counting under its new version the same day
+  (the version is part of the hash input), which is exactly what you want when
+  watching a migration progress.
+
 ## Contents
 
 ```
@@ -103,7 +165,9 @@ deploy/powerdns/
 ├── docker-compose.yml       # dnsdist + pdns + mw-proxy + caddy + umami (+ umami-db)
 ├── mw-proxy/
 │   ├── main.go              # least-privilege filtering gateway (stdlib only)
+│   ├── update.go            # release relay + installed-version census (0.3.0+)
 │   ├── main_test.go         # filter + ownership unit tests
+│   ├── update_test.go       # relay cache, fallback and event-sanitising tests
 │   └── Dockerfile           # static Go build on a minimal runtime
 ├── pdns/
 │   ├── init.sh              # zone bootstrap, then the official pdns wrapper
@@ -344,7 +408,8 @@ or reach any other zone:
   (DNSSEC), `/metadata` and every other zone are refused.
 - **Only the records the app produces.** `{uid}.{zone}` A, `_owner.{uid}.{zone}`
   TXT, `_acme-challenge.{uid}.{zone}` TXT — where `uid` is 8 hex chars. This
-  automatically excludes reserved labels (`www`, `api`, `dnsapi`, `stats`, …).
+  automatically excludes reserved labels (`www`, `api`, `dnsapi`, `stats`,
+  `updates`, …).
   Any other name/type (e.g. an NS/SOA rewrite) → `403`.
 - **No zone dumps.** `GET` must carry a valid `rrset_name` filter, so nobody can
   list the zone and harvest every subdomain.
