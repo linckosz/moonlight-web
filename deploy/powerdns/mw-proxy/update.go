@@ -237,11 +237,14 @@ func (u *updateRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ── Version census (Umami) ──────────────────────────────────────────────────
 
+// Deliberately without a "name" field: in Umami, a payload carrying a name is a
+// custom EVENT (it shows up under Events and leaves Visitors/Views/Pages at
+// zero), while a nameless one is a PAGEVIEW. We want the pageview — that is
+// what turns the built-in Pages report into the version histogram.
 type umamiPayload struct {
 	Website  string            `json:"website"`
 	Hostname string            `json:"hostname"`
 	URL      string            `json:"url"`
-	Name     string            `json:"name"`
 	Data     map[string]string `json:"data"`
 }
 
@@ -250,12 +253,14 @@ type umamiEvent struct {
 	Payload umamiPayload `json:"payload"`
 }
 
-// eventURL is the path recorded for one check. The version goes in the *url* on
-// purpose: Umami's built-in "Pages" report then becomes the version histogram,
-// with its date filter, with no dashboard configuration at all. The same values
-// are repeated as event data for the finer OS/arch breakdown.
+// eventURL is the URL recorded for one check: the version as the *path*, the
+// platform as the *query string*. That split is what makes both built-in
+// reports useful without any dashboard configuration — Umami's Pages panel has
+// a "Path" tab, which collapses every platform into one row per version (the
+// version histogram), and a "URL" tab, which keeps them apart when you want the
+// OS/arch breakdown. Values are allowlisted upstream, so no escaping is needed.
 func eventURL(version, platform, arch string) string {
-	return "/uc/" + version + "/" + platform + "-" + arch
+	return "/uc/" + version + "?os=" + platform + "&arch=" + arch
 }
 
 // report records one check as an Umami event, fire-and-forget.
@@ -278,7 +283,6 @@ func (u *updateRelay) report(version, platform, arch, ip string) {
 				Website:  u.cfg.umamiWebsite,
 				Hostname: u.cfg.hostname,
 				URL:      eventURL(version, platform, arch),
-				Name:     "update-check",
 				Data:     map[string]string{"version": version, "os": platform, "arch": arch},
 			},
 		}

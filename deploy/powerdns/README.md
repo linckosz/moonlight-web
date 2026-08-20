@@ -148,10 +148,18 @@ at most lie about which GitHub release exists.
    `version census DISABLED (MW_UMAMI_WEBSITE_ID is empty)` — check with
    `docker compose logs mw-proxy | tail -2`.
 
-**Reading it.** Each check is recorded at `/uc/{version}/{os}-{arch}`, so the
-dashboard's ordinary **Pages** report *is* the version histogram, with its date
-filter — no configuration. Set the range to the last 30 days and read unique
-visitors per version: that is your fleet. Two caveats worth knowing:
+**Reading it.** Each check is recorded as a **pageview** at
+`/uc/{version}?os={os}&arch={arch}`, so the dashboard's ordinary **Pages** panel
+*is* the census, with its date filter and no configuration:
+
+- tab **Path** → one row per version (`/uc/0.2.4`, `/uc/0.3.0`, …) — the version
+  histogram;
+- tab **URL** → the same split by platform, when you need the OS/arch detail.
+
+Set the range to the last 30 days and read unique visitors per version: that is
+your fleet. (It has to be a pageview: a payload carrying a `name` is filed by
+Umami as a *custom event*, which shows up under **Events** and leaves
+Visitors/Views/Pages at zero.) Two caveats worth knowing:
 
 - Umami identifies a visitor by a hash that includes a **daily-rotating salt**,
   so "unique visitors over 30 days" is an approximation of machine count, not a
