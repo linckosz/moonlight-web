@@ -472,7 +472,7 @@ echo "               MW_UMAMI_TELEMETRY_WEBSITE_ID=<that id>"
 echo "         c) $COMPOSE up -d mw-proxy"
 echo "         Instances running 0.3.0+ point their update check at"
 echo "         https://updates.${MW_DOMAIN:-<MW_DOMAIN>}, and the dashboard's"
-echo "         'Pages' report becomes the version histogram (/uc/<version>/<os>-<arch>)."
+echo "         'Pages' panel becomes the version histogram (Path tab: /uc/<version>)."
 echo "         Until then the relay just serves releases and counts nothing."
 echo
 echo " This list is saved to: $HERE/$SUMMARY"

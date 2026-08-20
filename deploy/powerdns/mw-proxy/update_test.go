@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -162,16 +163,23 @@ func TestUpdateRelayColdCacheFailureIs502(t *testing.T) {
 func TestUpdateRelayReportsSanitizedEvent(t *testing.T) {
 	type capture struct {
 		event umamiEvent
+		raw   map[string]any // to assert on fields the struct does not model
 		ua    string
 		xff   string
 	}
 	got := make(chan capture, 4)
 	umami := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("umami could not read the body: %v", err)
+		}
 		var ev umamiEvent
-		if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		if err := json.Unmarshal(body, &ev); err != nil {
 			t.Errorf("umami received invalid JSON: %v", err)
 		}
-		got <- capture{ev, r.Header.Get("User-Agent"), r.Header.Get("X-Forwarded-For")}
+		raw := map[string]any{}
+		_ = json.Unmarshal(body, &raw)
+		got <- capture{ev, raw, r.Header.Get("User-Agent"), r.Header.Get("X-Forwarded-For")}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer umami.Close()
@@ -193,8 +201,13 @@ func TestUpdateRelayReportsSanitizedEvent(t *testing.T) {
 		if c.event.Type != "event" || c.event.Payload.Website != "test-website-id" {
 			t.Errorf("unexpected envelope: %+v", c.event)
 		}
-		if c.event.Payload.URL != "/uc/unknown/windows-arm64" {
-			t.Errorf("url = %q, want /uc/unknown/windows-arm64", c.event.Payload.URL)
+		// A "name" would make Umami file this as a custom event, which does not
+		// feed Visitors/Views/Pages — the reports the census is read from.
+		if _, named := c.raw["payload"].(map[string]any)["name"]; named {
+			t.Error("payload must stay a pageview: no \"name\" field")
+		}
+		if c.event.Payload.URL != "/uc/unknown?os=windows&arch=arm64" {
+			t.Errorf("url = %q, want /uc/unknown?os=windows&arch=arm64", c.event.Payload.URL)
 		}
 		if c.event.Payload.Data["version"] != "unknown" || c.event.Payload.Data["arch"] != "arm64" {
 			t.Errorf("unexpected event data: %+v", c.event.Payload.Data)
