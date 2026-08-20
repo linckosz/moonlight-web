@@ -31,12 +31,9 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
-import {
-    SUPPORTS_CANVAS_TEARING,
-    IS_MOBILE_OR_TABLET,
-    clientAspectString,
-} from '../util/BrowserDetect.js';
+import { SUPPORTS_CANVAS_TEARING, IS_MOBILE_OR_TABLET } from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
+import { ASPECT_VALUES, SCREEN_ASPECTS } from '../util/AspectRatio.js';
 
 /** True when the browser supports touch events (mobile/tablet, or touchscreen laptop). */
 const IS_TOUCH_DEVICE =
@@ -141,7 +138,7 @@ export class SettingsView {
         const kbps = data.stream_bitrate || 20000;
         this._streamBitrateMbps = Math.round(kbps / 1000);
         this._streamHeight = data.stream_height || 1080;
-        this._streamAspect = ['auto', '16:9', '21:9', '32:9'].includes(data.stream_aspect)
+        this._streamAspect = ASPECT_VALUES.includes(data.stream_aspect)
             ? data.stream_aspect
             : 'auto';
         this._streamFps = data.stream_fps || 60;
@@ -189,10 +186,11 @@ export class SettingsView {
         const height = parseInt(this.container.querySelector('#settings-stream-height')?.value, 10);
         const fps = parseInt(this.container.querySelector('#settings-stream-fps')?.value, 10);
         const chroma444 = this.container.querySelector('#settings-chroma-444')?.checked === true;
-        // Aspect is not user-selectable — it is always the client monitor's (or
-        // 16:9 on mobile), resolved at launch. Use it here so the auto-bitrate
-        // estimate matches the ratio that will actually be streamed.
-        const aspect = clientAspectString();
+        // "auto" resolves to the host's own format at launch, which is unknown
+        // here — aspectToNumber() reads it as the 16:9 baseline, which is what
+        // the estimate wants.
+        const aspect =
+            this.container.querySelector('#settings-stream-aspect')?.value || this._streamAspect;
         const hdr = this.container.querySelector('#settings-hdr')?.checked ?? this._hdrEnabled;
         const mbps = this._computeAutoBitrate(
             isNaN(height) ? this._streamHeight : height,
@@ -633,6 +631,16 @@ export class SettingsView {
             )
             .join('');
 
+        // Aspect options: "Auto" (measured from the host, see AspectProbe) then
+        // the real screen formats, most common first.
+        const aspectOptions = [{ value: 'auto', label: t('settings.aspectAuto') }]
+            .concat(SCREEN_ASPECTS.map((a) => ({ value: a.value, label: a.value })))
+            .map(
+                (a) =>
+                    `<option value="${a.value}" ${a.value === this._streamAspect ? 'selected' : ''}>${this.esc(a.label)}</option>`,
+            )
+            .join('');
+
         // FPS options
         const fpsValues = [15, 30, 60, 75, 90, 120, 144, 165, 240];
         const fpsOptions = fpsValues
@@ -689,6 +697,16 @@ export class SettingsView {
                         <span class="setting-desc">${t('settings.resolutionDesc')}</span>
                         <select id="settings-stream-height" class="settings-select">
                             ${heightOptions}
+                        </select>
+                    </div>
+
+                    <div class="settings-field">
+                        <label class="settings-label" for="settings-stream-aspect">
+                            ${t('settings.streamAspect')}
+                        </label>
+                        <span class="setting-desc">${t('settings.streamAspectDesc')}</span>
+                        <select id="settings-stream-aspect" class="settings-select">
+                            ${aspectOptions}
                         </select>
                     </div>
 
@@ -946,6 +964,16 @@ export class SettingsView {
         const heightSelect = this.container.querySelector('#settings-stream-height');
         if (heightSelect)
             heightSelect.addEventListener('change', () => {
+                this._applyAutoBitrate();
+                this._autoSave();
+            });
+
+        // Aspect: an ultrawide frame is more pixels at the same height, so the
+        // recommended bitrate follows it too.
+        const aspectSelect = this.container.querySelector('#settings-stream-aspect');
+        if (aspectSelect)
+            aspectSelect.addEventListener('change', () => {
+                this._streamAspect = aspectSelect.value;
                 this._applyAutoBitrate();
                 this._autoSave();
             });

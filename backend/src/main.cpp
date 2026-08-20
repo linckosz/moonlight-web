@@ -1462,6 +1462,12 @@ int main(int argc, char* argv[])
     // UUID of the host the active relay streams from. Needed by teardown paths
     // that have no HTTP request to read the host from (revoked-device kill).
     QString g_ActiveHostUuid;
+    // Aspect ratio the owner's last launch settled on, per host. A guest cannot
+    // know the host's screen format — its own monitor says nothing about it —
+    // so its stream inherits what the owner's browser measured for that host
+    // (frontend/js/stream/AspectProbe.js). Keyed by host so two owners on two
+    // different hosts never hand each other's ratio to a player.
+    QHash<QString, QString> g_HostAspect;
 
     // ── Concurrent stream worker slots ─────────────────────────────────────
     // With stream_worker_enabled (default), every session runs in its own
@@ -1841,7 +1847,7 @@ int main(int argc, char* argv[])
                                                         &g_ActiveRelay, &g_ActiveStreamRelay,
                                                         &g_ActiveMediaTrackRelay, &g_ActiveSession,
                                                         &g_ActiveRelayRoot, &g_ActiveClientUniqueId,
-                                                        &g_ActiveHostUuid, &g_Pool,
+                                                        &g_ActiveHostUuid, &g_HostAspect, &g_Pool,
                                                         &g_DualSupport, &g_LastStandbyStartMs,
                                                         &g_LiveSunshineUids, &detachWorkerSlot,
                                                         &slotSignalingPort, &slotWsPath,
@@ -2053,10 +2059,15 @@ int main(int argc, char* argv[])
                             : appSettings.streamHeight();
 
         // Aspect ratio → explicit width. Fix the height, derive the width from
-        // the host's actual screen format so ultrawide hosts (21:9 / 32:9) stream
-        // un-stretched. "auto" (default) reads the host's largest reported
-        // DisplayMode — the host format is detected here, not assumed in advance.
-        // An explicit "W:H" overrides it (manual 16:9 / 21:9 / 32:9).
+        // the host's actual screen format so a non-16:9 host streams without the
+        // black bars Sunshine would otherwise encode into the picture.
+        //
+        // The browser always sends a concrete "W:H" here: its Settings override,
+        // or the ratio its AspectProbe measured from those very bars at stream
+        // start (see frontend/js/stream/AspectProbe.js). Sunshine's serverinfo
+        // carries no DisplayMode at all, so the "auto" branch below is only a
+        // last-resort net for a backend that does report one — on Sunshine it
+        // falls through to 16:9.
         QString reqAspect =
             body.contains("stream_aspect") && !body["stream_aspect"].toString().isEmpty()
                 ? body["stream_aspect"].toString()
@@ -2075,6 +2086,8 @@ int main(int argc, char* argv[])
         // Even width (encoders require it), 0 height stays native (width 0).
         int reqWidth = (reqHeight > 0) ? (static_cast<int>(reqHeight * aspect + 0.5) & ~1) : 0;
         qInfo() << "[Session] Aspect" << reqAspect << "→" << reqWidth << "x" << reqHeight;
+        // Players joining this host's share inherit it (see g_HostAspect).
+        if (reqAspect.contains(':')) g_HostAspect[host->uuid] = reqAspect;
 
         int reqFps = body.contains("stream_fps") && body["stream_fps"].toInt() > 0
                          ? body["stream_fps"].toInt()
@@ -3024,7 +3037,7 @@ int main(int argc, char* argv[])
     shareDeps.startPlayerStream =
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
          &anyOtherSlotLive, &slotSignalingPort, &slotWsPath, &server, &appSettings, signalingPort,
-         stunServer, &ownerContext](int slot, int height, QString aspect,
+         stunServer, &ownerContext, &g_HostAspect](int slot, int height, QString aspect,
                                     ShareManager::Permissions perms, QString serverHost,
                                     ResponseCallback respond) {
             const std::pair<QString, int> owner = ownerContext();
@@ -3044,10 +3057,12 @@ int main(int argc, char* argv[])
             if (previousWorker) shareManager.setStreaming(slot, false);
 
             // Fixed profile: 60 fps, SDR, 4:2:0, HEVC→H.264 (Auto never resolves
-            // to AV1). The width follows the player's own screen aspect ("W:H",
-            // 16:9 fallback) so the stream fills their display. The bitrate is the
-            // standard auto estimate for the height, halved — a guest should not
-            // eat the whole uplink.
+            // to AV1). The width follows the HOST's screen aspect ("W:H", 16:9
+            // fallback), which the owner's session already worked out for this
+            // host — a guest has no way to know it and its own monitor is beside
+            // the point. The bitrate is the standard auto estimate for the
+            // height, halved — a guest should not eat the whole uplink.
+            if (!aspect.contains(':')) aspect = g_HostAspect.value(hostUuid);
             double aspectRatio = 16.0 / 9.0;
             if (aspect.contains(':')) {
                 const QStringList parts = aspect.split(':');
