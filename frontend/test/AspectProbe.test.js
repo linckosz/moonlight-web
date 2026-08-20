@@ -17,10 +17,13 @@
  * browser. These tests pin both halves of the verdict: the bar measurement, and
  * the white list that decides whether a measurement is a screen at all — the
  * guard that keeps a pillarboxed video from reshaping the stream.
+ *
+ * And the short circuit ahead of both: a host that refused the frame we asked
+ * for has already stated its shape, so nothing has to be inferred from pixels.
  */
-import { describe, it, expect } from 'vitest';
-import { scanBars, decideAspect } from '../js/stream/AspectProbe.js';
-import { resolveMeasuredAspect } from '../js/util/AspectRatio.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { scanBars, decideAspect, frameAspect, startAspectProbe } from '../js/stream/AspectProbe.js';
+import { resolveMeasuredAspect, parseAspect } from '../js/util/AspectRatio.js';
 
 const N = 3; // probe columns / rows, as sampled by the real code
 
@@ -137,5 +140,127 @@ describe('AspectRatio — the white list of real screen formats', () => {
         expect(resolveMeasuredAspect(1500, 1080)).toBeNull(); // between 4:3 and 3:2
         expect(resolveMeasuredAspect(0, 1080)).toBeNull();
         expect(resolveMeasuredAspect(1920, 0)).toBeNull();
+    });
+});
+
+describe('frameAspect — the host stating its own shape', () => {
+    it('takes the decoded shape when the host refused the frame we asked for', () => {
+        // 1728×1080 came back where 1920×1080 was requested: a virtual display
+        // that only does 16:10. No bars anywhere — nothing to measure.
+        expect(frameAspect(1728, 1080, '16:9')).toBe('16:10');
+    });
+
+    it('stays silent when the host honoured the request', () => {
+        expect(frameAspect(1920, 1080, '16:9')).toBeNull();
+        expect(frameAspect(1728, 1080, '16:10')).toBeNull();
+    });
+
+    it('ignores the renderer rounding its backing size to whole pixels', () => {
+        // WebGpuRenderer fits a frame-aspect rect into the output box, so the
+        // ratio arrives a fraction of a percent off. Not a host decision.
+        expect(frameAspect(1476, 1107, '4:3')).toBeNull();
+        expect(frameAspect(1919, 1080, '16:9')).toBeNull();
+    });
+
+    it('adopts a shape the white list does not know — the host chose it', () => {
+        // 1:1 is no monitor, but no content can fake an encoded frame size:
+        // whatever the host put there is what it is willing to send.
+        expect(frameAspect(1080, 1080, '16:9')).toBe('1080:1080');
+    });
+
+    it('needs a requested aspect to compare against', () => {
+        expect(frameAspect(1728, 1080, 'auto')).toBeNull();
+        expect(frameAspect(1728, 1080, undefined)).toBeNull();
+        expect(frameAspect(0, 1080, '16:9')).toBeNull();
+    });
+});
+
+describe('parseAspect — reading an aspect string back', () => {
+    it('reads both the canonical and the exact forms', () => {
+        expect(parseAspect('16:10')).toBeCloseTo(1.6, 10);
+        expect(parseAspect('1728:1080')).toBeCloseTo(1.6, 10);
+    });
+
+    it('refuses what names no ratio', () => {
+        expect(parseAspect('auto')).toBeNull();
+        expect(parseAspect('')).toBeNull();
+        expect(parseAspect('16:')).toBeNull();
+        expect(parseAspect('16:9:9')).toBeNull();
+        expect(parseAspect('0:9')).toBeNull();
+        expect(parseAspect(null)).toBeNull();
+    });
+});
+
+describe('the watch — only the host may reshape a running stream', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    // performance.now() is not among vitest's default fakes, and the watch
+    // times its own silence with it.
+    const useClock = () =>
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+
+    /** jsdom has no 2d context, so the bar window closes on the first tick and
+     *  the watch takes over — which is exactly what these tests are about. */
+    function probe(surface, requested) {
+        // Stated rather than left to jsdom, which only logs its own refusal.
+        vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+        const seen = [];
+        const stop = startAspectProbe({
+            getSurface: () => surface,
+            getRequestedAspect: () => requested.value,
+            onResult: (aspect, reason) => seen.push(reason + ' ' + aspect),
+        });
+        return { seen, stop };
+    }
+
+    it('reports again when the host changes the shape it encodes', () => {
+        useClock();
+        const surface = { el: {}, width: 1920, height: 1080 };
+        const requested = { value: '16:9' };
+        const { seen, stop } = probe(surface, requested);
+        expect(seen).toEqual(['no-2d-context null']);
+
+        // Nothing changed: the watch has nothing to say, however long it runs.
+        vi.advanceTimersByTime(11000);
+        expect(seen).toHaveLength(1);
+
+        // The host switched its display to 16:10 and re-encoded at that shape.
+        surface.width = 1728;
+        vi.advanceTimersByTime(1000); // one reading is not enough
+        expect(seen).toHaveLength(1);
+        vi.advanceTimersByTime(1000);
+        expect(seen).toEqual(['no-2d-context null', 'frame-aspect 16:10']);
+
+        // The application acted: the request now matches, and it goes quiet.
+        requested.value = '16:10';
+        vi.advanceTimersByTime(30000);
+        expect(seen).toHaveLength(2);
+        stop();
+    });
+
+    it('says nothing more once stopped', () => {
+        useClock();
+        const surface = { el: {}, width: 1920, height: 1080 };
+        const requested = { value: '16:9' };
+        const { seen, stop } = probe(surface, requested);
+        stop();
+        surface.width = 1728;
+        vi.advanceTimersByTime(60000);
+        expect(seen).toHaveLength(1);
+    });
+
+    it('ignores a canvas still reporting the HTML default size', () => {
+        useClock();
+        const surface = { el: {}, width: 300, height: 150 };
+        const requested = { value: '16:9' };
+        const { seen, stop } = probe(surface, requested);
+        // 300x150 is 2:1 against a 16:9 request — believed, it would relaunch
+        // the stream into a shape no host ever asked for.
+        vi.advanceTimersByTime(60000);
+        expect(seen).toHaveLength(0);
+        stop();
     });
 });
