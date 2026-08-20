@@ -750,6 +750,16 @@ export class StreamView {
         // Mobile fullscreen button state
         this._mobileFsBtn = null;
 
+        // Mobile orientation tracking (see StreamViewFullscreen). _lastLandscape
+        // is the orientation we last ACTED on: rotation signals arrive before
+        // screen.orientation has settled, so the re-check probes diff against it.
+        this._orientationMql = null;
+        this._screenOrientation = null;
+        this._onOrientationChange = null;
+        this._lastLandscape = null;
+        this._orientationSyncTimers = null;
+        this._orientationSyncRaf = null;
+
         // CSS fallback fullscreen (when Fullscreen API fails, e.g. iOS canvas)
         this._cssFullscreen = false;
 
@@ -6669,12 +6679,8 @@ export class StreamView {
             this._idrTimeout = null;
         }
 
-        // Remove mobile orientation fullscreen listener
-        if (this._orientationMql && this._onOrientationChange) {
-            this._orientationMql.removeEventListener('change', this._onOrientationChange);
-            this._orientationMql = null;
-            this._onOrientationChange = null;
-        }
+        // Remove the mobile orientation listeners + any pending re-check
+        this._teardownOrientation();
 
         // Clean up fullscreen change listener
         if (this._onFullscreenChange) {
@@ -6852,12 +6858,8 @@ export class StreamView {
             this._idrTimeout = null;
         }
 
-        // Remove mobile orientation fullscreen listener
-        if (this._orientationMql && this._onOrientationChange) {
-            this._orientationMql.removeEventListener('change', this._onOrientationChange);
-            this._orientationMql = null;
-            this._onOrientationChange = null;
-        }
+        // Remove the mobile orientation listeners + any pending re-check
+        this._teardownOrientation();
 
         // Clean up fullscreen change listener
         if (this._onFullscreenChange) {
