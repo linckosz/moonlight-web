@@ -54,7 +54,15 @@ const DEFAULTS = {
     MIN_SPAN_MS: 4000, // shortest observation that may produce a verdict
     DRIFT_PER_FRAME: 0.05, // ms the baseline may rise per frame (~3ms/s @60fps)
     RESYNC_MS: 500, // |delay - baseline| past this = discontinuity → rebase
-    SPIKE_MS: 12, // excess over the baseline that counts as "disturbed"
+    // Excess over the baseline that counts as "disturbed". Sits above both the
+    // legitimate Wi-Fi power-save jitter (~25ms p95) and the client's own
+    // scheduling noise (rAF/GC), and is ~2.4 frame intervals at 60fps — so only
+    // a stall big enough to actually judder counts. A 12ms blip is imperceptible
+    // (we always show the latest frame) yet still periodic: on a Mac, AWDL keeps
+    // cycling for Handoff/Continuity even with AirDrop off, which produced these
+    // false positives on a stream the user reports as perfectly fluid. The real
+    // AWDL case climbed 28→74ms (~46ms of excess), well clear of this floor.
+    SPIKE_MS: 40,
     MIN_PERIOD_MS: 250, // below this it is not a radio time-share
     MAX_PERIOD_MS: 1200, // above this the user would call it a freeze, not judder
     MIN_EVENTS: 6, // onsets required (⇒ at least 5 intervals)

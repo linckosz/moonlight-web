@@ -24,8 +24,9 @@ function run(d, count, lateness = () => 0, keyframe = () => false, start = 0) {
     return out;
 }
 
-/** A 40ms stall every PERIOD_FRAMES frames — the measured AWDL signature. */
-const awdl = (i) => (i % PERIOD_FRAMES === 0 ? 40 : 0);
+/** A 70ms stall every PERIOD_FRAMES frames — the measured AWDL signature
+ *  (ping climbed 28→74ms), comfortably above the SPIKE_MS floor. */
+const awdl = (i) => (i % PERIOD_FRAMES === 0 ? 70 : 0);
 
 describe('PeriodicStallDetector', () => {
     it('stays silent on a metronomic link', () => {
@@ -46,7 +47,7 @@ describe('PeriodicStallDetector', () => {
             at += g;
             hits.add(at);
         }
-        const verdicts = run(d, 900, (i) => (hits.has(i) ? 40 : 0));
+        const verdicts = run(d, 900, (i) => (hits.has(i) ? 70 : 0));
         expect(verdicts.every((v) => v === null)).toBe(true);
         expect(d.verdict).toBe(null);
     });
@@ -67,7 +68,7 @@ describe('PeriodicStallDetector', () => {
         const verdicts = run(
             d,
             900,
-            (i) => (i % PERIOD_FRAMES === 0 ? 40 : 0),
+            (i) => (i % PERIOD_FRAMES === 0 ? 70 : 0),
             (i) => i % PERIOD_FRAMES === 0,
         );
         expect(verdicts.every((v) => v === null)).toBe(true);
