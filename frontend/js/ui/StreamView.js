@@ -2580,7 +2580,8 @@ export class StreamView {
         }
         if (!this._standby) {
             // Show stats overlay (only if enabled in settings)
-            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+            if (this._overlayEl && this._showPerfStats && !this._statsClosed)
+                this._overlayEl.style.display = '';
             // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
             this._updateStartupStep(3);
             setTimeout(() => this._hideStartupOverlay(), 500);
@@ -2616,7 +2617,8 @@ export class StreamView {
         // Startup overlay was never shown on a standby view — drop it outright.
         this._hideStartupOverlay();
         if (this._firstFrameRendered) {
-            if (this._overlayEl && this._showPerfStats) this._overlayEl.style.display = '';
+            if (this._overlayEl && this._showPerfStats && !this._statsClosed)
+                this._overlayEl.style.display = '';
         }
         // Desktop gaming mode: best-effort pointer-lock re-acquisition. The
         // retiring view still holds the lock at promote time and loses it when
@@ -2679,9 +2681,9 @@ export class StreamView {
 
     /**
      * Snapshot of the purely local display state a quality/transport switch
-     * must not throw away: pinch zoom + its pan offset, and whether the soft
-     * keyboard was open. Nothing here is negotiated with the host, so the
-     * successor can adopt it verbatim.
+     * must not throw away: pinch zoom + its pan offset, whether the soft
+     * keyboard was open, and the overlay cards the user dismissed. Nothing here
+     * is negotiated with the host, so the successor can adopt it verbatim.
      */
     captureViewState() {
         return {
@@ -2689,6 +2691,8 @@ export class StreamView {
             panX: this._panX,
             panY: this._panY,
             kbdVisible: this._kbdVisible === true,
+            statsClosed: this._statsClosed === true,
+            immersiveClosed: this._immersiveClosed === true,
         };
     }
 
@@ -2699,12 +2703,29 @@ export class StreamView {
      */
     restoreViewState(state) {
         if (!state) return;
+        // A dismissal is a decision about the session, not about one leg: the
+        // successor must not bring back a card the user already closed. Applied
+        // ahead of the deferral below — the overlays tick on their own timer,
+        // independently of frames.
+        this._adoptOverlayDismissals(state);
         if (!this._firstFrameRendered) {
             this._pendingViewState = state;
             return;
         }
         this._pendingViewState = null;
         this._applyViewState(state);
+    }
+
+    /** Carry the × dismissals of the stats / immersive cards to this view. */
+    _adoptOverlayDismissals(s) {
+        if (s.statsClosed) {
+            this._statsClosed = true;
+            if (this._overlayEl) this._overlayEl.style.display = 'none';
+        }
+        if (s.immersiveClosed) {
+            this._immersiveClosed = true;
+            this._updateImmersiveOverlay();
+        }
     }
 
     _applyViewState(s) {
