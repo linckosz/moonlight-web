@@ -15,7 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { resolveMeasuredAspect } from '../util/AspectRatio.js';
+import { parseAspect, resolveMeasuredAspect } from '../util/AspectRatio.js';
 
 /**
  * Work out the host's real screen format from the black bars Sunshine encodes.
@@ -33,6 +33,15 @@ import { resolveMeasuredAspect } from '../util/AspectRatio.js';
  * while content arrives later. So the probe only ever looks at the first few
  * seconds, demands that the bars be identical throughout, and then stops for
  * good. A video started afterwards can no longer reshape the stream.
+ *
+ * There is one case where nothing has to be inferred at all: a host that does
+ * not honour the frame we asked for — a virtual display snapping to a supported
+ * mode (Wolf, MultiSeat/Apollo), a display-managed backend imposing its own —
+ * encodes its own shape, and the decoded frame states it outright. That short
+ * circuit runs first, and it is also the ONLY thing still watched once the bar
+ * window has closed: the host changing resolution mid-session is the one event
+ * no picture can imitate, so it may reshape a running stream where a bar
+ * measurement never may.
  */
 
 // Sampling window. Short on purpose: it must close before the user has had time
@@ -50,6 +59,20 @@ const MIN_BAR_FRACTION = 0.02;
 
 // Two samples describe the same bars when every edge agrees within this.
 const EDGE_TOLERANCE_PX = 2;
+
+// How far the decoded shape has to be from the requested one to mean the host
+// refused the request. WebGpuRenderer rounds its backing size to whole pixels,
+// which moves the ratio by a small fraction of this.
+const FRAME_ASPECT_TOLERANCE = 0.01;
+
+// Watch cadence once the verdict is in: two attribute reads a second, no pixel
+// work at all. Two readings must agree before it speaks, and it stays quiet for
+// a while after any verdict — the startup one included, which covers the
+// seconds during which the correction that verdict triggered is still being
+// applied and the old stream is still the one on screen.
+const WATCH_INTERVAL_MS = 1000;
+const WATCH_CONFIRMATIONS = 2;
+const MIN_WATCH_REPORT_MS = 10000;
 
 // Probe lines: three columns (and three rows) at 25/50/75%. A bar has to be
 // black on all three, so a dark strip in the picture cannot pass for padding.
@@ -167,6 +190,31 @@ export function decideAspect(bars, w, h) {
 }
 
 /**
+ * The decoded frame's own shape, when it contradicts the one we asked for.
+ *
+ * Nothing is being inferred here: the host encoded that shape because it would
+ * not give us ours. Unlike a bar measurement there is no content that could be
+ * faking it, so a ratio the white list does not know is still the host's answer
+ * and is passed on as measured. Pure, and exported for the tests.
+ *
+ * @returns {string|null} the aspect to request, or null when the host honoured
+ *          the request (or when there is nothing to compare against).
+ */
+export function frameAspect(width, height, requested) {
+    const want = parseAspect(requested);
+    if (!want || !(width > 0) || !(height > 0)) return null;
+    const got = width / height;
+    if (Math.abs(got - want) / want <= FRAME_ASPECT_TOLERANCE) return null;
+    return resolveMeasuredAspect(width, height) || Math.round(width) + ':' + Math.round(height);
+}
+
+/** A <canvas> that has never been presented to still reports the HTML default,
+ *  whose 2:1 would read as a deliberate host format. */
+function isBlankCanvas(surface) {
+    return surface.width === 300 && surface.height === 150;
+}
+
+/**
  * Start a one-shot probe on the live stream surface.
  *
  * @param {object} opts
@@ -174,29 +222,44 @@ export function decideAspect(bars, w, h) {
  *                height: number}|null)} opts.getSurface current display surface
  *        and its INTRINSIC size (never the CSS box — object-fit: contain adds
  *        bars of its own on the client side).
+ * @param {() => string} [opts.getRequestedAspect] aspect the live stream was
+ *        launched with, re-read on every tick: the correction this probe
+ *        triggers changes it, and comparing against a frozen value would make
+ *        the probe answer itself.
  * @param {(aspect: string|null, reason: string) => void} opts.onResult fires
- *        exactly once, with the aspect to request or null when undecided.
+ *        once with the startup verdict — the aspect to request, or null when
+ *        undecided — and again only if the host later changes the shape it
+ *        encodes.
  * @returns {() => void} stop, safe to call at any time (onResult never fires
  *          afterwards).
  */
-export function startAspectProbe({ getSurface, onResult }) {
+export function startAspectProbe({ getSurface, getRequestedAspect, onResult }) {
     let ctx = null;
     let reference = null;
     let samples = 0;
     let startedAt = 0;
     let timer = null;
-    let finished = false;
+    let stopped = false; // stop() called: nothing fires again
+    let measured = false; // the bar window is closed, the watch has taken over
+
+    let watchTimer = null;
+    let watchPending = null;
+    let watchStable = 0;
+    let lastReport = 0;
+
+    const requested = () => (getRequestedAspect ? getRequestedAspect() : null);
 
     const stop = () => {
-        finished = true;
+        stopped = true;
         if (timer) clearInterval(timer);
         timer = null;
+        if (watchTimer) clearInterval(watchTimer);
+        watchTimer = null;
         ctx = null;
     };
 
-    const finish = (aspect, reason) => {
-        if (finished) return;
-        stop();
+    const report = (aspect, reason) => {
+        lastReport = performance.now();
         console.log('[AspectProbe] ' + reason + (aspect ? ' → ' + aspect : ''));
         try {
             onResult(aspect, reason);
@@ -205,13 +268,69 @@ export function startAspectProbe({ getSurface, onResult }) {
         }
     };
 
+    /**
+     * The verdict is in, but the host can still change shape under us — someone
+     * changing its resolution mid-session. Only its own encoded shape may
+     * reopen the question: the bars never speak again, so a film letterboxed
+     * for two hours cannot reshape a running stream.
+     */
+    const watchTick = () => {
+        if (stopped) return;
+        const surface = getSurface && getSurface();
+        if (!surface || !(surface.width > 0) || !(surface.height > 0) || isBlankCanvas(surface)) {
+            watchPending = null;
+            watchStable = 0;
+            return;
+        }
+        const stated = frameAspect(surface.width, surface.height, requested());
+        if (!stated) {
+            watchPending = null;
+            watchStable = 0;
+            return;
+        }
+        // Two readings in a row: mid-transition the previous stream is still on
+        // screen while the settings already carry the new aspect.
+        if (stated === watchPending) watchStable++;
+        else {
+            watchPending = stated;
+            watchStable = 1;
+        }
+        if (watchStable < WATCH_CONFIRMATIONS) return;
+        // The application may decline to act (a relaunch in flight, a share
+        // pinning the stream). The condition still holds, so ask again later
+        // rather than hammering it.
+        if (performance.now() - lastReport < MIN_WATCH_REPORT_MS) return;
+        watchPending = null;
+        watchStable = 0;
+        report(stated, 'frame-aspect');
+    };
+
+    const finish = (aspect, reason) => {
+        if (stopped || measured) return;
+        measured = true;
+        if (timer) clearInterval(timer);
+        timer = null;
+        ctx = null;
+        report(aspect, reason);
+        if (!stopped && !watchTimer) watchTimer = setInterval(watchTick, WATCH_INTERVAL_MS);
+    };
+
     const tick = () => {
-        if (finished) return;
+        if (stopped || measured) return;
         const surface = getSurface && getSurface();
         if (!surface || !surface.el || !(surface.width > 0) || !(surface.height > 0)) return;
+        if (isBlankCanvas(surface)) return;
         // A <video> with no decoded data yet cannot be drawn (a <canvas> has no
         // readyState and is always drawable).
         if ('readyState' in surface.el && surface.el.readyState < 2) return;
+
+        // The host may have refused the frame we asked for, in which case it
+        // has already told us its shape and there is nothing to measure.
+        const stated = frameAspect(surface.width, surface.height, requested());
+        if (stated) {
+            finish(stated, 'frame-aspect');
+            return;
+        }
 
         let bars;
         try {

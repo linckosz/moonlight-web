@@ -81,6 +81,22 @@ export function resolveMeasuredAspect(contentW, contentH) {
         : `${Math.round(contentW)}:${Math.round(contentH)}`;
 }
 
+/**
+ * Read an aspect string back as a number — the inverse of what this module
+ * emits, and of what the backend parses out of the launch request.
+ * @param {string} value "16:10", or an exact "1728:1080"
+ * @returns {number|null} the ratio, or null when the string names none ("auto")
+ */
+export function parseAspect(value) {
+    if (typeof value !== 'string') return null;
+    const parts = value.split(':');
+    if (parts.length !== 2) return null;
+    const w = Number(parts[0]);
+    const h = Number(parts[1]);
+    if (!(w > 0) || !(h > 0)) return null;
+    return w / h;
+}
+
 // Per-host memory. Not a source of truth: it only lets a launch start at the
 // format the last session measured, instead of spending its first seconds at
 // 16:9. Every session re-measures and overwrites it, so a wrong value (a host

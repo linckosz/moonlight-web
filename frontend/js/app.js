@@ -1182,10 +1182,11 @@ const MoonlightApp = {
             this._lastUpgradeTime = 0;
             this._upgradeStableMs = 75000;
             this._originalStreamHeight = undefined;
-            // Aspect probe: one measurement per user-initiated launch (see
-            // _startAspectProbe). A relaunch inside the same session — codec
-            // fallback, degradation, the aspect correction itself — inherits
-            // the verdict instead of measuring again.
+            // Aspect probe: one bar measurement per user-initiated launch,
+            // and a watch on the host's own shape for as long as the stream
+            // lasts (see _startAspectProbe). A relaunch inside the same session
+            // — codec fallback, degradation, the aspect correction itself —
+            // inherits the verdict instead of measuring again.
             this._stopAspectProbe();
             this._aspectProbeDone = false;
             // Dual-stream state: fresh launch starts on slot 0 with an unknown
@@ -1617,24 +1618,28 @@ const MoonlightApp = {
     // ── Host aspect probe ─────────────────────────────────────────────────
 
     /**
-     * Measure the host's real screen format from the black bars Sunshine
-     * encodes, and relaunch once at that format if we guessed wrong.
+     * Work out the host's real screen format and relaunch at it if we guessed
+     * wrong: from the shape the host encoded when it refused the frame we asked
+     * for, or failing that from the black bars Sunshine pads with.
      *
-     * Runs only in "Auto", only on the first stream view of a user-initiated
-     * launch, and only for the few seconds after the first frame — see
-     * stream/AspectProbe.js for why that window is what keeps a letterboxed
-     * video from being mistaken for a 4:3 host.
+     * Runs only in "Auto" and only on the first stream view of a user-initiated
+     * launch. The bar measurement lasts a few seconds — see stream/AspectProbe.js
+     * for why that window is what keeps a letterboxed video from being mistaken
+     * for a 4:3 host — after which only the host restating its own shape can
+     * reopen the question.
      */
     _startAspectProbe() {
         if (!this._aspectAuto || this._aspectProbeDone) return;
         this._stopAspectProbe();
         this._aspectProbeStop = startAspectProbe({
             getSurface: () => (this.streamView ? this.streamView.getProbeSurface() : null),
+            getRequestedAspect: () => (this._lastStreamingSettings || {}).stream_aspect,
             onResult: (aspect, reason) => this._onAspectMeasured(aspect, reason),
         });
     },
 
-    /** Drop a probe still in flight (quit, or a fresh launch superseding it). */
+    /** Drop the probe, measurement and watch alike (quit, or a fresh launch
+     *  superseding it). */
     _stopAspectProbe() {
         if (this._aspectProbeStop) {
             this._aspectProbeStop();
@@ -1643,11 +1648,12 @@ const MoonlightApp = {
     },
 
     /**
-     * Verdict of the probe: one correction at most, then the format is settled
-     * for the rest of the session.
+     * Verdict of the probe. The bar measurement speaks once and is then done
+     * for the session; the probe's watch can speak again later, but only when
+     * the host itself changes the shape it encodes — a signal no picture can
+     * imitate. The handle is kept either way, so quitting still stops it.
      */
     _onAspectMeasured(aspect, reason) {
-        this._aspectProbeStop = null;
         this._aspectProbeDone = true;
         if (!aspect) return;
 
@@ -1661,7 +1667,8 @@ const MoonlightApp = {
         if (!settings || settings.stream_aspect === aspect) return;
         // The stream has to still be ours to relaunch.
         if (this._nav.overlay !== 'streaming' || !this.streamView) return;
-        if (this._standbyView) return;
+        // A relaunch already in flight would be replaced mid-transition.
+        if (this._standbyView || this._relaunching) return;
         // A share pins the stream: guests would ride along on a transition they
         // never asked for (same reasoning as the quality ladder).
         if (this._sharePinsQuality()) return;
