@@ -1106,8 +1106,8 @@ export class StreamView {
                         ? `<button class="btn btn-secondary stream-console-btn"
                                    id="btn-stream-console"
                                    title="${escapeHtml(t('stream.consoleHint'))}">${escapeHtml(
-                              t('stream.console')
-                          )}</button>`
+                                       t('stream.console'),
+                                   )}</button>`
                         : ''
                 }
                 <button class="btn stream-quit-btn" id="btn-stream-quit">${
