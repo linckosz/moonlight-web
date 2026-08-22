@@ -1,9 +1,11 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testZone = "moonlightweb.top."
@@ -155,6 +157,106 @@ func TestRejectForbiddenTypes(t *testing.T) {
 	body = `{"rrsets":[{"name":"ab12cd34.` + testZone + `","type":"TXT","changetype":"REPLACE"}]}`
 	if code, _ := doPatch(p, "tokenA", "1.1.1.1", body); code != 403 {
 		t.Fatalf("TXT on A-name should be 403, got %d", code)
+	}
+}
+
+// testProxyUpstream builds a proxy wired to a stub PowerDNS that always answers
+// with the given status, so the full ServeHTTP path (including the forward) can
+// be exercised.
+func testProxyUpstream(t *testing.T, status int) (*proxy, *httptest.Server) {
+	t.Helper()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(up.Close)
+	store, err := newOwnerStore(t.TempDir()+"/owners.json", []byte("test-secret"))
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	cfg := config{
+		zone:         testZone,
+		upstream:     up.URL,
+		realKey:      "real-pdns-key",
+		proxyKey:     "restricted-key",
+		maxBodyBytes: 64 * 1024,
+	}
+	return newProxy(cfg, store), up
+}
+
+func serveClaim(p *proxy, owner, uid string) *httptest.ResponseRecorder {
+	body := aReplace(uid)
+	r := httptest.NewRequest("PATCH", "/api/v1/servers/localhost/zones/"+testZone, strings.NewReader(body))
+	r.Header.Set("X-API-Key", "restricted-key")
+	r.Header.Set("X-MW-Owner", owner)
+	r.Header.Set("X-Forwarded-For", "1.1.1.1")
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, r)
+	return w
+}
+
+func TestOwnershipRecordedOnlyWhenPowerDNSAccepts(t *testing.T) {
+	// PowerDNS refuses the write: nothing may be claimed. Claiming anyway would
+	// strand the uid — its owner would hold a subdomain that has no record, and
+	// the one-uid-per-owner rule would then refuse them every other one, with
+	// nothing to delete to get out of it.
+	p, _ := testProxyUpstream(t, http.StatusUnprocessableEntity)
+	if w := serveClaim(p, "tokenA", "ab12cd34"); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("upstream status should be relayed, got %d", w.Code)
+	}
+	if len(p.store.owners) != 0 {
+		t.Fatalf("a refused write must claim nothing, store = %v", p.store.owners)
+	}
+
+	// An accepted write does record it.
+	p2, _ := testProxyUpstream(t, http.StatusNoContent)
+	if w := serveClaim(p2, "tokenA", "ab12cd34"); w.Code != http.StatusNoContent {
+		t.Fatalf("accepted write should be 204, got %d", w.Code)
+	}
+	if p2.store.owners["ab12cd34"] != p2.store.hash("tokenA") {
+		t.Fatalf("accepted write must record ownership, store = %v", p2.store.owners)
+	}
+}
+
+func TestUnreachableUpstreamClaimsNothing(t *testing.T) {
+	p, up := testProxyUpstream(t, http.StatusNoContent)
+	up.Close() // the request never reaches PowerDNS
+
+	if w := serveClaim(p, "tokenA", "ab12cd34"); w.Code != http.StatusBadGateway {
+		t.Fatalf("unreachable upstream should be 502, got %d", w.Code)
+	}
+	if len(p.store.owners) != 0 {
+		t.Fatalf("nothing may be claimed, store = %v", p.store.owners)
+	}
+}
+
+func TestQuotaSweepsIdleAddresses(t *testing.T) {
+	q := newQuota(2)
+
+	// Attempts that have aged out of the window, from addresses that never came
+	// back. Pruning only happens on that same address's next call, so without a
+	// sweep these stay in the map for the life of the process.
+	stale := time.Now().Add(-2 * time.Hour)
+	for _, ip := range []string{"1.0.0.1", "1.0.0.2", "1.0.0.3"} {
+		q.hits[ip] = []time.Time{stale}
+	}
+	q.hits["2.0.0.1"] = []time.Time{time.Now()} // still inside the window
+	q.lastSweep = time.Now().Add(-quotaSweepEvery - time.Minute)
+
+	if !q.allow("3.0.0.1") {
+		t.Fatal("a first claim from a new address must be allowed")
+	}
+	if _, ok := q.hits["1.0.0.1"]; ok {
+		t.Errorf("aged-out address still in the map: %v", q.hits)
+	}
+	if len(q.hits) != 2 { // the live address + the caller
+		t.Errorf("map should hold only live addresses, got %v", q.hits)
+	}
+	// Sweeping must not cost a live address its recorded attempts.
+	if !q.allow("2.0.0.1") {
+		t.Error("live address still under budget must be allowed")
+	}
+	if q.allow("2.0.0.1") {
+		t.Error("live address over budget must be refused")
 	}
 }
 

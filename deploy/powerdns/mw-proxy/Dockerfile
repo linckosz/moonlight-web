@@ -10,6 +10,13 @@ WORKDIR /src
 # out of the binary (`go build` ignores the _test.go files it also picks up).
 COPY go.mod ./
 COPY *.go ./
+# The proxy is the only thing between a restricted key shared by every instance
+# and the real PowerDNS key, and nothing else builds it — no CI job, and the Go
+# toolchain is not installed on the machines this repo is developed on. So its
+# tests run here, on every `docker compose up -d --build`. A red test failing the
+# deploy is the point: the alternative is shipping the gateway untested.
+# CGO stays off for the tests too — this image has no C toolchain.
+RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test ./...
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mw-proxy .
 
 FROM alpine:3.20

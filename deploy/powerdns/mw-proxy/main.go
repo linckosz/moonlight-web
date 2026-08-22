@@ -231,15 +231,47 @@ func (s *ownerStore) persist() error {
 
 // ── Per-IP new-claim quota (sliding 1h window) ──────────────────────────────
 
+// How often, and above which size, the whole map is swept. Time-based alone is
+// enough in practice — every entry costs the client a TLS connection through
+// Caddy, so addresses cannot be conjured — but the size trigger keeps a burst of
+// many distinct addresses inside one interval from mattering either.
+const (
+	quotaSweepEvery   = 15 * time.Minute
+	quotaSweepEntries = 4096
+)
+
 type quota struct {
-	mu     sync.Mutex
-	max    int
-	window time.Duration
-	hits   map[string][]time.Time
+	mu        sync.Mutex
+	max       int
+	window    time.Duration
+	hits      map[string][]time.Time
+	lastSweep time.Time
 }
 
 func newQuota(max int) *quota {
-	return &quota{max: max, window: time.Hour, hits: map[string][]time.Time{}}
+	return &quota{max: max, window: time.Hour, hits: map[string][]time.Time{}, lastSweep: time.Now()}
+}
+
+// sweep drops every address whose recorded attempts have all aged out of the
+// window. Without it the map is append-only: one entry per distinct address,
+// kept for the life of the process, and pruned only if that same address ever
+// comes back. Caller holds q.mu.
+func (q *quota) sweep(now time.Time) {
+	cut := now.Add(-q.window)
+	for ip, ts := range q.hits {
+		live := ts[:0]
+		for _, t := range ts {
+			if t.After(cut) {
+				live = append(live, t)
+			}
+		}
+		if len(live) == 0 {
+			delete(q.hits, ip)
+			continue
+		}
+		q.hits[ip] = live
+	}
+	q.lastSweep = now
 }
 
 // allow records a new-claim attempt for ip and reports whether it is within the
@@ -251,6 +283,9 @@ func (q *quota) allow(ip string) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	now := time.Now()
+	if now.Sub(q.lastSweep) >= quotaSweepEvery || len(q.hits) >= quotaSweepEntries {
+		q.sweep(now)
+	}
 	cut := now.Add(-q.window)
 	kept := q.hits[ip][:0]
 	for _, t := range q.hits[ip] {
@@ -351,8 +386,15 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, code, msg)
 			return
 		}
-		p.forward(w, r, body)
-		commit() // record ownership only after the write reached PowerDNS
+		// Record ownership only once PowerDNS has actually accepted the write.
+		// On a 4xx/5xx — or an upstream that never answered — nothing changed in
+		// the zone, and claiming the uid anyway would strand it: the owner would
+		// hold a subdomain that does not exist, and the one-uid-per-owner rule
+		// would then refuse them every other one, with no record to delete to
+		// get out of it.
+		if status := p.forward(w, r, body); status >= 200 && status < 300 {
+			commit()
+		}
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "only GET and PATCH are allowed")
 	}
@@ -501,7 +543,9 @@ func (p *proxy) ownerHoldsOtherUID(otHash, self string, claims map[string]string
 }
 
 // forward relays the (already validated) request to PowerDNS with the real key.
-func (p *proxy) forward(w http.ResponseWriter, r *http.Request, body []byte) {
+// It returns the status code PowerDNS answered with, or 0 when the request never
+// reached it — the caller uses that to tell a real write from a refused one.
+func (p *proxy) forward(w http.ResponseWriter, r *http.Request, body []byte) int {
 	var reqBody io.Reader
 	if body != nil {
 		reqBody = bytes.NewReader(body)
@@ -513,7 +557,7 @@ func (p *proxy) forward(w http.ResponseWriter, r *http.Request, body []byte) {
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, reqBody)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "cannot build upstream request")
-		return
+		return 0
 	}
 	req.Header.Set("X-API-Key", p.cfg.realKey)
 	req.Header.Set("Accept", "application/json")
@@ -524,7 +568,7 @@ func (p *proxy) forward(w http.ResponseWriter, r *http.Request, body []byte) {
 	resp, err := p.client.Do(req)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream request failed")
-		return
+		return 0
 	}
 	defer resp.Body.Close()
 
@@ -533,6 +577,7 @@ func (p *proxy) forward(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+	return resp.StatusCode
 }
 
 func main() {
