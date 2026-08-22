@@ -702,6 +702,11 @@ export class WebRtcMedia {
                 return;
             }
             console.log('[MW-BIND] Host signature verified');
+        } else if (!msg.nonce) {
+            // The host did not sign: this session has no pairing key bound.
+            // Normal on the host machine itself (local privilege, no session),
+            // where there is no relay to guard against anyway.
+            console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
         } else if (this._mwBind) {
             console.warn('[MW-BIND] No stored host identity — cannot verify this offer');
         }

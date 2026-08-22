@@ -315,6 +315,18 @@ Two details worth knowing before touching this code:
   cannot bind silently, so they stream unsigned until the user pairs again with a
   PIN.
 
+- **The host machine reaching itself.** `HttpServer::isLocalRequest()` treats a
+  connection whose source IP is one of this machine's own interface addresses as
+  local, so opening `https://192.168.1.x:port` *on the host* yields
+  `authenticated: true` with **no session at all** — and therefore nowhere to
+  hang a pairing key. The binding is inert on that path by construction.
+
+  This is the right outcome rather than a hole to plug: MW-BIND-v1 defends
+  against something *relaying* the signaling, and a browser talking to the
+  machine it runs on has no relay in the path. It is worth knowing when testing,
+  though — from the host machine, only the mesh-VPN or public-domain URLs
+  exercise the protocol, because those are the ones that require a session.
+
 Both are server-side state an attacker cannot reach in and change, and neither
 has a relay in the path today — but both stop being acceptable the day the
 introduction server exists. They are phase-2 blockers, not open questions.
