@@ -39,6 +39,7 @@ export default defineConfig({
                 'js/util/Mp4Muxer.js',
                 'js/util/BrowserDetect.js',
                 'js/util/VersionGuard.js',
+                'js/util/audioAutoplay.js',
                 'js/stream/JitterController.js',
                 'js/stream/PeriodicStallDetector.js',
                 'js/stream/PipelineDiag.js',
