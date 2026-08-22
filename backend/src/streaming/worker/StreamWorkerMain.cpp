@@ -221,6 +221,12 @@ int runStreamWorker(QCoreApplication& app)
     session->setClientUniqueId(cfg["clientUniqueId"].toString());
     session->setPreferResume(cfg["preferResume"].toBool(false));
     session->setClientIsLocal(cfg["clientIsLocal"].toBool());
+    // MW-BIND-v1 material, arriving on stdin rather than the command line so the
+    // host private key never shows up in the process list.
+    session->setPairingIdentity(
+        cfg["mwBindHostId"].toString(),
+        QByteArray::fromBase64(cfg["mwBindHostKey"].toString().toUtf8()),
+        QByteArray::fromBase64(cfg["mwBindBrowserKey"].toString().toUtf8()));
     session->setAutoMode(cfg["autoMode"].toBool(true));
     session->setWsPath(cfg["wsPath"].toString(QStringLiteral("/ws")));
     // A shared session (invited player) arrives with the permissions the owner

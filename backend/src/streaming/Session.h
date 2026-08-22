@@ -98,6 +98,17 @@ public:
     /// to a local client without leaking it to internet peers.
     void setClientIsLocal(bool local) { m_ClientIsLocal = local; }
 
+    /// MW-BIND-v1 material, forwarded to the SignalingServer of whichever relay
+    /// this session ends up using. See SignalingServer::setPairingIdentity and
+    /// docs/design/pairing-signature.md.
+    void setPairingIdentity(const QString& hostId, const QByteArray& hostKeyPem,
+                            const QByteArray& browserSpki)
+    {
+        m_MwBindHostId = hostId;
+        m_MwBindHostKey = hostKeyPem;
+        m_MwBindBrowserKey = browserSpki;
+    }
+
     /// Set the ordered transport fallback chain and the index of the attempt
     /// this session represents. Echoed back to the browser so the frontend can
     /// walk the chain (relaunch with the next index) when a transport fails.
@@ -243,6 +254,9 @@ private:
 
     /// Streaming client is on our LAN (see setClientIsLocal).
     bool m_ClientIsLocal = false;
+    QString m_MwBindHostId;
+    QByteArray m_MwBindHostKey;
+    QByteArray m_MwBindBrowserKey;
 
     /// The HTTPS port HttpServer is actually listening on (may be != 443).
     quint16 m_HttpsPort = 443;

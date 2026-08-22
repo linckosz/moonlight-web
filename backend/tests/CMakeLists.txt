@@ -75,6 +75,9 @@ add_executable(run_tests
     ${_src}/src/server/HttpParser.cpp
     ${_src}/src/server/RequestGuard.cpp
     ${_src}/src/server/SessionPool.cpp
+    # AppSettings and AuthManager both reach into MW-BIND-v1 now: the host
+    # identity key, and the pairing key bound to a session.
+    ${_src}/src/common/PairingCrypto.cpp
     ${_src}/src/common/Logger.cpp
 )
 

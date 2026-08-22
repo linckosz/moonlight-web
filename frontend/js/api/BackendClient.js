@@ -31,6 +31,8 @@
  * }} BackendError
  */
 
+import { loadOrCreateIdentity, rememberHostIdentity } from '../util/pairingCrypto.js';
+
 export class BackendClient {
     /** Cached promise for the per-run admin key (see _adminKey). */
     static _adminKeyPromise = null;
@@ -397,11 +399,51 @@ export class BackendClient {
      *  default). False asks the server for a session-scoped cookie and a short
      *  server-side lifetime — for a machine the visitor does not own. */
     static async validatePin(pin, machineName, remember = true) {
-        return this.post('/api/auth/validate', {
+        const identity = await loadOrCreateIdentity();
+        const resp = await this.post('/api/auth/validate', {
             pin,
             machine_name: machineName,
             remember: remember !== false,
+            // MW-BIND-v1: pairing with a PIN is the moment this browser's key is
+            // registered. It is the only path allowed from the internet — the
+            // silent one below is restricted to peers that never crossed it.
+            public_key: identity?.publicKeyBase64 || undefined,
         });
+        if (resp?.host_public_key) {
+            await rememberHostIdentity(resp.host_public_key, resp.host_id);
+        }
+        return resp;
+    }
+
+    /**
+     * Register this browser's MW-BIND-v1 key on a session created before the
+     * mechanism existed, and collect the host's own identity.
+     *
+     * Trust-on-first-use over the already-authenticated session cookie. The
+     * server only accepts it from loopback, the LAN or a mesh VPN; from the
+     * internet it answers 403 and the visitor pairs with a PIN instead. Silent
+     * and best-effort by design: a browser that cannot bind still streams, it
+     * simply does so without the fingerprint binding.
+     */
+    static async ensurePairingKey() {
+        const identity = await loadOrCreateIdentity();
+        if (!identity) return null;
+        if (identity.hostPublicKey) return identity; // already paired with this host
+
+        try {
+            const resp = await this.post('/api/auth/pairing-key', {
+                public_key: identity.publicKeyBase64,
+            });
+            if (resp?.host_public_key) {
+                await rememberHostIdentity(resp.host_public_key, resp.host_id);
+                return loadOrCreateIdentity();
+            }
+        } catch (e) {
+            // 403 from the internet, 401 with no session, 409 on a session bound
+            // to another key: all expected, none of them fatal here.
+            console.log('[MW-BIND] Silent pairing not available:', e.message);
+        }
+        return identity;
     }
     static async generatePin() {
         return this.post('/api/admin/pin/generate');
@@ -447,11 +489,17 @@ export class BackendClient {
 
     /** Validate a certificate token (alternative to PIN). Sends the raw token content. */
     static async validateCertificate(certificateContent, machineName, remember = true) {
-        return this.post('/api/auth/validate', {
+        const identity = await loadOrCreateIdentity();
+        const resp = await this.post('/api/auth/validate', {
             certificate: certificateContent,
             machine_name: machineName,
             remember: remember !== false,
+            public_key: identity?.publicKeyBase64 || undefined,
         });
+        if (resp?.host_public_key) {
+            await rememberHostIdentity(resp.host_public_key, resp.host_id);
+        }
+        return resp;
     }
 
     /** Regenerate the certificate token (invalidates all existing certificates). */

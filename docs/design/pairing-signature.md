@@ -1,9 +1,14 @@
 # MW-BIND-v1 — binding the DTLS fingerprint to the pairing key
 
-**Status**: design, not implemented. No code should be written against this
-document until it has been reviewed by someone other than its author.
+**Status**: reviewed and approved 2026-08-22, and **implemented the same day** —
+§11 records what shipped and what deliberately did not.
 **Audience**: reviewers. It assumes no prior knowledge of this codebase.
 **Date**: 2026-08-22.
+
+The four questions of §10 were answered at approval; §4, §6 and §10 carry the
+answers. Two of them changed the design: the browser's key id joins the host's
+digest, and pairing keys live inside the session record so the existing
+"revoke device" button revokes them.
 
 ---
 
@@ -108,7 +113,7 @@ of a few hundred milliseconds with an open channel to an unverified peer.
 0.  browser → host :  hello  { keyId, nonceB }
 
 1.  host → browser :  offer  { sdp, nonceH, sigH }
-       sigH = Sign_host( "MW-BIND-v1|host" ‖ hostId ‖ nonceB ‖ fpH )
+       sigH = Sign_host( "MW-BIND-v1|host" ‖ hostId ‖ keyId ‖ nonceB ‖ fpH )
 
 2.  browser: verify sigH BEFORE setRemoteDescription.
              On failure → abort. No DTLS state is ever created.
@@ -122,6 +127,11 @@ of a few hundred milliseconds with an open channel to an unverified peer.
 - `fpH` / `fpB` — the SHA-256 fingerprint extracted from the SDP, normalised
   (uppercase hex, bytes separated by `:`).
 - `hostId` — the instance identifier (the future 16-character base36 id).
+- `keyId` — SHA-256 of the browser's SPKI public key, base64url. Present in the
+  host's digest **by decision at approval**: `nonceB` already stops replay, so
+  this is defence in depth, but it costs one field and no round trip, and it
+  narrows `sigH` from "valid for this host" to "valid for this host *and this
+  browser*".
 - `nonceB` / `nonceH` — ≥ 128 bits, single use.
 - `‖` — concatenation of length-prefixed fields, so no field boundary is
   ambiguous.
@@ -164,7 +174,8 @@ of a few hundred milliseconds with an open channel to an unverified peer.
 |---|---|
 | Fingerprint extraction + normalisation | New helper next to `RelayBase` — both WebRTC relays need it, and neither has it today. |
 | Signature emission / verification | `SignalingServer` — **not** `HttpServer`. The signaling channel is what must refuse, before `setRemoteDescription` (`SignalingServer.cpp:325-330`). |
-| Host key, paired browser public keys | `AuthManager` + `AppSettings`, next to `SessionInfo`. |
+| Host key | `AppSettings`, persisted next to the other long-lived secrets. |
+| Paired browser public key | **Inside `SessionInfo`** — decided at approval. A pairing *is* a session, so the key rides in the record the admin page already lists and already lets you revoke. `destroySession()` therefore revokes the key too, with no new UI and no second lifecycle to keep in sync (§10.4). |
 | Browser side | `BackendClient.js` (pairing, IndexedDB) and both `WebRtc*.js` (sign/verify around the SDP exchange). |
 
 ---
@@ -227,18 +238,73 @@ the legitimate one, and an `sha-1` fingerprint.
 
 ---
 
-## 10. Open questions for the reviewer
+## 10. Questions asked at review — and how they were answered
 
-1. Is the asymmetry of §4 (host signature independent of `fpB`) correct, or is
-   there an attack that exploits the host committing to `fpH` before it knows
-   anything about the browser beyond `nonceB` and `keyId`?
-2. `hostId` is inside both digests to stop a signature being replayed towards a
-   different instance. Is that sufficient, or should the browser's key id be in
-   the host's digest as well?
-3. Is TOFU over an authenticated cookie (§7), restricted to non-public peers,
-   an acceptable migration — or should every existing installation be made to
-   re-enter a PIN once?
-4. Renewal and revocation are deliberately absent from v1: a browser that loses
-   its IndexedDB re-pairs with a PIN, and a host that loses its key invalidates
-   every pairing. Is that acceptable, or does v1 need an explicit revocation
-   path?
+Answered 2026-08-22. Recorded because each is a load-bearing choice a future
+reader would otherwise re-litigate from scratch.
+
+1. **Asymmetry of §4 — kept.** The host signs before it knows anything about the
+   browser's fingerprint. The alternative (one signature covering both
+   fingerprints) is tidier to explain but forces the browser to start its
+   handshake against an unverified peer. On a channel carrying keystrokes, "the
+   verification failed and nothing had happened yet" is the property worth
+   protecting.
+2. **The browser's `keyId` joins the host's digest.** `nonceB` already prevents
+   replay, so this is belt and braces — but it is one field, no extra round
+   trip, and it narrows `sigH` to this browser on this host.
+3. **Silent TOFU, restricted to `Loopback | Private | Tunnel`.** Existing
+   browsers bind their key without a prompt when they connect from the LAN, the
+   host itself, or the mesh VPN; from the internet, the PIN is required. No
+   introduction server exists yet, so there is nobody in the middle today —
+   which is exactly why this is the moment to migrate the installed base.
+4. **Revocation comes free, via the session table.** Because the public key is
+   stored inside `SessionInfo` (§6), the admin page's existing "revoke" button
+   already destroys the pairing, and the device must go through the PIN again.
+   Key *rotation* stays out of scope for v1: a browser that loses its IndexedDB
+   re-pairs with a PIN, and a host that loses its key invalidates every pairing
+   at once.
+
+---
+
+## 11. What shipped
+
+Implemented 2026-08-22, against this document as approved.
+
+| Piece | Where |
+|---|---|
+| P-256 keys, raw r‖s signatures, length-prefixed digests, nonces | `backend/src/common/PairingCrypto.{h,cpp}` |
+| Fingerprint extraction and the "exactly one sha-256" rule | `backend/src/streaming/SdpFingerprint.{h,cpp}` |
+| Host identity key, generated on first use | `AppSettings::hostSigningKeyPem()` |
+| Pairing key inside the session, revoked with it | `SessionInfo::pairingKey`, `AuthManager::bindSessionKey()` |
+| Key registration at PIN / certificate login | `POST /api/auth/validate`, `public_key` field |
+| Silent TOFU for pre-existing pairings | `POST /api/auth/pairing-key`, gated on `NetClassify::isTrustedPeer()` |
+| The exchange itself, verified before `setRemoteDescription` | `SignalingServer::sendSignedOffer()` and the `hello` / `sdp` branches of `onWsTextMessage()` |
+| Browser half: non-extractable key in IndexedDB, verify, sign | `frontend/js/util/pairingCrypto.js`, wired into both `WebRtc*.js` |
+| The §9 checks | `backend/tests/test_pairing_binding.cpp` — substitution, replay across sessions and across hosts, a foreign key, a stripped signature, a second `a=fingerprint` line, sha-1, role confusion |
+
+Two details worth knowing before touching this code:
+
+- **Signatures cross the wire as raw r‖s, not DER.** WebCrypto produces and
+  expects the 64-byte form; OpenSSL speaks DER natively. The conversion lives in
+  `PairingCrypto.cpp` and is covered by a test, because a DER signature verifies
+  perfectly server-side and fails in every browser — a bug that looks like "the
+  protocol works" right until a real user tries it.
+- **The host holds its SDP offer until the browser's `hello` arrives**, since its
+  signature covers the browser's nonce (§4). A 15-second timeout turns a browser
+  that never says hello into an error rather than a spinner.
+
+### Not covered, and why
+
+- **Guests joining through a share link.** Their access comes from
+  `ShareManager`, not from a PIN-paired `AuthManager` session, so they hold no
+  pairing key and their signaling runs unsigned exactly as before. A real gap,
+  stated here rather than left to be discovered: extending the binding to them
+  needs a decision about what a guest's key is bound to — the link, the slot, or
+  the device — and that decision is not made in this document.
+- **Pre-existing sessions connecting from the internet.** By the §7 rule they
+  cannot bind silently, so they stream unsigned until the user pairs again with a
+  PIN.
+
+Both are server-side state an attacker cannot reach in and change, and neither
+has a relay in the path today — but both stop being acceptable the day the
+introduction server exists. They are phase-2 blockers, not open questions.

@@ -17,6 +17,13 @@
 
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
 import { forceOpusStereo } from '../util/SdpUtils.js';
+import {
+    beginHandshake,
+    helloMessage,
+    signAnswer,
+    verifyHostSignature,
+    extractFingerprint,
+} from '../util/pairingCrypto.js';
 
 /**
  * Describe a WebSocket close code for diagnostic logging.
@@ -300,6 +307,12 @@ export class WebRtcDataChannel {
             this.signalingWs.onopen = () => {
                 this._wsHadOpen = true;
                 console.log('[WebRTC] Signaling WS connected, waiting for ICE config...');
+                // MW-BIND-v1: announce our key and nonce. The host holds its SDP
+                // offer until this arrives, since its signature covers the nonce.
+                beginHandshake().then((identity) => {
+                    this._mwBind = identity;
+                    if (identity) this._sendSignaling(helloMessage(identity));
+                });
             };
 
             this.signalingWs.onmessage = (evt) => {
@@ -849,7 +862,7 @@ export class WebRtcDataChannel {
 
     _handleSignalingMessage(msg) {
         if (msg.type === 'sdp') {
-            this._handleSdpOffer(msg.sdp);
+            this._handleSdpOffer(msg);
         } else if (msg.type === 'ice') {
             this._handleIceCandidate(msg.candidate, msg.mid);
         } else if (msg.type === 'fallback-ws') {
@@ -879,8 +892,32 @@ export class WebRtcDataChannel {
         }
     }
 
-    async _handleSdpOffer(sdp) {
+    async _handleSdpOffer(msg) {
+        const sdp = msg.sdp;
         console.log('[WebRTC] Received SDP offer, length=' + sdp.length);
+
+        // ── MW-BIND-v1 step 2 ───────────────────────────────────────────────
+        // Verify the host BEFORE creating any DTLS state. On failure we return
+        // without ever calling setRemoteDescription, so nothing was negotiated
+        // with whoever sent this.
+        if (this._mwBind?.hostPublicKey) {
+            const ok = await verifyHostSignature(this._mwBind, msg);
+            if (!ok) {
+                this._onError(
+                    'This host could not prove its identity — refusing to connect. '
+                        + 'If you re-installed MoonlightWeb on it, pair again with a PIN.'
+                );
+                return;
+            }
+            console.log('[MW-BIND] Host signature verified');
+        } else if (this._mwBind) {
+            // We hold a pairing key but no host identity to check against — the
+            // browser's stored record is incomplete (cleared site data, or a
+            // pairing made before the host had a key). We can still sign our own
+            // half, which is what the host verifies; re-pairing restores the
+            // other direction.
+            console.warn('[MW-BIND] No stored host identity — cannot verify this offer');
+        }
 
         // Safety net: if ice-config never arrived, create PC now.
         // This can happen if the backend sends the SDP offer before the
@@ -914,11 +951,31 @@ export class WebRtcDataChannel {
             // blocked by a corporate firewall).
             this._startIceTimer();
 
-            // Send answer via signaling WS
-            this._sendSignaling({
+            // Send answer via signaling WS, signed when this browser is paired.
+            const answerMsg = {
                 type: 'sdp',
                 sdp: this.pc.localDescription.sdp,
-            });
+            };
+
+            // MW-BIND-v1 step 3: sign the fingerprint of the answer we just
+            // committed to, over the host's nonce and fingerprint. The host
+            // refuses the answer if this is missing or does not verify.
+            if (this._mwBind && msg.nonce) {
+                const sig = await signAnswer(
+                    this._mwBind,
+                    msg.host_id || this._mwBind.hostId || '',
+                    msg.nonce,
+                    extractFingerprint(sdp),
+                    answerMsg.sdp
+                );
+                if (!sig) {
+                    this._onError('Could not sign this connection — refusing to continue.');
+                    return;
+                }
+                answerMsg.sig = sig;
+            }
+
+            this._sendSignaling(answerMsg);
         } catch (e) {
             console.error('[WebRTC] SDP handling error:', e.message);
             this._onError('SDP negotiation failed: ' + e.message);

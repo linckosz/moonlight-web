@@ -18,6 +18,7 @@
 #include "AuthManager.h"
 #include "AppSettings.h"
 #include "common/Logger.h"
+#include "common/PairingCrypto.h"
 
 #include <QRandomGenerator>
 #include <QMessageAuthenticationCode>
@@ -178,6 +179,15 @@ void AuthManager::loadSessions()
                                                   : info.createdAt;
         info.isHost = obj["is_host"].toBool(false);
         info.isAdmin = keepAdminFlags && obj["is_admin"].toBool(false);
+
+        // MW-BIND-v1 pairing key. A stored key that no longer parses is dropped
+        // rather than kept: the session survives, and the browser simply
+        // re-registers on its next visit.
+        const QString storedKey = obj["pairing_key"].toString();
+        if (!storedKey.isEmpty()) {
+            const QByteArray spki = QByteArray::fromBase64(storedKey.toUtf8());
+            if (PairingCrypto::isValidP256Spki(spki)) info.pairingKey = spki;
+        }
 
         // Drop sessions that are already expired by inactivity.
         const qint64 last = info.lastSeen > 0 ? info.lastSeen : info.createdAt;
@@ -661,6 +671,46 @@ void AuthManager::touchSession(const QString& token)
     // Throttle disk writes: only persist when the clock advanced by >1h. A
     // temporary session has nothing on disk to refresh.
     if (!it->ephemeral && now - prev >= 3600) saveSessions();
+}
+
+bool AuthManager::bindSessionKey(const QString& token, const QByteArray& spkiDer)
+{
+    if (token.isEmpty()) return false;
+    if (!PairingCrypto::isValidP256Spki(spkiDer)) {
+        Logger::warning(QStringLiteral("[AuthManager] Rejected an unparseable pairing key"));
+        return false;
+    }
+
+    auto it = m_sessions.find(hashToken(token));
+    if (it == m_sessions.end()) return false;
+
+    if (!it->pairingKey.isEmpty()) {
+        // Same key again: a browser re-registering after a reconnect. Fine.
+        if (it->pairingKey == spkiDer) return true;
+        // A different key on a session that already has one. The legitimate
+        // browser cannot do this — its key is non-extractable and stable — so
+        // this is either a stolen cookie trying to pair itself, or a bug. Refuse
+        // and say so: silently overwriting would hand the session away.
+        Logger::warning(QStringLiteral(
+            "[AuthManager] Refused to replace the pairing key of session %1 — a session keeps "
+            "the key it was bound to; revoke it if the device really changed")
+                         .arg(it->token.left(8)));
+        return false;
+    }
+
+    it->pairingKey = spkiDer;
+    if (!it->ephemeral) saveSessions();
+    Logger::info(QStringLiteral("[AuthManager] Bound pairing key %1 to session %2")
+                     .arg(PairingCrypto::keyId(spkiDer).left(12), it->token.left(8)));
+    return true;
+}
+
+QByteArray AuthManager::sessionPairingKey(const QString& token) const
+{
+    if (token.isEmpty()) return {};
+    auto it = m_sessions.constFind(hashToken(token));
+    if (it == m_sessions.constEnd()) return {};
+    return it->pairingKey;
 }
 
 void AuthManager::setSessionGeo(const QString& token, const QString& city, const QString& country)

@@ -189,6 +189,24 @@ public:
     /// clients — avoids leaking the LAN IP.
     void setClientIsLocal(bool local) { m_ClientIsLocal = local; }
 
+    // ── MW-BIND-v1 (docs/design/pairing-signature.md) ──────────────────────
+    //
+    // Signaling will eventually be relayed by an introduction server we do not
+    // want to have to trust. These bind the SDP fingerprints to keys that server
+    // has never seen, so it cannot substitute its own, terminate DTLS itself and
+    // inject input into the desktop.
+    //
+    // @param hostId       identifier of this host, inside both signatures so one
+    //                     captured elsewhere cannot be replayed here.
+    // @param hostKeyPem   this host's P-256 private key. Reaches the worker on
+    //                     stdin, never on the command line.
+    // @param browserSpki  public key of the browser this session is paired with;
+    //                     empty when the pairing predates the mechanism, which
+    //                     disables the checks (see onWsTextMessage for why that
+    //                     is not a downgrade an attacker can reach).
+    void setPairingIdentity(const QString& hostId, const QByteArray& hostKeyPem,
+                            const QByteArray& browserSpki);
+
     /// The external port mapped via UPnP (0 = not mapped).
     uint16_t upnpMappedPort() const { return m_UpnpMappedPort; }
 
@@ -213,6 +231,26 @@ private:
     static rtc::Configuration buildIceConfig(bool isInternet, uint16_t upnpMappedPort,
                                              uint16_t mediaPort, const QString& stunServerUrl,
                                              bool forceIceTcp = false);
+
+    // ── MW-BIND-v1 state ───────────────────────────────────────────────────
+    /// Sign the pending SDP offer and hand it to the browser. Called once the
+    /// browser's nonce has arrived, since the host's signature covers it.
+    void sendSignedOffer();
+    /// Refuse the connection and say why. Closes the WS without ever reaching
+    /// setRemoteDescription, so no DTLS state exists when we give up.
+    void abortSignaling(const QString& reason);
+
+    /// How long the signed offer waits for the browser's hello before giving up.
+    static constexpr int kHelloTimeoutMs = 15000;
+
+    QString m_HostId;
+    QByteArray m_HostKeyPem;
+    QByteArray m_BrowserSpki;   // empty ⇒ pairing predates MW-BIND-v1
+    QByteArray m_NonceBrowser;  // from the browser's hello; covered by our signature
+    QByteArray m_NonceHost;     // ours; covered by the browser's signature
+    QString m_LocalFingerprint; // fpH, extracted from our own offer
+    std::string m_PendingOffer; // held back until the browser's nonce arrives
+    bool m_HelloReceived = false;
 
     bool m_UseUPnP = true;
     /// Distinct WebRTC/UPnP media UDP port for this slot (base + slot). Keeps

@@ -20,8 +20,11 @@
 #include "server/HttpServer.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
+#include "server/AppSettings.h"
+#include "server/NetClassify.h"
 #include "network/GeoIpService.h"
 #include "common/Logger.h"
+#include "common/PairingCrypto.h"
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -61,14 +64,45 @@ bool wantsRemember(const QJsonObject& body)
     return body.value(QStringLiteral("remember")).toBool(true);
 }
 
+/// The MW-BIND-v1 identity a browser needs to verify this host's SDP offers.
+/// `host_id` is the host key's own identifier: it goes inside every signature so
+/// one captured from another installation cannot be replayed here.
+QJsonObject hostPairingIdentity(AppSettings& settings)
+{
+    const QByteArray spki = settings.hostSigningPublicKey();
+    QJsonObject obj;
+    obj["host_public_key"] = QString::fromLatin1(spki.toBase64());
+    obj["host_id"] = PairingCrypto::keyId(spki);
+    return obj;
+}
+
+/// Bind the browser public key carried in a login body, when there is one.
+/// Pairing with a PIN is the one moment a key may be registered from anywhere,
+/// including the internet: the visitor has just proven they hold the secret.
+void bindKeyFromLoginBody(AuthManager& authManager, const QString& token, const QJsonObject& body,
+                          QJsonObject& reply, AppSettings& settings)
+{
+    const QString b64 = body.value(QStringLiteral("public_key")).toString();
+    if (b64.isEmpty()) return; // older frontend: nothing to bind, nothing to fail
+
+    if (!authManager.bindSessionKey(token, QByteArray::fromBase64(b64.toUtf8()))) {
+        reply["pairing_key"] = "rejected";
+        return;
+    }
+    reply["pairing_key"] = "bound";
+    const QJsonObject identity = hostPairingIdentity(settings);
+    for (auto it = identity.constBegin(); it != identity.constEnd(); ++it) reply[it.key()] = it.value();
+}
+
 } // namespace
 
-void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpService& geoIpService)
+void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpService& geoIpService,
+                        AppSettings& settings)
 {
     // ── Auth routes ─────────────────────────────────────────────────────────
     // POST /api/auth/validate — validate PIN or certificate, create session, set cookie
-    server.router()->post("/api/auth/validate", [&authManager,
-                                                 &geoIpService](const HttpRequest& req) {
+    server.router()->post("/api/auth/validate", [&authManager, &geoIpService,
+                                                 &settings](const HttpRequest& req) {
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
         QJsonObject body = doc.object();
         QString pin = body["pin"].toString();
@@ -92,6 +126,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 obj["status"] = "ok";
                 obj["auth_method"] = "certificate";
                 obj["remembered"] = remember;
+                bindKeyFromLoginBody(authManager, token, body, obj, settings);
                 HttpResponse resp = HttpResponse::json(obj);
                 resp.headers["Set-Cookie"] = sessionCookie(token, remember);
                 return resp;
@@ -128,6 +163,7 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             obj["status"] = "ok";
             obj["pin_regenerated"] = true;
             obj["remembered"] = remember;
+            bindKeyFromLoginBody(authManager, token, body, obj, settings);
             HttpResponse resp = HttpResponse::json(obj);
             resp.headers["Set-Cookie"] = sessionCookie(token, remember);
             return resp;
@@ -145,6 +181,44 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
             return HttpResponse::json(obj, 429);
         }
         return HttpResponse::error(500, "Internal error");
+    });
+
+    // POST /api/auth/pairing-key — register this browser's MW-BIND-v1 public key
+    // on a session that predates the mechanism, and collect the host's own.
+    //
+    // This is trust-on-first-use over a channel that is already authenticated by
+    // the session cookie, so that browsers paired before MW-BIND-v1 existed do
+    // not all have to re-enter a PIN. It is deliberately restricted to peers
+    // that reached us without crossing the internet — loopback, the LAN, or a
+    // mesh VPN. From anywhere else the browser must pair with a PIN, which is
+    // the path that carries its key in the login body.
+    //
+    // A session that already has a key gets the same answer as long as it sends
+    // the same key; a *different* key is refused by bindSessionKey().
+    server.router()->post("/api/auth/pairing-key", [&authManager,
+                                                    &settings](const HttpRequest& req) {
+        const QString token = HttpServer::sessionTokenFromRequest(req);
+        if (!authManager.validateSession(token)) return HttpResponse::error(401, "Not authenticated");
+
+        const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
+        if (!NetClassify::isTrustedPeer(kind)) {
+            Logger::warning(QStringLiteral("[Auth] Refused silent pairing-key registration from %1 "
+                                        "(%2) — PIN required from the internet")
+                             .arg(req.clientAddress, NetClassify::toString(kind)));
+            return HttpResponse::error(403, "Pair with a PIN from this network");
+        }
+
+        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        const QString b64 = body.value(QStringLiteral("public_key")).toString();
+        if (b64.isEmpty()) return HttpResponse::error(400, "Missing 'public_key' field");
+
+        if (!authManager.bindSessionKey(token, QByteArray::fromBase64(b64.toUtf8()))) {
+            return HttpResponse::error(409, "This session is already bound to another key");
+        }
+
+        QJsonObject obj = hostPairingIdentity(settings);
+        obj["status"] = "ok";
+        return HttpResponse::json(obj);
     });
 
     // POST /api/admin/pin/generate — generate a new PIN without revoking sessions (localhost only)

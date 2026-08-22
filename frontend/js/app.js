@@ -874,6 +874,12 @@ const MoonlightApp = {
 
             // Localhost or already authenticated — proceed
             if (status.is_localhost || status.authenticated) {
+                // MW-BIND-v1: a session created before this mechanism existed has
+                // no pairing key. Register one now rather than asking the user for
+                // a PIN they already gave. The server only accepts it from
+                // loopback, the LAN or a mesh VPN, and answers 403 otherwise.
+                // Best-effort: never let it hold up the app.
+                BackendClient.ensurePairingKey().catch(() => {});
                 return true;
             }
 

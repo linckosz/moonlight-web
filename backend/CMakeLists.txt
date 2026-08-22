@@ -159,6 +159,8 @@ target_link_libraries(qmdnsengine PUBLIC Qt6::Network)
 # InputCrypto/InputEncoder which are not part of the current build).
 add_executable(mw-server
     src/main.cpp
+    src/common/PairingCrypto.cpp
+    src/streaming/SdpFingerprint.cpp
     src/server/AuthManager.cpp
     src/server/AppSettings.cpp
     src/server/Provisioning.cpp
@@ -369,11 +371,18 @@ if(MW_BUILD_TESTS)
         # purpose, so the credentials guarding a shareable link are verified on
         # every platform like the rest of the security units.
         src/server/ShareManager.cpp
+        # MW-BIND-v1: the fingerprint binding that keeps a relaying introduction
+        # server out of the middle of a stream. Pulls OpenSSL in (ECDSA P-256),
+        # unlike the units above — worth it: this is the check that decides
+        # whether someone can inject input into the host's desktop.
+        tests/test_pairing_binding.cpp
+        src/common/PairingCrypto.cpp
+        src/streaming/SdpFingerprint.cpp
         src/common/Logger.cpp
     )
     set_target_properties(mw-security-tests PROPERTIES AUTOMOC ON)
     target_include_directories(mw-security-tests PRIVATE src tests)
-    target_link_libraries(mw-security-tests PRIVATE Qt6::Core Qt6::Network)
+    target_link_libraries(mw-security-tests PRIVATE Qt6::Core Qt6::Network OpenSSL::Crypto)
     add_test(NAME security-tnr COMMAND mw-security-tests)
 endif()
 
