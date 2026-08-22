@@ -31,6 +31,7 @@ import { JitterController } from '../stream/JitterController.js';
 import { FramePacer } from '../stream/FramePacer.js';
 import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
+import { armAudioPlayRetry } from '../util/audioAutoplay.js';
 import {
     NalParser,
     splitNals,
@@ -2653,7 +2654,22 @@ export class StreamView {
         this._acquireWakeLock();
         this.bindEvents();
         if (this._gamepadManager) this._gamepadManager.start();
-        if (this.audioEl) this.audioEl.muted = false;
+        // Unmuting an element the browser only let play BECAUSE it was muted
+        // pauses it, unless the unmute happens on a user activation — and an
+        // automatic quality degradation has none. Restart it, with the same
+        // gesture retry as the ontrack path if that restart is refused too.
+        if (this.audioEl) {
+            this.audioEl.muted = false;
+            if (this.audioEl.paused) {
+                const p = this.audioEl.play();
+                if (p && p.catch) {
+                    p.catch((e) => {
+                        console.warn('[StreamView] audio play() after unmute failed:', e.message);
+                        armAudioPlayRetry(this.audioEl);
+                    });
+                }
+            }
+        }
         // Startup overlay was never shown on a standby view — drop it outright.
         this._hideStartupOverlay();
         if (this._firstFrameRendered) {

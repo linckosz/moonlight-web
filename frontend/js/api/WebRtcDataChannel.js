@@ -16,6 +16,7 @@
  */
 
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
+import { armAudioPlayRetry } from '../util/audioAutoplay.js';
 import { forceOpusStereo } from '../util/SdpUtils.js';
 import {
     beginHandshake,
@@ -110,6 +111,8 @@ export class WebRtcDataChannel {
         // PeerConnection; the browser decodes it (jitter buffer + FEC + PLC) and
         // we render it through this <audio> element. Set by StreamView.
         this.audioElement = null;
+        // Cleanup for the autoplay gesture retry, when play() was rejected.
+        this._audioRetryCleanup = null;
 
         // WSS mode: legacy StreamRelay WebSocket passthrough.
         // When true, this class acts as a simple WS client that receives
@@ -540,6 +543,14 @@ export class WebRtcDataChannel {
         }
         this._reassembly.clear();
 
+        // Drop the autoplay gesture retry: quitting before ever interacting must
+        // not leave a listener on window. Placed BEFORE the WSS early-return so
+        // it can never be skipped.
+        if (this._audioRetryCleanup) {
+            this._audioRetryCleanup();
+            this._audioRetryCleanup = null;
+        }
+
         if (this._wssMode) {
             // WSS mode: only the WS needs closing
             if (this.signalingWs) {
@@ -662,7 +673,14 @@ export class WebRtcDataChannel {
                 this.audioElement.srcObject = stream;
                 const p = this.audioElement.play();
                 if (p && p.catch)
-                    p.catch((e) => console.warn('[WebRTC] audio play() failed:', e.message));
+                    p.catch((e) => {
+                        // Autoplay policy rejected it (cold Media Engagement
+                        // profile, Safari/Firefox defaults). Retry on the next
+                        // gesture — in a stream the mouse-capture click always
+                        // comes — instead of staying silent for the session.
+                        console.warn('[WebRTC] audio play() failed:', e.message);
+                        this._audioRetryCleanup = armAudioPlayRetry(this.audioElement);
+                    });
             }
         };
 
@@ -904,8 +922,8 @@ export class WebRtcDataChannel {
             const ok = await verifyHostSignature(this._mwBind, msg);
             if (!ok) {
                 this._onError(
-                    'This host could not prove its identity — refusing to connect. '
-                        + 'If you re-installed MoonlightWeb on it, pair again with a PIN.'
+                    'This host could not prove its identity — refusing to connect. ' +
+                        'If you re-installed MoonlightWeb on it, pair again with a PIN.',
                 );
                 return;
             }
@@ -970,7 +988,7 @@ export class WebRtcDataChannel {
                     msg.host_id || this._mwBind.hostId || '',
                     msg.nonce,
                     extractFingerprint(sdp),
-                    answerMsg.sdp
+                    answerMsg.sdp,
                 );
                 if (!sig) {
                     this._onError('Could not sign this connection — refusing to continue.');
