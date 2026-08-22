@@ -4,7 +4,7 @@
 
 # 13. Roadmap, Constraints & Improvement Leads
 
-An honest inventory of what remains, what constrains the design, and where the leverage is. Sources: in-repo plans (`docs/moonlightweb-plan.md`, `docs/internet-plan.md`, `docs/audit-*`), TODO-class comments, and the development history.
+An honest inventory of what remains, what constrains the design, and where the leverage is. Sources: in-repo plans (`docs/moonlightweb-plan.md`, `docs/audit-*` — `docs/internet-plan.md` describes the retired DNS design and is kept as an archive), TODO-class comments, and the development history.
 
 ## 13.1 Known remaining work
 
@@ -26,9 +26,9 @@ An honest inventory of what remains, what constrains the design, and where the l
 | **Browsers only** | Codec support is at the browser's mercy (HEVC/AV1 availability varies; MediaTrack path is H.264-only); no raw UDP from JS — everything rides WebRTC/WSS. |
 | **Canvas is SDR-referred** | Real HDR requires the `<video>` sink → HDR and WebGPU enhancement are mutually exclusive. Until browsers expose HDR canvas (WebGPU `rgba16float` + HDR compositing is still maturing), this stands. |
 | **The `/start` response precedes ICE** | The client must own transport fallback; the server can never know a transport failed. |
-| **Self-signed cert on LAN** | A first-visit browser warning is unavoidable without a public domain (or user-provided cert). |
+| **Self-signed cert on LAN** | A first-visit browser warning is unavoidable without a user-provided domain and certificate. |
 | **UPnP/NAT reality** | CGNAT/double-NAT cannot be traversed (detected + reported); routers rarely hairpin UDP (hence local-candidate advertisement to LAN clients). |
-| **Single DNS box** | The shared-domain infrastructure is one VM: no anycast, no volumetric-DDoS absorption; `ns2` on a second IP is the documented cheap upgrade. |
+| **Single DNS box** | The shared legacy-domain infrastructure is one VM: no anycast, no volumetric-DDoS absorption. It only has to hold until the February 2027 shutdown. |
 | **No accounts / single settings store** | By design (server-side `settings.json`, no multi-user) — features requiring per-user server state should map to per-browser localStorage or be rethought. |
 | **Sunshine's HTTP fragility** | Host polling must stay suspended during streams; one HTTPS request per host at a time. |
 | **macOS notarization needs a paid Apple Developer ID** | No free tier, no OSS programme — a *downloaded* `.pkg` will always be refused by Gatekeeper. The Homebrew cask and `install.sh` route around it (`installer(8)` never consults Gatekeeper), so the fix is a documented command, not a signature ([§9.2](09-Installers-and-Packaging.md)). |
@@ -47,10 +47,11 @@ An honest inventory of what remains, what constrains the design, and where the l
 **Platform & ops**
 - Make the ASan workflow a scheduled job; add clang-tidy to CI as advisory → blocking.
 - Linux ARM (Raspberry-class LAN bridges) is a natural next build target given the CMake matrix.
-- A second authoritative DNS instance (`ns2`) + automated zone replication for the shared domain.
+- (Dropped with the DNS retirement: a second authoritative instance/`ns2` — the stack only lives until February 2027.)
 - Symbol upload + crash-report ingestion (currently: local minidumps + manual cdb symbolization).
 
 **Product**
+- The **remote entry link**: reaching the instance from anywhere without exposing the web ports — an outgoing connection from the host to an introduction server, replacing the retired per-instance subdomain. In design.
 - Multi-session beyond the current two slots: the per-stream worker process shipped, so what remains is a variable-size slot table (ports, take-over rules, UI) instead of a hard-coded pair.
 - Bring-your-own-domain is configured by hand in `settings.json` ([§7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate)); an admin-page field + a certificate panel (CN, expiry, source) would remove the file editing and surface an ageing certificate before the browser does.
 - Host-side virtual display management (resolution matching without changing the host desktop).

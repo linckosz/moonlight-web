@@ -35,7 +35,7 @@ yours:
 
 ```sh
 sudo ufw allow 443/tcp        # the web UI — required
-sudo ufw allow 80/tcp         # redirect + ACME challenge
+sudo ufw allow 80/tcp         # HTTP-to-HTTPS redirect
 sudo ufw reload
 ```
 
@@ -60,7 +60,9 @@ no free pass.
 
 1. Open **`https://<server-ip>`** in Chrome/Edge/Safari (use the IP, not
    `localhost` — the server is not the machine you are sitting at).
-2. Accept the self-signed certificate warning. Expected on a LAN.
+2. Accept the self-signed certificate warning. Expected on a LAN — the
+   server serves a self-signed certificate unless you configure your own
+   domain and certificate.
 3. Type the **PIN** from step 3. One PIN per device — re-run `--new-pin` for
    the next phone or laptop.
 4. Your Sunshine machines appear by themselves (mDNS). If one does not, or you
@@ -100,7 +102,7 @@ exemption does not apply to a container. The PIN grants streaming; the password
 grants administration.
 
 Accept the self-signed certificate warning on first connection — expected on a
-LAN until Internet Access issues a real one.
+LAN, unless you configure your own domain and certificate.
 
 ---
 
@@ -155,7 +157,7 @@ ports fixes none of them:
   add your hosts by IP address instead — a one-time step, then everything else
   behaves normally.
 - **UPnP.** The router is found by SSDP multicast — same story. Without it,
-  Internet Access cannot open your router's ports for you.
+  Internet Access cannot open the per-session streaming port for you.
 
 Host networking removes all three at once, and there is nothing to gain from
 isolating a service whose whole job is to be reachable.
@@ -211,9 +213,9 @@ outside the LAN.
 | Port | Proto | Needed | What goes over it |
 |---|---|---|---|
 | **443** | TCP | **Always** | The web UI, the REST API, and the `wss://…/ws` upgrade that carries WebRTC signalling. The one port a browser cannot do without. |
-| **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. Also the `http-01` challenge address when Internet Access issues a public TLS certificate — required if you turn that on. |
+| **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. |
 | **48010–48014** | UDP | With UPnP | WebRTC media, audio and input. The app asks UPnP for 48010 and falls back through 48014; whichever it gets, it binds libdatachannel to that exact port so the router mapping and the socket agree. |
-| **47999** | UDP | Internet Access | Mapped alongside 80/443 when Internet Access is enabled. |
+| **47999** | UDP | Legacy Internet Access | Mapped alongside 80/443 only by an install that still holds a legacy `moonlightweb.top` sub-domain. |
 | *ephemeral* | UDP | No UPnP | With no UPnP mapping there is no fixed port: libdatachannel takes whatever the kernel gives it. On the host network that is fine unless a host firewall blocks the range. |
 
 > **In short:** on a LAN, **443/tcp** and **80/tcp**. If a firewall on the host
@@ -237,45 +239,38 @@ Nothing to publish, but these paths have to exist. On the host network they do.
 | LAN multicast | 5353 | UDP | mDNS host discovery (host networking only). |
 | LAN multicast | 1900 | UDP | SSDP, to find the UPnP router (host networking only). |
 | Internet | 19302 | UDP | STUN, to learn the public address for a stream from outside the LAN. |
-| Internet | 443 | TCP | Update check, ACME certificate issuance, DNS API for Internet Access. |
+| Internet | 443 | TCP | Update check; plus ACME certificate renewals and the DNS API, only for an install that still holds a legacy sub-domain. |
 
 ---
 
 ## Streaming from outside the LAN (Internet Access)
 
-Works from the container exactly as it does from a `.deb` — **on host
-networking**. The official images carry the same DNS and ACME configuration the
-installers do (embedded at build time from the repository's secrets), so:
+Internet Access is an opt-in consent, off by default. While it is on, the app
+asks the router (UPnP, SSDP multicast — so **host networking**) to open a
+streaming port during each session; whoever connects reaches this machine
+directly, and each side of a peer-to-peer connection sees the other's public IP
+address. No DNS record is created, no certificate is issued, and ports 80/443
+stay closed:
 
 ```sh
 docker exec -it moonlightweb moonlightweb --enable-internet
 ```
 
-claims a sub-domain of `moonlightweb.top` for this machine, points it at your
-public IP, obtains a real TLS certificate for it, and asks your router to
-forward the ports. After that the browser warning is gone and the URL works
-from anywhere.
+A new remote entry link — reaching the web UI itself from outside without
+opening it to the internet — is in development and will be announced in the
+release notes. Until then a remote browser has no way in unless you forward
+TCP 443 yourself and accept the self-signed warning, or bring your own domain
+and certificate.
 
-It is opt-in and reversible: the sub-domain and the IP live on the MoonlightWeb
-DNS server only while the link is on, and the admin page turns it off again.
-
-**Each of its three moving parts is a reason host networking is the supported
-mode:**
-
-| What it needs | `--network host` | bridge |
-|---|---|---|
-| UPnP to open 443 + 80 on the router (SSDP multicast) | works | never reaches the router — forward the ports by hand |
-| The ACME `http-01` challenge answered on port 80 | works | needs `-p 80:80` *and* a manual router rule |
-| Its own LAN address, for the URL it advertises and for NAT hairpin | correct | reports the bridge address (`172.17.0.x`) |
-
-So on a bridge you can still get there, but every step your router would have
-automated becomes a rule you write yourself. On a Linux host, use
-`--network host` and run the one command above.
-
-Pointing the feature at your own PowerDNS and ACME account instead: set
-`MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_KID` and
-`MW_ZEROSSL_EAB_HMAC` as environment variables — a runtime value always wins
-over the one compiled in.
+**A container that still holds a legacy `moonlightweb.top` sub-domain** (one
+that enabled Internet Access on v0.2.4 or earlier) keeps its sub-domain,
+certificate renewals and 80/443 forwards unchanged until the shared DNS
+service shuts down in February 2027. For those, the official images carry the
+same DNS and ACME configuration the installers do; pointing them at your own
+PowerDNS and ACME account instead is a matter of setting `MW_DOMAIN`,
+`MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_KID` and
+`MW_ZEROSSL_EAB_HMAC` — a runtime value always wins over the one compiled
+in.
 
 ---
 
@@ -306,10 +301,10 @@ docker run --rm -v mw-data:/data -v "$PWD:/backup" debian:trixie-slim \
 | Variable | Default | What it does |
 |---|---|---|
 | `MW_HTTPS_PORT` | `443` | HTTPS listener. Written into `settings.json` on every start, so it survives the fallback the server applies when a port is taken. |
-| `MW_HTTP_PORT` | `80` | HTTP listener (redirect + ACME challenge). |
+| `MW_HTTP_PORT` | `80` | HTTP listener (HTTP-to-HTTPS redirect). |
 | `MW_UPNP` | `1` | `0` stops the app asking the router to map ports — set it on a bridge network, where the request cannot reach a router anyway. |
 | `TZ` | `Etc/UTC` | Timestamps in the logs and the admin UI. |
-| `MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_KID`, `MW_ZEROSSL_EAB_HMAC` | baked in | Internet Access's DNS and ACME configuration. The official images carry the project's, exactly like the `.deb`; set them to point the feature at your own PowerDNS + ACME account. |
+| `MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_KID`, `MW_ZEROSSL_EAB_HMAC` | baked in | DNS and ACME configuration for a legacy sub-domain (pre-v0.2.5 installs only). The official images carry the project's, exactly like the `.deb`. |
 
 Everything else is configured from the admin page, or by editing
 `settings.json` in the volume and restarting — see
@@ -329,7 +324,7 @@ docker run … ghcr.io/linckosz/moonlight-web:latest --port 8080
 docker exec moonlightweb moonlightweb --status               # URLs, PIN, internet state
 docker exec moonlightweb moonlightweb --new-pin              # let one more device in
 docker exec -it moonlightweb moonlightweb --set-admin-password
-docker exec -it moonlightweb moonlightweb --enable-internet  # public sub-domain + TLS
+docker exec -it moonlightweb moonlightweb --enable-internet  # allow the internet link
 docker logs -f moonlightweb
 ```
 

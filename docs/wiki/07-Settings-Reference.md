@@ -52,17 +52,19 @@ The browser also stores per-device keys the server deliberately ignores when the
 
 ### Internet Access
 
+The consent is the master switch: `internet_access_enabled` now gates the per-session media-port mapping too, and disabling it removes the router mappings immediately. The DNS half of the table only applies to a **legacy instance** — one that registered a `{unique_id}.{MW_DOMAIN}` subdomain before the mechanism was retired (`registered_uid` set). The shared DNS service behind those subdomains shuts down in **February 2027**.
+
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `internet_access_enabled` | bool | `false` | Auto-starts `InternetAccessManager` at boot when true. |
-| `unique_id` | string | generated | 8-hex-char subdomain label. Reserved labels rejected. |
-| `registered_uid` | string | — | Last subdomain actually registered (used to release the old one on change). |
-| `domain` | string | `"MW_DOMAIN"` | The sentinel means "computed": `{unique_id}.{MW_DOMAIN}`. Replace it with **your own FQDN** to serve the app under it — the value is then kept verbatim and Internet Access switches to its network-only mode ([§7.5](#75-bring-your-own-domain--certificate)). Anything that is not a valid FQDN falls back to the computed name. |
-| `public_ip` | string | — | Resolved public IP (STUN or manual). |
+| `internet_access_enabled` | bool | `false` | The user's consent to be reachable from the internet. Gates the per-session UPnP media mapping, auto-starts `InternetAccessManager` at boot, and (legacy only) the 80/443/47999 forwards. |
+| `unique_id` | string | generated | 8-hex-char instance id. Internal only on a fresh install: it seeds the deterministic UPnP fallback port so two instances on one LAN never collide. On a legacy instance it is also the subdomain label (reserved labels rejected). |
+| `registered_uid` | string | — | **The legacy marker.** Set on the first successful subdomain registration, never cleared; its presence is what keeps the DNS/ACME machinery running (and lets a `unique_id` change release the old record). Absent on every fresh install. |
+| `domain` | string | `"MW_DOMAIN"` | The sentinel means "computed" — `{unique_id}.{MW_DOMAIN}`, which only exists on a legacy instance (a fresh install has no public name). Replace it with **your own FQDN** to serve the app under it — the value is then kept verbatim and Internet Access switches to its network-only mode ([§7.5](#75-bring-your-own-domain--certificate)). Anything that is not a valid FQDN falls back to the computed name. |
+| `public_ip` | string | — | Resolved public IP (STUN or manual). Also feeds the NAT-hairpin test and CGNAT detection. |
 | `auto_ip_detection` | bool | `true` | STUN/HTTP auto-detect vs manual `public_ip`. |
-| `pending_registration` | bool | `false` | Set when registration failed offline; retried at startup. |
-| `owner_token` | string | generated | Random token written to the `_owner.<uid>` TXT record (subdomain ownership). |
-| `internet_consent` | object | `{}` | `{message, at, source}` — the exact opt-in agreement record. |
+| `pending_registration` | bool | `false` | Legacy only: set when the subdomain registration failed offline; retried at startup. |
+| `owner_token` | string | generated | Legacy only: random token sent as the `X-MW-Owner` header on every DNS write — the HMAC of it is what the proxy stores as proof of subdomain ownership. Never published in DNS. |
+| `internet_consent` | object | `{}` | `{message, at, source, version, mechanism}` — the exact opt-in agreement record. A record without `version` predates the retirement and was worded for the DNS mechanism (version 1): a non-legacy instance then waits in phase `consent_required` until the user agrees to the current wording (version 2). |
 
 ### TLS & auth
 
@@ -88,9 +90,9 @@ Loaded at startup by `loadEnvFile()` (`.env` next to the executable, else the pr
 
 | Variable | Required for | Description |
 |---|---|---|
-| `MW_DOMAIN` | Internet Access | Parent domain hosted on the PowerDNS box. Fallback default: `moonlightweb.top`. |
-| `MW_PDNS_URL` | Internet Access | DNS-registration API base URL. 0.2.0+ points at the restricted gateway: `https://dnsapi.{MW_DOMAIN}/api/v1/servers/localhost`. Defaults to `https://api.{MW_DOMAIN}/api/v1/servers/localhost` (legacy direct PowerDNS) when unset. |
-| `MW_PDNS_TOKEN` | Internet Access | API key (`X-API-Key`) for the `dnsapi.` gateway: the **restricted** `MW_PDNS_PROXY_KEY`, which manages only this instance's own records. **Secret.** |
+| `MW_DOMAIN` | Legacy Internet Access | Parent domain hosted on the PowerDNS box. Fallback default: `moonlightweb.top`. Only consulted by an instance that still holds a legacy subdomain. |
+| `MW_PDNS_URL` | Legacy Internet Access | DNS-registration API base URL. 0.2.0+ points at the restricted gateway: `https://dnsapi.{MW_DOMAIN}/api/v1/servers/localhost`. Defaults to `https://api.{MW_DOMAIN}/api/v1/servers/localhost` (legacy direct PowerDNS) when unset. |
+| `MW_PDNS_TOKEN` | Legacy Internet Access | API key (`X-API-Key`) for the `dnsapi.` gateway: the **restricted** `MW_PDNS_PROXY_KEY`, which manages only this instance's own records. **Secret.** |
 | `MW_ACME_DIRECTORY` | optional | ACME directory URL. Defaults to Let's Encrypt, or ZeroSSL DV90 when EAB creds are set. |
 | `MW_ZEROSSL_EAB_KID` / `MW_ZEROSSL_EAB_HMAC` | optional | ZeroSSL External Account Binding. **Secrets.** |
 | `MW_CERT_PEM` / `MW_CERT_KEY` | optional | Inline PEM cert/key (the default `cert_pem`/`cert_key` settings point at these env-var names). |
@@ -116,7 +118,7 @@ CI bakes `MW_DOMAIN`, `MW_PDNS_URL`, `MW_PDNS_TOKEN`, `MW_ZEROSSL_EAB_*` (from r
 
 ## 7.5 Bring your own domain & certificate
 
-The one-click **Internet Access** flow is the *shared-domain* automation (subdomain on the project's PowerDNS + ACME DNS-01 + UPnP). If you own a domain, publish the server as `https://stream.mywebsite.com` with your own certificate instead: set `domain` in `settings.json`, and the manager switches to a **network-only mode** — public-IP detection, UPnP port mapping and NAT-hairpin test still run, DNS registration and ACME issuance never do (the zone and the certificate are yours).
+Bringing your own domain is **the** way to put the web interface itself on the internet now that the shared-subdomain automation is retired: set `domain` in `settings.json` and the manager runs in a **network-only mode** — public-IP detection and the NAT-hairpin test still run, DNS registration and ACME issuance never do (the zone and the certificate are yours), and the 443 forward on your router is yours to create.
 
 **1. DNS — A record on your public IP.** In `mywebsite.com`'s zone create `stream` → **your router's public IPv4** (the WAN address, *not* the machine's `192.168.x.x`). Check it with `curl https://api.ipify.org` on the host, or read *Public IP* on the admin page. IPv6-only reachability needs an AAAA record instead. A dynamic ISP address needs a DDNS updater; a **CGNAT** address (`100.64.0.0/10`) can never be port-forwarded — the admin page detects and reports that case.
 
@@ -128,7 +130,7 @@ The one-click **Internet Access** flow is the *shared-domain* automation (subdom
 | TCP 80 (optional) | same host:80 | HTTP→HTTPS redirect; also needed if you renew with an HTTP-01 ACME client on that machine. |
 | UDP 48010–48014 (recommended) | same host, same ports | Direct WebRTC media (`SignalingServer` maps the first free port of that range). Without it the fallback chain still works over ICE-TCP, then `wss`, at a worse latency profile. |
 
-If the router speaks UPnP, keeping `upnp_enabled: true` **and** Internet Access on maps 80/443/UDP for you even with a custom domain (step 5); otherwise every rule above is manual.
+With `upnp_enabled: true` **and** Internet Access on, the per-session media ports (UDP 48010-48014) are still mapped for you; the TCP 443 (and optional 80) rules above are always manual with a custom domain.
 
 **3. Certificate.** Issue one for `stream.mywebsite.com` (certbot / win-acme / lego with your DNS provider, or any commercial CA). You need two **unencrypted PEM** files: the full chain and the private key (RSA or EC). A wildcard (`*.mywebsite.com`) works too.
 
@@ -147,14 +149,14 @@ Without `cert_pem`/`cert_key`, drop both files (`*.pem`, same folder) into the d
 
 Confirm in `logs/moonlightweb.log`: `SSL certificate loaded: CN=stream.mywebsite.com`. **Renewal is yours**: replace the files and restart. A certificate near expiry is kept and logged as *renew it soon* — it is never silently downgraded to a self-signed one.
 
-**5. Internet Access — optional, and safe to leave on.** With a custom domain it registers nothing and requests no certificate; it only keeps the router mapping fresh (UPnP), re-detects the public IP, tests NAT hairpin, and points the tray/shortcut entry URLs at your domain. Turn it off to manage the forwarding entirely by hand. `GET /api/internet/status` reports `custom_domain: true` in that mode.
+**5. Internet Access — optional.** With a custom domain it registers nothing and requests no certificate; it re-detects the public IP, tests NAT hairpin, allows the per-session media mapping, and points the tray/shortcut entry URLs at your domain. Turn it off to manage everything by hand. `GET /api/internet/status` reports `custom_domain: true` in that mode.
 
 Authentication is unchanged: remote devices still need the admin PIN or the certificate-auth token file (see [Security](06-Security.md)).
 
 **Caveats**
 
 - Reaching `stream.mywebsite.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry.
-- `unique_id` keeps existing (it is this instance's identity) but is never registered while a custom domain is set. Restoring `"domain": "MW_DOMAIN"` brings the shared-domain behaviour back.
+- `unique_id` keeps existing (it is this instance's identity) but is never registered while a custom domain is set. Restoring `"domain": "MW_DOMAIN"` brings the computed name back — on a legacy instance only; a fresh install then simply has no public name again.
 - The `stream` label is only reserved on the project's shared domain, never on yours.
 
 ---

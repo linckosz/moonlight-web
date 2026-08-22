@@ -18,8 +18,10 @@
   keyboard, Xbox and PlayStation controllers with rumble.
 - Zero-config: Sunshine hosts are auto-discovered on the LAN via mDNS, paired with
   a PIN.
-- One-click Internet access: personal sub-domain ({you}.moonlightweb.top), free
-  auto-renewed TLS certificate, UPnP port mapping.
+- Internet access (opt-in): direct peer-to-peer WebRTC streams; per-session
+  UPnP port mapping; no public DNS record or certificate. A redesigned remote
+  entry link is in development; pre-existing sub-domains keep working until
+  February 2027.
 
 ## How it works
 

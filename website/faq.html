@@ -87,7 +87,7 @@
         {
           "@type": "Question",
           "name": "How do I play over the Internet, away from home?",
-          "acceptedAnswer": {"@type": "Answer", "text": "Tick one box in the admin page: MoonlightWeb registers a personal sub-domain (https://you.moonlightweb.top), issues a free auto-renewed TLS certificate and maps the ports via UPnP. No dynamic-DNS accounts and no reverse-proxy configuration."}
+          "acceptedAnswer": {"@type": "Answer", "text": "Streams are direct, peer-to-peer WebRTC between your browser and your PC. A redesigned remote entry link - no public sub-domain, no exposed web ports - is in development; instances that already hold a sub-domain keep it until February 2027. You can also bring your own domain and certificate."}
         },
         {
           "@type": "Question",
@@ -211,9 +211,9 @@
   <h2 data-i18n="h2.internet">Internet play &amp; security</h2>
   <details>
     <summary data-i18n="q12.s">How do I play over the Internet, away from home?</summary>
-    <div class="a" data-i18n-html="q12.a"><p>Tick one box in the admin page: MoonlightWeb registers a personal sub-domain
-      (<code>https://you.moonlightweb.top</code>), issues a free auto-renewed TLS certificate and maps the
-      ports via UPnP. No dynamic-DNS accounts, no reverse-proxy configuration.</p></div>
+    <div class="a" data-i18n-html="q12.a"><p>Streams are direct, peer-to-peer WebRTC between your browser and your PC. A redesigned
+      remote entry link — no public sub-domain, no exposed web ports — is in development; instances that
+      already hold a sub-domain keep it until February 2027. You can also bring your own domain and certificate.</p></div>
   </details>
   <details>
     <summary data-i18n="q13.s">Is it secure? Where does my stream go?</summary>
@@ -290,7 +290,7 @@ window.MW_DICTS = {
     'q11.a':'<p>Le transport bascule automatiquement : UDP d’abord pour la latence la plus faible, puis TCP, puis WSS. Le stream continue de fonctionner à travers les réseaux restrictifs — il choisit simplement le meilleur chemin disponible.</p>',
     'h2.internet':'Jeu sur Internet et sécurité',
     'q12.s':'Comment jouer sur Internet, loin de chez moi ?',
-    'q12.a':'<p>Cochez une case dans la page d’administration : MoonlightWeb enregistre un sous-domaine personnel (<code>https://vous.moonlightweb.top</code>), émet un certificat TLS gratuit et auto-renouvelé, et mappe les ports via UPnP. Aucun compte DNS dynamique, aucune configuration de reverse-proxy.</p>',
+    'q12.a':'<p>Le flux est une connexion WebRTC directe, pair-à-pair, entre votre navigateur et votre PC. Un lien d’accès distant repensé — sans sous-domaine public, sans port web exposé — est en développement ; les installations qui détiennent déjà un sous-domaine le conservent jusqu’en février 2027. Vous pouvez aussi utiliser votre propre domaine et certificat.</p>',
     'q13.s':'Est-ce sécurisé ? Où va mon stream ?',
     'q13.a':'<p>MoonlightWeb est auto-hébergé : le stream va directement de votre PC à votre navigateur, jamais par le cloud d’un tiers. Les hôtes sont appairés par un code PIN, et l’accès Internet utilise HTTPS avec un certificat TLS gratuit et auto-renouvelé.</p>',
     'q14.s':'Comment MoonlightWeb fonctionne-t-il en coulisses ?',
@@ -335,7 +335,7 @@ window.MW_DICTS = {
     'q11.a':'<p>传输会自动回退：先用 UDP 以获得最低延迟，然后 TCP，再然后 WSS。串流会穿过受限网络继续工作——它只会挑选可用的最佳路径。</p>',
     'h2.internet':'互联网远程游玩与安全',
     'q12.s':'我如何在外地通过互联网游玩？',
-    'q12.a':'<p>在管理页勾选一个复选框：MoonlightWeb 会注册一个专属子域名（<code>https://you.moonlightweb.top</code>）、签发免费且自动续期的 TLS 证书，并通过 UPnP 映射端口。无需动态 DNS 账户，也无需配置反向代理。</p>',
+    'q12.a':'<p>串流是浏览器与 PC 之间点对点的 WebRTC 直连。重新设计的远程接入链接——没有公开子域名、不暴露 Web 端口——正在开发中；已持有子域名的安装可继续使用至 2027 年 2 月。你也可以使用自己的域名和证书。</p>',
     'q13.s':'它安全吗？我的串流去了哪里？',
     'q13.a':'<p>MoonlightWeb 是自托管的：串流直接从你的 PC 到你的浏览器，绝不经过任何他人的云。主机通过 PIN 码配对，互联网访问使用 HTTPS，配有免费自动续期的 TLS 证书。</p>',
     'q14.s':'MoonlightWeb 底层是如何工作的？',

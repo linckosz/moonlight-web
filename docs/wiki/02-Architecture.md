@@ -16,12 +16,9 @@
  │  Input : kbd/mouse/gamepad│◄════►│  │  moonlight-common-c    │  │ RTP  │  GPU encoder     │
  │  Video Enhancement (GPU)  │ (WSS │  │  RTSP/RTP/ENet → Relay │  │◄════►│  (NVENC/AMF/QSV) │
  └───────────────────────────┘ fall)└──────────────────────────────┘ UDP  └──────────────────┘
-        ▲ DNS (sub-domain) + TLS
- ┌──────┴────────────────────────────────────────────┐
- │  Self-hosted DNS stack (Docker, separate machine) │  ← maintained by the author,
- │  dnsdist :53 · PowerDNS (API) · Caddy :80/:443    │    or host your own
- └───────────────────────────────────────────────────┘
 ```
+
+*(A decoupled DNS stack — dnsdist, PowerDNS, Caddy in Docker on a separate machine — still serves the subdomains of legacy installs until February 2027; see [PowerDNS Stack](10-PowerDNS-Stack.md).)*
 
 The MoonlightWeb server plays three roles at once:
 
@@ -29,7 +26,7 @@ The MoonlightWeb server plays three roles at once:
 2. **GameStream client** — embeds `moonlight-common-c` and speaks NvHTTP/RTSP/RTP/ENet to Sunshine, exactly like moonlight-qt would.
 3. **Streaming bridge** — re-encapsulates the decoded-protocol media (H.264/HEVC/AV1 frames, Opus packets) and input into browser-reachable transports: WebRTC DataChannels, WebRTC RTP media tracks, or a WSS relay. Each session actually runs in a **child process** (`--stream-worker`), which is what lets two of them coexist despite the `moonlight-common-c` singleton.
 
-The **DNS stack is decoupled**: it runs on a separate machine and only provides subdomain registration + the marketing site. MoonlightWeb talks to it through a REST API (`MW_PDNS_URL`/`MW_PDNS_TOKEN`).
+The **DNS stack is decoupled**: it runs on a separate machine and only provides the marketing site plus subdomain upkeep for legacy installs (a fresh install never talks to it). A legacy MoonlightWeb reaches it through a REST API (`MW_PDNS_URL`/`MW_PDNS_TOKEN`).
 
 ## 2.2 The three-party exchange in detail
 
@@ -98,7 +95,7 @@ Key invariants (hard-won, do not regress):
 | **WebCodecs + WebGPU/Canvas** (video) | WebCodecs exposes the browser's hardware H.264/HEVC/AV1 decoders with frame-level control (latency!); rendering to canvas allows the WebGPU enhancement pipeline. A `<video>`-sink alternative exists for HDR (see [Transports](05-Streaming-and-Transports.md)). |
 | **AudioWorklet + WebCodecs AudioDecoder** (audio) | Opus decode on the native decoder, playback on the real-time audio thread with an adaptive jitter buffer and WSOLA time-stretch. |
 | **CMake** (single build system) | qmake was removed 2026-06-28. One `CMakeLists.txt` covers Windows x64/ARM64 (MSVC/Ninja), Linux, macOS, plus tests, coverage and `compile_commands.json`. |
-| **PowerDNS + dnsdist + Caddy in Docker** (DNS) | Official images, one process per container, REST API for record management — the smallest self-hostable authoritative-DNS-with-API stack. See [PowerDNS Stack](10-PowerDNS-Stack.md). |
+| **PowerDNS + dnsdist + Caddy in Docker** (DNS, legacy) | Official images, one process per container, REST API for record management — the smallest self-hostable authoritative-DNS-with-API stack. Serves legacy subdomains until February 2027. See [PowerDNS Stack](10-PowerDNS-Stack.md). |
 | **Server-side settings** (`settings.json`) | The server is the single source of truth (no accounts/multi-user); per-browser *streaming* preferences live in `localStorage`, everything else server-side. |
 
 ## 2.4 Repository layout

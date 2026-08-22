@@ -13,7 +13,7 @@ Headline capabilities:
 - **Opus audio** decoded in the browser with an adaptive jitter buffer.
 - **Full input**: keyboard, mouse (pointer-lock), touch trackpad, Xbox/PS **gamepads** with rumble, bidirectional **clipboard**.
 - **Auto-discovery** of Sunshine hosts on the LAN (mDNS) + manual IP add.
-- **One-click Internet access**: automatic public subdomain + real TLS certificate + UPnP port mapping.
+- **Internet access** (opt-in consent): per-session UPnP media mapping for remote streams. A new remote entry link is in development; installs that already hold a public subdomain keep it until February 2027.
 - **Video Enhancement**: GPU upscaling & sharpening (FSR1 / SGSRv1 via WebGPU) in the browser.
 
 ## 1.1 The User's journey
@@ -70,16 +70,18 @@ The admin page controls:
 
 ### Internet access
 
-Enabling **Internet Access** (an explicit, logged opt-in) makes the server automatically:
+**Internet Access** is an explicit, versioned, logged consent — the master switch for being reachable from the internet. While it is on, the server:
 
-1. **Detect the public IP** (STUN, HTTPS fallback via ipify/icanhazip).
-2. **Register a subdomain** `{uniqueId}.{MW_DOMAIN}` through the PowerDNS REST API (A record + `_owner` TXT ownership token).
-3. **Obtain a real TLS certificate** via ACME DNS-01 (ZeroSSL with EAB credentials, else Let's Encrypt), hot-reloaded without restart, auto-renewed under 30 days remaining.
-4. **Open router ports** via UPnP (TCP 80/443 + UDP 47999), with strict *external == internal* port parity and deterministic fallback ports when several instances share one NAT.
+1. **Detects the public IP** (STUN, HTTPS fallback via ipify/icanhazip), and reports CGNAT/double-NAT when it sees one.
+2. **Asks the router (UPnP) to open the streaming port during each session**, and removes the mapping when the session — or the consent — ends. Peers connect directly, so each side of a WebRTC connection sees the other's public IP.
+
+Nothing else is opened or published: no DNS record, no certificate, ports 80/443 stay closed. A new **remote entry link** (an outgoing connection from the host to an introduction server) is in development and will carry remote access to the web UI itself.
+
+**Legacy instances** — those that registered a `{uniqueId}.{MW_DOMAIN}` subdomain before the mechanism was retired — keep the full historic behaviour (A record upkeep, ACME renewals, 80/443/47999 forwards, port parity) until the shared DNS service shuts down in **February 2027**; the admin page shows the notice.
 
 ![Admin page — Internet access & server config](../screenshots/admin.png)
 
-Known limitations are detected and reported in the UI: UPnP disabled (manual forwarding needed), CGNAT/double-NAT (port forwarding cannot work), port already mapped by another device, restrictive corporate CAs. Prefer your own name and certificate (`stream.mywebsite.com`)? That path skips Internet Access entirely — see [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
+Known limitations are detected and reported in the UI: UPnP disabled (manual forwarding needed), CGNAT/double-NAT (port forwarding cannot work), port already mapped by another device. Want the web UI itself on the internet under your own name and certificate (`stream.mywebsite.com`)? See [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
 
 ### First-run setup
 
@@ -101,7 +103,7 @@ Known limitations are detected and reported in the UI: UPnP disabled (manual for
 | **MoonlightWeb server** | Any machine on Sunshine's LAN (ideally the Sunshine PC) | Native installers per platform |
 | **Web app** | The client browser | Served by the MoonlightWeb server itself |
 | **Sunshine** | The gaming PC | Third-party; installable through MoonlightWeb's wizard |
-| **DNS stack** (PowerDNS + dnsdist + Caddy) | A small Linux VM with a public IP | `deploy/powerdns/` Docker stack — maintained by the author for the shared domain, or self-hosted (see [PowerDNS Stack](10-PowerDNS-Stack.md)) |
+| **DNS stack** (PowerDNS + dnsdist + Caddy) | A small Linux VM with a public IP | `deploy/powerdns/` Docker stack — serves the legacy subdomains until February 2027; a fork can run its own (see [PowerDNS Stack](10-PowerDNS-Stack.md)) |
 
 ---
 

@@ -1,5 +1,12 @@
 # Self-hosted DNS stack for MoonlightWeb (Docker)
 
+> ⚠️ **Retirement.** The per-instance-subdomain mechanism this stack served is
+> retired for new MoonlightWeb installs; only instances that registered a
+> subdomain before the retirement still write here, and the author's shared
+> instance shuts that role down in **February 2027**. The box keeps its other
+> roles (marketing site, stats, update relay) beyond that date, and the stack
+> remains usable by a fork that wants to run the mechanism for its own users.
+
 Three dedicated containers (one process each — the idiomatic Docker layout):
 
 ```
@@ -31,11 +38,11 @@ Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:80
   presentation website** at `https://{MW_DOMAIN}` / `https://www.{MW_DOMAIN}`
   (repo-root `website/`, bind-mounted into the container).
 
-The MoonlightWeb server itself is **not** in this stack. It talks to this DNS
-box over the REST API (`MW_PDNS_URL` + `MW_PDNS_TOKEN`) and creates per-instance
-subdomains `{uniqueId}.{MW_DOMAIN}` at runtime. This stack only bootstraps the
-parent zone, the nameserver glue, the `api.{MW_DOMAIN}` host and the `www`
-record for the presentation site.
+The MoonlightWeb server itself is **not** in this stack. A legacy instance talks
+to this DNS box over the REST API (`MW_PDNS_URL` + `MW_PDNS_TOKEN`) to keep its
+pre-retirement subdomain `{uniqueId}.{MW_DOMAIN}` alive; a fresh install never
+calls it. This stack only bootstraps the parent zone, the nameserver glue, the
+`api.{MW_DOMAIN}` host and the `www` record for the presentation site.
 
 ## Presentation website
 
