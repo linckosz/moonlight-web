@@ -368,6 +368,28 @@ public:
     /// Returns the new key.
     QString rotateLocalKey();
 
+    // ── MW-BIND-v1 host identity key ────────────────────────────────────────
+    //
+    // ECDSA P-256 key pair proving to a paired browser that the DTLS
+    // fingerprint in an SDP offer really is this host's, so that an
+    // introduction server relaying the signaling cannot substitute its own and
+    // sit in the middle of the session. See docs/design/pairing-signature.md.
+    //
+    // Deliberately NOT IdentityManager's key: that one is our client identity
+    // towards Sunshine, a different role with a different lifetime. Conflating
+    // them would mean re-pairing with Sunshine and re-pairing every browser for
+    // the same reasons.
+    //
+    // It must survive updates: losing it invalidates every browser pairing at
+    // once, since a browser has no way to tell a new key from a substituted one.
+
+    /// PEM-encoded P-256 private key; generated on first call and persisted.
+    QByteArray hostSigningKeyPem();
+
+    /// SPKI (DER) public half of hostSigningKeyPem(), for handing to a browser
+    /// at pairing time. Generates the key if it does not exist yet.
+    QByteArray hostSigningPublicKey();
+
     // ── Low-level access (for other one-off settings) ───────────────────────
 
     /// Read the entire settings JSON object.

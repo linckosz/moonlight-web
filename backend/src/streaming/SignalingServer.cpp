@@ -24,6 +24,8 @@ extern "C" {
 #include "Limelight.h"
 }
 #include "MoonlightShim.h"
+#include "SdpFingerprint.h"
+#include "common/PairingCrypto.h"
 #include "network/UPNPClient.h"
 #include "server/NetClassify.h"
 
@@ -235,6 +237,14 @@ void SignalingServer::onNewWsConnection()
         return;
     }
 
+    // MW-BIND-v1 state is per connection: nonces are single-use, and a
+    // reconnect must not be able to reuse the previous exchange's material.
+    m_HelloReceived = false;
+    m_NonceBrowser.clear();
+    m_NonceHost.clear();
+    m_LocalFingerprint.clear();
+    m_PendingOffer.clear();
+
     // Classify the peer once. A tunnel peer (mesh VPN) still counts as
     // "internet" here so STUN stays available: if the tunnel path fails, its
     // srflx address is the fallback. Whether we may show it our internal host
@@ -322,9 +332,76 @@ void SignalingServer::onWsTextMessage(const QString& message)
         qInfo() << "[SignalingServer] WS msg #" << msgCount << "type=" << type;
     }
 
+    if (type == "hello") {
+        // MW-BIND-v1 step 0: the browser announces which key it will sign with
+        // and the nonce our signature must cover.
+        if (m_HelloReceived) {
+            abortSignaling(QStringLiteral("a second hello on the same connection"));
+            return;
+        }
+
+        const QString claimedKeyId = msg["key_id"].toString();
+        const QString expectedKeyId = PairingCrypto::keyId(m_BrowserSpki);
+        if (!m_BrowserSpki.isEmpty() && claimedKeyId != expectedKeyId) {
+            // The browser is offering to sign with a key this session is not
+            // paired with. Refusing here rather than at the answer keeps the
+            // failure legible instead of surfacing as a bad signature.
+            abortSignaling(QStringLiteral("hello announced key %1, session is paired with %2")
+                               .arg(claimedKeyId.left(12), expectedKeyId.left(12)));
+            return;
+        }
+
+        m_NonceBrowser = QByteArray::fromBase64(msg["nonce"].toString().toUtf8());
+        if (!m_BrowserSpki.isEmpty() && m_NonceBrowser.size() < PairingCrypto::MIN_NONCE_BYTES) {
+            abortSignaling(QStringLiteral("hello nonce is too short to be single-use"));
+            return;
+        }
+
+        m_HelloReceived = true;
+        qInfo() << "[SignalingServer] MW-BIND-v1 hello accepted, key=" << claimedKeyId.left(12);
+
+        // The offer may already be waiting on this.
+        sendSignedOffer();
+        return;
+    }
+
     if (type == "sdp") {
         QString sdp = msg["sdp"].toString();
         qInfo() << "[SignalingServer] Received SDP answer, length=" << sdp.size();
+
+        // MW-BIND-v1 step 4 — verify BEFORE the answer reaches the
+        // PeerConnection. Everything below fails closed: a missing signature is
+        // a failure, never a skip.
+        //
+        // The one case that skips verification is a session with no paired key
+        // at all, which happens only for a browser paired before this mechanism
+        // shipped. That is server-side state an attacker cannot influence — they
+        // cannot make us forget a key — so it is not a downgrade path. It also
+        // costs them nothing to exploit, since holding such a session's cookie
+        // already grants a stream.
+        if (!m_BrowserSpki.isEmpty()) {
+            const QString remoteFingerprint = SdpFingerprint::extract(sdp);
+            if (remoteFingerprint.isEmpty()) {
+                abortSignaling(
+                    QStringLiteral("the SDP answer does not commit to one sha-256 fingerprint"));
+                return;
+            }
+
+            const QByteArray sig = QByteArray::fromBase64(msg["sig"].toString().toUtf8());
+            if (sig.isEmpty()) {
+                abortSignaling(QStringLiteral("the SDP answer carries no signature"));
+                return;
+            }
+
+            const QByteArray signed_ = PairingCrypto::browserDigestInput(
+                m_HostId, m_NonceHost, m_LocalFingerprint, remoteFingerprint);
+            if (!PairingCrypto::verify(m_BrowserSpki, signed_, sig)) {
+                abortSignaling(QStringLiteral("the SDP answer's signature does not verify"));
+                return;
+            }
+
+            qInfo() << "[SignalingServer] MW-BIND-v1: answer fingerprint verified";
+        }
 
         // Feed the answer into libdatachannel PeerConnection
         if (!m_Relay->setRemoteDescription(sdp.toStdString())) {
@@ -756,20 +833,111 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
 
 // --- DataChannelRelay signals forwarded to WS client ---
 
-void SignalingServer::onLocalSdp(const std::string& sdp)
+// ── MW-BIND-v1 ─────────────────────────────────────────────────────────────────
+// docs/design/pairing-signature.md. Two signatures, each verifiable before its
+// recipient creates any DTLS state, so that an introduction server relaying this
+// exchange cannot swap the fingerprints and end up in the middle of a session
+// that carries keyboard and mouse input.
+
+void SignalingServer::setPairingIdentity(const QString& hostId, const QByteArray& hostKeyPem,
+                                         const QByteArray& browserSpki)
 {
+    m_HostId = hostId;
+    m_HostKeyPem = hostKeyPem;
+    m_BrowserSpki = browserSpki;
+}
+
+void SignalingServer::abortSignaling(const QString& reason)
+{
+    qCritical() << "[SignalingServer] MW-BIND-v1 refused the connection:" << reason;
+
+    // Close before anything reaches the PeerConnection. The whole point of
+    // verifying ahead of setRemoteDescription is that on this path no DTLS
+    // state was ever created, so there is nothing to tear down.
+    if (m_WsClient && m_WsClient->isValid()) {
+        m_WsClient->close(QWebSocketProtocol::CloseCodePolicyViolated,
+                          QStringLiteral("pairing verification failed"));
+    }
+    emit sessionEnded();
+}
+
+void SignalingServer::sendSignedOffer()
+{
+    if (m_PendingOffer.empty()) return;
     if (!m_WsClient || !m_WsClient->isValid()) {
         qWarning() << "[SignalingServer] No WS client to send SDP offer";
         return;
     }
 
-    qInfo() << "[SignalingServer] Forwarding SDP offer to browser, length=" << sdp.size();
-
     QJsonObject msg;
     msg["type"] = "sdp";
-    msg["sdp"] = QString::fromStdString(sdp);
+    msg["sdp"] = QString::fromStdString(m_PendingOffer);
+
+    if (!m_BrowserSpki.isEmpty()) {
+        m_NonceHost = PairingCrypto::generateNonce();
+        if (m_NonceHost.isEmpty()) {
+            abortSignaling(QStringLiteral("no secure random available for the host nonce"));
+            return;
+        }
+
+        const QByteArray toSign = PairingCrypto::hostDigestInput(
+            m_HostId, PairingCrypto::keyId(m_BrowserSpki), m_NonceBrowser, m_LocalFingerprint);
+        const QByteArray sig = PairingCrypto::sign(m_HostKeyPem, toSign);
+        if (sig.isEmpty()) {
+            // Sending the offer unsigned would train the browser to accept
+            // unsigned offers, which is exactly the downgrade this protocol
+            // exists to prevent. Fail instead.
+            abortSignaling(QStringLiteral("could not sign the SDP offer with the host key"));
+            return;
+        }
+
+        msg["protocol"] = QString::fromLatin1(PairingCrypto::PROTOCOL);
+        msg["host_id"] = m_HostId;
+        msg["nonce"] = QString::fromLatin1(m_NonceHost.toBase64());
+        msg["sig"] = QString::fromLatin1(sig.toBase64());
+    }
+
+    qInfo() << "[SignalingServer] Forwarding SDP offer to browser, length=" << m_PendingOffer.size()
+            << "signed=" << !m_BrowserSpki.isEmpty();
+
     QJsonDocument doc(msg);
     m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
+    m_PendingOffer.clear();
+}
+
+void SignalingServer::onLocalSdp(const std::string& sdp)
+{
+    m_PendingOffer = sdp;
+
+    // Extract our own fingerprint from the offer we are about to make. Both
+    // signatures cover it, so an SDP we cannot read a single sha-256 fingerprint
+    // out of is one we must not send.
+    m_LocalFingerprint = SdpFingerprint::extract(QString::fromStdString(sdp));
+    if (!m_BrowserSpki.isEmpty() && m_LocalFingerprint.isEmpty()) {
+        abortSignaling(QStringLiteral("our own SDP offer carries no single sha-256 fingerprint"));
+        return;
+    }
+
+    // The host's signature covers the browser's nonce, so the offer waits for
+    // the hello that carries it. This is the ordering that lets the browser
+    // verify us *before* it touches setRemoteDescription — see §4 of the design.
+    // Without a paired key there is nothing to sign and nothing to wait for.
+    if (!m_BrowserSpki.isEmpty() && !m_HelloReceived) {
+        qInfo() << "[SignalingServer] Holding the SDP offer until the browser's hello arrives";
+        // Never hold forever. A browser paired with this session is running a
+        // frontend that speaks MW-BIND-v1, so the hello should be immediate; if
+        // it is not — a page cached from before the upgrade, say — fail with a
+        // message instead of leaving the user watching a spinner.
+        QTimer::singleShot(kHelloTimeoutMs, this, [this]() {
+            if (m_HelloReceived || m_PendingOffer.empty()) return;
+            if (!m_WsClient || !m_WsClient->isValid()) return;
+            abortSignaling(QStringLiteral(
+                "the browser never announced its pairing key — reload the page to update it"));
+        });
+        return;
+    }
+
+    sendSignedOffer();
 }
 
 void SignalingServer::onLocalIceCandidate(const std::string& candidate, const std::string& mid)

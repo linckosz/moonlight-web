@@ -72,6 +72,7 @@
 #include "server/routes/ShareRoutes.h"
 #include "server/routes/SystemRoutes.h"
 #include "common/Logger.h"
+#include "common/PairingCrypto.h"
 #include "common/CrashHandler.h"
 #include "common/DesktopSession.h"
 #include "backend/ComputerManager.h"
@@ -1847,7 +1848,7 @@ int main(int argc, char* argv[])
         return HttpResponse::json(obj);
     });
 
-    registerAuthRoutes(server, authManager, geoIpService);
+    registerAuthRoutes(server, authManager, geoIpService, appSettings);
 
     server.router()->get("/api/server/status", [&server](const HttpRequest&) {
         QJsonObject obj;
@@ -2483,6 +2484,27 @@ int main(int argc, char* argv[])
             // user who declined keeps streaming — same-subnet peers connect on
             // the host candidate, the router is never in the path.
             cfg["upnpEnabled"] = effectiveUpnpEnabled && appSettings.internetAccessEnabled();
+
+            // MW-BIND-v1 (docs/design/pairing-signature.md): the worker signs the
+            // DTLS fingerprint of its SDP offer, and verifies the browser's, so
+            // that whoever relays the signaling cannot substitute either one and
+            // land in the middle of a session that carries keyboard input.
+            //
+            // The private key travels on the worker's stdin, never on its command
+            // line — a command line is world-readable in the process list.
+            //
+            // An empty browser key (localhost, which has no session row, or a
+            // browser paired before this shipped) leaves the checks off. That is
+            // server-side state no attacker can reach in to change, and neither
+            // case has a relay in the path today.
+            {
+                const QByteArray hostKey = appSettings.hostSigningKeyPem();
+                const QByteArray browserKey = authManager.sessionPairingKey(sessionToken);
+                cfg["mwBindHostId"] =
+                    PairingCrypto::keyId(appSettings.hostSigningPublicKey());
+                cfg["mwBindHostKey"] = QString::fromLatin1(hostKey.toBase64());
+                cfg["mwBindBrowserKey"] = QString::fromLatin1(browserKey.toBase64());
+            }
             cfg["internalTransport"] = internalTransport;
             cfg["transportMode"] = chainMode;
             cfg["stunServer"] = stunServer;

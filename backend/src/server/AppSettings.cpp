@@ -17,6 +17,7 @@
 
 #include "AppSettings.h"
 #include "common/Logger.h"
+#include "common/PairingCrypto.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -725,4 +726,36 @@ QString AppSettings::rotateLocalKey()
     obj["local_key"] = key;
     writeAll(obj);
     return key;
+}
+
+// ── MW-BIND-v1 host identity key ────────────────────────────────────────────────
+
+QByteArray AppSettings::hostSigningKeyPem()
+{
+    QJsonObject obj = readAll();
+    const QString stored = obj.value("host_signing_key").toString();
+    if (!stored.isEmpty()) {
+        const QByteArray pem = QByteArray::fromBase64(stored.toUtf8());
+        // A key we can no longer parse is worse than no key: every browser would
+        // fail to verify a host that looks live. Regenerate and let the pairings
+        // rebuild rather than serving signatures nobody can check.
+        if (!PairingCrypto::publicKeySpkiFromPrivatePem(pem).isEmpty()) return pem;
+        qWarning() << "[AppSettings] Stored host signing key is unusable — regenerating."
+                   << "Every paired browser will have to pair again.";
+    }
+
+    const QByteArray pem = PairingCrypto::generatePrivateKeyPem();
+    if (pem.isEmpty()) {
+        qCritical() << "[AppSettings] Failed to generate the host signing key";
+        return {};
+    }
+
+    obj["host_signing_key"] = QString::fromLatin1(pem.toBase64());
+    writeAll(obj);
+    return pem;
+}
+
+QByteArray AppSettings::hostSigningPublicKey()
+{
+    return PairingCrypto::publicKeySpkiFromPrivatePem(hostSigningKeyPem());
 }

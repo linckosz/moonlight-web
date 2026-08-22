@@ -20,6 +20,10 @@
 class HttpServer;
 class AuthManager;
 class GeoIpService;
+class AppSettings;
 
-/// Register auth / admin-PIN / certificate-token routes on the server's router.
-void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpService& geoIpService);
+/// Register auth / admin-PIN / certificate-token / pairing-key routes on the
+/// server's router. @p settings is needed for the MW-BIND-v1 host identity key
+/// handed to a browser when it pairs.
+void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpService& geoIpService,
+                        AppSettings& settings);

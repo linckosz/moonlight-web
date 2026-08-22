@@ -19,6 +19,7 @@ void run_connection_guard_tests();
 void run_request_guard_tests();
 void run_api_csrf_tests();
 void run_share_manager_tests();
+void run_pairing_binding_tests();
 
 int main(int argc, char** argv)
 {
@@ -32,6 +33,7 @@ int main(int argc, char** argv)
     run_request_guard_tests();
     run_api_csrf_tests();
     run_share_manager_tests();
+    run_pairing_binding_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");

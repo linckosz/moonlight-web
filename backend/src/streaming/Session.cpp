@@ -601,6 +601,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
         signaling->setClientIsLocal(m_ClientIsLocal);
+        signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
@@ -670,6 +671,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
         signaling->setClientIsLocal(m_ClientIsLocal);
+        signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.

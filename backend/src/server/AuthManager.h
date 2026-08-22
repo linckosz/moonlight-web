@@ -52,10 +52,21 @@ struct SessionInfo
                             // after EPHEMERAL_SESSION_TTL_SECS of inactivity
                             // instead of the usual 90 days
 
+    // MW-BIND-v1: the SPKI (DER) public key this browser signs its half of the
+    // WebRTC handshake with, so a relaying introduction server cannot swap the
+    // DTLS fingerprints and put itself in the middle of the stream.
+    //
+    // It lives here, inside the session, on purpose: a pairing *is* a session,
+    // so revoking the session in the admin page revokes the key with it, and
+    // there is no second lifetime to keep in sync. Public key — nothing here is
+    // secret, and it never leaves the machine anyway.
+    QByteArray pairingKey;
+
     QJsonObject toJson() const
     {
         QJsonObject obj;
         obj["token"] = token;
+        if (!pairingKey.isEmpty()) obj["pairing_key"] = QString::fromLatin1(pairingKey.toBase64());
         obj["ip"] = ip;
         obj["machine_name"] = machineName;
         obj["city"] = city;
@@ -174,6 +185,26 @@ public:
     /** Bump a session's lastSeen on activity (sliding expiration). Takes the raw
      *  cookie token. No-op for unknown/empty tokens. */
     void touchSession(const QString& token);
+
+    // ── MW-BIND-v1 pairing keys ────────────────────────────────────────────
+    // See docs/design/pairing-signature.md. The key is bound to a session, so
+    // destroySession() revokes it and no separate revocation path exists.
+
+    /** Bind @p spkiDer (a browser's P-256 public key, DER) to the session the
+     *  raw cookie @p token belongs to.
+     *
+     *  Returns false for an unknown session, an unparseable key, or an attempt
+     *  to replace a key that is already bound to a *different* value. That last
+     *  rule is what keeps a stolen cookie from being upgraded into a pairing:
+     *  whoever holds the cookie could otherwise swap in their own key and then
+     *  satisfy every signature check that follows. Re-binding the same key is
+     *  allowed and idempotent, so a browser replaying its registration after a
+     *  reconnect is not treated as an attack. */
+    bool bindSessionKey(const QString& token, const QByteArray& spkiDer);
+
+    /** The SPKI public key bound to the session a raw cookie @p token belongs
+     *  to, or empty when there is none (or no such session). */
+    QByteArray sessionPairingKey(const QString& token) const;
     /** Revoke a session by its opaque id (the value exposed in sessions()/toJson,
      *  i.e. the token hash), NOT the raw cookie token. */
     void destroySession(const QString& token);
