@@ -45,9 +45,10 @@ backend/certs/
 # Build cache
 backend/.cache/
 
-# Docs: keep only wiki and screenshots tracked
+# Docs: keep only wiki, design docs and screenshots tracked
 docs/*
 !docs/wiki
+!docs/design
 !docs/screenshots
 
 # Local benchmark prompt documents (never committed)
