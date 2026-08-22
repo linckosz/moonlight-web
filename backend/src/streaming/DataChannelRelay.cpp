@@ -622,36 +622,19 @@ void DataChannelRelay::createDataChannels()
 
     qInfo() << "[DataChannelRelay] Creating DataChannels";
 
-    // --- Video DataChannel (server->browser, H.264 NAL units) ---
-    // Ordered + partial reliability (3 retransmits): an HEVC keyframe is
-    // ~11 chunks ≈ 140 UDP packets, so with 0 retransmits a single packet
-    // loss kills the whole frame and forces an IDR recovery cycle.
-    //
-    // Ordered is required for video: frames reference their predecessor, so
-    // delivery order IS decode order. With unordered delivery, a retransmitted
-    // chunk made frame N complete AFTER frame N+1 — the frontend saw a frameId
-    // gap (false loss), invalidated the reference and requested an IDR on every
-    // reorder. Ordered lets SCTP hold N+1 the ~RTT the retransmit takes; frames
-    // abandoned after 3 retransmits are skipped via FORWARD-TSN and surface as
-    // a real gap.
-    rtc::DataChannelInit videoConfig;
-    videoConfig.reliability.unordered = false;
-    videoConfig.reliability.maxRetransmits = 3; // Must match frontend negotiated channel config
-    videoConfig.negotiated = true;
-    videoConfig.id = 0;
-
-    m_VideoDc = m_Pc->createDataChannel("video", videoConfig);
-    if (m_VideoDc) {
-        m_VideoDc->onOpen([this]() {
-            qInfo() << "[DataChannelRelay] Video DataChannel open";
-            // If a keyframe arrived before the DC was ready, send it now.
-            // Must marshal to main thread because sendFragmented() may access
-            // Qt objects owned by the main thread.
-            QMetaObject::invokeMethod(
-                this, [this]() { sendBufferedKeyframe(); }, Qt::QueuedConnection);
-        });
-        m_VideoDc->onClosed([this]() { qInfo() << "[DataChannelRelay] Video DataChannel closed"; });
-    }
+    // ORDER IS LOAD-BEARING: every addTrack() MUST come before the first
+    // createDataChannel(). libdatachannel generates the offer on its own, and
+    // createDataChannel() is what triggers it — synchronously, as soon as the
+    // signaling state is Stable (peerconnection.cpp, createDataChannel);
+    // addTrack() triggers nothing. Creating the video DC first therefore
+    // published an offer with no m=audio section at all, and the audio track
+    // could only reach the browser through a *second* offer, renegotiated once
+    // the answer put the signaling state back to Stable. That offer raced the
+    // frontend closing the signaling WS as soon as the DataChannels opened: it
+    // won on a fast LAN (audio fine) and lost behind a slow/proxied WS (audio
+    // silent for the whole session, with no way for the user to recover it).
+    // See issue #11. MediaTrackRelay::createTracksAndChannels() has the same
+    // constraint and already respects it.
 
     // --- Audio track (server->browser, Opus over RTP) ---
     // Native RTP Opus track on the SAME PeerConnection as the video DataChannel.
@@ -684,6 +667,39 @@ void DataChannelRelay::createDataChannels()
         } else {
             qWarning() << "[DataChannelRelay] Failed to create audio track";
         }
+    }
+
+    // --- Video DataChannel (server->browser, H.264 NAL units) ---
+    // NOTE: this call is what publishes the SDP offer (see the ordering note
+    // above) — nothing that must appear in it may be added after this point.
+    // Ordered + partial reliability (3 retransmits): an HEVC keyframe is
+    // ~11 chunks ≈ 140 UDP packets, so with 0 retransmits a single packet
+    // loss kills the whole frame and forces an IDR recovery cycle.
+    //
+    // Ordered is required for video: frames reference their predecessor, so
+    // delivery order IS decode order. With unordered delivery, a retransmitted
+    // chunk made frame N complete AFTER frame N+1 — the frontend saw a frameId
+    // gap (false loss), invalidated the reference and requested an IDR on every
+    // reorder. Ordered lets SCTP hold N+1 the ~RTT the retransmit takes; frames
+    // abandoned after 3 retransmits are skipped via FORWARD-TSN and surface as
+    // a real gap.
+    rtc::DataChannelInit videoConfig;
+    videoConfig.reliability.unordered = false;
+    videoConfig.reliability.maxRetransmits = 3; // Must match frontend negotiated channel config
+    videoConfig.negotiated = true;
+    videoConfig.id = 0;
+
+    m_VideoDc = m_Pc->createDataChannel("video", videoConfig);
+    if (m_VideoDc) {
+        m_VideoDc->onOpen([this]() {
+            qInfo() << "[DataChannelRelay] Video DataChannel open";
+            // If a keyframe arrived before the DC was ready, send it now.
+            // Must marshal to main thread because sendFragmented() may access
+            // Qt objects owned by the main thread.
+            QMetaObject::invokeMethod(
+                this, [this]() { sendBufferedKeyframe(); }, Qt::QueuedConnection);
+        });
+        m_VideoDc->onClosed([this]() { qInfo() << "[DataChannelRelay] Video DataChannel closed"; });
     }
 
     // --- Input DataChannel (bidirectional, JSON text) ---
@@ -735,6 +751,18 @@ void DataChannelRelay::createDataChannels()
                     this, [this, text]() { onInputMessage(text); }, Qt::QueuedConnection);
             }
         });
+    }
+
+    // Guard on the ordering invariant above: everything we want negotiated is
+    // created by now, so the published offer must already describe all of it.
+    // A leftover pending negotiation means something was added after the offer
+    // went out and will only reach the browser through a racy renegotiation —
+    // exactly the issue #11 failure. Fail loudly in the log instead of shipping
+    // an intermittent silence.
+    if (m_Pc->negotiationNeeded()) {
+        qWarning() << "[DataChannelRelay] BUG: negotiation still pending after setup —"
+                   << "a track/channel was created after the offer was published;"
+                   << "audio or video may be missing from the SDP (see issue #11)";
     }
 
     qInfo() << "[DataChannelRelay] Channels created (video=DC#0, audio=RTP, input=DC#2)";
