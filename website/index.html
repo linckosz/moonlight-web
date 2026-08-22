@@ -71,7 +71,7 @@
     "GPU Video Enhancement: SGSRv1 and FSR1 upscaling in WebGPU",
     "Keyboard, mouse, touch trackpad, Xbox and PlayStation gamepads with rumble",
     "mDNS auto-discovery of Sunshine hosts, PIN pairing",
-    "One-click Internet access: personal sub-domain, free TLS, UPnP",
+    "Direct peer-to-peer WebRTC streams; opt-in Internet access",
     "Session sharing: invite up to 3 players into one running game, local co-op from anywhere"
   ]
 }
@@ -588,7 +588,7 @@
         <h3 data-i18n="card5.h3">Full input, full rumble</h3><p data-i18n="card5.p">Keyboard, pointer‑lock mouse, touch trackpad, virtual keyboard — and Xbox &amp; PlayStation controllers with rumble.</p>
       </div>
       <div class="card cyb reveal"><div class="ico">🔎</div><h3 data-i18n="card6.h3">Zero‑config discovery</h3><p data-i18n="card6.p">Sunshine hosts appear automatically via mDNS. PIN pairing, multi‑host, persistent sessions.</p></div>
-      <div class="card cyb reveal"><div class="ico">🌍</div><h3 data-i18n="card7.h3">One‑click Internet play</h3><p data-i18n="card7.p">Auto sub‑domain, free TLS certificate and UPnP port mapping. Share a link, play from anywhere.</p></div>
+      <div class="card cyb reveal"><div class="ico">🌍</div><h3 data-i18n="card7.h3">Peer‑to‑peer by design</h3><p data-i18n="card7.p">Streams go straight from your PC to your browser — no cloud in the middle. A redesigned remote entry link is on its way.</p></div>
       <div class="card cyb reveal"><div class="ico">🛟</div><h3 data-i18n="card8.h3">Never drops you</h3><p data-i18n="card8.p">Transport auto‑fallback (UDP → TCP → WSS) rides through hostile networks and strict firewalls.</p></div>
       <div class="card cyb reveal"><div class="ico">👥</div><h3 data-i18n="card9.h3">Up to 4‑player co‑op</h3><p data-i18n="card9.p">Invite up to three friends into the game already running on your PC — four players in one session. One save, one screen each: they play from their own device, with their own gamepad, as if they were sitting next to you.</p></div>
     </div>
@@ -696,10 +696,10 @@
       <div class="txt reveal">
         <span class="kicker" data-i18n="s5.kicker">05 · Go global</span>
         <h3 data-i18n-html="s5.h3">LAN party today.<br>Hotel room tomorrow.</h3>
-        <p data-i18n="s5.p">Tick one box and your rig goes online: MoonlightWeb registers a personal sub‑domain, issues a free TLS certificate and maps the ports via UPnP. No dynamic‑DNS accounts, no reverse‑proxy homework.</p>
+        <p data-i18n="s5.p">Play away from home without handing your PC to a cloud: the stream is a direct, peer‑to‑peer WebRTC connection between your browser and your rig. A redesigned remote entry link — no public sub‑domain, no exposed web ports — is on its way.</p>
         <ul>
-          <li data-i18n-html="s5.li1"><strong>https://you.moonlightweb.top</strong> — your own address, automatically</li>
-          <li data-i18n-html="s5.li2"><strong>Free auto‑renewed TLS</strong> — padlock included</li>
+          <li data-i18n-html="s5.li1"><strong>Direct peer‑to‑peer</strong> — your browser connects straight to your PC</li>
+          <li data-i18n-html="s5.li2"><strong>Nothing published</strong> — no public DNS record, web ports stay closed</li>
           <li data-i18n-html="s5.li3"><strong>Self‑hosted</strong> — your games never touch anyone's cloud</li>
         </ul>
       </div>
@@ -1056,8 +1056,8 @@
     'card5.p':'Clavier, souris en pointer‑lock, trackpad tactile, clavier virtuel, et manettes Xbox & PlayStation avec vibrations.',
     'card6.h3':'Découverte sans configuration',
     'card6.p':'Les hôtes Sunshine apparaissent automatiquement via mDNS. Appairage par PIN, multi‑hôtes, sessions persistantes.',
-    'card7.h3':'Jeu en ligne en un clic',
-    'card7.p':'Sous‑domaine auto, certificat TLS gratuit et redirection de ports UPnP. Partagez un lien, jouez de partout.',
+    'card7.h3':'Pair‑à‑pair par conception',
+    'card7.p':'Le flux va droit de votre PC à votre navigateur — aucun cloud au milieu. Un lien d’accès distant repensé arrive.',
     'card8.h3':'Ne vous lâche jamais',
     'card8.p':'Bascule de transport automatique (UDP → TCP → WSS) qui traverse les réseaux hostiles et les pare‑feux stricts.',
     'card9.h3':'Le multi jusqu’à 4 joueurs',
@@ -1090,9 +1090,9 @@
     's4.li3':'<strong>Choix du codec</strong> — les options que votre navigateur ne peut pas décoder sont simplement grisées',
     's4.cap':'Réglages de streaming & options avancées',
     's5.kicker':'05 · Passer en ligne', 's5.h3':'LAN party aujourd’hui.<br>Chambre d’hôtel demain.',
-    's5.p':'Cochez une case et votre PC passe en ligne : MoonlightWeb enregistre un sous‑domaine personnel, émet un certificat TLS gratuit et redirige les ports via UPnP. Aucun compte DNS dynamique, aucun reverse‑proxy à configurer.',
-    's5.li1':'<strong>https://vous.moonlightweb.top</strong> — votre propre adresse, automatiquement',
-    's5.li2':'<strong>TLS gratuit auto‑renouvelé</strong> — cadenas inclus',
+    's5.p':'Jouez loin de chez vous sans confier votre PC à un cloud : le flux est une connexion WebRTC directe, pair‑à‑pair, entre votre navigateur et votre machine. Un lien d’accès distant repensé — sans sous‑domaine public, sans port web exposé — arrive.',
+    's5.li1':'<strong>Pair‑à‑pair direct</strong> — votre navigateur se connecte droit à votre PC',
+    's5.li2':'<strong>Rien de publié</strong> — aucun enregistrement DNS public, ports web fermés',
     's5.li3':'<strong>Auto‑hébergé</strong> — vos jeux ne touchent jamais le cloud de qui que ce soit',
     's5.cap':'ADMIN — accès Internet activé en un clic',
 
@@ -1152,8 +1152,8 @@
     'card5.p':'键盘、指针锁定鼠标、触摸触控板、虚拟键盘，以及带震动的 Xbox 和 PlayStation 手柄。',
     'card6.h3':'零配置发现',
     'card6.p':'Sunshine 主机通过 mDNS 自动出现。PIN 码配对、多主机、持久会话。',
-    'card7.h3':'一键联网畅玩',
-    'card7.p':'自动子域名、免费 TLS 证书和 UPnP 端口映射。分享一个链接，随处畅玩。',
+    'card7.h3':'天生点对点',
+    'card7.p':'串流从你的 PC 直达浏览器——中间没有任何云。重新设计的远程接入链接即将推出。',
     'card8.h3':'从不掉线',
     'card8.p':'传输自动回退（UDP → TCP → WSS），穿越恶劣网络和严格防火墙。',
     'card9.h3':'最多 4 人同乐',
@@ -1186,9 +1186,9 @@
     's4.li3':'<strong>编解码器选择</strong> — 浏览器无法解码的选项会自动灰显',
     's4.cap':'串流设置与高级选项',
     's5.kicker':'05 · 走向全球', 's5.h3':'今天局域网联机。<br>明天酒店房间。',
-    's5.p':'勾选一个复选框，你的主机即刻上线：MoonlightWeb 注册一个专属子域名、签发免费 TLS 证书，并通过 UPnP 映射端口。无需动态 DNS 账户，也无需配置反向代理。',
-    's5.li1':'<strong>https://you.moonlightweb.top</strong> — 你的专属地址，自动生成',
-    's5.li2':'<strong>免费自动续期的 TLS</strong> — 附带安全锁',
+    's5.p':'远离家门也能畅玩，而无需把 PC 交给云端：串流是浏览器与主机之间点对点的 WebRTC 直连。重新设计的远程接入链接——没有公开子域名、不暴露 Web 端口——即将推出。',
+    's5.li1':'<strong>点对点直连</strong> — 浏览器直接连接你的 PC',
+    's5.li2':'<strong>不公开任何信息</strong> — 无公开 DNS 记录，Web 端口保持关闭',
     's5.li3':'<strong>自托管</strong> — 你的游戏从不经过任何人的云',
     's5.cap':'管理页 — 一键启用互联网访问',
 

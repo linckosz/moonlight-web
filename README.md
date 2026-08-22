@@ -31,7 +31,7 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 - ⌨️🖱️🎮 **Full input**: keyboard, mouse (pointer‑lock), touch trackpad, **Xbox/PS gamepads** with rumble.
 - 🔎 **Auto‑discovery** of Sunshine hosts on the LAN (mDNS) + manual IP add.
 - 🔐 Secure **pairing**, multi‑host, persistent sessions.
-- 🌍 **Internet access** in one click: auto sub‑domain + TLS certificate.
+- 🌍 **Internet access** opt‑in: remote streaming sessions over WebRTC. A new remote entry link is in the works; installs that already hold a sub‑domain keep it until February 2027.
 - 🪄 **Video Enhancement** (bonus): GPU upscaling & sharpening in the browser.
 - 👥 **Session sharing**: invite up to 3 people into your stream, as viewer, gamepad player, or full control.
 
@@ -50,7 +50,7 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 ## How it works
 
 1. **Run the server** on any machine on the same LAN as Sunshine (the Sunshine PC itself is ideal, but not required).
-2. **Open a browser** at `https://localhost` (or the PC's LAN IP, or your domain if Internet access is on).
+2. **Open a browser** at `https://localhost` (or the PC's LAN IP — or your own domain if you [configured one](#ssl--your-own-domain--certificate)).
 3. The server **discovers your Sunshine hosts** (mDNS) — or add an IP manually.
 4. **Pair** the host (PIN), pick an app, **stream**.
 
@@ -170,9 +170,9 @@ Double‑click it — the wizard (English / Français / 简体中文) does every
 | Step | What it does |
 |---|---|
 | **Install** | App + Start‑Menu/Desktop shortcuts, firewall rule, optional **start at logon**. |
-| **Internet link** | Opt‑in (unchecked by default): public sub‑domain + free TLS certificate. |
+| **Internet link** | Opt‑in (unchecked by default): allows remote streaming sessions (per‑session router port via UPnP). |
 | **Sunshine** | Detected, or **installed silently** for you (official LizardByte installer), then **paired automatically** with the credentials you enter. |
-| **Checklist** | Live progress (Sunshine → pairing → DNS record), then opens the admin page. |
+| **Checklist** | Live progress (Sunshine → pairing → Internet link), then opens the admin page. |
 
 **Updates** reuse the same installer: a single *Update* confirmation page, settings, Internet link and pairing kept. In‑app one‑click update works too (no UAC prompt — an elevated scheduled task is registered at install).\
 **Service (optional):** `backend/packaging/windows/install-service.bat` installs a session‑0 service via NSSM (server available before any user logs in).
@@ -261,7 +261,7 @@ caveats).
 | | |
 |---|---|
 | **Tags** | `latest` · `0.2.4` · `0.2` · `sha-<commit>`. Release tags only — no `edge`, no nightly, so `latest` can never be work in progress. |
-| **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (redirect + ACME challenge). WebRTC media takes **48010‑48014/udp** when UPnP maps it, an ephemeral UDP port otherwise. Sunshine is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
+| **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (HTTP→HTTPS redirect). WebRTC media takes **48010‑48014/udp** when UPnP maps it, an ephemeral UDP port otherwise. Sunshine is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
 | **Volume** | `/data` — settings, TLS material, paired hosts and the **client identity**. Losing it un‑pairs every host. |
 | **Env** | `MW_HTTPS_PORT` · `MW_HTTP_PORT` · `MW_UPNP` · `TZ` |
 | **GPU** | **None required.** The server never decodes or re‑encodes: Sunshine encodes on its GPU, the browser decodes on the viewer's. No `/dev/dri`, no NVIDIA runtime, no VA‑API. Gamepad/keyboard/mouse arrive over the data channel — no `/dev/input`, no privileged container. |
@@ -282,8 +282,8 @@ the Compose project, and troubleshooting: **[`docker/README.md`](docker/README.m
 1. The server starts and shows a **tray icon**; a browser opens on the setup or admin page.
 2. Open **`https://localhost`** in a recent Chrome / Edge / Safari.
    - Default ports: **HTTP :80** (redirected) and **HTTPS :443**.
-   - Until the Internet link is enabled, the cert is **self‑signed** — accept the browser warning (normal on LAN).
-3. **Pair** your host (PIN shown by Sunshine) and stream. From another LAN device: `https://<PC-LAN-IP>`; from anywhere: your sub‑domain, once [Internet access](#internet-access) is on.
+   - The certificate is **self‑signed** — accept the browser warning (normal on LAN).
+3. **Pair** your host (PIN shown by Sunshine) and stream. From another LAN device: `https://<PC-LAN-IP>`. For access from outside the LAN, see [Internet access](#internet-access).
 
 Prefer to build it yourself? See [Fork & build](#fork--build).
 
@@ -316,12 +316,16 @@ It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transpo
 
 ### Internet access
 
-Enabling **Internet Access** makes the server automatically:
+**Internet Access is an opt‑in consent, off by default.** While it is on, the server:
 
-1. **Detect your public IP** (STUN, HTTPS fallback).
-2. **Create a sub‑domain** `「id」.moonlightweb.top` via the PowerDNS API (A record + TXT ownership token).
-3. **Obtain a TLS certificate** automatically (ACME DNS‑01).
-4. **Open ports** via **UPnP** (TCP 80/443 + UDP 47999).
+1. **Detects your public IP** (STUN, HTTPS fallback) and reports CGNAT/double‑NAT when it sees one.
+2. **Asks your router (UPnP) to open a streaming port during each session**, and closes it when the session ends. Whoever connects reaches this PC directly — each side of a peer‑to‑peer connection sees the other's public IP address.
+
+Nothing else is opened or published: **no public DNS record, no certificate, ports 80/443 stay closed**. Turning the consent off closes the mappings immediately.
+
+**Remote entry link.** A new way to reach your PC from anywhere — without exposing the web interface — is in development; it will use an outgoing connection from your PC to an introduction server, and will be announced in the release notes.
+
+**Existing installs (≤ v0.2.4)** that enabled Internet Access keep their `「id」.moonlightweb.top` sub‑domain, its certificate renewals and their 80/443 forwards, unchanged, **until the shared DNS service shuts down in February 2027**. The admin page shows this notice.
 
 <div align="center">
 
@@ -329,7 +333,7 @@ Enabling **Internet Access** makes the server automatically:
 
 </div>
 
-**Possible limitations:** UPnP disabled (forward TCP 80/443 + UDP 47999 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), port already mapped, or restrictive corporate networks (see [SSL](#ssl--your-own-domain--certificate)).
+**Possible limitations:** UPnP disabled (forward the media ports 48010‑48014 manually), CGNAT/double‑NAT (detected and reported — port forwarding won't work), or a port already mapped by another device.
 
 ---
 
@@ -345,15 +349,10 @@ Enabling **Internet Access** makes the server automatically:
  │  Input : kbd/mouse/gamepad│◄════►│  │  moonlight-common-c    │  │ RTP  │  GPU encoder     │
  │  Video Enhancement (GPU)  │ (WSS │  │  RTSP/RTP/ENet → Relay │  │◄════►│  (NVENC/AMF/QSV) │
  └───────────────────────────┘ fall)└──────────────────────────────┘ UDP  └──────────────────┘
-        ▲ DNS (sub-domain) + TLS
- ┌──────┴────────────────────────────────────────────┐
- │  Self-hosted DNS stack (Docker, separate machine) │  ← maintained by the author,
- │  dnsdist :53 · PowerDNS (API) · Caddy :80/:443    │    or host your own
- └───────────────────────────────────────────────────┘
 ```
 
 The server is a **web server** (frontend + REST API), a **proxy** to Sunshine's API, and a **streaming bridge** embedding `moonlight-common-c`. Video (H.264/HEVC/AV1) and Opus audio are relayed over **WebRTC** (DataChannels + RTP tracks), with **WSS** fallback.\
-Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. The **DNS stack is decoupled** and can run on a dedicated machine — that's the server your tips help keep alive, but you can host your own (see [Fork & build](#fork--build)).
+Input is encrypted (AES‑128‑GCM) and sent to Sunshine over the **ENet** control channel. A decoupled **DNS stack** ([`deploy/powerdns/`](deploy/powerdns/)) still serves the sub‑domains of existing installs until February 2027 — that's the server your tips help keep alive.
 
 ---
 
@@ -378,7 +377,7 @@ Set `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` i
 
 ### SSL — your own domain & certificate
 
-By default Moonlight‑Web obtains a free cert automatically via **ZeroSSL** (or Let's Encrypt), with auto‑renewal. Some restrictive corporate networks distrust certain CAs — in that case, use your own domain and certificate in `settings.json`:
+On the LAN the server serves a **self‑signed** certificate. To reach it under a real name with a real certificate — including from outside your network — bring your own domain and certificate in `settings.json`:
 
 ```json
 {
@@ -389,7 +388,7 @@ By default Moonlight‑Web obtains a free cert automatically via **ZeroSSL** (or
 ```
 
 The cert's **CN must match** `domain`. A cert managed this way is **not** auto‑renewed — its lifecycle is yours.\
-Point your DNS (`A`/`CNAME`) to your IP.
+Point your DNS (`A`/`CNAME`) to your IP, and **forward TCP 443 on your router yourself** to this machine: the server does not open its web ports for you.
 
 ---
 
@@ -420,7 +419,7 @@ cmd //c backend/build_msvc.bat
 **Qt Creator** kit configuration, frontend tests and the PR workflow — is in
 **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-**DNS stack (Internet access).** To offer auto sub‑domain + TLS you need an authoritative DNS server on a domain you own. [`deploy/powerdns/`](deploy/powerdns/) ships a turnkey Docker stack (dnsdist + PowerDNS + Caddy).\
+**DNS stack (legacy Internet access).** The per‑instance sub‑domain mechanism is retired for new installs and its shared service shuts down in **February 2027** — but the stack that still serves existing installs, and that a fork could run for its own users, lives in [`deploy/powerdns/`](deploy/powerdns/): a turnkey Docker stack (dnsdist + PowerDNS + Caddy).\
 Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 80 and 443, register your nameservers at your registrar, then set `MW_DOMAIN` / `MW_PDNS_URL` / `MW_PDNS_TOKEN` in the server's `.env`. See [`deploy/powerdns/README.md`](deploy/powerdns/README.md).
 
 ---
@@ -442,7 +441,7 @@ high‑quality streaming on *any* device with a browser, no native app, just a U
 ## Support
 
 If MoonlightWeb is useful to you,\
-a coffee helps keep the shared DNS domain server online and the domain running 🙏
+a coffee helps keep the shared servers online and the domain running 🙏
 
 <div align="center">
 
@@ -466,6 +465,6 @@ See [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT) for third‑party component li
 
 <div align="center">
 
-**Like this project?** Leave a ⭐ and [buy the DNS server a coffee](#support) ☕
+**Like this project?** Leave a ⭐ and [buy the servers a coffee](#support) ☕
 
 </div>

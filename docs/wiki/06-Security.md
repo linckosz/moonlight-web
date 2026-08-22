@@ -8,7 +8,7 @@ MoonlightWeb exposes a streaming server to the LAN and, optionally, to the publi
 
 ## 6.1 Threat model in one paragraph
 
-The server may be reachable from the Internet on `https://{uniqueId}.{MW_DOMAIN}`. Attackers can: scan/guess the PIN, flood connections, replay stolen artifacts, or try to hijack another instance's subdomain. Trusted parties: the local machine (localhost is always admin), LAN clients (exempt from bans, still need a PIN when remote-auth applies), the DNS box operator. Out of scope: volumetric DDoS (see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)), a compromised host OS.
+A legacy instance may be reachable from the Internet on `https://{uniqueId}.{MW_DOMAIN}` (until the shared DNS service shuts down in February 2027); a fresh install exposes at most a per-session media port. Attackers can: scan/guess the PIN, flood connections, replay stolen artifacts, or try to hijack a legacy instance's subdomain. Trusted parties: the local machine (localhost is always admin), LAN clients (exempt from bans, still need a PIN when remote-auth applies), the DNS box operator. Out of scope: volumetric DDoS (see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)), a compromised host OS.
 
 ## 6.2 Authentication
 
@@ -85,12 +85,12 @@ A share link is *designed* to leave the machine — it travels over chat apps, g
 ## 6.5 TLS
 
 - **LAN**: a self-signed certificate is generated on first run (browser shows a one-time warning — inherent to self-signed TLS).
-- **Internet Access**: a real certificate is issued via the native **ACMEv2 client** (`AcmeClient`) with the **DNS-01 challenge** through the PowerDNS API — ZeroSSL DV90 when EAB credentials are configured, Let's Encrypt otherwise. Renewal below 30 days remaining; `certificateChanged` performs a **hot TLS reload** (no restart, new connections get the new cert).
+- **Legacy Internet Access** (instances holding a pre-retirement subdomain): a real certificate is issued via the native **ACMEv2 client** (`AcmeClient`) with the **DNS-01 challenge** through the PowerDNS API — ZeroSSL DV90 when EAB credentials are configured, Let's Encrypt otherwise. Renewal below 30 days remaining; `certificateChanged` performs a **hot TLS reload** (no restart, new connections get the new cert). Note: a publicly trusted certificate lands in **Certificate Transparency** logs, so those hostnames are public information permanently — one of the reasons the mechanism is retired. A fresh install is never issued a certificate.
 - **Bring your own**: set `domain` to your FQDN and point `cert_pem`/`cert_key` at your PEM files (or drop them in the data dir's `cert/` folder). A certificate is accepted when it covers the domain by **CN or SAN**, wildcards included; renewal and lifecycle are the user's, and a certificate close to expiry is kept, never downgraded to self-signed. Full procedure, with the DNS/router side: [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
 - Qt's TLS backend is forced to **OpenSSL** (Windows Schannel cannot import ACME PEM keys — it would silently fall back to the self-signed cert and break the public domain).
 - Historical ACME pitfalls fixed and guarded: finalize-URL handling, self-signed↔ACME key collision, `loadCertFiles` ordering, hot reload.
 
-## 6.6 DNS subdomain ownership
+## 6.6 DNS subdomain ownership (legacy)
 
 Two instances (or a malicious actor) must never overwrite each other's A record. Ownership is enforced **server-side** by the `mw-proxy` gateway (0.2.0+; see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)) rather than cooperatively:
 
@@ -101,7 +101,7 @@ Two instances (or a malicious actor) must never overwrite each other's A record.
 
 ## 6.7 Internet-access consent & audit
 
-Enabling Internet Access is an **explicit opt-in** (checkbox unchecked everywhere: installer, setup wizard, admin page). The exact agreement text, timestamp (ISO-8601 UTC) and entry point (`admin` | `setup` | `installer`) are persisted (`internet_consent` in settings), and **every A-record registration request appends a JSONL audit entry** referencing that consent — legal traceability for exposing a user's machine publicly.
+Enabling Internet Access is an **explicit opt-in** (checkbox unchecked everywhere: installer, setup wizard, admin page), and the consent is the mechanism that actually opens things: it gates the per-session media mapping, and withdrawing it removes the router mappings immediately. The exact agreement text, timestamp (ISO-8601 UTC), entry point (`admin` | `setup` | `installer`) and **mechanism version** are persisted (`internet_consent` in settings). A consent only covers the mechanism its wording described: a record without a `version` field was worded for the retired DNS mechanism, and a non-legacy instance re-asks (phase `consent_required`) before opening anything. On legacy instances, **every A-record registration request appends a JSONL audit entry** referencing the consent — legal traceability for exposing a user's machine publicly.
 
 ## 6.8 Other hardening
 

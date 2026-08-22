@@ -4,7 +4,9 @@
 
 # 10. PowerDNS Stack (`deploy/powerdns/`)
 
-The DNS stack is the infrastructure side of **Internet Access**: an authoritative DNS server with a REST API on a domain you own, so every MoonlightWeb instance can self-register `{uniqueId}.{MW_DOMAIN}` and pass ACME DNS-01 challenges. It runs on a small Linux VM, fully decoupled from the app. The author operates one for the shared domain; anyone can self-host it.
+The DNS stack is the infrastructure side of the **legacy Internet Access** mechanism: an authoritative DNS server with a REST API on a domain you own, letting a MoonlightWeb instance self-register `{uniqueId}.{MW_DOMAIN}` and pass ACME DNS-01 challenges. It runs on a small Linux VM, fully decoupled from the app.
+
+> ⚠️ **Retirement.** New installs no longer register subdomains; only instances that registered one before the retirement still talk to this stack. The author's shared instance keeps serving those until **February 2027**, then shuts down. The stack remains available for a fork that wants to run the mechanism for its own users — and this VM also hosts the marketing site, the stats and the release relay, which outlive the DNS role.
 
 ## 10.1 Topology
 

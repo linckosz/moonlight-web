@@ -53,7 +53,7 @@
       "step": [
         {"@type": "HowToStep", "name": "Download the installer", "text": "Download the Apple Silicon .pkg from the MoonlightWeb releases page.", "url": "https://moonlightweb.top/guides/macos.html#step-download"},
         {"@type": "HowToStep", "name": "Run the guided installer", "text": "Run the .pkg on the Mac that runs your games. The setup wizard walks you through the configuration, including one-click Internet access.", "url": "https://moonlightweb.top/guides/macos.html#step-install"},
-        {"@type": "HowToStep", "name": "Open a browser on any device", "text": "Go to https://localhost on the Mac itself, your LAN IP from another device, or your personal sub-domain from anywhere.", "url": "https://moonlightweb.top/guides/macos.html#step-open"},
+        {"@type": "HowToStep", "name": "Open a browser on any device", "text": "Go to https://localhost on the Mac itself, or your LAN IP from another device on your network.", "url": "https://moonlightweb.top/guides/macos.html#step-open"},
         {"@type": "HowToStep", "name": "Pair once with a PIN", "text": "Your Sunshine hosts are auto-discovered. Enter the PIN Sunshine shows — pairing is remembered forever.", "url": "https://moonlightweb.top/guides/macos.html#step-pair"},
         {"@type": "HowToStep", "name": "Press play", "text": "Pick a game or the full desktop and play from any browser in the house — or anywhere.", "url": "https://moonlightweb.top/guides/macos.html#step-play"}
       ]
@@ -93,13 +93,13 @@
     </div>
     <div class="gstep cyb" id="step-install">
       <h3 data-i18n="step2.h">Run the guided installer — on the Mac that runs your games</h3>
-      <p data-i18n="step2.p">The setup wizard walks you through the configuration, including optional one-click Internet access
-         (personal sub-domain, free TLS certificate, UPnP port mapping). When it finishes, the server is running.</p>
+      <p data-i18n="step2.p">The setup wizard walks you through the configuration, including the optional Internet link
+         (remote streaming sessions, off by default). When it finishes, the server is running.</p>
     </div>
     <div class="gstep cyb" id="step-open">
       <h3 data-i18n="step3.h">Open a browser on any device</h3>
       <p data-i18n-html="step3.p">On the Mac itself: <code>https://localhost</code>. From another device on your network: your LAN IP.
-         From anywhere: your personal sub-domain (<code>https://you.moonlightweb.top</code>) if you enabled Internet access.</p>
+         Playing from outside your network: a redesigned remote entry link is in development — meanwhile you can bring your own domain and certificate.</p>
     </div>
     <div class="gstep cyb" id="step-pair">
       <h3 data-i18n="step4.h">Pair once with a PIN</h3>
@@ -176,9 +176,9 @@ window.MW_DICTS = {
     'step1.h':'Téléchargez l’installateur',
     'step1.p':'Récupérez le <code>arm64 .pkg</code> depuis la <a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">page des versions</a>.',
     'step2.h':'Lancez l’installateur guidé — sur le Mac qui fait tourner vos jeux',
-    'step2.p':'L’assistant de configuration vous guide pas à pas, y compris l’accès Internet optionnel en un clic (sous-domaine personnel, certificat TLS gratuit, mappage de ports UPnP). À la fin, le serveur tourne.',
+    'step2.p':'L’assistant de configuration vous guide pas à pas, y compris le lien Internet optionnel (sessions de streaming à distance, désactivé par défaut). À la fin, le serveur tourne.',
     'step3.h':'Ouvrez un navigateur sur n’importe quel appareil',
-    'step3.p':'Sur le Mac lui-même : <code>https://localhost</code>. Depuis un autre appareil de votre réseau : votre IP locale. Depuis n’importe où : votre sous-domaine personnel (<code>https://vous.moonlightweb.top</code>) si vous avez activé l’accès Internet.',
+    'step3.p':'Sur le Mac lui-même : <code>https://localhost</code>. Depuis un autre appareil de votre réseau : votre IP locale. Jouer depuis l’extérieur de votre réseau : un lien d’accès distant repensé est en développement — en attendant, vous pouvez utiliser votre propre domaine et certificat.',
     'step4.h':'Appairez une fois avec un code PIN',
     'step4.p':'Vos hôtes Sunshine sont déjà listés — découverts automatiquement sur le réseau local via mDNS. Saisissez le code PIN affiché par Sunshine, et l’appairage est mémorisé pour toujours.',
     'step5.h':'Appuyez sur play',
@@ -216,9 +216,9 @@ window.MW_DICTS = {
     'step1.h':'下载安装程序',
     'step1.p':'从<a href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener">发布页面</a>获取 <code>arm64 .pkg</code>。',
     'step2.h':'运行向导式安装程序——在运行游戏的那台 Mac 上',
-    'step2.p':'安装向导会带你完成配置，包括可选的一键互联网访问（专属子域名、免费 TLS 证书、UPnP 端口映射）。完成后，服务器即在运行。',
+    'step2.p':'安装向导会带你完成配置，包括可选的互联网连接（远程串流会话，默认关闭）。完成后，服务器即在运行。',
     'step3.h':'在任何设备上打开浏览器',
-    'step3.p':'在 Mac 本机上：<code>https://localhost</code>。从你网络上的其他设备：你的局域网 IP。从任何地方：如果你启用了互联网访问，就用你的专属子域名（<code>https://you.moonlightweb.top</code>）。',
+    'step3.p':'在 Mac 本机上：<code>https://localhost</code>。从你网络上的其他设备：你的局域网 IP。要从网络之外游玩：重新设计的远程接入链接正在开发中——在此之前，你可以使用自己的域名和证书。',
     'step4.h':'用 PIN 码配对一次',
     'step4.p':'你的 Sunshine 主机已经列出——通过 mDNS 在局域网自动发现。输入 Sunshine 显示的 PIN 码，配对将被永久记住。',
     'step5.h':'按下开始',

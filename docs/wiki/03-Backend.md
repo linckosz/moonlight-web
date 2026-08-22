@@ -59,17 +59,22 @@ Congestion handling (mobile networks) is **frontend-driven** (`app.js`), session
 
 ## 3.4 Internet access
 
-`InternetAccessManager` orchestrates the one-click public exposure (state machine with a `phase` field driving the UI loader):
+`InternetAccessManager` runs the internet-reachability consent (state machine with a `phase` field driving the UI loader). **The consent is enforced end to end**: `internet_access_enabled` gates the per-session media-port mapping in the stream launch path (read live, so toggling applies to the next stream without a restart), and `stop()` removes every router mapping the manager owns the moment the consent is withdrawn.
 
-1. `ensureIdentifiers()` — generates the 8-hex-char `unique_id` (rejected if it collides with reserved labels: apex, `www`, `api`, `stats`, `stream`, `ns1/ns2`, `mail`, `_*`), computes `domain`.
-2. Public IP detection: STUN first, HTTP fallback (ipify/icanhazip); can be manual (`auto_ip_detection: false`).
-3. **Ownership claim**: a `_owner.<uid>` TXT record must match this instance's `owner_token` before the A record is touched — two instances can never clobber each other's subdomain. Changing `unique_id` releases the old subdomain first.
-4. A-record create/update via `PdnsClient`; every registration appends a JSONL entry to a **consent audit log** (exact agreement text, timestamp, entry point).
+For every instance:
+
+1. `ensureIdentifiers()` — generates the 8-hex-char `unique_id`. On a fresh install it is internal only (it seeds the deterministic UPnP fallback port); it becomes a public name on nothing.
+2. Public IP detection: STUN first, HTTP fallback (ipify/icanhazip); can be manual (`auto_ip_detection: false`). Feeds CGNAT detection and the NAT-hairpin test.
+3. **Consent versioning**: a stored consent without a `version` field was worded for the retired DNS mechanism; a non-legacy instance then parks in phase `consent_required` and opens nothing until the user re-agrees under the current wording.
+
+For a **legacy instance** only — one whose `registered_uid` proves a subdomain was registered before the retirement (`m_LegacyDns`), kept alive until the shared DNS service shuts down in February 2027:
+
+4. **Ownership claim** (`owner_token` sent as `X-MW-Owner`; the proxy stores its HMAC — the token is never published in DNS), then A-record create/update via `PdnsClient`; every registration appends a JSONL entry to a **consent audit log** (exact agreement text, timestamp, entry point). Changing `unique_id` releases the old subdomain first.
 5. **ACME certificate** via the native `AcmeClient` (DNS-01 challenge written through PDNS; ZeroSSL DV90 with EAB env credentials, else Let's Encrypt). Auto-renew below 30 days; `certificateChanged` triggers a hot TLS reload.
-6. **UPnP mapping** with *port parity* (external == internal, always): if another device owns the preferred external port, a deterministic FNV-1a fallback port derived from `unique_id` is chosen and the HTTPS listener is extended to it via the rebind callback. Never evicts another device's mapping. CGNAT is detected and surfaced.
-7. Periodic checks every 5 min (IP change, DNS resolution ~24h, cert expiry); NAT-hairpin reachability is tested to decide whether the host's own browser can use the public URL.
+6. **UPnP 80/443/47999 mapping** with *port parity* (external == internal, always): if another device owns the preferred external port, a deterministic FNV-1a fallback port derived from `unique_id` is chosen and the HTTPS listener is extended to it via the rebind callback. Never evicts another device's mapping.
+7. Periodic checks every 5 min (IP change, DNS resolution ~24h, cert expiry, mapping refresh).
 
-**Bring-your-own-domain**: when `domain` in `settings.json` holds a valid FQDN that is not the computed `{unique_id}.{MW_DOMAIN}`, the manager keeps it verbatim and runs in a **network-only mode** — steps 1/3/4/5 (identifiers, DNS, ACME) are skipped since the zone and the certificate belong to the user, while IP detection, UPnP and hairpin still run. Every DNS/ACME entry point (`createOrUpdateARecord`, `updateARecord`, `checkCertificate`, `issueCertificate`) refuses on its own, so no periodic task or manual `/api/internet/renew-cert` can reach a foreign zone. See [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
+**Bring-your-own-domain**: when `domain` in `settings.json` holds a valid FQDN that is not the computed `{unique_id}.{MW_DOMAIN}`, the manager keeps it verbatim and runs in a **network-only mode** — DNS and ACME are skipped since the zone and the certificate belong to the user, and the 443 forward on the router is the user's own rule. Every DNS/ACME entry point (`createOrUpdateARecord`, `updateARecord`, `checkCertificate`, `issueCertificate`) refuses on its own for any non-legacy instance, so no periodic task or manual `/api/internet/renew-cert` can reach a foreign zone — or resurrect a retired mechanism. See [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
 
 ## 3.5 Startup sequence (`main.cpp`)
 
@@ -110,7 +115,7 @@ On a server there is no browser on the machine, and the admin API is localhost-o
 |---|---|---|
 | `--status` | `server/status`, `setup/status`, `auth/status`, `internet/status`, `internet/upnp-probe` | Loopback/LAN/public URLs, access PIN, Sunshine state, and — while Internet Access is off — whether a UPnP router answered or a port forward has to be typed in by hand |
 | `--new-pin` | `POST /api/admin/pin/generate` | A fresh access PIN. Deliberately the non-revoking endpoint (`/api/auth/regenerate` destroys every session) |
-| `--enable-internet [--yes]` | `POST /api/internet/enable` | Prints the consent text, requires `yes` on a TTY (or `--yes`), sends that exact text as `consent_message` so the DNS audit log records what was shown, then the public URL and the router verdict |
+| `--enable-internet [--yes]` | `POST /api/internet/enable` | Prints the consent text, requires `yes` on a TTY (or `--yes`), sends that exact text as `consent_message` so the consent record keeps what was shown, then the outcome: the router verdict (fresh install) or the public URL (legacy instance) |
 
 The loopback port is read from this user's `settings.json`, then falls back to 443 — running the CLI as a different user than the service (a `sudo`-less `moonlightweb --status` against a root-owned unit) reads a different file, or none. Peer verification is off for these calls: the certificate on 127.0.0.1 is the self-signed LAN one, and no certificate authenticates a loopback socket better than the kernel already does.
 
