@@ -99,6 +99,8 @@ void run_app_settings_tests()
     // domain(): the sentinel resolves to {unique_id}.{MW_DOMAIN}, while a stored
     // FQDN is a user-owned domain and must survive verbatim — InternetAccess
     // decides on exactly this difference whether it may touch DNS/ACME.
+    // The computed form only exists for a legacy instance (registered_uid set
+    // above): a fresh install has a unique_id but no public name.
     qputenv("MW_DOMAIN", "example.test");
     s.setUniqueId("abcd1234");
     s.setDomain("MW_DOMAIN");
@@ -111,7 +113,27 @@ void run_app_settings_tests()
     // Storing the computed name is not a custom domain either.
     s.setDomain("abcd1234.example.test");
     CHECK_EQ(s.domain(), QString("abcd1234.example.test"));
+    // Without a legacy registration the computed name disappears entirely —
+    // handing out a subdomain nothing points at would poison the Host-header
+    // trust and every entry-point URL. A custom domain still wins.
+    s.setRegisteredUid("");
+    s.setDomain("MW_DOMAIN");
+    CHECK_EQ(s.domain(), QString());
+    s.setDomain("my.host.example.com");
+    CHECK_EQ(s.domain(), QString("my.host.example.com"));
+    s.setRegisteredUid("abcd1234");
+    s.setDomain("MW_DOMAIN");
     qunsetenv("MW_DOMAIN");
+
+    // Consent record: versioned since the DNS mechanism started retiring. A
+    // fresh write carries version 2 + the mechanism it was worded for; the
+    // version reader maps "no record" to 0 (a legacy record without the field
+    // reads as 1, the DNS-era wording).
+    CHECK_EQ(s.internetConsentVersion(), 0);
+    s.setInternetConsent("agreement text", "admin", "rendezvous");
+    CHECK_EQ(s.internetConsentVersion(), 2);
+    CHECK_EQ(s.internetConsent().value("mechanism").toString(), QString("rendezvous"));
+    CHECK_EQ(s.internetConsent().value("source").toString(), QString("admin"));
 
     // Documented file-only defaults are idempotently seeded.
     s.seedDocumentedDefaults();

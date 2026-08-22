@@ -108,8 +108,17 @@ public:
     /// valid FQDN that is not the computed one) rather than from the shared
     /// MW_DOMAIN registration. In that mode this manager never touches DNS and
     /// never issues a certificate — the user owns both — but still detects the
-    /// public IP, maps the router ports and tests NAT hairpin.
+    /// public IP and tests NAT hairpin. The 443 forward is the user's to set up.
     bool customDomain() const { return m_CustomDomain; }
+
+    /// True when this instance registered a `{unique_id}.{MW_DOMAIN}` subdomain
+    /// under the retiring DNS mechanism (settings.json carries a non-empty
+    /// `registered_uid` — written on the first successful A-record registration,
+    /// shipped since v0.1.0, never cleared). Only such an instance keeps running
+    /// the DNS/ACME half of this manager, until the announced shutdown of the
+    /// PowerDNS stack (February 2027). A fresh install never registers anything:
+    /// no subdomain, no public certificate, no 80/443 mapping.
+    bool legacyDns() const { return m_LegacyDns; }
 
     /// Current public IP.
     QString publicIp() const { return m_PublicIp; }
@@ -294,6 +303,9 @@ private:
     bool m_CustomDomain = false; ///< True when settings.json carries a user-owned FQDN instead of
                                  ///< the computed {unique_id}.{MW_DOMAIN}. The DNS/ACME half of the
                                  ///< manager is then inert (we own neither the zone nor the cert).
+    bool m_LegacyDns = false;    ///< True when this instance holds a subdomain registered under the
+                                 ///< retiring DNS mechanism (registered_uid set). Gates every DNS,
+                                 ///< ACME and 80/443/47999 code path — see legacyDns().
     QString m_PublicIp;
     QString m_LocalIp;      ///< Best LAN IP of this host: the default-route address (= first
                             ///< entry of m_LocalIps). What the port mapping and the shared
@@ -311,6 +323,10 @@ private:
     quint16 m_HttpsPort = 0;         ///< Actual HTTPS server port
     quint16 m_ExternalHttpsPort = 0; ///< Router-side external HTTPS port (443 or fallback)
     quint16 m_ExternalHttpPort = 0;  ///< Router-side external HTTP port (80 or fallback)
+    quint16 m_ExternalUdpPort = 0;   ///< Router-side external UDP stream port (47999 or fallback),
+                                     ///< tracked so stop() can close it — a mapping left behind
+                                     ///< after "disable" would keep the NAT hole open for up to
+                                     ///< the remaining lease (1 h)
     bool m_ServiceManaged = false; ///< True when launched by a service supervisor (MW_SERVICE set);
                                    ///< such an instance never steals a port mapping owned by
                                    ///< another device — only a manual launch takes over.

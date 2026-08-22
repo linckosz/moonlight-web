@@ -121,8 +121,6 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // pdns_token is no longer stored in settings; set MW_PDNS_TOKEN env var instead.
         if (body.contains("auto_ip_detection"))
             appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
-        if (body.contains("transport_mode"))
-            appSettings.setTransportMode(body["transport_mode"].toString());
         if (body.contains("public_ip")) appSettings.setPublicIp(body["public_ip"].toString());
 
         if (body.contains("internet_access_enabled"))
@@ -131,10 +129,18 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             appSettings.setUpnpEnabled(body["upnp_enabled"].toBool());
 
         // Legal traceability: record the exact agreement text the user read when
-        // they ticked the checkbox. Referenced by the DNS registration audit log.
-        if (body.value("internet_access_enabled").toBool(false) && body.contains("consent_message"))
+        // they ticked the checkbox. The mechanism is decided here, not by the
+        // client: a legacy instance still consents to the DNS registration it
+        // keeps running, everyone else to the rendezvous-era behaviour (UPnP
+        // during sessions, peer-visible IP, no DNS record, no certificate).
+        if (body.value("internet_access_enabled").toBool(false) &&
+            body.contains("consent_message")) {
+            const bool legacy = !appSettings.registeredUid().isEmpty();
             appSettings.setInternetConsent(body["consent_message"].toString(),
-                                           QStringLiteral("admin"));
+                                           QStringLiteral("admin"),
+                                           legacy ? QStringLiteral("dns")
+                                                  : QStringLiteral("rendezvous"));
+        }
 
         bool enabled =
             body.value("internet_access_enabled").toBool(appSettings.internetAccessEnabled());
@@ -375,8 +381,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         if (internetAuth) {
             Provisioning::setStepStatus("arecord", "running");
             // Legal traceability: the wizard sends the exact agreement text shown.
+            // The wizard only runs on a fresh install, which never registers a
+            // subdomain — the consent is for the rendezvous-era behaviour.
             appSettings.setInternetConsent(body.value("consent_message").toString(),
-                                           QStringLiteral("setup"));
+                                           QStringLiteral("setup"),
+                                           QStringLiteral("rendezvous"));
             appSettings.setInternetAccessEnabled(true);
             internetAccess.start();
             const bool active = internetAccess.isActive();
@@ -769,6 +778,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["upnp_enabled"].toBool();
             appSettings.setUpnpEnabled(enabled);
             obj["upnp_enabled"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        // Transport chain preference. Lived on POST /api/internet/enable for
+        // historical reasons; it is a streaming setting with no relation to
+        // internet reachability, so it is written here with its siblings.
+        if (body.contains("transport_mode")) {
+            appSettings.setTransportMode(body["transport_mode"].toString());
+            obj["transport_mode"] = appSettings.transportMode();
             obj["status"] = "saved";
             hadChange = true;
         }

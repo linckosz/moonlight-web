@@ -171,11 +171,27 @@ void InternetAccessManager::start()
     // Step 1: Ensure identifiers exist (already done eagerly at startup,
     // but called again here in case setUniqueId was changed via API).
     ensureIdentifiers();
-    qInfo() << "[InternetAccess] Step 1 OK — domain:" << m_Domain;
+    qInfo() << "[InternetAccess] Step 1 OK — domain:" << m_Domain
+            << "legacy:" << m_LegacyDns << "custom:" << m_CustomDomain;
 
-    // Step 2: Read the PowerDNS token from MW_PDNS_TOKEN env var. Skipped for a
-    // user-owned domain: we register nothing, so a missing token is not an error.
-    if (!m_CustomDomain) {
+    // Consent gate. A consent record without a version was obtained for the
+    // retired DNS mechanism ("create an A record pointing at your IP") — it
+    // does not cover what enabling does today, so the UI has to ask again with
+    // the current wording. Legacy instances still run that mechanism until the
+    // announced shutdown, so their v1 consent remains exactly right; a custom
+    // domain involves no service of ours to consent to.
+    if (!m_LegacyDns && !m_CustomDomain && m_Settings->internetConsentVersion() < 2 &&
+        !m_Settings->internetConsent().isEmpty()) {
+        qInfo() << "[InternetAccess] Stored consent predates the current mechanism —"
+                << "waiting for renewed consent before opening anything";
+        m_Phase = QStringLiteral("consent_required");
+        return;
+    }
+
+    // Step 2: Read the PowerDNS token from MW_PDNS_TOKEN env var. Only a legacy
+    // instance still writes to PowerDNS; a fresh install registers nothing and a
+    // user-owned domain is not ours to write to.
+    if (m_LegacyDns) {
         QString token = QString::fromUtf8(qgetenv("MW_PDNS_TOKEN"));
         qInfo() << "[InternetAccess] Step 2 — token source: env var MW_PDNS_TOKEN"
                 << "empty:" << token.isEmpty() << "length:" << token.length();
@@ -204,8 +220,7 @@ void InternetAccessManager::start()
     // Step 3.5: Pre-check DNS — if the domain already resolves, skip PowerDNS A record creation.
     // This is critical when STUN fails (e.g. IPv6 XOR-MAPPED-ADDRESS not supported):
     // the existing A record is still valid, so no need to touch PowerDNS at all.
-    // Never for a user-owned domain: their zone is not ours to write to.
-    if (!m_CustomDomain) {
+    if (m_LegacyDns) {
         bool skipARecordStep = false;
         QString resolvedIp = resolveDomain(m_Domain);
         if (!resolvedIp.isEmpty()) {
@@ -240,7 +255,7 @@ void InternetAccessManager::start()
     // Step 5: Initial DNS check (spaced to 24h thereafter). A freshly created A
     // record needs time to propagate, so retry a few times before giving up —
     // otherwise the first check fails and misleads anyone reading the logs.
-    if (!m_CustomDomain) {
+    if (m_LegacyDns) {
         m_Phase = QStringLiteral("checking_dns");
         QString resolvedIp;
         for (int attempt = 1; attempt <= kDnsCheckRetries; ++attempt) {
@@ -275,10 +290,11 @@ void InternetAccessManager::start()
         m_LastDnsCheck = QDateTime::currentDateTimeUtc();
     }
 
-    // Step 6: Issue/renew TLS certificate (never for a user-owned domain — the
-    // certificate for it is the user's, CertManager just loads what they dropped
-    // in the cert directory).
-    if (!m_CustomDomain) {
+    // Step 6: Issue/renew TLS certificate. Only a legacy instance holds a
+    // public certificate; a fresh install serves its self-signed one on the
+    // LAN, and a user-owned domain's certificate is the user's (CertManager
+    // just loads what they dropped in the cert directory).
+    if (m_LegacyDns) {
         m_Phase = QStringLiteral("issuing_certificate");
         QString existingCert = m_Settings->certPem();
         qInfo() << "[InternetAccess] Step 6 — checking certificate: cert_pem=\"" << existingCert
@@ -286,26 +302,31 @@ void InternetAccessManager::start()
         checkCertificate();
     }
 
-    // Step 7: UPnP port mapping
+    // Step 7: UPnP port mapping. Only a legacy instance forwards its web ports
+    // — its public URL depends on them until the DNS stack shuts down. A fresh
+    // install exposes no admin surface: the media port is mapped per-session by
+    // the signaling server (and only with this same consent), and a custom
+    // domain's 443 forward is the user's own router configuration.
     m_Phase = QStringLiteral("configuring_ports");
     if (m_Settings->upnpEnabled()) {
         if (m_Upnp.discover()) {
-            // Co-existence: never evict another device's mapping. HTTPS uses
-            // strict external==internal parity: when another instance holds the
-            // default router port, this instance claims a deterministic fallback
-            // port AND moves its HTTPS listener to it (deferred rebind), so the
-            // advertised URL port is exactly the router-forwarded port.
-            m_ExternalHttpsPort = mapHttpsPortParity();
+            if (m_LegacyDns) {
+                // Co-existence: never evict another device's mapping. HTTPS uses
+                // strict external==internal parity: when another instance holds
+                // the default router port, this instance claims a deterministic
+                // fallback port AND moves its HTTPS listener to it (deferred
+                // rebind), so the advertised URL port is exactly the
+                // router-forwarded port.
+                m_ExternalHttpsPort = mapHttpsPortParity();
 
-            // Map HTTP port too, so the HTTP→HTTPS redirect works from the internet.
-            // Without this mapping, external clients cannot reach the HTTP redirect
-            // server through the NAT gateway.
-            {
+                // Map HTTP port too, so the HTTP→HTTPS redirect works from the
+                // internet. Without this mapping, external clients cannot reach
+                // the HTTP redirect server through the NAT gateway.
                 quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
                 m_ExternalHttpPort = mapPortWithFallback(httpPort, "TCP", "MoonlightWeb HTTP");
-            }
 
-            mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream");
+                m_ExternalUdpPort = mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream");
+            }
 
             // Capture local LAN IP for the UI (port mapping display)
             refreshLocalAddresses();
@@ -354,6 +375,30 @@ void InternetAccessManager::stop()
     // Cancel any in-progress ACME issuance
     m_Acme.cancel();
     m_CertIssuing = false;
+
+    // Close our router mappings now. The consent toggle is the master switch
+    // for internet reachability: leaving the forwards to die with their lease
+    // would keep the NAT hole open for up to an hour after the user said no.
+    // Only ports we mapped ourselves are touched (mapPortWithFallback and
+    // mapHttpsPortParity both refuse to evict another device's mapping, so
+    // these external ports are ours by construction).
+    if (m_Upnp.isAvailable()) {
+        if (m_ExternalHttpsPort > 0) {
+            qInfo() << "[InternetAccess] Removing HTTPS mapping" << m_ExternalHttpsPort;
+            m_Upnp.removePortMapping(m_ExternalHttpsPort, "TCP");
+        }
+        if (m_ExternalHttpPort > 0) {
+            qInfo() << "[InternetAccess] Removing HTTP mapping" << m_ExternalHttpPort;
+            m_Upnp.removePortMapping(m_ExternalHttpPort, "TCP");
+        }
+        if (m_ExternalUdpPort > 0) {
+            qInfo() << "[InternetAccess] Removing UDP stream mapping" << m_ExternalUdpPort;
+            m_Upnp.removePortMapping(m_ExternalUdpPort, "UDP");
+        }
+    }
+    m_ExternalHttpsPort = 0;
+    m_ExternalHttpPort = 0;
+    m_ExternalUdpPort = 0;
 
     m_Active = false;
     m_Phase.clear();
@@ -540,13 +585,15 @@ void InternetAccessManager::forceRefresh()
         }
     }
 
-    // Check DNS resolution
-    QString resolvedIp = resolveDomain(m_Domain);
-    if (!resolvedIp.isEmpty() && resolvedIp != m_PublicIp && !m_PublicIp.isEmpty()) {
-        // DNS mismatch — update A record
-        qInfo() << "[InternetAccess] DNS resolution mismatch: resolved=" << resolvedIp
-                << "expected=" << m_PublicIp << "— updating A record";
-        updateARecord();
+    // Check DNS resolution — legacy registrations only.
+    if (m_LegacyDns) {
+        QString resolvedIp = resolveDomain(m_Domain);
+        if (!resolvedIp.isEmpty() && resolvedIp != m_PublicIp && !m_PublicIp.isEmpty()) {
+            // DNS mismatch — update A record
+            qInfo() << "[InternetAccess] DNS resolution mismatch: resolved=" << resolvedIp
+                    << "expected=" << m_PublicIp << "— updating A record";
+            updateARecord();
+        }
     }
 
     // Check certificate
@@ -569,6 +616,15 @@ QJsonObject InternetAccessManager::statusJson() const
     // True when `domain` in settings.json is a user-owned FQDN: no DNS
     // registration, no ACME — only IP detection, port mapping and hairpin.
     obj[QStringLiteral("custom_domain")] = m_CustomDomain;
+    // True when this instance still runs the retiring DNS mechanism (registered
+    // subdomain + public certificate). Drives the legacy-only admin UI: the
+    // activation checklist's DNS steps, the pending-registration banner, and
+    // the February 2027 shutdown notice.
+    obj[QStringLiteral("legacy_dns")] = m_LegacyDns;
+    // Version of the stored consent record (0 when none). A record without a
+    // version was worded for the DNS mechanism; the admin UI must re-ask
+    // before a non-legacy instance opens anything (phase "consent_required").
+    obj[QStringLiteral("consent_version")] = m_Settings->internetConsentVersion();
     obj[QStringLiteral("local_ip")] = m_LocalIp;
     // Every address another machine can reach this host on, best first: a
     // multi-homed host (Hyper-V, VirtualBox, WSL) needs all of them shown —
@@ -701,9 +757,26 @@ void InternetAccessManager::ensureIdentifiers()
     const QString stored = m_Settings->domain();
     m_CustomDomain = AppSettings::isValidFqdn(stored) && stored != buildDomain();
     if (m_CustomDomain) {
+        m_LegacyDns = false;
         m_Domain = stored;
         qInfo() << "[InternetAccess] Custom domain from settings:" << m_Domain
                 << "— DNS registration and ACME issuance are disabled";
+        return;
+    }
+
+    // Only an instance that actually registered a subdomain under the retiring
+    // DNS mechanism keeps a public domain. registered_uid is written on the
+    // first successful A-record registration (shipped since v0.1.0) and never
+    // cleared, so it is the one reliable marker — the skip-when-already-resolving
+    // path never runs before a first registration succeeded.
+    m_LegacyDns = !m_Settings->registeredUid().isEmpty();
+    if (!m_LegacyDns) {
+        // Fresh instance: unique_id stays (it seeds the deterministic UPnP
+        // fallback port, so two instances on one LAN never collide) but it
+        // never leaves this machine — no domain, no ownership token, nothing
+        // to publish. An empty domain is what keeps every entry point
+        // (shortcut, tray, hairpin test) on the LAN address.
+        m_Domain.clear();
         return;
     }
 
@@ -781,7 +854,7 @@ void InternetAccessManager::releaseOldSubdomain()
 
 bool InternetAccessManager::createOrUpdateARecord()
 {
-    if (m_CustomDomain) return false; // user-owned zone — never registered here
+    if (!m_LegacyDns) return false; // user-owned zone, or nothing registered — never write
 
     qInfo() << "[InternetAccess] Checking A record for subdomain:" << m_UniqueId;
 
@@ -1027,9 +1100,10 @@ void InternetAccessManager::logDnsRegistrationAudit(const QString& action)
 
 bool InternetAccessManager::updateARecord()
 {
-    // The user's own zone is not ours to write to (the periodic IP-change path
-    // lands here directly).
-    if (m_CustomDomain) return false;
+    // Only a legacy registration is ours to update — the user's own zone is
+    // not ours to write to, and a fresh install has no record at all (the
+    // periodic IP-change path lands here directly).
+    if (!m_LegacyDns) return false;
 
     if (m_Domain.isEmpty() || m_PublicIp.isEmpty()) {
         qWarning() << "[InternetAccess] Cannot update A record: domain or IP empty";
@@ -1058,11 +1132,12 @@ bool InternetAccessManager::updateARecord()
 bool InternetAccessManager::issueCertificate()
 {
     // ACME DNS-01 writes the challenge through the PowerDNS API, which only
-    // covers the shared domain — a manual /api/internet/renew-cert on a
-    // user-owned domain must not even try.
-    if (m_CustomDomain) {
-        qWarning() << "[InternetAccess] Certificate issuance skipped — custom domain" << m_Domain
-                   << "is managed by the user";
+    // covers a legacy subdomain — a manual /api/internet/renew-cert on a
+    // user-owned domain (their cert) or a fresh install (no public domain)
+    // must not even try.
+    if (!m_LegacyDns) {
+        qWarning() << "[InternetAccess] Certificate issuance skipped — no legacy DNS registration"
+                   << (m_CustomDomain ? "(custom domain is managed by the user)" : "");
         return false;
     }
 
@@ -1147,8 +1222,11 @@ bool InternetAccessManager::checkCertificate()
 {
     // User-owned domain: the certificate is theirs (dropped in the cert
     // directory or pointed at by cert_pem/cert_key). Never reissue over it.
-    if (m_CustomDomain) {
-        qInfo() << "[InternetAccess] Custom domain — certificate lifecycle left to the user";
+    // Fresh install: no public domain, nothing to certify — the LAN serves
+    // the self-signed certificate.
+    if (!m_LegacyDns) {
+        qInfo() << "[InternetAccess] No legacy DNS registration — certificate lifecycle"
+                << (m_CustomDomain ? "left to the user" : "not applicable (self-signed on LAN)");
         return false;
     }
 
@@ -1516,8 +1594,9 @@ void InternetAccessManager::onPeriodicCheck()
         }
     }
 
-    // 2. Check DNS resolution (max once every 24h)
-    {
+    // 2. Check DNS resolution (max once every 24h) — legacy registrations only,
+    // a fresh install has no domain to resolve.
+    if (m_LegacyDns) {
         QDateTime now = QDateTime::currentDateTimeUtc();
         if (!m_LastDnsCheck.isValid() || m_LastDnsCheck.secsTo(now) >= 86400) {
             QString resolvedIp = resolveDomain(m_Domain);
@@ -1548,17 +1627,18 @@ void InternetAccessManager::onPeriodicCheck()
         qInfo() << "[InternetAccess] ACME issuance in progress, skipping cert check";
     }
 
-    // 4. Re-verify UPnP mappings. Idempotent and self-healing: if our external
-    // port was taken over since last time, the next free candidate is re-derived
-    // — no eviction, so instances never fight over a port. HTTPS keeps strict
-    // external==internal parity (rebinding the listener if needed).
-    if (m_Settings->upnpEnabled() && m_Upnp.isAvailable()) {
+    // 4. Re-verify UPnP mappings (legacy only — a fresh install forwards no web
+    // ports). Idempotent and self-healing: if our external port was taken over
+    // since last time, the next free candidate is re-derived — no eviction, so
+    // instances never fight over a port. HTTPS keeps strict external==internal
+    // parity (rebinding the listener if needed).
+    if (m_LegacyDns && m_Settings->upnpEnabled() && m_Upnp.isAvailable()) {
         m_ExternalHttpsPort = mapHttpsPortParity();
 
         quint16 httpPort = m_HttpPort > 0 ? m_HttpPort : m_Settings->httpPort(80);
         m_ExternalHttpPort = mapPortWithFallback(httpPort, "TCP", "MoonlightWeb HTTP (renew)");
 
-        mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream (renew)");
+        m_ExternalUdpPort = mapPortWithFallback(47999, "UDP", "MoonlightWeb UDP Stream (renew)");
     }
 
     // 5. Refresh NAT hairpin reachability (router config can change).
