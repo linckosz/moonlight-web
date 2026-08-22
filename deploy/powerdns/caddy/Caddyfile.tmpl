@@ -73,12 +73,39 @@ stats.@MW_DOMAIN@ {
 	reverse_proxy umami:3000
 }
 
-# Presentation website — apex + www both serve the static ./site folder.
-# stream.* is a vanity alias shown on the marketing site; it redirects to the apex.
-@MW_DOMAIN@, www.@MW_DOMAIN@, stream.@MW_DOMAIN@ {
+# stream.@MW_DOMAIN@ — deliberately its own vhost, NOT merged into the apex block
+# below. Its behaviour today is unchanged: every path 301s to the apex, because
+# it is only a vanity alias printed on the marketing site.
+#
+# It is split out because the rendezvous path /mw/{id} lands on this host. A
+# catch-all redirect living in a shared block would swallow that path before any
+# handler could see it — a failure that only surfaces the day the feature ships.
+# When the rendezvous arrives, wrap both in `handle` blocks — `handle /mw/*` for
+# it, then a bare `handle` holding the redir — so everything that is not a
+# rendezvous path keeps redirecting to the apex. It will also need its own
+# `header` block: splitting this host out of the apex block means the apex CSP
+# (notably `connect-src 'self'`) no longer covers it.
+#
+# It carries no rate_limit yet, and that is deliberate rather than an oversight:
+# a 301 to the apex is not worth a budget, and the global `order rate_limit
+# before reverse_proxy` would place the limiter AFTER redir in Caddy's standard
+# order, so on a redirect-only host it would never run at all. Add it together
+# with the rendezvous route — that block ends in a reverse_proxy, where the
+# global order puts it in the right place with no `route` gymnastics. Unlike the
+# apex, this host does want one: the apex serves a static site whose page loads
+# fan out into many asset requests and would trip a per-IP budget for nothing,
+# whereas the rendezvous answers on an identifier, and a budget is what bounds
+# guessing it.
+stream.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
-	# Redirect www/stream visitors to the canonical apex.
-	@alias host www.@MW_DOMAIN@ stream.@MW_DOMAIN@
+	redir https://@MW_DOMAIN@{uri} permanent
+}
+
+# Presentation website — apex + www both serve the static ./site folder.
+@MW_DOMAIN@, www.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	# Redirect www visitors to the canonical apex.
+	@alias host www.@MW_DOMAIN@
 	redir @alias https://@MW_DOMAIN@{uri} permanent
 
 	header {
