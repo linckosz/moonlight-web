@@ -31,11 +31,13 @@ static inline NSString *MWSunshineDmgURL(void)
 }
 
 // The Internet opt-in checkbox label. Single source of truth: displayed in the
-// pane AND handed to the server as the consent text it records in its DNS
-// registration audit log.
+// pane AND handed to the server as the consent text of its versioned consent
+// record — so it has to say what enabling actually does, and what it does not.
 static inline NSString *MWInternetConsentText(void)
 {
-    return @"Allow a secure public Internet link (recommended)";
+    return @"Allow the Internet link (recommended) — asks the router (UPnP) to open a "
+           @"streaming port during sessions; peers connect directly and see this Mac's "
+           @"public IP. No DNS record, no certificate, ports 80/443 stay closed.";
 }
 
 // True when a prior install already authorized the public Internet link: the

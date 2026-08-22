@@ -118,7 +118,7 @@ Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 en.AutoStartTask=Start MoonlightWeb at logon
 en.InternetPageCaption=Internet Link
 en.InternetPageDesc=Allow access from the Internet?
-en.InternetPageBody=MoonlightWeb can publish a secure public link (e.g. https://a1b2c3d4.moonlightweb.top) to stream outside your local network.%n%nThis is done once the application is installed.
+en.InternetPageBody=MoonlightWeb can allow streaming from outside your local network. Your router is asked (UPnP) to open a streaming port during each session, and whoever connects reaches this PC directly — each side of a peer-to-peer connection sees the other's public IP address. A future update will add the remote entry link, an outgoing connection to the MoonlightWeb introduction server, which then sees this PC's public IP address and when it is online.%n%nNo public DNS record is created, no certificate is issued for this machine, and ports 80/443 stay closed. You can turn this off at any time from the Admin page.
 en.InternetPageOption=Allow the Internet link (recommended)
 en.SunshinePageCaption=Sunshine
 en.SunshinePageDesc=Sunshine streaming server
@@ -146,7 +146,7 @@ en.TaskSunshine=Install the Sunshine streaming server
 en.TaskSunshineDone=Sunshine is already installed
 en.TaskPairing=Pair the local Sunshine
 en.TaskPairingDone=Sunshine is already paired
-en.TaskArecord=Publish the secure Internet address
+en.TaskArecord=Enable the Internet link
 en.ButtonUpdate=&Update
 en.UpdatePageCaption=Update MoonlightWeb
 en.UpdatePageDesc=A newer version will replace the installed one
@@ -160,7 +160,7 @@ en.UninstConfigDetail=Settings, accounts, certificates and Sunshine pairings are
 fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
 fr.InternetPageDesc=Autoriser l'accès depuis Internet ?
-fr.InternetPageBody=MoonlightWeb peut publier un lien public sécurisé (ex. https://a1b2c3d4.moonlightweb.top) pour streamer hors de votre réseau local.%n%nCette opération est effectuée une fois l'application installée.
+fr.InternetPageBody=MoonlightWeb peut autoriser le streaming depuis l'extérieur de votre réseau local. Votre box se voit demander (UPnP) l'ouverture d'un port de streaming pendant chaque session, et celui qui se connecte joint ce PC directement — chaque côté d'une connexion pair-à-pair voit l'adresse IP publique de l'autre. Une future mise à jour ajoutera le lien d'accès distant, une connexion sortante vers le serveur d'introduction MoonlightWeb, qui voit alors l'adresse IP publique de ce PC et ses périodes de présence en ligne.%n%nAucun enregistrement DNS public n'est créé, aucun certificat n'est émis pour cette machine, et les ports 80/443 restent fermés. Désactivable à tout moment depuis la page admin.
 fr.InternetPageOption=Autoriser le lien Internet (recommandé)
 fr.SunshinePageCaption=Sunshine
 fr.SunshinePageDesc=Serveur de streaming Sunshine
@@ -188,7 +188,7 @@ fr.TaskSunshine=Installer le serveur de streaming Sunshine
 fr.TaskSunshineDone=Sunshine est déjà installé
 fr.TaskPairing=Appairer le Sunshine local
 fr.TaskPairingDone=Sunshine est déjà appairé
-fr.TaskArecord=Publier l'adresse Internet sécurisée
+fr.TaskArecord=Activer le lien Internet
 fr.ButtonUpdate=&Mettre à jour
 fr.UpdatePageCaption=Mise à jour de MoonlightWeb
 fr.UpdatePageDesc=Une version plus récente va remplacer celle installée
@@ -202,7 +202,7 @@ fr.UninstConfigDetail=Les réglages, comptes, certificats et appairages Sunshine
 zh.AutoStartTask=登录时启动 MoonlightWeb
 zh.InternetPageCaption=互联网链接
 zh.InternetPageDesc=是否允许从互联网访问？
-zh.InternetPageBody=MoonlightWeb 可以发布一个安全的公共链接（例如 https://a1b2c3d4.moonlightweb.top），以便在本地网络之外进行串流。%n%n此操作将在应用程序安装完成后进行。
+zh.InternetPageBody=MoonlightWeb 可以允许从本地网络之外进行串流。每次串流会话期间会通过 UPnP 请求路由器开放一个串流端口，连接方将直接连到这台电脑——点对点连接的双方都能看到对方的公网 IP 地址。未来的更新将加入远程接入链接：一条到 MoonlightWeb 介绍服务器的出站连接，该服务器因此能看到这台电脑的公网 IP 地址及其在线时间。%n%n不会创建任何公开 DNS 记录，不会为这台机器签发任何证书，端口 80/443 保持关闭。可随时在管理页面关闭。
 zh.InternetPageOption=允许互联网链接（推荐）
 zh.SunshinePageCaption=Sunshine
 zh.SunshinePageDesc=Sunshine 串流服务器
@@ -230,7 +230,7 @@ zh.TaskSunshine=安装 Sunshine 串流服务器
 zh.TaskSunshineDone=Sunshine 已安装
 zh.TaskPairing=配对本地 Sunshine
 zh.TaskPairingDone=Sunshine 已配对
-zh.TaskArecord=发布安全的互联网地址
+zh.TaskArecord=启用互联网链接
 zh.ButtonUpdate=更新(&U)
 zh.UpdatePageCaption=更新 MoonlightWeb
 zh.UpdatePageDesc=较新的版本将替换已安装的版本
@@ -542,8 +542,8 @@ begin
   // Pre-ticked only when a previous install already authorized Internet access
   // (settings.json persists internet_access_enabled) — a re-install / upgrade
   // must not silently forget the user's prior opt-in. On a first install it
-  // stays unchecked: opening the machine to the Internet (UPnP + public DNS
-  // record) requires an explicit opt-in click.
+  // stays unchecked: opening the machine to the Internet (per-session UPnP
+  // mapping) requires an explicit opt-in click.
   InternetPage := CreateInputOptionPage(wpSelectTasks,
     ExpandConstant('{cm:InternetPageCaption}'), ExpandConstant('{cm:InternetPageDesc}'),
     ExpandConstant('{cm:InternetPageBody}'),
@@ -1316,10 +1316,12 @@ begin
   itSun := 0; itPair := 0; itAr := 0;
   prevSun := ''; prevPair := ''; prevAr := '';
   try
-    // ~3min budget (600 * 300ms). The A-record step now also waits for the ACME
-    // certificate (up to 30s of DNS propagation retries, then the order itself),
-    // so the old 90s budget expired mid-issuance and the wizard moved on while
-    // the domain was still served with the self-signed fallback.
+    // ~3min budget (600 * 300ms). On a fresh install the internet step closes
+    // in seconds (no DNS, no certificate); the budget is sized for a legacy
+    // upgrade whose step still waits for the ACME certificate (up to 30s of DNS
+    // propagation retries, then the order itself) — a 90s budget used to expire
+    // mid-issuance and the wizard moved on while the domain was still served
+    // with the self-signed fallback.
     for i := 0 to 600 do begin
       ps := ''; ar := '';
       if LoadStringFromFile(statusPath, raw) then begin

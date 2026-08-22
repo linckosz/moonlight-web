@@ -33,10 +33,11 @@
 # postinstall, the real repository metadata, the real signature check.
 #
 # Notes
-#   * Answering "Yes" to the Internet Access question registers a *real*
-#     sub-domain of moonlightweb.top against this container's public IP — the
-#     CI binaries carry the production DNS credentials. Answer No, or export
-#     MW_INTERNET=0, unless that is what you are testing.
+#   * Answering "Yes" to the Internet Access question records a *real* consent
+#     and lets the instance ask the container's gateway for UPnP mappings (a
+#     legacy upgrade would also re-register its moonlightweb.top sub-domain —
+#     the CI binaries still carry the production DNS credentials for those).
+#     Answer No, or export MW_INTERNET=0, unless that is what you are testing.
 #   * No ports are published: nothing on your LAN reaches the container, and
 #     the installer says so itself. Add -p to TRY_RUN_ARGS if you want in.
 #   * The container has no systemd, so nothing starts the service — the
