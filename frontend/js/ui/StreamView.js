@@ -2668,6 +2668,12 @@ export class StreamView {
      */
     _mountShareMenu() {
         if (this._playerMode || this._shareMenu || !this._rootEl) return;
+        // Sharing is deferred on Wolf: a guest needs Wolf's native co-op (a
+        // multi_user lobby joined over /api/v1/lobbies/join), which is not wired up
+        // yet, so the button would only ever hand out a link whose player launches
+        // a separate Wolf session and never sees the owner's screen. Hide it there
+        // until the lobby-join path lands.
+        if (this.host?.backendType === 'wolf') return;
         const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
         const quitBtn = /** @type {HTMLElement} */ (this._rootEl.querySelector('#btn-stream-quit'));
         if (!header || !quitBtn) return;
