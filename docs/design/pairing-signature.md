@@ -297,10 +297,20 @@ Two details worth knowing before touching this code:
 
 - **Guests joining through a share link.** Their access comes from
   `ShareManager`, not from a PIN-paired `AuthManager` session, so they hold no
-  pairing key and their signaling runs unsigned exactly as before. A real gap,
-  stated here rather than left to be discovered: extending the binding to them
-  needs a decision about what a guest's key is bound to — the link, the slot, or
-  the device — and that decision is not made in this document.
+  pairing key and their signaling runs unsigned exactly as before.
+
+  **Decided 2026-08-22, to be built with phase 2**: a guest's key is bound to
+  their *device*, registered at the moment they enter the share PIN — the same
+  shape as the owner's pairing, at the same point in the flow. The guest keeps
+  it across visits to the same link, so returning costs them nothing, and
+  revoking the slot destroys it.
+
+  Deliberately **not** bound to the link: a link that gets forwarded would hand
+  its identity to whoever opens it next, and the signature would then only prove
+  that the link had been used before — not who is at the other end. The cost of
+  the device binding is that reactivating a slot for a different device replaces
+  the previous key, which `bindSessionKey()` currently refuses; the share path
+  will need to clear the old key on reactivation rather than reuse that rule.
 - **Pre-existing sessions connecting from the internet.** By the §7 rule they
   cannot bind silently, so they stream unsigned until the user pairs again with a
   PIN.
