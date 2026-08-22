@@ -365,6 +365,17 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
         return DR_OK;
     }
 
+    // The host is alive and encoding — recorded before the drop below, which
+    // says something about the relay thread, not about Sunshine. Read by the
+    // encoder wake-up to tell "the host has nothing to send" apart from "the
+    // host is not capturing at all".
+    instance->m_LastHostFrameTimeUs.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count(),
+        std::memory_order_release);
+    instance->m_ConsecutiveWakeNudges.store(0, std::memory_order_release);
+
     // Worker→relay queue bound: if the relay thread is backed up, drop deltas
     // here (before the buffer copy) so latency cannot build in the event queue.
     // Keyframes always pass; the relay arms awaiting-IDR via the dropped flag.
@@ -576,6 +587,10 @@ void MoonlightShim::clConnectionStarted()
     MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
     if (!instance || instance->m_Stopping.load()) return;
     instance->m_Connected.store(true, std::memory_order_release);
+    instance->m_ConnectedTimeUs.store(std::chrono::duration_cast<std::chrono::microseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count(),
+                                      std::memory_order_release);
     emit instance->connectionStarted();
 }
 
@@ -1026,6 +1041,86 @@ void MoonlightShim::requestIdrFrame()
                              std::memory_order_release);
     qInfo() << "[MoonlightShim] Calling LiRequestIdrFrame() to request IDR from Sunshine";
     LiRequestIdrFrame();
+
+    // The request above is worthless while the host captures nothing: give it
+    // something to capture — now if the host is already silent, and on the
+    // timer for the far more common case where the request rides the last
+    // frame the host had to send.
+    maybeWakeHostEncoder();
+    armEncoderWakeTimer();
+}
+
+void MoonlightShim::armEncoderWakeTimer()
+{
+    // QTimer is thread-affine; IDR requests come from the relay thread.
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, [this]() { armEncoderWakeTimer(); }, Qt::QueuedConnection);
+        return;
+    }
+    if (!m_EncoderWakeTimer) {
+        m_EncoderWakeTimer = new QTimer(this);
+        m_EncoderWakeTimer->setTimerType(Qt::CoarseTimer);
+        connect(m_EncoderWakeTimer, &QTimer::timeout, this, &MoonlightShim::onEncoderWakeTick);
+    }
+    if (!m_EncoderWakeTimer->isActive()) m_EncoderWakeTimer->start(1000);
+}
+
+void MoonlightShim::onEncoderWakeTick()
+{
+    if (!m_Connected.load(std::memory_order_acquire)) {
+        if (m_EncoderWakeTimer) m_EncoderWakeTimer->stop();
+        return;
+    }
+    // Zeroed by the keyframe that answers it (see drSubmitDecodeUnit), so a
+    // non-zero timestamp means a client is still waiting for a picture.
+    if (m_IdrRequestTimeUs.load(std::memory_order_acquire) == 0) {
+        if (m_EncoderWakeTimer) m_EncoderWakeTimer->stop();
+        return;
+    }
+    maybeWakeHostEncoder();
+}
+
+void MoonlightShim::maybeWakeHostEncoder()
+{
+    if (!m_WakeNudgeAllowed.load(std::memory_order_acquire)) return;
+
+    const int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+
+    // A host that sent a frame recently is encoding: the IDR just requested
+    // will ride its next capture, no nudge needed. Before the first frame of a
+    // session there is nothing to compare against — measure from the moment
+    // the connection came up instead, so a session whose very first keyframe
+    // was lost on the browser link (the standby leg of a quality switch, a
+    // relaunch on a congested link) still gets woken up.
+    const int64_t lastFrameUs = m_LastHostFrameTimeUs.load(std::memory_order_acquire);
+    const int64_t sinceRefUs =
+        lastFrameUs != 0 ? lastFrameUs : m_ConnectedTimeUs.load(std::memory_order_acquire);
+    if (sinceRefUs == 0) return; // no connection yet: nothing to wake
+    const int64_t sinceUs = nowUs - sinceRefUs;
+    if (sinceUs < static_cast<int64_t>(kEncoderIdleMs) * 1000) return;
+
+    const int64_t lastNudgeUs = m_LastWakeNudgeUs.load(std::memory_order_acquire);
+    if (lastNudgeUs != 0 && nowUs - lastNudgeUs < static_cast<int64_t>(kWakeNudgeCooldownMs) * 1000)
+        return;
+
+    // Reset by every frame the host sends: the cap counts attempts within one
+    // stall, not over the session. Once spent, the pointer is not what stands
+    // between us and a frame — stop shaking it.
+    const int attempt = m_ConsecutiveWakeNudges.load(std::memory_order_acquire) + 1;
+    if (attempt > kMaxWakeNudges) return;
+    m_ConsecutiveWakeNudges.store(attempt, std::memory_order_release);
+    m_LastWakeNudgeUs.store(nowUs, std::memory_order_release);
+
+    qInfo() << "[MoonlightShim] Host silent for" << (sinceUs / 1000)
+            << "ms with an IDR pending — nudging the pointer to force a capture (attempt"
+            << attempt << "of" << kMaxWakeNudges << ")";
+    // One pixel out and back: enough damage for Sunshine to capture, small
+    // enough to be invisible in a game. Both events are sent even at a screen
+    // edge, where the host clamps one of them (worst case: a 1px drift).
+    LiSendMouseMoveEvent(1, 0);
+    LiSendMouseMoveEvent(-1, 0);
 }
 
 double MoonlightShim::hostRttMs() const
