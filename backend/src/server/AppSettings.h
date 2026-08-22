@@ -332,13 +332,25 @@ public:
     // ── Internet Access consent (legal traceability) ─────────────────────────
     //
     // Record of the user's explicit opt-in to Internet Access: the exact
-    // agreement text displayed, when it was accepted, and through which entry
-    // point ("admin" | "setup" | "installer"). Referenced by every A-record
-    // registration entry in the dedicated audit log.
+    // agreement text displayed, when it was accepted, through which entry
+    // point ("admin" | "setup" | "installer"), and for which mechanism.
+    // Referenced by every A-record registration entry in the audit log.
+    //
+    // A consent only covers the mechanism its wording described. Records
+    // written before the "version" field existed (version 1, implicit) were
+    // obtained for the retiring DNS mechanism — an instance that never
+    // registered a subdomain must obtain a fresh consent (version ≥ 2)
+    // before opening anything.
 
-    /// {"message": ..., "at": ISO-8601 UTC, "source": ...} — empty if never given.
+    /// {"message", "at" (ISO-8601 UTC), "source", "version", "mechanism"} —
+    /// empty if never given; no "version" field means version 1 (DNS wording).
     QJsonObject internetConsent() const;
-    void setInternetConsent(const QString& message, const QString& source);
+    void setInternetConsent(const QString& message, const QString& source,
+                            const QString& mechanism);
+
+    /// Version of the stored consent record: 0 when none, 1 when the record
+    /// predates versioning (DNS-mechanism wording), 2+ otherwise.
+    int internetConsentVersion() const;
 
     // ── Host key (host-machine recognition over the public domain) ──────────
     //

@@ -458,6 +458,14 @@ QString AppSettings::domain() const
         stored != computed)
         return stored;
 
+    // The computed {unique_id}.{MW_DOMAIN} form only exists for an instance
+    // that actually registered it under the retiring DNS mechanism. A fresh
+    // install has a unique_id (it seeds the deterministic UPnP fallback port)
+    // but no public name: returning the subdomain here would make HttpServer
+    // trust a Host header nothing ever points at, and hand entry points a URL
+    // that does not resolve.
+    if (registeredUid().isEmpty()) return {};
+
     return computed;
 }
 
@@ -662,16 +670,29 @@ QJsonObject AppSettings::internetConsent() const
     return obj.value("internet_consent").toObject();
 }
 
-void AppSettings::setInternetConsent(const QString& message, const QString& source)
+void AppSettings::setInternetConsent(const QString& message, const QString& source,
+                                     const QString& mechanism)
 {
     QJsonObject consent;
     consent["message"] = message;
     consent["at"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     consent["source"] = source;
+    // A consent record only covers the mechanism it was worded for. Records
+    // written before this field exists (no "version") were obtained for the
+    // original DNS mechanism and are treated as version 1.
+    consent["version"] = 2;
+    consent["mechanism"] = mechanism;
 
     QJsonObject obj = readAll();
     obj["internet_consent"] = consent;
     writeAll(obj);
+}
+
+int AppSettings::internetConsentVersion() const
+{
+    const QJsonObject consent = internetConsent();
+    if (consent.isEmpty()) return 0;
+    return consent.value("version").toInt(1);
 }
 
 // ── Host key (host-machine recognition over the public domain) ────────────────

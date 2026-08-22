@@ -535,15 +535,23 @@ static QString findRunningInstance(quint16 persistedPort)
                     : QStringLiteral("https://127.0.0.1:%1").arg(p);
 }
 
-// The agreement the operator must accept before a subdomain is registered in
-// their name. Printed verbatim and sent verbatim as `consent_message`, so the
-// DNS audit log records the exact words that were shown — same contract as the
+// The agreement the operator must accept before the machine is opened to the
+// internet. Printed verbatim and sent verbatim as `consent_message`, so the
+// audit log records the exact words that were shown — same contract as the
 // wizard's checkbox text (frontend/js/ui/SetupView.js).
 static const char* kCliInternetConsent =
-    "MoonlightWeb will register a public sub-domain for this machine on the "
-    "shared MoonlightWeb DNS zone, point it at this network's public IP address, "
-    "and obtain a TLS certificate for it. The sub-domain and the IP address are "
-    "stored on the MoonlightWeb DNS server for as long as the link is enabled.";
+    "MoonlightWeb will make this machine reachable from outside your local "
+    "network. While the link is on, your router is asked (UPnP) to open a "
+    "streaming port during each session, and whoever connects reaches this "
+    "machine directly - each side of a peer-to-peer connection sees the "
+    "other's public IP address. A future update will add an outgoing "
+    "connection to the MoonlightWeb introduction server, which then sees this "
+    "machine's public IP address and when it is online. No public DNS record "
+    "is created, no certificate is issued for this machine, and ports 80/443 "
+    "are not opened. You can turn the link off at any time from the Admin "
+    "page. (An instance that already holds a moonlightweb.top sub-domain "
+    "keeps it, and its existing behaviour, until the announced shutdown of "
+    "the DNS service in February 2027.)";
 
 // stdin is a terminal — i.e. there is a human who can answer a prompt.
 static bool stdinIsInteractive()
@@ -788,9 +796,11 @@ static int runSetAdminPasswordCommand(quint16 persistedHttpsPort)
     return 0;
 }
 
-// `moonlightweb --enable-internet`: publish the sub-domain, get the certificate,
-// map the router port when a UPnP-IGD answers — and say plainly what to forward
-// by hand when none does. Returns the process exit code.
+// `moonlightweb --enable-internet`: record the operator's consent and enable
+// the Internet link. A legacy instance re-publishes its sub-domain and renews
+// its certificate; a fresh one authorizes the per-session router mapping and
+// nothing more. Says plainly what to forward by hand when no UPnP-IGD answers.
+// Returns the process exit code.
 static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
 {
     QTextStream out(stdout);
@@ -828,7 +838,7 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
     QJsonObject body;
     body["internet_access_enabled"] = true;
     body["consent_message"] = QString::fromUtf8(kCliInternetConsent);
-    out << "\nRegistering the sub-domain and requesting the certificate…\n";
+    out << "\nEnabling the Internet link…\n";
     out.flush();
 
     // Generous: the handler returns only once the A record resolves, and DNS
@@ -856,23 +866,36 @@ static int runEnableInternetCommand(quint16 persistedHttpsPort, bool assumeYes)
         return 1;
     }
 
-    out << "\n  Public URL     https://" << domain << extSuffix << "\n";
-    if (st.value("cert_issuing").toBool(false))
-        out << "                 certificate still being issued — it lands within a minute\n";
-
-    out << "\n";
-    if (upnp) {
-        out << "  Router         UPnP gateway found — port " << extPort
-            << "/tcp mapped automatically.\n";
+    if (domain.isEmpty()) {
+        // Fresh instance: nothing is published — the link only authorizes the
+        // per-session router mapping. The remote entry point arrives with the
+        // introduction server.
+        out << "\n  Internet link  enabled — streaming sessions may open a router port"
+            << (upnp ? " (UPnP gateway found).\n"
+                     : ".\n                 No UPnP gateway answered: remote streams will need a "
+                       "manual port forward.\n");
+        out << "  Web interface  stays on the LAN address (no sub-domain is registered,\n"
+            << "                 no certificate is issued, ports 80/443 stay closed).\n";
     } else {
-        // The only manual step on a headless internet install, and the one that
-        // silently breaks everything when skipped. Spell it out.
-        out << "  Router         no UPnP gateway answered. Forward this port by hand in your\n"
-            << "                 router's admin page, or the public URL will not resolve to\n"
-            << "                 this machine:\n"
-            << "\n"
-            << "                     TCP " << extPort << "  ->  " << st.value("local_ip").toString()
-            << ":" << st.value("https_port").toInt(443) << "\n";
+        out << "\n  Public URL     https://" << domain << extSuffix << "\n";
+        if (st.value("cert_issuing").toBool(false))
+            out << "                 certificate still being issued — it lands within a minute\n";
+
+        out << "\n";
+        if (upnp) {
+            out << "  Router         UPnP gateway found — port " << extPort
+                << "/tcp mapped automatically.\n";
+        } else {
+            // The only manual step on a headless internet install, and the one
+            // that silently breaks everything when skipped. Spell it out.
+            out << "  Router         no UPnP gateway answered. Forward this port by hand in your\n"
+                << "                 router's admin page, or the public URL will not resolve to\n"
+                << "                 this machine:\n"
+                << "\n"
+                << "                     TCP " << extPort << "  ->  "
+                << st.value("local_ip").toString() << ":" << st.value("https_port").toInt(443)
+                << "\n";
+        }
     }
     out << "\n";
     out.flush();
@@ -1253,8 +1276,7 @@ int main(int argc, char* argv[])
     parser.addOption(setAdminPasswordOption);
 
     QCommandLineOption enableInternetOption(
-        "enable-internet",
-        "Publish this server on a public sub-domain (asks for consent), then exit");
+        "enable-internet", "Enable the Internet link (asks for consent), then exit");
     parser.addOption(enableInternetOption);
 
     QCommandLineOption yesOption("yes", "Accept the --enable-internet agreement non-interactively");
@@ -2453,7 +2475,14 @@ int main(int argc, char* argv[])
             cfg["codecOverridden"] = codecOverridden;
             cfg["originalCodec"] = static_cast<int>(originalCodec);
             cfg["gamingMode"] = reqGamingMode;
-            cfg["upnpEnabled"] = effectiveUpnpEnabled;
+            // UPnP is consent-gated: a router mapping only serves a peer coming
+            // from the internet, and internet_access_enabled is the user's
+            // answer to exactly that question. Read live (not baked into
+            // effectiveUpnpEnabled at boot) so flipping the admin toggle takes
+            // effect on the very next stream, without a restart. A LAN-only
+            // user who declined keeps streaming — same-subnet peers connect on
+            // the host candidate, the router is never in the path.
+            cfg["upnpEnabled"] = effectiveUpnpEnabled && appSettings.internetAccessEnabled();
             cfg["internalTransport"] = internalTransport;
             cfg["transportMode"] = chainMode;
             cfg["stunServer"] = stunServer;

@@ -246,9 +246,15 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
     // auto-start path brings the InternetAccessManager up after this returns.
     if (internet) {
         // Legal traceability: the installer records the exact agreement text the
-        // user read when ticking the Internet checkbox (localized).
-        settings.setInternetConsent(obj.value(QStringLiteral("consent_message")).toString(),
-                                    QStringLiteral("installer"));
+        // user read when ticking the Internet checkbox (localized). Only on the
+        // first authorization — an upgrade skips the consent page (the checkbox
+        // is pre-answered from settings.json), so what it forwards here is not
+        // a consent the user just gave, and must not overwrite the one they did.
+        if (settings.internetConsent().isEmpty()) {
+            settings.setInternetConsent(obj.value(QStringLiteral("consent_message")).toString(),
+                                        QStringLiteral("installer"),
+                                        QStringLiteral("rendezvous"));
+        }
         settings.setInternetAccessEnabled(true);
         Logger::info(QStringLiteral("Provisioning: Internet Access authorized"));
     }
