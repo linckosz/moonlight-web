@@ -177,7 +177,11 @@ export class SetupView {
         }
 
         const internetBlock = this._internetActive
-            ? this._okNote(t('setup.internetActive', { domain: this._domain }))
+            ? this._okNote(
+                  this._domain
+                      ? t('setup.internetActive', { domain: this._domain })
+                      : t('setup.internetActiveLan'),
+              )
             : `
                 <p class="setup-note">${t('setup.internetBody')}</p>
                 <label class="setup-check">
@@ -449,8 +453,8 @@ export class SetupView {
         try {
             const result = await BackendClient.applySetup({
                 internet_access_authorized: this._internetAuth,
-                // Exact agreement text displayed — recorded server-side in the
-                // DNS registration audit log (legal traceability).
+                // Exact agreement text displayed — recorded server-side as the
+                // versioned consent record (legal traceability).
                 consent_message: this._internetAuth
                     ? t('setup.internetBody') + ' / ' + t('setup.internetOption')
                     : '',

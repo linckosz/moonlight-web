@@ -19,7 +19,8 @@
  * MoonlightWeb — Server Settings
  *
  * Server administration functions (localhost only):
- *   - Internet Access (Azure DNS) with DNS propagation check
+ *   - Internet Access consent (legacy instances keep their DNS sub-domain and
+ *     its propagation check until the announced shutdown, February 2027)
  *   - HTTPS port configuration
  *   - Transport mode
  *   - Access PIN display with copy-to-clipboard
@@ -78,9 +79,19 @@ export class AdminView {
         // instance behind the same NAT.
         this._externalHttpsPort = 443;
 
-        // Internet Access state (Azure DNS)
+        // Internet Access state
         this._internetEnabled = false;
         this._domain = '';
+        // True when this instance registered a sub-domain under the retiring
+        // DNS mechanism: it keeps the DNS activation steps, the propagation
+        // polling and its public URL until the announced shutdown (Feb 2027).
+        // A fresh install has none of that — enabling only authorizes the
+        // per-session router mapping.
+        this._legacyDns = false;
+        // Version of the stored consent record (0 = none, 1 = DNS-era wording).
+        // The backend holds phase "consent_required" until a version-2 consent
+        // is recorded, so the checkbox must re-ask with the current text.
+        this._consentVersion = 0;
         this._publicIp = '';
         this._localIp = '';
         // Every IPv4 the backend can be reached on, best (default-route) first.
@@ -192,6 +203,8 @@ export class AdminView {
                       ? [this._localIp]
                       : [];
             this._uniqueId = status.unique_id || '';
+            this._legacyDns = status.legacy_dns || false;
+            this._consentVersion = status.consent_version || 0;
             this._transportMode = status.transport_mode || 'auto';
             this._availableTransports = status.available_transports || [];
             this._upnpAvailable = status.upnp_available || false;
@@ -199,6 +212,13 @@ export class AdminView {
             this._active = status.active || false;
             this._hairpinReachable = status.hairpin_reachable || false;
             this._phase = status.phase || '';
+            // The backend refuses to open anything until the user agrees to the
+            // current consent wording (the stored record described the retired
+            // DNS mechanism). Uncheck the box so re-ticking it records a fresh,
+            // accurate consent.
+            if (this._phase === 'consent_required') {
+                this._internetEnabled = false;
+            }
             // Show the activation checklist whenever the backend is mid-activation,
             // even when it was triggered by first-run provisioning (not the toggle).
             this._activating = AdminView.IN_PROGRESS_PHASES.includes(this._phase);
@@ -734,7 +754,9 @@ export class AdminView {
         ];
 
         const domainUrl = this._buildDomainUrl();
-        const showDomain = this._internetEnabled || !!this._domain;
+        // Only a legacy instance (or a custom domain) has a public URL to show;
+        // a fresh install's Internet link opens no web port and names nothing.
+        const showDomain = !!this._domain;
 
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
@@ -898,10 +920,22 @@ export class AdminView {
                             : ''
                     }
 
-                    <!-- Info frame (always visible) -->
+                    ${
+                        this._legacyDns
+                            ? `
+                        <div class="internet-info-box internet-info-error">
+                            <p>${t('admin.legacySunset', { domain: this.esc(this._domain) })}</p>
+                        </div>
+                    `
+                            : ''
+                    }
+
+                    <!-- Info frame (always visible): the exact consent wording.
+                         A legacy instance still runs the DNS mechanism, so it
+                         keeps the wording it agreed to. -->
                     <div class="internet-info-box">
                         <p><strong class="internet-important-label">${t('admin.importantLabel')}</strong><br>
-                        ${t('admin.internetInfo1')}</p>
+                        ${this._internetConsentText()}</p>
                         <p>${this._upnpAvailable ? t('admin.upnpAvailableNote') : t('admin.upnpUnavailableNote')}</p>
                         ${this._publicIp ? `<p>${t('admin.publicIp')} <code>${this.esc(this._publicIp)}</code></p>` : ''}
                         <p>${t('admin.upnpLabel')} ${
@@ -935,13 +969,27 @@ export class AdminView {
                             : ''
                     }
 
+                    <!-- Consent renewal: the stored agreement described the
+                         retired DNS mechanism, so nothing opens until the user
+                         re-ticks the box under the current wording. -->
+                    ${
+                        this._phase === 'consent_required'
+                            ? `
+                        <div class="internet-info-box">
+                            <p>${t('admin.consentRequired')}</p>
+                        </div>
+                    `
+                            : ''
+                    }
+
                     <!-- Enabled but registration not live, with no specific error
                          (e.g. remote view where the reason is hidden) -->
                     ${
                         this._internetEnabled &&
                         !this._active &&
                         !this._pendingRegistration &&
-                        !this._lastError
+                        !this._lastError &&
+                        this._phase !== 'consent_required'
                             ? `
                         <div class="internet-info-box internet-info-error">
                             <p>${t('admin.internetNotActive')}</p>
@@ -1820,6 +1868,14 @@ export class AdminView {
 
     // Internet Access enable / disable
 
+    // The exact agreement text shown next to the checkbox — and recorded
+    // server-side as consent_message. A legacy instance still runs the DNS
+    // registration it originally agreed to; everyone else gets the current
+    // wording (per-session UPnP, peer-visible IP, no DNS record, no cert).
+    _internetConsentText() {
+        return this._legacyDns ? t('admin.internetInfoLegacy') : t('admin.internetInfo1');
+    }
+
     async _enableInternet() {
         // Show the activation loader immediately; the enable request blocks on the
         // backend while it runs through its steps, so we poll status.phase in
@@ -1835,15 +1891,18 @@ export class AdminView {
             const result = await BackendClient.enableInternet({
                 internet_access_enabled: true,
                 auto_ip_detection: true,
-                transport_mode: this._transportMode,
                 // Exact agreement text displayed next to the checkbox — recorded
-                // server-side in the DNS registration audit log (traceability).
-                consent_message: t('admin.internetInfo1') + ' / ' + t('admin.enableInternet'),
+                // server-side for traceability (versioned consent record).
+                consent_message: this._internetConsentText() + ' / ' + t('admin.enableInternet'),
             });
             this._stopPhasePolling();
             this._activating = false;
             if (result.status === 'enabled') {
-                Toast.success(t('admin.internetEnabled', { domain: result.domain || '...' }));
+                Toast.success(
+                    result.domain
+                        ? t('admin.internetEnabled', { domain: result.domain })
+                        : t('admin.internetEnabledLan'),
+                );
                 // Capture the redirect target straight from the enable response —
                 // it carries the final domain, external HTTPS port and hairpin
                 // result, computed by the time start() returned. Reading them here
@@ -1890,11 +1949,17 @@ export class AdminView {
                     const loader = this.container.querySelector('#internet-activation');
                     if (loader) loader.innerHTML = this._renderActivationSteps();
                 }
-                // Terminal phase (success, give-up or waiting): close the loader and
-                // refresh the full view. Needed when activation was triggered by
-                // provisioning (no awaited enable call to finalize). An empty phase
-                // is treated as "not reported yet", never as terminal.
-                if (phase === 'active' || phase === 'error' || phase === 'pending') {
+                // Terminal phase (success, give-up, waiting, or consent renewal):
+                // close the loader and refresh the full view. Needed when
+                // activation was triggered by provisioning (no awaited enable
+                // call to finalize). An empty phase is treated as "not reported
+                // yet", never as terminal.
+                if (
+                    phase === 'active' ||
+                    phase === 'error' ||
+                    phase === 'pending' ||
+                    phase === 'consent_required'
+                ) {
                     this._stopPhasePolling();
                     this._activating = false;
                     await this._loadInternetState();
@@ -1966,13 +2031,10 @@ export class AdminView {
         const transportSelect = this.container.querySelector('#select-transport-mode');
         const newMode = transportSelect ? transportSelect.value : this._transportMode;
 
-        const prefs = {
-            internet_access_enabled: this._internetEnabled,
-            transport_mode: newMode,
-        };
-
+        // A streaming setting, saved with its siblings — routing it through the
+        // internet-enable endpoint used to re-run the whole activation.
         try {
-            await BackendClient.enableInternet(prefs);
+            await BackendClient.saveStreamingSettings({ transport_mode: newMode });
             this._transportMode = newMode;
             Toast.success(t('admin.transportSaved', { mode: newMode }));
         } catch (err) {
@@ -1986,13 +2048,20 @@ export class AdminView {
     // Build the activation step checklist for the loader. Marks steps before the
     // current phase as done, the current one as spinning, the rest as pending.
     _renderActivationSteps() {
-        const phases = [
-            ['detecting_ip', t('admin.phaseDetectingIp')],
-            ['registering_dns', t('admin.phaseRegisteringDns')],
-            ['checking_dns', t('admin.phaseCheckingDns')],
-            ['issuing_certificate', t('admin.phaseIssuingCert')],
-            ['configuring_ports', t('admin.phaseConfiguringPorts')],
-        ];
+        // Only a legacy instance still walks the DNS/certificate steps; a fresh
+        // install goes straight from IP detection to the router configuration.
+        const phases = this._legacyDns
+            ? [
+                  ['detecting_ip', t('admin.phaseDetectingIp')],
+                  ['registering_dns', t('admin.phaseRegisteringDns')],
+                  ['checking_dns', t('admin.phaseCheckingDns')],
+                  ['issuing_certificate', t('admin.phaseIssuingCert')],
+                  ['configuring_ports', t('admin.phaseConfiguringPorts')],
+              ]
+            : [
+                  ['detecting_ip', t('admin.phaseDetectingIp')],
+                  ['configuring_ports', t('admin.phaseConfiguringPorts')],
+              ];
         const order = phases.map((p) => p[0]);
         const done = this._phase === 'active';
         const cur = order.indexOf(this._phase);
