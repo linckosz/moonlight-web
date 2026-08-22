@@ -21,6 +21,7 @@
 #include "server/ShareManager.h"
 
 #include <functional>
+#include <utility>
 
 class HttpServer;
 
@@ -50,6 +51,11 @@ struct ShareRoutesDeps
     /// Sunshine refuses /resume with "No running app to resume" otherwise, so
     /// this is checked before the join instead of failing mid-handshake.
     std::function<bool()> ownerStreamAlive;
+
+    /// The host uuid + app id the owner is streaming *right now*, empty uuid when
+    /// nothing is up. Read at activation time to bind the share to that host, so
+    /// the link can never later be routed to a different machine.
+    std::function<std::pair<QString, int>()> currentOwnerContext;
 
     /// The host machine's display name, shown on the "Join <machine>" button.
     std::function<QString()> machineName;

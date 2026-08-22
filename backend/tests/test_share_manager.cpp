@@ -22,6 +22,11 @@ namespace {
 
 const int kSlot = ShareManager::kFirstSlot;
 
+// A share is always bound to the host the owner is streaming; these stand in for
+// that context wherever a test does not care which host it is.
+const QString kHost = QStringLiteral("host-uuid-A");
+const int kApp = 42;
+
 /// A manager as it would be on a fresh install. The state file is removed
 /// first, so remembered permissions from an earlier test — or from an earlier
 /// run of this binary — cannot leak in. (The caller runs with QStandardPaths
@@ -40,7 +45,7 @@ void test_activation_mints_distinct_secrets()
 
     QString token1, pin1;
     ShareManager::SlotStatus st1;
-    CHECK(mgr->activate(kSlot, token1, pin1, st1));
+    CHECK(mgr->activate(kSlot, kHost, kApp, token1, pin1, st1));
     CHECK(st1.state == ShareManager::State::Shared);
     // 32 random bytes, base64url, unpadded.
     CHECK(token1.size() >= 40);
@@ -49,7 +54,7 @@ void test_activation_mints_distinct_secrets()
 
     QString token2, pin2;
     ShareManager::SlotStatus st2;
-    CHECK(mgr->activate(kSlot, token2, pin2, st2));
+    CHECK(mgr->activate(kSlot, kHost, kApp, token2, pin2, st2));
     CHECK(token1 != token2);
     // Re-sharing kills the old link outright — that is the only way to change
     // the permissions, so it must not leave the previous one usable.
@@ -59,8 +64,11 @@ void test_activation_mints_distinct_secrets()
     // A slot outside the player range is not a slot.
     QString t3, p3;
     ShareManager::SlotStatus s3;
-    CHECK(!mgr->activate(0, t3, p3, s3));
-    CHECK(!mgr->activate(ShareManager::kLastSlot + 1, t3, p3, s3));
+    CHECK(!mgr->activate(0, kHost, kApp, t3, p3, s3));
+    CHECK(!mgr->activate(ShareManager::kLastSlot + 1, kHost, kApp, t3, p3, s3));
+    // And an activation with no host to bind to is refused: an unbound link is
+    // exactly the cross-host hole the binding closes.
+    CHECK(!mgr->activate(kSlot, QString(), kApp, t3, p3, s3));
 
     delete mgr;
 }
@@ -72,7 +80,7 @@ void test_pin_is_required_and_bound_to_the_link()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
 
     // The link alone opens nothing.
     ShareManager::PinOutcome wrong = mgr->redeemPin(token, QStringLiteral("000000"), "1.2.3.4");
@@ -93,7 +101,7 @@ void test_pin_is_required_and_bound_to_the_link()
 
     // A cookie is worthless once the owner re-shares.
     QString token2, pin2;
-    mgr->activate(kSlot, token2, pin2, st);
+    mgr->activate(kSlot, kHost, kApp, token2, pin2, st);
     CHECK_EQ(mgr->slotForCookie(ok.cookie), -1);
 
     delete mgr;
@@ -106,7 +114,7 @@ void test_pin_bruteforce_kills_the_activation()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
 
     // Each attempt comes from its own bucket so the per-caller lockout never
     // fires — this is the attacker with a botnet, and the per-activation
@@ -135,7 +143,7 @@ void test_rate_limit_locks_a_single_caller()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
 
     bool sawLockout = false;
     for (int i = 0; i < 4; ++i) {
@@ -161,7 +169,7 @@ void test_permissions_freeze_when_the_popin_closes()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
 
     // A fresh share starts as viewer — the safe default, not the last one.
     CHECK(!st.permissions.gamepad);
@@ -185,7 +193,7 @@ void test_permissions_freeze_when_the_popin_closes()
     // The next share remembers the choice as its starting point.
     QString token2, pin2;
     ShareManager::SlotStatus st2;
-    mgr->activate(kSlot, token2, pin2, st2);
+    mgr->activate(kSlot, kHost, kApp, token2, pin2, st2);
     CHECK(st2.permissions.gamepad);
     CHECK(!st2.permissions.keyboardMouse);
 
@@ -199,7 +207,7 @@ void test_a_dropped_stream_does_not_end_the_share()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
 
     mgr->setStreaming(kSlot, true);
     CHECK(mgr->state(kSlot) == ShareManager::State::Streaming);
@@ -235,13 +243,13 @@ void test_revoking_a_live_stream_asks_for_a_disconnect()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
 
     // Nothing streaming → nothing to disconnect.
     mgr->deactivate(kSlot, ShareManager::EndReason::OwnerToggle);
     CHECK_EQ(disconnects.size(), 0);
 
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
     mgr->setStreaming(kSlot, true);
     mgr->deactivate(kSlot, ShareManager::EndReason::OwnerStop);
     CHECK_EQ(disconnects.size(), 1);
@@ -260,8 +268,8 @@ void test_slots_are_independent()
 
     QString tokenA, pinA, tokenB, pinB;
     ShareManager::SlotStatus st;
-    mgr->activate(ShareManager::kFirstSlot, tokenA, pinA, st);
-    mgr->activate(ShareManager::kFirstSlot + 1, tokenB, pinB, st);
+    mgr->activate(ShareManager::kFirstSlot, kHost, kApp, tokenA, pinA, st);
+    mgr->activate(ShareManager::kFirstSlot + 1, kHost, kApp, tokenB, pinB, st);
 
     // The right link with the wrong PIN is still refused.
     const ShareManager::PinOutcome crossed = mgr->redeemPin(tokenA, pinB, "198.51.100.1");
@@ -298,7 +306,7 @@ void test_persistence_survives_a_restart()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
     ShareManager::Permissions p;
     p.gamepad = true;
     mgr->setPermissions(kSlot, p);
@@ -332,7 +340,7 @@ void test_clear_secrets_are_memory_only()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, token, pin, st);
 
     // The owner reopening the popin gets the same pair back, not a new one.
     QString again, againPin;
@@ -360,6 +368,41 @@ void test_clear_secrets_are_memory_only()
     delete restarted;
 }
 
+void test_share_is_bound_to_its_host()
+{
+    SECTION("share: an activation is bound to one host, and only that host");
+    ShareManager* mgr = freshManager();
+
+    // Off slots name no host.
+    CHECK(mgr->hostForSlot(kSlot).isEmpty());
+    CHECK_EQ(mgr->appForSlot(kSlot), -1);
+
+    QString token, pin;
+    ShareManager::SlotStatus st;
+    CHECK(mgr->activate(kSlot, kHost, kApp, token, pin, st));
+    CHECK_EQ(mgr->hostForSlot(kSlot), kHost);
+    CHECK_EQ(mgr->appForSlot(kSlot), kApp);
+
+    // Re-sharing rebinds to whatever host is up at that moment.
+    QString token2, pin2;
+    CHECK(mgr->activate(kSlot, QStringLiteral("host-uuid-B"), 7, token2, pin2, st));
+    CHECK_EQ(mgr->hostForSlot(kSlot), QStringLiteral("host-uuid-B"));
+    CHECK_EQ(mgr->appForSlot(kSlot), 7);
+    delete mgr;
+
+    // The binding outlives a restart — a link handed out on host B must still
+    // resolve to host B, never to whatever is up next.
+    auto* restarted = new ShareManager();
+    CHECK_EQ(restarted->hostForSlot(kSlot), QStringLiteral("host-uuid-B"));
+    CHECK_EQ(restarted->appForSlot(kSlot), 7);
+
+    // Revoking drops the binding with everything else.
+    restarted->deactivate(kSlot, ShareManager::EndReason::OwnerToggle);
+    CHECK(restarted->hostForSlot(kSlot).isEmpty());
+    CHECK_EQ(restarted->appForSlot(kSlot), -1);
+    delete restarted;
+}
+
 } // namespace
 
 void run_share_manager_tests()
@@ -374,4 +417,5 @@ void run_share_manager_tests()
     test_slots_are_independent();
     test_persistence_survives_a_restart();
     test_clear_secrets_are_memory_only();
+    test_share_is_bound_to_its_host();
 }

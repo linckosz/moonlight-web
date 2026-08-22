@@ -183,9 +183,14 @@ QList<ShareManager::SlotStatus> ShareManager::status()
     return out;
 }
 
-bool ShareManager::activate(int slot, QString& outToken, QString& outPin, SlotStatus& outStatus)
+bool ShareManager::activate(int slot, const QString& hostUuid, int appId, QString& outToken,
+                            QString& outPin, SlotStatus& outStatus)
 {
     if (!isPlayerSlot(slot)) return false;
+    // A share is an invitation into a *running* stream on a *specific* host.
+    // With no host there is nothing to bind the link to, and an unbound link is
+    // exactly the cross-host hole we are closing.
+    if (hostUuid.isEmpty()) return false;
     pruneExpired();
 
     Slot* s = slotFor(slot);
@@ -207,6 +212,8 @@ bool ShareManager::activate(int slot, QString& outToken, QString& outPin, SlotSt
     act.permissions = s->lastPermissions; // viewer on a fresh install
     act.locked = false;
     act.activatedAt = QDateTime::currentSecsSinceEpoch();
+    act.hostUuid = hostUuid;
+    act.appId = appId;
     s->activation = act;
 
     save();
@@ -218,8 +225,9 @@ bool ShareManager::activate(int slot, QString& outToken, QString& outPin, SlotSt
     outStatus.locked = false;
     outStatus.expiresAt = act.activatedAt + kTtlSecs;
 
-    Logger::info(QStringLiteral("[Share] Slot %1 shared (access=%2, 8h)")
+    Logger::info(QStringLiteral("[Share] Slot %1 shared on host %2 (access=%3, 8h)")
                      .arg(slot)
+                     .arg(hostUuid)
                      .arg(act.permissions.accessLevel()));
     return true;
 }
@@ -430,6 +438,22 @@ qint64 ShareManager::expiresAt(int slot)
     return s->activation.activatedAt + kTtlSecs;
 }
 
+QString ShareManager::hostForSlot(int slot)
+{
+    pruneExpired();
+    Slot* s = slotFor(slot);
+    if (!s || !s->activation.live()) return {};
+    return s->activation.hostUuid;
+}
+
+int ShareManager::appForSlot(int slot)
+{
+    pruneExpired();
+    Slot* s = slotFor(slot);
+    if (!s || !s->activation.live()) return -1;
+    return s->activation.appId;
+}
+
 // ── Rate limiting ───────────────────────────────────────────────────────────
 
 int ShareManager::rateLockout(const QString& bucket) const
@@ -517,6 +541,8 @@ void ShareManager::save()
             act[QStringLiteral("locked")] = s.activation.locked;
             act[QStringLiteral("activatedAt")] = s.activation.activatedAt;
             act[QStringLiteral("pinFailures")] = s.activation.pinFailures;
+            act[QStringLiteral("hostUuid")] = s.activation.hostUuid;
+            act[QStringLiteral("appId")] = s.activation.appId;
             obj[QStringLiteral("activation")] = act;
         }
         slotArray.append(obj);
@@ -573,7 +599,12 @@ void ShareManager::load()
         a.activatedAt = activatedAt;
         a.pinFailures = act.value(QStringLiteral("pinFailures")).toInt(0);
         a.streaming = false; // the worker died with the process
+        a.hostUuid = act.value(QStringLiteral("hostUuid")).toString();
+        a.appId = act.value(QStringLiteral("appId")).toInt(-1);
         if (a.tokenHash.isEmpty() || a.pinHash.isEmpty()) continue;
+        // An activation with no bound host predates the per-host binding (or was
+        // hand-edited): drop it rather than let it resolve to an arbitrary host.
+        if (a.hostUuid.isEmpty()) continue;
         s.activation = a;
 
         Logger::info(QStringLiteral("[Share] Slot %1 activation restored (%2s left)")
