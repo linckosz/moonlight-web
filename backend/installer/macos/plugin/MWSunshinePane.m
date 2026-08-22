@@ -116,21 +116,28 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
                 in:view];
 
     // The Internet opt-in is not a Sunshine choice: it stays offered.
-    [self addInternetCheckAt:110 in:view];
+    [self addInternetCheckAt:98 in:view];
 }
 
 - (void)addInternetCheckAt:(CGFloat)y in:(NSView *)view
 {
     // Pre-ticked only when a previous install already authorized Internet access
     // (settings.json) — a re-install must not silently forget the prior opt-in.
-    // First install stays unchecked: opening the machine to the Internet (UPnP +
-    // public DNS record) requires an explicit opt-in click. The label carries a
-    // discreet positive green tint to draw the eye.
-    _internetCheck = [[NSButton alloc] initWithFrame:NSMakeRect(0, y, 470, 22)];
+    // First install stays unchecked: opening the machine to the Internet
+    // (per-session UPnP mapping) requires an explicit opt-in click. The label IS
+    // the recorded consent, so it wraps over several lines to say what enabling
+    // does and does not do; a discreet positive green tint draws the eye.
+    _internetCheck = [[NSButton alloc] initWithFrame:NSMakeRect(0, y, 470, 46)];
     [_internetCheck setButtonType:NSButtonTypeSwitch];
+    NSMutableParagraphStyle *wrap = [[NSMutableParagraphStyle alloc] init];
+    wrap.lineBreakMode = NSLineBreakByWordWrapping;
     _internetCheck.attributedTitle = [[NSAttributedString alloc]
         initWithString:MWInternetConsentText()
-            attributes:@{NSForegroundColorAttributeName : [NSColor systemGreenColor]}];
+            attributes:@{
+                NSForegroundColorAttributeName : [NSColor systemGreenColor],
+                NSFontAttributeName : [NSFont systemFontOfSize:11],
+                NSParagraphStyleAttributeName : wrap
+            }];
     _internetCheck.state =
         MWInternetAlreadyAuthorized() ? NSControlStateValueOn : NSControlStateValueOff;
     [view addSubview:_internetCheck];
@@ -175,15 +182,17 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
         [view addSubview:_passSecure];
     }
 
-    [self addInternetCheckAt:58 in:view];
+    // The taller multi-line consent checkbox (46px) fills the band between the
+    // password field (bottom edge y=92) and the status line below.
+    [self addInternetCheckAt:46 in:view];
 
     // Status + progress stop short of the Skip button's column.
-    _statusLabel = [self labelAt:32 text:@"Preparing Sunshine…" in:view];
-    _statusLabel.frame = NSMakeRect(0, 32, 360, 18);
+    _statusLabel = [self labelAt:24 text:@"Preparing Sunshine…" in:view];
+    _statusLabel.frame = NSMakeRect(0, 24, 360, 18);
     _statusLabel.textColor = [NSColor secondaryLabelColor];
     _statusLabel.hidden = (_case != MWSunshineAbsent);
 
-    _progress = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 12, 360, 16)];
+    _progress = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 6, 360, 16)];
     _progress.style = NSProgressIndicatorStyleBar;
     _progress.indeterminate = NO;
     _progress.minValue = 0.0;

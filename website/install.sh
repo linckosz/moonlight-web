@@ -102,7 +102,7 @@ cli_hint() {
     printf '    %-34s %s\n' "$MW_CLI --set-admin-password" \
         "${dim}open the admin page to your LAN${reset}"
     printf '    %-34s %s\n' "$MW_CLI --enable-internet" \
-        "${dim}publish it on a public sub-domain${reset}"
+        "${dim}allow the internet link${reset}"
     printf '    %-34s %s\n' "$MW_CLI --help" \
         "${dim}every command${reset}"
     say ""
@@ -139,11 +139,14 @@ ask_internet() {
     say ""
     say "${bold}Expose this machine on the internet?${reset}"
     say ""
-    say "  MoonlightWeb can claim a sub-domain of moonlightweb.top for this"
-    say "  machine, point it at your public IP address and obtain a real TLS"
-    say "  certificate for it — so you can stream from anywhere, not only from"
-    say "  this network. The sub-domain and that IP address are stored on the"
-    say "  MoonlightWeb DNS server for as long as you keep the link on."
+    say "  MoonlightWeb can allow streaming from outside this network. Your"
+    say "  router is asked (UPnP) to open a streaming port during each session,"
+    say "  and whoever connects reaches this machine directly — each side of a"
+    say "  peer-to-peer connection sees the other's public IP address. A future"
+    say "  update will add the remote entry link, an outgoing connection to the"
+    say "  MoonlightWeb introduction server, which then sees this machine's"
+    say "  public IP address and when it is online. No public DNS record is"
+    say "  created, no certificate is issued, and ports 80/443 stay closed."
     say ""
     say "  ${dim}No decides nothing for good: Internet Access can be turned on —"
     say "  and off again — at any time from the admin page.${reset}"
@@ -171,10 +174,10 @@ ask_internet() {
         [ -z "$_drawn" ] || printf '\033[2A'
         _drawn=1
         if [ "$_sel" = 0 ]; then
-            printf '    %s> Yes%s  register the sub-domain now\033[K\n' "$bold" "$reset"
+            printf '    %s> Yes%s  allow the internet link\033[K\n' "$bold" "$reset"
             printf '      No   %sstay on this network only%s\033[K\n' "$dim" "$reset"
         else
-            printf '      Yes  %sregister the sub-domain now%s\033[K\n' "$dim" "$reset"
+            printf '      Yes  %sallow the internet link%s\033[K\n' "$dim" "$reset"
             printf '    %s> No%s   stay on this network only\033[K\n' "$bold" "$reset"
         fi
 
@@ -202,11 +205,12 @@ ask_internet() {
     say ""
 }
 
-# Act on a Yes, once the app is installed. The registration is driven by the
-# *running* instance (it holds the DNS credentials and the ACME account), which
-# the package's postinstall has only just been told to start — so wait for it to
-# answer on loopback first. `--yes` prints the full agreement and proceeds; the
-# audit entry records those exact words, not the summary shown above.
+# Act on a Yes, once the app is installed. The enable is driven by the
+# *running* instance (it records the consent and owns the router mapping),
+# which the package's postinstall has only just been told to start — so wait
+# for it to answer on loopback first. `--yes` prints the full agreement and
+# proceeds; the consent record keeps those exact words, not the summary shown
+# above.
 # The operator commands all talk to the running instance over loopback, and the
 # package's postinstall has only just been told to start it. Give it a moment to
 # answer before asking it anything.
@@ -506,7 +510,7 @@ EOF
     say ""
     cli_hint
     # Nothing started the app here — unlike the packages, an AppImage has no
-    # postinstall — so the sub-domain cannot be registered from this script.
+    # postinstall — so the internet link cannot be enabled from this script.
     if [ "$WANT_INTERNET" = "yes" ]; then
         say "  ${dim}Internet Access: start it first, then run${reset}"
         say "  ${dim}  $MW_CLI --enable-internet${reset}"
