@@ -175,6 +175,33 @@ public:
     // Called when the browser needs a keyframe to configure its decoder.
     void requestIdrFrame();
 
+    // ── Host encoder wake-up (still-screen deadlock) ────────────────────────
+    //
+    // Sunshine only encodes on damage, and LiRequestIdrFrame only applies to
+    // the NEXT frame it encodes. On a still host screen (a text page, a paused
+    // desktop) nothing is captured, so a client whose decoder lost its
+    // reference — a keyframe lost on the browser link during congestion, a
+    // delta gated after a worker-side drop — waits for an IDR that can never
+    // come. The picture stays black until someone moves the host's mouse.
+    //
+    // So when IDRs are being asked for and the host has sent NOTHING for a
+    // while, move the pointer one pixel and back: that damage is what makes
+    // Sunshine capture, and the pending IDR rides the frame it then encodes.
+    // Guarded three ways — the host must be silent (a host that still encodes
+    // needs no help), one nudge per cooldown, and a handful of attempts per
+    // stall (if the pointer is not what's blocking, shaking it is noise).
+    static constexpr int kEncoderIdleMs = 2000;
+    static constexpr int kWakeNudgeCooldownMs = 3000;
+    static constexpr int kMaxWakeNudges = 5;
+
+    /// Whether this session may nudge the host pointer (see above). Off for a
+    /// share whose guest was not given keyboard/mouse: their stalled decoder
+    /// must not move a pointer they are not allowed to touch.
+    void setWakeNudgeAllowed(bool allowed)
+    {
+        m_WakeNudgeAllowed.store(allowed, std::memory_order_release);
+    }
+
     // Metrics for stats overlay.
     // One-way backend↔Sunshine latency (ms): ENet control-stream RTT / 2 when
     // available (continuously updated, like moonlight-qt's "network latency"),
@@ -287,6 +314,16 @@ private:
     std::atomic<int64_t> m_LastDecodeLatencyUs{0};
     std::atomic<int64_t> m_FrameSubmitTimeUs{0};
     std::atomic<int64_t> m_IdrRequestTimeUs{0};
+    // Arrival time of the last frame the HOST sent, whatever happens to it
+    // downstream (recorded before the worker-side drop, which says nothing
+    // about whether Sunshine is still encoding). Drives the encoder wake-up.
+    std::atomic<int64_t> m_LastHostFrameTimeUs{0};
+    std::atomic<int64_t> m_LastWakeNudgeUs{0};
+    // Connection-up time, the reference the wake-up measures against until the
+    // session's first frame arrives.
+    std::atomic<int64_t> m_ConnectedTimeUs{0};
+    std::atomic<int> m_ConsecutiveWakeNudges{0};
+    std::atomic<bool> m_WakeNudgeAllowed{true};
     std::atomic<int64_t> m_FramePresentationTimeUs{0}; // presentationTimeUs from DECODE_UNIT
     std::atomic<int64_t> m_FirstFrameArrivalTimeUs{
         0}; // steady_clock::now() at first frame arrival (us since epoch)
@@ -321,6 +358,7 @@ private:
     // the shim's own thread.
     QMutex m_InputStateMutex;
     QTimer* m_InputWatchdog = nullptr;
+    QTimer* m_EncoderWakeTimer = nullptr;
     QElapsedTimer m_ClientAliveTimer; // invalid until the first client message
     QHash<short, HeldKey> m_HeldKeys;
     quint32 m_HeldButtons = 0; // 1 << (button - 1)
@@ -337,6 +375,17 @@ private:
     // cached frontend — which goes silent while a key is legitimately held —
     // would have its keys released out from under it.
     bool m_HeartbeatSeen = false;
+
+    /// Force the host to capture a frame when it has gone silent with an IDR
+    /// pending (contract above requestIdrFrame's wake-up section).
+    void maybeWakeHostEncoder();
+    /// Keep checking after the request that armed it: the deadlock is a state,
+    /// not an event. The IDR is normally asked for the instant the host goes
+    /// quiet — too early for the silence to be measurable — and nothing else
+    /// runs afterwards, since every other code path here is driven by frames
+    /// that are precisely what stopped coming.
+    void armEncoderWakeTimer();
+    void onEncoderWakeTick();
 
     /// Run the watchdog only while something is actually held down.
     void updateInputWatchdog();

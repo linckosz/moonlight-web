@@ -528,6 +528,9 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // Concurrent sessions each start their controller numbering at 0, which on
     // the host collapses every player's gamepad onto the same virtual pad.
     m_Shim->setControllerOffset(m_GamepadOffset);
+    // A guest who was not given keyboard/mouse must not move the host pointer,
+    // not even the 1px the encoder wake-up uses to unstick a still screen.
+    m_Shim->setWakeNudgeAllowed(m_InputPolicy.keyboardMouse);
 
     // Branch: WSS (legacy StreamRelay) or WebRTC (DataChannelRelay + SignalingServer)
     if (m_Transport == "wss") {

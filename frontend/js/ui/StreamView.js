@@ -2571,6 +2571,34 @@ export class StreamView {
     }
 
     /**
+     * Show a still image over this view's canvas/video until it decodes its own
+     * first frame — the outgoing stream's last frame, handed over by a relaunch
+     * whose successor has not produced anything yet.
+     *
+     * Sunshine only encodes on damage: on a still host screen a decoder that
+     * lost its reference gets no IDR however many are requested, so the empty
+     * canvas (black) can stand for as long as nobody touches the host. That
+     * frozen frame IS what the host screen currently looks like, which makes it
+     * a far better placeholder than black — and unlike the relaunch loader it
+     * covers, it lets pointer events through to the input layer, so moving the
+     * mouse (the thing that unsticks the host) still works.
+     */
+    showStalePoster(img) {
+        if (!img || !this.canvasArea || this._firstFrameRendered) return;
+        this._clearStalePoster();
+        img.className = 'stream-stale-poster';
+        img.setAttribute('aria-hidden', 'true');
+        this._stalePoster = img;
+        this.canvasArea.appendChild(img);
+    }
+
+    _clearStalePoster() {
+        if (!this._stalePoster) return;
+        this._stalePoster.remove();
+        this._stalePoster = null;
+    }
+
+    /**
      * First decoded/presented frame of this stream instance: flip the status to
      * Live, reveal the stats overlay, tear down the startup overlay and show
      * the shortcuts slide. The overlay work is idempotent (safe to re-run);
@@ -2580,6 +2608,8 @@ export class StreamView {
     _markFirstFrame() {
         const first = !this._firstFrameRendered;
         this._firstFrameRendered = true;
+        // Whatever this view was showing in place of a picture is now stale.
+        this._clearStalePoster();
         this.setStatus('live', 'Live');
         // Zoom/pan inherited from the replaced view: apply before the frame is
         // revealed, now that its real size is known.

@@ -2155,7 +2155,24 @@ const MoonlightApp = {
                     // Hold the frozen frame until the new stream presents its
                     // first frame (bounded — the failure paths hide the loader
                     // themselves, this timer only covers a silent stall).
-                    const failsafe = setTimeout(() => this._hideRelaunchLoader(), 15000);
+                    //
+                    // On expiry the frame moves BEHIND the loader instead of
+                    // going away with it: a host that stopped encoding (still
+                    // screen, no damage, so the IDRs we keep asking for are
+                    // applied to a frame that is never captured) leaves the new
+                    // view with an empty canvas, and dropping the cover there
+                    // used to reveal it as a black screen that stood until the
+                    // user moved the mouse. As a poster it keeps showing what
+                    // the host screen actually looks like, and — unlike the
+                    // loader — it lets the pointer through, so that mouse move
+                    // is possible. StreamView drops it on its first frame.
+                    const failsafe = setTimeout(() => {
+                        const img = document.querySelector(
+                            '#stream-relaunch-loader .relaunch-freeze-frame',
+                        );
+                        if (img && this.streamView) this.streamView.showStalePoster(img);
+                        this._hideRelaunchLoader();
+                    }, 15000);
                     this.streamView.onFirstFrame = () => {
                         clearTimeout(failsafe);
                         this._hideRelaunchLoader();

@@ -190,6 +190,23 @@ body.streaming-active::after {
     touch-action: none;
 }
 
+/* Last frame of the previous stream, held over the canvas/video until this
+   view decodes its own (see StreamView.showStalePoster). Above the picture
+   elements so the empty canvas cannot show through, below the input layer so
+   the user can still move the mouse — which is exactly what wakes a host that
+   stopped encoding. Slightly dimmed, like the relaunch freeze frame, so a held
+   image never passes for a live one. */
+.stream-stale-poster {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    z-index: 10;
+    pointer-events: none;
+    filter: brightness(0.85);
+}
+
 .stream-click-hint {
     position: absolute;
     bottom: 40px;
