@@ -910,12 +910,16 @@ export class WebRtcDataChannel {
                 return;
             }
             console.log('[MW-BIND] Host signature verified');
+        } else if (!msg.nonce) {
+            // The host did not sign, so this session has no pairing key bound.
+            // Normal on the host machine itself, which gets local privilege
+            // without a session — and where no relay exists to guard against.
+            console.log('[MW-BIND] Unsigned offer — this session has no pairing key');
         } else if (this._mwBind) {
-            // We hold a pairing key but no host identity to check against — the
-            // browser's stored record is incomplete (cleared site data, or a
-            // pairing made before the host had a key). We can still sign our own
-            // half, which is what the host verifies; re-pairing restores the
-            // other direction.
+            // The host signed but we have no identity to check it against: our
+            // stored record is incomplete (site data cleared, or paired before
+            // the host had a key). We can still sign our own half, which is what
+            // the host verifies; re-pairing restores the other direction.
             console.warn('[MW-BIND] No stored host identity — cannot verify this offer');
         }
 

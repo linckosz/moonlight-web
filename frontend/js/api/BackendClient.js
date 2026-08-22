@@ -439,9 +439,19 @@ export class BackendClient {
                 return loadOrCreateIdentity();
             }
         } catch (e) {
-            // 403 from the internet, 401 with no session, 409 on a session bound
-            // to another key: all expected, none of them fatal here.
-            console.log('[MW-BIND] Silent pairing not available:', e.message);
+            // All of these are expected states, not failures.
+            if (e.statusCode === 401) {
+                // No session at all. This is the host machine reaching itself by
+                // localhost or a private-IP literal: it gets local privilege
+                // without ever logging in, so there is no session to hang a key
+                // on. Nothing to protect either — no relay sits between a
+                // browser and the machine it is running on.
+                console.log('[MW-BIND] Host-machine access, no session — binding not applicable');
+            } else if (e.statusCode === 403) {
+                console.log('[MW-BIND] Remote peer — pair with a PIN to bind this browser');
+            } else {
+                console.log('[MW-BIND] Silent pairing not available:', e.message);
+            }
         }
         return identity;
     }
