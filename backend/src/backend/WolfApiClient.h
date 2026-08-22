@@ -44,6 +44,38 @@ struct WolfPairedClient
     QString appStateFolder;
 };
 
+/// One entry of GET /api/v1/sessions (reflected wolf::core::events::StreamSession).
+/// `sessionId` is the value Wolf exposes as `client_id` — reflectors.hpp sets it to
+/// `std::to_string(session.session_id)`, and `session_id == std::hash(client_cert)`
+/// (config.hpp:get_client_id). It is exactly the `moonlight_session_id` that
+/// /lobbies/join expects. `aesKey` is the `rikey` the launcher put in the GameStream
+/// launch URL (endpoints.hpp:create_run_session), so a caller that generated its own
+/// rikey can single out its own session unambiguously — every other field
+/// (client_ip, resolution) can collide between concurrent MoonlightWeb sessions.
+struct WolfStreamSession
+{
+    QString sessionId; ///< == the reflected `client_id`; pass this to joinLobby
+    QString clientIp;
+    QString aesKey; ///< == the launch rikey; the only collision-free match key
+    QString appId;
+    int width = 0;
+    int height = 0;
+    int fps = 0;
+};
+
+/// One entry of GET /api/v1/lobbies (reflected wolf::core::events::Lobby). A lobby
+/// owns the shared Wayland compositor + runner; `connectedSessions` holds the
+/// `moonlight_session_id`s currently switched onto it (sessions/lobbies.cpp).
+struct WolfLobby
+{
+    QString id;
+    QString name;
+    bool multiUser = false;
+    bool pinRequired = false;
+    QString startedByProfileId;
+    QStringList connectedSessions;
+};
+
 /// Why a Wolf API call failed. Deliberately transport-level: WolfBackend maps
 /// these onto BackendError so the interface layer owns the user-facing wording.
 struct WolfApiError
@@ -74,6 +106,10 @@ using WolfPairedClientsCallback =
     std::function<void(bool ok, const WolfApiError& error, const QVector<WolfPairedClient>& clients)>;
 using WolfJsonArrayCallback =
     std::function<void(bool ok, const WolfApiError& error, const QJsonArray& items)>;
+using WolfSessionsCallback =
+    std::function<void(bool ok, const WolfApiError& error, const QVector<WolfStreamSession>& sessions)>;
+using WolfLobbiesCallback =
+    std::function<void(bool ok, const WolfApiError& error, const QVector<WolfLobby>& lobbies)>;
 
 /**
  * @brief Client for Wolf's control API (`/api/v1`).
@@ -137,6 +173,31 @@ public:
 
     /// GET /api/v1/lobbies — native co-op; only meaningful on Wolf.
     void listLobbies(WolfJsonArrayCallback cb);
+
+    /// GET /api/v1/lobbies, parsed. Each lobby's `connectedSessions` names the
+    /// moonlight sessions switched onto its shared compositor — how a joiner finds
+    /// the owner's lobby.
+    void lobbies(WolfLobbiesCallback cb);
+
+    /// GET /api/v1/sessions, parsed. Used to resolve a caller's own
+    /// `moonlight_session_id` by matching `aesKey` against its launch rikey.
+    void listSessions(WolfSessionsCallback cb);
+
+    /// POST /api/v1/lobbies/join {lobby_id, moonlight_session_id, pin?} — switches
+    /// an already-running session's stream producer onto the lobby's shared
+    /// compositor (sessions/lobbies.cpp). The session must exist first.
+    void joinLobby(const QString& lobbyId, const QString& moonlightSessionId,
+                   const QString& pin, WolfVoidCallback cb);
+
+    /// POST /api/v1/lobbies/leave {lobby_id, moonlight_session_id} — switches the
+    /// session back to its own compositor; empties (and, if
+    /// stop_when_everyone_leaves, stops) the lobby when it was the last one.
+    void leaveLobby(const QString& lobbyId, const QString& moonlightSessionId,
+                    WolfVoidCallback cb);
+
+    /// POST /api/v1/lobbies/stop {lobby_id, pin?} — tears the lobby down, ejecting
+    /// every connected session.
+    void stopLobby(const QString& lobbyId, const QString& pin, WolfVoidCallback cb);
 
 private:
     void get(const QString& path, std::function<void(bool, const WolfApiError&,
