@@ -3002,6 +3002,7 @@ int main(int argc, char* argv[])
 
     ShareRoutesDeps shareDeps;
     shareDeps.ownerStreamAlive = ownerStreamAlive;
+    shareDeps.currentOwnerContext = ownerContext;
     shareDeps.machineName = []() {
 #ifdef Q_OS_WIN
         wchar_t buf[256];
@@ -3038,13 +3039,36 @@ int main(int argc, char* argv[])
     shareDeps.startPlayerStream =
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
          &anyOtherSlotLive, &slotSignalingPort, &slotWsPath, &server, &appSettings, signalingPort,
-         stunServer, &ownerContext, &g_HostAspect](int slot, int height, QString aspect,
+         stunServer, &g_HostAspect](int slot, int height, QString aspect,
                                     ShareManager::Permissions perms, QString serverHost,
                                     ResponseCallback respond) {
-            const std::pair<QString, int> owner = ownerContext();
-            const QString hostUuid = owner.first;
-            const int appId = owner.second;
-            NvComputer* host = hostUuid.isEmpty() ? nullptr : computerManager.getHost(hostUuid);
+            // The share is bound to ONE host at activation (ShareManager::activate).
+            // A player is routed there and nowhere else — never to "whichever owner
+            // slot is up", which is what let a link minted on one host reach a
+            // different machine. Resolve the bound host, then require the owner to
+            // actually be streaming it right now.
+            const QString hostUuid = shareManager.hostForSlot(slot);
+            if (hostUuid.isEmpty()) {
+                respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
+                return;
+            }
+            int appId = shareManager.appForSlot(slot);
+            bool ownerOnBoundHost = false;
+            for (int i = 0; i < kOwnerSlots; ++i)
+                if (g_Pool.at(i).worker && g_Pool.at(i).hostUuid == hostUuid) {
+                    appId = g_Pool.at(i).appId; // the app currently up on that host
+                    ownerOnBoundHost = true;
+                    break;
+                }
+            // Owner pressed Leave but kept the Sunshine session alive for guests:
+            // the owner's leg is gone, the session on the bound host is not.
+            if (!ownerOnBoundHost && g_LastOwnerHostUuid == hostUuid &&
+                !g_LiveSunshineUids.isEmpty()) {
+                if (appId < 0) appId = g_LastOwnerAppId;
+                ownerOnBoundHost = true;
+            }
+            NvComputer* host =
+                ownerOnBoundHost ? computerManager.getHost(hostUuid) : nullptr;
             if (!host) {
                 respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
                 return;

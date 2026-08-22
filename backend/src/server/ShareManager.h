@@ -122,9 +122,13 @@ public:
     /// Every player slot, always kSlotCount entries, lowest slot first.
     QList<SlotStatus> status();
 
-    /// Mint a new activation on @p slot, revoking any previous one. Returns
-    /// false for a slot outside the player range.
-    bool activate(int slot, QString& outToken, QString& outPin, SlotStatus& outStatus);
+    /// Mint a new activation on @p slot, revoking any previous one. @p hostUuid
+    /// (and @p appId) is the host the owner is streaming *right now*: the share is
+    /// bound to it, and a player is only ever routed there — never to whatever
+    /// other host happens to be up when they join. Returns false for a slot
+    /// outside the player range, or when @p hostUuid is empty (nothing to share).
+    bool activate(int slot, const QString& hostUuid, int appId, QString& outToken,
+                  QString& outPin, SlotStatus& outStatus);
 
     /// The raw link token and PIN of a live activation, so the owner reopening
     /// the popin can read what they already sent out. False when the slot is
@@ -198,6 +202,13 @@ public:
     State state(int slot);
     qint64 expiresAt(int slot);
 
+    /// The host uuid this slot's live activation is bound to, empty when Off.
+    /// The player join uses this — and only this — to decide which host to reach,
+    /// so a leaked link can never be pointed at a different machine.
+    QString hostForSlot(int slot);
+    /// The app id captured when the slot was shared, -1 when Off.
+    int appForSlot(int slot);
+
 signals:
     /// A slot's observable state changed — the owner's dropdown should refresh.
     void slotChanged(int slot);
@@ -218,6 +229,12 @@ private:
         qint64 activatedAt = 0;
         int pinFailures = 0;
         bool streaming = false; ///< runtime only, never persisted
+
+        /// The host the owner was streaming when this share was minted. A player
+        /// on this activation is only ever routed here — the share is per-host, so
+        /// a link leaked from one host can never reach another (see activate()).
+        QString hostUuid;
+        int appId = -1;
 
         /// The clear link token and PIN, so the owner can reopen the popin and
         /// read what they already handed out. Runtime only — share.json holds

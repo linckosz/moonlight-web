@@ -124,14 +124,23 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
 
     // POST /api/share/slots/:n/activate — mint the link + PIN shown in the popin.
     router->post(QStringLiteral("/api/share/slots/:n/activate"),
-                 [&share, shareOrigin](const HttpRequest& req) {
+                 [&share, &deps, shareOrigin](const HttpRequest& req) {
                      const int slot = slotParam(req);
                      if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+
+                     // Bind the share to the host the owner is streaming this very
+                     // moment: the link is per-host, and a player who redeems it is
+                     // only ever taken there (ShareManager::activate / the join).
+                     const std::pair<QString, int> owner =
+                         deps.currentOwnerContext ? deps.currentOwnerContext()
+                                                  : std::pair<QString, int>{};
+                     if (owner.first.isEmpty())
+                         return HttpResponse::error(409, "Start a stream before sharing it");
 
                      QString token;
                      QString pin;
                      ShareManager::SlotStatus st;
-                     if (!share.activate(slot, token, pin, st))
+                     if (!share.activate(slot, owner.first, owner.second, token, pin, st))
                          return HttpResponse::error(500, "Could not share this slot");
 
                      QJsonObject obj = slotJson(st);
