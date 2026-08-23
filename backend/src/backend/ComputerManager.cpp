@@ -33,6 +33,7 @@
 #include <qmdnsengine/resolver.h>
 
 #include <QHostInfo>
+#include <QStringList>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QDateTime>
@@ -216,6 +217,18 @@ void ComputerManager::init()
 
     Logger::info(
         QString("ComputerManager initialized: %1 hosts loaded (mDNS idle)").arg(m_Hosts.size()));
+
+    // The addresses a restored host will actually be polled at, in order. When a
+    // host that worked before a restart comes back offline, this line names the
+    // reason: the path we are trying is not the one that used to answer.
+    for (auto it = m_Hosts.cbegin(); it != m_Hosts.cend(); ++it) {
+        QStringList candidates;
+        for (const NvAddress& na : it.value()->uniqueAddresses()) candidates << na.toString();
+        Logger::info(QString("[NETWORK] host %1 candidates: %2")
+                         .arg(it.value()->name,
+                              candidates.isEmpty() ? QStringLiteral("(none — never polled)")
+                                                   : candidates.join(QStringLiteral(", "))));
+    }
 }
 
 // --- Persistence -----------------------------------------------------------
@@ -225,6 +238,15 @@ void ComputerManager::loadHosts()
     QSettings settings;
     int count = settings.beginReadArray(SER_HOSTS);
 
+    // Where the list came from and whether it was readable at all. Without this
+    // a store that is empty for the wrong reason (another user's home under a
+    // service, a file we may not read) is indistinguishable from a first run.
+    Logger::info(QString("Host store: %1 (%2 entries, status %3)")
+                     .arg(settings.fileName())
+                     .arg(count)
+                     .arg(static_cast<int>(settings.status())));
+
+    int rejected = 0;
     for (int i = 0; i < count; i++) {
         settings.setArrayIndex(i);
 
@@ -232,16 +254,40 @@ void ComputerManager::loadHosts()
         if (!computer->uuid.isEmpty()) {
             m_Hosts[computer->uuid] = computer;
         } else {
+            rejected++;
             delete computer;
         }
     }
 
     settings.endArray();
+
+    if (rejected > 0)
+        Logger::warning(QString("Host store: %1 stored entries carried no uuid and were dropped")
+                            .arg(rejected));
+
+    m_HostsLoaded = true;
 }
 
-void ComputerManager::saveHosts()
+void ComputerManager::saveHosts(bool allowEmpty)
 {
     QSettings settings;
+
+    // An empty in-memory list is a legitimate state only right after the last
+    // host was deleted. Every other way to get here — a store we failed to read,
+    // a save racing the load — would silently write hosts/size = 0 and destroy a
+    // perfectly good list, which is unrecoverable from the UI. Refuse instead.
+    if (m_Hosts.isEmpty() && !allowEmpty) {
+        const int stored = settings.beginReadArray(SER_HOSTS);
+        settings.endArray();
+        if (stored > 0) {
+            Logger::error(QString("Refusing to overwrite %1 stored host(s) with an empty list "
+                                  "(the stored list was %2)")
+                              .arg(stored)
+                              .arg(m_HostsLoaded ? "read at startup" : "never read"));
+            return;
+        }
+    }
+
     settings.beginWriteArray(SER_HOSTS);
 
     int i = 0;
@@ -271,6 +317,18 @@ void ComputerManager::startPolling()
     m_BackupPollTimer->setInterval(60000);
     connect(m_BackupPollTimer, &QTimer::timeout, this, &ComputerManager::onBackupPollTick);
     m_BackupPollTimer->start();
+}
+
+// The candidate this host's next poll should use. Rotating through the list
+// instead of always taking first() is what lets a host whose leading address has
+// gone dead — a stale <LocalIP> from a multi-homed Sunshine, a changed DHCP
+// lease — be found again on one of the others. One address per tick keeps the
+// single-connection-per-host rule Sunshine's single-threaded server needs.
+NvAddress ComputerManager::pollAddressFor(const NvComputer* host) const
+{
+    const QVector<NvAddress> addrs = host->uniqueAddresses();
+    if (addrs.isEmpty()) return NvAddress();
+    return addrs.at(m_PollAddrIndex.value(host->uuid, 0) % addrs.size());
 }
 
 void ComputerManager::onPollTick()
@@ -306,19 +364,19 @@ void ComputerManager::onPollTick()
             if (!m_LastPairCheck.contains(uuid) ||
                 m_LastPairCheck[uuid].secsTo(now) >= PAIR_CHECK_INTERVAL_SEC) {
                 m_LastPairCheck[uuid] = now;
-                QVector<NvAddress> addrs = host->uniqueAddresses();
-                if (!addrs.isEmpty()) {
+                const NvAddress pairAddr = pollAddressFor(host);
+                if (!pairAddr.isNull()) {
                     IdentityManager* im = IdentityManager::get();
                     quint16 httpsPort =
                         host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
                     m_PendingPairChecks.insert(uuid);
                     // [NETWORK] diagnostic: trace HTTPS pair-check (every 5 min).
                     Logger::info(QString("[NETWORK] pair-check applist HTTPS -> %1:%2 (%3)")
-                                     .arg(addrs.first().address())
+                                     .arg(pairAddr.address())
                                      .arg(httpsPort)
                                      .arg(host->name));
                     QNetworkReply* reply = m_Http->getAppListAsync(
-                        addrs.first(), httpsPort, im->getCertificate(), im->getPrivateKey());
+                        pairAddr, httpsPort, im->getCertificate(), im->getPrivateKey());
                     reply->setProperty("mwHostUuid", uuid);
                     connect(reply, &QNetworkReply::finished, this,
                             &ComputerManager::onPairCheckFinished);
@@ -329,11 +387,8 @@ void ComputerManager::onPollTick()
         // Skip if this host is already being polled (robust tracking via QSet)
         if (m_PollingHosts.contains(uuid)) continue;
 
-        QVector<NvAddress> addrs = host->uniqueAddresses();
-        if (addrs.isEmpty()) continue;
-
-        // Use first address for polling
-        const NvAddress& addr = addrs.first();
+        const NvAddress addr = pollAddressFor(host);
+        if (addr.isNull()) continue;
 
         // [NETWORK] diagnostic: trace every outbound serverinfo poll.
         Logger::info(
@@ -371,10 +426,8 @@ void ComputerManager::onBackupPollTick()
 
         if (m_PollingHosts.contains(uuid)) continue;
 
-        QVector<NvAddress> addrs = host->uniqueAddresses();
-        if (addrs.isEmpty()) continue;
-
-        const NvAddress& addr = addrs.first();
+        const NvAddress addr = pollAddressFor(host);
+        if (addr.isNull()) continue;
 
         // [NETWORK] diagnostic: trace backup serverinfo poll (every 60s).
         Logger::info(QString("[NETWORK] backup poll serverinfo HTTP -> %1 (%2)")
@@ -421,6 +474,13 @@ void ComputerManager::onPollReplyFinished()
     static constexpr int OFFLINE_FAILURE_THRESHOLD = 3;
 
     auto registerFailure = [&](const QString& reason) {
+        // Try the next known address on the following tick. The one we just used
+        // may simply be the wrong path to a host that is perfectly up — a stale
+        // <LocalIP>, a bridge address, an IP the lease moved elsewhere.
+        const int candidates = host->uniqueAddresses().size();
+        if (candidates > 1)
+            m_PollAddrIndex[uuid] = (m_PollAddrIndex.value(uuid, 0) + 1) % candidates;
+
         // Cap the counter at the threshold: once offline, keep polling silently
         // so a long-down host doesn't grow the counter or spam the log.
         if (host->consecutivePollFailures < OFFLINE_FAILURE_THRESHOLD) {
@@ -468,6 +528,9 @@ void ComputerManager::onPollReplyFinished()
 
             if (newState.uuid == host->uuid) {
                 host->consecutivePollFailures = 0;
+                // This address works: update() has just made it activeAddress, so
+                // index 0 is it. Stay there until it stops answering.
+                m_PollAddrIndex.remove(uuid);
                 changed = host->update(newState);
 
                 // Capture the MAC from ARP while reachable (Sunshine often
@@ -503,21 +566,27 @@ void ComputerManager::startMdnsDiscovery()
         return;
     }
 
-    try {
-        m_MdnsServer = new QMdnsEngine::Server(this);
-        m_MdnsBrowser =
-            new QMdnsEngine::Browser(m_MdnsServer, "_nvstream._tcp.local.", nullptr, this);
+    m_MdnsServer = new QMdnsEngine::Server(this);
 
-        connect(m_MdnsBrowser, &QMdnsEngine::Browser::serviceAdded, this,
-                &ComputerManager::onMdnsServiceAdded);
+    // QMdnsEngine reports a refused UDP 5353 bind through this signal, never by
+    // throwing — the try/catch that used to sit here could not fire. Unconnected,
+    // a discovery that bound nothing still logged "window opened" and then found
+    // no host, which reads as "there is no Sunshine on this network".
+    connect(m_MdnsServer, &QMdnsEngine::Server::error, this, [](const QString& message) {
+        Logger::warning(QString("[NETWORK] mDNS socket error: %1 — discovery will find nothing")
+                            .arg(message));
+    });
 
-        m_MdnsActive = true;
-        m_MdnsWindowTimer->start(MDNS_DISCOVERY_WINDOW_MS);
-        Logger::info(
-            "[NETWORK] mDNS discovery window opened — UDP 5353 bound (_nvstream._tcp.local.)");
-    } catch (const std::exception& e) {
-        Logger::warning(QString("mDNS discovery unavailable: %1").arg(e.what()));
-    }
+    m_MdnsBrowser =
+        new QMdnsEngine::Browser(m_MdnsServer, "_nvstream._tcp.local.", nullptr, this);
+
+    connect(m_MdnsBrowser, &QMdnsEngine::Browser::serviceAdded, this,
+            &ComputerManager::onMdnsServiceAdded);
+
+    m_MdnsSeenThisWindow = 0;
+    m_MdnsActive = true;
+    m_MdnsWindowTimer->start(MDNS_DISCOVERY_WINDOW_MS);
+    Logger::info("[NETWORK] mDNS discovery window opened — UDP 5353 bound (_nvstream._tcp.local.)");
 }
 
 void ComputerManager::stopMdnsDiscovery()
@@ -535,11 +604,14 @@ void ComputerManager::stopMdnsDiscovery()
     m_MdnsServer = nullptr;
 
     m_MdnsActive = false;
-    Logger::info("[NETWORK] mDNS discovery window closed — UDP 5353 released");
+    Logger::info(QString("[NETWORK] mDNS discovery window closed — UDP 5353 released "
+                         "(%1 service(s) seen)")
+                     .arg(m_MdnsSeenThisWindow));
 }
 
 void ComputerManager::onMdnsServiceAdded(const QMdnsEngine::Service& service)
 {
+    m_MdnsSeenThisWindow++;
     Logger::info(QString("mDNS host discovered: %1").arg(QString::fromUtf8(service.hostname())));
 
     MdnsPendingComputer* pending = new MdnsPendingComputer(m_MdnsServer, service);
@@ -787,6 +859,14 @@ std::pair<int, QJsonObject> ComputerManager::handleAddManualHost(const QString& 
                 {{"status", "error"}, {"message", "Host was added but could not be retrieved"}}};
     }
 
+    // Remember it as the manual address. This is the operator's answer to a host
+    // discovery cannot reach, so it has to outlive the process — until now it
+    // only landed in activeAddress and was gone at the next restart.
+    if (host->manualAddress != nvAddr) {
+        host->manualAddress = nvAddr;
+        saveHosts();
+    }
+
     Logger::info(
         QString("Manual host added: %1 (%2) at %3").arg(host->name, host->uuid, nvAddr.toString()));
 
@@ -804,8 +884,9 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
 
     QString name = host->name;
     m_Hosts.remove(uuid);
+    m_PollAddrIndex.remove(uuid);
     delete host;
-    saveHosts();
+    saveHosts(/*allowEmpty=*/true);
     emit hostsChanged();
 
     Logger::info(QString("Host removed: %1 (%2)").arg(name, uuid));

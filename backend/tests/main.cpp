@@ -25,6 +25,7 @@ void run_request_guard_tests();
 void run_api_csrf_tests();
 void run_session_pool_tests();
 void run_port_fallback_tests();
+void run_host_persistence_tests();
 
 int main(int argc, char** argv)
 {
@@ -46,6 +47,7 @@ int main(int argc, char** argv)
     run_api_csrf_tests();
     run_session_pool_tests();
     run_port_fallback_tests();
+    run_host_persistence_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");

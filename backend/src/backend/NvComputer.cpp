@@ -97,6 +97,14 @@ NvComputer::NvComputer(QSettings& settings)
     uuid = settings.value("uuid").toString();
     macAddress = settings.value("mac").toByteArray();
 
+    // The address that last answered, restored first: it is the only candidate we
+    // have actually seen work. Without it a restart falls back to the host's
+    // self-reported <LocalIP>, which on a multi-homed machine (podman/virbr0/VPN)
+    // or after a DHCP change names a path that never answers — and polling never
+    // tries a second candidate on its own.
+    activeAddress = NvAddress(settings.value("activeaddress").toString(),
+                              settings.value("activeport", MW_HTTP_PORT).toUInt());
+
     localAddress = NvAddress(settings.value("localaddress").toString(),
                              settings.value("localport", MW_HTTP_PORT).toUInt());
 
@@ -125,6 +133,8 @@ void NvComputer::serialize(QSettings& settings) const
     settings.setValue("hostname", name);
     settings.setValue("uuid", uuid);
     settings.setValue("mac", macAddress);
+    settings.setValue("activeaddress", activeAddress.address());
+    settings.setValue("activeport", activeAddress.port());
     settings.setValue("localaddress", localAddress.address());
     settings.setValue("localport", localAddress.port());
     settings.setValue("remoteaddress", remoteAddress.address());
@@ -144,7 +154,8 @@ void NvComputer::serialize(QSettings& settings) const
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
 {
     return name == that.name && uuid == that.uuid && macAddress == that.macAddress &&
-           localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
+           activeAddress == that.activeAddress && localAddress == that.localAddress &&
+           remoteAddress == that.remoteAddress &&
            manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
            activeHttpsPort == that.activeHttpsPort;
 }
@@ -190,7 +201,12 @@ bool NvComputer::update(const NvComputer& that)
         changed = true;
     }
 
-    if (this->localAddress.isNull() && !that.localAddress.isNull()) {
+    // Follow the host's own <LocalIP> whenever it moves. Freezing the first one
+    // ever seen outlived its usefulness the moment it could be wrong: a DHCP
+    // lease change or a Sunshine bound to another interface would otherwise
+    // strand the host on a dead address for good. activeAddress still wins the
+    // poll, so a working host never changes path because of this.
+    if (!that.localAddress.isNull() && this->localAddress != that.localAddress) {
         this->localAddress = that.localAddress;
         changed = true;
     }
@@ -202,6 +218,14 @@ bool NvComputer::update(const NvComputer& that)
 
     if (!that.displayModes.isEmpty() && this->displayModes != that.displayModes) {
         this->displayModes = that.displayModes;
+        changed = true;
+    }
+
+    // The address an operator typed in. Nothing else writes it, so without this
+    // merge "Add manually" only ever lived in activeAddress and was lost at the
+    // next restart.
+    if (!that.manualAddress.isNull() && this->manualAddress != that.manualAddress) {
+        this->manualAddress = that.manualAddress;
         changed = true;
     }
 
@@ -243,14 +267,15 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
     QVector<NvAddress> addrs;
 
     // Active address first — this is the address that last responded successfully
-    // (updated in onPollReplyFinished from the URL used in the poll request).
+    // (updated in onPollReplyFinished from the URL used in the poll request, and
+    // persisted, so a restart resumes on it rather than on <LocalIP>).
     // It is more reliable than localAddress (from XML <LocalIP>) which may differ
     // from the mDNS-resolved address in multi-homed / Docker / VPN setups.
     //
-    // Deliberately not demoted, even when a less exposed candidate exists: every
-    // caller takes only first() and polling never falls through to the next
-    // entry, so moving a known-good address down would strand a host that is
-    // reachable only the "worse" way.
+    // Deliberately not demoted, even when a less exposed candidate exists: it is
+    // the one path we have seen answer, so moving it down would cost a restarted
+    // host its first tick — and, for a host reachable only the "worse" way, more
+    // than that. Polling walks the rest of the list when it stops answering.
     if (!activeAddress.isNull()) addrs.append(activeAddress);
 
     // The rest, least exposed first — this is what decides the initial pick, and
@@ -264,7 +289,12 @@ QVector<NvAddress> NvComputer::uniqueAddresses() const
         return exposureRank(a) < exposureRank(b);
     });
 
-    addrs += rest;
+    // Distinct paths only, as the name promises: activeAddress is usually equal
+    // to one of the others, and a duplicate would cost the poll a whole tick
+    // retrying the address that just failed.
+    for (const NvAddress& na : rest)
+        if (!addrs.contains(na)) addrs.append(na);
+
     return addrs;
 }
 
