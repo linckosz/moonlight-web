@@ -1,0 +1,59 @@
+# Publishes ./bootstrap to GitHub Pages, served at the domain in bootstrap/CNAME.
+#
+# Only the bootstrap goes here. The marketing site stays behind Caddy, which can
+# set real headers — Pages cannot, and losing X-Frame-Options on a page whose
+# main element is a download button is not a trade worth making. The bootstrap
+# is different: hosting it apart from the rendezvous server is the whole point,
+# since it is the only code a browser ever loads from a server.
+#
+# Triggers are scoped on purpose. This repository deliberately does NOT build on
+# every push to main, and this workflow does not change that: it runs only when
+# the bootstrap itself changes, or on demand.
+name: bootstrap-pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bootstrap/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deployments race; queue instead of cancelling, so a superseded
+# run still finishes rather than leaving the site half-updated.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The published bytes are meant to be pinned by fingerprint, and later
+      # watched by a job that compares what the live site serves against what
+      # was released. Printing the digests at publish time is what makes that
+      # comparison possible: this log is the record of what was intended.
+      - name: Record bootstrap digests
+        run: |
+          echo "### Bootstrap digests" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          find bootstrap -type f ! -name CNAME -print0 \
+            | sort -z | xargs -0 sha256sum | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: bootstrap
+      - id: deploy
+        uses: actions/deploy-pages@v4
