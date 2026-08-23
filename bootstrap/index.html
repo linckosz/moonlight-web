@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoonlightWeb — bootstrap</title>
+<meta name="robots" content="noindex, nofollow">
+<!--
+  This host serves the MoonlightWeb BOOTSTRAP, and nothing else.
+
+  What the bootstrap is
+  ---------------------
+  A few kilobytes of HTML and JavaScript. It installs a Service Worker, performs
+  the MW-BIND-v1 handshake and opens the WebRTC channel to the user's own
+  machine. From that point the application itself — interface and API — is served
+  BY that machine, over the encrypted channel. This page is the only code that
+  ever comes from a server.
+
+  Why it is hosted apart from the rendezvous server
+  ------------------------------------------------
+  Precisely because it is that only code. A rendezvous server that both relayed
+  signalling AND served this page would, if compromised, be able to hand the
+  browser hostile JavaScript holding a legitimate pairing key. MW-BIND-v1 does
+  not cover that case: it binds DTLS fingerprints against a RELAYING server, not
+  against a server that serves the page. Keeping the two on separate
+  infrastructure means compromising one does not yield the other.
+
+  Content-Security-Policy is declared in a meta tag because GitHub Pages serves
+  no custom headers. That covers script/connect/base/form; it cannot express
+  frame-ancestors, so the frame check below stands in for it.
+
+  Status: placeholder. The real bootstrap ships with phase 2b.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fbfbfd; --fg: #1c1c1f; --muted: #6b6b76; --line: #e3e3e9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101013; --fg: #ececf1; --muted: #9a9aa6; --line: #2a2a31; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    padding: 2rem; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 34rem; }
+  h1 { font-size: 1.35rem; margin: 0 0 .75rem; letter-spacing: -.01em; }
+  p { margin: 0 0 1rem; color: var(--muted); }
+  .tag {
+    display: inline-block; margin-bottom: 1.25rem; padding: .2rem .6rem;
+    border: 1px solid var(--line); border-radius: 999px;
+    font-size: .78rem; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+</style>
+</head>
+<body>
+<main>
+  <span class="tag">Placeholder</span>
+  <h1>MoonlightWeb bootstrap</h1>
+  <p>
+    This address will serve the small page that opens a session with your own
+    computer. It is deliberately hosted apart from the rendezvous server, so
+    that compromising one does not compromise the other.
+  </p>
+  <p>
+    Nothing runs here yet. Streaming happens directly between your browser and
+    your machine — this page never carries video, input or credentials.
+  </p>
+  <p><code>github.com/linckosz/moonlight-web</code></p>
+</main>
+<script>
+  // Stands in for the frame-ancestors directive a meta CSP cannot express.
+  if (window.top !== window.self) { window.top.location = window.self.location; }
+</script>
+</body>
+</html>
