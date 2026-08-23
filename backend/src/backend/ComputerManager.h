@@ -167,7 +167,11 @@ private slots:
 
 private:
     void loadHosts();
-    void saveHosts();
+    // The address the next poll of this host should use — see m_PollAddrIndex.
+    NvAddress pollAddressFor(const NvComputer* host) const;
+    // allowEmpty guards the one destructive case: writing an empty array wipes
+    // the stored list for good. Only the explicit delete route may do that.
+    void saveHosts(bool allowEmpty = false);
     void startPolling();
     void startMdnsDiscovery();
     void stopMdnsDiscovery();
@@ -186,6 +190,11 @@ private:
 
     QMap<QString, NvComputer*> m_Hosts; // uuid → host, all pointers owned here
 
+    // False until loadHosts() has run once. saveHosts() uses it to tell a
+    // deliberate empty list from one that only looks empty because nothing was
+    // ever read.
+    bool m_HostsLoaded = false;
+
     QTimer* m_PollTimer = nullptr;
     QNetworkAccessManager* m_Nam = nullptr;
     NvHTTP* m_Http = nullptr;
@@ -196,6 +205,16 @@ private:
 
     // Pending poll tracking: reply → uuid (for callback routing only, not for "is polling?" check)
     QMap<QNetworkReply*, QString> m_PendingPolls;
+
+    // Which entry of uniqueAddresses() the next poll of this host should use.
+    // Reset to 0 on every success, advanced on every failure, so a host whose
+    // first candidate has gone dead is found again on one of the others instead
+    // of staying offline forever. Absent uuid means 0.
+    QHash<QString, int> m_PollAddrIndex;
+
+    // Services seen since the current mDNS window opened — reported when it
+    // closes, so a scan that found nothing says so.
+    int m_MdnsSeenThisWindow = 0;
 
     // Backup polling timer — forces full refresh every 30s regardless of tracking state
     QTimer* m_BackupPollTimer = nullptr;
