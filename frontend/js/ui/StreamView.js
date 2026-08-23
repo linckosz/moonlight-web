@@ -638,6 +638,18 @@ export class StreamView {
         // keyup never reaches us and the host keeps the key — turning a later
         // "e" into Win+E, etc. We synthesize the missing keyups on blur/hidden.
         this._heldPhysKeys = new Map();
+        // Apple keyboards swallow the keyup of any key pressed while Cmd is
+        // held (see the meta-tap branch in handleKeyDown). An instance field
+        // rather than the module constant, so tests can drive both platforms.
+        // Deliberately NOT the `isMac` of the control-combo block further down:
+        // that one reads navigator.platform and must keep answering "no" on
+        // iPad, where the Q/X/Z/M combo still takes Shift as third modifier.
+        this._appleKeyboard = IS_APPLE;
+        // e.code of the keys that branch already released. Their keyup is
+        // normally never delivered, but letting go of Cmd first un-swallows it
+        // — the token turns that late release into a no-op instead of an
+        // unmatched key-up on the host.
+        this._metaTapCodes = new Set();
         // Mouse buttons currently held (1-based, as sent to the host). Same
         // reason as above, plus it feeds the held-input heartbeat below.
         this._heldMouseButtons = new Set();
@@ -5609,6 +5621,33 @@ export class StreamView {
         // AZERTY instead of VK_Q), which breaks Sunshine's layout correction.
         // Fall back to e.keyCode only for unmapped codes.
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
+
+        // ── Cmd+key on an Apple keyboard: send a tap, not a hold ──────────
+        // macOS never delivers the keyup of a key pressed while Cmd is down.
+        // The keydown for KeyC arrives, its keyup never does, so _heldPhysKeys
+        // keeps KeyC forever and the 100ms heartbeat re-asserts it — guest
+        // typematic then turns one Cmd+C into "ccccccc…". Release it ourselves
+        // right away, and remember to swallow the keyup if the OS relents (it
+        // does when the user lets go of Cmd before the letter).
+        // Cmd itself keeps its normal press/release: it is the host's Windows
+        // key, and Cmd alone must still open the Start menu.
+        if (this._appleKeyboard && e.metaKey && !StreamView.MODIFIER_CODES.has(e.code)) {
+            // No `hold`: a tap has nothing to hold through a stall.
+            const tap = {
+                keyCode: vkCode,
+                code: e.code,
+                key: e.key,
+                ctrlKey: e.ctrlKey,
+                shiftKey: e.shiftKey,
+                altKey: e.altKey,
+                metaKey: e.metaKey,
+            };
+            this._sendKeyEvent({ type: 'keydown', ...tap });
+            this._sendKeyEvent({ type: 'keyup', ...tap });
+            this._metaTapCodes.add(e.code);
+            return;
+        }
+
         // _sendKeyEvent remembers the matching keyup, so the key can be released
         // if focus is lost before the real keyup fires (modifier flags are
         // cleared on release) and so the held-input heartbeat reports it.
@@ -5631,6 +5670,19 @@ export class StreamView {
         // Same exclusion as handleKeyDown: a release whose press was never sent
         // would land on the host as an unmatched key-up.
         if (StreamView.isLocalKeyboardTarget(e.target)) return;
+        // A key the meta-tap branch already released: its press is long gone
+        // from the host, so this late release must not land unmatched.
+        if (this._metaTapCodes && this._metaTapCodes.delete(e.code)) {
+            e.preventDefault();
+            return;
+        }
+        // Cmd coming back up: sweep out anything still held whose keyup macOS
+        // ate — keys pressed BEFORE Cmd joined them, which the meta-tap branch
+        // never saw. Done here, before Cmd's own release goes out, so the host
+        // sees the chord break up in the order a real keyboard would send it.
+        if (this._appleKeyboard && (e.code === 'MetaLeft' || e.code === 'MetaRight')) {
+            this._releaseKeysHeldUnderMeta();
+        }
         // Clipboard paste chord: the backend injected V down+up itself —
         // swallow the real keyup so the host doesn't get an unmatched release.
         if (this._suppressPasteKeyUpCode && e.code === this._suppressPasteKeyUpCode) {
@@ -5642,6 +5694,12 @@ export class StreamView {
         // keydown now so the keyup below doesn't land unmatched on the host.
         if (this._pendingPasteKey && e.code === this._pendingPasteKey.code) {
             this._sendPendingPasteKey();
+            // On an Apple keyboard that call already completed the tap; the
+            // release below would be a second, unmatched one.
+            if (this._metaTapCodes && this._metaTapCodes.delete(e.code)) {
+                e.preventDefault();
+                return;
+            }
         }
         e.preventDefault();
         const vkCode = StreamView.codeToWindowsVk(e.code) || e.keyCode;
@@ -5663,6 +5721,8 @@ export class StreamView {
     // on the host. Mouse buttons have the same hole in gaming mode, where a
     // mouseup arriving after focus loss is dropped by the _mouseFocused gate.
     _releaseAllPhysKeys() {
+        // Nothing stays held, so no late keyup is worth swallowing any more.
+        if (this._metaTapCodes) this._metaTapCodes.clear();
         if (this._heldPhysKeys && this._heldPhysKeys.size > 0) {
             for (const payload of this._heldPhysKeys.values()) {
                 this.webrtc.send({
@@ -5710,6 +5770,52 @@ export class StreamView {
 
     _holdsThroughStall(code) {
         return !!this._gamingMode && StreamView.HOLD_THROUGH_STALL_CODES.has(code);
+    }
+
+    /**
+     * Physical codes of the keys that are modifiers rather than characters.
+     *
+     * The Apple Cmd workarounds skip them: a modifier's own keyup is always
+     * delivered, and auto-releasing one would break the control combos, which
+     * are held across several events (Cmd+Option+Ctrl+Q).
+     */
+    static MODIFIER_CODES = new Set([
+        'ControlLeft',
+        'ControlRight',
+        'ShiftLeft',
+        'ShiftRight',
+        'AltLeft',
+        'AltRight',
+        'MetaLeft',
+        'MetaRight',
+        'CapsLock',
+    ]);
+
+    /**
+     * Release every non-modifier key the host still believes is down.
+     *
+     * Called when Cmd comes back up on an Apple keyboard. The meta-tap branch
+     * in handleKeyDown covers keys pressed WHILE Cmd was held; this covers the
+     * mirror case — a key already down when Cmd joined it, whose keyup macOS
+     * ate just the same. Toolbar-synthesised presses (numeric ids) are left
+     * alone: they have no physical release to miss.
+     */
+    _releaseKeysHeldUnderMeta() {
+        if (!this._heldPhysKeys || this._heldPhysKeys.size === 0) return;
+        // Snapshot: _sendKeyEvent deletes from the map we are iterating.
+        for (const [id, payload] of [...this._heldPhysKeys]) {
+            if (typeof id !== 'string' || StreamView.MODIFIER_CODES.has(id)) continue;
+            this._sendKeyEvent({
+                type: 'keyup',
+                keyCode: payload.keyCode,
+                code: payload.code,
+                key: payload.key,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+            });
+        }
     }
 
     /**
@@ -5902,6 +6008,14 @@ export class StreamView {
         this._pendingPasteKey = null;
         // Registers for focus-loss auto-release like any forwarded keydown.
         this._sendKeyEvent(pending.keydownMsg);
+        // Cmd+V on an Apple keyboard: the real keyup was eaten like any other
+        // key held under Cmd, and this is the one path that forwards a real
+        // keydown — without the matching release V stays down and the host
+        // pastes "vvvvv…". Complete the tap ourselves.
+        if (this._appleKeyboard && pending.keydownMsg.metaKey) {
+            this._sendKeyEvent({ ...pending.keydownMsg, type: 'keyup' });
+            this._metaTapCodes.add(pending.code);
+        }
     }
 
     /** Host clipboard changed: mirror it into the local clipboard. Browsers
