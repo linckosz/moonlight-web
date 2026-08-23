@@ -689,9 +689,10 @@ bool InternetAccessManager::isReservedSubdomain(const QString& label)
     if (l.startsWith(QLatin1Char('_'))) return true; // _owner / _acme-challenge tokens
     // Labels the DNS stack itself publishes under the base domain — keep in sync
     // with deploy/powerdns/pdns/init.sh (plus "stats" for the Umami analytics
-    // host and "updates" for the release relay).
+    // host, "updates" for the release relay, and "app" for the bootstrap, which
+    // is a CNAME to GitHub Pages rather than a record this stack serves).
     static const char* const kReserved[] = {
-        "www", "api", "dnsapi", "stats", "stream", "ns1", "ns2", "mail", "updates",
+        "www", "api", "dnsapi", "stats", "stream", "ns1", "ns2", "mail", "updates", "app",
     };
     for (const char* r : kReserved)
         if (l == QLatin1String(r)) return true;
