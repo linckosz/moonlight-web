@@ -22,8 +22,8 @@ Access is single-threaded, synchronous I/O. **Restart the server after a manual 
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `http_port` | int | `80` | HTTP listener (redirects to HTTPS). CLI `--port` overrides. The *actually bound* port is persisted back after fallback. |
-| `https_port` | int | `443` | HTTPS listener preference; fallback ranges are tried, the bound port is persisted back. |
+| `http_port` | int | `80` | HTTP listener (redirects to HTTPS). CLI `--port` overrides. When 80 is denied (unprivileged install) the fallback ladder is `8080`, `18080`, `28080`, then a scan from 49080. The *actually bound* port is persisted back. |
+| `https_port` | int | `443` | HTTPS listener preference. When 443 is denied (unprivileged install — only the systemd unit gets `CAP_NET_BIND_SERVICE`) the fallback ladder is `8443`, `18443`, `28443`, then the high ranges. The bound port is persisted back and preferred on the next boot, which is why the ladder stays below 32768: ports above it are handed out to outgoing connections by the OS, so the local address would drift on every restart. |
 | `transport_mode` | string | `"auto"` | Transport for streams: `auto` \| `webrtc-media-udp` \| `webrtc-dc-udp` \| `webrtc-media-tcp` \| `webrtc-dc-tcp` \| `wss`. `auto` = fallback chain (see [Transports](05-Streaming-and-Transports.md)). Written by `POST /api/internet/enable` (the admin page's transport selector). |
 | `stun_server` | string | `"stun:stun.l.google.com:19302"` | Used by both libdatachannel and the browser's `RTCPeerConnection`. |
 | `upnp_enabled` | bool | `true` | UPnP port mapping for NAT traversal. |
@@ -149,13 +149,13 @@ Without `cert_pem`/`cert_key`, drop both files (`*.pem`, same folder) into the d
 
 Confirm in `logs/moonlightweb.log`: `SSL certificate loaded: CN=stream.mywebsite.com`. **Renewal is yours**: replace the files and restart. A certificate near expiry is kept and logged as *renew it soon* — it is never silently downgraded to a self-signed one.
 
-**5. Internet Access — optional.** With a custom domain it registers nothing and requests no certificate; it re-detects the public IP, tests NAT hairpin, allows the per-session media mapping, and points the tray/shortcut entry URLs at your domain. Turn it off to manage everything by hand. `GET /api/internet/status` reports `custom_domain: true` in that mode.
+**5. Internet Access — optional.** With a custom domain it registers nothing and requests no certificate; it re-detects the public IP, tests NAT hairpin, allows the per-session media mapping, and points the tray/shortcut entry URLs at your domain — but only when that hairpin test succeeds. Without it the host's own entry points stay on `https://localhost:<port>`, which is the address that works from the machine itself; every other device still uses the domain. Turn it off to manage everything by hand. `GET /api/internet/status` reports `custom_domain: true` in that mode.
 
 Authentication is unchanged: remote devices still need the admin PIN or the certificate-auth token file (see [Security](06-Security.md)).
 
 **Caveats**
 
-- Reaching `stream.mywebsite.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry.
+- Reaching `stream.mywebsite.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry. The host machine itself needs nothing: the tray, the shortcut and the auto-open fall back to loopback on their own.
 - `unique_id` keeps existing (it is this instance's identity) but is never registered while a custom domain is set. Restoring `"domain": "MW_DOMAIN"` brings the computed name back — on a legacy instance only; a fresh install then simply has no public name again.
 - The `stream` label is only reserved on the project's shared domain, never on yours.
 

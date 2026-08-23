@@ -90,7 +90,7 @@ Known limitations are detected and reported in the UI: UPnP disabled (manual for
 
 ### Day-2 operations
 
-- A **tray icon** exposes the app/admin URLs (public domain with host key once Internet Access is live).
+- A **tray icon** exposes the app/admin URLs (public domain with host key once Internet Access is live *and* the router reflects it back to the LAN; `https://localhost:<port>` otherwise — a domain the host itself cannot open is no entry point).
 - A **desktop shortcut** self-heals on every startup to point at the right URL/port.
 - Launching the app twice never spawns a duplicate: the second launch asks the running instance to surface the admin page (single-instance lock + `/api/local/focus` + a `/ws/control` channel that redirects an already-open tab).
 - An **update banner** on the hosts page polls `/api/update/check` (GitHub Releases) and links the right installer for the platform.

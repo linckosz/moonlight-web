@@ -137,6 +137,12 @@ public:
     /// External (router-side) HTTP port (used for the HTTP→HTTPS redirect).
     quint16 externalHttpPort() const { return m_ExternalHttpPort; }
 
+    /// True when this host can reach its own public endpoint, i.e. the router
+    /// reflects it back to the LAN (NAT hairpin). False until the first test has
+    /// run, which is the safe default: an entry point on the host machine then
+    /// stays on loopback instead of handing a browser an address that times out.
+    bool hairpinReachable() const { return m_HairpinReachable; }
+
     /// UPnP client (exposed for integration with existing session code).
     UPNPClient* upnpClient() { return &m_Upnp; }
 
@@ -172,6 +178,11 @@ signals:
     /// (port parity rebind). Entry points depending on the port (Desktop
     /// shortcut, tray tooltip) must refresh.
     void httpsPortChanged(quint16 port);
+
+    /// Emitted when the NAT-hairpin verdict flips. Host-side entry points (tray,
+    /// Desktop shortcut) pick the public domain or loopback based on it, so they
+    /// must be rebuilt when it changes.
+    void hairpinChanged(bool reachable);
 
 private slots:
     /// Called every 5 minutes for periodic checks.

@@ -17,6 +17,7 @@
 
 #include "HttpServer.h"
 #include "HttpParser.h"
+#include "PortFallback.h"
 #include "RequestGuard.h"
 #include "RestRouter.h"
 #include "StaticFileHandler.h"
@@ -369,7 +370,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
     }
 
     // Start HTTP server with port fallback (required for tunnels).
-    // Try the preferred port first, then scan from 49080 upward.
+    // Preferred port, then the stable ladder (PortFallback), then a scan.
     {
         auto tryHttpPort = [this](quint16 port) -> bool {
             if (m_HttpServer->listen(QHostAddress::Any, port)) {
@@ -389,7 +390,20 @@ bool HttpServer::start(quint16 preferredHttpsPort)
                             m_HttpServer->errorString() + "), scanning fallback range...");
         }
 
-        // 2. Fallback: scan from 49080 upward
+        // 2. Stable ladder: fixed low ports no outgoing connection can steal, so
+        // the port persisted here is still the port bound on the next boot.
+        if (!httpOk) {
+            for (quint16 p : PortFallback::kHttp) {
+                if (tryHttpPort(p)) {
+                    httpOk = true;
+                    break;
+                }
+            }
+        }
+
+        // 3. Last resort: scan from 49080 upward. These ports are inside the OS
+        // ephemeral range, so one that is free today may be taken tomorrow —
+        // good enough to answer at all when the ladder above is fully occupied.
         if (!httpOk) {
             for (quint16 p = 49080; p <= 65535; ++p) {
                 if (tryHttpPort(p)) {
@@ -418,7 +432,22 @@ bool HttpServer::start(quint16 preferredHttpsPort)
         m_HttpsServer = tryHttpsPort(preferredHttpsPort);
         if (m_HttpsServer) m_ActiveHttpsPort = m_HttpsServer->serverPort();
 
-        // 2. Fallback range 1: 49443 to 65443, step 1000
+        // 2. Stable ladder: fixed low ports (8443, 18443, 28443) the OS never
+        // hands out as ephemeral. main() persists whatever we bind here and the
+        // next boot prefers it, so a port an outgoing connection can be holding
+        // makes the local address drift on every restart — hence this rung
+        // before the high ranges below.
+        if (!m_HttpsServer) {
+            for (quint16 p : PortFallback::kHttps) {
+                m_HttpsServer = tryHttpsPort(p);
+                if (m_HttpsServer) {
+                    m_ActiveHttpsPort = p;
+                    break;
+                }
+            }
+        }
+
+        // 3. Fallback range 1: 49443 to 65443, step 1000
         if (!m_HttpsServer) {
             for (quint16 p = 49443; p <= 65443; p += 1000) {
                 m_HttpsServer = tryHttpsPort(p);
@@ -429,7 +458,7 @@ bool HttpServer::start(quint16 preferredHttpsPort)
             }
         }
 
-        // 3. Fallback range 2: 49152 to 65535, step 1
+        // 4. Fallback range 2: 49152 to 65535, step 1
         if (!m_HttpsServer) {
             for (quint16 p = 49152; p <= 65535; ++p) {
                 if ((p - 49152) % 1000 == 0)

@@ -461,7 +461,7 @@ by a previous container. The entrypoint deletes it on every start — if you see
 this, you are running the binary without the entrypoint. Delete
 `/data/.local/share/MoonlightWeb/MoonlightWeb/moonlightweb.lock`.
 
-**`HTTPS server started on port 49443`** (not 443). Something else on the host
+**`HTTPS server started on port 8443`** (not 443). Something else on the host
 already holds 443 — on host networking that is a real conflict with a reverse
 proxy or another web server. Either free the port or set `MW_HTTPS_PORT` and
 put your proxy in front.
