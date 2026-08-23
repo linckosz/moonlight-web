@@ -27,6 +27,35 @@
 #include <QNetworkReply>
 #include <QTimer>
 
+namespace {
+
+/**
+ * Map a QNetworkReply transport failure to a BackendError kind.
+ *
+ * Every NvHTTP request carries setTransferTimeout(), so Qt aborts a stalled
+ * request itself — always ~2s BEFORE the QTimer safety net below fires. Qt
+ * reports that abort as OperationCanceledError (setTransferTimeout) or
+ * TimeoutError, with no HTTP status. Classified as Unreachable it surfaced as a
+ * 502 "bad gateway" for a host that was merely slow, and the QTimer's
+ * BackendError::Timeout branch — the one that yields a 504 — was dead code it
+ * could never win against.
+ *
+ * A reply that carries a real HTTP status is NOT a transport failure: the host
+ * answered and rejected us. Callers own that case (401 = pairing dropped, other
+ * 4xx/5xx = a Protocol answer the launch<->resume self-heal acts on), so this
+ * helper is only ever asked about status-less failures.
+ */
+BackendError::Kind transportErrorKind(QNetworkReply::NetworkError err)
+{
+    switch (err) {
+    case QNetworkReply::OperationCanceledError: // what setTransferTimeout() raises
+    case QNetworkReply::TimeoutError: return BackendError::Timeout;
+    default: return BackendError::Unreachable;
+    }
+}
+
+} // namespace
+
 GameStreamBackend::GameStreamBackend(QString hostUuid, HostResolver resolver, NvHTTP* http,
                                      QNetworkAccessManager* nam, QObject* parent)
     : QObject(parent)
@@ -174,7 +203,7 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
                        {});
             } else {
                 answer(false,
-                       BackendError::make(BackendError::Unreachable, reply->errorString(),
+                       BackendError::make(transportErrorKind(reply->error()), reply->errorString(),
                                           httpStatus),
                        {});
             }
@@ -279,7 +308,7 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
             // restarted and dropped our session) is a Protocol-level answer the
             // launch<->resume self-heal can act on. Only a status-less failure
             // (connection refused, DNS, timeout) is a genuine transport error.
-            BackendError::Kind kind = BackendError::Unreachable;
+            BackendError::Kind kind = transportErrorKind(reply->error());
             if (httpStatus == 401)
                 kind = BackendError::NotPaired;
             else if (httpStatus >= 400)
@@ -378,7 +407,7 @@ void GameStreamBackend::quit(const QString& seatId, const QString& clientUniqueI
         if (reply->error() != QNetworkReply::NoError) {
             answer(false,
                    BackendError::make(
-                       BackendError::Unreachable, reply->errorString(),
+                       transportErrorKind(reply->error()), reply->errorString(),
                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()));
         } else {
             answer(true, BackendError{});
