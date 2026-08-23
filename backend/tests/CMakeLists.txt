@@ -63,6 +63,7 @@ add_executable(run_tests
     test_request_guard.cpp
     test_api_csrf.cpp
     test_session_pool.cpp
+    test_port_fallback.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp

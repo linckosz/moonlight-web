@@ -500,7 +500,11 @@ void InternetAccessManager::updateHairpinStatus()
     const bool ok = testHairpinReachable();
     if (ok != m_HairpinReachable) {
         m_HairpinReachable = ok;
+        // Two audiences: a live admin page polls the status, while the host-side
+        // entry points (tray, Desktop shortcut) only care about this one flag —
+        // they rebuild on hairpinChanged rather than on every status update.
         emit statusChanged(statusJson());
+        emit hairpinChanged(ok);
     }
 }
 

@@ -3351,9 +3351,18 @@ int main(int argc, char* argv[])
     // browser shows ERR_CERT_AUTHORITY_INVALID, so stay on loopback — checking
     // certPem() as well as certificateIssuing() keeps us there when issuance
     // finished by failing. Every caller re-reads this on certificateChanged.
+    // ...and published, trusted and REACHABLE FROM HERE are three different
+    // things: many routers do not reflect their own public endpoint back to the
+    // LAN (no NAT hairpin), so the domain that every other device uses simply
+    // times out in a browser sitting on the host. hairpinReachable() is the
+    // measured answer (a TCP connect from this machine to its own public
+    // address); without it, loopback — which cannot fail — is the entry point.
+    // Same rule the frontend applies before redirecting a localhost page to the
+    // domain (app.js _maybeRedirectToDomain). Callers refresh on hairpinChanged.
     auto entryUrl = [&](const QString& path) -> QString {
         if (internetAccess.isActive() && !internetAccess.domain().isEmpty() &&
-            !internetAccess.certificateIssuing() && !appSettings.certPem().isEmpty()) {
+            !internetAccess.certificateIssuing() && !appSettings.certPem().isEmpty() &&
+            internetAccess.hairpinReachable()) {
             quint16 p = internetAccess.externalHttpsPort();
             if (p == 0) p = server.activeHttpsPort();
             const QString base =
@@ -3506,6 +3515,15 @@ int main(int argc, char* argv[])
     QObject::connect(
         &internetAccess, &InternetAccessManager::ready, &trayManager,
         [&trayManager](const QString&, const QString&) { trayManager.refreshTooltip(); });
+    // The hairpin verdict decides between the domain and loopback, and it can
+    // flip long after startup (router reconfigured, periodic re-test): rebuild
+    // the entry points rather than leaving them on an address that stopped
+    // working — or on loopback when the nicer one became usable.
+    QObject::connect(&internetAccess, &InternetAccessManager::hairpinChanged, &trayManager,
+                     [&trayManager, adminUrl](bool) {
+                         writeAdminShortcut(adminUrl());
+                         trayManager.refreshTooltip();
+                     });
 
     // The app is windowless, so on a manual launch (Apps / Start-menu click) the
     // browser IS the app surface: open it — the setup wizard on first run
