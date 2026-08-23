@@ -73,32 +73,67 @@ stats.@MW_DOMAIN@ {
 	reverse_proxy umami:3000
 }
 
-# stream.@MW_DOMAIN@ — deliberately its own vhost, NOT merged into the apex block
-# below. Its behaviour today is unchanged: every path 301s to the apex, because
-# it is only a vanity alias printed on the marketing site.
+# stream.@MW_DOMAIN@ — the rendezvous host (0.3.0+).
 #
-# It is split out because the rendezvous path /mw/{id} lands on this host. A
-# catch-all redirect living in a shared block would swallow that path before any
-# handler could see it — a failure that only surfaces the day the feature ships.
-# When the rendezvous arrives, wrap both in `handle` blocks — `handle /mw/*` for
-# it, then a bare `handle` holding the redir — so everything that is not a
-# rendezvous path keeps redirecting to the apex. It will also need its own
-# `header` block: splitting this host out of the apex block means the apex CSP
-# (notably `connect-src 'self'`) no longer covers it.
+# This is where an instance is reached now that there is no per-instance
+# sub-domain: the host holds a WebSocket open here, a browser asks for it by
+# identifier, and the two exchange WebRTC signalling until they have a direct
+# path. No media crosses this box — see mw-rendezvous/main.go.
 #
-# It carries no rate_limit yet, and that is deliberate rather than an oversight:
-# a 301 to the apex is not worth a budget, and the global `order rate_limit
-# before reverse_proxy` would place the limiter AFTER redir in Caddy's standard
-# order, so on a redirect-only host it would never run at all. Add it together
-# with the rendezvous route — that block ends in a reverse_proxy, where the
-# global order puts it in the right place with no `route` gymnastics. Unlike the
-# apex, this host does want one: the apex serves a static site whose page loads
-# fan out into many asset requests and would trip a per-IP budget for nothing,
-# whereas the rendezvous answers on an identifier, and a budget is what bounds
-# guessing it.
+# It has its own vhost rather than living in the apex block below because a
+# catch-all redirect there would swallow /v1/ before any handler saw it. That
+# also means the apex CSP no longer covers this host, hence the header block.
 stream.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
-	redir https://@MW_DOMAIN@{uri} permanent
+
+	header {
+		X-Content-Type-Options "nosniff"
+		# The identifier is the whole path on the bootstrap side; keep it out of
+		# anything this host hands onward.
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000"
+		# Nothing here is a document: every response is JSON or a WebSocket
+		# upgrade, so the page-shaped capabilities can all be switched off.
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+		-Server
+	}
+
+	# Signalling API: /v1/claim, /v1/host and /v1/peer.
+	handle /v1/* {
+		# The budget that matters is inside mw-rendezvous, which distinguishes a
+		# new claim from a host reconnecting and a browser from either. This one
+		# is the coarse outer bound on connection attempts — and unlike the
+		# redirect-only host this replaces, the block ends in a reverse_proxy, so
+		# the global `order rate_limit before reverse_proxy` puts the limiter
+		# where it will actually run.
+		#
+		# It counts connection ATTEMPTS, not traffic: a held line is one request
+		# that then stays open for days, so a host is charged once per reconnect.
+		rate_limit {
+			zone mw_rendezvous {
+				key {remote_host}
+				events 120
+				window 1m
+			}
+		}
+		reverse_proxy mw-rendezvous:8090
+	}
+
+	# Convenience alias. The canonical address is the bootstrap on its own host,
+	# app.@MW_DOMAIN@/#{id} — kept there so that compromising this server does
+	# not also mean serving the browser its code. A link in this shorter form
+	# still has to work, so it is bounced across, identifier intact.
+	handle /mw/* {
+		@rdvid path_regexp rdvid ^/mw/([0-9abcdefghjkmnpqrstvwxyz]{26})/?$
+		redir @rdvid https://app.@MW_DOMAIN@/#{re.rdvid.1} permanent
+		redir https://@MW_DOMAIN@{uri} permanent
+	}
+
+	# Everything else keeps the old behaviour: this was a vanity alias for the
+	# marketing site long before it carried an API.
+	handle {
+		redir https://@MW_DOMAIN@{uri} permanent
+	}
 }
 
 # Presentation website — apex + www both serve the static ./site folder.

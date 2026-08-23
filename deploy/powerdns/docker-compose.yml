@@ -4,6 +4,8 @@
 #   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)
 #   caddy    public :80/:443 → pdns:8081 / umami:3000  (HTTPS API + site + stats, auto-TLS)
 #            also updates.{domain} → mw-proxy:8080 (cached release mirror + census)
+#            also stream.{domain}/v1/ → mw-rendezvous:8090 (signalling relay)
+#   mw-rendezvous  introduction server, internal only  (held host lines :8090)
 #   umami    web analytics (stats.{domain}), internal  → umami-db (Postgres)
 #   umami-db Postgres for Umami, internal only
 #
@@ -79,6 +81,37 @@ services:
     pids_limit: 100
     mem_limit: 128m
 
+  # ── mw-rendezvous: the introduction server ─────────────────────────────────
+  # Holds one WebSocket per online host and copies WebRTC signalling between it
+  # and the browsers that ask for it by identifier. No media ever passes through:
+  # once the two peers have a direct path this process is out of the way. Never
+  # published; Caddy exposes it under https://stream.${MW_DOMAIN}/v1/.
+  # See mw-rendezvous/main.go.
+  mw-rendezvous:
+    build: ./mw-rendezvous
+    image: moonlight-mw-rendezvous:latest
+    container_name: moonlight-mw-rendezvous
+    restart: unless-stopped
+    environment:
+      # HMAC key used to store identifier ownership — SECRET, server-side only.
+      # Separate from MW_PDNS_OWNER_SECRET on purpose: that one authorises a DNS
+      # zone claim and retires with the sub-domain mechanism in February 2027.
+      MW_RDV_OWNER_SECRET: ${MW_RDV_OWNER_SECRET}
+      # New-identifier claims per client IP per hour (0 = unlimited).
+      MW_RDV_MAX_NEW_PER_HOUR: ${MW_RDV_MAX_NEW_PER_HOUR:-20}
+      # Browser connection attempts per client IP per minute. This is what bounds
+      # guessing identifiers, so it is a security control, not just hygiene.
+      MW_RDV_MAX_PEER_PER_MIN: ${MW_RDV_MAX_PEER_PER_MIN:-30}
+      # Concurrent browsers per host.
+      MW_RDV_MAX_SESSIONS: ${MW_RDV_MAX_SESSIONS:-4}
+    volumes:
+      - mwrdv_data:/data                            # identifier claims persist
+    networks: [mwnet]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]                               # high port :8090, no caps
+    pids_limit: 200
+    mem_limit: 128m
+
   # ── dnsdist: public DNS front (DoS / amplification protection) ─────────────
   dnsdist:
     image: powerdns/dnsdist-19:latest
@@ -107,7 +140,7 @@ services:
     image: moonlight-caddy:latest
     container_name: moonlight-caddy
     restart: unless-stopped
-    depends_on: [pdns, mw-proxy]
+    depends_on: [pdns, mw-proxy, mw-rendezvous]
     environment:
       MW_DOMAIN: ${MW_DOMAIN}
       # Optional user-supplied TLS cert (takes priority over Let's Encrypt).
@@ -179,6 +212,7 @@ services:
 volumes:
   pdns_data:
   mwproxy_data:
+  mwrdv_data:
   caddy_data:
   caddy_config:
   umami_db:

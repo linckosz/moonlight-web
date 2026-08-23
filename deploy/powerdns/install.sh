@@ -260,6 +260,11 @@ if [ -f .env ]; then
     ensure_env MW_PDNS_PROXY_KEY        "$(gen_secret)"
     ensure_env MW_PDNS_OWNER_SECRET     "$(gen_secret)"
     ensure_env MW_PROXY_MAX_NEW_PER_HOUR "20"
+    # mw-rendezvous (0.3.0+): its own ownership HMAC, never the mw-proxy one.
+    ensure_env MW_RDV_OWNER_SECRET      "$(gen_secret)"
+    ensure_env MW_RDV_MAX_NEW_PER_HOUR  "20"
+    ensure_env MW_RDV_MAX_PEER_PER_MIN  "30"
+    ensure_env MW_RDV_MAX_SESSIONS      "4"
     # Update relay (0.3.0+): empty until the operator creates the second Umami
     # website and pastes its ID — the relay serves updates either way.
     ensure_env MW_UMAMI_TELEMETRY_WEBSITE_ID ""
@@ -292,6 +297,10 @@ else
     MW_PDNS_PROXY_KEY="$(gen_secret)"
     MW_PDNS_OWNER_SECRET="$(gen_secret)"
 
+    # mw-rendezvous — its own ownership HMAC, distinct from the mw-proxy one so
+    # the DNS claim and the rendezvous claim never share a credential.
+    MW_RDV_OWNER_SECRET="$(gen_secret)"
+
     echo "  Optional TLS (blank = automatic Let's Encrypt via Caddy):"
     MW_TLS_EMAIL="$(ask MW_TLS_EMAIL 'Email for Let'\''s Encrypt notices' '')"
     MW_TLS_CERT="$(ask MW_TLS_CERT 'Own cert path in ./certs (blank = Let'\''s Encrypt)' '')"
@@ -307,6 +316,10 @@ MW_PDNS_API_KEY=${MW_PDNS_API_KEY}
 MW_PDNS_PROXY_KEY=${MW_PDNS_PROXY_KEY}
 MW_PDNS_OWNER_SECRET=${MW_PDNS_OWNER_SECRET}
 MW_PROXY_MAX_NEW_PER_HOUR=20
+MW_RDV_OWNER_SECRET=${MW_RDV_OWNER_SECRET}
+MW_RDV_MAX_NEW_PER_HOUR=20
+MW_RDV_MAX_PEER_PER_MIN=30
+MW_RDV_MAX_SESSIONS=4
 MW_TLS_EMAIL=${MW_TLS_EMAIL}
 MW_TLS_CERT=${MW_TLS_CERT}
 MW_TLS_KEY=${MW_TLS_KEY}
