@@ -619,8 +619,19 @@ void MoonlightShim::clRumble(unsigned short controller, unsigned short low, unsi
 {
     MoonlightShim* instance = s_Instance.load(std::memory_order_acquire);
     if (!instance || instance->m_Stopping.load()) return;
+    // Undo the numbering shift applied on the way out (applyControllerOffset).
+    // The host answers with the number IT knows, so a session with an offset —
+    // every invited player — would otherwise hand the browser an index its
+    // navigator.getGamepads() has nothing at, and the pad would simply never
+    // buzz. The owner's own sessions run at offset 0 and are unaffected, which
+    // is why this stayed invisible.
+    //
+    // A saturated shift cannot be inverted exactly, but reaching the clamp
+    // already means two client pads collapsed onto one host pad, and that
+    // ambiguity is inherent rather than introduced here.
+    const int clientNumber = qMax(0, static_cast<int>(controller) - instance->m_ControllerOffset);
     // Forward to the relay (queued: this runs on the moonlight worker thread).
-    emit instance->rumble(controller, low, high);
+    emit instance->rumble(clientNumber, low, high);
 }
 void MoonlightShim::clConnectionStatusUpdate(int) {}
 void MoonlightShim::clSetHdrMode(bool) {}
