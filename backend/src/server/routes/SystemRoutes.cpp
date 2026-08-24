@@ -52,7 +52,8 @@ static constexpr int kServiceRestartExitCode = 79;
 
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
-                          std::function<void()> onHostKeyRotated)
+                          std::function<void()> onHostKeyRotated,
+                          std::function<void(bool)> onInternetAccessToggled)
 {
     // API route: get Internet Access status
     server.router()->get("/api/internet/status", [&](const HttpRequest& req) {
@@ -98,7 +99,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     });
 
     // API route: enable/configure Internet Access
-    server.router()->post("/api/internet/enable", [&](const HttpRequest& req) {
+    // onInternetAccessToggled captured BY VALUE: the parameter dies when this
+    // registration function returns, but the route lambdas live on — the same
+    // reason onHostKeyRotated is captured that way below.
+    server.router()->post("/api/internet/enable", [&, onInternetAccessToggled](
+                                                      const HttpRequest& req) {
         // Only localhost can modify internet access settings
         if (!req.isLocal)
             return HttpResponse::error(
@@ -148,6 +153,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         if (enabled) {
             qInfo() << "[main] POST /api/internet/enable — calling internetAccess.start()...";
             internetAccess.start();
+            if (onInternetAccessToggled) onInternetAccessToggled(true);
             QJsonObject obj = internetAccess.statusJson();
             qInfo() << "[main] internetAccess.start() completed — active:"
                     << internetAccess.isActive()
@@ -156,6 +162,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             return HttpResponse::json(obj);
         } else {
             internetAccess.stop();
+            if (onInternetAccessToggled) onInternetAccessToggled(false);
             QJsonObject obj;
             obj["status"] = "disabled";
             obj["internet_access_enabled"] = false;
@@ -519,7 +526,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     });
 
     // API route: disable Internet Access
-    server.router()->post("/api/internet/disable", [&](const HttpRequest& req) {
+    server.router()->post("/api/internet/disable",
+                          [&, onInternetAccessToggled](const HttpRequest& req) {
         // Only localhost can modify internet access settings
         if (!req.isLocal)
             return HttpResponse::error(
@@ -527,6 +535,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
         internetAccess.stop();
         appSettings.setInternetAccessEnabled(false);
+        if (onInternetAccessToggled) onInternetAccessToggled(false);
 
         QJsonObject obj;
         obj["status"] = "disabled";

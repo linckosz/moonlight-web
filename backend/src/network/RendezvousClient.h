@@ -131,6 +131,16 @@ private:
     bool m_Claiming = false;
     int m_RetryCount = 0;
 
+    /// Whether the CURRENT attempt ever reached the connected state. It is what
+    /// separates "the line was working and dropped" from "the server refuses to
+    /// let us on", which need opposite responses.
+    bool m_LineEverUp = false;
+
+    /// Consecutive attempts that never came up. Past a threshold the client
+    /// stops trusting its own claim and goes through the claim endpoint again —
+    /// see the note in onDisconnected().
+    int m_LineFailures = 0;
+
     /// How many times this process has been allowed to redraw its identity.
     /// Bounded on purpose: a redraw loop would burn through the server's
     /// per-address claim budget and leave orphaned entries behind it.
