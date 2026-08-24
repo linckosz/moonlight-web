@@ -102,6 +102,12 @@ public:
     /// Public because the stream path builds one per session.
     std::unique_ptr<IStreamBackend> backendForHost(const QString& uuid) const;
 
+    /// What the host's backend can do, as the frontend consumes it: {multiUser,
+    /// provisioning, lobbies}. Read off a real provider instance so it cannot
+    /// claim something the code does not implement. Empty object for a plain
+    /// GameStream host, which is what keeps a Sunshine card free of backend UI.
+    QJsonObject backendCapabilitiesJson(const QString& uuid) const;
+
     // A host's backend configuration and what that backend can do. Capabilities
     // are read off a real instance rather than a table, so they cannot drift
     // from the provider. Never returns the API token.

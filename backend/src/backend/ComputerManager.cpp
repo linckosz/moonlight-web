@@ -763,11 +763,33 @@ NvComputer* ComputerManager::getHost(const QString& uuid) const
 
 // --- REST API methods -------------------------------------------------------
 
+QJsonObject ComputerManager::backendCapabilitiesJson(const QString& uuid) const
+{
+    // Capabilities come from an actual provider instance rather than a lookup
+    // table, so a backend cannot advertise something its code does not do. An
+    // unmanaged host has none, which is what keeps a Sunshine card plain.
+    NvComputer* host = findHostByUuid(uuid);
+    if (!host || host->backendType.isEmpty()) return {};
+    std::unique_ptr<IStreamBackend> backend = backendForHost(uuid);
+    if (!backend) return {};
+    const BackendCapabilities caps = backend->capabilities();
+    return QJsonObject{{"multiUser", caps.multiUser},
+                       {"provisioning", caps.provisioning},
+                       {"lobbies", caps.lobbies}};
+}
+
 QJsonArray ComputerManager::getHostsJson() const
 {
     QJsonArray arr;
     for (auto it = m_Hosts.cbegin(); it != m_Hosts.cend(); ++it) {
-        arr.append(it.value()->toJson());
+        QJsonObject obj = it.value()->toJson();
+        // The frontend keys backend affordances (hiding Share on a co-op host,
+        // offering seat management) off capabilities, and it reads them from the
+        // host list — not from the per-host /backend call — so they have to ride
+        // along here, or every host looks capability-less and the gates misfire.
+        const QJsonObject caps = backendCapabilitiesJson(it.key());
+        if (!caps.isEmpty()) obj["capabilities"] = caps;
+        arr.append(obj);
     }
     return arr;
 }
@@ -1483,17 +1505,10 @@ std::pair<int, QJsonObject> ComputerManager::handleGetBackend(const QString& uui
     // The token is write-only; the browser only ever learns that one is stored.
     obj["configured"] = !host->backendApiToken.isEmpty();
 
-    // Capabilities come from an actual provider instance rather than a lookup
-    // table, so a backend cannot advertise something its code does not do. An
-    // unmanaged host has none, which is what keeps a Sunshine card plain.
-    if (!host->backendType.isEmpty()) {
-        if (std::unique_ptr<IStreamBackend> backend = backendForHost(uuid)) {
-            const BackendCapabilities caps = backend->capabilities();
-            obj["capabilities"] = QJsonObject{{"multiUser", caps.multiUser},
-                                              {"provisioning", caps.provisioning},
-                                              {"lobbies", caps.lobbies}};
-        }
-    }
+    // Same capabilities the host list carries, read off a real provider instance
+    // so it cannot claim what the code does not do. Absent for an unmanaged host.
+    const QJsonObject caps = backendCapabilitiesJson(uuid);
+    if (!caps.isEmpty()) obj["capabilities"] = caps;
 
     return {200, obj};
 }
