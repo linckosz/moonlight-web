@@ -181,6 +181,8 @@ add_executable(mw-server
     src/common/Logger.cpp
     src/common/CrashHandler.cpp
     src/common/DesktopSession.cpp
+    src/common/RendezvousId.cpp
+    src/network/RendezvousClient.cpp
     src/network/UPNPClient.cpp
     src/network/PdnsClient.cpp
     src/network/StunClient.cpp

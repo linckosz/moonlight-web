@@ -663,6 +663,52 @@ void AppSettings::setCertAuthEnabled(bool enabled)
     writeAll(obj);
 }
 
+// ── Rendezvous identity ───────────────────────────────────────────────────────
+
+QString AppSettings::rendezvousId() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("rendezvous_id").toString();
+}
+
+void AppSettings::setRendezvousId(const QString& id)
+{
+    QJsonObject obj = readAll();
+    obj["rendezvous_id"] = id;
+    // The claim belongs to the id it was granted for. Writing a new id while
+    // leaving the old flag set would make the instance advertise an address the
+    // server has never heard of, and it would look reachable while being
+    // unreachable — the one failure mode with no visible symptom.
+    obj["rendezvous_claimed"] = false;
+    writeAll(obj);
+}
+
+QString AppSettings::rendezvousToken() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("rendezvous_token").toString();
+}
+
+void AppSettings::setRendezvousToken(const QString& token)
+{
+    QJsonObject obj = readAll();
+    obj["rendezvous_token"] = token;
+    writeAll(obj);
+}
+
+bool AppSettings::rendezvousClaimed() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("rendezvous_claimed").toBool(false);
+}
+
+void AppSettings::setRendezvousClaimed(bool claimed)
+{
+    QJsonObject obj = readAll();
+    obj["rendezvous_claimed"] = claimed;
+    writeAll(obj);
+}
+
 // ── Internet Access consent (legal traceability) ──────────────────────────────
 
 QJsonObject AppSettings::internetConsent() const

@@ -65,6 +65,7 @@ add_executable(run_tests
     test_session_pool.cpp
     test_port_fallback.cpp
     test_host_persistence.cpp
+    test_rendezvous_id.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp
@@ -77,6 +78,8 @@ add_executable(run_tests
     ${_src}/src/server/HttpParser.cpp
     ${_src}/src/server/RequestGuard.cpp
     ${_src}/src/server/SessionPool.cpp
+    ${_src}/src/common/RendezvousId.cpp
+    ${_src}/src/common/RendezvousId.cpp
     # Host persistence: the restart path for a paired host (issue #9).
     ${_src}/src/backend/NvComputer.cpp
     ${_src}/src/backend/NvHTTP.cpp

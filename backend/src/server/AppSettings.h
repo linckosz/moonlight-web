@@ -329,6 +329,38 @@ public:
     QString ownerToken() const;
     void setOwnerToken(const QString& token);
 
+    // ── Rendezvous identity (0.3.0+) ────────────────────────────────────────
+    //
+    // What replaces the sub-domain: the instance is reached at
+    // https://stream.{MW_DOMAIN}/{rendezvous_id}. Two values, deliberately
+    // distinct from the DNS pair above.
+    //
+    // rendezvous_id is a LOCATOR, not a secret — it identifies, it does not
+    // authenticate (that is the pairing signature's job). It is drawn once and
+    // never rotates: an address that changes cannot be bookmarked.
+    //
+    // rendezvous_token is the credential that proves ownership of that id to
+    // the rendezvous server, which stores only HMAC(token). It is NOT
+    // owner_token: that one authorises a DNS zone claim and retires with the
+    // sub-domain mechanism in February 2027, while this one authorises a
+    // rendezvous line and outlives it. Sharing one value between the two would
+    // merge two unrelated authorisations, and retiring the first would either
+    // strand the second or keep alive a credential that should have died.
+
+    /// 26 Crockford base32 characters, empty until first claimed.
+    QString rendezvousId() const;
+    void setRendezvousId(const QString& id);
+
+    /// Ownership credential presented as X-MW-Owner. Empty until generated.
+    QString rendezvousToken() const;
+    void setRendezvousToken(const QString& token);
+
+    /// Whether the id above has been accepted by the rendezvous server. Until
+    /// it has, the instance holds an id nothing knows about, and must keep
+    /// retrying rather than advertise an address that answers to nobody.
+    bool rendezvousClaimed() const;
+    void setRendezvousClaimed(bool claimed);
+
     // ── Internet Access consent (legal traceability) ─────────────────────────
     //
     // Record of the user's explicit opt-in to Internet Access: the exact
