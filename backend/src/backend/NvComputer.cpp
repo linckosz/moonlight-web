@@ -359,6 +359,11 @@ QJsonObject NvComputer::toJson() const
     obj["backendPairUser"] = backendPairUser;
     obj["backendPairConfigured"] = !backendPairPassword.isEmpty();
 
+    // A MultiSeat control API answered on this host. The UI offers its setup
+    // only when this is true, which is how a plain Sunshine card stays plain
+    // without anyone having to declare that it is one.
+    obj["multiSeatDetected"] = multiSeatApiPresent;
+
     // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
     // itself never has to reach the browser — the UI only needs to know whether
     // the button can be offered at all.

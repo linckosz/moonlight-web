@@ -17,6 +17,7 @@
 
 #include "ComputerManager.h"
 
+#include "streambackend/BackendProbe.h"
 #include "streambackend/GameStreamBackend.h"
 #include "streambackend/StreamBackendRegistry.h"
 #include "NvComputer.h"
@@ -541,6 +542,28 @@ void ComputerManager::onPollReplyFinished()
                         host->macAddress = mac;
                         changed = true;
                     }
+                }
+
+                // Work out for ourselves whether this host has a MultiSeat
+                // control API, so that nobody ever has to declare what their
+                // machine runs. Once per process per host: the answer does not
+                // change under a running service, and this rides along on the
+                // poll of every host on the network.
+                if (!m_MultiSeatProbed.contains(uuid)) {
+                    m_MultiSeatProbed.insert(uuid);
+                    QPointer<ComputerManager> self(this);
+                    BackendProbe::probeMultiSeat(
+                        m_Nam, pollAddr.address(), [self, uuid](bool present) {
+                            if (!self || !present) return;
+                            NvComputer* h = self->findHostByUuid(uuid);
+                            if (!h || h->multiSeatApiPresent) return;
+                            h->multiSeatApiPresent = true;
+                            Logger::info(
+                                QString("[Backend] MultiSeat control API answered on %1 — its "
+                                        "setup will be offered on this host")
+                                    .arg(h->name));
+                            emit self->hostsChanged();
+                        });
                 }
             }
         } catch (const std::exception& e) {

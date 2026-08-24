@@ -199,6 +199,12 @@ private:
     QNetworkAccessManager* m_Nam = nullptr;
     NvHTTP* m_Http = nullptr;
 
+    // Hosts whose control plane has already been probed this run. The probe is
+    // a one-off per process: what a machine runs does not change under a live
+    // service, and repeating it on every poll would knock on port 9550 of every
+    // host on the network every few seconds.
+    QSet<QString> m_MultiSeatProbed;
+
     // Robust polling tracking: which hosts are currently being polled + when they started
     QSet<QString> m_PollingHosts;                  // host UUIDs currently being polled
     QHash<QString, QElapsedTimer> m_PollStartedAt; // start time per host (for stalled detection)

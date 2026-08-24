@@ -66,6 +66,7 @@ add_executable(run_tests
     test_port_fallback.cpp
     test_host_persistence.cpp
     test_rendezvous_id.cpp
+    test_backend_probe.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp
@@ -79,10 +80,11 @@ add_executable(run_tests
     ${_src}/src/server/RequestGuard.cpp
     ${_src}/src/server/SessionPool.cpp
     ${_src}/src/common/RendezvousId.cpp
-    ${_src}/src/common/RendezvousId.cpp
     # Host persistence: the restart path for a paired host (issue #9).
     ${_src}/src/backend/NvComputer.cpp
     ${_src}/src/backend/NvHTTP.cpp
+    # Backend detection: what a host runs, worked out rather than asked for.
+    ${_src}/src/backend/streambackend/BackendProbe.cpp
     ${_src}/src/backend/IdentityManager.cpp
     # AppSettings and AuthManager both reach into MW-BIND-v1 now: the host
     # identity key, and the pairing key bound to a session.

@@ -137,4 +137,16 @@ public:
     // backendPairPassword is a secret and must never reach toJson().
     QString backendPairUser;
     QString backendPairPassword;
+
+    // — What we worked out about this host ourselves (NOT persisted) —
+    //
+    // A MultiSeat control API answered on this host's address. This is the one
+    // thing about a backend that can be established without a credential and
+    // without asking, so it is what lets the UI offer MultiSeat to the people
+    // who have it while staying completely absent for everyone else.
+    //
+    // Deliberately not saved: it describes what is running right now, and a
+    // stale "yes" from months ago would offer a setup that cannot complete.
+    // Re-probed once per process, per host.
+    bool multiSeatApiPresent = false;
 };
