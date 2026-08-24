@@ -27,6 +27,7 @@ void run_session_pool_tests();
 void run_port_fallback_tests();
 void run_host_persistence_tests();
 void run_rendezvous_id_tests();
+void run_backend_probe_tests();
 
 int main(int argc, char** argv)
 {
@@ -50,6 +51,7 @@ int main(int argc, char** argv)
     run_port_fallback_tests();
     run_host_persistence_tests();
     run_rendezvous_id_tests();
+    run_backend_probe_tests();
 
     const int total = g_stats.passed + g_stats.failed;
     std::fprintf(stderr, "\n========================================\n");
