@@ -52,15 +52,19 @@ domain and `www`:
 - `https://{MW_DOMAIN}` — the canonical landing page (`website/index.html` at the
   repo root).
 - `https://www.{MW_DOMAIN}` — permanently redirected to the apex.
-- `https://stream.{MW_DOMAIN}` — vanity alias shown on the marketing site,
-  permanently redirected to the apex.
+- `https://stream.{MW_DOMAIN}` — **where people stream** (0.3.0+): serves the
+  bootstrap entry page at `/{id}` and the rendezvous API under `/v1/`. It was a
+  vanity alias redirected to the apex until 0.3.0; nothing redirects now.
+  Deliberately its own host rather than a path on the apex, so signalling can be
+  repointed at another machine later without moving the marketing site.
 
 Both get their own automatic Let's Encrypt certificate (independent of any
 api-only cert you may supply via `MW_TLS_CERT`). The site is plain HTML/CSS with
 the project screenshots under `website/assets/`. It is **bind-mounted** into the
 Caddy container (`../../website → /srv/site`), so edit it freely then
-`docker compose restart caddy` — no rebuild needed. The zone bootstrap adds the
-`www` and `stream` A records automatically; the apex `@` A record already existed.
+`docker compose restart caddy` — no rebuild needed. The bootstrap is mounted the
+same way (`../../bootstrap → /srv/bootstrap`). The zone bootstrap adds the `www`
+and `stream` A records automatically; the apex `@` A record already existed.
 
 **Cache-busting.** The shared assets (`assets/chrome.js`, `chrome.css`,
 `pages.css`, `i18n.js`) are referenced with a `?v=…` query stamped from each

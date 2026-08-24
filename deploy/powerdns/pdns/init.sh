@@ -68,7 +68,7 @@ ensure_a api    # api    — PowerDNS REST API (direct, compatibility)
 ensure_a dnsapi # dnsapi — restricted DNS-registration API (mw-proxy, 0.2.0+)
 ensure_a stats  # stats  — Umami analytics dashboard
 ensure_a updates # updates — update relay / version census (mw-proxy, 0.3.0+)
-ensure_a stream # stream — vanity alias, redirected to the apex by Caddy
+ensure_a stream # stream — rendezvous host: bootstrap page + /v1 API (0.3.0+)
 
 # Zones created before default-soa-content was set (zz-mw.conf) carry the image
 # placeholder SOA ("a.misconfigured.dns.server.invalid"); swap in a real one.

@@ -6,7 +6,7 @@
 <title>MoonlightWeb — bootstrap</title>
 <meta name="robots" content="noindex, nofollow">
 <!--
-  This host serves the MoonlightWeb BOOTSTRAP, and nothing else.
+  The MoonlightWeb BOOTSTRAP — the entry page, and nothing else.
 
   What the bootstrap is
   ---------------------
@@ -16,23 +16,40 @@
   BY that machine, over the encrypted channel. This page is the only code that
   ever comes from a server.
 
-  Why it is hosted apart from the rendezvous server
-  ------------------------------------------------
-  Precisely because it is that only code. A rendezvous server that both relayed
-  signalling AND served this page would, if compromised, be able to hand the
-  browser hostile JavaScript holding a legitimate pairing key. MW-BIND-v1 does
-  not cover that case: it binds DTLS fingerprints against a RELAYING server, not
-  against a server that serves the page. Keeping the two on separate
-  infrastructure means compromising one does not yield the other.
+  Where it is served from
+  -----------------------
+  Two places, on purpose, and the difference matters:
 
-  Content-Security-Policy is declared in a meta tag because GitHub Pages serves
-  no custom headers. That covers script/connect/base/form; it cannot express
-  frame-ancestors, so the frame check below stands in for it.
+    stream.{domain}/{id}   the address people actually use. Served by Caddy from
+                           the same box as the rendezvous relay. Its own host
+                           rather than a path on the apex, so signalling can be
+                           moved to another machine later without touching the
+                           marketing site.
+
+    app.{domain}           a byte-identical copy on GitHub Pages, published by
+                           .github/workflows/pages.yml, which records the SHA-256
+                           of every file it publishes. Not the address anyone
+                           visits: it is the reference copy the bootstrap
+                           watchdog compares the live host against.
+
+  Be precise about what that buys, because it is easy to overstate. Serving this
+  page from the rendezvous box means a compromise of that box CAN hand a browser
+  hostile JavaScript holding a legitimate pairing key — MW-BIND-v1 does not cover
+  that case, since it binds DTLS fingerprints against a RELAYING server, not
+  against one that serves the page. The reference copy does not prevent that; it
+  makes it DETECTABLE, within the watchdog's interval, and gives a published
+  record of what the bytes were supposed to be.
+
+  Content-Security-Policy is declared twice: as a header by Caddy, and in the
+  meta tag below for the Pages copy, which gets no headers at all. Both are
+  enforced and they intersect — a directive relaxed in one and not the other
+  silently becomes the stricter of the two, so change them together. Neither can
+  express frame-ancestors, hence the frame check in bootstrap.js.
 
   Status: placeholder. The real bootstrap ships with phase 2b.
 -->
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
 <style>
   :root {
     color-scheme: light dark;
@@ -65,8 +82,7 @@
   <h1>MoonlightWeb bootstrap</h1>
   <p>
     This address will serve the small page that opens a session with your own
-    computer. It is deliberately hosted apart from the rendezvous server, so
-    that compromising one does not compromise the other.
+    computer, at <code>/&lt;your&nbsp;id&gt;</code>.
   </p>
   <p>
     Nothing runs here yet. Streaming happens directly between your browser and
@@ -74,9 +90,6 @@
   </p>
   <p><code>github.com/linckosz/moonlight-web</code></p>
 </main>
-<script>
-  // Stands in for the frame-ancestors directive a meta CSP cannot express.
-  if (window.top !== window.self) { window.top.location = window.self.location; }
-</script>
+<script src="bootstrap.js"></script>
 </body>
 </html>

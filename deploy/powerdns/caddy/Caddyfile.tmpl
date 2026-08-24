@@ -73,32 +73,39 @@ stats.@MW_DOMAIN@ {
 	reverse_proxy umami:3000
 }
 
-# stream.@MW_DOMAIN@ — the rendezvous host (0.3.0+).
+# stream.@MW_DOMAIN@ — where people stream (0.3.0+).
 #
-# This is where an instance is reached now that there is no per-instance
-# sub-domain: the host holds a WebSocket open here, a browser asks for it by
-# identifier, and the two exchange WebRTC signalling until they have a direct
-# path. No media crosses this box — see mw-rendezvous/main.go.
+# This is the address an instance is reached at now that there is no
+# per-instance sub-domain: https://stream.@MW_DOMAIN@/{id}. The host holds a
+# WebSocket open here, the browser asks for it by identifier, and the two
+# exchange WebRTC signalling until they have a direct path. No media crosses
+# this box — see mw-rendezvous/main.go.
 #
-# It has its own vhost rather than living in the apex block below because a
-# catch-all redirect there would swallow /v1/ before any handler saw it. That
-# also means the apex CSP no longer covers this host, hence the header block.
+# It is a real host, not an alias, and deliberately separate from the apex: the
+# apex is the marketing site and stays wherever it is, while this name can be
+# repointed at another machine — or several — the day signalling outgrows one
+# box. That separation is only worth anything if nothing here depends on being
+# co-located with the site, so keep this block self-contained.
+#
+# It used to 301 everything to the apex, back when it was a vanity name printed
+# on the site with nothing behind it. Nothing redirects any more: this host
+# serves the entry page and the API, and the address the user sees is the address
+# they stay on.
 stream.@MW_DOMAIN@ {
 	@SITE_TLS_LINE@
 
 	header {
 		X-Content-Type-Options "nosniff"
-		# The identifier is the whole path on the bootstrap side; keep it out of
-		# anything this host hands onward.
+		# The identifier is in the path, so it would otherwise ride along in the
+		# Referer of every outbound link and asset.
 		Referrer-Policy "no-referrer"
 		Strict-Transport-Security "max-age=31536000"
-		# Nothing here is a document: every response is JSON or a WebSocket
-		# upgrade, so the page-shaped capabilities can all be switched off.
-		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 		-Server
 	}
 
-	# Signalling API: /v1/claim, /v1/host and /v1/peer.
+	# Signalling API: /v1/claim, /v1/host and /v1/peer. Matched ahead of the page
+	# handler below, and the only reason an identifier can safely be a bare path
+	# segment: "v1" is not 26 Crockford characters, so the two can never collide.
 	handle /v1/* {
 		# The budget that matters is inside mw-rendezvous, which distinguishes a
 		# new claim from a host reconnecting and a browser from either. This one
@@ -119,20 +126,34 @@ stream.@MW_DOMAIN@ {
 		reverse_proxy mw-rendezvous:8090
 	}
 
-	# Convenience alias. The canonical address is the bootstrap on its own host,
-	# app.@MW_DOMAIN@/#{id} — kept there so that compromising this server does
-	# not also mean serving the browser its code. A link in this shorter form
-	# still has to work, so it is bounced across, identifier intact.
-	handle /mw/* {
-		@rdvid path_regexp rdvid ^/mw/([0-9abcdefghjkmnpqrstvwxyz]{26})/?$
-		redir @rdvid https://app.@MW_DOMAIN@/#{re.rdvid.1} permanent
-		redir https://@MW_DOMAIN@{uri} permanent
-	}
-
-	# Everything else keeps the old behaviour: this was a vanity alias for the
-	# marketing site long before it carried an API.
+	# Everything else is the bootstrap: a few kilobytes of HTML and JavaScript
+	# that install a Service Worker, run the MW-BIND-v1 handshake and then fetch
+	# the actual interface from the user's own machine over WebRTC.
+	#
+	# Every path serves the same page — /{id} is read by the page from its own
+	# location, so there is nothing per-identifier on disk and no redirect in the
+	# way. try_files, not rewrite, so a real asset still wins over the fallback.
 	handle {
-		redir https://@MW_DOMAIN@{uri} permanent
+		header {
+			# This one IS a document, so it gets the page-shaped protections the
+			# API block has no use for.
+			X-Frame-Options "DENY"
+			# Kept in step with the <meta> CSP inside index.html, which is what
+			# protects the copy published to GitHub Pages (Pages serves no
+			# headers of its own). The two are enforced independently and
+			# intersect, so a directive relaxed in one place and not the other
+			# silently becomes the strictest of the pair — change both together.
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+		}
+		encode zstd gzip
+		root * /srv/bootstrap
+		try_files {path} /index.html
+		# CNAME only means something to GitHub Pages, which serves the reference
+		# copy of these same files. Serving it here would just publish that
+		# host's name to anyone who asks.
+		file_server {
+			hide CNAME
+		}
 	}
 }
 
