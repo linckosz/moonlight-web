@@ -129,10 +129,30 @@ func newServer(cfg config, store *claimStore) *server {
 }
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeErrCode(w, status, msg, "")
+}
+
+// writeErrCode adds a machine-readable code beside the prose.
+//
+// The two 409s mean opposite things to a host — one says "draw another
+// identifier", the other says "you already have one, this is not it" — and the
+// only alternative to a code is matching on the sentence, which turns a wording
+// change into a client bug.
+func writeErrCode(w http.ResponseWriter, status int, msg, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	body := map[string]string{"error": msg}
+	if code != "" {
+		body["code"] = code
+	}
+	_ = json.NewEncoder(w).Encode(body)
 }
+
+// Machine-readable error codes. Keep in step with RendezvousClient.cpp.
+const (
+	errIDTaken       = "id_taken"        // someone else owns this identifier
+	errOwnerHasOther = "owner_has_other" // this credential already holds a different one
+)
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -234,9 +254,10 @@ func (s *server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	case claimExisting:
 		writeJSON(w, http.StatusOK, map[string]any{"id": id, "claimed": false})
 	case claimTaken:
-		writeErr(w, http.StatusConflict, "this id is already claimed")
+		writeErrCode(w, http.StatusConflict, "this id is already claimed", errIDTaken)
 	case claimHasOther:
-		writeErr(w, http.StatusConflict, "this owner already holds an id — release it first")
+		writeErrCode(w, http.StatusConflict,
+			"this owner already holds an id — release it first", errOwnerHasOther)
 	}
 }
 

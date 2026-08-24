@@ -133,8 +133,14 @@ func TestClaimIsTrustOnFirstUse(t *testing.T) {
 	}
 	// Anyone else is refused, which is the whole point: without this, a stranger
 	// could take over an identifier already in someone's bookmarks.
-	if status, _ = postClaim(t, ts, http.MethodPost, tokenB, idA); status != http.StatusConflict {
+	status, body = postClaim(t, ts, http.MethodPost, tokenB, idA)
+	if status != http.StatusConflict {
 		t.Fatalf("claim by another owner: status %d, want 409", status)
+	}
+	// The two 409s tell a host to do opposite things, so they must be told
+	// apart by a code rather than by the sentence.
+	if body["code"] != errIDTaken {
+		t.Fatalf("code = %v, want %q", body["code"], errIDTaken)
 	}
 }
 
@@ -145,8 +151,12 @@ func TestOneLinePerOwner(t *testing.T) {
 	}
 	// Without this rule one token could reserve identifiers in bulk, and the
 	// per-address budget alone would not stop a patient caller.
-	if status, _ := postClaim(t, ts, http.MethodPost, tokenA, idB); status != http.StatusConflict {
+	status, body := postClaim(t, ts, http.MethodPost, tokenA, idB)
+	if status != http.StatusConflict {
 		t.Fatalf("second id for same owner: status %d, want 409", status)
+	}
+	if body["code"] != errOwnerHasOther {
+		t.Fatalf("code = %v, want %q", body["code"], errOwnerHasOther)
 	}
 	// Releasing the first frees the owner to take another — the reinstall path.
 	if status, _ := postClaim(t, ts, http.MethodDelete, tokenA, idA); status != http.StatusOK {
