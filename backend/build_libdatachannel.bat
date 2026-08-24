@@ -51,7 +51,9 @@ cmake .. ^
     -DNO_TESTS=ON ^
     -DOPENSSL_ROOT_DIR="%~dp0libs\windows"
 
-if errorlevel 1 (
+REM `neq 0`, not `if errorlevel 1`: the latter is a signed >= test, and cmake
+REM returns -1 when the link step fails.
+if !errorlevel! neq 0 (
     echo [ERROR] CMake configuration failed
     exit /b 1
 )
@@ -59,7 +61,7 @@ if errorlevel 1 (
 REM ---- Build + install Release ----
 echo [BUILD] Building libdatachannel (Release)...
 cmake --build . --config Release
-if errorlevel 1 (
+if !errorlevel! neq 0 (
     echo [ERROR] Release build failed
     exit /b 1
 )
@@ -69,7 +71,7 @@ cmake --install . --config Release
 REM ---- Build + install Debug to install/debug/ ----
 echo [BUILD] Building libdatachannel (Debug)...
 cmake --build . --config Debug
-if errorlevel 1 (
+if !errorlevel! neq 0 (
     echo [ERROR] Debug build failed
     exit /b 1
 )

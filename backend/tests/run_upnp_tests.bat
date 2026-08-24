@@ -74,7 +74,13 @@ if defined UPNP_FLAG (
     "%TEST_EXE%"
 )
 
-if errorlevel 1 (
+REM Capture the result here and nowhere else: every echo below resets errorlevel,
+REM so reading it at the end of the script always yielded 0 and the suite could
+REM fail while this script still exited successfully. `neq 0` rather than
+REM `errorlevel 1` so a crashed runner (negative exit code) is caught too.
+set "TEST_RC=!errorlevel!"
+
+if !TEST_RC! neq 0 (
     echo [tests] Some tests FAILED
 ) else (
     echo [tests] All tests PASSED
@@ -85,4 +91,4 @@ echo ============================================
 echo  Tests complete.
 echo ============================================
 
-exit /b %errorlevel%
+exit /b !TEST_RC!
