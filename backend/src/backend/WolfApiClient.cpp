@@ -240,6 +240,50 @@ void WolfApiClient::listLobbies(WolfJsonArrayCallback cb)
     getArray(QStringLiteral("/lobbies"), QStringLiteral("lobbies"), std::move(cb));
 }
 
+QVector<WolfLobby> WolfApiClient::parseLobbies(const QJsonDocument& doc)
+{
+    QVector<WolfLobby> lobbies;
+    const QJsonArray entries = doc.object().value(QStringLiteral("lobbies")).toArray();
+    lobbies.reserve(entries.size());
+    for (const QJsonValue& value : entries) {
+        const QJsonObject obj = value.toObject();
+        WolfLobby lobby;
+        lobby.id = obj.value(QStringLiteral("id")).toString();
+        lobby.name = obj.value(QStringLiteral("name")).toString();
+        lobby.multiUser = obj.value(QStringLiteral("multi_user")).toBool();
+        lobby.pinRequired = obj.value(QStringLiteral("pin_required")).toBool();
+        lobby.startedByProfileId = obj.value(QStringLiteral("started_by_profile_id")).toString();
+        for (const QJsonValue& s : obj.value(QStringLiteral("connected_sessions")).toArray()) {
+            lobby.connectedSessions.append(s.toString());
+        }
+        if (!lobby.id.isEmpty()) lobbies.append(lobby);
+    }
+    return lobbies;
+}
+
+QVector<WolfStreamSession> WolfApiClient::parseSessions(const QJsonDocument& doc)
+{
+    QVector<WolfStreamSession> sessions;
+    const QJsonArray entries = doc.object().value(QStringLiteral("sessions")).toArray();
+    sessions.reserve(entries.size());
+    for (const QJsonValue& value : entries) {
+        const QJsonObject obj = value.toObject();
+        WolfStreamSession session;
+        // `client_id`, not `session_id`: the reflector renames it on the way out
+        // (reflectors.hpp) even though it IS the session id every lobby call
+        // wants. There is no `session_id` field to read here.
+        session.sessionId = obj.value(QStringLiteral("client_id")).toString();
+        session.clientIp = obj.value(QStringLiteral("client_ip")).toString();
+        session.aesKey = obj.value(QStringLiteral("aes_key")).toString();
+        session.appId = obj.value(QStringLiteral("app_id")).toString();
+        session.width = obj.value(QStringLiteral("video_width")).toInt();
+        session.height = obj.value(QStringLiteral("video_height")).toInt();
+        session.fps = obj.value(QStringLiteral("video_refresh_rate")).toInt();
+        if (!session.sessionId.isEmpty()) sessions.append(session);
+    }
+    return sessions;
+}
+
 void WolfApiClient::lobbies(WolfLobbiesCallback cb)
 {
     get(QStringLiteral("/lobbies"),
@@ -248,27 +292,7 @@ void WolfApiClient::lobbies(WolfLobbiesCallback cb)
                 cb(false, err, {});
                 return;
             }
-
-            QVector<WolfLobby> lobbies;
-            const QJsonArray entries = doc.object().value(QStringLiteral("lobbies")).toArray();
-            lobbies.reserve(entries.size());
-            for (const QJsonValue& value : entries) {
-                const QJsonObject obj = value.toObject();
-                WolfLobby lobby;
-                lobby.id = obj.value(QStringLiteral("id")).toString();
-                lobby.name = obj.value(QStringLiteral("name")).toString();
-                lobby.multiUser = obj.value(QStringLiteral("multi_user")).toBool();
-                lobby.pinRequired = obj.value(QStringLiteral("pin_required")).toBool();
-                lobby.startedByProfileId =
-                    obj.value(QStringLiteral("started_by_profile_id")).toString();
-                for (const QJsonValue& s :
-                     obj.value(QStringLiteral("connected_sessions")).toArray()) {
-                    lobby.connectedSessions.append(s.toString());
-                }
-                if (!lobby.id.isEmpty()) lobbies.append(lobby);
-            }
-
-            cb(true, WolfApiError{}, lobbies);
+            cb(true, WolfApiError{}, parseLobbies(doc));
         });
 }
 
@@ -280,36 +304,77 @@ void WolfApiClient::listSessions(WolfSessionsCallback cb)
                 cb(false, err, {});
                 return;
             }
-
-            QVector<WolfStreamSession> sessions;
-            const QJsonArray entries = doc.object().value(QStringLiteral("sessions")).toArray();
-            sessions.reserve(entries.size());
-            for (const QJsonValue& value : entries) {
-                const QJsonObject obj = value.toObject();
-                WolfStreamSession session;
-                session.sessionId = obj.value(QStringLiteral("client_id")).toString();
-                session.clientIp = obj.value(QStringLiteral("client_ip")).toString();
-                session.aesKey = obj.value(QStringLiteral("aes_key")).toString();
-                session.appId = obj.value(QStringLiteral("app_id")).toString();
-                session.width = obj.value(QStringLiteral("video_width")).toInt();
-                session.height = obj.value(QStringLiteral("video_height")).toInt();
-                session.fps = obj.value(QStringLiteral("video_refresh_rate")).toInt();
-                if (!session.sessionId.isEmpty()) sessions.append(session);
-            }
-
-            cb(true, WolfApiError{}, sessions);
+            cb(true, WolfApiError{}, parseSessions(doc));
         });
 }
 
-void WolfApiClient::joinLobby(const QString& lobbyId, const QString& moonlightSessionId,
-                              const QString& pin, WolfVoidCallback cb)
+QVector<int> WolfApiClient::pinDigits(const QString& pin)
+{
+    QVector<int> digits;
+    digits.reserve(pin.size());
+    for (const QChar c : pin) {
+        if (!c.isDigit()) return {};
+        digits.append(c.digitValue());
+    }
+    return digits;
+}
+
+namespace {
+
+/// Add the `pin` member in the shape Wolf parses — a JSON array of numbers.
+/// Absent when there is no PIN: `check_lobby_pin` compares the *optional*
+/// against the lobby's own, so an empty array is NOT the same as none and
+/// would be rejected on a lobby that has no PIN.
+void addPin(QJsonObject& body, const QVector<int>& pin)
+{
+    if (pin.isEmpty()) return;
+    QJsonArray arr;
+    for (int d : pin)
+        arr.append(d);
+    body[QStringLiteral("pin")] = arr;
+}
+
+} // namespace
+
+QJsonObject WolfApiClient::joinLobbyBody(const QString& lobbyId,
+                                         const QString& moonlightSessionId, const QVector<int>& pin)
+{
+    QJsonObject body;
+    body[QStringLiteral("lobby_id")] = lobbyId;
+    // A string on purpose: the field is a std::size_t upstream, but its parser
+    // is specialised to read from a JSON string (reflectors.hpp) because JSON
+    // has no unsigned 64-bit integer. Sending a number would be rejected.
+    body[QStringLiteral("moonlight_session_id")] = moonlightSessionId;
+    addPin(body, pin);
+    return body;
+}
+
+QJsonObject WolfApiClient::leaveLobbyBody(const QString& lobbyId,
+                                          const QString& moonlightSessionId)
 {
     QJsonObject body;
     body[QStringLiteral("lobby_id")] = lobbyId;
     body[QStringLiteral("moonlight_session_id")] = moonlightSessionId;
-    if (!pin.isEmpty()) body[QStringLiteral("pin")] = pin;
+    return body;
+}
 
-    post(QStringLiteral("/lobbies/join"), body,
+QJsonObject WolfApiClient::stopLobbyBody(const QString& lobbyId, const QVector<int>& pin)
+{
+    QJsonObject body;
+    body[QStringLiteral("lobby_id")] = lobbyId;
+    addPin(body, pin);
+    return body;
+}
+
+QJsonObject WolfApiClient::stopSessionBody(const QString& sessionId)
+{
+    return QJsonObject{{QStringLiteral("session_id"), sessionId}};
+}
+
+void WolfApiClient::joinLobby(const QString& lobbyId, const QString& moonlightSessionId,
+                              const QVector<int>& pin, WolfVoidCallback cb)
+{
+    post(QStringLiteral("/lobbies/join"), joinLobbyBody(lobbyId, moonlightSessionId, pin),
          [cb = std::move(cb)](bool ok, const WolfApiError& err, const QJsonDocument&) {
              cb(ok, err);
          });
@@ -318,23 +383,23 @@ void WolfApiClient::joinLobby(const QString& lobbyId, const QString& moonlightSe
 void WolfApiClient::leaveLobby(const QString& lobbyId, const QString& moonlightSessionId,
                                WolfVoidCallback cb)
 {
-    QJsonObject body;
-    body[QStringLiteral("lobby_id")] = lobbyId;
-    body[QStringLiteral("moonlight_session_id")] = moonlightSessionId;
-
-    post(QStringLiteral("/lobbies/leave"), body,
+    post(QStringLiteral("/lobbies/leave"), leaveLobbyBody(lobbyId, moonlightSessionId),
          [cb = std::move(cb)](bool ok, const WolfApiError& err, const QJsonDocument&) {
              cb(ok, err);
          });
 }
 
-void WolfApiClient::stopLobby(const QString& lobbyId, const QString& pin, WolfVoidCallback cb)
+void WolfApiClient::stopLobby(const QString& lobbyId, const QVector<int>& pin, WolfVoidCallback cb)
 {
-    QJsonObject body;
-    body[QStringLiteral("lobby_id")] = lobbyId;
-    if (!pin.isEmpty()) body[QStringLiteral("pin")] = pin;
+    post(QStringLiteral("/lobbies/stop"), stopLobbyBody(lobbyId, pin),
+         [cb = std::move(cb)](bool ok, const WolfApiError& err, const QJsonDocument&) {
+             cb(ok, err);
+         });
+}
 
-    post(QStringLiteral("/lobbies/stop"), body,
+void WolfApiClient::stopSession(const QString& sessionId, WolfVoidCallback cb)
+{
+    post(QStringLiteral("/sessions/stop"), stopSessionBody(sessionId),
          [cb = std::move(cb)](bool ok, const WolfApiError& err, const QJsonDocument&) {
              cb(ok, err);
          });
