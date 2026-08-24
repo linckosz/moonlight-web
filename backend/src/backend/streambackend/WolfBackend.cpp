@@ -477,35 +477,6 @@ void WolfBackend::resolveCoopSessionId(const QByteArray& launchKey, BackendStrin
     });
 }
 
-void WolfBackend::findCoopLobby(const QString& peerSessionId, BackendStringCallback cb)
-{
-    if (peerSessionId.isEmpty()) {
-        cb(true, BackendError{}, QString());
-        return;
-    }
-
-    m_Api->lobbies(
-        [cb, peerSessionId](bool ok, const WolfApiError& err, const QVector<WolfLobby>& lobbies) {
-            if (!ok) {
-                cb(false, toBackendError(err), QString());
-                return;
-            }
-            cb(true, BackendError{}, WolfCoop::shareableLobbyFor(lobbies, peerSessionId));
-        });
-}
-
-void WolfBackend::joinCoopLobby(const QString& lobbyId, const QString& sessionId,
-                                BackendVoidCallback cb)
-{
-    // No PIN: we only ever join a lobby the owner of THIS MoonlightWeb host is
-    // already on, and the invitation was authorised by MoonlightWeb's own share
-    // link. A PIN-protected lobby is a Wolf-side decision we do not try to
-    // defeat — the join simply fails, and the player stays on their own screen.
-    m_Api->joinLobby(lobbyId, sessionId, {}, [cb](bool ok, const WolfApiError& err) {
-        cb(ok, ok ? BackendError{} : toBackendError(err));
-    });
-}
-
 void WolfBackend::endCoopSession(const QString& sessionId, BackendVoidCallback cb)
 {
     if (sessionId.isEmpty()) {

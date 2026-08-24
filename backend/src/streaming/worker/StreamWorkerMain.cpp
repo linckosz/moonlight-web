@@ -18,7 +18,7 @@
 #include "StreamWorkerMain.h"
 
 #include "../Session.h"
-#include "CoopLobbyJoiner.h"
+#include "CoopSessionResolver.h"
 #include "../../backend/streambackend/StreamBackendRegistry.h"
 #include "../../backend/streambackend/StreamBackendSetup.h"
 #include "../DataChannelRelay.h"
@@ -255,20 +255,21 @@ int runStreamWorker(QCoreApplication& app)
         session->setTransportChain(chain, cfg["transportIndex"].toInt());
     }
 
-    // ── Native co-op: put this stream on the owner's shared lobby ────────────
-    // Nothing happens here unless the backend has lobbies (Wolf). The owner is
-    // given no lobby id — they are already on it — but still goes through the
-    // joiner, because resolving the host-side session id is what lets the
-    // supervisor close that session later, and the owner's id is also what a
-    // player's lobby is found by.
+    // ── Native co-op: recover the host-side session id, for reaping ──────────
+    // Nothing happens here unless the backend has lobbies (Wolf). Resolving the
+    // id is what lets the supervisor close the session host-side when the stream
+    // ends — the worker cannot be trusted to, since the case that leaks is
+    // exactly the one where it died without a teardown. Joining a shared lobby
+    // so a guest sees the owner's screen is the host's own streamed UI's job
+    // now (Wolf UI), not ours — see docs/integration-multiseat-wolf.md.
     {
-        auto* joiner = new CoopLobbyJoiner(
-            backend, cfg["coopPeerSessionId"].toString(), [](const QString& sessionId) {
+        auto* resolver = new CoopSessionResolver(
+            backend, [](const QString& sessionId) {
                 emitEvent({{QStringLiteral("event"), QStringLiteral("coopSession")},
                            {QStringLiteral("sessionId"), sessionId}});
             }, qApp);
         QObject::connect(session, &StreamSession::sessionStarted, qApp,
-                         [joiner, session]() { joiner->begin(session->launchKey(), session->shim()); });
+                         [resolver, session]() { resolver->begin(session->launchKey()); });
     }
 
     // ── Relay tracking: unexpected end → "ended" event + teardown + exit ─────
