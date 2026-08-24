@@ -855,11 +855,26 @@ export class HostListView {
                                     ? `<button class="host-menu-item btn-stop-session" data-uuid="${host.uuid}">${t('hosts.stopSession')}</button>`
                                     : ''
                             }
-                            <button class="host-menu-item btn-backend" data-uuid="${host.uuid}">${
-                                host.backendType
-                                    ? t('hosts.backendManage', { type: host.backendType })
-                                    : t('hosts.backendSetup')
-                            }</button>
+                            ${
+                                // Only offered where there is something to
+                                // manage: a backend already configured, or one
+                                // the server detected on its own. A plain
+                                // Sunshine card shows nothing at all, which is
+                                // the point — the type is never a question put
+                                // to the user.
+                                //
+                                // Wolf is deliberately not reachable from here:
+                                // it cannot be detected (its control API is on a
+                                // Unix socket), so it needs its own entry point,
+                                // owed when its wiring lands.
+                                host.backendType || host.multiSeatDetected
+                                    ? `<button class="host-menu-item btn-backend" data-uuid="${host.uuid}">${
+                                          host.backendType
+                                              ? t('hosts.backendManage', { type: host.backendType })
+                                              : t('hosts.backendSetup')
+                                      }</button>`
+                                    : ''
+                            }
                             <button class="host-menu-item btn-remove" data-uuid="${host.uuid}">${t('common.remove')}</button>
                         </div>
                     </div>

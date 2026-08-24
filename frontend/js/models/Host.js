@@ -50,6 +50,11 @@ export class Host {
         this.backendType = data.backendType || '';
         this.backendApiUrl = data.backendApiUrl || '';
         this.backendConfigured = data.backendConfigured === true;
+
+        // The server found a MultiSeat control API on this host by itself. It is
+        // what lets the UI offer that setup to the people who have it and stay
+        // completely absent for everyone else — nobody names their own server.
+        this.multiSeatDetected = data.multiSeatDetected === true;
     }
 
     get isOnline() {
