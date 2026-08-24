@@ -19,10 +19,11 @@
 
 #include "../WolfApiClient.h"
 
-/// The two decisions native co-op turns on, kept apart from the transport so
-/// they can be reasoned about — and tested — on their own. Both encode facts
-/// about Wolf that are invisible from our side, which is exactly why neither
-/// belongs inline in a network callback.
+/// The one decision co-op session reaping turns on, kept apart from the
+/// transport so it can be reasoned about — and tested — on its own. It encodes a
+/// fact about Wolf that is invisible from our side (a session is identified by
+/// the launch key it was created with), which is exactly why it does not belong
+/// inline in a network callback.
 namespace WolfCoop {
 
 /// Which of Wolf's live sessions is the one OUR launch created.
@@ -46,23 +47,6 @@ inline QString matchSessionByLaunchKey(const QVector<WolfStreamSession>& session
     const QString wanted = QString::fromLatin1(launchKey.toHex());
     for (const WolfStreamSession& s : sessions) {
         if (s.aesKey.compare(wanted, Qt::CaseInsensitive) == 0) return s.sessionId;
-    }
-    return {};
-}
-
-/// The lobby `peerSessionId` is on that a second player can actually join.
-///
-/// A lobby that is not `multi_user` is skipped rather than returned: Wolf
-/// refuses the second joiner outright ("Lobby is full", sessions/lobbies.cpp),
-/// and Wolf UI creates exactly that kind for an ordinary start — only its
-/// "start co-op" makes a shareable one. Reporting none is what lets the caller
-/// say so plainly instead of failing later on an opaque 500.
-inline QString shareableLobbyFor(const QVector<WolfLobby>& lobbies, const QString& peerSessionId)
-{
-    if (peerSessionId.isEmpty()) return {};
-    for (const WolfLobby& lobby : lobbies) {
-        if (!lobby.multiUser) continue;
-        if (lobby.connectedSessions.contains(peerSessionId)) return lobby.id;
     }
     return {};
 }

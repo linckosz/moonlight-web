@@ -223,7 +223,7 @@ add_executable(mw-server
     src/streaming/SignalingServer.cpp
     src/streaming/StreamWorkerHost.cpp
     src/streaming/worker/StreamWorkerMain.cpp
-    src/streaming/worker/CoopLobbyJoiner.cpp
+    src/streaming/worker/CoopSessionResolver.cpp
 )
 
 # Ship the binary as "MoonlightWeb(.exe)" regardless of the CMake target name.

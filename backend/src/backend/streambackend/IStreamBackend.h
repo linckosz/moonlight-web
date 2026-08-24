@@ -212,19 +212,20 @@ public:
            QJsonArray());
     }
 
-    // --- Native co-op ------------------------------------------------------
+    // --- Native co-op session reaping --------------------------------------
     //
-    // Only backends whose capabilities().lobbies is true implement these. They
-    // exist because sharing a screen on such a backend is NOT the ShareManager
-    // mechanism: a second GameStream launch there opens a second, private
-    // desktop rather than a second view of the first one. What makes two
-    // players see the same thing is joining them to one lobby, which owns the
-    // compositor and runs the app exactly once.
+    // Only backends whose capabilities().lobbies is true implement these. On
+    // such a backend the session is keyed host-side by the client certificate,
+    // with an id we cannot compute — Wolf derives it from the certificate with a
+    // hash whose value is an implementation detail of its standard library — so
+    // it has to be read back, which is what resolveCoopSessionId is for, and
+    // then handed to endCoopSession when the stream ends.
     //
-    // The identifier they trade in is the backend's own session id. We cannot
-    // compute it — Wolf derives it from the client certificate with a hash whose
-    // value is an implementation detail of its standard library — so it has to
-    // be read back, which is what resolveCoopSessionId is for.
+    // Sharing a screen on such a backend is native co-op, not the ShareManager
+    // mechanism: a second player joins the owner's lobby from the host's own
+    // streamed UI (Wolf UI). That join is not brokered here — MoonlightWeb only
+    // has to keep from leaking the sessions it launches, which is what these two
+    // calls are for. See docs/integration-multiseat-wolf.md.
 
     /// The session id the backend gave the session THIS launch key created.
     /// `launchKey` is the per-session `rikey`; it is the only field that cannot
@@ -237,30 +238,6 @@ public:
            BackendError::make(BackendError::Unsupported,
                               QStringLiteral("This backend has no co-op sessions")),
            QString());
-    }
-
-    /// Id of the lobby `peerSessionId` is currently on. Empty `value` with
-    /// ok == true is the normal answer when the owner simply has not started
-    /// co-op yet — the caller turns that into an instruction, not an error.
-    virtual void findCoopLobby(const QString& peerSessionId, BackendStringCallback cb)
-    {
-        Q_UNUSED(peerSessionId);
-        cb(false,
-           BackendError::make(BackendError::Unsupported,
-                              QStringLiteral("This backend has no lobbies")),
-           QString());
-    }
-
-    /// Put `sessionId` onto `lobbyId`'s shared compositor. Must not be called
-    /// before that session is actually streaming — see WolfApiClient::joinLobby
-    /// for why an early join is lost without any error.
-    virtual void joinCoopLobby(const QString& lobbyId, const QString& sessionId,
-                               BackendVoidCallback cb)
-    {
-        Q_UNUSED(lobbyId);
-        Q_UNUSED(sessionId);
-        cb(false, BackendError::make(BackendError::Unsupported,
-                                     QStringLiteral("This backend has no lobbies")));
     }
 
     /// End one session host-side. Called by the supervisor when a stream ends,

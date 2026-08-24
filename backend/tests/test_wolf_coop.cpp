@@ -1,8 +1,11 @@
 /*
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  *
- * Native co-op on Wolf: finding our own session, finding the lobby to join, and
- * the exact wire shapes those calls take.
+ * Native co-op on Wolf: finding our own session so we can reap it, and the exact
+ * wire shapes those calls take. The join that once lived here is gone — a guest
+ * joins the owner's lobby natively, from the host's own streamed UI (Wolf UI) —
+ * so what remains is the session-id resolution the reaping depends on, plus the
+ * transport shapes kept as a validated reference.
  *
  * Everything here is pinned against Wolf's own source rather than against a
  * capture, because the failure mode is silent in both directions:
@@ -16,10 +19,9 @@
  *    from a JSON *string* (there is no unsigned 64-bit integer in JSON). So the
  *    field that looks numeric must be sent as text, and vice versa.
  *
- * The selection rules are pinned for a different reason: they encode two facts
- * about Wolf that are not visible from our side at all — that a session is
- * identified by the launch key it was created with, and that a lobby which is
- * not multi_user will refuse the second player rather than share.
+ * The match rule is pinned for a different reason: it encodes a fact about Wolf
+ * not visible from our side at all — that a session is identified by the launch
+ * key it was created with.
  */
 #include "test_framework.h"
 
@@ -94,27 +96,19 @@ void run_wolf_coop_tests()
     CHECK(WolfCoop::matchSessionByLaunchKey(sessions, QByteArray()).isEmpty());
     CHECK(WolfCoop::matchSessionByLaunchKey({}, ourKey).isEmpty());
 
-    SECTION("Wolf co-op — only a multi_user lobby can actually be shared");
+    SECTION("Wolf co-op — a lobby answer parses, multi_user flag and all");
 
+    // The typed lobby mirror is transport we keep even though MoonlightWeb no
+    // longer brokers the join itself (a guest joins natively from Wolf UI): the
+    // wire shape is hard-won and worth pinning. The first lobby is what a plain
+    // "start" produces — single-user; the second is a "start co-op" one.
     const QVector<WolfLobby> lobbies = WolfApiClient::parseLobbies(doc(kLobbies));
     CHECK_EQ(lobbies.size(), 2);
     CHECK(!lobbies[0].multiUser);
     CHECK(lobbies[1].multiUser);
     CHECK_EQ(lobbies[1].connectedSessions.size(), 1);
-
-    // The owner is on a lobby, but a single-user one: joining it is refused by
-    // Wolf with "Lobby is full". Answering "none" here is what lets the caller
-    // tell the player to have co-op started, instead of failing on an opaque 500.
-    CHECK(WolfCoop::shareableLobbyFor(lobbies, QStringLiteral("11111111111111111111"))
-              .isEmpty());
-
-    CHECK_EQ(WolfCoop::shareableLobbyFor(lobbies, QStringLiteral("33333333333333333333")),
-             QStringLiteral("coop-lobby"));
-
-    // Someone else's session, and no session at all.
-    CHECK(WolfCoop::shareableLobbyFor(lobbies, QStringLiteral("99999999999999999999"))
-              .isEmpty());
-    CHECK(WolfCoop::shareableLobbyFor(lobbies, QString()).isEmpty());
+    CHECK_EQ(lobbies[1].id, QStringLiteral("coop-lobby"));
+    CHECK_EQ(lobbies[1].connectedSessions.at(0), QStringLiteral("33333333333333333333"));
 
     SECTION("Wolf co-op — the PIN is digits, never the string a human typed");
 

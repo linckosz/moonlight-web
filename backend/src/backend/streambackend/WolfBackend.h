@@ -107,12 +107,10 @@ public:
     void listProfiles(BackendJsonCallback cb) override;
     void listLobbies(BackendJsonCallback cb) override;
 
-    // The two selection rules these rest on live in WolfCoop.h, free of the
-    // transport so they can be exercised directly.
+    // Session reaping only — the join is native, done from the host's own
+    // streamed UI. resolveCoopSessionId's match rule lives in WolfCoop.h, free
+    // of the transport so it can be exercised directly.
     void resolveCoopSessionId(const QByteArray& launchKey, BackendStringCallback cb) override;
-    void findCoopLobby(const QString& peerSessionId, BackendStringCallback cb) override;
-    void joinCoopLobby(const QString& lobbyId, const QString& sessionId,
-                       BackendVoidCallback cb) override;
     void endCoopSession(const QString& sessionId, BackendVoidCallback cb) override;
 
 private:

@@ -3148,14 +3148,9 @@ int main(int argc, char* argv[])
             }
             int appId = shareManager.appForSlot(slot);
             bool ownerOnBoundHost = false;
-            // On a co-op backend the player does not resume the owner's session,
-            // it joins the owner's lobby — and a lobby is found by who is on it.
-            // This is the owner's host-side session id, reported by their worker.
-            QString ownerCoopSessionId;
             for (int i = 0; i < kOwnerSlots; ++i)
                 if (g_Pool.at(i).worker && g_Pool.at(i).hostUuid == hostUuid) {
                     appId = g_Pool.at(i).appId; // the app currently up on that host
-                    ownerCoopSessionId = g_Pool.at(i).coopSessionId;
                     ownerOnBoundHost = true;
                     break;
                 }
@@ -3170,25 +3165,6 @@ int main(int argc, char* argv[])
                 ownerOnBoundHost ? computerManager.getHost(hostUuid) : nullptr;
             if (!host) {
                 respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
-                return;
-            }
-
-            // Wolf and friends: sharing there is native co-op, not a second
-            // GameStream session on the same desktop. Without the owner's
-            // host-side session id there is no lobby to look up, and the player
-            // would launch a private desktop of their own and stare at it — so
-            // refuse rather than start something that cannot be what they asked
-            // for. It resolves within a second of the owner's stream starting.
-            const bool coopHost = !host->backendType.isEmpty() && [&] {
-                std::unique_ptr<IStreamBackend> b = computerManager.backendForHost(hostUuid);
-                return b && b->capabilities().lobbies;
-            }();
-            if (coopHost && ownerCoopSessionId.isEmpty()) {
-                respond(HttpResponse::json(
-                    QJsonObject{{"error", "coop_not_ready"},
-                                {"message", "This host shares through co-op, and its session is "
-                                            "not ready yet. Try again in a moment."}},
-                    409));
                 return;
             }
 
@@ -3277,16 +3253,7 @@ int main(int argc, char* argv[])
             cfg["autoMode"] = true;
             // Never /launch: Sunshine refuses it while an app runs, and a player
             // has no business starting one anyway.
-            //
-            // A co-op backend is the exception, and not a tweak: there, a
-            // /resume under this player's own certificate reconnects to nothing
-            // (the host has no session for that identity yet). The player must
-            // launch — which gives them a private session — and then be moved
-            // onto the owner's lobby, which is what the joiner does.
-            cfg["preferResume"] = !coopHost;
-            // Whose lobby to look for. Empty for everyone but an invited player
-            // on a co-op backend.
-            cfg["coopPeerSessionId"] = ownerCoopSessionId;
+            cfg["preferResume"] = true;
             // The host the player typed, so the signaling URL they get back
             // points at the same place — an empty one made the browser fall
             // back to /ws and land on the owner's signaling server.

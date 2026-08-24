@@ -175,11 +175,6 @@ public:
     /// deletes itself immediately afterwards.
     QByteArray launchKey() const { return m_Config.rikey; }
 
-    /// The live moonlight-common-c bridge. Outlives this object (it is a child
-    /// of the relay), which is what makes it a safe handle for work that has to
-    /// continue after the /start reply.
-    MoonlightShim* shim() const { return m_Shim; }
-
 signals:
     void relayCreated(DataChannelRelay* relay);
     void mediaTrackRelayCreated(MediaTrackRelay* relay);

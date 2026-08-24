@@ -537,7 +537,6 @@
         "share": "Share",
         "shareCount": "Share ({{count}})",
         "dropdownTitle": "Invite players",
-        "coopHint": "On this host, players join your co-op session — start co-op on the host itself first, or your guest lands on their own screen.",
         "playerN": "Player {{n}}",
         "working": "Working...",
         "state": {
