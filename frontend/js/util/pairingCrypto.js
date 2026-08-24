@@ -170,7 +170,7 @@ export async function loadOrCreateIdentity() {
         }
 
         const keyIdBytes = new Uint8Array(
-            await crypto.subtle.digest('SHA-256', record.publicKeySpki)
+            await crypto.subtle.digest('SHA-256', record.publicKeySpki),
         );
 
         return {
@@ -205,8 +205,10 @@ export async function rememberHostIdentity(hostPublicKeyBase64, hostId) {
         if (!record) return false;
 
         if (record.hostPublicKey && record.hostPublicKey !== hostPublicKeyBase64) {
-            console.error('[MW-BIND] This host presented a different identity key than the one '
-                + 'this browser paired with — refusing to overwrite it');
+            console.error(
+                '[MW-BIND] This host presented a different identity key than the one ' +
+                    'this browser paired with — refusing to overwrite it',
+            );
             return false;
         }
 
@@ -302,20 +304,15 @@ export async function verifyHostSignature(identity, message) {
             base64ToBytes(identity.hostPublicKey),
             ALGORITHM,
             false,
-            ['verify']
+            ['verify'],
         );
         const signed = hostDigestInput(
             message.host_id || identity.hostId || '',
             identity.keyId,
             identity.nonceB,
-            fingerprint
+            fingerprint,
         );
-        return await crypto.subtle.verify(
-            SIGN_PARAMS,
-            hostKey,
-            base64ToBytes(message.sig),
-            signed
-        );
+        return await crypto.subtle.verify(SIGN_PARAMS, hostKey, base64ToBytes(message.sig), signed);
     } catch (e) {
         console.error('[MW-BIND] Host signature verification failed:', e.message);
         return false;
@@ -335,7 +332,7 @@ export async function signAnswer(identity, hostId, nonceHBase64, fingerprintHost
             hostId,
             base64ToBytes(nonceHBase64),
             fingerprintHost,
-            fingerprintBrowser
+            fingerprintBrowser,
         );
         const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
         return bytesToBase64(new Uint8Array(sig));
@@ -371,7 +368,10 @@ export function extractFingerprint(sdp) {
 
         if (body.slice(0, sep).toLowerCase() !== 'sha-256') return null;
 
-        const value = body.slice(sep + 1).trim().toUpperCase();
+        const value = body
+            .slice(sep + 1)
+            .trim()
+            .toUpperCase();
         if (!/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(value)) return null;
 
         if (found === null) found = value;

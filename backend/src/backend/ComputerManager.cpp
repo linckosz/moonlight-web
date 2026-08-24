@@ -1233,12 +1233,25 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     const QString effectivePairPassword =
         pairPassword.isEmpty() ? host->backendPairPassword : pairPassword;
 
+    // A MultiSeat we detected ourselves needs no URL from anyone: its control
+    // API sits on a fixed port of the host we are already polling. Asking for an
+    // address the server can work out is the kind of question this whole feature
+    // exists to stop asking — and the browser is never told a host's address, so
+    // it could not have filled the field in even if we wanted it to.
+    QString effectiveUrl = apiUrl;
+    if (effectiveUrl.isEmpty() && type == QStringLiteral("multiseat") &&
+        host->multiSeatApiPresent && !host->activeAddress.isNull()) {
+        effectiveUrl = QStringLiteral("http://%1:%2")
+                           .arg(host->activeAddress.address())
+                           .arg(BackendProbe::kMultiSeatApiPort);
+    }
+
     // Build the candidate from the values being proposed, WITHOUT storing them
     // yet. Persisting first would let a failed attempt — a mistyped key is the
     // obvious one — overwrite a configuration that was working.
     QJsonObject config;
     config[QStringLiteral("hostUuid")] = uuid;
-    config[QStringLiteral("apiUrl")] = apiUrl;
+    config[QStringLiteral("apiUrl")] = effectiveUrl;
     config[QStringLiteral("apiToken")] = effectiveToken;
     config[QStringLiteral("pairUser")] = pairUser;
     config[QStringLiteral("pairPassword")] = effectivePairPassword;
@@ -1259,7 +1272,7 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     // escape hatch is "Stop managing", which clears the config entirely.
     if (NvComputer* h = findHostByUuid(uuid)) {
         h->backendType = type;
-        h->backendApiUrl = apiUrl;
+        h->backendApiUrl = effectiveUrl;
         h->backendApiToken = effectiveToken;
         h->backendPairUser = pairUser;
         h->backendPairPassword = effectivePairPassword;

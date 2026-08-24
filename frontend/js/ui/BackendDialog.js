@@ -23,6 +23,17 @@ export class BackendDialog {
         this.onSaved = onSaved;
         this.overlay = null;
         this.busy = false;
+
+        // The type is RESOLVED, never chosen. Either this host already has a
+        // backend, or the server detected one on its own. Asking someone to name
+        // the software their own machine runs is a question we refuse to put,
+        // and the dialog is only reachable when one of the two holds anyway.
+        this.type = host.backendType || (host.multiSeatDetected ? 'multiseat' : '');
+
+        // MultiSeat's control API is on a fixed port of a host the server is
+        // already polling, so the server fills the URL in. The browser is never
+        // told a host's address and could not do it here.
+        this.urlIsDerived = this.type === 'multiseat' && !host.backendApiUrl;
     }
 
     esc(s) {
@@ -34,22 +45,17 @@ export class BackendDialog {
         document.body.appendChild(this.overlay);
         this.bindEvents();
 
-        // Ask the server which backends it can actually build, rather than
-        // offering a list the build may not support.
+        // The type is already resolved; this call only confirms the build can
+        // actually construct it. A detected backend the binary cannot drive has
+        // to say so here rather than fail on save.
         try {
             const { types } = await BackendClient.getBackendTypes();
-            const select = this.overlay?.querySelector('.backend-type');
-            if (!select) return; // closed while loading
-            select.innerHTML = types
-                // "gamestream" is the absence of management, offered as "none".
-                .filter((ty) => ty !== 'gamestream')
-                .map(
-                    (ty) =>
-                        `<option value="${this.esc(ty)}"${
-                            ty === this.host.backendType ? ' selected' : ''
-                        }>${this.esc(ty)}</option>`,
-                )
-                .join('');
+            if (!this.overlay) return; // closed while loading
+            if (this.type && !types.includes(this.type)) {
+                this.setStatus(t('backend.typesFailed'), 'error');
+                this.setBusy(true);
+                return;
+            }
             this.syncPairCredsVisibility();
         } catch {
             this.setStatus(t('backend.typesFailed'), 'error');
@@ -217,17 +223,16 @@ export class BackendDialog {
     /// credentials; Wolf pairs through its own API and needs none. Asking every
     /// backend for them would be noise.
     syncPairCredsVisibility() {
-        const select = this.overlay?.querySelector('.backend-type');
         const panel = this.overlay?.querySelector('.backend-pair-creds');
-        if (!select || !panel) return;
-        panel.hidden = select.value !== 'multiseat';
+        if (!panel) return;
+        panel.hidden = this.type !== 'multiseat';
     }
 
     /// Current form values, as the tuple that decides whether anything changed.
     snapshotForm() {
         const q = (sel) => this.overlay?.querySelector(sel);
         return JSON.stringify({
-            type: q('.backend-type')?.value || '',
+            type: this.type,
             url: q('.backend-url')?.value.trim() || '',
             token: q('.backend-token')?.value || '',
             pairUser: q('.backend-pair-user')?.value.trim() || '',
@@ -243,12 +248,21 @@ export class BackendDialog {
     }
 
     /// SAVE is enabled only when the form differs from the baseline and no
-    /// request is in flight. A URL is required, so an empty one never enables it.
+    /// request is in flight, so an accidental click cannot re-pair with values
+    /// that have not moved.
+    ///
+    /// A first-time setup is the exception, and it has to be: a detected
+    /// MultiSeat with its API key disabled needs no URL and no secret, so there
+    /// is nothing for the user to type — and a dirty-only rule would leave SAVE
+    /// greyed out forever on exactly the setup that requires the least work.
     updateSaveEnabled() {
         const save = this.overlay?.querySelector('.btn-backend-save');
         if (!save) return;
-        const hasUrl = !!this.overlay.querySelector('.backend-url')?.value.trim();
-        save.disabled = this.busy || !hasUrl || this.snapshotForm() === this._baseline;
+        const firstTime = !this.host.backendType;
+        const hasUrl =
+            this.urlIsDerived || !!this.overlay.querySelector('.backend-url')?.value.trim();
+        save.disabled =
+            this.busy || !hasUrl || (!firstTime && this.snapshotForm() === this._baseline);
     }
 
     close() {
@@ -277,13 +291,15 @@ export class BackendDialog {
     async save() {
         if (this.busy) return;
 
-        const type = this.overlay.querySelector('.backend-type').value;
-        const apiUrl = this.overlay.querySelector('.backend-url').value.trim();
+        const type = this.type;
+        const apiUrl = this.overlay.querySelector('.backend-url')?.value.trim() || '';
         const apiToken = this.overlay.querySelector('.backend-token').value;
         const pairUser = this.overlay.querySelector('.backend-pair-user')?.value.trim() || '';
         const pairPassword = this.overlay.querySelector('.backend-pair-password')?.value || '';
 
-        if (!apiUrl) {
+        // Empty is fine only when the server derives the address itself; every
+        // other backend still has to be told where its control API lives.
+        if (!apiUrl && !this.urlIsDerived) {
             this.setStatus(t('backend.urlRequired'), 'error');
             return;
         }
@@ -325,17 +341,26 @@ export class BackendDialog {
                 <h3>${this.esc(t('backend.title', { name: this.host.displayName || this.host.name }))}</h3>
                 <p class="pairing-instruction">${t('backend.instruction')}</p>
 
-                <label class="backend-field">
+                <div class="backend-field">
                     <span>${t('backend.type')}</span>
-                    <select class="backend-type"></select>
-                </label>
+                    <strong class="backend-type-name">${this.esc(this.type)}</strong>
+                </div>
 
-                <label class="backend-field">
+                ${
+                    // Hidden when the server works the address out for itself.
+                    // The field only exists for a backend whose control API
+                    // lives somewhere we cannot guess — Wolf behind its reverse
+                    // proxy — and showing an empty box the user must not fill
+                    // would be worse than showing nothing.
+                    this.urlIsDerived
+                        ? ''
+                        : `<label class="backend-field">
                     <span>${t('backend.apiUrl')}</span>
                     <input class="backend-url" type="url" spellcheck="false"
                            placeholder="http://192.168.1.50:8080"
                            value="${this.esc(this.host.backendApiUrl || '')}">
-                </label>
+                </label>`
+                }
 
                 <label class="backend-field">
                     <span>${t('backend.apiToken')}</span>
@@ -391,10 +416,8 @@ export class BackendDialog {
             .querySelector('.btn-backend-save')
             .addEventListener('click', () => this.save());
 
-        this.overlay.querySelector('.backend-type').addEventListener('change', () => {
-            this.syncPairCredsVisibility();
-            this.updateSaveEnabled();
-        });
+        // No listener on the type: it is resolved once in the constructor and
+        // cannot change while the dialog is open.
 
         // SAVE stays disabled until the form differs from what is stored, so an
         // accidental click cannot re-pair with unchanged values. Any edit to a
