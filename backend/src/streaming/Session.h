@@ -166,6 +166,20 @@ public:
     /// controller 0. Zero (the owner) keeps the browser's own numbering.
     void setGamepadOffset(int offset) { m_GamepadOffset = offset; }
 
+    /// The per-session key sent to the host as `rikey`. A backend that keys its
+    /// own bookkeeping on the launch — Wolf indexes a session by client
+    /// certificate and reflects this key back as `aes_key` — needs it to tell
+    /// OUR session apart from every other one running on that host.
+    ///
+    /// Valid from sessionStarted(); read it there, not later: this object
+    /// deletes itself immediately afterwards.
+    QByteArray launchKey() const { return m_Config.rikey; }
+
+    /// The live moonlight-common-c bridge. Outlives this object (it is a child
+    /// of the relay), which is what makes it a safe handle for work that has to
+    /// continue after the /start reply.
+    MoonlightShim* shim() const { return m_Shim; }
+
 signals:
     void relayCreated(DataChannelRelay* relay);
     void mediaTrackRelayCreated(MediaTrackRelay* relay);

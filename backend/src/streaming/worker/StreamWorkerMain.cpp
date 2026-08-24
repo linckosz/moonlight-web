@@ -18,6 +18,7 @@
 #include "StreamWorkerMain.h"
 
 #include "../Session.h"
+#include "CoopLobbyJoiner.h"
 #include "../../backend/streambackend/StreamBackendRegistry.h"
 #include "../../backend/streambackend/StreamBackendSetup.h"
 #include "../DataChannelRelay.h"
@@ -252,6 +253,22 @@ int runStreamWorker(QCoreApplication& app)
         for (const auto& v : cfg["transportChain"].toArray())
             chain.append(v.toString());
         session->setTransportChain(chain, cfg["transportIndex"].toInt());
+    }
+
+    // ── Native co-op: put this stream on the owner's shared lobby ────────────
+    // Nothing happens here unless the backend has lobbies (Wolf). The owner is
+    // given no lobby id — they are already on it — but still goes through the
+    // joiner, because resolving the host-side session id is what lets the
+    // supervisor close that session later, and the owner's id is also what a
+    // player's lobby is found by.
+    {
+        auto* joiner = new CoopLobbyJoiner(
+            backend, cfg["coopPeerSessionId"].toString(), [](const QString& sessionId) {
+                emitEvent({{QStringLiteral("event"), QStringLiteral("coopSession")},
+                           {QStringLiteral("sessionId"), sessionId}});
+            }, qApp);
+        QObject::connect(session, &StreamSession::sessionStarted, qApp,
+                         [joiner, session]() { joiner->begin(session->launchKey(), session->shim()); });
     }
 
     // ── Relay tracking: unexpected end → "ended" event + teardown + exit ─────

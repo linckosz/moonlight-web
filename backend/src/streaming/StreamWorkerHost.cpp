@@ -146,6 +146,9 @@ void StreamWorkerHost::onStdout()
                 m_EndedEmitted = true;
                 emit ended();
             }
+        } else if (type == QLatin1String("coopSession")) {
+            const QString id = event["sessionId"].toString();
+            if (!id.isEmpty()) emit coopSessionResolved(id);
         } else if (!line.trimmed().isEmpty()) {
             qWarning() << "[StreamWorkerHost] Unknown worker event:" << line.constData();
         }

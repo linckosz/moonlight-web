@@ -537,6 +537,7 @@
         "share": "Partager",
         "shareCount": "Partager ({{count}})",
         "dropdownTitle": "Inviter des joueurs",
+        "coopHint": "Sur cet hôte, les joueurs rejoignent votre session coop — démarrez d'abord la coop sur l'hôte lui-même, sinon votre invité arrive sur son propre écran.",
         "playerN": "Joueur {{n}}",
         "working": "En cours...",
         "state": {

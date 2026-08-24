@@ -537,6 +537,7 @@
         "share": "共享",
         "shareCount": "共享 ({{count}})",
         "dropdownTitle": "邀请玩家",
+        "coopHint": "在此主机上，玩家将加入你的合作会话——请先在主机上启动合作模式，否则来宾只会看到自己的画面。",
         "playerN": "玩家 {{n}}",
         "working": "处理中...",
         "state": {

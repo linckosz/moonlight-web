@@ -78,6 +78,16 @@
     color: var(--text-3);
 }
 
+/* Only on a host whose sharing is its own native co-op: what the owner still
+   has to do before a link is worth handing out. Sentence case and full width,
+   deliberately unlike the title above it — it is prose, not a label. */
+.share-dropdown-hint {
+    margin: 0 2px 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-3);
+}
+
 /* One row per invitable player, built like a host card: round status glyph,
    name + one-line hint, uppercase badge. */
 .share-row {

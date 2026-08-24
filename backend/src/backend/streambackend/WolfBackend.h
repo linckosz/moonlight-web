@@ -19,6 +19,7 @@
 
 #include "GameStreamBackend.h"
 #include "IStreamBackend.h"
+#include "../WolfApiClient.h"
 
 #include <QByteArray>
 #include <QMap>
@@ -27,7 +28,6 @@
 #include <memory>
 
 class NvPairingManager;
-class WolfApiClient;
 
 /**
  * @brief A Wolf host: GameStream media, Wolf's `/api/v1` for everything else.
@@ -106,6 +106,14 @@ public:
 
     void listProfiles(BackendJsonCallback cb) override;
     void listLobbies(BackendJsonCallback cb) override;
+
+    // The two selection rules these rest on live in WolfCoop.h, free of the
+    // transport so they can be exercised directly.
+    void resolveCoopSessionId(const QByteArray& launchKey, BackendStringCallback cb) override;
+    void findCoopLobby(const QString& peerSessionId, BackendStringCallback cb) override;
+    void joinCoopLobby(const QString& lobbyId, const QString& sessionId,
+                       BackendVoidCallback cb) override;
+    void endCoopSession(const QString& sessionId, BackendVoidCallback cb) override;
 
 private:
     /// Resolve the PIN into Wolf once stage 1 is parked on it. Polls
