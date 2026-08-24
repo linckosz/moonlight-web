@@ -186,18 +186,64 @@ public:
     /// POST /api/v1/lobbies/join {lobby_id, moonlight_session_id, pin?} — switches
     /// an already-running session's stream producer onto the lobby's shared
     /// compositor (sessions/lobbies.cpp). The session must exist first.
+    ///
+    /// **Timing.** The switch is an event the *video pipeline* handles, and Wolf
+    /// only builds that pipeline after the client's first RTP video ping
+    /// (sessions/moonlight.cpp waits on it, streaming.cpp registers the handler
+    /// while constructing it). Joining before the pipeline exists is silently
+    /// lost — the lobby records the session and moves the input devices over, but
+    /// the interpipesrc keeps listening to the joiner's own compositor, so the
+    /// player watches their own screen and nothing reports a failure. Call this
+    /// only once frames are actually flowing.
     void joinLobby(const QString& lobbyId, const QString& moonlightSessionId,
-                   const QString& pin, WolfVoidCallback cb);
+                   const QVector<int>& pin, WolfVoidCallback cb);
 
     /// POST /api/v1/lobbies/leave {lobby_id, moonlight_session_id} — switches the
     /// session back to its own compositor; empties (and, if
     /// stop_when_everyone_leaves, stops) the lobby when it was the last one.
+    ///
+    /// Not needed to end a stream: stopSession() takes the session out of its
+    /// lobby too (lobbies.cpp routes StopStreamEvent to the same handler). This
+    /// is for going back to one's own Wolf UI *while staying connected*.
     void leaveLobby(const QString& lobbyId, const QString& moonlightSessionId,
                     WolfVoidCallback cb);
 
     /// POST /api/v1/lobbies/stop {lobby_id, pin?} — tears the lobby down, ejecting
     /// every connected session.
-    void stopLobby(const QString& lobbyId, const QString& pin, WolfVoidCallback cb);
+    void stopLobby(const QString& lobbyId, const QVector<int>& pin, WolfVoidCallback cb);
+
+    /// POST /api/v1/sessions/stop {session_id} — ends one streaming session host
+    /// side, whatever became of the client that owned it.
+    ///
+    /// This is the only reliable way for us to close a Wolf session. The
+    /// GameStream `/cancel` Wolf also honours resolves the session from the
+    /// *presented client certificate* (rest/endpoints.hpp), so a cancel sent
+    /// under our default identity matches nothing when the session was launched
+    /// under a per-seat certificate — the session and its `Wolf-UI_*` container
+    /// then survive forever and pile up.
+    void stopSession(const QString& sessionId, WolfVoidCallback cb);
+
+    /// Digits of a user-typed PIN, in the `std::vector<short>` shape Wolf's API
+    /// expects (events.hpp). Sending the PIN as a string makes reflect-cpp
+    /// reject the whole request body with a 500 "Invalid event".
+    /// Returns an empty vector for an empty or non-numeric PIN.
+    static QVector<int> pinDigits(const QString& pin);
+
+    // Wire format, split out from the calls so it can be asserted directly.
+    // Every field below is shaped by how Wolf's reflection-based parser reads
+    // it, not by what reads naturally — and getting one wrong is rejected as a
+    // malformed body, with no hint which field was at fault.
+    static QJsonObject joinLobbyBody(const QString& lobbyId, const QString& moonlightSessionId,
+                                     const QVector<int>& pin);
+    static QJsonObject leaveLobbyBody(const QString& lobbyId, const QString& moonlightSessionId);
+    static QJsonObject stopLobbyBody(const QString& lobbyId, const QVector<int>& pin);
+    static QJsonObject stopSessionBody(const QString& sessionId);
+
+    // Response parsing, split out for the same reason: the field names are
+    // generated from Wolf's own structs (events/reflectors.hpp), so they are
+    // worth pinning against a captured answer.
+    static QVector<WolfStreamSession> parseSessions(const QJsonDocument& doc);
+    static QVector<WolfLobby> parseLobbies(const QJsonDocument& doc);
 
 private:
     void get(const QString& path, std::function<void(bool, const WolfApiError&,
