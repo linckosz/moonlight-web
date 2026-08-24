@@ -37,8 +37,11 @@ class IStreamBackend;
  *
  * This recovers the id by asking the backend which of its live sessions carries
  * our launch key — the one field that cannot collide between two of our own
- * concurrent sessions — and reports it exactly once. It does nothing on a
- * backend without native co-op.
+ * concurrent sessions — and reports it exactly once. The session appears in the
+ * backend's list a beat after the stream starts, and the answer travels over a
+ * proxy that can drop a request, so the lookup is retried on a short cadence
+ * until it lands rather than given up after a single miss — a miss is exactly
+ * how a session used to leak. It does nothing on a backend without native co-op.
  *
  * Scope note: this used to also move the stream onto a shared lobby so an
  * invited player saw the owner's screen. That join is now done natively, inside
@@ -68,7 +71,16 @@ public:
     void begin(const QByteArray& launchKey);
 
 private:
+    /// One lookup attempt; reschedules itself until the id lands or we give up.
+    void attempt();
+
     std::shared_ptr<IStreamBackend> m_Backend;
     SessionIdReporter m_Report;
+    QByteArray m_LaunchKey;
     bool m_Begun = false;
+    int m_Attempts = 0;
+    /// ~12 s of retries at 1 s apart: long enough to outlast a slow registration
+    /// or a dropped proxy request, short enough not to outlive a brief stream.
+    static constexpr int kMaxAttempts = 12;
+    static constexpr int kRetryMs = 1000;
 };
