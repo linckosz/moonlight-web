@@ -20,6 +20,7 @@
 #include "../../backend/streambackend/IStreamBackend.h"
 
 #include <QPointer>
+#include <QTimer>
 #include <QDebug>
 
 CoopSessionResolver::CoopSessionResolver(std::shared_ptr<IStreamBackend> backend,
@@ -35,19 +36,40 @@ void CoopSessionResolver::begin(const QByteArray& launchKey)
 
     if (!m_Backend || !m_Backend->capabilities().lobbies) return;
 
+    m_LaunchKey = launchKey;
+    attempt();
+}
+
+void CoopSessionResolver::attempt()
+{
     QPointer<CoopSessionResolver> self(this);
     m_Backend->resolveCoopSessionId(
-        launchKey, [self](bool ok, const BackendError& err, const QString& sessionId) {
+        m_LaunchKey, [self](bool ok, const BackendError& err, const QString& sessionId) {
             if (!self) return;
-            if (!ok) {
-                qWarning() << "[Coop] Could not ask the host for our session id:" << err.message;
+
+            // Landed: report once and stop. A stable answer never changes for the
+            // life of the stream, so there is nothing to keep polling for.
+            if (ok && !sessionId.isEmpty()) {
+                if (self->m_Report) self->m_Report(sessionId);
                 return;
             }
-            if (sessionId.isEmpty()) {
-                qWarning() << "[Coop] The host reports no session for this launch key — it may "
-                              "have ended already";
+
+            // A failed call and an empty answer are both "not yet": the session
+            // may still be registering, or the request was dropped in the proxy.
+            // Keep trying on a cadence — a single miss is exactly what used to
+            // leave the session unreaped — until it lands or the budget runs out.
+            if (++self->m_Attempts >= kMaxAttempts) {
+                if (!ok)
+                    qWarning() << "[Coop] Gave up asking the host for our session id after"
+                               << self->m_Attempts << "tries; last error:" << err.message;
+                else
+                    qWarning() << "[Coop] No session matched our launch key after"
+                               << self->m_Attempts << "tries — it likely never started, or "
+                                                      "ended before we could see it";
                 return;
             }
-            if (self->m_Report) self->m_Report(sessionId);
+            QTimer::singleShot(kRetryMs, self, [self]() {
+                if (self) self->attempt();
+            });
         });
 }
