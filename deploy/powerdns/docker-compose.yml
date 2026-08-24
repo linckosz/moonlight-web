@@ -4,7 +4,7 @@
 #   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)
 #   caddy    public :80/:443 → pdns:8081 / umami:3000  (HTTPS API + site + stats, auto-TLS)
 #            also updates.{domain} → mw-proxy:8080 (cached release mirror + census)
-#            also stream.{domain}/v1/ → mw-rendezvous:8090 (signalling relay)
+#            also stream.{domain} → bootstrap page + /v1/ → mw-rendezvous:8090
 #   mw-rendezvous  introduction server, internal only  (held host lines :8090)
 #   umami    web analytics (stats.{domain}), internal  → umami-db (Postgres)
 #   umami-db Postgres for Umami, internal only
@@ -156,6 +156,10 @@ services:
       - caddy_config:/config
       - ./certs:/certs:ro            # your own certs when using MW_TLS_CERT/KEY
       - ../../website:/srv/site:ro   # presentation website (repo-root ./website)
+      # Bootstrap entry page served at stream.${MW_DOMAIN}/{id} (repo-root
+      # ./bootstrap). Same files the pages.yml workflow publishes to GitHub
+      # Pages, which stays as the digest-stamped reference copy.
+      - ../../bootstrap:/srv/bootstrap:ro
     networks: [mwnet]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
