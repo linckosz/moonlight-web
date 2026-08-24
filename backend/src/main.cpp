@@ -1542,6 +1542,31 @@ int main(int argc, char* argv[])
     // /resume — Sunshine rejects /launch while an app is running.
     QSet<QString> g_LiveSunshineUids;
 
+    // Close a co-op backend's session host-side once its stream is over.
+    //
+    // This exists because the obvious mechanism does not work on such a
+    // backend: the GameStream /cancel we send everywhere else resolves the
+    // session from the client certificate presented with it, and a co-op
+    // backend launches each seat under its OWN certificate. A /cancel sent
+    // under our default identity therefore matches nothing, the session and the
+    // container behind it survive, and they accumulate until the host is
+    // restarted. Asking the backend to end the session by name is the only
+    // reliable route — and it is the supervisor's job rather than the worker's,
+    // because the worker dying without a teardown is exactly the case that leaks.
+    auto reapCoopSession = [&computerManager](const QString& hostUuid, const QString& sessionId) {
+        if (hostUuid.isEmpty() || sessionId.isEmpty()) return;
+        std::shared_ptr<IStreamBackend> backend(computerManager.backendForHost(hostUuid).release());
+        if (!backend || !backend->capabilities().lobbies) return;
+        // The lambda keeps `backend` alive until the answer comes back.
+        backend->endCoopSession(sessionId, [backend, sessionId](bool ok, const BackendError& err) {
+            if (ok)
+                qInfo() << "[main] Co-op session" << sessionId << "closed on the host";
+            else
+                qWarning() << "[main] Could not close co-op session" << sessionId << ":"
+                           << err.message;
+        });
+    };
+
     // Detach a worker slot from session-level bookkeeping and tear the child
     // down. Suppresses the slot's normal ended-cleanup (no Sunshine /cancel:
     // take-over and standby-restart both want the Sunshine session kept alive
@@ -1876,7 +1901,8 @@ int main(int argc, char* argv[])
                                                         &g_DualSupport, &g_LastStandbyStartMs,
                                                         &g_LiveSunshineUids, &detachWorkerSlot,
                                                         &slotSignalingPort, &slotWsPath,
-                                                        &anyOtherSlotLive, &server, &appSettings,
+                                                        &anyOtherSlotLive, &reapCoopSession,
+                                                        &server, &appSettings,
                                                         &authManager, effectiveUpnpEnabled,
                                                         stunServer](const HttpRequest& req,
                                                                     ResponseCallback respond) {
@@ -2547,6 +2573,16 @@ int main(int argc, char* argv[])
 
             const QString hostUuidCopy = host->uuid;
             const QString uid = reqClientUniqueId;
+            // Held by both handlers below rather than read back from the slot:
+            // a take-over can hand this slot to somebody else before our ended()
+            // runs, and reaping then has to close OUR session, not theirs.
+            auto coopSessionId = std::make_shared<QString>();
+            QObject::connect(worker, &StreamWorkerHost::coopSessionResolved, qApp,
+                             [coopSessionId, &g_Pool, worker, reqSlot](const QString& id) {
+                                 *coopSessionId = id;
+                                 SessionPool::Slot& sl = g_Pool.at(reqSlot);
+                                 if (sl.worker == worker) sl.coopSessionId = id;
+                             });
             QObject::connect(
                 worker, &StreamWorkerHost::responseReady, qApp,
                 [respond, worker, &g_Pool, &g_DualSupport, &g_LiveSunshineUids, &authManager,
@@ -2591,10 +2627,14 @@ int main(int argc, char* argv[])
             QObject::connect(
                 worker, &StreamWorkerHost::ended, qApp,
                 [worker, &g_Pool, &g_DualSupport, &g_LastStandbyStartMs, &g_LiveSunshineUids,
-                 &anyOtherSlotLive, &computerManager, &authManager, reqSlot, host, hostUuidCopy,
-                 uid, sessionToken]() {
+                 &anyOtherSlotLive, &computerManager, &authManager, &reapCoopSession, reqSlot, host,
+                 hostUuidCopy, uid, sessionToken, coopSessionId]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
+                    // Unconditional, unlike the /cancel below: a co-op session is
+                    // this seat's alone, so closing it never takes the app away
+                    // from a sibling slot the way a shared-app /cancel would.
+                    reapCoopSession(hostUuidCopy, *coopSessionId);
                     // Pathological probe outcome: the LIVE stream died within
                     // ~3s of a standby launch — the host "took over" instead of
                     // adding a session. Remember no-dual for this host.
@@ -2641,6 +2681,7 @@ int main(int argc, char* argv[])
                         sl.clientUniqueId.clear();
                         sl.hostUuid.clear();
                         sl.sessionToken.clear();
+                        sl.coopSessionId.clear();
                     }
                 });
 
@@ -3090,7 +3131,8 @@ int main(int argc, char* argv[])
     };
     shareDeps.startPlayerStream =
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
-         &anyOtherSlotLive, &slotSignalingPort, &slotWsPath, &server, &appSettings, signalingPort,
+         &anyOtherSlotLive, &reapCoopSession, &slotSignalingPort, &slotWsPath, &server,
+         &appSettings, signalingPort,
          stunServer, &g_HostAspect](int slot, int height, QString aspect,
                                     ShareManager::Permissions perms, QString serverHost,
                                     ResponseCallback respond) {
@@ -3106,9 +3148,14 @@ int main(int argc, char* argv[])
             }
             int appId = shareManager.appForSlot(slot);
             bool ownerOnBoundHost = false;
+            // On a co-op backend the player does not resume the owner's session,
+            // it joins the owner's lobby — and a lobby is found by who is on it.
+            // This is the owner's host-side session id, reported by their worker.
+            QString ownerCoopSessionId;
             for (int i = 0; i < kOwnerSlots; ++i)
                 if (g_Pool.at(i).worker && g_Pool.at(i).hostUuid == hostUuid) {
                     appId = g_Pool.at(i).appId; // the app currently up on that host
+                    ownerCoopSessionId = g_Pool.at(i).coopSessionId;
                     ownerOnBoundHost = true;
                     break;
                 }
@@ -3123,6 +3170,25 @@ int main(int argc, char* argv[])
                 ownerOnBoundHost ? computerManager.getHost(hostUuid) : nullptr;
             if (!host) {
                 respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
+                return;
+            }
+
+            // Wolf and friends: sharing there is native co-op, not a second
+            // GameStream session on the same desktop. Without the owner's
+            // host-side session id there is no lobby to look up, and the player
+            // would launch a private desktop of their own and stare at it — so
+            // refuse rather than start something that cannot be what they asked
+            // for. It resolves within a second of the owner's stream starting.
+            const bool coopHost = !host->backendType.isEmpty() && [&] {
+                std::unique_ptr<IStreamBackend> b = computerManager.backendForHost(hostUuid);
+                return b && b->capabilities().lobbies;
+            }();
+            if (coopHost && ownerCoopSessionId.isEmpty()) {
+                respond(HttpResponse::json(
+                    QJsonObject{{"error", "coop_not_ready"},
+                                {"message", "This host shares through co-op, and its session is "
+                                            "not ready yet. Try again in a moment."}},
+                    409));
                 return;
             }
 
@@ -3211,7 +3277,16 @@ int main(int argc, char* argv[])
             cfg["autoMode"] = true;
             // Never /launch: Sunshine refuses it while an app runs, and a player
             // has no business starting one anyway.
-            cfg["preferResume"] = true;
+            //
+            // A co-op backend is the exception, and not a tweak: there, a
+            // /resume under this player's own certificate reconnects to nothing
+            // (the host has no session for that identity yet). The player must
+            // launch — which gives them a private session — and then be moved
+            // onto the owner's lobby, which is what the joiner does.
+            cfg["preferResume"] = !coopHost;
+            // Whose lobby to look for. Empty for everyone but an invited player
+            // on a co-op backend.
+            cfg["coopPeerSessionId"] = ownerCoopSessionId;
             // The host the player typed, so the signaling URL they get back
             // points at the same place — an empty one made the browser fall
             // back to /ws and land on the owner's signaling server.
@@ -3236,6 +3311,14 @@ int main(int argc, char* argv[])
             auto* worker = new StreamWorkerHost(qApp);
             QObject::connect(worker, &StreamWorkerHost::exited, worker, &QObject::deleteLater);
 
+            auto coopSessionId = std::make_shared<QString>();
+            QObject::connect(worker, &StreamWorkerHost::coopSessionResolved, qApp,
+                             [coopSessionId, &g_Pool, worker, slot](const QString& id) {
+                                 *coopSessionId = id;
+                                 SessionPool::Slot& sl = g_Pool.at(slot);
+                                 if (sl.worker == worker) sl.coopSessionId = id;
+                             });
+
             QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,
                              [respond, &g_LiveSunshineUids, &shareManager, slot,
                               uid](int code, QJsonObject bodyObj) {
@@ -3251,11 +3334,16 @@ int main(int argc, char* argv[])
 
             QObject::connect(worker, &StreamWorkerHost::ended, qApp,
                              [worker, &g_Pool, &g_LiveSunshineUids, &shareManager,
-                              &anyOtherSlotLive, &computerManager, slot, host, uid]() {
+                              &anyOtherSlotLive, &computerManager, &reapCoopSession, slot, host,
+                              uid, coopSessionId]() {
                                  qInfo() << "[main] Player worker ended (slot" << slot << ")";
                                  // The share survives the stream: a dropped connection must
                                  // not end the invitation, only an owner action does.
                                  shareManager.setStreaming(slot, false);
+                                 // Unlike the /cancel below, this is unconditional: a
+                                 // co-op session belongs to this player alone, so closing
+                                 // it cannot disturb whoever else is on the lobby.
+                                 reapCoopSession(host->uuid, *coopSessionId);
                                  // Same rule as the owner slots — the Sunshine app is shared,
                                  // so /cancel only once nothing else is streaming.
                                  if (!anyOtherSlotLive(slot, host->uuid)) {
@@ -3274,6 +3362,7 @@ int main(int argc, char* argv[])
                                      sl.clientUniqueId.clear();
                                      sl.hostUuid.clear();
                                      sl.sessionToken.clear();
+                                     sl.coopSessionId.clear();
                                      sl.appId = 0;
                                  }
                              });

@@ -56,10 +56,16 @@ export class ShareMenu {
     /**
      * @param {HTMLElement} headerEl the .stream-header element
      * @param {HTMLElement} beforeEl insert the button before this node (Stop)
+     * @param {boolean} [coopHost] this host shares through its own native co-op
+     *   rather than by opening a second view of one screen. It changes what the
+     *   owner has to do — the shared session only exists once they start co-op
+     *   in the host's own interface — so the menu says so instead of letting
+     *   them hand out a link that lands the guest on a private desktop.
      */
-    constructor(headerEl, beforeEl) {
+    constructor(headerEl, beforeEl, coopHost = false) {
         this.headerEl = headerEl;
         this.beforeEl = beforeEl;
+        this.coopHost = coopHost === true;
         this.root = null;
         this.slots = [];
         this._open = false;
@@ -196,8 +202,17 @@ export class ShareMenu {
             })
             .join('');
 
+        // On a co-op host the invitation is only half the story: the shared
+        // session has to exist on the host first, and only the person sitting
+        // there can start it. We deliberately do not start it for them — that
+        // would duplicate the host's own co-op flow and take the decision away.
+        const coopHint = this.coopHost
+            ? `<div class="share-dropdown-hint">${escapeHtml(t('sharing.coopHint'))}</div>`
+            : '';
+
         this.dropdown.innerHTML = `
             <div class="share-dropdown-title">${escapeHtml(t('sharing.dropdownTitle'))}</div>
+            ${coopHint}
             ${rows}
         `;
 

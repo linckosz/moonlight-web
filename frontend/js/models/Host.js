@@ -51,6 +51,12 @@ export class Host {
         this.backendApiUrl = data.backendApiUrl || '';
         this.backendConfigured = data.backendConfigured === true;
 
+        // This host shares a screen through its own native co-op — the player
+        // joins the owner's lobby rather than opening a second view of one
+        // desktop. Read from the backend's declared capabilities rather than
+        // from its name: what the UI needs to know is what the host can do.
+        this.supportsLobbies = data.capabilities?.lobbies === true;
+
         // The server found a MultiSeat control API on this host by itself. It is
         // what lets the UI offer that setup to the people who have it and stay
         // completely absent for everyone else — nobody names their own server.

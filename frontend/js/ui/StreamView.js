@@ -2726,16 +2726,14 @@ export class StreamView {
      */
     _mountShareMenu() {
         if (this._playerMode || this._shareMenu || !this._rootEl) return;
-        // Sharing is deferred on Wolf: a guest needs Wolf's native co-op (a
-        // multi_user lobby joined over /api/v1/lobbies/join), which is not wired up
-        // yet, so the button would only ever hand out a link whose player launches
-        // a separate Wolf session and never sees the owner's screen. Hide it there
-        // until the lobby-join path lands.
-        if (this.host?.backendType === 'wolf') return;
         const header = /** @type {HTMLElement} */ (this._rootEl.querySelector('.stream-header'));
         const quitBtn = /** @type {HTMLElement} */ (this._rootEl.querySelector('#btn-stream-quit'));
         if (!header || !quitBtn) return;
-        const menu = new ShareMenu(header, quitBtn);
+        // A host with native co-op shares a screen its own way — the player
+        // joins the owner's lobby instead of getting a second view of one
+        // desktop. The menu is the same; what changes is that the owner has to
+        // have started co-op on the host, which the menu tells them.
+        const menu = new ShareMenu(header, quitBtn, this.host?.supportsLobbies === true);
         this._shareMenu = menu;
         menu.mount().then((mounted) => {
             if (!mounted && this._shareMenu === menu) this._shareMenu = null;

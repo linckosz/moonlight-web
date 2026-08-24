@@ -62,6 +62,12 @@ signals:
     void responseReady(int code, QJsonObject body);
     /// The session is over (worker event or process exit) — exactly once.
     void ended();
+    /// A co-op backend (Wolf) named the session this worker launched. Recorded
+    /// by the supervisor so the session can be closed host-side afterwards: the
+    /// worker cannot be trusted to do it, since the case that leaks is exactly
+    /// the one where it died without a teardown. At most once, and only on a
+    /// backend with native co-op.
+    void coopSessionResolved(const QString& sessionId);
     /// The child process fully exited (ports are certainly free) — exactly
     /// once, always after ended(). Serialization barrier for slot reuse.
     void exited();

@@ -67,6 +67,7 @@ add_executable(run_tests
     test_host_persistence.cpp
     test_rendezvous_id.cpp
     test_backend_probe.cpp
+    test_wolf_coop.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp
@@ -85,6 +86,9 @@ add_executable(run_tests
     ${_src}/src/backend/NvHTTP.cpp
     # Backend detection: what a host runs, worked out rather than asked for.
     ${_src}/src/backend/streambackend/BackendProbe.cpp
+    # Wolf's control API: the wire shapes native co-op depends on. The selection
+    # rules themselves are header-only (WolfCoop.h), so nothing else comes in.
+    ${_src}/src/backend/WolfApiClient.cpp
     ${_src}/src/backend/IdentityManager.cpp
     # AppSettings and AuthManager both reach into MW-BIND-v1 now: the host
     # identity key, and the pairing key bound to a session.

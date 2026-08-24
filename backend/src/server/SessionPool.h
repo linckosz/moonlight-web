@@ -56,6 +56,12 @@ public:
         // seats come from MultiSeat or Wolf.
         QString backendType;
         QString seatId;
+
+        // What a co-op backend called the session behind this slot, reported by
+        // the worker once the host answered. Kept here rather than in the
+        // worker because closing that session is the supervisor's job: the
+        // worker dying without a teardown is precisely the case that leaks it.
+        QString coopSessionId;
     };
 
     SessionPool(quint16 signalingBasePort, int reservedSlots, int maxSlots);
