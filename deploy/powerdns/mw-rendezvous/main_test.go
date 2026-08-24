@@ -65,8 +65,20 @@ func postClaim(t *testing.T, ts *httptest.Server, method, token, id string) (int
 	return resp.StatusCode, out
 }
 
-// claimAndConnect claims id for token and brings its host line up.
-func claimAndConnect(t *testing.T, ts *httptest.Server, token, id string) *testClient {
+// claimAndConnect claims id for token, brings its host line up, and waits until
+// the hub has actually registered it.
+//
+// That wait is not ceremony. The handshake completes inside wsUpgrade, so
+// dialWS returns the moment the 101 is written — while handleHost has yet to
+// reach hub.register. A browser arriving in that window finds no line and is
+// told "offline", and the host never sees an open frame. It is a narrow window
+// and a real one: a busy machine widens it enough to hit reliably, which is
+// exactly how it first showed up, on the production box and nowhere else.
+//
+// In production the same window exists and costs nothing — a host is registered
+// long before any browser asks for it, and a browser that does lose the race
+// retries. In a test it is the difference between deterministic and haunted.
+func claimAndConnect(t *testing.T, s *server, ts *httptest.Server, token, id string) *testClient {
 	t.Helper()
 	if status, body := postClaim(t, ts, http.MethodPost, token, id); status != http.StatusOK {
 		t.Fatalf("claim %s: status %d (%v)", id, status, body)
@@ -76,6 +88,7 @@ func claimAndConnect(t *testing.T, ts *httptest.Server, token, id string) *testC
 		t.Fatalf("host line: status %d, want 101", status)
 	}
 	t.Cleanup(host.Close)
+	waitFor(t, func() bool { return s.hub.line(id) != nil })
 	return host
 }
 
@@ -252,8 +265,8 @@ func TestHostLineRequiresOwnership(t *testing.T) {
 }
 
 func TestSignallingIsRelayedBothWays(t *testing.T) {
-	_, ts := testServer(t)
-	host := claimAndConnect(t, ts, tokenA, idA)
+	s, ts := testServer(t)
+	host := claimAndConnect(t, s, ts, tokenA, idA)
 
 	peer, status := dialWS(t, ts.URL, "/v1/peer?id="+idA, nil)
 	if status != http.StatusSwitchingProtocols {
@@ -301,8 +314,8 @@ func TestSignallingIsRelayedBothWays(t *testing.T) {
 // end parses back out. A test pinned to bytes would fail on a payload containing
 // an angle bracket and teach the wrong lesson.
 func TestPayloadSurvivesTheRelayUnchanged(t *testing.T) {
-	_, ts := testServer(t)
-	host := claimAndConnect(t, ts, tokenA, idA)
+	s, ts := testServer(t)
+	host := claimAndConnect(t, s, ts, tokenA, idA)
 	peer, _ := dialWS(t, ts.URL, "/v1/peer?id="+idA, nil)
 	defer peer.Close()
 
@@ -331,8 +344,8 @@ func TestPayloadSurvivesTheRelayUnchanged(t *testing.T) {
 // A browser must not be able to name a session. If it could, one visitor to a
 // host could inject signalling into another visitor's negotiation.
 func TestPeerCannotAddressAnotherSession(t *testing.T) {
-	_, ts := testServer(t)
-	host := claimAndConnect(t, ts, tokenA, idA)
+	s, ts := testServer(t)
+	host := claimAndConnect(t, s, ts, tokenA, idA)
 
 	first, _ := dialWS(t, ts.URL, "/v1/peer?id="+idA, nil)
 	defer first.Close()
@@ -392,8 +405,8 @@ func TestUnknownIdAndOfflineHostAreIndistinguishable(t *testing.T) {
 }
 
 func TestSessionCapRefusesExtraBrowsers(t *testing.T) {
-	_, ts := testServer(t) // maxSessions = 2
-	host := claimAndConnect(t, ts, tokenA, idA)
+	s, ts := testServer(t) // maxSessions = 2
+	host := claimAndConnect(t, s, ts, tokenA, idA)
 
 	for i := 0; i < 2; i++ {
 		c, _ := dialWS(t, ts.URL, "/v1/peer?id="+idA, nil)
@@ -422,7 +435,8 @@ func TestSessionCapRefusesExtraBrowsers(t *testing.T) {
 // identifier for up to the ping timeout, every time its address changes.
 func TestHostReconnectDisplacesTheStaleLine(t *testing.T) {
 	s, ts := testServer(t)
-	first := claimAndConnect(t, ts, tokenA, idA)
+	first := claimAndConnect(t, s, ts, tokenA, idA)
+	stale := s.hub.line(idA)
 
 	second, status := dialWS(t, ts.URL, "/v1/host?id="+idA, map[string]string{"X-MW-Owner": tokenA})
 	if status != http.StatusSwitchingProtocols {
@@ -434,8 +448,11 @@ func TestHostReconnectDisplacesTheStaleLine(t *testing.T) {
 		t.Fatalf("displaced line closed with %d, want %d", code, closePolicy)
 	}
 
-	// And the surviving line is the new one: a browser reaches it.
-	waitFor(t, func() bool { return s.hub.line(idA) != nil })
+	// And the surviving line is the new one: a browser reaches it. Wait for the
+	// hub entry to actually CHANGE — "not nil" was true of the stale line too,
+	// so it would have let the browser through before the swap and read as a
+	// pass on a fast machine while failing on a slow one.
+	waitFor(t, func() bool { return s.hub.line(idA) != stale })
 	peer, _ := dialWS(t, ts.URL, "/v1/peer?id="+idA, nil)
 	defer peer.Close()
 	var open hostFrame
@@ -448,8 +465,8 @@ func TestHostReconnectDisplacesTheStaleLine(t *testing.T) {
 // When the line goes, the browsers hanging off it must be told, not left
 // waiting on a peer that will never answer.
 func TestBrowsersAreNotifiedWhenTheLineDrops(t *testing.T) {
-	_, ts := testServer(t)
-	host := claimAndConnect(t, ts, tokenA, idA)
+	s, ts := testServer(t)
+	host := claimAndConnect(t, s, ts, tokenA, idA)
 
 	peer, _ := dialWS(t, ts.URL, "/v1/peer?id="+idA, nil)
 	defer peer.Close()
@@ -468,8 +485,8 @@ func TestBrowsersAreNotifiedWhenTheLineDrops(t *testing.T) {
 }
 
 func TestHostClosingOneSessionLeavesTheOtherAlone(t *testing.T) {
-	_, ts := testServer(t)
-	host := claimAndConnect(t, ts, tokenA, idA)
+	s, ts := testServer(t)
+	host := claimAndConnect(t, s, ts, tokenA, idA)
 
 	a, _ := dialWS(t, ts.URL, "/v1/peer?id="+idA, nil)
 	defer a.Close()
