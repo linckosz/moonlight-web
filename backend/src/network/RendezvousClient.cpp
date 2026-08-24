@@ -58,6 +58,12 @@ constexpr int kRetryMaxMs  = 60 * 1000;
 // Redraws allowed per process. See the header.
 constexpr int kMaxIdentityRedraws = 2;
 
+// Consecutive failures to bring the line up before we stop trusting our own
+// claim and go through the claim endpoint again. Two, because one is ordinary
+// (the server restarting under us) and three would leave a machine unreachable
+// for the best part of a minute longer for no gain.
+constexpr int kReclaimAfterFailures = 2;
+
 /// 256 bits, hex. This is the credential that proves ownership of the
 /// identifier, so it comes from the system CSPRNG, never the global generator.
 QString generateOwnerToken()
@@ -276,6 +282,7 @@ void RendezvousClient::openLine()
         return;
     }
 
+    m_LineEverUp = false;
     QUrl url(baseUrl() + QStringLiteral("/v1/host"));
     url.setScheme(url.scheme() == QLatin1String("http") ? QStringLiteral("ws")
                                                         : QStringLiteral("wss"));
@@ -291,6 +298,8 @@ void RendezvousClient::openLine()
 void RendezvousClient::onConnected()
 {
     m_RetryCount = 0;
+    m_LineFailures = 0;
+    m_LineEverUp = true;
     m_KeepAliveTimer.start();
     setOnline(true);
     qInfo() << "[RDV] line up —" << entryUrl();
@@ -301,20 +310,42 @@ void RendezvousClient::onDisconnected()
     m_KeepAliveTimer.stop();
     m_Watchdog.stop();
     setOnline(false);
+
+    // An attempt that never came up is a different animal from a line that was
+    // working and dropped. Count only the former, and after a few of them go
+    // back through the claim.
+    //
+    // This exists because of a real failure that a live test found and no unit
+    // test could: the server had lost its claim store, so it answered the
+    // handshake with 401 forever, while this client — believing it still owned
+    // the identifier — retried the line and never once re-claimed. It backed off
+    // to a minute and stayed there, permanently unreachable.
+    //
+    // The first fix was to recognise the 401 in the error string. That was the
+    // wrong instinct: Qt reports it as "Unsupported WWW-Authenticate challenges
+    // encountered", with neither "401" nor "Unauthorized" anywhere in it, and
+    // any other wording would have failed the same way on the next Qt release.
+    // Counting failures needs no error message at all. Re-claiming when we do
+    // still own the identifier costs nothing — the server answers
+    // "claimed": false and charges no budget for it — so the repair is safe to
+    // attempt even when the real cause was something else entirely.
+    if (!m_LineEverUp) {
+        if (++m_LineFailures >= kReclaimAfterFailures) {
+            m_LineFailures = 0;
+            qWarning() << "[RDV] line refused repeatedly — re-claiming the identifier";
+            m_Settings->setRendezvousClaimed(false);
+        }
+    } else {
+        m_LineFailures = 0;
+    }
+
     if (m_Running) scheduleRetry("line dropped");
 }
 
 void RendezvousClient::onSocketError(QAbstractSocket::SocketError error)
 {
     Q_UNUSED(error)
-    // A refused handshake is worth naming: 401 means the server does not agree
-    // that we own this identifier, which no amount of retrying will change on
-    // its own — the claim has to be redone.
     qWarning() << "[RDV] line error:" << m_Socket.errorString();
-    if (m_Socket.errorString().contains(QLatin1String("401"))
-        || m_Socket.errorString().contains(QLatin1String("Unauthorized"))) {
-        m_Settings->setRendezvousClaimed(false);
-    }
 }
 
 void RendezvousClient::onKeepAlive()

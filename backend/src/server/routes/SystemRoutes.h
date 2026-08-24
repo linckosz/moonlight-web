@@ -29,6 +29,13 @@ class ComputerManager;
 /// @param onHostKeyRotated Invoked after a host-key redemption rotated the key
 ///        (single-use), so the entry points embedding it (Desktop shortcut)
 ///        are rewritten with the fresh key.
+/// @param onInternetAccessToggled Invoked with the new state whenever the
+///        Internet-access switch is thrown here. The rendezvous line follows the
+///        same switch — it is an outbound connection that announces this machine
+///        is online, so it belongs on the consent side of the boundary, not
+///        outside it. A callback rather than a direct dependency keeps these
+///        routes ignorant of the rendezvous client entirely.
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
-                          std::function<void()> onHostKeyRotated = {});
+                          std::function<void()> onHostKeyRotated = {},
+                          std::function<void(bool)> onInternetAccessToggled = {});

@@ -86,6 +86,15 @@ public:
     /// Whether the manager is currently active (Internet Access enabled).
     bool isActive() const { return m_Active; }
 
+    /// True when start() stopped at the consent gate: a stored consent that
+    /// predates the current mechanism, so nothing may be opened until the user
+    /// has been asked again with today's wording.
+    ///
+    /// Callers that open anything of their own — the rendezvous line is one —
+    /// must honour this too. The switch being "on" is not sufficient: it can be
+    /// on because of a consent given for a mechanism that no longer runs.
+    bool consentRequired() const { return m_Phase == QLatin1String("consent_required"); }
+
     /// True while an ACME issuance is in flight. start() emits ready() as soon
     /// as the A-record resolves, but issuance runs asynchronously and finishes
     /// later (certificateChanged): until then the domain is still served with

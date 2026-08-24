@@ -89,6 +89,7 @@
 #include "streaming/StreamWorkerHost.h"
 #include "streaming/worker/StreamWorkerMain.h"
 #include "network/InternetAccessManager.h"
+#include "network/RendezvousClient.h"
 #include "network/GeoIpService.h"
 #include "network/SelfUpdater.h"
 #include "network/UpdateChecker.h"
@@ -3441,6 +3442,33 @@ int main(int argc, char* argv[])
                                                                        : QStringLiteral("failed"));
     }
 
+    // ── Rendezvous line ──────────────────────────────────────────────────────
+    //
+    // The outbound connection that replaces the sub-domain: while it is held,
+    // this machine is reachable at https://stream.{domain}/{id}; when it is
+    // down, it simply is not. Nothing is published and nothing is polled.
+    //
+    // It follows internet_access_enabled, and that is the whole point of the
+    // switch. The line tells a third party that this machine is online and
+    // shows it a residential address on the socket — exactly the class of thing
+    // the user opted into, so refusing consent must leave it closed, like every
+    // other opening.
+    RendezvousClient rendezvous(&appSettings);
+
+    QObject::connect(&rendezvous, &RendezvousClient::onlineChanged, &app, [&](bool online) {
+        qInfo() << "[main] rendezvous line" << (online ? "up" : "down")
+                << (online ? rendezvous.entryUrl() : QString());
+    });
+
+    // The switch being on is not enough. A consent recorded for the retired DNS
+    // mechanism left it on, and it never described an outbound line announcing
+    // this machine — so the gate InternetAccessManager stops at applies here for
+    // exactly the same reason.
+    auto rendezvousShouldRun = [&]() {
+        return appSettings.internetAccessEnabled() && !internetAccess.consentRequired();
+    };
+    if (rendezvousShouldRun()) rendezvous.start();
+
     // Write the Desktop admin shortcut with the best URL known at this point.
     writeAdminShortcut(adminUrl());
 
@@ -3493,7 +3521,11 @@ int main(int argc, char* argv[])
     // The host key is single-use: after each redemption the rotated key must be
     // written back into the Desktop shortcut (tray/startup URLs read it live).
     registerSystemRoutes(server, appSettings, authManager, internetAccess, computerManager,
-                         [adminUrl]() { writeAdminShortcut(adminUrl()); });
+                         [adminUrl]() { writeAdminShortcut(adminUrl()); },
+                         [&rendezvous, rendezvousShouldRun](bool enabled) {
+                             if (enabled && rendezvousShouldRun()) rendezvous.start();
+                             else rendezvous.stop();
+                         });
 
     // Phase N: System tray icon. Its entries open the public domain (with the
     // host key) once Internet Access is live, https://localhost otherwise.
