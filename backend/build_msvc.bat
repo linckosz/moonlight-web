@@ -81,19 +81,30 @@ where ninja >nul 2>&1 || (
 )
 
 REM ---- Configure + build ----
+REM  Failures are tested with `neq 0`, never `if errorlevel 1`: the latter is a
+REM  signed >= comparison, and cmake returns -1 when the link step fails (a
+REM  locked MoonlightWeb.exe gives LNK1104 -> -1). That slipped straight through
+REM  and the script went on to announce a successful build.
 echo [BUILD] Configuring (Ninja, Release)...
 cmake -S "%ROOT%\backend" -B "%BUILD_DIR%" -G Ninja ^
     -DCMAKE_BUILD_TYPE=Release ^
     -DCMAKE_PREFIX_PATH="%QTDIR%"
-if errorlevel 1 (
+if !errorlevel! neq 0 (
     echo [ERROR] CMake configuration failed
     exit /b 1
 )
 
 echo [BUILD] Compiling...
 cmake --build "%BUILD_DIR%" -j
-if errorlevel 1 (
+if !errorlevel! neq 0 (
     echo [ERROR] Build failed
+    exit /b 1
+)
+
+REM  Belt and braces: whatever a future generator returns, [OK] is only ever
+REM  printed over a binary that is actually there.
+if not exist "%BUILD_DIR%\MoonlightWeb.exe" (
+    echo [ERROR] Build reported success but %BUILD_DIR%\MoonlightWeb.exe is missing
     exit /b 1
 )
 

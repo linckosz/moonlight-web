@@ -14,26 +14,49 @@ REM ============================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-REM ---- Visual Studio 2022 x64 environment (Ninja needs cl on PATH) ----
-if not defined VSINSTALLDIR call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+REM ---- MSVC x64 environment (Ninja needs cl on PATH) ----
+REM  Detected the same way as backend\build_msvc.bat rather than hard-coded: the
+REM  old "Visual Studio\2022\Community" path matched exactly one machine, and on
+REM  every other one this script died in CMake with "compiler not set" instead of
+REM  saying what was missing. This suite is the release gate; it has to run.
+if not defined VSINSTALLDIR (
+    set "VSPATH="
+    set "_VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+    if exist "!_VSWHERE!" (
+        for /f "usebackq tokens=*" %%i in (`"!_VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul`) do set "VSPATH=%%i"
+    )
+    if not defined VSPATH set "VSPATH=%ProgramFiles%\Microsoft Visual Studio\2022\Community"
+    call "!VSPATH!\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+    if !errorlevel! neq 0 goto vs_fail
+)
 
-REM ---- Qt 6.11 ----
-if not defined QTDIR set "QTDIR=C:\Qt\6.11.0\msvc2022_64"
-set "PATH=%QTDIR%\bin;%PATH%"
+REM ---- Qt: highest 6.x MSVC kit under C:\Qt, unless QTDIR overrides ----
+if not defined QTDIR (
+    for /d %%d in ("C:\Qt\6.*") do (
+        if exist "%%d\msvc2022_64\lib\cmake\Qt6\Qt6Config.cmake" set "QTDIR=%%d\msvc2022_64"
+    )
+)
+if not defined QTDIR goto qt_fail
+echo [INFO] Qt kit : !QTDIR!
+set "PATH=!QTDIR!\bin;%PATH%"
 
 REM ---- Configure + build (shadow build under tests\build) ----
 rmdir /s /q build 2>nul
+REM `neq 0`, not `if errorlevel 1`: the latter is a signed >= test and cmake
+REM returns -1 when the link step fails, which would fall through to the run.
 cmake -S "%~dp0." -B "%~dp0build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%QTDIR%"
-if errorlevel 1 goto cfg_fail
+if !errorlevel! neq 0 goto cfg_fail
 cmake --build "%~dp0build" -j
-if errorlevel 1 goto build_fail
+if !errorlevel! neq 0 goto build_fail
 
 set "RUNNER=%~dp0build\run_tests.exe"
 if not exist "%RUNNER%" goto no_exe
 
 REM ---- 1) Pass/fail gate: run the suite directly (reliable exit code) ----
+REM  `neq 0` also catches a crashed runner: an access violation exits with
+REM  0xC0000005, which is negative and would pass an `if errorlevel 1` gate.
 "%RUNNER%"
-if errorlevel 1 goto tests_fail
+if !errorlevel! neq 0 goto tests_fail
 
 REM ---- 2) Coverage report (optional). OpenCppCoverage's own exit code is
 REM        unreliable, so we ignore it and gate on the parsed XML instead. ----
@@ -51,6 +74,14 @@ REM ---- 3) Coverage gate ----
 powershell -NoProfile -ExecutionPolicy Bypass -File check_coverage.ps1 -CoverageXml cov.xml -Threshold 70
 exit /b %errorlevel%
 
+:vs_fail
+echo [ERROR] No MSVC x64 toolset found. Install "Desktop development with C++"
+echo         (MSVC v143 + Windows SDK), or run this from a Developer Prompt.
+exit /b 1
+:qt_fail
+echo [ERROR] No Qt 6.x MSVC kit found under C:\Qt. Set QTDIR, e.g.:
+echo             set QTDIR=C:\Qt\6.10.3\msvc2022_64
+exit /b 1
 :cfg_fail
 echo [ERROR] CMake configure failed
 exit /b 1
