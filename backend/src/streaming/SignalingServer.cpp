@@ -430,7 +430,13 @@ void SignalingServer::onWsTextMessage(const QString& message)
     } else if (type == "ice") {
         QString candidate = msg["candidate"].toString();
         QString mid = msg["mid"].toString();
-        qInfo() << "[SignalingServer] Received ICE candidate, mid=" << mid;
+        // Print what the browser actually offered, not just how many. When a
+        // handshake dies on the ICE deadline this is the only record of the
+        // peer's side of the pairing: a phone that offered nothing but IPv6, or
+        // nothing but a host address behind carrier NAT, explains the timeout
+        // that the host's own candidate list never can.
+        qInfo() << "[SignalingServer] Received ICE candidate, mid=" << mid << ":"
+                << candidate.left(120);
 
         m_Relay->addRemoteCandidate(candidate.toStdString(), mid.toStdString());
     } else if (type == "fallback-ws-request") {
