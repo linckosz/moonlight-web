@@ -108,6 +108,14 @@ public:
     NvAddress manualAddress;
     QByteArray macAddress;
     QString name;
+
+    // A name the user gave this host here, which wins over `name` everywhere it
+    // is shown. Kept separate rather than overwriting `name` because `name` is
+    // refreshed from serverinfo on every poll: writing the alias there would
+    // have the next poll erase it. Empty means "show what the host calls
+    // itself", which is also how the alias is cleared.
+    QString customName;
+
     QString uuid;
     QVector<NvApp> appList;
 

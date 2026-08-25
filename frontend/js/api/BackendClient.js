@@ -193,6 +193,16 @@ export class BackendClient {
     static async wakeHost(uuid) {
         return this.post(`/api/hosts/${uuid}/wol`);
     }
+    /** Give a host a local alias. An empty name clears it — the card then shows
+     *  the name the host reports for itself again. Nothing is written host-side. */
+    static async renameHost(uuid, name) {
+        return this.post(`/api/hosts/${uuid}/name`, { name });
+    }
+    /** Restart the streaming service the host runs. Only offered where the host
+     *  list said `restartSupported`; anywhere else the server answers 501. */
+    static async restartHost(uuid) {
+        return this.post(`/api/hosts/${uuid}/restart`, {}, { timeoutMs: 30000 });
+    }
     static async startPairing(hostId) {
         return this.post(`/api/hosts/${hostId}/pair/start`);
     }

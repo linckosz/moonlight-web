@@ -30,6 +30,8 @@
 
 #include <QSettings>
 
+#include <memory>
+
 namespace {
 
 BackendError toBackendError(const MultiSeatApiError& err)
@@ -498,6 +500,46 @@ void MultiSeatBackend::releaseSeatOwner(const QString& seatId, BackendVoidCallba
 
     Logger::info(QStringLiteral("MultiSeat: seat %1 released, it can be claimed again").arg(seatId));
     cb(true, BackendError{});
+}
+
+// "Restart the service" on a MultiSeat host means every seat's Apollo: there is
+// no single streaming process to bounce, one runs per seat. Seats are restarted
+// in parallel and the first failure is the one reported — a partial restart is
+// still worth reporting as a failure, since the seats that did come back are the
+// ones the user can see for themselves.
+void MultiSeatBackend::restartService(BackendVoidCallback cb)
+{
+    m_Api->listSeats([this, cb = std::move(cb)](bool ok, const MultiSeatApiError& err,
+                                                const QVector<MultiSeatSeat>& seats) {
+        if (!ok) {
+            cb(false, toBackendError(err));
+            return;
+        }
+        if (seats.isEmpty()) {
+            cb(false, BackendError::make(BackendError::NotFound,
+                                         QStringLiteral("This MultiSeat host has no seat to "
+                                                        "restart")));
+            return;
+        }
+
+        // Shared across the per-seat callbacks: only the last one answers.
+        auto pending = std::make_shared<int>(seats.size());
+        auto failure = std::make_shared<BackendError>();
+
+        for (const MultiSeatSeat& seat : seats) {
+            const QString seatId = seat.id;
+            m_Api->restartSeatApollo(
+                seatId, [seatId, pending, failure, cb](bool seatOk, const MultiSeatApiError& e) {
+                    if (!seatOk && failure->kind == BackendError::None) {
+                        *failure = toBackendError(e);
+                        Logger::warning(QStringLiteral("MultiSeat: restarting seat %1 failed (%2)")
+                                            .arg(seatId, e.message));
+                    }
+                    if (--(*pending) > 0) return;
+                    cb(failure->kind == BackendError::None, *failure);
+                });
+        }
+    });
 }
 
 void MultiSeatBackend::teardownSeat(const QString& seatId, BackendVoidCallback cb)

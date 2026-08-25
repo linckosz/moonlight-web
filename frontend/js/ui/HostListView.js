@@ -246,6 +246,43 @@ export class HostListView {
                 return;
             }
 
+            const renameBtn = e.target.closest('.btn-rename');
+            if (renameBtn) {
+                this._closeAllMenus();
+                const host = this.hosts.find((h) => h.uuid === renameBtn.dataset.uuid);
+                if (host) this._renameHost(host);
+                return;
+            }
+
+            const restartBtn = e.target.closest('.btn-restart');
+            if (restartBtn) {
+                const uuid = restartBtn.dataset.uuid;
+                const host = this.hosts.find((h) => h.uuid === uuid);
+                // The service going down takes every stream on that host with
+                // it, this browser's included — same weight as "Stop session".
+                if (!window.confirm(t('hosts.restartConfirm'))) return;
+                restartBtn.disabled = true;
+                restartBtn.textContent = t('hosts.restartWorking');
+                BackendClient.restartHost(uuid)
+                    .then(() => {
+                        Toast.show(
+                            t('hosts.restartSent', { name: host ? host.displayName : uuid }),
+                            'success',
+                        );
+                    })
+                    .catch((err) => {
+                        console.error('[MW] Restart host failed:', err);
+                        Toast.show(err.message, 'error');
+                    })
+                    .finally(() => {
+                        this._closeAllMenus();
+                        // The host is mid-restart: let the poll repaint it as it
+                        // drops offline and comes back.
+                        this.refresh();
+                    });
+                return;
+            }
+
             const removeBtn = e.target.closest('.btn-remove');
             if (removeBtn) {
                 removeBtn.disabled = true;
@@ -708,6 +745,7 @@ export class HostListView {
                 h.reachable,
                 h.pairState,
                 h.name,
+                h.customName,
                 h.port,
                 h.gpuModel,
                 h.displayModes,
@@ -715,6 +753,7 @@ export class HostListView {
                 // without it here the card never re-renders when a Leave leaves
                 // the Sunshine app paused-but-alive.
                 h.currentGameId > 0,
+                h.restartSupported,
             ]),
         );
     }
@@ -726,9 +765,11 @@ export class HostListView {
             host.reachable,
             host.pairState,
             host.name,
+            host.customName,
             host.port,
             host.gpuModel,
             host.wakeSupported,
+            host.restartSupported,
             JSON.stringify(host.displayModes),
             host.currentGameId > 0,
         ].join('|');
@@ -846,6 +887,17 @@ export class HostListView {
                                 aria-haspopup="true" aria-expanded="false"
                                 aria-label="${this.esc(t('hosts.menuAria'))}">${Icons.menu}</button>
                         <div class="host-menu" hidden>
+                            <button class="host-menu-item btn-rename" data-uuid="${host.uuid}">${t('hosts.rename')}</button>
+                            ${
+                                // Offered only where the server holds a control
+                                // path of its own — its Sunshine, or a backend
+                                // API that can bounce the service. It never asks
+                                // the user for a host password, so on a plain
+                                // remote host there is simply nothing to show.
+                                host.restartSupported
+                                    ? `<button class="host-menu-item btn-restart" data-uuid="${host.uuid}">${t('hosts.restartService')}</button>`
+                                    : ''
+                            }
                             ${
                                 // Escape hatch: an app is still running on the
                                 // host but this browser has no stream view to
@@ -1143,6 +1195,81 @@ export class HostListView {
                 }
             });
         }
+    }
+
+    /** Rename a host: ask for a name, then store it server-side. The alias is
+     *  local to MoonlightWeb — nothing is written on the host — so it works just
+     *  as well on an offline or never-paired card. */
+    async _renameHost(host) {
+        const name = await this._promptHostName(host);
+        if (name === null) return; // cancelled
+
+        try {
+            const data = await BackendClient.renameHost(host.uuid, name);
+            // Patch in place so the card renames the moment the dialog closes,
+            // instead of waiting on the next poll.
+            host.customName = data.customName || '';
+            this.renderList();
+        } catch (err) {
+            console.error('[MW] Rename host failed:', err);
+            Toast.show(err.message, 'error');
+        }
+    }
+
+    /** Themed replacement for window.prompt(): asks for a name for one host.
+     *  Resolves with the entered string (possibly empty, which clears the
+     *  alias), or null on cancel/Escape/backdrop click. */
+    _promptHostName(host) {
+        return new Promise((resolve) => {
+            if (document.querySelector('.host-rename-overlay')) return resolve(null);
+
+            const overlay = document.createElement('div');
+            overlay.className = 'pairing-overlay host-rename-overlay';
+            overlay.innerHTML = `
+                <div class="pairing-dialog">
+                    <h3>${this.esc(t('hosts.rename'))}</h3>
+                    <p class="pairing-instruction">${this.esc(t('hosts.renamePrompt'))}</p>
+                    <input type="text" class="settings-input host-rename-input"
+                           maxlength="64" autocomplete="off"
+                           placeholder="${this.esc(host.reportedName)}"
+                           autocapitalize="none" autocorrect="off" spellcheck="false" />
+                    <div class="pairing-actions">
+                        <button class="btn btn-secondary host-rename-cancel">${t('common.cancel')}</button>
+                        <button class="btn host-rename-ok">${t('common.save')}</button>
+                    </div>
+                </div>
+            `;
+
+            const input = /** @type {HTMLInputElement} */ (
+                overlay.querySelector('.host-rename-input')
+            );
+            // Only the alias, never the reported name: an untouched dialog on a
+            // host with no alias must save nothing rather than freeze today's
+            // hostname in place.
+            input.value = host.customName || '';
+
+            const done = (value) => {
+                overlay.remove();
+                resolve(value);
+            };
+            overlay.querySelector('.host-rename-ok').addEventListener('click', () => {
+                done(input.value.trim());
+            });
+            overlay
+                .querySelector('.host-rename-cancel')
+                .addEventListener('click', () => done(null));
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) done(null);
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') done(input.value.trim());
+                else if (e.key === 'Escape') done(null);
+            });
+
+            document.body.appendChild(overlay);
+            input.focus();
+            input.select();
+        });
     }
 
     /** Themed replacement for window.prompt(): asks for a host IP/hostname.

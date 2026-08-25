@@ -72,6 +72,20 @@ public:
     void handleScanRequest();
     std::pair<int, QJsonObject> handleAddManualHost(const QString& address);
     std::pair<int, QJsonObject> handleDeleteHost(const QString& uuid);
+
+    // Give a host a name of our own. Purely local: nothing is written to the
+    // host, which is what lets it work on an offline or unpaired card too. An
+    // empty name clears the alias and the host goes back to calling itself
+    // whatever serverinfo says.
+    std::pair<int, QJsonObject> handleRenameHost(const QString& uuid, const QString& name);
+
+    // Restart the streaming service a host runs. Only ever through a control
+    // path we already hold: the local machine's own Sunshine, or a backend whose
+    // capabilities().restartService says its API can do it. A plain remote
+    // GameStream host has no such path — Sunshine's REST needs a web-UI password
+    // MoonlightWeb deliberately does not keep — and answers 501.
+    void handleRestartHost(const QString& uuid, ResponseCallback respond);
+
     // Wake-on-LAN — broadcasts a magic packet to the host's MAC on the LAN
     std::pair<int, QJsonObject> handleWakeHost(const QString& uuid);
 
