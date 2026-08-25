@@ -1143,6 +1143,60 @@ static constexpr quint16 kDevSignalingPort = 48501;
 // SignalingServer::kUpnpPort. The dev firewall rule opens base..base+kMaxSlots-1.
 static constexpr quint16 kMediaBasePort = 48010;
 
+// First port above the signaling base that belongs to somebody else: the
+// MultiSeat seat range documented above, and Wolf's video ping (48100, audio
+// 48200) whenever Wolf shares the machine — which the Linux build does. The
+// slot plan takes ten ports per slot, so it walks into this range fast and has
+// to stop before it.
+static constexpr quint16 kForeignPortFloor = 48100;
+// Ceiling independent of the port plan: enough for the largest per-backend cap
+// on two hosts at once (see concurrentSessionCap) plus the reserved block. It
+// is a ceiling, not an allocation — the pool creates slots on demand.
+static constexpr int kSlotHardCeiling = 24;
+
+// Where a slot's two signaling ports live, and how many slots fit.
+//
+// Slot 0 keeps the historical base; slots 1.. take two consecutive ports from a
+// second base placed after the media block, so the two ranges can never
+// overlap. They used to: with the old base + 10*slot spacing, slot 1's pair
+// (48011/48012) landed exactly on the media ports of slots 1 and 2, and since
+// the media socket also binds TCP under ICE-TCP, that candidate silently failed
+// to bind. Starting after the media block costs nothing and ends the class.
+struct SlotPortPlan
+{
+    quint16 extraBase = 0;
+    int maxSlots = 0;
+};
+
+static SlotPortPlan planSlotPorts(quint16 signalingBase, quint16 mediaBase, int ceiling)
+{
+    for (int n = ceiling; n >= 1; --n) {
+        // Clear of slot 0's own ports (base, +1 relay, +2 control) AND of the
+        // media block, whichever ends later.
+        const int extra = qMax<int>(signalingBase + 4, mediaBase + n);
+        const int top = extra + 2 * (n - 1) + 1;
+        // A block that already starts above the reserved range has nothing left
+        // to walk into: the --dev base (48501) is in that case.
+        if (extra >= kForeignPortFloor || top < kForeignPortFloor)
+            return SlotPortPlan{static_cast<quint16>(extra), n};
+    }
+    return SlotPortPlan{static_cast<quint16>(signalingBase + 4), 1};
+}
+
+// How many sessions one host may serve at once, by the software it runs.
+//
+// Wolf and MultiSeat hand every device its own session upstream — its own
+// certificate, its own container or seat — so the wall is the machine, not the
+// protocol. Sunshine serves a single session, which MoonlightWeb fans out to
+// the owner plus the invited players of the Share feature, and that is what the
+// reserved slot block is sized for.
+static int concurrentSessionCap(const QString& backendType)
+{
+    if (backendType == QLatin1String("wolf")) return 10;
+    if (backendType == QLatin1String("multiseat")) return 10;
+    return 4; // gamestream (Sunshine / Apollo), and anything not yet known
+}
+
 int main(int argc, char* argv[])
 {
     // Before QApplication: on a headless Linux host this swaps the xcb platform
@@ -1509,9 +1563,19 @@ int main(int argc, char* argv[])
     // paths, 2..4 by ShareManager when a player joins. Above that, acquire()
     // hands out slots to devices streaming a DIFFERENT host, which is what lets
     // independent sessions coexist instead of evicting each other.
-    static constexpr int kExtraSessionSlots = 4;
-    static constexpr int kMaxSlots = kTotalSlots + kExtraSessionSlots;
-    SessionPool g_Pool(signalingPort, kTotalSlots, kMaxSlots);
+    //
+    // The ceiling is not a round number picked by hand: it is however many the
+    // port plan can carry (see planSlotPorts), never fewer than the reserved
+    // slots. The pool then creates them one at a time, as launches ask for
+    // them — so a household that streams twice reserves two routes, not the
+    // whole plan. What a single host may actually use is a separate, smaller
+    // question, answered per backend by concurrentSessionCap().
+    const SlotPortPlan kSlotPlan = planSlotPorts(signalingPort, kMediaBasePort, kSlotHardCeiling);
+    const int kMaxSlots = qMax(kTotalSlots, kSlotPlan.maxSlots);
+    SessionPool g_Pool(signalingPort, kSlotPlan.extraBase, kTotalSlots, kMaxSlots);
+    qInfo() << "[Session] Stream slots: reserved" << kTotalSlots << "max" << kMaxSlots
+            << "— slot 0 signaling" << signalingPort << ", slots 1.. from" << kSlotPlan.extraBase
+            << ", media from" << kMediaBasePort;
 
     // Thin names kept over the pool: they read better at the call sites and
     // leave the slot arithmetic in one place.
@@ -1948,8 +2012,10 @@ int main(int argc, char* argv[])
         // untouched: the frontend relies on it for quality switches and
         // transport fallback.
         bool backendIsMultiUser = false;
+        QString backendType;
         if (auto probe = computerManager.backendForHost(uuid)) {
             backendIsMultiUser = probe->capabilities().multiUser;
+            backendType = probe->type();
         }
         // The pool stores the raw request value, so compare against the same.
         const QString reqDevice = body["client_uniqueid"].toString();
@@ -1959,7 +2025,33 @@ int main(int argc, char* argv[])
                    g_Pool.at(i).clientUniqueId != reqDevice;
         };
 
+        // How many devices this host already carries, counted by device rather
+        // than by slot: the owner's standby slot is the same viewer as its
+        // primary, and a quality switch or a transport fallback must not read
+        // as a newcomer. A standby launch is skipped entirely — it belongs to a
+        // device that is already counted.
         if (!standby && workerMode) {
+            QSet<QString> devicesOnHost;
+            for (int i = 0; i < g_Pool.size(); ++i) {
+                if (!g_Pool.live(i) || g_Pool.at(i).hostUuid != uuid) continue;
+                const QString dev = g_Pool.at(i).clientUniqueId;
+                // A slot still setting up has no device id yet; count it as one
+                // of its own so it cannot be waved through.
+                devicesOnHost.insert(dev.isEmpty() ? QStringLiteral("#%1").arg(i) : dev);
+            }
+            devicesOnHost.insert(reqDevice.isEmpty() ? QStringLiteral("#new") : reqDevice);
+
+            const int cap = concurrentSessionCap(backendType);
+            if (devicesOnHost.size() > cap) {
+                qWarning() << "[Session] Host" << uuid << "already serves" << (devicesOnHost.size() - 1)
+                           << "devices — cap for backend" << backendType << "is" << cap;
+                respond(HttpResponse::error(
+                    503, QStringLiteral("This host already streams to %1 devices, which is all it "
+                                        "is set up to serve at once — stop one first")
+                             .arg(cap)));
+                return;
+            }
+
             const bool slot0Busy = (g_Pool.live(0) && !g_Pool.at(0).hostUuid.isEmpty() &&
                                     g_Pool.at(0).hostUuid != uuid) ||
                                    slotHeldByAnotherDevice(0);
@@ -3547,10 +3639,17 @@ int main(int argc, char* argv[])
     // listens on +10*slot / +10*slot+1, proxied at /wsN and /wsN/stream.
     for (int slot = 1; slot < kTotalSlots; ++slot)
         server.setSlotPorts(slot, slotSignalingPort(slot), slotSignalingPort(slot) + 1);
-    // Slots acquired for a second host live above kTotalSlots; register their
-    // ports up front so the proxy can route /wsN the moment one is handed out.
-    for (int slot = kTotalSlots; slot < kMaxSlots; ++slot)
+    // Slots above kTotalSlots are created on demand, so their route is
+    // registered as the pool hands them out rather than claimed for the whole
+    // plan at startup. This runs inside the launch request that asked for the
+    // slot, so the route exists before the response naming /wsN leaves — and
+    // both ends live on the HTTP event loop, which is also the thread the WS
+    // upgrade reads m_SlotPorts on, so no lock is involved.
+    g_Pool.setOnSlotCreated([&server, &slotSignalingPort](int slot) {
         server.setSlotPorts(slot, slotSignalingPort(slot), slotSignalingPort(slot) + 1);
+        qInfo() << "[Session] Slot" << slot << "opened —" << SessionPool::wsPath(slot) << "on"
+                << slotSignalingPort(slot);
+    });
     server.setFirstPlayerSlot(kOwnerSlots);
     // Player slots end at kTotalSlots; slots above it are the owner's own extra
     // sessions on a second host, so the WS-upgrade auth treats them as the owner

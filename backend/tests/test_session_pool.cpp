@@ -11,16 +11,21 @@ void run_session_pool_tests()
     SECTION("SessionPool");
 
     // Historical layout: 2 owner slots (primary + standby), 3 player slots.
-    SessionPool pool(48001, 2, 5);
+    SessionPool pool(48001, 48024, 2, 5);
 
     // Reserved slots exist up front — they are addressed by index, never acquired.
     CHECK_EQ(pool.size(), 2);
     CHECK_EQ(pool.reservedSlots(), 2);
 
-    // Ports and paths are the frontend-facing contract.
+    // Slot 0 keeps its historical port; the rest live two apart in their own
+    // block, which the caller placed clear of the media range (48010 + slot) so
+    // the two can never land on the same number.
     CHECK_EQ(pool.signalingPort(0), quint16(48001));
-    CHECK_EQ(pool.signalingPort(1), quint16(48011));
-    CHECK_EQ(pool.signalingPort(2), quint16(48021));
+    CHECK_EQ(pool.signalingPort(1), quint16(48024));
+    CHECK_EQ(pool.signalingPort(2), quint16(48026));
+    CHECK_EQ(pool.signalingPort(4), quint16(48030));
+    // The relay takes the port above, so consecutive slots must not overlap.
+    CHECK(pool.signalingPort(2) > pool.signalingPort(1) + 1);
     CHECK(SessionPool::wsPath(0) == QStringLiteral("/ws"));
     CHECK(SessionPool::wsPath(1) == QStringLiteral("/ws1"));
     CHECK(SessionPool::wsPath(4) == QStringLiteral("/ws4"));
@@ -121,4 +126,41 @@ void run_session_pool_tests()
     CHECK_EQ(pool.isValid(99), false);
     CHECK_EQ(pool.live(99), false);
     pool.release(99); // must not crash
+
+    // ── Slots are opened one at a time, and announced ─────────────────────
+    SECTION("SessionPool slot creation");
+
+    QVector<int> opened;
+    SessionPool grown(48001, 48024, 2, 4);
+    grown.setOnSlotCreated([&opened](int slot) { opened.append(slot); });
+
+    // Nothing is created ahead of need: the reserved slots exist, no more.
+    CHECK_EQ(grown.size(), 2);
+    CHECK_EQ(opened.size(), 0);
+
+    // Each acquire() creates exactly one slot and announces it before handing
+    // it back, so the caller has registered its route by the time the index is
+    // in anyone's hands.
+    CHECK_EQ(grown.acquire(), 2);
+    CHECK_EQ(grown.size(), 3);
+    CHECK_EQ(opened.size(), 1);
+    CHECK_EQ(opened.value(0), 2);
+    grown.at(2).clientUniqueId = QStringLiteral("device-0");
+
+    CHECK_EQ(grown.acquire(), 3);
+    CHECK_EQ(opened.size(), 2);
+    CHECK_EQ(opened.value(1), 3);
+    grown.at(3).clientUniqueId = QStringLiteral("device-1");
+
+    // maxSlots is the wall, and a refusal announces nothing.
+    CHECK_EQ(grown.acquire(), -1);
+    CHECK_EQ(grown.size(), 4);
+    CHECK_EQ(opened.size(), 2);
+
+    // A released index is reused rather than announced again: /wsN indices stay
+    // as few as the pool can manage.
+    grown.release(2);
+    CHECK_EQ(grown.acquire(), 2);
+    CHECK_EQ(grown.size(), 4);
+    CHECK_EQ(opened.size(), 2);
 }
