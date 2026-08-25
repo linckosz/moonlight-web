@@ -1382,6 +1382,25 @@ const MoonlightApp = {
                 this.transition('app_list');
                 return;
             }
+            // The card may have been painted from the list this browser
+            // remembered, and an app deleted in Sunshine since then fails here
+            // like anything else — with a message that blames the wrong thing.
+            // Re-ask the host: the grid drops the dead card on its own, and if
+            // the app really is gone we say so instead. Not awaited — an
+            // unreachable host would hold the explanation for its whole timeout,
+            // so the generic message goes out now and is only replaced once the
+            // host has actually answered.
+            if (this.hostListView) {
+                this.hostListView
+                    .confirmAppExists(host, app)
+                    .then(async (exists) => {
+                        if (exists || this.state === 'streaming' || this.state === 'launching')
+                            return;
+                        await Toast.dismissAll();
+                        Toast.error(t('launch.appGone', { name: app.name }));
+                    })
+                    .catch(() => {});
+            }
             // Distinguish a client-side timeout (backend hung/crashed) from a
             // regular failure so the user gets a clear, actionable message.
             const msg =

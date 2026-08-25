@@ -521,6 +521,7 @@
         "launching": "正在启动 {{name}}…",
         "started": "{{name}} 已启动",
         "failed": "启动失败",
+        "appGone": "“{{name}}” 已不在此主机上——列表已刷新",
         "timeout": "服务器无响应——已取消启动",
         "hevcH264Unsupported": "浏览器同时不支持 HEVC 和 H.264",
         "hdrFallback": "HDR 不可用——已切换到不含 HDR 的 {{to}}"
