@@ -1828,11 +1828,38 @@ const MoonlightApp = {
             // retrying an index that is gone would never resolve.
             const exhausted = cur >= chain.length;
             if (exhausted || this._launchRetried) {
+                // A launch that fails right after a transport failed is usually
+                // OUR doing: the relaunch reaches the host while it is still
+                // tearing the abandoned session down, so /launch stalls past its
+                // budget. Ending the session here strands the user on the very
+                // transport that just proved unusable, and the rungs that need
+                // no UDP at all (dc-tcp, wss) are never tried — exactly what a
+                // phone whose UDP path is blocked needs. Walk on instead, but
+                // without granting another launch retry: one attempt per rung,
+                // so a genuinely wedged host still costs seconds, not minutes.
+                const nextRung = cur + 1;
+                if (!exhausted && this._firstTransportRetried && nextRung < chain.length) {
+                    console.warn(
+                        `[MW] Launch failed on ${chain[cur]} after a transport failure —` +
+                            ` moving to ${chain[nextRung]} rather than ending here`,
+                    );
+                    Toast.warning(
+                        t('transport.connectFailed', {
+                            from: this._transportLabel(chain[cur]),
+                            to: this._transportLabel(chain[nextRung]),
+                        }),
+                    );
+                    this._relaunchTransport(nextRung);
+                    return;
+                }
+                // Walked the whole chain on the way here: the honest message is
+                // "nothing works", not "the host refused one launch".
+                const walkedOut = exhausted || this._firstTransportRetried;
                 console.error(
                     `[MW] Launch failed on ${chain[cur] || '?'} — giving up`,
-                    exhausted ? '(chain exhausted)' : '(retried once)',
+                    walkedOut ? '(chain exhausted)' : '(retried once)',
                 );
-                Toast.error(t(exhausted ? 'transport.allFailed' : 'transport.launchFailed'));
+                Toast.error(t(walkedOut ? 'transport.allFailed' : 'transport.launchFailed'));
                 this._hideRelaunchLoader();
                 if (this.streamView) this.streamView.quit({ silent: true });
                 return;
