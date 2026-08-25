@@ -1128,7 +1128,7 @@ export class StreamView {
                     // native button is the only reliable way back, so it is
                     // offered wherever that console exists.
                     this._hasConsoleHotkey()
-                        ? `<button class="btn btn-secondary stream-console-btn"
+                        ? `<button class="btn btn-secondary stream-console-btn stream-ctl-prestart"
                                    id="btn-stream-console"
                                    title="${escapeHtml(t('stream.consoleHint'))}">${escapeHtml(
                                        t('stream.console'),
@@ -1243,12 +1243,13 @@ export class StreamView {
             this._handleManualQuit();
 
         // ── Share menu (owner only) ────────────────────────────────────────
-        // A standby view is invisible and about to replace the live one, so it
-        // never grows its own menu here — activate() mounts it when the standby
-        // is promoted, or the owner would lose the button (and with it every
-        // way to manage their players) on a quality switch. A player has
-        // nothing to share.
-        if (!this._standby) this._mountShareMenu();
+        // Not mounted here: the Share button — like the keyboard and Wolf
+        // console buttons — only shows up once the stream is really on screen
+        // (_revealStreamControls, called from _markFirstFrame). A standby view
+        // never mounts one either: it is invisible and about to replace the
+        // live one, so activate() reveals its controls when it is promoted, or
+        // the owner would lose the button (and with it every way to manage
+        // their players) on a quality switch. A player has nothing to share.
 
         // ── Streaming stats overlay (top-center card, elegant styling) ─────
         this._overlayEl = document.createElement('div');
@@ -1262,10 +1263,13 @@ export class StreamView {
         // went nowhere (card stays open, × just blinks as it is re-rendered).
         this._statsBodyEl = document.createElement('div');
         this._statsBodyEl.className = 'stats-content';
-        this._statsBodyEl.innerHTML =
-            '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
         this._overlayEl.appendChild(this._statsBodyEl);
         this._overlayEl.appendChild(this._makeOverlayCloseBtn());
+        // Hidden until the first frame: there is nothing to measure yet, and
+        // the centered startup overlay already reports the connection
+        // progress. The CSS carries no display of its own, so without this the
+        // empty card flashes on screen the moment the view is rendered.
+        this._overlayEl.style.display = 'none';
         this._rootEl.appendChild(this._overlayEl);
 
         // The stats card can sit over the game; let the user drag it out of the
@@ -1435,7 +1439,7 @@ export class StreamView {
             // Header toggle button: keyboard glyph + tiny up arrow.
             this._kbdBtn = document.createElement('button');
             this._kbdBtn.id = 'btn-stream-keyboard';
-            this._kbdBtn.className = 'btn-stream-kbd';
+            this._kbdBtn.className = 'btn-stream-kbd stream-ctl-prestart';
             this._kbdBtn.innerHTML = Icons.keyboard;
             this._kbdBtn.title = t('stream.showKeyboard');
             this._kbdBtn.addEventListener('click', (e) => {
@@ -2638,6 +2642,8 @@ export class StreamView {
             // Mark startup step 3 ("Stream ready!") and hide overlay after 1.5s
             this._updateStartupStep(3);
             setTimeout(() => this._hideStartupOverlay(), 500);
+            // There is a picture now: the header can grow its real controls.
+            this._revealStreamControls();
             // Show keyboard shortcuts slide (5s auto-hide)
             this._showShortcutsSlide();
         }
@@ -2660,9 +2666,12 @@ export class StreamView {
         if (!this._standby) return;
         this._standby = false;
         if (this._rootEl) this._rootEl.style.visibility = '';
-        // This leg is the live stream now, so it needs the owner's Share menu:
-        // the retiring view takes its own away with its DOM.
-        this._mountShareMenu();
+        // This leg is the live stream now, so it needs the full header — the
+        // owner's Share menu above all: the retiring view takes its own away
+        // with its DOM. Unconditional: a promoted view IS the live one, and a
+        // header amputated of its controls is exactly the bug the scoping
+        // comment in render() warns about.
+        this._revealStreamControls();
         this._acquireWakeLock();
         this.bindEvents();
         if (this._gamepadManager) this._gamepadManager.start();
@@ -2716,6 +2725,26 @@ export class StreamView {
                 setTimeout(() => document.removeEventListener('pointerlockchange', onChange), 3000);
             }
         }
+    }
+
+    /**
+     * Reveal the header controls that only make sense once the stream is
+     * actually on screen: the soft-keyboard toggle, the Share menu and the
+     * Wolf console. Until the first decoded frame the header carries Stop
+     * alone — a keyboard or a share link over an empty canvas has nothing to
+     * act on, and Stop is the only thing the user can usefully press.
+     *
+     * Idempotent: every caller may fire more than once (the worker's
+     * 'firstframe' message re-enters _markFirstFrame on purpose).
+     */
+    _revealStreamControls() {
+        if (!this._rootEl) return;
+        // Scoped to THIS view's root, never the document: a hidden standby view
+        // coexists with the live one and they share element ids.
+        const consoleBtn = this._rootEl.querySelector('#btn-stream-console');
+        if (consoleBtn) consoleBtn.classList.remove('stream-ctl-prestart');
+        if (this._kbdBtn) this._kbdBtn.classList.remove('stream-ctl-prestart');
+        this._mountShareMenu();
     }
 
     /**
@@ -3968,11 +3997,10 @@ export class StreamView {
             return;
         }
 
-        // Before first frame: show minimal waiting state
+        // Nothing to show before the first frame — the centered startup overlay
+        // already reports the connection progress.
         if (!this._firstFrameRendered) {
-            this._statsBodyEl.innerHTML =
-                '<div class="stats-waiting">' + t('stream.connecting') + '</div>';
-            this._overlayEl.style.display = '';
+            this._overlayEl.style.display = 'none';
             return;
         }
 
