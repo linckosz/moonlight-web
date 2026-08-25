@@ -87,6 +87,11 @@ struct BackendCapabilities
     bool multiUser = false;     // independent concurrent seats/sessions
     bool provisioning = false;  // seats can be created/destroyed on demand
     bool lobbies = false;       // native co-op (Wolf) — otherwise ShareManager
+    // The control API can bounce the host's streaming service on its own. Only
+    // true where that costs no new credential: MoonlightWeb refuses to hold a
+    // Sunshine web-UI password, so a plain GameStream host — whose only restart
+    // path is Sunshine's Basic-Auth REST — stays false and shows nothing.
+    bool restartService = false;
 };
 
 // Why a call failed. Callers map this to HTTP; keeping the kind distinct from
@@ -177,6 +182,15 @@ public:
     // down a *different* player's stream. StreamSession has always passed it.
     virtual void quit(const QString& seatId, const QString& clientUniqueId,
                       BackendVoidCallback cb) = 0;
+
+    // Restart the streaming service this backend fronts, through its own
+    // control API — never by asking the host for credentials. Only meaningful
+    // when capabilities().restartService is true; others answer Unsupported.
+    virtual void restartService(BackendVoidCallback cb)
+    {
+        cb(false, BackendError::make(BackendError::Unsupported,
+                                     QStringLiteral("This backend cannot restart its service")));
+    }
 
     // Only meaningful when capabilities().provisioning is true; others answer
     // ok == false with an explanatory error.

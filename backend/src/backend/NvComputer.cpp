@@ -94,6 +94,7 @@ NvComputer::NvComputer(QSettings& settings)
     : state(CS_OFFLINE) // persisted hosts start offline
 {
     name = settings.value("hostname").toString();
+    customName = settings.value("customName").toString();
     uuid = settings.value("uuid").toString();
     macAddress = settings.value("mac").toByteArray();
 
@@ -131,6 +132,7 @@ NvComputer::NvComputer(QSettings& settings)
 void NvComputer::serialize(QSettings& settings) const
 {
     settings.setValue("hostname", name);
+    settings.setValue("customName", customName);
     settings.setValue("uuid", uuid);
     settings.setValue("mac", macAddress);
     settings.setValue("activeaddress", activeAddress.address());
@@ -153,7 +155,8 @@ void NvComputer::serialize(QSettings& settings) const
 
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
 {
-    return name == that.name && uuid == that.uuid && macAddress == that.macAddress &&
+    return name == that.name && customName == that.customName && uuid == that.uuid &&
+           macAddress == that.macAddress &&
            activeAddress == that.activeAddress && localAddress == that.localAddress &&
            remoteAddress == that.remoteAddress &&
            manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
@@ -333,6 +336,10 @@ QJsonObject NvComputer::toJson() const
     QJsonObject obj;
     obj["uuid"] = uuid;
     obj["name"] = name;
+    // The alias, sent alongside the reported name rather than instead of it: the
+    // rename dialog needs to show what the host calls itself when the field is
+    // cleared, and an empty string is exactly "no alias".
+    obj["customName"] = customName;
     obj["state"] = computerStateToString(state);
     obj["reachable"] = reachable;
     obj["pairState"] = pairStateToString(pairState);

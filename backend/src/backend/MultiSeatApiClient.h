@@ -155,6 +155,12 @@ public:
     /// DELETE /api/seats/{id}
     void teardownSeat(const QString& seatId, MultiSeatVoidCallback cb);
 
+    /// POST /api/seats/{id}/apollo/restart — bounce the Apollo instance that
+    /// fronts one seat. This is the closest thing MultiSeat has to "restart the
+    /// streaming service": there is one Apollo per seat, so restarting the host
+    /// means restarting each of them.
+    void restartSeatApollo(const QString& seatId, MultiSeatVoidCallback cb);
+
     /// GET /api/seats/{id}/clients — GameStream clients paired to that seat.
     void seatClients(const QString& seatId, MultiSeatJsonArrayCallback cb);
 

@@ -58,6 +58,36 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(result, status);
     });
 
+    // Rename a host. POST rather than PATCH because the router speaks
+    // get/post/del, and because this changes state either way.
+    //
+    // A missing 'name' is refused, but an empty one is not: clearing the field is
+    // how the user drops the alias and goes back to the host's own name.
+    server.router()->post("/api/hosts/:id/name", [&computerManager](const HttpRequest& req) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
+
+        QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        if (!body.contains("name")) return HttpResponse::error(400, "Missing 'name' field");
+
+        auto [status, result] = computerManager.handleRenameHost(uuid, body["name"].toString());
+        return HttpResponse::json(result, status);
+    });
+
+    // Restart the streaming service a host runs. Answers 501 wherever
+    // MoonlightWeb holds no control path for it, which is what the host list's
+    // `restartSupported` flag mirrors so the menu entry never appears in vain.
+    server.router()->postAsync(
+        "/api/hosts/:id/restart",
+        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+            QString uuid = req.pathParams.value("id");
+            if (uuid.isEmpty()) {
+                respond(HttpResponse::error(400, "Missing host ID"));
+                return;
+            }
+            computerManager.handleRestartHost(uuid, std::move(respond));
+        });
+
     server.router()->post("/api/hosts/:id/wol", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");

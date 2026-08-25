@@ -224,6 +224,14 @@ void MultiSeatApiClient::teardownSeat(const QString& seatId, MultiSeatVoidCallba
         });
 }
 
+void MultiSeatApiClient::restartSeatApollo(const QString& seatId, MultiSeatVoidCallback cb)
+{
+    post(QStringLiteral("/api/seats/%1/apollo/restart").arg(seatId), QJsonObject(),
+         [cb = std::move(cb)](bool ok, const MultiSeatApiError& err, const QJsonDocument&) {
+             cb(ok, err);
+         });
+}
+
 void MultiSeatApiClient::seatClients(const QString& seatId, MultiSeatJsonArrayCallback cb)
 {
     get(QStringLiteral("/api/seats/%1/clients").arg(seatId),

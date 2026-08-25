@@ -89,7 +89,8 @@ public:
     /// Windows sessions rather than one shared instance.
     BackendCapabilities capabilities() const override
     {
-        return BackendCapabilities{/*multiUser*/ true, /*provisioning*/ true, /*lobbies*/ false};
+        return BackendCapabilities{/*multiUser*/ true, /*provisioning*/ true, /*lobbies*/ false,
+                                   /*restartService*/ true};
     }
 
     /// No handshake: MultiSeat's API is key-authenticated. This just proves the
@@ -107,6 +108,7 @@ public:
     void quit(const QString& seatId, const QString& clientUniqueId,
               BackendVoidCallback cb) override;
 
+    void restartService(BackendVoidCallback cb) override;
     void provisionSeat(const QJsonObject& params, BackendSeatCallback cb) override;
     void teardownSeat(const QString& seatId, BackendVoidCallback cb) override;
     void releaseSeatOwner(const QString& seatId, BackendVoidCallback cb) override;

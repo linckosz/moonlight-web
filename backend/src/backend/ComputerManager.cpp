@@ -26,6 +26,7 @@
 #include "WolfApiClient.h"
 #include "streambackend/StreamBackendSetup.h"
 #include "IdentityManager.h"
+#include "SunshineInstaller.h"
 #include "common/Logger.h"
 
 #include <qmdnsengine/server.h>
@@ -84,6 +85,14 @@ static const int PAIR_CHECK_INTERVAL_SEC = 300;
 // Windows. Known hosts are kept fresh via HTTP polling, so a brief window per
 // scan is enough to discover new hosts.
 static const int MDNS_DISCOVERY_WINDOW_MS = 8000;
+
+// Longest alias a host card will take. Not a storage limit — it is what still
+// fits a card's name row next to the status badge on a phone.
+static const int kMaxHostNameLength = 64;
+
+// Sunshine drops its mDNS registration and its tray on the way out; giving it a
+// beat before starting the new one keeps the two from fighting over the ports.
+static const int RESTART_RELAUNCH_DELAY_MS = 1500;
 
 // ============================================================================
 // MdnsPendingComputer — Resolves mDNS hostname → addresses
@@ -763,6 +772,18 @@ NvComputer* ComputerManager::getHost(const QString& uuid) const
 
 // --- REST API methods -------------------------------------------------------
 
+namespace {
+
+/// Whether this machine has a Sunshine we can stop and start. Probed once: it
+/// walks well-known install paths, and /api/hosts asks per host on every poll.
+bool localSunshinePresent()
+{
+    static const bool present = SunshineInstaller::detect().installed;
+    return present;
+}
+
+} // namespace
+
 QJsonObject ComputerManager::backendCapabilitiesJson(const QString& uuid) const
 {
     // Capabilities come from an actual provider instance rather than a lookup
@@ -775,7 +796,8 @@ QJsonObject ComputerManager::backendCapabilitiesJson(const QString& uuid) const
     const BackendCapabilities caps = backend->capabilities();
     return QJsonObject{{"multiUser", caps.multiUser},
                        {"provisioning", caps.provisioning},
-                       {"lobbies", caps.lobbies}};
+                       {"lobbies", caps.lobbies},
+                       {"restartService", caps.restartService}};
 }
 
 QJsonArray ComputerManager::getHostsJson() const
@@ -789,6 +811,13 @@ QJsonArray ComputerManager::getHostsJson() const
         // along here, or every host looks capability-less and the gates misfire.
         const QJsonObject caps = backendCapabilitiesJson(it.key());
         if (!caps.isEmpty()) obj["capabilities"] = caps;
+        // Whether the kebab can offer a restart at all. Computed here rather
+        // than in NvComputer::toJson() because it is not a property of the host:
+        // it is whether *we* hold a way to bounce its service without asking
+        // anyone for a password.
+        obj["restartSupported"] = it.value()->isLocalMachine()
+                                      ? localSunshinePresent()
+                                      : caps.value("restartService").toBool();
         arr.append(obj);
     }
     return arr;
@@ -939,6 +968,48 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
     QJsonObject result;
     result["status"] = "ok";
     result["message"] = QString("Host '%1' removed").arg(name);
+    return {200, result};
+}
+
+// --- Rename ------------------------------------------------------------------
+
+// The alias lives here and nowhere else. Renaming a host on the host itself
+// would mean holding its web-UI password, which MoonlightWeb refuses to do, and
+// it would also be useless on the cards that need a name most: an offline or
+// never-paired host, which cannot be asked anything at all.
+std::pair<int, QJsonObject> ComputerManager::handleRenameHost(const QString& uuid,
+                                                             const QString& name)
+{
+    NvComputer* host = findHostByUuid(uuid);
+    if (!host) return {404, {{"status", "error"}, {"message", "Host not found"}}};
+
+    // Simplify() rather than trimmed(): a name is one line, and a pasted one can
+    // carry newlines or runs of spaces that would break the card's layout.
+    QString alias = name.simplified();
+    if (alias.length() > kMaxHostNameLength) alias.truncate(kMaxHostNameLength);
+
+    if (alias == host->customName) {
+        // Nothing to write, but the answer still carries the current state: the
+        // caller patches its copy from it, so a field missing here would read as
+        // "the alias is gone".
+        return {200,
+                {{"status", "ok"},
+                 {"name", alias.isEmpty() ? host->name : alias},
+                 {"customName", alias}}};
+    }
+
+    host->customName = alias;
+    saveHosts();
+    emit hostsChanged();
+
+    Logger::info(alias.isEmpty()
+                     ? QString("Host %1 renamed back to \"%2\"").arg(uuid, host->name)
+                     : QString("Host %1 renamed to \"%2\"").arg(uuid, alias));
+
+    QJsonObject result;
+    result["status"] = "ok";
+    result["name"] = alias.isEmpty() ? host->name : alias;
+    result["customName"] = alias;
     return {200, result};
 }
 
@@ -1444,6 +1515,69 @@ void ComputerManager::handleTeardownSeat(const QString& uuid, const QString& sea
         } else {
             respond(HttpResponse::json({{"status", "ok"}}));
         }
+        QTimer::singleShot(0, [backend]() {});
+    });
+}
+
+// The restart never travels with a credential we asked the user for. Two paths
+// only: the machine we run on (its Sunshine is ours to stop and start), and a
+// backend whose own control API can do it — MultiSeat bouncing each seat's
+// Apollo, for instance. Everything else answers 501, which is what keeps the
+// menu entry absent rather than broken.
+//
+// Deliberately not localhost-only: the browser asking for it is already an
+// authenticated MoonlightWeb client, and the person most likely to need this is
+// exactly the one who is not sitting at the host.
+void ComputerManager::handleRestartHost(const QString& uuid, ResponseCallback respond)
+{
+    NvComputer* host = findHostByUuid(uuid);
+    if (!host) {
+        respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+
+    if (host->isLocalMachine()) {
+        if (!localSunshinePresent()) {
+            respond(HttpResponse::json(
+                {{"status", "error"}, {"message", "No Sunshine install found on this machine"}},
+                501));
+            return;
+        }
+
+        Logger::info(QStringLiteral("Restarting the local Sunshine (host %1)").arg(uuid));
+        SunshineInstaller::stop();
+        // Answered only once the new instance has been spawned, so the UI's
+        // spinner covers the gap rather than ending before the host goes away.
+        QTimer::singleShot(RESTART_RELAUNCH_DELAY_MS, this, [respond = std::move(respond)]() {
+            const bool ok = SunshineInstaller::launch();
+            if (!ok) {
+                Logger::error(QStringLiteral("Sunshine did not come back after a restart"));
+                respond(HttpResponse::json(
+                    {{"status", "error"}, {"message", "Sunshine did not restart"}}, 502));
+                return;
+            }
+            respond(HttpResponse::json({{"status", "ok"}}));
+        });
+        return;
+    }
+
+    std::shared_ptr<IStreamBackend> backend(backendForHost(uuid).release());
+    if (!backend) {
+        respond(HttpResponse::json(
+            {{"status", "error"},
+             {"message", "This host has no control API MoonlightWeb can restart it through"}},
+            501));
+        return;
+    }
+
+    backend->restartService([respond = std::move(respond), backend](bool ok,
+                                                                    const BackendError& err) {
+        if (!ok) {
+            respond(backendFailure(err));
+        } else {
+            respond(HttpResponse::json({{"status", "ok"}}));
+        }
+        // Released a turn later: see handleSetBackend for why.
         QTimer::singleShot(0, [backend]() {});
     });
 }

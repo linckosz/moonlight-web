@@ -25,6 +25,10 @@ export class Host {
     constructor(data) {
         this.uuid = data.uuid || '';
         this.name = data.name || 'Unknown Host';
+        // A name given here, in MoonlightWeb. Wins over the reported one wherever
+        // the host is shown, and is kept apart from it so the rename dialog can
+        // still offer what the host calls itself when the field is cleared.
+        this.customName = data.customName || '';
         this.state = data.state || 'unknown';
         // Machine answers at the IP level but the GameStream server isn't running
         // (host powered on, MoonlightWeb/Sunshine not started). Backend-derived.
@@ -43,6 +47,11 @@ export class Host {
         this.wakeSupported = data.wakeSupported === true;
         // Backend flag: this host is the very machine MoonlightWeb runs on.
         this.isLocalHost = data.isLocalHost === true;
+
+        // The server holds a way to bounce this host's streaming service without
+        // asking anyone for a password — its own Sunshine, or a backend control
+        // API that offers it. False everywhere else, and the menu says nothing.
+        this.restartSupported = data.restartSupported === true;
 
         // Which backend drives this host. Empty for a plain GameStream host,
         // which is the default and what every Sunshine card stays. The token is
@@ -90,7 +99,18 @@ export class Host {
     }
 
     get displayName() {
+        // A name given here wins: it is the one the user chose to recognise this
+        // machine by, and it is the only one that exists for a host that has
+        // never answered.
+        if (this.customName) return this.customName;
         // Never fall back to the IP address — internal addresses stay hidden.
+        if (this.name && this.name !== 'UNKNOWN') return this.name;
+        return 'Unknown Host';
+    }
+
+    /** What the host calls itself, ignoring any alias — shown as the rename
+     *  dialog's placeholder so clearing the field has a visible meaning. */
+    get reportedName() {
         if (this.name && this.name !== 'UNKNOWN') return this.name;
         return 'Unknown Host';
     }
