@@ -2195,8 +2195,14 @@ int main(int argc, char* argv[])
         // host ICE candidate so a local client can connect directly (routers
         // rarely hairpin UDP); never for a public peer, so the LAN IP is not
         // leaked.
-        const bool clientIsLocal =
-            NetClassify::isTrustedPeer(NetClassify::classify(req.clientAddress));
+        // Classify the browser's own address once, here, where we still have it.
+        // The stream worker cannot redo this: its signaling WebSocket arrives
+        // through the local HTTP proxy, so every client looks like loopback to
+        // it — which is what silently denied internet sessions their STUN
+        // server. Hand the verdict down instead of a derived bool, so the two
+        // questions it answers (need STUN? may we show the LAN candidate?)
+        // cannot drift apart again.
+        const NetClassify::Kind clientKind = NetClassify::classify(req.clientAddress);
 
         // ================================================================
         // Resolve transport mode (from AppSettings).
@@ -2445,7 +2451,7 @@ int main(int argc, char* argv[])
             s->setLowAudio(reqLowAudio);
             s->setMuteHostAudio(reqMuteHost);
             s->setClientUniqueId(reqClientUniqueId);
-            s->setClientIsLocal(clientIsLocal);
+            s->setClientKind(clientKind);
             // Which provider drives this host: plain GameStream unless it was
             // registered as a Wolf or MultiSeat backend.
             s->setBackend(std::shared_ptr<IStreamBackend>(
@@ -2545,7 +2551,7 @@ int main(int argc, char* argv[])
             cfg["lowAudio"] = reqLowAudio;
             cfg["muteHostAudio"] = reqMuteHost;
             cfg["clientUniqueId"] = reqClientUniqueId;
-            cfg["clientIsLocal"] = clientIsLocal;
+            cfg["clientKind"] = NetClassify::toString(clientKind);
             cfg["autoMode"] = true;
             // Straight to /resume when joining a live app session: every
             // standby joins the running app by definition, and any uid we know
@@ -3249,7 +3255,10 @@ int main(int argc, char* argv[])
             cfg["lowAudio"] = false;
             cfg["muteHostAudio"] = false;
             cfg["clientUniqueId"] = uid;
-            cfg["clientIsLocal"] = false;
+            // No browser address reaches this path (a player is started from the
+            // share activation, not from their own request), so assume the most
+            // restrictive: no LAN candidate, and STUN available.
+            cfg["clientKind"] = NetClassify::toString(NetClassify::Kind::Public);
             cfg["autoMode"] = true;
             // Never /launch: Sunshine refuses it while an app runs, and a player
             // has no business starting one anyway.

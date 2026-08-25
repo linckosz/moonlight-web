@@ -471,7 +471,7 @@ DataChannelRelay::DataChannelRelay(MoonlightShim* shim, QObject* parent)
     });
 
     // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
-    // Connected within 3s after setRemoteDescription().
+    // Connected within m_IceTimeoutMs after setRemoteDescription().
     // Triggers WebSocket fallback when UDP is blocked (corporate firewall).
     m_IceCheckTimer = new QTimer(this);
     m_IceCheckTimer->setSingleShot(true);
@@ -511,12 +511,16 @@ DataChannelRelay::~DataChannelRelay()
     DataChannelRelay::stop();
 }
 
-bool DataChannelRelay::prepare(const rtc::Configuration& config, bool)
+bool DataChannelRelay::prepare(const rtc::Configuration& config, bool isInternet)
 {
     if (m_Pc) {
         qWarning() << "[DataChannelRelay] already prepared";
         return false;
     }
+
+    // A public peer needs a longer ICE deadline than a LAN one; see
+    // RelayBase::kIceTimeoutInternetMs.
+    m_IceTimeoutMs = isInternet ? kIceTimeoutInternetMs : kIceTimeoutLocalMs;
 
     setupPeerConnection(config);
     return true;
@@ -530,12 +534,13 @@ bool DataChannelRelay::setRemoteDescription(const std::string& sdp)
     }
     try {
         m_Pc->setRemoteDescription(rtc::Description(sdp));
-        qInfo() << "[DataChannelRelay] Remote description set — starting ICE timeout (3s)";
+        qInfo() << "[DataChannelRelay] Remote description set — starting ICE timeout ("
+                << m_IceTimeoutMs << "ms)";
         // Start ICE connection timer. The remote description is set, so ICE
-        // negotiation begins now. If it doesn't reach Connected within 3s,
+        // negotiation begins now. If it doesn't reach Connected in time,
         // we emit iceTimedOut() for WS fallback.
         if (m_IceCheckTimer) {
-            m_IceCheckTimer->start(3000);
+            m_IceCheckTimer->start(m_IceTimeoutMs);
         }
         return true;
     } catch (const std::exception& e) {
@@ -1417,7 +1422,8 @@ void DataChannelRelay::onIceCheckTimeout()
     if (m_Stopping.load()) return;
     if (m_Connected) return; // Safety: should not happen since we cancel on Connected
 
-    qWarning() << "[DataChannelRelay] ICE timeout — PC did not reach Connected within 3s."
+    qWarning() << "[DataChannelRelay] ICE timeout — PC did not reach Connected within"
+               << m_IceTimeoutMs << "ms."
                << "This likely indicates UDP is blocked (corporate firewall)."
                << "Emitting iceTimedOut() for WebSocket fallback.";
 

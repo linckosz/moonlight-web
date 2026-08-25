@@ -54,6 +54,13 @@ struct LaunchRequest
     // Sunshine keys sessions by uniqueid, Wolf by client certificate. Only a
     // backend that keys on the certificate has any reason to set this.
     QString clientIdentitySeat;
+
+    // Deadline for this one attempt, in ms. 0 means the backend's own default.
+    // The caller sets it because only the caller knows how much of the overall
+    // launch budget is left — a launch that outlives the browser's /start
+    // deadline is answered to nobody and keeps the slot busy while the browser
+    // starts a second one on top of it.
+    int timeoutMs = 0;
 };
 
 // One streamable slot on a backend.

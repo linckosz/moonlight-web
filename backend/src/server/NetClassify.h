@@ -96,6 +96,19 @@ inline bool isTrustedPeer(Kind k)
     return k != Kind::Public;
 }
 
+/// Parse back what toString() produced. Used to carry a classification across
+/// the process boundary into a stream worker: the worker only ever sees the
+/// loopback end of the local WebSocket proxy, so it cannot classify the real
+/// browser itself and must be told.
+inline Kind fromString(const QString& s, Kind fallback = Kind::Public)
+{
+    if (s == QLatin1String("loopback")) return Kind::Loopback;
+    if (s == QLatin1String("private")) return Kind::Private;
+    if (s == QLatin1String("tunnel")) return Kind::Tunnel;
+    if (s == QLatin1String("public")) return Kind::Public;
+    return fallback;
+}
+
 /// Convenience for logging.
 inline const char* toString(Kind k)
 {

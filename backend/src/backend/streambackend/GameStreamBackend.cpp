@@ -251,7 +251,7 @@ void GameStreamBackend::launch(const QString& seatId, const LaunchRequest& req,
     QNetworkReply* reply = m_Http->launchAppAsync(
         host->activeAddress, host->activeHttpsPort, req.appId, uniqueId, req.rikey, req.rikeyid,
         req.width, req.height, req.fps, req.bitrateKbps, identity.certPem, identity.keyPem,
-        req.hdrEnabled ? 1 : 0, req.muteHostAudio ? 0 : 1);
+        req.hdrEnabled ? 1 : 0, req.muteHostAudio ? 0 : 1, req.timeoutMs);
 
     finishLaunchReply(reply, req, std::move(cb));
 }
@@ -277,7 +277,7 @@ void GameStreamBackend::resume(const QString& seatId, const LaunchRequest& req,
 
     QNetworkReply* reply = m_Http->resumeAppAsync(
         host->activeAddress, host->activeHttpsPort, uniqueId, req.rikey, req.rikeyid,
-        identity.certPem, identity.keyPem, req.muteHostAudio ? 0 : 1);
+        identity.certPem, identity.keyPem, req.muteHostAudio ? 0 : 1, req.timeoutMs);
 
     finishLaunchReply(reply, req, std::move(cb));
 }
@@ -292,7 +292,11 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
         cb(ok, e, media);
     };
 
-    QTimer::singleShot(NvHTTP::LAUNCH_TIMEOUT_MS + 2000, reply, [answer]() {
+    // Backstop for a reply that never finishes at all: setTransferTimeout only
+    // fires while the socket is idle. Tracks whatever deadline the request was
+    // actually given, or the default when the caller named none.
+    const int deadlineMs = req.timeoutMs > 0 ? req.timeoutMs : NvHTTP::LAUNCH_TIMEOUT_MS;
+    QTimer::singleShot(deadlineMs + 2000, reply, [answer]() {
         answer(false,
                BackendError::make(BackendError::Timeout, QStringLiteral("Launch request timed out")),
                MediaDescriptor{});

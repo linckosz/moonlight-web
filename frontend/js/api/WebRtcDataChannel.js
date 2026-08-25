@@ -187,8 +187,16 @@ export class WebRtcDataChannel {
         // transport in the priority chain (… → wss is a distinct attempt).
         this._chainFallback = false;
 
-        // ICE connection timeout: if ICE doesn't reach "connected" within
-        // 3s, trigger WebSocket fallback (UDP blocked, corporate firewall).
+        // ICE connection timeout: if ICE doesn't reach "connected" in time,
+        // trigger WebSocket fallback (UDP blocked, corporate firewall).
+        //
+        // The host runs the same deadline and sizes it from where this client
+        // is (RelayBase::kIceTimeoutLocalMs / kIceTimeoutInternetMs), then
+        // ships the value in ice-config. Whichever end fires first ends the
+        // attempt, so this value must follow the host's: left at 3s it kept
+        // cutting off internet handshakes — over 4G, an attempt whose video was
+        // already flowing died here at exactly 3.0s. The 3s below is only the
+        // pre-ice-config default, and what an older host implies.
         this._iceTimeout = null;
         this.ICE_TIMEOUT_MS = 3000;
 
@@ -444,7 +452,7 @@ export class WebRtcDataChannel {
         }
     }
 
-    /** Start the ICE connection timeout timer (3s). */
+    /** Start the ICE connection timeout timer (see ICE_TIMEOUT_MS). */
     _startIceTimer() {
         this._clearIceTimer();
         this._iceTimeout = setTimeout(() => this._onIceTimeout(), this.ICE_TIMEOUT_MS);
@@ -459,7 +467,7 @@ export class WebRtcDataChannel {
         }
     }
 
-    /** Called when ICE fails to connect within 3s. */
+    /** Called when ICE fails to connect within ICE_TIMEOUT_MS. */
     _onIceTimeout() {
         if (this._stopping || this.connected || this._iceConnected) return;
         this._iceTimeout = null;
@@ -899,6 +907,14 @@ export class WebRtcDataChannel {
             // Overrides the default Google STUN with the user-configured server.
             console.log('[WebRTC] Received ice-config:', JSON.stringify(msg.iceServers));
             this._dynamicIceServers = msg.iceServers;
+            // Adopt the host's ICE deadline: it classified where this client
+            // actually is, which this side cannot do. Bounded so a malformed or
+            // hostile value can neither disable the watchdog nor hang the UI on
+            // a dead attempt. Absent → keep the default (older host).
+            if (Number.isFinite(msg.iceTimeoutMs)) {
+                this.ICE_TIMEOUT_MS = Math.min(Math.max(msg.iceTimeoutMs, 3000), 30000);
+                console.log('[WebRTC] ICE deadline from host: ' + this.ICE_TIMEOUT_MS + 'ms');
+            }
             // Create the PeerConnection now that we have ICE servers.
             // Previously this happened in onopen, but we need the ice-config
             // to ensure proper ICE candidate generation from the start.

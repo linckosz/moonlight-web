@@ -78,7 +78,7 @@ MediaTrackRelay::MediaTrackRelay(MoonlightShim* shim, QObject* parent)
     });
 
     // ICE connection timeout: emit iceTimedOut() if PC doesn't reach
-    // Connected within 3s after setRemoteDescription().
+    // Connected within m_IceTimeoutMs after setRemoteDescription().
     m_IceCheckTimer = new QTimer(this);
     m_IceCheckTimer->setSingleShot(true);
     connect(m_IceCheckTimer, &QTimer::timeout, this, &MediaTrackRelay::onIceCheckTimeout);
@@ -116,12 +116,16 @@ MediaTrackRelay::~MediaTrackRelay()
     MediaTrackRelay::stop();
 }
 
-bool MediaTrackRelay::prepare(const rtc::Configuration& config, bool)
+bool MediaTrackRelay::prepare(const rtc::Configuration& config, bool isInternet)
 {
     if (m_Pc) {
         qWarning() << "[MediaTrackRelay] already prepared";
         return false;
     }
+
+    // A public peer needs a longer ICE deadline than a LAN one; see
+    // RelayBase::kIceTimeoutInternetMs.
+    m_IceTimeoutMs = isInternet ? kIceTimeoutInternetMs : kIceTimeoutLocalMs;
 
     setupPeerConnection(config);
     return true;
@@ -135,9 +139,10 @@ bool MediaTrackRelay::setRemoteDescription(const std::string& sdp)
     }
     try {
         m_Pc->setRemoteDescription(rtc::Description(sdp));
-        qInfo() << "[MediaTrackRelay] Remote description set — starting ICE timeout (3s)";
+        qInfo() << "[MediaTrackRelay] Remote description set — starting ICE timeout ("
+                << m_IceTimeoutMs << "ms)";
         if (m_IceCheckTimer) {
-            m_IceCheckTimer->start(3000);
+            m_IceCheckTimer->start(m_IceTimeoutMs);
         }
         return true;
     } catch (const std::exception& e) {
@@ -737,7 +742,8 @@ void MediaTrackRelay::onIceCheckTimeout()
         if (state == rtc::PeerConnection::State::Connected) return;
     }
 
-    qWarning() << "[MediaTrackRelay] ICE timeout — PC did not reach Connected within 3s."
+    qWarning() << "[MediaTrackRelay] ICE timeout — PC did not reach Connected within"
+               << m_IceTimeoutMs << "ms."
                << "Emitting iceTimedOut().";
 
     // In auto mode: the relay tracking will catch this and trigger tryNext().

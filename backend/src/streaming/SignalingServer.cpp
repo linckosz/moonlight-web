@@ -196,7 +196,7 @@ QString SignalingServer::wsUrl() const
 
 // --- ICE configuration push to browser ---
 
-void SignalingServer::sendIceConfig()
+void SignalingServer::sendIceConfig(int iceTimeoutMs)
 {
     if (!m_WsClient || !m_WsClient->isValid()) {
         qWarning() << "[SignalingServer] Cannot send ice-config: no WS client";
@@ -211,10 +211,16 @@ void SignalingServer::sendIceConfig()
     QJsonObject msg;
     msg["type"] = "ice-config";
     msg["iceServers"] = iceServers;
+    // The browser runs its own copy of this deadline. Ship ours so the two
+    // agree: whichever end fires first ends the attempt, and a browser stuck on
+    // the LAN value would keep cutting off internet handshakes the host is
+    // still willing to wait for.
+    msg["iceTimeoutMs"] = iceTimeoutMs;
 
     QJsonDocument doc(msg);
     m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
-    qInfo() << "[SignalingServer] Sent ice-config: stun=" << m_StunServerUrl;
+    qInfo() << "[SignalingServer] Sent ice-config: stun=" << m_StunServerUrl
+            << "iceTimeoutMs=" << iceTimeoutMs;
 }
 
 // --- New WS client connected ---
@@ -245,15 +251,22 @@ void SignalingServer::onNewWsConnection()
     m_LocalFingerprint.clear();
     m_PendingOffer.clear();
 
-    // Classify the peer once. A tunnel peer (mesh VPN) still counts as
-    // "internet" here so STUN stays available: if the tunnel path fails, its
-    // srflx address is the fallback. Whether we may show it our internal host
-    // candidates is a separate question, answered by m_ClientIsLocal below.
+    // Where the client really is. NOT the WebSocket peer address: this server
+    // sits behind the local HTTP proxy, so that address is 127.0.0.1 for every
+    // client and classifying it declared a phone on 4G to be loopback — which
+    // took the LAN branch of buildIceConfig() and denied the host its STUN
+    // server. m_ClientKind is the browser's own address, classified by the
+    // process that accepted /start and handed down to us.
+    //
+    // A tunnel peer (mesh VPN) still counts as "internet" here so STUN stays
+    // available: if the tunnel path fails, its srflx address is the fallback.
+    // Whether we may show it our internal host candidates is a separate
+    // question, answered by clientIsLocal below.
     const QString peerAddrStr = m_WsClient->peerAddress().toString();
-    const NetClassify::Kind peerKind = NetClassify::classify(peerAddrStr);
-    const bool isInternet = !NetClassify::isPrivateOrLoopback(peerKind);
-    qInfo() << "[SignalingServer] Client connected from" << peerAddrStr << "kind="
-            << NetClassify::toString(peerKind) << "(isInternet=" << isInternet << ")";
+    const bool isInternet = !NetClassify::isPrivateOrLoopback(m_ClientKind);
+    const bool clientIsLocal = NetClassify::isTrustedPeer(m_ClientKind);
+    qInfo() << "[SignalingServer] Client connected via" << peerAddrStr << "— client kind="
+            << NetClassify::toString(m_ClientKind) << "(isInternet=" << isInternet << ")";
 
     connect(m_WsClient, &QWebSocket::textMessageReceived, this, &SignalingServer::onWsTextMessage);
     connect(m_WsClient, &QWebSocket::disconnected, this, &SignalingServer::onWsDisconnected);
@@ -271,8 +284,12 @@ void SignalingServer::onNewWsConnection()
 #endif
 
     // Send ICE server configuration to the browser first, so the frontend
-    // knows which STUN server to use before creating its RTCPeerConnection.
-    sendIceConfig();
+    // knows which STUN server to use before creating its RTCPeerConnection —
+    // and how long it may wait for ICE, which depends on the same peer
+    // classification the relay uses below.
+    const int iceTimeoutMs =
+        isInternet ? RelayBase::kIceTimeoutInternetMs : RelayBase::kIceTimeoutLocalMs;
+    sendIceConfig(iceTimeoutMs);
 
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
     // m_ForceIceTcp controls whether ICE-TCP candidates are generated
@@ -293,7 +310,7 @@ void SignalingServer::onNewWsConnection()
         // For a same-LAN client (incl. one on the public URL, hairpinned), also
         // let the relay advertise the private host candidate for a direct path
         // (routers rarely hairpin UDP). Never for internet clients — no LAN leak.
-        m_Relay->setEmitLanHostCandidate(m_ClientIsLocal);
+        m_Relay->setEmitLanHostCandidate(clientIsLocal);
         qInfo() << "[SignalingServer] UPnP: relaying host candidate as" << m_UpnpPublicIP << ":"
                 << m_UpnpMappedPort;
     }
