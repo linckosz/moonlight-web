@@ -72,11 +72,13 @@ public:
                                    const QByteArray& clientCertPem, const QByteArray& clientKeyPem);
 
     // Launch / quit app (HTTPS, requires client cert, async)
+    // timeoutMs 0 → LAUNCH_TIMEOUT_MS. A caller that is spending a shared
+    // budget passes what is left of it instead.
     QNetworkReply* launchAppAsync(const NvAddress& address, quint16 httpsPort, int appId,
                                   const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                   int width, int height, int fps, int bitrate,
                                   const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
-                                  int hdrMode = 0, int localAudioPlayMode = 0);
+                                  int hdrMode = 0, int localAudioPlayMode = 0, int timeoutMs = 0);
 
     // Resume an existing session for this uniqueId (reconnect to our own
     // orphaned session without relaunching the app). Keyed by uniqueId so it
@@ -84,7 +86,7 @@ public:
     QNetworkReply* resumeAppAsync(const NvAddress& address, quint16 httpsPort,
                                   const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                   const QByteArray& clientCertPem, const QByteArray& clientKeyPem,
-                                  int localAudioPlayMode = 0);
+                                  int localAudioPlayMode = 0, int timeoutMs = 0);
 
     // uniqueId empty → falls back to the shared Moonlight unique ID.
     QNetworkReply* quitAppAsync(const NvAddress& address, quint16 httpsPort,

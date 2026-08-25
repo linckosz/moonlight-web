@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "server/NetClassify.h"
+
 #include <QObject>
 #include <QWebSocketServer>
 #include <QWebSocket>
@@ -130,7 +132,10 @@ private:
     /// Send ICE server configuration to the browser as {type:"ice-config"}.
     /// Called in onNewWsConnection() so the browser knows which STUN server
     /// to use for its RTCPeerConnection, overriding the hardcoded default.
-    void sendIceConfig();
+    /// Send the browser its ICE servers and the ICE deadline it must run.
+    /// @param iceTimeoutMs the deadline both ends apply, so the browser does
+    ///        not abandon an attempt the host is still nursing.
+    void sendIceConfig(int iceTimeoutMs);
 
     /// Handle text messages received on the WS in fallback mode.
     /// These are input commands (keydown, mousemove, etc.) from the browser.
@@ -182,12 +187,21 @@ public:
     /// Called before start() to set the preference from settings.
     void setUseUPnP(bool enable) { m_UseUPnP = enable; }
 
-    /// Whether the streaming client is on our LAN (loopback/RFC1918, incl. a
-    /// NAT-hairpinned client on the public URL). When true and UPnP rewrites host
-    /// candidates to the public IP, the relay also advertises the private LAN
-    /// candidate so the local client can connect directly. Never set for internet
-    /// clients — avoids leaking the LAN IP.
-    void setClientIsLocal(bool local) { m_ClientIsLocal = local; }
+    /// Where the streaming client actually sits, classified from the browser's
+    /// own address by whoever accepted the /start request.
+    ///
+    /// It must be told: the signaling WebSocket reaches us through the local
+    /// HTTP proxy, so this server only ever sees 127.0.0.1 and classifying the
+    /// socket peer would call every client — a phone on 4G included — loopback.
+    /// That is what stripped internet sessions of their STUN server and left
+    /// them with a single UPnP candidate to connect through.
+    ///
+    /// Two decisions read it, and they are not the same question:
+    ///  - isPrivateOrLoopback → do we need STUN? A mesh VPN peer says yes, so
+    ///    its srflx address survives if the tunnel path fails.
+    ///  - isTrustedPeer → may we show it our internal host candidate? A mesh
+    ///    VPN peer says yes too; a public peer never does, or the LAN leaks.
+    void setClientKind(NetClassify::Kind kind) { m_ClientKind = kind; }
 
     // ── MW-BIND-v1 (docs/design/pairing-signature.md) ──────────────────────
     //
@@ -257,7 +271,7 @@ private:
     /// concurrent workers off each other's port; slot 0 keeps 48010. See
     /// setMediaPort().
     quint16 m_MediaPort = kUpnpPort;
-    bool m_ClientIsLocal = false; // Streaming client is on our LAN (see setClientIsLocal)
+    NetClassify::Kind m_ClientKind = NetClassify::Kind::Public; // see setClientKind
     UPNPClient* m_Upnp = nullptr;
     uint16_t m_UpnpMappedPort = 0;
     QString m_UpnpPublicIP;

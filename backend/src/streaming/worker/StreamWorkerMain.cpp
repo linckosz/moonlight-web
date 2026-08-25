@@ -221,7 +221,9 @@ int runStreamWorker(QCoreApplication& app)
     session->setBackend(backend);
     session->setClientUniqueId(cfg["clientUniqueId"].toString());
     session->setPreferResume(cfg["preferResume"].toBool(false));
-    session->setClientIsLocal(cfg["clientIsLocal"].toBool());
+    // Absent (an older parent) → Public: the conservative reading, since every
+    // non-Public verdict grants something.
+    session->setClientKind(NetClassify::fromString(cfg["clientKind"].toString()));
     // MW-BIND-v1 material, arriving on stdin rather than the command line so the
     // host private key never shows up in the process list.
     session->setPairingIdentity(

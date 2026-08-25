@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QNetworkReply>
 #include <QUrl>
@@ -26,6 +27,7 @@
 #include "InputPolicy.h"
 #include "StreamConfig.h"
 #include "../common/Types.h"
+#include "../server/NetClassify.h"
 
 #include "../backend/streambackend/IStreamBackend.h"
 
@@ -92,11 +94,12 @@ public:
 
     void setExplicitWsUrl(const QString& url) { m_ExplicitWsUrl = url; }
 
-    /// Whether the streaming client is on our LAN (loopback/RFC1918, incl. a
-    /// NAT-hairpinned client reaching us via the public URL). Forwarded to the
-    /// SignalingServer so the relay may advertise the private LAN ICE candidate
-    /// to a local client without leaking it to internet peers.
-    void setClientIsLocal(bool local) { m_ClientIsLocal = local; }
+    /// Where the streaming client sits, classified from the browser's own
+    /// address. Forwarded to the SignalingServer, which cannot work it out for
+    /// itself — it only sees the loopback end of the local WebSocket proxy.
+    /// Drives both the ICE-server choice and whether the private LAN candidate
+    /// may be advertised. See SignalingServer::setClientKind.
+    void setClientKind(NetClassify::Kind kind) { m_ClientKind = kind; }
 
     /// MW-BIND-v1 material, forwarded to the SignalingServer of whichever relay
     /// this session ends up using. See SignalingServer::setPairingIdentity and
@@ -196,6 +199,12 @@ private:
     /// Everything a launch/resume needs, gathered from this session.
     LaunchRequest buildLaunchRequest() const;
 
+    /// Deadline for the launch/resume about to be sent, carved out of a budget
+    /// shared by every attempt this session makes. Call once per attempt, after
+    /// the attempt's own flag is set — the reserve it keeps depends on whether
+    /// the cancel-and-retry is still on the table.
+    int launchTimeoutMs();
+
     /// Effective Sunshine uniqueid (m_ClientUniqueId or the shared id).
     QString effectiveUniqueId() const;
 
@@ -256,13 +265,31 @@ private:
     /// A /launch that TIMES OUT means Sunshine still holds a stale session; we
     /// /cancel and relaunch exactly once. This guards that single retry.
     bool m_LaunchTimeoutRetried = false;
+
+    // ── Launch budget ────────────────────────────────────────────────────────
+    //
+    // The browser gives up on /start after 25s (BackendClient.launchApp) and
+    // relaunches, which takes this slot over and kills the worker mid-request.
+    // Two back-to-back 20s attempts overran that by 15s: against a host that
+    // had stopped answering /launch entirely, the browser had already started a
+    // second worker — itself good for another 40s — while the first was still
+    // waiting. Every attempt now draws from one budget that ends first.
+    static constexpr int kLaunchBudgetMs = 21000;
+    /// Held back from the first attempt so the /cancel and the relaunch that a
+    /// timeout triggers still fit inside the budget.
+    static constexpr int kLaunchRetryReserveMs = 11000;
+    /// Floor for a single attempt: below this a healthy but slow host would be
+    /// cut off mid-answer.
+    static constexpr int kLaunchMinTimeoutMs = 4000;
+    /// Starts on the first attempt; measures the whole launch step.
+    QElapsedTimer m_LaunchBudget;
     QString m_SessionUrl;
 
     /// If non-empty, overrides SignalingServer::wsUrl() in the /start response.
     QString m_ExplicitWsUrl;
 
-    /// Streaming client is on our LAN (see setClientIsLocal).
-    bool m_ClientIsLocal = false;
+    /// Where the streaming client sits (see setClientKind).
+    NetClassify::Kind m_ClientKind = NetClassify::Kind::Public;
     QString m_MwBindHostId;
     QByteArray m_MwBindHostKey;
     QByteArray m_MwBindBrowserKey;

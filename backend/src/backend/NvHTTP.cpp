@@ -245,7 +245,7 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
                                       int width, int height, int fps, int bitrate,
                                       const QByteArray& clientCertPem,
                                       const QByteArray& clientKeyPem, int hdrMode,
-                                      int localAudioPlayMode)
+                                      int localAudioPlayMode, int timeoutMs)
 {
     Q_UNUSED(bitrate) // sent via RTSP ANNOUNCE, not /launch
     QString mode = QString("%1x%2x%3").arg(width).arg(height).arg(fps);
@@ -268,7 +268,7 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
     qDebug() << "[NvHTTP] launchApp URL:" << url.toString();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(LAUNCH_TIMEOUT_MS);
+    req.setTransferTimeout(timeoutMs > 0 ? timeoutMs : LAUNCH_TIMEOUT_MS);
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();
@@ -287,7 +287,8 @@ QNetworkReply* NvHTTP::launchAppAsync(const NvAddress& address, quint16 httpsPor
 QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPort,
                                       const QString& uniqueId, const QByteArray& rikey, int rikeyid,
                                       const QByteArray& clientCertPem,
-                                      const QByteArray& clientKeyPem, int localAudioPlayMode)
+                                      const QByteArray& clientKeyPem, int localAudioPlayMode,
+                                      int timeoutMs)
 {
     QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QString uid = uniqueId.isEmpty() ? IdentityManager::get()->getUniqueId() : uniqueId;
@@ -306,7 +307,7 @@ QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPor
     qDebug() << "[NvHTTP] resumeApp URL:" << url.toString();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(LAUNCH_TIMEOUT_MS); // resume blocks like launch
+    req.setTransferTimeout(timeoutMs > 0 ? timeoutMs : LAUNCH_TIMEOUT_MS); // resume blocks like launch
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();

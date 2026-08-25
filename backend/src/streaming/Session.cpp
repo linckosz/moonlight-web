@@ -203,13 +203,33 @@ LaunchRequest StreamSession::buildLaunchRequest() const
     return req;
 }
 
+int StreamSession::launchTimeoutMs()
+{
+    if (!m_LaunchBudget.isValid()) m_LaunchBudget.start();
+
+    // The cancel-and-retry in onLaunchResult() fires only for a timed-out
+    // /launch that has not already retried and has not fallen back to /resume.
+    // While it is still possible, keep its share of the budget back; once it is
+    // gone this attempt may spend everything that is left.
+    const bool retryAvailable =
+        m_LaunchAttempted && !m_ResumeAttempted && !m_LaunchTimeoutRetried;
+    const qint64 left = kLaunchBudgetMs - m_LaunchBudget.elapsed() -
+                        (retryAvailable ? kLaunchRetryReserveMs : 0);
+
+    return static_cast<int>(qBound<qint64>(qint64{kLaunchMinTimeoutMs}, left,
+                                          qint64{NvHTTP::LAUNCH_TIMEOUT_MS}));
+}
+
 void StreamSession::doResumeApp()
 {
     qInfo() << "[Session] Resuming session on" << m_Host->name << "appid=" << m_AppId;
     m_ResumeAttempted = true;
 
+    LaunchRequest req = buildLaunchRequest();
+    req.timeoutMs = launchTimeoutMs();
+
     QPointer<StreamSession> self(this);
-    m_Backend->resume(m_Host->uuid, buildLaunchRequest(),
+    m_Backend->resume(m_Host->uuid, req,
                       [self](bool ok, const BackendError& err, const MediaDescriptor& media) {
                           // The backend answers through a plain std::function, which
                           // — unlike a Qt connection — does not detach when this
@@ -230,8 +250,11 @@ void StreamSession::doLaunchApp()
 
     m_LaunchAttempted = true;
 
+    LaunchRequest req = buildLaunchRequest();
+    req.timeoutMs = launchTimeoutMs();
+
     QPointer<StreamSession> self(this);
-    m_Backend->launch(m_Host->uuid, buildLaunchRequest(),
+    m_Backend->launch(m_Host->uuid, req,
                       [self](bool ok, const BackendError& err, const MediaDescriptor& media) {
                           if (!self) return;
                           self->onLaunchResult(ok, err, media);
@@ -352,11 +375,20 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // rejection self-heal below cannot help — a timeout yields no answer to
         // read. Cancel our own session once, scoped to our uniqueid so it never
         // touches another client's, then relaunch. Bounded to a single retry.
+        //
+        // Only while the budget still affords it: a retry that runs past the
+        // browser's own /start deadline is worse than no retry, because the
+        // browser relaunches on top of it and both workers then wait on the
+        // same unresponsive host.
+        const bool budgetLeft =
+            m_LaunchBudget.isValid() &&
+            (kLaunchBudgetMs - m_LaunchBudget.elapsed()) >= kLaunchMinTimeoutMs;
         if (err.kind == BackendError::Timeout && m_LaunchAttempted && !m_ResumeAttempted &&
-            !m_LaunchTimeoutRetried) {
+            !m_LaunchTimeoutRetried && budgetLeft) {
             m_LaunchTimeoutRetried = true;
             qWarning() << "[Session] Launch timed out — cancelling stale session and retrying "
-                          "/launch once";
+                          "/launch once ("
+                       << (kLaunchBudgetMs - m_LaunchBudget.elapsed()) << "ms of budget left)";
             QPointer<StreamSession> self(this);
             m_Backend->quit(m_Host->uuid, effectiveUniqueId(),
                             [self](bool, const BackendError&) {
@@ -600,7 +632,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
-        signaling->setClientIsLocal(m_ClientIsLocal);
+        signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
 
@@ -670,7 +702,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setStunServer(m_StunServer);
         signaling->setEnableIceTcp(m_EnableIceTcp);
         signaling->setAllowWsFallback(!m_AutoMode);
-        signaling->setClientIsLocal(m_ClientIsLocal);
+        signaling->setClientKind(m_ClientKind);
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
 

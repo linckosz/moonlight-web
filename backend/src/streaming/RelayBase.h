@@ -41,6 +41,25 @@ class RelayBase : public QObject
     Q_OBJECT
 
 public:
+    // ── ICE connectivity deadline ───────────────────────────────────────────
+    //
+    /// How long ICE may take to reach Connected after setRemoteDescription()
+    /// before the transport is declared dead and the fallback chain moves on.
+    ///
+    /// Sized from where the peer is. On loopback/LAN a candidate pair is
+    /// checked in a couple of round trips. A public peer has to punch through
+    /// two NATs, and its checks carry STUN's retransmit backoff — 3s expired
+    /// mid-handshake and killed sessions whose video was already flowing,
+    /// leaving the host to tear down a stream it had just started (and, on
+    /// Sunshine, to stop answering /launch for minutes afterwards).
+    ///
+    /// Public because the browser runs the very same deadline on its own side
+    /// and must be told which one applies: whichever end fires first ends the
+    /// attempt, so a host that waits 10s while the browser gives up at 3s has
+    /// gained nothing. SignalingServer ships the value in its ice-config.
+    static constexpr int kIceTimeoutLocalMs = 3000;
+    static constexpr int kIceTimeoutInternetMs = 10000;
+
     explicit RelayBase(QObject* parent = nullptr)
         : QObject(parent)
     {}
@@ -132,6 +151,11 @@ protected:
     /// thread, read-only afterwards — same lifetime discipline as
     /// m_ClipboardEnabled.
     InputMsg::Policy m_InputPolicy;
+
+    // ── ICE connectivity deadline ───────────────────────────────────────────
+    /// Set by prepare() from the peer classification; read by
+    /// setRemoteDescription() when it arms the timer.
+    int m_IceTimeoutMs = kIceTimeoutLocalMs;
 
     // ── UPnP NAT traversal ──────────────────────────────────────────────────
     std::string m_PublicIP;    ///< Public IP discovered via UPnP (or empty)
