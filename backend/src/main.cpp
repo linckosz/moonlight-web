@@ -1948,8 +1948,10 @@ int main(int argc, char* argv[])
         // untouched: the frontend relies on it for quality switches and
         // transport fallback.
         bool backendIsMultiUser = false;
+        bool backendIsWolf = false;
         if (auto probe = computerManager.backendForHost(uuid)) {
             backendIsMultiUser = probe->capabilities().multiUser;
+            backendIsWolf = probe->type() == QLatin1String("wolf");
         }
         // The pool stores the raw request value, so compare against the same.
         const QString reqDevice = body["client_uniqueid"].toString();
@@ -2152,6 +2154,22 @@ int main(int argc, char* argv[])
 
         // Mobile clients request lower-bandwidth audio (10ms Opus frames).
         bool reqLowAudio = body.contains("low_audio") && body["low_audio"].toBool();
+
+        // ...but never on Wolf. The 10ms request rides on
+        // CAPABILITY_SLOW_OPUS_DECODER, which moonlight-common-c also reads as
+        // "skip the high-quality-audio path" — and that path is the only one
+        // that keeps the server's rtspSessionUrl. Without it the RTSP target
+        // becomes 0.0.0.0, discarding the per-session address Wolf hands out to
+        // tell concurrent sessions apart. Wolf then falls back to matching on
+        // source IP, which every session shares here (they all reach it through
+        // this backend), so a phone lands on somebody else's session: it never
+        // starts, and it freezes theirs. RAF: drop this once moonlight-common-c
+        // honours a server-provided rtspSessionUrl regardless of audio flags.
+        if (reqLowAudio && backendIsWolf) {
+            qInfo() << "[Session] Wolf backend — ignoring low_audio so the RTSP "
+                       "session URL survives (concurrent sessions would collide)";
+            reqLowAudio = false;
+        }
 
         // Mute host PC speakers while streaming (localAudioPlayMode). Default true.
         bool reqMuteHost = body.contains("mute_host_audio") ? body["mute_host_audio"].toBool()
