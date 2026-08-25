@@ -17,8 +17,10 @@
 
 #include "SessionPool.h"
 
-SessionPool::SessionPool(quint16 signalingBasePort, int reservedSlots, int maxSlots)
+SessionPool::SessionPool(quint16 signalingBasePort, quint16 extraSlotBasePort, int reservedSlots,
+                         int maxSlots)
     : m_SignalingBase(signalingBasePort)
+    , m_ExtraSlotBase(extraSlotBasePort)
     , m_Reserved(reservedSlots < 0 ? 0 : reservedSlots)
     , m_Max(maxSlots < m_Reserved ? m_Reserved : maxSlots)
 {
@@ -29,7 +31,11 @@ SessionPool::SessionPool(quint16 signalingBasePort, int reservedSlots, int maxSl
 
 quint16 SessionPool::signalingPort(int index) const
 {
-    return static_cast<quint16>(m_SignalingBase + 10 * index);
+    // Slot 0 keeps the historical base (its relay is the port above, the
+    // control channel the one after that). The rest live two ports apart in
+    // their own block, which the caller placed clear of the media range.
+    if (index <= 0) return m_SignalingBase;
+    return static_cast<quint16>(m_ExtraSlotBase + 2 * (index - 1));
 }
 
 QString SessionPool::wsPath(int index)
@@ -79,16 +85,31 @@ bool SessionPool::inUse(int index) const
     return !s.worker.isNull() || !s.clientUniqueId.isEmpty() || !s.sessionToken.isEmpty();
 }
 
-int SessionPool::acquire()
+void SessionPool::setOnSlotCreated(std::function<void(int)> fn)
 {
-    for (int i = m_Reserved; i < m_Slots.size(); ++i) {
-        if (!inUse(i)) return i;
-    }
+    m_OnSlotCreated = std::move(fn);
+}
 
+int SessionPool::appendSlot()
+{
     if (m_Slots.size() >= m_Max) return -1;
 
     m_Slots.append(Slot{});
-    return m_Slots.size() - 1;
+    const int index = m_Slots.size() - 1;
+    // Announce before returning: the caller wires the slot's proxy route here,
+    // and acquire() may hand this very index out on the next line.
+    if (m_OnSlotCreated) m_OnSlotCreated(index);
+    return index;
+}
+
+int SessionPool::acquire()
+{
+    // A released slot comes back before a new one is created: indices are part
+    // of the contract with the frontend (/wsN) and stay as few as possible.
+    for (int i = m_Reserved; i < m_Slots.size(); ++i) {
+        if (!inUse(i)) return i;
+    }
+    return appendSlot();
 }
 
 void SessionPool::release(int index)

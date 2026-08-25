@@ -22,12 +22,22 @@
 #include <QString>
 #include <QVector>
 
+#include <functional>
+
 // Bookkeeping for the concurrent stream worker slots.
 //
-// A slot index is not an implementation detail: it picks the signaling port
-// (base + 10 * index) and the WebSocket path the browser connects to (/ws,
-// /ws1, /ws2…), so indices are part of the contract with the frontend and are
-// reused rather than handed out freely.
+// A slot index is not an implementation detail: it picks the slot's signaling
+// port and the WebSocket path the browser connects to (/ws, /ws1, /ws2…), so
+// indices are part of the contract with the frontend and are reused rather
+// than handed out freely.
+//
+// Port layout. Slot 0 keeps its historical pair — the signaling base and the
+// port above it — with the control channel just after. Every other slot takes
+// two consecutive ports from a second base, so the whole range stays compact:
+// the old "base + 10 * index" spacing spent ten ports to use two, ran into the
+// media range (48010 + slot) after a couple of slots, and hit the ports
+// reserved above 48100 at slot ten. Caller picks that second base; see
+// planSlotPorts() in main.cpp, which places it clear of the media block.
 //
 // The first `reservedSlots` indices keep their historical meaning — 0 is the
 // owner's primary stream, 1 the standby used for seamless quality switching —
@@ -64,7 +74,12 @@ public:
         QString coopSessionId;
     };
 
-    SessionPool(quint16 signalingBasePort, int reservedSlots, int maxSlots);
+    /// @param signalingBasePort slot 0's signaling port (its relay takes the
+    ///        next one, the control channel the one after).
+    /// @param extraSlotBasePort signaling port of slot 1; every slot above it
+    ///        follows two ports apart. Must be placed clear of the media range.
+    SessionPool(quint16 signalingBasePort, quint16 extraSlotBasePort, int reservedSlots,
+                int maxSlots);
 
     int size() const { return m_Slots.size(); }
     int reservedSlots() const { return m_Reserved; }
@@ -87,7 +102,8 @@ public:
         return isValid(index) ? qobject_cast<T*>(m_Slots[index].worker.data()) : nullptr;
     }
 
-    // signaling = base + 10 * index; the relay takes the next port up.
+    // Slot 0: the signaling base. Slot N: extraSlotBase + 2 * (N - 1). The
+    // relay always takes the next port up.
     quint16 signalingPort(int index) const;
     static QString wsPath(int index);
 
@@ -106,6 +122,16 @@ public:
     // Lowest free index at or above reservedSlots, reusing released ones.
     // Returns -1 when every slot up to maxSlots is taken.
     int acquire();
+
+    // Called once for every slot the pool creates. Reserved slots never reach
+    // it — they exist before anyone can install this — so wire it before the
+    // first acquire(): it is where the caller registers the slot's proxy route.
+    //
+    // No slot is prepared ahead of need, and none has to be: acquire() runs
+    // inside the launch request, so the route is registered before the response
+    // that tells the browser which /wsN to open. Nothing here is asynchronous,
+    // and a slot costs nothing until a worker is attached to it.
+    void setOnSlotCreated(std::function<void(int slot)> fn);
     // Clears the slot so acquire() can hand the index out again. Does not touch
     // the worker object itself — ownership stays with the caller.
     void release(int index);
@@ -116,9 +142,13 @@ public:
 
 private:
     bool inUse(int index) const;
+    // Appends one slot and announces it. Returns its index, or -1 at maxSlots.
+    int appendSlot();
 
     QVector<Slot> m_Slots;
     quint16 m_SignalingBase;
+    quint16 m_ExtraSlotBase;
     int m_Reserved;
     int m_Max;
+    std::function<void(int)> m_OnSlotCreated;
 };
