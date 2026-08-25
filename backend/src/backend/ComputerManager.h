@@ -165,8 +165,11 @@ public:
     void handleGetAppList(const QString& uuid, const QString& deviceSessionId,
                           ResponseCallback respond);
 
-    // Box art — proxy PNG from Sunshine, async (fetches on demand if not cached)
-    void handleGetBoxArt(const QString& uuid, int appId, ResponseCallback respond);
+    // Box art — proxy PNG from Sunshine, async (fetches on demand if not cached).
+    // ifNoneMatch carries the request's If-None-Match so an unchanged image is
+    // answered with a bodyless 304 instead of re-sending the PNG.
+    void handleGetBoxArt(const QString& uuid, int appId, const QString& ifNoneMatch,
+                         ResponseCallback respond);
 
     // Unique client ID, persisted in QSettings
     static QString clientUniqueId();

@@ -521,6 +521,7 @@
         "launching": "Launching {{name}}...",
         "started": "{{name}} started",
         "failed": "Launch failed",
+        "appGone": "“{{name}}” is no longer on this host — the list has been refreshed",
         "timeout": "Server not responding — launch cancelled",
         "hevcH264Unsupported": "HEVC and H.264 both unsupported by browser",
         "hdrFallback": "HDR unavailable — switched to {{to}} without HDR"

@@ -279,6 +279,8 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
                 return;
             }
 
-            computerManager.handleGetBoxArt(uuid, appId, std::move(respond));
+            computerManager.handleGetBoxArt(uuid, appId,
+                                            req.headers.value(QStringLiteral("if-none-match")),
+                                            std::move(respond));
         });
 }

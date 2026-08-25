@@ -521,6 +521,7 @@
         "launching": "Lancement de {{name}}...",
         "started": "{{name}} démarré",
         "failed": "Échec du lancement",
+        "appGone": "« {{name}} » n'est plus sur cet hôte — la liste a été actualisée",
         "timeout": "Le serveur ne répond pas — démarrage annulé",
         "hevcH264Unsupported": "HEVC et H.264 non pris en charge par le navigateur",
         "hdrFallback": "HDR indisponible — bascule en {{to}} sans HDR"

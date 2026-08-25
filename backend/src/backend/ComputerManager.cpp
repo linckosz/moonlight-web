@@ -43,6 +43,7 @@
 #include <QNetworkProxy>
 #include <QRandomGenerator>
 #include <QPointer>
+#include <QCryptographicHash>
 #include <QEventLoop>
 #include <QTimer>
 #include <QUuid>
@@ -1757,17 +1758,47 @@ void ComputerManager::onPairCheckFinished()
 
 // --- Box Art -----------------------------------------------------------------
 
-void ComputerManager::handleGetBoxArt(const QString& uuid, int appId, ResponseCallback respond)
+// Box art is the slowest thing on a host card: each PNG is a separate HTTPS
+// round trip to Sunshine, serialized one at a time per host, so a ten-app grid
+// fills in over several seconds. Nothing about a cover changes between visits
+// (a new cover comes with a new appid, hence a new URL), so the browser is
+// allowed to keep it: a validator plus a day of freshness turns every later
+// page load into zero requests, and the day after into a bodyless 304 served
+// from RAM. `private` keeps it out of shared caches — the grid says which games
+// a host has.
+static QString boxArtETag(const QByteArray& png)
+{
+    return QStringLiteral("\"%1\"").arg(QString::fromLatin1(
+        QCryptographicHash::hash(png, QCryptographicHash::Md5).toHex()));
+}
+
+static void applyBoxArtCacheHeaders(HttpResponse& resp, const QString& etag)
+{
+    resp.headers["ETag"] = etag;
+    resp.headers["Cache-Control"] = "private, max-age=86400";
+}
+
+void ComputerManager::handleGetBoxArt(const QString& uuid, int appId, const QString& ifNoneMatch,
+                                      ResponseCallback respond)
 {
     // Serve from cache if available
     auto hostIt = m_BoxArtCache.find(uuid);
     if (hostIt != m_BoxArtCache.end()) {
         auto artIt = hostIt->find(appId);
         if (artIt != hostIt->end()) {
+            const QString etag = boxArtETag(*artIt);
+            if (!ifNoneMatch.isEmpty() && ifNoneMatch.contains(etag)) {
+                HttpResponse notModified;
+                notModified.statusCode = 304;
+                applyBoxArtCacheHeaders(notModified, etag);
+                respond(notModified);
+                return;
+            }
             HttpResponse resp;
             resp.statusCode = 200;
             resp.contentType = "image/png";
             resp.body = *artIt;
+            applyBoxArtCacheHeaders(resp, etag);
             respond(resp);
             return;
         }
@@ -1885,6 +1916,7 @@ void ComputerManager::onBoxArtFetchComplete(const QString& uuid, int appId, bool
             resp.statusCode = 200;
             resp.contentType = "image/png";
             resp.body = pngData;
+            applyBoxArtCacheHeaders(resp, boxArtETag(pngData));
             cb(resp);
         } else {
             cb(HttpResponse::error(502, "Failed to fetch box art"));

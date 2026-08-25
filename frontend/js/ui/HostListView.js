@@ -35,6 +35,12 @@ import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import {
+    loadCachedApps,
+    saveCachedApps,
+    forgetCachedApps,
+    appsSignature,
+} from '../util/appCache.js';
 
 /**
  * Update progress is driven by a local animation, not by the poll samples.
@@ -81,9 +87,12 @@ export class HostListView {
         this.pollTimer = null;
         this.eventsBound = false;
         this.onLaunchApp = null; // called with (host, app) when an app card is clicked
-        // Per-host app cache:
-        //   { apps: App[] }              → loaded
-        //   { loading: true }            → request in flight
+        // Per-host app state. `apps` is what the grid paints, and it can be on
+        // screen while a fetch is still in flight — that is the whole point of
+        // the remembered list:
+        //   { apps: App[] }              → loaded from the host
+        //   { apps, fromCache: true }    → last visit's list, not yet confirmed
+        //   { pending: Promise }         → request in flight (may carry apps too)
         //   { error, sticky: true }      → definitive rejection (not paired / not found)
         //   { error }                    → transient failure (unreachable) → auto-retried
         this.appsByHost = {};
@@ -292,6 +301,7 @@ export class HostListView {
                     .then(() => {
                         this.hosts = this.hosts.filter((h) => h.uuid !== uuid);
                         delete this.appsByHost[uuid];
+                        forgetCachedApps(uuid);
                         this.renderList();
                     })
                     .catch((err) => {
@@ -966,46 +976,97 @@ export class HostListView {
 
     // --- Per-host app loading ---
 
-    // Ensure the app grid for an available host is loaded and painted into its
-    // card. Uses a dataset flag so a re-render (host poll) never repaints an
-    // already-filled grid and clobbers a launching card.
+    /**
+     * What `appsByHost[uuid]` holds. Every field is optional on purpose: a grid
+     * can carry a remembered list AND a request in flight at the same time.
+     * @typedef {Object} AppsEntry
+     * @property {App[]} [apps] the list the grid paints
+     * @property {boolean} [fromCache] painted from the last visit, unconfirmed
+     * @property {Promise<AppsEntry>} [pending] fetch in flight
+     * @property {string} [error]
+     * @property {boolean} [sticky] the error is definitive — don't retry
+     */
+
+    // Ensure the app grid for an available host is on screen, and current.
+    //
+    // The list this browser saw last time is painted immediately — the host is
+    // "ready", so its apps show up with the card rather than a few seconds of
+    // spinner later — and the real fetch runs behind it, repainting only if the
+    // host disagrees. A host never seen before still gets the spinner, because
+    // there is genuinely nothing to show yet.
+    //
+    // The dataset flags say what is currently painted, so a re-render (host
+    // poll) never repaints an identical grid and clobbers a launching card.
     _ensureAppsLoaded(host) {
         const uuid = host.uuid;
         const cont = this.container.querySelector(`.host-card[data-uuid="${uuid}"] .host-apps`);
         if (!cont) return;
 
-        const entry = this.appsByHost[uuid];
+        let entry = this.appsByHost[uuid];
 
-        // A definitive result (apps, or a permanent "not paired" / "not found"
-        // rejection) is cached — paint it (cheap) and stop. Transient errors
-        // deliberately fall through so a recovered host reloads on its own
-        // instead of staying wedged behind a red banner until a manual reload.
+        // First sight of this host in this session: adopt what the last visit
+        // saw so there is something to draw right now.
+        if (!entry) {
+            const remembered = loadCachedApps(uuid);
+            if (remembered) {
+                entry = { apps: remembered.map((a) => new App(a, uuid)), fromCache: true };
+                this.appsByHost[uuid] = entry;
+            }
+        }
+
+        // Something definitive to paint (apps, or a permanent "not paired" /
+        // "not found" rejection). Transient errors deliberately fall through so
+        // a recovered host reloads on its own instead of staying wedged behind a
+        // red banner until a manual reload.
         if (entry && (entry.apps || entry.sticky)) {
             if (cont.dataset.loaded !== '1') {
                 this._paintApps(cont, entry);
-                cont.dataset.loaded = '1';
             }
+            // A remembered list is shown on trust, never kept on trust: confirm
+            // it against the host once, with no spinner over the grid that is
+            // already there.
+            if (entry.apps && entry.fromCache) this._refreshApps(uuid);
             return;
         }
-        if (entry && entry.loading) return; // request in flight, placeholder shown
+        if (entry && entry.pending) return; // request in flight, placeholder shown
 
         cont.innerHTML = `<div class="host-apps-loading">${t('apps.loading')}</div>`;
         cont.dataset.loaded = '';
-        this.appsByHost[uuid] = { loading: true };
-        BackendClient.getAppList(uuid)
+        this._refreshApps(uuid);
+    }
+
+    /**
+     * Ask the host for its app list and reconcile the grid with the answer.
+     *
+     * Runs both as the very first load (spinner on screen) and as the silent
+     * confirmation behind a remembered list, which is why it never paints a
+     * spinner of its own and never tears down a grid it cannot replace.
+     *
+     * @returns {Promise<object>} the settled entry for this host — apps when the
+     *          host answered, an error marker otherwise. One request at a time
+     *          per host: a second caller joins the one in flight.
+     */
+    _refreshApps(uuid) {
+        const prev = this.appsByHost[uuid];
+        if (prev && prev.pending) return prev.pending;
+
+        // Keep any list already on screen while the request runs.
+        const entry = prev && prev.apps ? prev : {};
+        this.appsByHost[uuid] = entry;
+
+        const pending = BackendClient.getAppList(uuid)
             .then((data) => {
                 if (data && data.status === 'ok') {
-                    this.appsByHost[uuid] = {
-                        apps: (data.apps || []).map((a) => new App(a, uuid)),
-                    };
-                } else {
-                    // The backend answered with a definitive rejection (host not
-                    // paired / not found) — retrying won't change the outcome.
-                    this.appsByHost[uuid] = {
-                        error: (data && data.message) || 'load_failed',
-                        sticky: true,
-                    };
+                    const raw = data.apps || [];
+                    saveCachedApps(uuid, raw);
+                    return /** @type {AppsEntry} */ ({ apps: raw.map((a) => new App(a, uuid)) });
                 }
+                // The backend answered with a definitive rejection (host not
+                // paired / not found) — retrying won't change the outcome.
+                return /** @type {AppsEntry} */ ({
+                    error: (data && data.message) || 'load_failed',
+                    sticky: true,
+                });
             })
             .catch((err) => {
                 // Network error / timeout / 5xx: the host is momentarily
@@ -1014,27 +1075,77 @@ export class HostListView {
                 // active address). Keep it transient and schedule an auto-retry
                 // so the card self-heals without a manual page reload.
                 console.error('[MW] Failed to load app list:', err);
-                this.appsByHost[uuid] = { error: err.message };
+                return /** @type {AppsEntry} */ ({ error: err.message });
             })
-            .finally(() => {
-                if (this._destroyed) return;
-                const c2 = this.container.querySelector(
+            .then((result) => {
+                if (this._destroyed) return result;
+                const current = this.appsByHost[uuid];
+                const shown = current && current.apps ? current.apps : null;
+
+                // A transient failure must not cost the user the grid they can
+                // see: keep the remembered list up and retry behind it.
+                if (result.error && !result.sticky && shown) {
+                    this.appsByHost[uuid] = { apps: shown, fromCache: current.fromCache };
+                    this._scheduleAppsRetry(uuid);
+                    return this.appsByHost[uuid];
+                }
+
+                this.appsByHost[uuid] = result;
+
+                const cont = this.container.querySelector(
                     `.host-card[data-uuid="${uuid}"] .host-apps`,
                 );
-                if (!c2) return;
-                const e2 = this.appsByHost[uuid];
-                const transient = e2 && !e2.apps && !e2.sticky;
-                if (transient) {
-                    // Keep the loading spinner (not the red error) while a retry
-                    // is pending, then re-attempt shortly.
-                    c2.innerHTML = `<div class="host-apps-loading">${t('apps.loading')}</div>`;
-                    c2.dataset.loaded = '';
+                if (!cont) return result;
+
+                if (result.error && !result.sticky) {
+                    // Nothing to fall back on — keep the spinner (not the red
+                    // error) while a retry is pending, then re-attempt shortly.
+                    cont.innerHTML = `<div class="host-apps-loading">${t('apps.loading')}</div>`;
+                    cont.dataset.loaded = '';
                     this._scheduleAppsRetry(uuid);
-                } else {
-                    this._paintApps(c2, e2);
-                    c2.dataset.loaded = '1';
+                    return result;
                 }
+
+                // Repaint only on a real difference. A confirmation that agrees
+                // with the remembered list must be invisible — repainting every
+                // grid on every visit is the flash this whole path exists to
+                // avoid — and a launching card would not survive it.
+                const sig = result.apps ? appsSignature(result.apps) : '';
+                const unchanged = cont.dataset.loaded === '1' && cont.dataset.appsSig === sig;
+                if (!unchanged && !cont.querySelector('.app-card--launching')) {
+                    this._paintApps(cont, result);
+                }
+                return result;
             });
+
+        entry.pending = pending;
+        // Clear the in-flight marker on the entry that is current by then — the
+        // handlers above may well have replaced it.
+        pending.finally(() => {
+            const settled = this.appsByHost[uuid];
+            if (settled) delete settled.pending;
+        });
+        return pending;
+    }
+
+    /**
+     * Whether an app the user just tried to launch still exists on its host.
+     *
+     * A card can be painted from the list this browser remembered, and the app
+     * behind it may have been removed in Sunshine since — a launch then fails
+     * like any other failure, with nothing saying why. So a failed launch
+     * re-asks the host: the answer both repaints the grid (the dead card
+     * disappears on its own) and tells the caller what to say.
+     *
+     * Answers `true` whenever it cannot tell — an unreachable host is not
+     * evidence that the app is gone, and blaming the app there would be worse
+     * than the generic message.
+     */
+    async confirmAppExists(host, app) {
+        if (!host || !app) return true;
+        const entry = await this._refreshApps(host.uuid);
+        if (!entry || !entry.apps) return true;
+        return entry.apps.some((a) => a.id === app.id);
     }
 
     // Auto-retry an app-list fetch that failed transiently (unreachable host).
@@ -1048,15 +1159,24 @@ export class HostListView {
             const host = this.hosts.find((h) => h.uuid === uuid);
             if (!host || !host.isAvailable) return;
             const entry = this.appsByHost[uuid];
-            // Only retry if still stuck on a transient error.
-            if (entry && !entry.apps && !entry.sticky && !entry.loading) {
+            if (!entry || entry.sticky || entry.pending) return;
+            // A remembered list still on screen is refreshed in place; a card
+            // stuck on the spinner goes back through the full load.
+            if (entry.apps) {
+                this._refreshApps(uuid);
+            } else {
                 delete this.appsByHost[uuid]; // clear transient error → re-fetch
                 this._ensureAppsLoaded(host);
             }
         }, HostListView.APP_LIST_RETRY_MS);
     }
 
+    // Paints the grid AND records what is on screen: `loaded` says the container
+    // holds a definitive result, `appsSig` says which one, so a later refresh can
+    // tell "same list" from "the host changed something".
     _paintApps(cont, entry) {
+        cont.dataset.loaded = '1';
+        cont.dataset.appsSig = entry && entry.apps ? appsSignature(entry.apps) : '';
         if (!entry || entry.error) {
             cont.innerHTML = `<div class="host-apps-msg host-apps-error">${t('apps.loadFailed')}</div>`;
             return;
