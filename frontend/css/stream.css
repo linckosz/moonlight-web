@@ -79,6 +79,13 @@ body.streaming-active::after {
     flex-shrink: 0;
 }
 
+/* Header controls revealed only once the stream is really on screen
+   (see StreamView._revealStreamControls). Stop stays visible throughout — it
+   is the only way out while the connection is still being negotiated. */
+.stream-header .stream-ctl-prestart {
+    display: none;
+}
+
 .stream-status {
     display: flex;
     align-items: center;
@@ -481,13 +488,6 @@ body.streaming-active::after {
 .overlay-close-btn:hover {
     color: #fff;
     background: rgba(255, 255, 255, 0.12);
-}
-
-.stats-waiting {
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.4);
-    text-align: center;
-    white-space: nowrap;
 }
 
 .stats-line {
