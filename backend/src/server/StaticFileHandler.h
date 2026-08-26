@@ -35,6 +35,16 @@ public:
     HttpResponse serveFile(const QString& requestPath,
                            const QString& ifNoneMatch = QString()) const;
 
+    /// Every path this handler will serve, as request paths ("/js/app.js").
+    ///
+    /// It exists for the rendezvous tunnel. A browser reached that way has no
+    /// network route to this machine, so it cannot discover the application by
+    /// following links the way a browser normally does: it has to pull the whole
+    /// set down through the tunnel in one pass and keep it. Guessing that set by
+    /// parsing index.html would miss every module a script imports at runtime,
+    /// which is most of them.
+    QStringList listFiles() const;
+
 private:
     QString mimeType(const QString& path) const;
     static QMap<QString, QString> s_MimeTypes;

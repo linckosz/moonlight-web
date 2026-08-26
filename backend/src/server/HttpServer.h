@@ -137,6 +137,51 @@ public:
     /// or a loopback address (127.0.0.1, ::1, or any loopback).
     static bool isLocalRequest(const QString& addr);
 
+    /// How a request reached us.
+    ///
+    /// This distinction is load-bearing, not bookkeeping. The local exemption is
+    /// granted on the source address, and everything arriving through the
+    /// rendezvous tunnel is handed to us by a component running ON this machine
+    /// — so a naive implementation would hand every visitor on the internet the
+    /// privileges of the host's own desktop. That is the bug class already
+    /// documented above handleWebSocketUpgrade(), and §4.3 of the architecture
+    /// answers it with a rule rather than a heuristic: a request that came
+    /// through the tunnel never obtains the local exemption, whatever address it
+    /// appears to carry.
+    enum class Arrival
+    {
+        Socket, ///< accepted on one of our listening sockets
+        Tunnel, ///< carried in over a rendezvous control tunnel
+    };
+
+    /// Answer @p req and hand the response to @p respond, with no socket in
+    /// sight. Runs the same access decision, the same static-file fallback and
+    /// the same router as a socket request — deliberately, so the tunnel cannot
+    /// drift into a second, less-guarded copy of the pipeline.
+    ///
+    /// @p req must already carry clientAddress; for a tunnel it is a synthetic
+    /// label, since the browser's real address is known to the rendezvous server
+    /// and to nobody else.
+    void serveRequest(HttpRequest req, Arrival arrival, ResponseCallback respond);
+
+    /// Decide whether a WebSocket a tunnel peer asked for may be opened, and to
+    /// which local port. Returns 0 and fills @p outError otherwise.
+    ///
+    /// It lives here, beside the socket path's own gate, so the two cannot drift
+    /// — and it applies that gate MINUS every local exemption, for the reason
+    /// spelled out on Arrival. In practice that leaves the session cookie and
+    /// the player cookie: the same two credentials a remote visitor has always
+    /// needed. The Origin check the socket path performs is absent because it
+    /// would be theatre here: nothing but the bootstrap's own page holds the
+    /// data channel these frames arrive on.
+    quint16 authorizeTunnelWebSocket(const HttpRequest& req, QString* outError);
+
+    /// The security headers every answer carries, whichever way it leaves. The
+    /// tunnel needs them as much as a socket does: the page it serves IS the
+    /// document, so its Content-Security-Policy is the one the browser enforces.
+    /// @p hostHeader scopes connect-src to the origin the page was served from.
+    static QMap<QString, QString> securityHeaders(const QString& hostHeader);
+
     /// Set the AuthManager for PIN-based authentication of remote requests.
     void setAuthManager(AuthManager* am) { m_AuthManager = am; }
     AuthManager* authManager() const { return m_AuthManager; }
