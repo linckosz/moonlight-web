@@ -5532,9 +5532,18 @@ export class StreamView {
         // If no paste event follows (empty/non-text local clipboard), a short
         // timer forwards the swallowed keydown so host-side Ctrl+V still
         // pastes the HOST's own clipboard.
+        //
+        // Only the chord the LOCAL system pastes with can ever produce that
+        // native event: Cmd+V on Apple, Ctrl+V everywhere else. macOS fires
+        // nothing for Ctrl+V, so routing it through here bought a 150ms wait
+        // and a swallowed key-up for a paste event that was never coming —
+        // and the swallowed release left V held on the host, where typematic
+        // turned one paste into an endless one. Ctrl+V on a Mac is a plain
+        // keystroke again: the host pastes its own clipboard, immediately.
+        const pasteChord = this._appleKeyboard ? e.metaKey && !e.ctrlKey : e.ctrlKey;
         if (
             this._clipboardEnabled &&
-            (e.ctrlKey || e.metaKey) &&
+            pasteChord &&
             !e.altKey &&
             !e.shiftKey &&
             (e.key === 'v' || e.key === 'V')
@@ -5703,6 +5712,7 @@ export class StreamView {
         // from the host, so this late release must not land unmatched.
         if (this._metaTapCodes && this._metaTapCodes.delete(e.code)) {
             e.preventDefault();
+            this._forgetHeldKey(e.code);
             return;
         }
         // Cmd coming back up: sweep out anything still held whose keyup macOS
@@ -5717,16 +5727,19 @@ export class StreamView {
         if (this._suppressPasteKeyUpCode && e.code === this._suppressPasteKeyUpCode) {
             this._suppressPasteKeyUpCode = null;
             e.preventDefault();
+            this._forgetHeldKey(e.code);
             return;
         }
         // V released before its 'paste' event arrived: flush the swallowed
         // keydown now so the keyup below doesn't land unmatched on the host.
         if (this._pendingPasteKey && e.code === this._pendingPasteKey.code) {
             this._sendPendingPasteKey();
-            // On an Apple keyboard that call already completed the tap; the
+            // A Cmd+V flush asks the backend to inject the whole chord; the
             // release below would be a second, unmatched one.
-            if (this._metaTapCodes && this._metaTapCodes.delete(e.code)) {
+            if (this._suppressPasteKeyUpCode === e.code) {
+                this._suppressPasteKeyUpCode = null;
                 e.preventDefault();
+                this._forgetHeldKey(e.code);
                 return;
             }
         }
@@ -5918,6 +5931,21 @@ export class StreamView {
         this.webrtc.send(msg);
     }
 
+    /**
+     * Drop a key from the held set without sending anything.
+     *
+     * For the paths that swallow a real key-up: the token that tells them to
+     * (a meta tap, a paste chord the backend completed) is armed on a press
+     * whose release macOS may simply never deliver, so a stale token can meet
+     * the NEXT press of the same key. Swallowing that release is harmless —
+     * leaving the key in _heldPhysKeys is not: the heartbeat keeps re-asserting
+     * it and guest typematic turns one paste into "xxxxxxxx…". Whenever we see
+     * a physical release, the key stops being held, whatever we send.
+     */
+    _forgetHeldKey(code) {
+        if (code) this._heldPhysKeys.delete(code);
+    }
+
     /** Send a mouse button event and keep _heldMouseButtons in sync (same
      *  reason as _sendKeyEvent). `button` is 1-based, as the host expects. */
     _sendMouseButton(button, down) {
@@ -6015,6 +6043,10 @@ export class StreamView {
         }
         clearTimeout(pending.timer);
         this._pendingPasteKey = null;
+        // Cmd is still down, and the host knows it as the Windows key: the
+        // chord the backend is about to inject would land as Win+Ctrl+V, which
+        // pastes nothing on Windows. Let go of it first.
+        if (pending.injectCtrl) this._releaseHeldMeta();
         // The backend injects the complete V down+up — swallow the real keyup.
         this._suppressPasteKeyUpCode = pending.code;
         this.webrtc.send({
@@ -6027,24 +6059,50 @@ export class StreamView {
         });
     }
 
-    /** Forward the Ctrl/Cmd+V keydown that handleKeyDown swallowed while
-     *  waiting for a 'paste' event that brought no text (or never fired).
-     *  The host then performs a regular paste of its OWN clipboard. */
+    /**
+     * Let go of the Windows key on the host before a paste chord goes out.
+     *
+     * Cmd streams as the host's Win key and it is still held while the chord
+     * is injected — Win+Ctrl+V is not a paste. macOS delivers Cmd's own
+     * release normally, so the later key-up simply arrives unmatched, which
+     * the host ignores. The cost is that a Cmd held ACROSS the paste is no
+     * longer down for whatever follows it; nobody chords off a Cmd they just
+     * pasted with, and the paste working matters more.
+     */
+    _releaseHeldMeta() {
+        for (const code of ['MetaLeft', 'MetaRight']) {
+            const held = this._heldPhysKeys.get(code);
+            if (!held) continue;
+            this._sendKeyEvent({
+                ...held,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+            });
+        }
+    }
+
+    /** The swallowed paste chord's 'paste' event brought no text (or never
+     *  fired): make the host paste its OWN clipboard instead.
+     *  Ctrl+V is forwarded as the plain keydown it was — Ctrl is genuinely
+     *  held, so the host reads a real chord. Cmd+V cannot be: it would reach
+     *  the host as Win+V. That one asks the backend for the same injected
+     *  Ctrl+V it does for a real paste, with no text — an empty payload leaves
+     *  the host clipboard untouched and only replays the chord. */
     _sendPendingPasteKey() {
         const pending = this._pendingPasteKey;
         if (!pending) return;
         clearTimeout(pending.timer);
         this._pendingPasteKey = null;
+        if (pending.injectCtrl) {
+            this._releaseHeldMeta();
+            this._suppressPasteKeyUpCode = pending.code;
+            this.webrtc.send({ type: 'clipboardpaste', text: '', injectCtrl: true });
+            return;
+        }
         // Registers for focus-loss auto-release like any forwarded keydown.
         this._sendKeyEvent(pending.keydownMsg);
-        // Cmd+V on an Apple keyboard: the real keyup was eaten like any other
-        // key held under Cmd, and this is the one path that forwards a real
-        // keydown — without the matching release V stays down and the host
-        // pastes "vvvvv…". Complete the tap ourselves.
-        if (this._appleKeyboard && pending.keydownMsg.metaKey) {
-            this._sendKeyEvent({ ...pending.keydownMsg, type: 'keyup' });
-            this._metaTapCodes.add(pending.code);
-        }
     }
 
     /** Host clipboard changed: mirror it into the local clipboard. Browsers
