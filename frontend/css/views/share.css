@@ -551,3 +551,77 @@ body.player-mode {
     padding: 7px 16px;
     font-size: 12px;
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Guest privacy corner
+
+   A guest has no Settings page, so the one place they can read what this page
+   keeps — and what the machine they are joining counts — is this button. It
+   sits out of the way on purpose: nothing behind it is blocked, and joining
+   never requires opening it.
+   ═════════════════════════════════════════════════════════════════════════ */
+.player-privacy-btn {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1200;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--text-3, var(--text-2));
+    background: var(--surface-2);
+    border: 1px solid var(--border-1);
+    border-radius: 999px;
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.player-privacy-btn:hover,
+.player-privacy-btn:focus-visible {
+    opacity: 1;
+    color: var(--text-1);
+}
+
+.player-privacy-panel {
+    position: fixed;
+    right: 16px;
+    bottom: 56px;
+    z-index: 1201;
+    width: min(420px, calc(100vw - 32px));
+    max-height: min(70vh, 560px);
+    overflow-y: auto;
+    padding: 16px 18px;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border-1);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.player-privacy-title {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-1);
+}
+
+.player-privacy-panel p {
+    margin: 0 0 10px;
+    font-size: 13px;
+}
+
+.player-privacy-panel ul {
+    margin: 6px 0 12px;
+    padding-left: 20px;
+}
+
+.player-privacy-panel li {
+    margin-bottom: 4px;
+}
+
+.player-privacy-close {
+    width: 100%;
+}

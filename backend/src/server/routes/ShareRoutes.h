@@ -64,6 +64,11 @@ struct ShareRoutesDeps
     /// string when only the LAN address will do — the caller then falls back to
     /// this machine's LAN IPv4. Never loopback: the player is on another PC.
     std::function<QString()> publicOrigin;
+
+    /// True when this machine currently reports anonymous session statistics.
+    /// A guest's own session is one of the things counted, so the join page
+    /// says so — they cannot change the answer, but they get to know it.
+    std::function<bool()> statsReporting;
 };
 
 /// Register the share API. A no-op when ShareManager::kSessionSharingEnabled is

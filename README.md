@@ -385,7 +385,7 @@ Never sent: the host's name or identifier, your account, the pairing identity, *
 
 Both of the above stay **completely silent until you answer**. At first launch a bar at the bottom of the page asks whether this machine may send anonymous statistics; it lists exactly what is and is not sent, and until a button is pressed nothing leaves your machine. Refusing costs you nothing — streaming, updates and every feature behave identically.
 
-It is not a cookie banner: the sign-in cookie the app needs to work is unaffected by either answer, and so is the separate Internet Access agreement. Only the machine's own browser is asked; a remote viewer never sees it, and the backend refuses the answer from anyone else. Change your mind at any time from **Admin → Anonymous statistics**, which takes effect immediately.
+It is not a cookie banner: the sign-in cookie the app needs to work is unaffected by either answer, and so is the separate Internet Access agreement. Only the machine's own browser is asked; a remote viewer never sees it, and the backend refuses the answer from anyone else. Change your mind at any time from **Settings → Privacy**, which takes effect immediately. That section is visible to every signed-in user, and invited players get the same disclosure from the **Cookies** button on their join page — in both cases the switch itself stays the machine's own.
 
 Under the hood the answer is stored in `settings.json` as `metrics_consent`, together with the exact wording you were shown and when you answered. The two switches remain as permanent overrides: `"session_metrics_enabled": false` or `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, stop the reporting whatever the answer was.
 

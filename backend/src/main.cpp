@@ -1952,12 +1952,15 @@ int main(int argc, char* argv[])
     // sends, so a remote viewer is neither asked nor allowed to answer for its
     // owner. The frontend asks the same question of itself before showing the
     // banner (app.js _isHostLocal), so a guest never even sees it.
+    // Readable by anyone signed in: what this machine reports about their own
+    // streams is their business too, and the Settings page shows it to every
+    // user. Only the answer is privileged — see the POST below.
     server.router()->get("/api/metrics/consent", [&appSettings,
                                                   &updateChecker](const HttpRequest& req) {
-        if (!req.isLocal) return HttpResponse::error(403, "Host-local decision");
         QJsonObject obj;
         obj["decision"] = appSettings.metricsConsentDecision();
         obj["version"] = AppSettings::kMetricsConsentVersion;
+        obj["writable"] = req.isLocal;
         // What the answer would actually change. A build with no relay
         // credentials reports nothing whatever the user says, and there is no
         // point putting a question to someone whose answer cannot matter.
@@ -1980,7 +1983,11 @@ int main(int argc, char* argv[])
         // actually read. Capped: this is a record, not a channel.
         const QString message = body["message"].toString().left(2000);
         QString source = body["source"].toString();
-        if (source != QLatin1String("banner") && source != QLatin1String("admin"))
+        // "admin" stays accepted: records written before the switch moved to
+        // the Settings page still say that, and rewriting history is not the
+        // job of a consent log.
+        if (source != QLatin1String("banner") && source != QLatin1String("settings") &&
+            source != QLatin1String("admin"))
             source = QStringLiteral("banner");
 
         appSettings.setMetricsConsent(granted, message, source);
@@ -3321,6 +3328,7 @@ int main(int argc, char* argv[])
 
     ShareRoutesDeps shareDeps;
     shareDeps.ownerStreamAlive = ownerStreamAlive;
+    shareDeps.statsReporting = [&appSettings]() { return appSettings.sessionMetricsAllowed(); };
     shareDeps.currentOwnerContext = ownerContext;
     shareDeps.machineName = []() {
 #ifdef Q_OS_WIN

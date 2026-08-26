@@ -28,6 +28,7 @@ import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { IS_MOBILE_OR_TABLET, IS_TOUCH_DEVICE } from '../util/BrowserDetect.js';
 import { PlayerArt } from './PlayerArt.js';
+import { noticeHtml } from './PrivacyNotice.js';
 
 const HEIGHTS = [720, 1080, 1440];
 
@@ -104,8 +105,58 @@ export class PlayerJoinView {
             <div class="player-page">
                 ${artKey ? `<div class="player-art">${PlayerArt[artKey]}</div>` : ''}
                 <div class="player-card">${inner}</div>
+                <button class="player-privacy-btn" type="button" id="player-privacy-btn"
+                        aria-expanded="false">${escapeHtml(t('stats.cookiesButton'))}</button>
             </div>
         `;
+        const btn = this.container.querySelector('#player-privacy-btn');
+        if (btn) btn.addEventListener('click', () => this._togglePrivacy(btn));
+    }
+
+    /**
+     * What this page keeps, and what the machine behind it counts.
+     *
+     * A guest has no account and no Settings page, so this corner button is
+     * their only way to find out — and their session IS one of the ones
+     * counted. They cannot change the answer: it belongs to the machine's
+     * owner. Telling them anyway is the point; a disclosure only the person
+     * who benefits from it can read is not one.
+     *
+     * Nothing here gates the page. It opens on demand and closes again, and no
+     * button on it has to be pressed before joining.
+     */
+    _togglePrivacy(btn) {
+        const open = this.container.querySelector('.player-privacy-panel');
+        if (open) {
+            open.remove();
+            btn.setAttribute('aria-expanded', 'false');
+            return;
+        }
+
+        // The join page may not have loaded yet (or the link is dead): the
+        // browser-storage half is always true, the census half needs the info.
+        const reporting = !!(this.info && this.info.stats_reporting);
+        const panel = document.createElement('div');
+        panel.className = 'player-privacy-panel';
+        panel.setAttribute('role', 'region');
+        panel.setAttribute('aria-label', t('stats.playerTitle'));
+        panel.innerHTML = `
+            <strong class="player-privacy-title">${escapeHtml(t('stats.playerTitle'))}</strong>
+            <p>${escapeHtml(t('stats.playerCookies'))}</p>
+            ${
+                this.info
+                    ? `<p>${escapeHtml(t(reporting ? 'stats.playerStatsOn' : 'stats.playerStatsOff'))}</p>
+                       ${reporting ? noticeHtml() : ''}`
+                    : ''
+            }
+            <button class="btn btn-neutral player-privacy-close" type="button">
+                ${escapeHtml(t('common.close'))}
+            </button>`;
+        btn.parentElement.appendChild(panel);
+        btn.setAttribute('aria-expanded', 'true');
+        panel
+            .querySelector('.player-privacy-close')
+            .addEventListener('click', () => this._togglePrivacy(btn));
     }
 
     _renderLoading() {

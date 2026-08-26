@@ -77,7 +77,7 @@ SessionMetrics::SessionMetrics(QString version, bool enabled, QObject* parent)
 {
     if (active())
         Logger::info(QStringLiteral("[Metrics] session counts are reported in aggregate "
-                                    "(consent given; withdraw it in the admin page)"));
+                                    "(consent given; withdraw it in the settings page)"));
 }
 
 void SessionMetrics::setEnabled(bool enabled)

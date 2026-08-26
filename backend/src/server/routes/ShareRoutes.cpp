@@ -292,6 +292,10 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         obj[QStringLiteral("expires_at")] = share.expiresAt(slot);
         obj[QStringLiteral("owner_streaming")] =
             deps.ownerStreamAlive ? deps.ownerStreamAlive() : false;
+        // Transparency, not a choice: the guest's session is counted (or not)
+        // by the machine they are joining, and the privacy panel says which.
+        obj[QStringLiteral("stats_reporting")] =
+            deps.statsReporting ? deps.statsReporting() : false;
         return HttpResponse::json(obj);
     });
 

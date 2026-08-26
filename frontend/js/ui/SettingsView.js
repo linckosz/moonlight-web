@@ -31,6 +31,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { noticeDetailsHtml, plainText } from './PrivacyNotice.js';
 import { SUPPORTS_CANVAS_TEARING, IS_MOBILE_OR_TABLET } from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { ASPECT_VALUES, SCREEN_ASPECTS } from '../util/AspectRatio.js';
@@ -90,6 +91,16 @@ export class SettingsView {
 
         // Debounce timer to avoid rapid repeated saves
         this._saveTimer = null;
+
+        // Privacy section. Everyone signed in sees what this machine reports;
+        // only the machine itself may change the answer, so the switch and the
+        // disclosure are two separate things. All false until _loadStatsConsent
+        // runs, so a backend that will not answer yields no section at all
+        // rather than one claiming the wrong state.
+        this._statsLoaded = false;
+        this._statsAvailable = false;
+        this._statsGranted = false;
+        this._statsWritable = false;
     }
 
     async start() {
@@ -97,8 +108,92 @@ export class SettingsView {
         this._codecSupport = await this._checkCodecSupport();
         this._webgpuUsable = await this._checkWebGpuSupport();
         this._canLogout = await this._checkSession();
+        await this._loadStatsConsent();
         this.render();
         this.bindEvents();
+    }
+
+    /**
+     * What this machine reports, and whether this browser may change it.
+     *
+     * Readable by any signed-in user — it is their streams being counted too,
+     * and a disclosure only the owner can find is not a disclosure. Writable
+     * only from the machine itself: the answer speaks for the machine, and a
+     * guest on the LAN does not get to answer for its owner.
+     *
+     * Best-effort: no answer means no section, which matches a backend that is
+     * reporting nothing anyway.
+     */
+    async _loadStatsConsent() {
+        try {
+            const state = await BackendClient.getMetricsConsent();
+            this._statsLoaded = !!state;
+            this._statsAvailable = !!(state && state.available);
+            this._statsGranted = !!(state && state.decision === 'granted');
+            this._statsWritable = !!(state && state.writable);
+        } catch (err) {
+            console.warn('[Settings] statistics consent unavailable:', err);
+            this._statsLoaded = false;
+        }
+    }
+
+    /**
+     * The checkbox IS the consent record: what it says is stored together with
+     * the text shown around it, in the language it was read in, so the record
+     * always names what was agreed to. Reverted on failure rather than left
+     * showing a state the backend does not hold.
+     */
+    async _setStatsConsent(checkbox) {
+        const granted = checkbox.checked;
+        checkbox.disabled = true;
+        try {
+            await BackendClient.setMetricsConsent(
+                granted,
+                plainText(['sectionTitle', 'toggle', 'toggleDesc']),
+                'settings',
+            );
+            this._statsGranted = granted;
+            Toast.success(granted ? t('stats.turnedOn') : t('stats.turnedOff'));
+        } catch (err) {
+            console.warn('[Settings] could not save the statistics choice:', err);
+            checkbox.checked = !granted;
+            Toast.error(t('stats.choiceSaveFailed'));
+        } finally {
+            checkbox.disabled = false;
+        }
+    }
+
+    /**
+     * The privacy block: what leaves this machine, and the switch that stops
+     * it. Absent only when the backend would not say — claiming "nothing is
+     * sent" without having asked would be the one unacceptable answer.
+     */
+    _renderPrivacySection() {
+        if (!this._statsLoaded) return '';
+
+        // A build with no reporting credentials (anything self-compiled) sends
+        // nothing whatever anyone ticks, so it gets the statement instead of a
+        // switch that would be a lie.
+        const control = !this._statsAvailable
+            ? `<p class="setting-desc">${t('stats.unavailable')}</p>`
+            : `
+                    <div class="settings-field">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="settings-stats-consent"
+                                   ${this._statsGranted ? 'checked' : ''}
+                                   ${this._statsWritable ? '' : 'disabled'} />
+                            <span class="settings-checkbox-text">${t('stats.toggle')}</span>
+                        </label>
+                        <p class="setting-desc">${t('stats.toggleDesc')}</p>
+                        ${this._statsWritable ? '' : `<p class="setting-desc">${t('stats.ownerOnly')}</p>`}
+                    </div>`;
+
+        return `
+                <div class="settings-section" id="settings-section-privacy">
+                    <h3 class="settings-section-title">${t('stats.settingsTitle')}</h3>
+                    ${control}
+                    ${noticeDetailsHtml()}
+                </div>`;
     }
 
     /**
@@ -958,6 +1053,13 @@ export class SettingsView {
                         : ''
                 }
 
+                <!-- ── Privacy ─────────────────────────────────────────────── -->
+                <!-- Here rather than in Admin: it concerns everyone who streams
+                     through this machine, and Admin is a door most users never
+                     open. The switch is still the owner's alone — shown to all,
+                     operable from the machine itself. -->
+                ${this._renderPrivacySection()}
+
                 <!-- ── Reset ───────────────────────────────────────────────── -->
                 <div class="settings-section">
                     <button class="btn btn-neutral" id="btn-settings-reset">
@@ -1002,6 +1104,12 @@ export class SettingsView {
     }
 
     bindEvents() {
+        // Anonymous statistics: consent given, or withdrawn, on the spot.
+        const statsChk = this.container.querySelector('#settings-stats-consent');
+        if (statsChk) {
+            statsChk.addEventListener('change', () => this._setStatsConsent(statsChk));
+        }
+
         const codecSelect = this.container.querySelector('#settings-video-codec');
         if (codecSelect) codecSelect.addEventListener('change', () => this._autoSave());
 

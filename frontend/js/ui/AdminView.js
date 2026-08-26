@@ -82,11 +82,6 @@ export class AdminView {
         // Internet Access state
         this._internetEnabled = false;
         this._domain = '';
-        // Anonymous statistics: whether this build can report at all, and the
-        // answer currently on file. Both false until _loadStatsConsent runs, so
-        // the section is simply absent rather than wrong.
-        this._statsAvailable = false;
-        this._statsGranted = false;
         // True when this instance registered a sub-domain under the retiring
         // DNS mechanism: it keeps the DNS activation steps, the propagation
         // polling and its public URL until the announced shutdown (Feb 2027).
@@ -163,7 +158,6 @@ export class AdminView {
             return;
         }
         await this._loadState();
-        await this._loadStatsConsent();
         await this._loadInternetState();
         await this._loadSessions();
         await this._loadSunshineState();
@@ -193,49 +187,6 @@ export class AdminView {
             this._localKey = admin.local_key || '';
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
-        }
-    }
-
-    /**
-     * Whether this build reports at all, and the current answer. A build with
-     * no reporting credentials (anything self-compiled) reports nothing
-     * whatever the user says, so the section is not shown there.
-     */
-    async _loadStatsConsent() {
-        try {
-            const state = await BackendClient.getMetricsConsent();
-            this._statsAvailable = !!(state && state.available);
-            this._statsGranted = !!(state && state.decision === 'granted');
-        } catch (err) {
-            // Never block the admin page on this: no answer means no section,
-            // which matches a backend that is reporting nothing anyway.
-            console.warn('[Admin] statistics consent unavailable:', err);
-            this._statsAvailable = false;
-            this._statsGranted = false;
-        }
-    }
-
-    /**
-     * The checkbox IS the consent record: what it says is stored with the text
-     * shown next to it, so the record always names what was agreed to. Reverted
-     * on failure rather than left showing a state the backend does not hold.
-     */
-    async _setStatsConsent(checkbox) {
-        const granted = checkbox.checked;
-        const message = `${t('stats.adminTitle')}
-${t('stats.adminToggle')}
-${t('stats.adminDesc')}`;
-        checkbox.disabled = true;
-        try {
-            await BackendClient.setMetricsConsent(granted, message, 'admin');
-            this._statsGranted = granted;
-            Toast.success(granted ? t('stats.adminOn') : t('stats.adminOff'));
-        } catch (err) {
-            console.warn('[Admin] could not save the statistics choice:', err);
-            checkbox.checked = !granted;
-            Toast.error(t('stats.adminSaveFailed'));
-        } finally {
-            checkbox.disabled = false;
         }
     }
 
@@ -1130,28 +1081,6 @@ ${t('stats.adminDesc')}`;
                         : ''
                 }
 
-                <!-- Anonymous statistics (localhost only) — where the answer
-                     given in the first-launch bar can be changed, as easily as
-                     it was given. Hidden on a build that reports nothing, where
-                     the switch would be a lie. -->
-                ${
-                    this._isLocalhost() && this._statsAvailable
-                        ? `
-                    <div class="settings-section" id="admin-section-stats">
-                        <h3 class="settings-section-title">${t('stats.adminTitle')}</h3>
-                        <div class="settings-field">
-                            <label class="settings-checkbox-label">
-                                <input type="checkbox" id="chk-stats-consent"
-                                       ${this._statsGranted ? 'checked' : ''} />
-                                <span class="settings-checkbox-text">${t('stats.adminToggle')}</span>
-                            </label>
-                            <p class="setting-desc">${t('stats.adminDesc')}</p>
-                        </div>
-                    </div>
-                `
-                        : ''
-                }
-
                 <!-- Active Sessions (localhost only) -->
                 ${
                     this._isLocalhost()
@@ -1582,12 +1511,6 @@ ${t('stats.adminDesc')}`;
                     this._saveAdminPassword(passInput.value);
                 }
             });
-        }
-
-        // Anonymous statistics: consent given, or withdrawn, on the spot.
-        const statsChk = this.container.querySelector('#chk-stats-consent');
-        if (statsChk) {
-            statsChk.addEventListener('change', () => this._setStatsConsent(statsChk));
         }
 
         // Internet Access checkbox toggle
