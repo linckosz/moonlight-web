@@ -116,6 +116,11 @@
         },
         {
           "@type": "Question",
+          "name": "What data does MoonlightWeb collect?",
+          "acceptedAnswer": {"@type": "Answer", "text": "Nothing about you, and nothing you have not agreed to. There is no account, and streams go directly from your PC to your browser. The application asks once, at first launch, whether it may send anonymous statistics: resolution, frame rate, codec, connection type, session length, MoonlightWeb version and operating system — never your PC name, your account, what you launch, or your IP address. Nothing is sent until you answer, refusing changes nothing else, and you can change your mind in the admin page. This website counts visits with self-hosted cookieless analytics: no cookie, no advertising, no cross-site tracking, and no stored IP address."}
+        },
+        {
+          "@type": "Question",
           "name": "Why does my system warn me about the installer?",
           "acceptedAnswer": {"@type": "Answer", "text": "The installers are not signed with a paid certificate, and Windows SmartScreen and macOS Gatekeeper flag anything they do not recognise. The code is public, so you can read exactly what you are installing. On Windows: click More info, then Run anyway. On macOS the warning only applies to browser downloads, so `brew install --cask linckosz/tap/moonlightweb` or `curl -fsSL https://moonlightweb.top/install.sh | bash` avoids it entirely; otherwise allow the downloaded file in System Settings, Privacy & Security, Open Anyway."}
         }
@@ -240,6 +245,21 @@
       <p>Or keep the downloaded file and allow it in <strong>System Settings → Privacy &amp; Security → Open Anyway</strong>.
       Details in the <a href="/guides/macos.html">macOS guide</a>.</p></div>
   </details>
+  <details>
+    <summary data-i18n="q16.s">What data does MoonlightWeb collect?</summary>
+    <div class="a" data-i18n-html="q16.a"><p>Nothing about you, and nothing you have not agreed to. There is no
+      account to create, and your streams are direct between your PC and your browser — they never reach us.</p>
+      <p><strong>In the application.</strong> At first launch it asks, once, whether it may send anonymous
+      statistics: resolution, frame rate, codec, connection type, how long a session lasted, plus the
+      MoonlightWeb version and operating system. Never the name of your PC, your account, what you launch, or
+      your IP address. Until you answer, nothing is sent — and saying no changes nothing else: streaming and
+      updates work exactly the same. You can change your mind at any time in the admin page.</p>
+      <p><strong>On this website.</strong> Visits are counted with a self-hosted, cookieless analytics tool
+      (<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>) that we run ourselves: no cookie,
+      no advertising, no tracking across other sites, and your IP address is not stored — it is turned into a
+      number that changes every day. That is why you are not greeted by a cookie banner here. The only thing
+      this site keeps in your browser is the language you picked.</p></div>
+  </details>
 
   <h2 data-i18n="h2.start">Get started</h2>
   <div class="xlinks">
@@ -297,6 +317,8 @@ window.MW_DICTS = {
     'q14.a':'<p>Un petit serveur C++/Qt tourne sur le PC gamer à côté de Sunshine. Il embarque <code>moonlight-common-c</code>, parle le protocole GameStream (RTSP/RTP/ENet) à Sunshine, et relaie la vidéo, l’audio et les entrées vers les navigateurs via WebRTC. Dans le navigateur : WebCodecs décode, WebGPU affiche, et un AudioWorklet joue l’audio Opus.</p>',
     'q15.s':'Pourquoi mon système m’avertit-il à propos de l’installateur ?',
     'q15.a':'<p>Parce que les installateurs ne sont pas signés avec un certificat payant — SmartScreen sous Windows et Gatekeeper sous macOS signalent tout ce qu’ils ne reconnaissent pas, signé ou non, sûr ou non. Le code est public : vous pouvez lire exactement ce que vous installez.</p><p>Sous <strong>Windows</strong> : cliquez sur <em>Informations complémentaires</em>, puis <em>Exécuter quand même</em>.</p><p>Sous <strong>macOS</strong>, évitez complètement l’avertissement — il ne concerne que les téléchargements par navigateur :</p><pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre><pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre><p>Ou gardez le fichier téléchargé et autorisez-le dans <strong>Réglages Système → Confidentialité et sécurité → Ouvrir quand même</strong>. Détails dans le <a href="/guides/macos.html">guide macOS</a>.</p>',
+    'q16.s':'Quelles données MoonlightWeb collecte-t-il ?',
+    'q16.a':'<p>Rien qui vous concerne, et rien que vous n’ayez accepté. Il n’y a aucun compte à créer, et vos sessions vont directement de votre PC à votre navigateur — elles ne passent jamais par nous.</p><p><strong>Dans l’application.</strong> Au premier lancement, elle demande une fois si elle peut envoyer des statistiques anonymes : résolution, fréquence d’images, codec, type de connexion, durée de la session, plus la version de MoonlightWeb et le système d’exploitation. Jamais le nom de votre PC, votre compte, ce que vous lancez, ni votre adresse IP. Tant que vous n’avez pas répondu, rien n’est envoyé — et refuser ne change rien d’autre : le streaming et les mises à jour fonctionnent à l’identique. Vous pouvez changer d’avis à tout moment dans la page d’administration.</p><p><strong>Sur ce site.</strong> Les visites sont comptées avec un outil de mesure d’audience sans cookie que nous hébergeons nous-mêmes (<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>) : aucun cookie, aucune publicité, aucun suivi sur d’autres sites, et votre adresse IP n’est pas conservée — elle est transformée en un numéro qui change chaque jour. C’est pourquoi aucun bandeau cookies ne vous accueille ici. La seule chose que ce site garde dans votre navigateur est la langue que vous avez choisie.</p>',
     'h2.start':'Pour commencer',
     'x.win.t':'Installer sur Windows', 'x.win.d':'Installateur guidé — Sunshine inclus dans l’assistant.',
     'x.mac.t':'Installer sur macOS', 'x.mac.d':'Guide Apple Silicon avec l’installateur .pkg.',
@@ -342,6 +364,8 @@ window.MW_DICTS = {
     'q14.a':'<p>一个小型 C++/Qt 服务器在游戏 PC 上紧挨 Sunshine 运行。它内嵌 <code>moonlight-common-c</code>，用 GameStream 协议（RTSP/RTP/ENet）与 Sunshine 通信，并通过 WebRTC 把视频、音频和输入转发到浏览器。在浏览器中：WebCodecs 解码，WebGPU 渲染，AudioWorklet 播放 Opus 音频。</p>',
     'q15.s':'为什么我的系统会对安装程序发出警告？',
     'q15.a':'<p>因为安装程序没有用付费证书签名——Windows SmartScreen 和 macOS Gatekeeper 会标记一切它们不认识的东西，无论是否已签名、是否安全。代码是公开的，你可以确切地看到自己安装的是什么。</p><p>在 <strong>Windows</strong> 上：点击<em>更多信息</em>，然后<em>仍要运行</em>。</p><p>在 <strong>macOS</strong> 上可以完全避开警告——它只针对浏览器下载的文件：</p><pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre><pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre><p>或者保留已下载的文件，在<strong>系统设置 → 隐私与安全性 → 仍要打开</strong>中放行。详见 <a href="/guides/macos.html">macOS 指南</a>。</p>',
+    'q16.s':'MoonlightWeb 会收集哪些数据？',
+    'q16.a':'<p>不收集任何关于你的信息，也不收集你未同意的任何内容。无需注册账号，你的串流直接从你的电脑到你的浏览器——从不经过我们。</p><p><strong>在应用中。</strong>首次启动时会询问一次，是否允许发送匿名统计：分辨率、帧率、编解码器、连接方式、会话时长，以及 MoonlightWeb 版本和操作系统。从不包括你的电脑名称、账号、你启动的内容，也不包括你的 IP 地址。在你回答之前，不会发送任何内容；拒绝也不会改变其他任何事情：串流和更新完全照常。你可以随时在管理页面改变主意。</p><p><strong>在本网站。</strong>访问量由我们自己托管的无 Cookie 统计工具（<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>）统计：没有 Cookie、没有广告、不跨站追踪，且不保存你的 IP 地址——它会被转换成每天都变化的一串数字。这就是为什么这里没有 Cookie 横幅。本站在你浏览器中保存的只有你选择的语言。</p>',
     'h2.start':'开始使用',
     'x.win.t':'在 Windows 上安装', 'x.win.d':'向导式安装程序——Sunshine 已包含在向导中。',
     'x.mac.t':'在 macOS 上安装', 'x.mac.d':'Apple Silicon 指南，附 .pkg 安装程序。',
