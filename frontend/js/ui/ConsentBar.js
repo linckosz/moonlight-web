@@ -41,11 +41,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
-
-/** Bullet keys, in display order. Kept in one place so the visible text and the
- *  stored consent record cannot drift apart. */
-const SENT_KEYS = ['statsSent1', 'statsSent2', 'statsSent3', 'statsSent4'];
-const NEVER_KEYS = ['statsNever1', 'statsNever2', 'statsNever3'];
+import { noticeHtml, plainText } from './PrivacyNotice.js';
 
 export class ConsentBar {
     /**
@@ -79,17 +75,10 @@ export class ConsentBar {
 
     /** The visible text, as one string, for the stored consent record. */
     static _plainText() {
-        const lines = [t('stats.title'), t('stats.body'), t('stats.sentIntro')];
-        for (const k of SENT_KEYS) lines.push('- ' + t('stats.' + k));
-        lines.push(t('stats.neverIntro'));
-        for (const k of NEVER_KEYS) lines.push('- ' + t('stats.' + k));
-        lines.push(t('stats.necessary'));
-        return lines.join('\n');
+        return plainText(['title', 'body']);
     }
 
     static _render() {
-        const li = (key) => `<li>${escapeHtml(t('stats.' + key))}</li>`;
-
         const bar = document.createElement('div');
         bar.className = 'consent-bar';
         bar.id = 'consent-bar';
@@ -101,13 +90,9 @@ export class ConsentBar {
             <div class="consent-bar-body">
                 <strong class="consent-bar-title">${escapeHtml(t('stats.title'))}</strong>
                 ${escapeHtml(t('stats.body'))}
-                <details class="consent-bar-details">
+                <details class="consent-bar-details privacy-details">
                     <summary>${escapeHtml(t('stats.detailsSummary'))}</summary>
-                    <p>${escapeHtml(t('stats.sentIntro'))}</p>
-                    <ul>${SENT_KEYS.map(li).join('')}</ul>
-                    <p>${escapeHtml(t('stats.neverIntro'))}</p>
-                    <ul>${NEVER_KEYS.map(li).join('')}</ul>
-                    <p>${escapeHtml(t('stats.necessary'))}</p>
+                    ${noticeHtml()}
                 </details>
             </div>
             <div class="consent-bar-actions">

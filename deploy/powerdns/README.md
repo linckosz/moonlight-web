@@ -139,7 +139,8 @@ MoonlightWeb **0.3.0+** points its periodic update check there instead of at
 question to the person running the machine — a bar at the bottom of the page,
 listing what is and is not sent — and reports nothing at all until they answer.
 Refusing, or never answering, sends the update check straight to GitHub; the
-answer is withdrawable from the admin page at any time, effective immediately.
+answer is withdrawable from the app's Settings → Privacy section at any time,
+effective immediately.
 
 **The relay is never load-bearing.** Any failure — unreachable, 502, unusable
 body — makes the client retry against `api.github.com` immediately, and the

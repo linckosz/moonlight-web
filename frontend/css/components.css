@@ -677,15 +677,23 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 .consent-bar-details {
     margin-top: var(--space-2);
 }
-.consent-bar-details summary {
+
+/* The shared disclosure block (bar, Settings, guest page). One rule set so the
+   same list cannot end up looking like three different statements. */
+.privacy-details {
+    margin-top: var(--space-2);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+}
+.privacy-details summary {
     cursor: pointer;
     color: var(--accent, #35c98f);
 }
-.consent-bar-details ul {
+.privacy-details ul {
     margin: var(--space-2) 0 0;
     padding-left: var(--space-5);
 }
-.consent-bar-details li {
+.privacy-details li {
     margin-bottom: var(--space-1);
 }
 .consent-bar-actions {
