@@ -86,14 +86,4 @@ describe('Host model', () => {
         expect(new Host({ state: 'online', pairState: 'paired' }).statusClass).toBe('ready');
         expect(new Host({ state: 'online', pairState: 'no' }).statusClass).toBe('locked');
     });
-
-    it('formats the best display mode resolution', () => {
-        expect(new Host({}).resolutionText).toBe('');
-        const h = new Host({ displayModes: [{ width: 1920, height: 1080, refreshRate: 120 }] });
-        expect(h.resolutionText).toBe('1920×1080 @ 120Hz');
-        // refreshRate defaults to 60 when absent
-        expect(new Host({ displayModes: [{ width: 1280, height: 720 }] }).resolutionText).toBe(
-            '1280×720 @ 60Hz',
-        );
-    });
 });

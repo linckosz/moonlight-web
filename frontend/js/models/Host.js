@@ -146,11 +146,4 @@ export class Host {
         if (this.isPaired) return Icons.check; // checkmark
         return Icons.lock; // lock
     }
-
-    get resolutionText() {
-        if (this.displayModes.length === 0) return '';
-        const best = this.displayModes[0]; // sorted desc by pixels*Hz
-        const hz = best.refreshRate || 60;
-        return `${best.width}\xd7${best.height} @ ${hz}Hz`;
-    }
 }

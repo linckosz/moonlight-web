@@ -314,8 +314,7 @@
 .host-name-row .status-badge {
     flex-shrink: 0;
 }
-.host-gpu,
-.host-resolution {
+.host-gpu {
     font-size: var(--fs-xs);
     color: var(--text-3);
     margin-top: 1px;
