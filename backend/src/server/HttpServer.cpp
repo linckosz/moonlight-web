@@ -641,6 +641,13 @@ quint16 HttpServer::authorizeTunnelWebSocket(const HttpRequest& req, QString* ou
         return 0;
     };
 
+    // Named before the shape test below, which would answer "not a signalling
+    // path" — true, but it hides the actual reason. This channel exists so a
+    // second launch on the host machine surfaces admin in the tab already open;
+    // there is no such thing to surface for a browser somewhere else.
+    if (req.path == QLatin1String("/ws/control"))
+        return refuse(QStringLiteral("the control channel is host-local"));
+
     bool wsIsRelay = false;
     const int slot = slotFromWsPath(req.path, &wsIsRelay);
     if (slot < 0) return refuse(QStringLiteral("not a signalling path"));
@@ -653,8 +660,6 @@ quint16 HttpServer::authorizeTunnelWebSocket(const HttpRequest& req, QString* ou
     // control channel instead would put every frame through one SCTP stream that
     // is also answering API calls.
     if (wsIsRelay) return refuse(QStringLiteral("the legacy video relay is not carried"));
-    if (req.path == QLatin1String("/ws/control"))
-        return refuse(QStringLiteral("the control channel is host-local"));
 
     quint16 targetPort = m_SignalingPort;
     if (slot > 0) {
