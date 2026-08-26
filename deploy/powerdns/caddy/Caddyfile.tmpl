@@ -65,6 +65,25 @@ updates.@MW_DOMAIN@ {
 	reverse_proxy mw-proxy:8080
 }
 
+# Session census (0.3.0+) — where instances report the SHAPE of a stream:
+# resolution, frame rate, codec, transport, how long it lasted. Same mw-proxy
+# container, exact path /v1/session (see session.go). Deliberately its own name
+# rather than a path on updates.*: removing this record switches the whole
+# census off fleet-wide without touching the update path, which must keep
+# working. Nothing here is required for streaming — the instance drops a failed
+# report and never retries.
+metrics.@MW_DOMAIN@ {
+	@SITE_TLS_LINE@
+	rate_limit {
+		zone mw_metrics {
+			key {remote_host}
+			events 60
+			window 1m
+		}
+	}
+	reverse_proxy mw-proxy:8080
+}
+
 # Analytics dashboard — self-hosted Umami (privacy-friendly, cookieless).
 # Serves both the tracker script (/script.js) and the admin dashboard.
 stats.@MW_DOMAIN@ {

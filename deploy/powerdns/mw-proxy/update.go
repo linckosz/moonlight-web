@@ -25,7 +25,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -96,10 +95,7 @@ type updateRelay struct {
 	fetchedAt time.Time     // when body was refreshed
 	inflight  chan struct{} // non-nil while a fetch runs; closed when it finishes
 
-	// Bounds concurrent analytics posts so a burst of clients cannot spawn an
-	// unbounded number of goroutines. Reporting is best-effort: when the
-	// semaphore is full the event is dropped, never queued.
-	reportSlots chan struct{}
+	rep *umamiReporter // the census; nil-safe and silent when unconfigured
 }
 
 func newUpdateRelay(cfg updateConfig, apiKey string) *updateRelay {
@@ -109,12 +105,13 @@ func newUpdateRelay(cfg updateConfig, apiKey string) *updateRelay {
 	if cfg.cacheTTL <= 0 {
 		cfg.cacheTTL = 10 * time.Minute
 	}
-	return &updateRelay{
-		cfg:         cfg,
-		apiKey:      apiKey,
-		client:      &http.Client{Timeout: 15 * time.Second},
-		reportSlots: make(chan struct{}, 32),
-	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	rep := newUmamiReporter(umamiConfig{
+		url:      cfg.umamiURL,
+		website:  cfg.umamiWebsite,
+		hostname: cfg.hostname,
+	}, "update", client)
+	return &updateRelay{cfg: cfg, apiKey: apiKey, client: client, rep: rep}
 }
 
 // release returns the cached release JSON, refreshing it in the background when
@@ -237,22 +234,6 @@ func (u *updateRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ── Version census (Umami) ──────────────────────────────────────────────────
 
-// Deliberately without a "name" field: in Umami, a payload carrying a name is a
-// custom EVENT (it shows up under Events and leaves Visitors/Views/Pages at
-// zero), while a nameless one is a PAGEVIEW. We want the pageview — that is
-// what turns the built-in Pages report into the version histogram.
-type umamiPayload struct {
-	Website  string            `json:"website"`
-	Hostname string            `json:"hostname"`
-	URL      string            `json:"url"`
-	Data     map[string]string `json:"data"`
-}
-
-type umamiEvent struct {
-	Type    string       `json:"type"`
-	Payload umamiPayload `json:"payload"`
-}
-
 // eventURL is the URL recorded for one check: the version as the *path*, the
 // platform as the *query string*. That split is what makes both built-in
 // reports useful without any dashboard configuration — Umami's Pages panel has
@@ -263,60 +244,13 @@ func eventURL(version, platform, arch string) string {
 	return "/uc/" + version + "?os=" + platform + "&arch=" + arch
 }
 
-// report records one check as an Umami event, fire-and-forget.
+// report records one check as a PAGEVIEW — no event name, which is what keeps
+// it in the Visitors/Views/Pages counters instead of the Events panel.
 func (u *updateRelay) report(version, platform, arch, ip string) {
-	if u.cfg.umamiURL == "" || u.cfg.umamiWebsite == "" {
-		return // analytics not configured — the relay still serves updates
-	}
-	select {
-	case u.reportSlots <- struct{}{}:
-	default:
-		return // saturated: drop rather than pile up
-	}
-
-	go func() {
-		defer func() { <-u.reportSlots }()
-
-		event := umamiEvent{
-			Type: "event",
-			Payload: umamiPayload{
-				Website:  u.cfg.umamiWebsite,
-				Hostname: u.cfg.hostname,
-				URL:      eventURL(version, platform, arch),
-				Data:     map[string]string{"version": version, "os": platform, "arch": arch},
-			},
-		}
-		body, err := json.Marshal(event)
-		if err != nil {
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			u.cfg.umamiURL+"/api/send", bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		// Umami rejects a request with no User-Agent, and derives the visitor
-		// hash from UA + address. An honest UA carrying the version keeps a
-		// machine that upgrades from being counted under its old version.
-		req.Header.Set("User-Agent", "MoonlightWeb/"+version+" ("+platform+"; "+arch+")")
-		// Umami runs with CLIENT_IP_HEADER=x-forwarded-for, so it hashes the
-		// instance's address rather than this container's — without which the
-		// whole fleet would collapse into a single "visitor".
-		req.Header.Set("X-Forwarded-For", ip)
-
-		resp, err := u.client.Do(req)
-		if err != nil {
-			log.Printf("[mw-proxy] update: analytics post failed: %v", err)
-			return
-		}
-		defer resp.Body.Close()
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		if resp.StatusCode >= 400 {
-			log.Printf("[mw-proxy] update: analytics rejected the event (%d)", resp.StatusCode)
-		}
-	}()
+	// An honest User-Agent carrying the version: Umami derives the visitor hash
+	// from UA + address, so a machine that upgrades stops being counted under
+	// its old version.
+	ua := "MoonlightWeb/" + version + " (" + platform + "; " + arch + ")"
+	u.rep.send("", eventURL(version, platform, arch), ua, ip,
+		map[string]string{"version": version, "os": platform, "arch": arch})
 }

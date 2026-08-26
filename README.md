@@ -366,7 +366,7 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 | **macOS** | `~/Library/Application Support/MoonlightWeb/MoonlightWeb/settings.json` |
 | **Linux** | `~/.local/share/MoonlightWeb/MoonlightWeb/settings.json` |
 
-Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`.\
+Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`, `session_metrics_enabled`.\
 Restart the server after a manual edit.
 
 #### Update check & version counts
@@ -374,6 +374,14 @@ Restart the server after a manual edit.
 Every few hours the server asks whether a newer MoonlightWeb exists. In official builds that question goes to `https://updates.{MW_DOMAIN}`, which mirrors the GitHub release and records **version, OS and architecture** — nothing else: no identifier, no account, no per-machine history. It is what tells us how many people still run an old version, so a release can drop support for one without stranding anyone.
 
 Set `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, and the check goes straight to GitHub instead, reporting nothing. Updates work identically either way. Builds you compiled yourself never contact the relay at all.
+
+#### Session counts
+
+When a stream starts and again when it ends, official builds report the **shape** of that session to `https://metrics.{MW_DOMAIN}`: resolution, frame rate, negotiated codec, HDR and 4:4:4 flags, a bitrate band, the backend family, the transport that won, whether the viewer was on the LAN or the internet, a coarse device class (desktop / mobile / tablet / TV), owner or invited player, and how long it lasted.
+
+Never sent: the host's name or identifier, your account, the pairing identity, **which application you launched**, or any address — the receiving end keeps no raw address, only a hash that changes every day. There is no free-text field at all: every value is a number or one of a fixed list of words. It answers questions like "is 720p still in use?" or "did AV1 take off?", and nothing finer.
+
+Set `"session_metrics_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment (which also covers the update relay above), and nothing is reported. Streaming is identical either way, and builds you compiled yourself never report at all.
 
 ### SSL — your own domain & certificate
 

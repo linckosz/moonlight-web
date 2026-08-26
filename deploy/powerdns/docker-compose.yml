@@ -4,6 +4,7 @@
 #   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)
 #   caddy    public :80/:443 → pdns:8081 / umami:3000  (HTTPS API + site + stats, auto-TLS)
 #            also updates.{domain} → mw-proxy:8080 (cached release mirror + census)
+#            also metrics.{domain} → mw-proxy:8080 (session census)
 #            also stream.{domain} → bootstrap page + /v1/ → mw-rendezvous:8090
 #   mw-rendezvous  introduction server, internal only  (held host lines :8090)
 #   umami    web analytics (stats.{domain}), internal  → umami-db (Postgres)
@@ -73,6 +74,10 @@ services:
       # nothing — see mw-proxy/update.go and README.md §Update relay.
       MW_UMAMI_URL: http://umami:3000
       MW_UMAMI_WEBSITE_ID: ${MW_UMAMI_TELEMETRY_WEBSITE_ID:-}
+      # Session census (metrics.${MW_DOMAIN} → /v1/session). Its OWN Umami
+      # website, so "views" there means "sessions" and nothing else. Same rule:
+      # leave it empty and the endpoint still answers, counting nothing.
+      MW_UMAMI_SESSIONS_WEBSITE_ID: ${MW_UMAMI_SESSIONS_WEBSITE_ID:-}
     volumes:
       - mwproxy_data:/data                          # ownership store persists
     networks: [mwnet]

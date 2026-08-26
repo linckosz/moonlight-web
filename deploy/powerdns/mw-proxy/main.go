@@ -67,6 +67,9 @@ type config struct {
 
 	// The update relay served on /v1/update — see update.go.
 	update updateConfig
+
+	// The session census served on /v1/session — see session.go.
+	session sessionConfig
 }
 
 func mustEnv(name string) string {
@@ -104,6 +107,14 @@ func loadConfig() config {
 			umamiURL:     strings.TrimRight(envOr("MW_UMAMI_URL", "http://umami:3000"), "/"),
 			umamiWebsite: os.Getenv("MW_UMAMI_WEBSITE_ID"),
 			hostname:     "updates." + domain,
+		},
+		// A website of its OWN, not the version census's: sessions and update
+		// checks are different populations counted at different rates, and
+		// mixing them would make the headline "views" number mean nothing.
+		session: sessionConfig{
+			umamiURL:     strings.TrimRight(envOr("MW_UMAMI_URL", "http://umami:3000"), "/"),
+			umamiWebsite: os.Getenv("MW_UMAMI_SESSIONS_WEBSITE_ID"),
+			hostname:     "metrics." + domain,
 		},
 	}
 	if v := os.Getenv("MW_PROXY_MAX_NEW_PER_HOUR"); v != "" {
@@ -604,12 +615,19 @@ func main() {
 		log.Printf("[mw-proxy] update relay on /v1/update — version census DISABLED " +
 			"(MW_UMAMI_WEBSITE_ID is empty)")
 	} else {
-		id := cfg.update.umamiWebsite
-		if len(id) > 8 {
-			id = id[:8] + "…"
-		}
 		log.Printf("[mw-proxy] update relay on /v1/update — version census → %s (website %s)",
-			cfg.update.umamiURL, id)
+			cfg.update.umamiURL, describeWebsite(cfg.update.umamiWebsite))
+	}
+	// Session census (metrics.{domain} in the Caddyfile). Same reasoning as
+	// above: say out loud whether it counts, because it accepts and answers
+	// identically either way.
+	mux.Handle("/v1/session", newSessionSink(cfg.session, cfg.proxyKey))
+	if cfg.session.umamiWebsite == "" || cfg.session.umamiURL == "" {
+		log.Printf("[mw-proxy] session census on /v1/session — DISABLED " +
+			"(MW_UMAMI_SESSIONS_WEBSITE_ID is empty)")
+	} else {
+		log.Printf("[mw-proxy] session census on /v1/session → %s (website %s)",
+			cfg.session.umamiURL, describeWebsite(cfg.session.umamiWebsite))
 	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
