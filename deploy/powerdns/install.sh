@@ -493,6 +493,11 @@ echo "         'Pages' panel becomes the version histogram (Path tab: /uc/<versi
 echo "         Until then the relay just serves releases and counts nothing."
 echo
 echo "  [ ] 8. Turn ON the session census (optional, same idea, other question):"
+echo "         This one also needs a HOST, which the stack does not create:"
+echo "         add a 'metrics' A record and the matching site block to the"
+echo "         Caddyfile (deploy/powerdns/README.md, 'Session census' — the"
+echo "         record FIRST, or Caddy chases a certificate that cannot be"
+echo "         issued). Then:"
 echo "         a) in Umami, add a THIRD website: name 'MoonlightWeb sessions',"
 echo "            domain 'metrics.${MW_DOMAIN:-<MW_DOMAIN>}' — its own website so"
 echo "            'views' there means 'sessions started', nothing else"

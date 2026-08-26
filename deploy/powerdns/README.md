@@ -14,7 +14,7 @@ Internet ─:53──────> [dnsdist] ──> pdns:5300         anti-ampl
 Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:8081        direct PowerDNS API (compatibility)
                              ├─ dnsapi.{domain} ───> mw-proxy:8080 ─> pdns:8081   restricted API (0.2.0+)
                              ├─ updates.{domain} ──> mw-proxy:8080 ─> GitHub      release relay + version census (0.3.0+)
-                             ├─ metrics.{domain} ──> mw-proxy:8080 ─> umami:3000  session census (0.3.0+)
+                             ├─ metrics.{domain} ──> (not deployed — see Session census)
                              └─ stats.{domain} ────> umami:3000      analytics dashboard
                      [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
                      [mw-proxy] (internal)            least-privilege filtering gateway
@@ -32,8 +32,8 @@ Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:80
   `https://dnsapi.{MW_DOMAIN}`. See [Least-privilege API key](#least-privilege-api-key-mw-proxy).
   The same container also serves the **update relay** at
   `https://updates.{MW_DOMAIN}` — see
-  [Update relay](#update-relay--installed-version-census) — and the **session
-  census** at `https://metrics.{MW_DOMAIN}` — see
+  [Update relay](#update-relay--installed-version-census) — and it carries the
+  code for the **session census**, which is *not* deployed: see
   [Session census](#session-census).
 - **caddy** — official Caddy + the `caddy-ratelimit` plugin (built via xcaddy).
   Exposes the APIs (`api.{MW_DOMAIN}` compatibility, `dnsapi.{MW_DOMAIN}` restricted)
@@ -197,7 +197,12 @@ used, so "is 720p still worth supporting?", "did AV1 take off?", "how long does
 a session actually last?" have no data behind them.
 
 `https://metrics.{MW_DOMAIN}` (`mw-proxy/session.go`, same container again, path
-`/v1/session`) collects that. MoonlightWeb **0.3.0+** POSTs a small JSON body —
+`/v1/session`) is where that would be collected — **it is not deployed**. The
+code ships, instances know how to report to it, and nothing answers: there is no
+`metrics` A record and no site block for it in the Caddyfile. Read the rest of
+this section as a description of what turning it on would collect.
+
+MoonlightWeb **0.3.0+** POSTs a small JSON body —
 with the same restricted key — when a stream first carries a picture, again when
 it ends, and once more if a launch never got there.
 
@@ -224,12 +229,36 @@ false` or `MW_NO_TELEMETRY`; self-built binaries never reach it (no
 census off fleet-wide without touching the update path — which is exactly why it
 is its own host rather than another path on `updates.`.
 
-**Turning it on** (same shape as the census above):
+**Turning it on** — four steps, and the **order matters**: publish the name
+before Caddy is asked to certify it, or it will order a certificate for a name
+that does not resolve, fail, and retry forever.
 
-1. In Umami, add a **third website**: name `MoonlightWeb sessions`, domain
+1. Add the A record: `pdnsutil add-record {MW_DOMAIN} metrics A {MW_PUBLIC_IP}`
+   then `pdnsutil rectify-zone {MW_DOMAIN}` (a DNSSEC zone serves nothing until
+   it is rectified). Check it resolves from outside before continuing.
+2. Add the site block to `caddy/Caddyfile.tmpl` — it belongs where the comment
+   marks its place, next to `updates.`:
+
+   ```
+   metrics.@MW_DOMAIN@ {
+   	@SITE_TLS_LINE@
+   	rate_limit {
+   		zone mw_metrics {
+   			key {remote_host}
+   			events 60
+   			window 1m
+   		}
+   	}
+   	reverse_proxy mw-proxy:8080
+   }
+   ```
+
+   Then `docker compose up -d --build caddy` — the template lives *in* the
+   image, so a restart alone changes nothing.
+3. In Umami, add a **third website**: name `MoonlightWeb sessions`, domain
    `metrics.{MW_DOMAIN}`. Its own website on purpose — there, "views" means
    "sessions started" and nothing else is mixed in.
-2. Put its ID in `.env` → `MW_UMAMI_SESSIONS_WEBSITE_ID=<id>` (**append** it;
+4. Put its ID in `.env` → `MW_UMAMI_SESSIONS_WEBSITE_ID=<id>` (**append** it;
    a `.env` created before this feature has no such line for `sed` to match),
    then `docker compose up -d --force-recreate mw-proxy`. Startup says which way
    it went: `session census on /v1/session → http://umami:3000 (website …)` or
