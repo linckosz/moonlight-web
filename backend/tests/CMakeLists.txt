@@ -67,6 +67,7 @@ add_executable(run_tests
     test_host_persistence.cpp
     test_rendezvous_id.cpp
     test_backend_probe.cpp
+    test_tunnel_frame.cpp
     test_wolf_coop.cpp
     test_session_metrics.cpp
     # In-scope production units (+ their real deps)

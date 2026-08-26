@@ -2466,6 +2466,15 @@ int main(int argc, char* argv[])
             for (const QString& m : autoOrder)
                 if (m != transportMode && m != sibling) transportChain.append(m);
         }
+        // The legacy WebSocket relay carries video over the same TLS connection
+        // that serves the page. A browser reached through the rendezvous has no
+        // such connection — that is the point of the architecture — so the mode
+        // comes out of the chain entirely, including when it was asked for by
+        // name: leaving it in would cost the user a relaunch to discover that a
+        // transport requiring an open port cannot work without one. Blocked UDP
+        // is covered here by ICE-TCP instead.
+        if (req.viaTunnel) transportChain.removeAll(QStringLiteral("wss"));
+
         qInfo() << "[Session] Transport chain:" << transportChain
                 << "requested index=" << reqTransportIndex;
 

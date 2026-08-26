@@ -1053,6 +1053,7 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     // been: a session established with the PIN. Admin still needs the machine
     // itself or the LAN unlock, exactly as it does under the public domain today.
     const bool viaTunnel = (arrival == Arrival::Tunnel);
+    req.viaTunnel = viaTunnel;
 
     // A target carrying control characters is refused before anything reads it.
     // The socket path already catches this at parse time; the tunnel builds its
