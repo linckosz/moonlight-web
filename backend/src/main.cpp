@@ -3672,41 +3672,30 @@ int main(int argc, char* argv[])
     });
 
     // URL for the host machine's own entry points (Desktop shortcut, installer
-    // post-install page, Dock, tray, startup open). Once Internet Access is live
-    // the full public domain is used (valid certificate, no warning); the
-    // appended ?mwk=<host key> lets the frontend prove to the backend that this
-    // browser runs on the host machine (over the domain the peer address is the
-    // router, not loopback), unlocking the localhost-only admin functionality.
-    // Before/without Internet Access, loopback over HTTPS is used — it works
-    // even when DNS is down; the browser asks to accept the self-signed cert
-    // once.
-    // The domain is only worth handing to a browser once it is BOTH published
-    // and covered by a real certificate: ready() fires as soon as the A-record
-    // resolves, while the ACME order finishes seconds to minutes later. In that
-    // window the domain is still served with the self-signed fallback and the
-    // browser shows ERR_CERT_AUTHORITY_INVALID, so stay on loopback — checking
-    // certPem() as well as certificateIssuing() keeps us there when issuance
-    // finished by failing. Every caller re-reads this on certificateChanged.
-    // ...and published, trusted and REACHABLE FROM HERE are three different
-    // things: many routers do not reflect their own public endpoint back to the
-    // LAN (no NAT hairpin), so the domain that every other device uses simply
-    // times out in a browser sitting on the host. hairpinReachable() is the
-    // measured answer (a TCP connect from this machine to its own public
-    // address); without it, loopback — which cannot fail — is the entry point.
-    // Same rule the frontend applies before redirecting a localhost page to the
-    // domain (app.js _maybeRedirectToDomain). Callers refresh on hairpinChanged.
+    // post-install page, Dock, tray, startup open).
+    //
+    // Always loopback. These entry points are, by construction, clicked by
+    // someone sitting AT the machine, and loopback is the one address that is
+    // always true for them: it needs no DNS, no certificate order, no port
+    // forwarding, and no cooperation from the router. It is also the only
+    // address that proves where the browser runs, so admin is granted by the
+    // connection itself rather than by a key travelling in a URL.
+    //
+    // It used to prefer the public sub-domain whenever one was published,
+    // trusted and reflected back to the LAN, on the reasoning that the host
+    // machine should use the same address as everyone else. That reasoning is
+    // gone: everyone else now arrives through the rendezvous, which deliberately
+    // grants no local privilege (see HttpServer's Arrival::Tunnel), and the
+    // sub-domain is a legacy path being retired in February 2027. Sending the
+    // owner to a dying address — with the host key in the query string, and
+    // therefore in browser history — to reach a page that is one hop away is
+    // three costs for no benefit. The remote link belongs in the tray's "copy
+    // link" entry, which hands out the rendezvous address.
+    //
+    // The cost, stated plainly: a legacy instance whose sub-domain has a real
+    // certificate loses the warning-free page locally, because loopback is
+    // served by the self-signed certificate. One acceptance, once per browser.
     auto entryUrl = [&](const QString& path) -> QString {
-        if (internetAccess.isActive() && !internetAccess.domain().isEmpty() &&
-            !internetAccess.certificateIssuing() && !appSettings.certPem().isEmpty() &&
-            internetAccess.hairpinReachable()) {
-            quint16 p = internetAccess.externalHttpsPort();
-            if (p == 0) p = server.activeHttpsPort();
-            const QString base =
-                p == 443 ? QStringLiteral("https://%1").arg(internetAccess.domain())
-                         : QStringLiteral("https://%1:%2").arg(internetAccess.domain()).arg(p);
-            const QChar sep = path.contains(QLatin1Char('?')) ? QLatin1Char('&') : QLatin1Char('?');
-            return base + path + sep + QStringLiteral("mwk=") + appSettings.localKey();
-        }
         quint16 p = server.activeHttpsPort();
         return p == 443 ? QStringLiteral("https://localhost%1").arg(path)
                         : QStringLiteral("https://localhost:%1%2").arg(p).arg(path);
@@ -3721,8 +3710,11 @@ int main(int argc, char* argv[])
     // off — no need for its return value here.
     Provisioning::applyOnce(QCoreApplication::applicationDirPath(), appSettings, computerManager);
 
-    // Refresh the shortcut to the valid-certificate domain link once it is ready,
-    // and (during a fresh install) mark the A-record checklist step done.
+    // Mark the A-record checklist step done once the address is usable (legacy
+    // instances only — a fresh install never opens that step). The shortcut is
+    // rewritten alongside because the active HTTPS port can move at this moment
+    // (port parity claims a fallback), not because the link itself changes: it
+    // is loopback either way.
     //
     // "done" means the address is usable in a browser, which takes BOTH the
     // A-record and the certificate. ready() only covers the former, so when an

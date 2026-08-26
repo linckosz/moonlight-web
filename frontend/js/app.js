@@ -186,10 +186,12 @@ const MoonlightApp = {
         // session BEFORE the auth check, then strip it from the address bar.
         await this._redeemHostKey();
 
-        // ── Canonical origin: once Internet Access is live, a page loaded (or
-        // refreshed) on https://localhost moves to the public domain, so the
-        // host machine uses the same URL as everyone else.
-        if (await this._maybeRedirectToDomain()) return; // navigating away
+        // A page loaded on loopback STAYS on loopback. It used to move itself to
+        // the public sub-domain, so that the host machine used the same address
+        // as everyone else; everyone else now arrives through the rendezvous,
+        // where local privilege is refused on purpose, and the sub-domain is
+        // being retired. Loopback is the address that always works from here and
+        // the only one that proves the browser runs on this machine.
 
         // ── Auth check: show login if remote and not authenticated ─────────
         const authOk = await this._checkAuth();
@@ -807,49 +809,6 @@ const MoonlightApp = {
             '',
             window.location.pathname + (query ? '?' + query : '') + window.location.hash,
         );
-    },
-
-    /**
-     * When Internet Access is live, the host machine's canonical origin is the
-     * public domain (valid certificate, the exact URL every other device uses).
-     * A page loaded or refreshed on https://localhost moves there, carrying the
-     * host key so the localhost-equivalent (admin) access survives the origin
-     * change. Routers without NAT hairpin cannot reach the domain from inside
-     * the LAN — the backend tests this from the host itself (hairpin_reachable),
-     * because the untrusted-cert localhost page cannot probe the domain (Chrome
-     * blocks its cross-origin subresources). Returns true when a navigation was
-     * started (caller must stop init).
-     */
-    async _maybeRedirectToDomain() {
-        if (window.location.protocol !== 'https:') return false;
-        const hostname = window.location.hostname;
-        const isLoopback =
-            hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
-        if (!isLoopback) return false;
-
-        try {
-            const [status, admin] = await Promise.all([
-                BackendClient.getInternetStatus(),
-                BackendClient.getAdminSettings(),
-            ]);
-            if (!status.active || !status.internet_access_enabled || !status.domain) return false;
-            if (!status.hairpin_reachable) {
-                console.log('[MW] Domain unreachable from LAN (no NAT hairpin) — staying local');
-                return false;
-            }
-            const key = admin.local_key || '';
-            if (!key) return false;
-
-            const extPort = status.external_https_port || admin.https_port || 443;
-            const origin = 'https://' + status.domain + (extPort !== 443 ? ':' + extPort : '');
-            const path = window.location.pathname || '/';
-            console.log('[MW] Internet Access live — moving to the public domain:', origin);
-            window.location.replace(origin + path + '?mwk=' + encodeURIComponent(key));
-            return true;
-        } catch (err) {
-            console.warn('[MW] Domain redirect check failed:', err);
-            return false;
-        }
     },
 
     /**
