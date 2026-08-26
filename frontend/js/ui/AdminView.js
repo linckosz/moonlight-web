@@ -107,6 +107,8 @@ export class AdminView {
         this._upnpAvailable = false;
         this._pendingRegistration = false;
         this._active = false; // DNS registration actually succeeded (domain live)
+        this._rendezvousUrl = ''; // address a fresh install is reached at, once claimed
+        this._rendezvousOnline = false; // the held line is actually up
         this._hairpinReachable = false; // router reflects our public endpoint to the LAN
         this._lastError = '';
 
@@ -259,6 +261,13 @@ ${t('stats.adminDesc')}`;
             this._upnpAvailable = status.upnp_available || false;
             this._pendingRegistration = status.pending_registration || false;
             this._active = status.active || false;
+            // The address a fresh install is reached at. It exists nowhere but
+            // here: no record is published any more, so this page is where its
+            // owner learns it. `online` is a separate answer from having a URL —
+            // the line is held, not published, and while it is down the address
+            // is right and answers to nobody.
+            this._rendezvousUrl = status.rendezvous?.url || '';
+            this._rendezvousOnline = status.rendezvous?.online === true;
             this._hairpinReachable = status.hairpin_reachable || false;
             this._phase = status.phase || '';
             // The backend refuses to open anything until the user agrees to the
@@ -806,6 +815,15 @@ ${t('stats.adminDesc')}`;
         // Only a legacy instance (or a custom domain) has a public URL to show;
         // a fresh install's Internet link opens no web port and names nothing.
         const showDomain = !!this._domain;
+        // A fresh install is reached through the rendezvous server, and that
+        // address is published nowhere — this row is where its owner learns it.
+        //
+        // A legacy instance sees it TOO, alongside the sub-domain it already
+        // hands out. That is not two competing addresses: the sunset notice
+        // right below promises a replacement link before February 2027, and this
+        // is that link. Hiding it from the only people who need to migrate would
+        // make the notice a promise we are quietly already breaking.
+        const showRendezvous = !!this._rendezvousUrl;
 
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
@@ -965,6 +983,26 @@ ${t('stats.adminDesc')}`;
                                             : `<span class="tunnel-url-disabled">${domainUrl ? this.esc(domainUrl) : ''}</span>`
                                     }
                                 </div>
+                    `
+                            : ''
+                    }
+
+                    ${
+                        showRendezvous
+                            ? `
+                                <div class="admin-url-row">
+                                    <a href="${this.esc(this._rendezvousUrl)}" target="_blank" rel="noopener"
+                                       class="tunnel-url-link" id="admin-rdv-url">${this.esc(this._rendezvousUrl)}</a>
+                                    <button class="btn btn-secondary" id="btn-copy-rdv"
+                                            type="button">${t('common.copy')}</button>
+                                </div>
+                                <p class="admin-url-note">${
+                                    !this._rendezvousOnline
+                                        ? t('admin.rendezvousOffline')
+                                        : showDomain
+                                          ? t('admin.rendezvousReplaces')
+                                          : t('admin.rendezvousReady')
+                                }</p>
                     `
                             : ''
                     }
@@ -1627,6 +1665,33 @@ ${t('stats.adminDesc')}`;
                     saveBtn.classList.remove('btn-loading');
                     saveBtn.textContent = t('admin.saveReload');
                     this._updateSaveButton();
+                }
+            });
+        }
+
+        // Copy the rendezvous address. This is the one thing on the page a user
+        // has to get onto another device, so it earns a button rather than a
+        // select-and-copy.
+        const copyRdv = this.container.querySelector('#btn-copy-rdv');
+        if (copyRdv) {
+            copyRdv.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(this._rendezvousUrl);
+                    copyRdv.textContent = t('common.copied');
+                    setTimeout(() => {
+                        copyRdv.textContent = t('common.copy');
+                    }, 2000);
+                } catch (err) {
+                    console.warn('[Admin] Clipboard write failed:', err);
+                    // Leave the address selected so it can still be copied by hand.
+                    const link = this.container.querySelector('#admin-rdv-url');
+                    if (link) {
+                        const range = document.createRange();
+                        range.selectNodeContents(link);
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
                 }
             });
         }

@@ -70,6 +70,18 @@ public:
         m_UrlProvider = std::move(provider);
     }
 
+    /// Supplies the address this machine answers at from anywhere, or an empty
+    /// string when there is none yet. It is deliberately NOT what the tray's
+    /// Open entry uses: opening it from the host machine would leave the LAN to
+    /// come straight back, and loopback already carries the host-key privilege
+    /// that the remote address does not. What it is for is the one gesture the
+    /// tray is genuinely the right place for — being at this PC and needing the
+    /// address on a phone. When unset, that entry is not shown at all.
+    void setRemoteUrlProvider(std::function<QString()> provider)
+    {
+        m_RemoteUrlProvider = std::move(provider);
+    }
+
     /// Recompute the hover tooltip from the current entry URL. Call after the
     /// HTTPS port or the public domain changed (port parity rebind, Internet
     /// Access becoming ready).
@@ -90,6 +102,8 @@ private:
     HttpServer* m_Server; // null in client mode
     bool m_ClientMode = false;
     std::function<QUrl(const QString& path)> m_UrlProvider;
+    std::function<QString()> m_RemoteUrlProvider;
+    QAction* m_CopyRemoteAction = nullptr;
     std::function<void()> m_RestartServer; // client mode: restart the remote server
     std::function<void()> m_QuitServer;    // client mode: stop the remote server
     QSystemTrayIcon* m_TrayIcon;

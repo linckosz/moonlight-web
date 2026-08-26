@@ -605,12 +605,37 @@ static int runStatusCommand(quint16 persistedHttpsPort)
 
     const bool internetOn =
         inet.value("active").toBool(false) && !inet.value("domain").toString().isEmpty();
+    // A fresh install has no domain and never will: it is reached through the
+    // rendezvous server instead. That address exists nowhere else — nothing is
+    // published in DNS any more — so if this command does not print it, its
+    // owner has no way to learn it. Before this branch existed such an instance
+    // was reported as "From internet off", which was the opposite of true.
+    const QJsonObject rdv = inet.value("rendezvous").toObject();
+    const QString rdvUrl = rdv.value("url").toString();
+    const bool internetWanted = inet.value("internet_access_enabled").toBool(false);
     if (internetOn) {
         const int extPort = inet.value("external_https_port").toInt(443);
         out << "  From internet  https://" << inet.value("domain").toString()
             << (extPort == 443 ? QString() : QStringLiteral(":%1").arg(extPort)) << "\n";
         if (inet.value("cert_issuing").toBool(false))
             out << "                 (certificate still being issued — retry in a minute)\n";
+        // A legacy instance gets BOTH: the sub-domain it hands out today, and
+        // the address that replaces it when that service shuts down. Printing
+        // only the first would leave the people who actually have to migrate as
+        // the only ones never shown where to migrate to.
+        if (!rdvUrl.isEmpty())
+            out << "                 " << rdvUrl << "\n"
+                << "                 (works now; replaces the address above in February 2027)\n";
+    } else if (!rdvUrl.isEmpty()) {
+        out << "  From internet  " << rdvUrl << "\n";
+        // Held connection, not a published record: while it is down the address
+        // is correct and answers to nobody. Saying so beats printing a link that
+        // silently fails.
+        if (!rdv.value("online").toBool(false))
+            out << "                 (the line to the rendezvous server is down — this address\n"
+                << "                 will not answer until it comes back)\n";
+    } else if (internetWanted) {
+        out << "  From internet  starting up — no address claimed yet, retry in a moment\n";
     } else {
         out << "  From internet  off — enable it with:  moonlightweb --enable-internet\n";
         // Only worth probing (and only actionable) while the link is off: it
@@ -3824,6 +3849,17 @@ int main(int argc, char* argv[])
                          [&rendezvous, rendezvousShouldRun](bool enabled) {
                              if (enabled && rendezvousShouldRun()) rendezvous.start();
                              else rendezvous.stop();
+                         },
+                         [&rendezvous]() {
+                             // `url` is empty until the identity is claimed, and
+                             // `online` says whether the line is actually up.
+                             // They are separate answers on purpose: an address
+                             // that exists but is not being held is a link that
+                             // would fail, and showing it as if it worked is
+                             // worse than showing nothing.
+                             return QJsonObject{
+                                 {QStringLiteral("url"), rendezvous.entryUrl()},
+                                 {QStringLiteral("online"), rendezvous.isOnline()}};
                          });
 
     // Phase N: System tray icon. Its entries open the public domain (with the
@@ -3834,6 +3870,11 @@ int main(int argc, char* argv[])
     // The desktop session gets its tray from runTrayClient() instead.
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
+    // Deliberately a different provider from the one above: the tray's Open
+    // entry must stay on loopback (it carries the host-key privilege, and going
+    // out to the internet to reach this same machine would be absurd). This one
+    // exists only to hand the address to another device.
+    trayManager.setRemoteUrlProvider([&rendezvous]() { return rendezvous.entryUrl(); });
     if (hasGuiSession()) trayManager.init();
 
     // Keep every host-side entry point current when the entry URL changes:

@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <QJsonObject>
+
 #include <functional>
 
 class HttpServer;
@@ -35,7 +37,13 @@ class ComputerManager;
 ///        is online, so it belongs on the consent side of the boundary, not
 ///        outside it. A callback rather than a direct dependency keeps these
 ///        routes ignorant of the rendezvous client entirely.
+/// @param rendezvousStatus Supplies {url, online} for /api/internet/status. Also
+///        a callback for the reason above — and because the address an instance
+///        answers at is now the ONLY way its owner can learn it: nothing is
+///        published in DNS any more, so an unsurfaced URL means a reachable
+///        machine nobody can reach.
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
                           std::function<void()> onHostKeyRotated = {},
-                          std::function<void(bool)> onInternetAccessToggled = {});
+                          std::function<void(bool)> onInternetAccessToggled = {},
+                          std::function<QJsonObject()> rendezvousStatus = {});
