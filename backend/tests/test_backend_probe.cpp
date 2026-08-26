@@ -116,6 +116,54 @@ void run_backend_probe_tests()
     CHECK(!BackendProbe::looksLikeMultiSeatAuth("not json at all"));
     CHECK(!BackendProbe::looksLikeMultiSeatAuth(QByteArray()));
 
+    SECTION("BackendProbe — the Sunshine REST API names itself");
+
+    using BackendProbe::Reach;
+    using BackendProbe::SunshineRest;
+
+    // Captured live, unauthenticated, from two independent Sunshine hosts
+    // (DualRTX and the UM790Pro, 2026-08-26): the management API answers a
+    // caller with no credentials by naming itself in the challenge.
+    const QByteArray kRealm = "Basic realm=\"Sunshine Gamestream Host\", charset=\"UTF-8\"";
+    CHECK(BackendProbe::classifySunshineRest(Reach::Answered, 401, kRealm) ==
+          SunshineRest::Present);
+
+    // The port follows the host's own base port, so an operator who moved it
+    // keeps working. Hard-coding 47990 would only ever fit a default install.
+    CHECK_EQ(BackendProbe::sunshineRestPort(47989), 47990);
+    CHECK_EQ(BackendProbe::sunshineRestPort(48989), 48990);
+
+    // THE case this file exists for, and the one a source reading got wrong.
+    // Measured against a live Wolf host (Bazzite, 2026-08-26): its GameStream
+    // ports connect in ~2 ms and httpPort + 1 answers ConnectionRefused. A
+    // refusal is an ANSWER — nothing is listening — and must classify as Absent,
+    // because Absent is what turns the control-API setup on. Reading it as
+    // silence left Wolf, the only host this feature serves, as Unknown forever.
+    CHECK(BackendProbe::classifySunshineRest(Reach::Refused, 0, QByteArray()) ==
+          SunshineRest::Absent);
+
+    // Silence is the opposite: it could be a firewall in front of a host that
+    // does have the API. A firewalled Sunshine must not be offered a setup it
+    // has no use for.
+    CHECK(BackendProbe::classifySunshineRest(Reach::NoAnswer, 0, QByteArray()) ==
+          SunshineRest::Unknown);
+    CHECK(BackendProbe::classifySunshineRest(Reach::NoAnswer, 401, kRealm) ==
+          SunshineRest::Unknown);
+
+    // Answered, definitely not that API.
+    CHECK(BackendProbe::classifySunshineRest(Reach::Answered, 404, QByteArray()) ==
+          SunshineRest::Absent);
+    CHECK(BackendProbe::classifySunshineRest(Reach::Answered, 200, QByteArray()) ==
+          SunshineRest::Absent);
+
+    // Some other password-protected service on that port. It answered, but
+    // naming what it is is beyond us, and handing its owner a setup dialog
+    // would be wrong — so this stays Unknown rather than becoming Absent.
+    CHECK(BackendProbe::classifySunshineRest(Reach::Answered, 401, "Basic realm=\"router\"") ==
+          SunshineRest::Unknown);
+    CHECK(BackendProbe::classifySunshineRest(Reach::Answered, 401, QByteArray()) ==
+          SunshineRest::Unknown);
+
     SECTION("BackendProbe — names crossing to the browser");
 
     CHECK_EQ(BackendProbe::toString(Detected::GameStream), QStringLiteral("gamestream"));

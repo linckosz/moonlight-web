@@ -370,6 +370,7 @@ QJsonObject NvComputer::toJson() const
     // only when this is true, which is how a plain Sunshine card stays plain
     // without anyone having to declare that it is one.
     obj["multiSeatDetected"] = multiSeatApiPresent;
+    obj["mayHaveControlApi"] = mayHaveControlApi;
 
     // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
     // itself never has to reach the browser — the UI only needs to know whether

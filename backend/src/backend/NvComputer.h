@@ -157,4 +157,16 @@ public:
     // stale "yes" from months ago would offer a setup that cannot complete.
     // Re-probed once per process, per host.
     bool multiSeatApiPresent = false;
+
+    // This host speaks GameStream but carries no Sunshine-family management API,
+    // so whatever runs it has a control API we have no way of finding: its
+    // address is known only to whoever set up the reverse proxy in front of it.
+    // Today the one such server we know of is Wolf — but that is an inference,
+    // not a fact, so this flag says what was actually observed and the UI it
+    // drives never names a product.
+    //
+    // Only a DEFINITE negative sets it. "Could not reach that port" leaves it
+    // false, or a Sunshine host behind a firewall would be offered a setup it
+    // has no use for. Not saved, for the same reason as the flag above.
+    bool mayHaveControlApi = false;
 };

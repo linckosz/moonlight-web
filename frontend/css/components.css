@@ -770,6 +770,14 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     max-width: 460px;
     text-align: left;
 }
+/* Stands in for the type row on a host whose backend has not identified itself
+   yet — it says what will happen, where the answer will later sit. */
+.backend-identify-note {
+    margin-bottom: var(--space-4);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    line-height: 1.5;
+}
 .backend-field {
     display: block;
     margin-bottom: var(--space-4);
