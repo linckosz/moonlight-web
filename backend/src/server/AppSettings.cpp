@@ -195,6 +195,16 @@ bool AppSettings::updateRelayEnabled() const
     return obj.value("update_relay_enabled").toBool(true);
 }
 
+// Aggregate session counts (resolution/fps/codec/transport/duration), never a
+// host name, an account or an application. Opt-out, file-only; MW_NO_TELEMETRY
+// in the environment overrides it (SessionMetrics reads both).
+
+bool AppSettings::sessionMetricsEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("session_metrics_enabled").toBool(true);
+}
+
 void AppSettings::seedDocumentedDefaults()
 {
     QJsonObject obj = readAll();
@@ -211,6 +221,10 @@ void AppSettings::seedDocumentedDefaults()
     }
     if (!obj.contains("update_relay_enabled")) {
         obj["update_relay_enabled"] = true;
+        changed = true;
+    }
+    if (!obj.contains("session_metrics_enabled")) {
+        obj["session_metrics_enabled"] = true;
         changed = true;
     }
     if (changed) writeAll(obj);

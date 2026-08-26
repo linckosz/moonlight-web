@@ -173,6 +173,21 @@ public:
 
     bool updateRelayEnabled() const;
 
+    // ── Session metrics ────────────────────────────────────────────────────────
+    //
+    // Whether finished streaming sessions are counted in aggregate by the
+    // project (https://metrics.{MW_DOMAIN}). Stored as JSON bool
+    // "session_metrics_enabled", DEFAULT true, file-only.
+    //
+    // What travels is the SHAPE of a session — resolution, frame rate, codec,
+    // HDR, a bitrate band, backend, transport, LAN-or-internet, device class,
+    // duration — and never a host name, an account or an application. Set it to
+    // false (or set MW_NO_TELEMETRY in the environment) to report nothing;
+    // streaming is identical either way, and self-built binaries never report
+    // at all. See backend/src/network/SessionMetrics.h and the README.
+
+    bool sessionMetricsEnabled() const;
+
     // Seed documented file-only default keys into settings.json if absent, so they
     // are discoverable/editable in the file. Idempotent.
     void seedDocumentedDefaults();

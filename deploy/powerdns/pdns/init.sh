@@ -38,6 +38,7 @@ if ! $PDNSUTIL list-all-zones 2>/dev/null | grep -qx "$MW_DOMAIN"; then
     $PDNSUTIL add-record "$MW_DOMAIN" api A  "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" dnsapi A "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" updates A "$MW_PUBLIC_IP"
+    $PDNSUTIL add-record "$MW_DOMAIN" metrics A "$MW_PUBLIC_IP"
     $PDNSUTIL add-record "$MW_DOMAIN" @   NS "ns1.${MW_DOMAIN}."
     $PDNSUTIL add-record "$MW_DOMAIN" @   NS "ns2.${MW_DOMAIN}."
     $PDNSUTIL secure-zone "$MW_DOMAIN"
@@ -68,6 +69,7 @@ ensure_a api    # api    — PowerDNS REST API (direct, compatibility)
 ensure_a dnsapi # dnsapi — restricted DNS-registration API (mw-proxy, 0.2.0+)
 ensure_a stats  # stats  — Umami analytics dashboard
 ensure_a updates # updates — update relay / version census (mw-proxy, 0.3.0+)
+ensure_a metrics # metrics — session census (mw-proxy, 0.3.0+); drop it to switch the census off
 ensure_a stream # stream — rendezvous host: bootstrap page + /v1 API (0.3.0+)
 
 # Zones created before default-soa-content was set (zz-mw.conf) carry the image

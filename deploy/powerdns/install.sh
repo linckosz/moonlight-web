@@ -268,6 +268,9 @@ if [ -f .env ]; then
     # Update relay (0.3.0+): empty until the operator creates the second Umami
     # website and pastes its ID — the relay serves updates either way.
     ensure_env MW_UMAMI_TELEMETRY_WEBSITE_ID ""
+    # Session census (0.3.0+): same rule — empty until the operator creates the
+    # third Umami website; /v1/session answers either way.
+    ensure_env MW_UMAMI_SESSIONS_WEBSITE_ID ""
 else
     detected_ip="$(curl -fsS https://api.ipify.org 2>/dev/null || true)"
 
@@ -326,6 +329,7 @@ MW_TLS_KEY=${MW_TLS_KEY}
 MW_UMAMI_DB_PASSWORD=${MW_UMAMI_DB_PASSWORD}
 MW_UMAMI_SECRET=${MW_UMAMI_SECRET}
 MW_UMAMI_TELEMETRY_WEBSITE_ID=
+MW_UMAMI_SESSIONS_WEBSITE_ID=
 EOF
     [ "$TARGET_USER" != "root" ] && chown "$TARGET_USER" .env 2>/dev/null || true
     ok ".env written"
@@ -487,6 +491,18 @@ echo "         Instances running 0.3.0+ point their update check at"
 echo "         https://updates.${MW_DOMAIN:-<MW_DOMAIN>}, and the dashboard's"
 echo "         'Pages' panel becomes the version histogram (Path tab: /uc/<version>)."
 echo "         Until then the relay just serves releases and counts nothing."
+echo
+echo "  [ ] 8. Turn ON the session census (optional, same idea, other question):"
+echo "         a) in Umami, add a THIRD website: name 'MoonlightWeb sessions',"
+echo "            domain 'metrics.${MW_DOMAIN:-<MW_DOMAIN>}' — its own website so"
+echo "            'views' there means 'sessions started', nothing else"
+echo "         b) copy its ID into $HERE/.env:"
+echo "               MW_UMAMI_SESSIONS_WEBSITE_ID=<that id>"
+echo "         c) $COMPOSE up -d mw-proxy"
+echo "         Instances then report the SHAPE of each stream (resolution, frame"
+echo "         rate, codec, transport, how long it lasted — never a host name, an"
+echo "         account or an application). 'Pages' becomes the resolution"
+echo "         histogram, 'Events' the duration one."
 echo
 echo " This list is saved to: $HERE/$SUMMARY"
 echo "============================================================"

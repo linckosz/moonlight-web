@@ -68,6 +68,7 @@ add_executable(run_tests
     test_rendezvous_id.cpp
     test_backend_probe.cpp
     test_wolf_coop.cpp
+    test_session_metrics.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
     ${_src}/src/streaming/StreamConfig.cpp
@@ -93,6 +94,8 @@ add_executable(run_tests
     # AppSettings and AuthManager both reach into MW-BIND-v1 now: the host
     # identity key, and the pairing key bound to a session.
     ${_src}/src/common/PairingCrypto.cpp
+    # The session census: what leaves the machine, and what must not.
+    ${_src}/src/network/SessionMetrics.cpp
     ${_src}/src/common/Logger.cpp
 )
 

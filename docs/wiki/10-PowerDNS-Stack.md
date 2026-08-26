@@ -15,6 +15,7 @@ Internet ─:53──────► [dnsdist] ──► pdns:5300          anti
 Internet ─:80/:443─► [caddy] ┬─ api.{domain} ───────► pdns:8081         direct PowerDNS API (compatibility)
                              ├─ dnsapi.{domain} ────► mw-proxy:8080 ──► pdns:8081  restricted API (0.2.0+)
                              ├─ updates.{domain} ───► mw-proxy:8080 ──► GitHub     release relay + census (0.3.0+)
+                             ├─ metrics.{domain} ───► mw-proxy:8080 ──► umami:3000 session census (0.3.0+)
                              └─ stats.{domain} ─────► umami:3000       analytics dashboard
                      [pdns]     (internal, non-root)  PowerDNS authoritative + REST API
                      [mw-proxy] (internal)            least-privilege filtering gateway
@@ -26,9 +27,9 @@ Six containers (one process each — the idiomatic Docker layout), defined in `d
 | Container | Image | Exposure | Role |
 |---|---|---|---|
 | `pdns` | official `powerdns/pdns-auth-49`, **unmodified** | internal only (DNS :5300, API :8081, fixed IP 172.28.0.10) | Authoritative zone (SQLite in the `pdns_data` volume) + REST API. Runs non-root, `cap_drop: ALL`. |
-| `mw-proxy` | custom build: small Go gateway (stdlib only) | internal only (:8080) | Least-privilege filter in front of the pdns API: holds the full key, exposes a restricted key that can only manage a client's own A/TXT records. Store in `mwproxy_data`. See §10.7. Also serves the update relay on `/v1/update` (§10.8). |
+| `mw-proxy` | custom build: small Go gateway (stdlib only) | internal only (:8080) | Least-privilege filter in front of the pdns API: holds the full key, exposes a restricted key that can only manage a client's own A/TXT records. Store in `mwproxy_data`. See §10.7. Also serves the update relay on `/v1/update` (§10.8) and the session census on `/v1/session` (§10.9). |
 | `dnsdist` | official `powerdns/dnsdist-19` | public :53 UDP+TCP | DNS front: per-client rate limit, ANY→TCP, forwards to pdns. |
-| `caddy` | custom build: Caddy + `caddy-ratelimit` (xcaddy) | public :80/:443 | `api.{domain}` → pdns API (compatibility); `dnsapi.{domain}` → mw-proxy (restricted); `updates.{domain}` → mw-proxy (release relay); apex/`www`/`stream` → static `website/`; `stats.` → Umami. Auto Let's Encrypt. |
+| `caddy` | custom build: Caddy + `caddy-ratelimit` (xcaddy) | public :80/:443 | `api.{domain}` → pdns API (compatibility); `dnsapi.{domain}` → mw-proxy (restricted); `updates.{domain}` → mw-proxy (release relay); `metrics.{domain}` → mw-proxy (session census); apex/`www`/`stream` → static `website/`; `stats.` → Umami. Auto Let's Encrypt. |
 | `umami` | official Umami (postgres flavor) | internal (via caddy) | Cookieless analytics for the landing page. |
 | `umami-db` | postgres 16-alpine | internal | Umami storage (`umami_db` volume). |
 
@@ -40,7 +41,7 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
 
 - **`pdns/zz-mw.conf`** — hardening snippet merged via include-dir: `disable-axfr`, `version-string=anonymous`, default SOA content, internal ports.
 - **`pdns/init.sh`** — idempotent zone bootstrap run as entrypoint (then `exec`s the official wrapper):
-  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `ns1`, `ns2`, `api`, `dnsapi`, `updates` → `MW_PUBLIC_IP`, NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
+  - creates the zone if absent with A records for `@`, `www`, `stats`, `stream`, `ns1`, `ns2`, `api`, `dnsapi`, `updates`, `metrics` → `MW_PUBLIC_IP`, NS records, then `secure-zone` (DNSSEC) + `rectify-zone`, and **prints the DS record** to submit to the registrar;
   - **backfills** missing records on pre-existing zones (`ensure_a` guards — note: a bare re-`add-record` would duplicate, hence the greps);
   - replaces the image's placeholder SOA when found.
 
@@ -57,7 +58,7 @@ The official image already ships `pdns.conf`, the gsqlite3 schema and the API wi
 
 - **Dockerfile**: xcaddy build adding the `caddy-ratelimit` plugin (this Go build is why the installer adds swap on 1 GiB VMs).
 - **`entrypoint.sh`** renders `Caddyfile.tmpl` from env at boot: `@MW_DOMAIN@`, `@TLS_LINE@` (api vhost: empty = auto Let's Encrypt, or `tls /certs/...` when `MW_TLS_CERT`+`MW_TLS_KEY` are both set — user files take priority), `@SITE_TLS_LINE@` (site vhosts always get their own ACME cert, never the api-only files).
-- Vhosts: `api.` → `reverse_proxy pdns:8081` (compatibility, 60 req/min/IP); `dnsapi.` → `reverse_proxy mw-proxy:8080` (restricted, 60 req/min/IP — §10.7); `updates.` → the same mw-proxy, serving the release relay (§10.8); `stats.` → Umami; apex+`www`+`stream` → static site with `www`/`stream` 301-redirected to the apex (`stream.` is a marketing vanity alias).
+- Vhosts: `api.` → `reverse_proxy pdns:8081` (compatibility, 60 req/min/IP); `dnsapi.` → `reverse_proxy mw-proxy:8080` (restricted, 60 req/min/IP — §10.7); `updates.` → the same mw-proxy, serving the release relay (§10.8); `metrics.` → the same mw-proxy again, serving the session census (§10.9, 60 req/min/IP); `stats.` → Umami; apex+`www`+`stream` → static site with `www`/`stream` 301-redirected to the apex (`stream.` is a marketing vanity alias).
 - Certificates persist in the `caddy_data` volume.
 
 ## 10.5 The installer (`install.sh`)
@@ -129,13 +130,37 @@ Version-migration decisions ("can 0.2.x be dropped?") need to know what is still
 
 Two properties of that number to keep in mind: Umami's visitor hash uses a **daily-rotating salt**, so "unique visitors / 30 days" approximates machine count rather than counting distinct machines; and since the version is part of the hash input, an upgraded machine moves to its new version's bucket the same day — which is exactly the signal a migration wants.
 
-## 10.9 Hardening & limits
+## 10.9 Session census
+
+The version census says which builds are alive; it says nothing about how they are used. `metrics.{domain}` (`mw-proxy/session.go`, path `/v1/session`, the same container again) is where instances report the **shape** of a session — so "is 720p still worth supporting?", "did AV1 take off?", "how long does a session last?" stop being guesses.
+
+MoonlightWeb 0.3.0+ POSTs a small JSON body, authenticated with the same restricted key, at two moments: when a stream first carries a picture, and when it ends. A launch that never got there is reported too.
+
+- **Records**: resolution, frame rate, negotiated codec, HDR and 4:4:4 flags, a bitrate *band*, backend family, the transport that won, LAN-or-internet, a coarse device class, owner-or-player, and — at the end — a duration *bucket*.
+- **Never records**: host name or UUID, account, session token, pairing identity, **the application launched**, or any raw address. Every field is matched against an allowlist or collapsed into a bucket before it goes anywhere, so a forged client can neither inject strings into the dashboard nor blow up its cardinality; there is no free-text field at all.
+- **Never load-bearing**: the endpoint answers `204` whether or not it counts anything, the instance drops a failed report without retrying, and nothing about a stream depends on the answer.
+- **Opt-out**: `session_metrics_enabled: false` or `MW_NO_TELEMETRY` in the app ([Settings §7](07-Settings-Reference.md)). Self-built binaries never reach it — it needs the `MW_PDNS_TOKEN` only official builds carry. Fleet-wide, deleting the `metrics` A record switches the whole census off without touching the update path, which is why it is its own host rather than a path under `updates.`.
+
+**Dashboard.** Set `MW_UMAMI_SESSIONS_WEBSITE_ID` to a *third* Umami website (suggested `MoonlightWeb sessions` / `metrics.{domain}`). Its own website on purpose: there, "views" means "sessions started" and nothing else is mixed in. With that, the built-in reports need no configuration:
+
+| Umami report | Reads as |
+|---|---|
+| Overview → **Views** | sessions started per day |
+| Overview → **Visitors** | distinct instances that streamed (daily hash) |
+| Pages → **Path** (`/s/1080p60`) | the resolution / frame-rate histogram |
+| Pages → **URL** | the same, split by codec / bitrate band / backend / transport / network / device / owner-or-player |
+| Events → **dur-…** | how long sessions lasted |
+| Events → **launch-failed** | attempts that never reached a picture |
+
+Three things that number is not. A *standby* leg (the second stream the quality ladder opens to switch seamlessly) is deliberately not counted, since it is the same viewer continuing an already-counted session — which also means a duration is the length of the *first* leg, not of the whole evening when the ladder moved. A transport fallback that fails before the picture arrives shows up under `launch-failed`, so that count is attempts, not people. And a transport that reached the host but then failed to establish the browser connection counts as its own very short session: a spike in `dur-0-1m` reads as "the first transport does not work there", not as "people leave immediately".
+
+## 10.10 Hardening & limits
 
 Built-in: DNS rate-limit + ANY→TCP (dnsdist), API key + 60 req/min/IP (Caddy), least-privilege restricted key (mw-proxy, §10.7), non-root/no-caps containers, resource limits, API port never published, `disable-axfr`, anonymous version string, host fail2ban + auto-updates.
 
 Explicit non-goals: **volumetric DDoS** absorption (needs upstream scrubbing/anycast/managed secondary DNS) and in-container IP banning (fail2ban belongs on the Docker host, watching Caddy's access log; the in-container mitigation is the HTTP 429 rate limit).
 
-## 10.10 Operations cheat-sheet
+## 10.11 Operations cheat-sheet
 
 ```bash
 docker compose logs -f pdns|mw-proxy|caddy|dnsdist   # logs

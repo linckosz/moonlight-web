@@ -696,7 +696,8 @@ bool InternetAccessManager::isReservedSubdomain(const QString& label)
     // host, "updates" for the release relay, and "app" for the bootstrap, which
     // is a CNAME to GitHub Pages rather than a record this stack serves).
     static const char* const kReserved[] = {
-        "www", "api", "dnsapi", "stats", "stream", "ns1", "ns2", "mail", "updates", "app",
+        "www", "api",  "dnsapi",  "stats", "stream",  "ns1",
+        "ns2", "mail", "updates", "app",   "metrics",
     };
     for (const char* r : kReserved)
         if (l == QLatin1String(r)) return true;

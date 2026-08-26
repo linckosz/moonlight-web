@@ -185,9 +185,13 @@ func TestUpdateRelayReportsSanitizedEvent(t *testing.T) {
 	defer umami.Close()
 
 	relay, _ := testRelay(t, time.Minute)
-	relay.cfg.umamiURL = umami.URL
-	relay.cfg.umamiWebsite = "test-website-id"
-	relay.cfg.hostname = "updates.moonlightweb.top"
+	// The reporter holds its own copy of the analytics config (see umami.go),
+	// so point IT at the fake dashboard, not the relay's cfg.
+	relay.rep.cfg = umamiConfig{
+		url:      umami.URL,
+		website:  "test-website-id",
+		hostname: "updates.moonlightweb.top",
+	}
 
 	// A forged version must not reach the dashboard as-is.
 	w := httptest.NewRecorder()
@@ -234,7 +238,7 @@ func TestUpdateRelaySkipsReportWithoutWebsiteID(t *testing.T) {
 	defer umami.Close()
 
 	relay, _ := testRelay(t, time.Minute)
-	relay.cfg.umamiURL = umami.URL // configured, but no website id
+	relay.rep.cfg = umamiConfig{url: umami.URL} // configured, but no website id
 
 	w := httptest.NewRecorder()
 	relay.ServeHTTP(w, updateRequest("?v=0.3.1&os=macos&arch=arm64"))

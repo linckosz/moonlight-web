@@ -92,6 +92,7 @@
 #include "network/RendezvousClient.h"
 #include "network/GeoIpService.h"
 #include "network/SelfUpdater.h"
+#include "network/SessionMetrics.h"
 #include "network/UpdateChecker.h"
 #include "TrayManager.h"
 
@@ -1793,6 +1794,12 @@ int main(int argc, char* argv[])
     UpdateChecker updateChecker(QCoreApplication::applicationVersion(),
                                 appSettings.updateRelayEnabled());
     SelfUpdater selfUpdater(&updateChecker);
+    // Aggregate session counts (resolution/fps/codec/transport/duration) for
+    // planning. Silent unless the instance allows it AND the build carries the
+    // credentials — see SessionMetrics.h for exactly what does and does not
+    // leave this machine.
+    SessionMetrics sessionMetrics(QCoreApplication::applicationVersion(),
+                                  appSettings.sessionMetricsEnabled());
 
     // Keep the release cache warm on our own clock instead of on client traffic.
     // statusJson() is stale-while-revalidate: the caller that finds the cache
@@ -1967,7 +1974,8 @@ int main(int argc, char* argv[])
                                                         &slotSignalingPort, &slotWsPath,
                                                         &anyOtherSlotLive, &reapCoopSession,
                                                         &server, &appSettings,
-                                                        &authManager, effectiveUpnpEnabled,
+                                                        &authManager, &sessionMetrics,
+                                                        effectiveUpnpEnabled,
                                                         stunServer](const HttpRequest& req,
                                                                     ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
@@ -2295,6 +2303,25 @@ int main(int argc, char* argv[])
         // questions it answers (need STUN? may we show the LAN candidate?)
         // cannot drift apart again.
         const NetClassify::Kind clientKind = NetClassify::classify(req.clientAddress);
+
+        // ── Session census ─────────────────────────────────────────────────────
+        // The shape of this session, for the aggregate counts (SessionMetrics.h:
+        // no host, no account, no application, and nothing at all unless the
+        // instance allows it). Codec and transport are only known once the host
+        // has answered, so the handlers below finish filling this in; the start
+        // timestamp stays 0 until a session is actually counted, which is what
+        // keeps the end report paired with a start.
+        auto sessionFacts = std::make_shared<SessionMetrics::Facts>();
+        sessionFacts->height = reqHeight;
+        sessionFacts->fps = reqFps;
+        sessionFacts->bitrateKbps = reqBitrate;
+        sessionFacts->hdr = reqHdr;
+        sessionFacts->yuv444 = reqYuv444;
+        sessionFacts->backend = backendType.isEmpty() ? QStringLiteral("gamestream") : backendType;
+        sessionFacts->net = QString::fromLatin1(NetClassify::toString(clientKind));
+        sessionFacts->client = SessionMetrics::clientClass(req.headers.value("user-agent"));
+        sessionFacts->kind = QStringLiteral("owner");
+        auto sessionStartedAt = std::make_shared<qint64>(0);
 
         // ================================================================
         // Resolve transport mode (from AppSettings).
@@ -2684,9 +2711,24 @@ int main(int argc, char* argv[])
             QObject::connect(
                 worker, &StreamWorkerHost::responseReady, qApp,
                 [respond, worker, &g_Pool, &g_DualSupport, &g_LiveSunshineUids, &authManager,
-                 reqSlot, standby, hostUuidCopy, uid, sessionToken](int code, QJsonObject bodyObj) {
+                 &sessionMetrics, sessionFacts, sessionStartedAt, reqSlot, standby, hostUuidCopy,
+                 uid, sessionToken](int code, QJsonObject bodyObj) {
                     const bool ok =
                         code == 200 && bodyObj["status"].toString() == QLatin1String("streaming");
+                    // Count a session once it actually carries a picture, and
+                    // once only: a standby leg is the same viewer continuing a
+                    // stream that was already counted, so it is skipped here and
+                    // in the end report below.
+                    if (!standby) {
+                        sessionFacts->codec = bodyObj["videoCodec"].toString();
+                        sessionFacts->transport = bodyObj["transport_mode"].toString();
+                        if (ok) {
+                            *sessionStartedAt = QDateTime::currentMSecsSinceEpoch();
+                            sessionMetrics.reportStart(*sessionFacts);
+                        } else {
+                            sessionMetrics.reportFailure(*sessionFacts, code);
+                        }
+                    }
                     if (ok) {
                         bodyObj["slot"] = reqSlot;
                         bodyObj["dual_supported"] = g_DualSupport.value(hostUuidCopy, true);
@@ -2725,10 +2767,18 @@ int main(int argc, char* argv[])
             QObject::connect(
                 worker, &StreamWorkerHost::ended, qApp,
                 [worker, &g_Pool, &g_DualSupport, &g_LastStandbyStartMs, &g_LiveSunshineUids,
-                 &anyOtherSlotLive, &computerManager, &authManager, &reapCoopSession, reqSlot, host,
-                 hostUuidCopy, uid, sessionToken, coopSessionId]() {
+                 &anyOtherSlotLive, &computerManager, &authManager, &reapCoopSession,
+                 &sessionMetrics, sessionFacts, sessionStartedAt, reqSlot, host, hostUuidCopy, uid,
+                 sessionToken, coopSessionId]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
+                    // Pairs with the start above: a non-zero timestamp is proof
+                    // this leg was the one counted.
+                    if (*sessionStartedAt > 0) {
+                        const qint64 ms = QDateTime::currentMSecsSinceEpoch() - *sessionStartedAt;
+                        sessionMetrics.reportEnd(*sessionFacts, static_cast<int>(ms / 1000));
+                        *sessionStartedAt = 0;
+                    }
                     // Unconditional, unlike the /cancel below: a co-op session is
                     // this seat's alone, so closing it never takes the app away
                     // from a sibling slot the way a shared-app /cancel would.
@@ -3230,7 +3280,7 @@ int main(int argc, char* argv[])
     shareDeps.startPlayerStream =
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &shareManager, &detachWorkerSlot,
          &anyOtherSlotLive, &reapCoopSession, &slotSignalingPort, &slotWsPath, &server,
-         &appSettings, signalingPort,
+         &appSettings, &sessionMetrics, signalingPort,
          stunServer, &g_HostAspect](int slot, int height, QString aspect,
                                     ShareManager::Permissions perms, QString serverHost,
                                     ResponseCallback respond) {
@@ -3304,6 +3354,21 @@ int main(int argc, char* argv[])
             // Sunshine build a separate session_t instead of reassigning the
             // owner's stream. 32 hex chars, like the browser-side ids.
             const QString uid = QUuid::createUuid().toString(QUuid::Id128);
+
+            // Session census, guest leg. Same rules as the owner's (see the
+            // /start route): shape only, and nothing at all unless the instance
+            // allows it. A player has no request of their own here — the share
+            // activation starts this — so there is no User-Agent to classify and
+            // the network is assumed public, exactly as the config below does.
+            auto sessionFacts = std::make_shared<SessionMetrics::Facts>();
+            sessionFacts->height = height;
+            sessionFacts->fps = 60;
+            sessionFacts->bitrateKbps = bitrateKbps;
+            sessionFacts->backend = host->backendType.isEmpty() ? QStringLiteral("gamestream")
+                                                                : host->backendType;
+            sessionFacts->net = QStringLiteral("public");
+            sessionFacts->kind = QStringLiteral("player");
+            auto sessionStartedAt = std::make_shared<qint64>(0);
 
             QJsonObject cfg;
             cfg["hostAddress"] = host->activeAddress.address();
@@ -3388,10 +3453,19 @@ int main(int argc, char* argv[])
                              });
 
             QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,
-                             [respond, &g_LiveSunshineUids, &shareManager, slot,
+                             [respond, &g_LiveSunshineUids, &shareManager, &sessionMetrics,
+                              sessionFacts, sessionStartedAt, slot,
                               uid](int code, QJsonObject bodyObj) {
                                  const bool ok = code == 200 && bodyObj["status"].toString() ==
                                                                     QLatin1String("streaming");
+                                 sessionFacts->codec = bodyObj["videoCodec"].toString();
+                                 sessionFacts->transport = bodyObj["transport_mode"].toString();
+                                 if (ok) {
+                                     *sessionStartedAt = QDateTime::currentMSecsSinceEpoch();
+                                     sessionMetrics.reportStart(*sessionFacts);
+                                 } else {
+                                     sessionMetrics.reportFailure(*sessionFacts, code);
+                                 }
                                  if (ok) {
                                      bodyObj["slot"] = slot;
                                      g_LiveSunshineUids.insert(uid);
@@ -3402,9 +3476,17 @@ int main(int argc, char* argv[])
 
             QObject::connect(worker, &StreamWorkerHost::ended, qApp,
                              [worker, &g_Pool, &g_LiveSunshineUids, &shareManager,
-                              &anyOtherSlotLive, &computerManager, &reapCoopSession, slot, host,
-                              uid, coopSessionId]() {
+                              &anyOtherSlotLive, &computerManager, &reapCoopSession,
+                              &sessionMetrics, sessionFacts, sessionStartedAt, slot, host, uid,
+                              coopSessionId]() {
                                  qInfo() << "[main] Player worker ended (slot" << slot << ")";
+                                 if (*sessionStartedAt > 0) {
+                                     const qint64 ms =
+                                         QDateTime::currentMSecsSinceEpoch() - *sessionStartedAt;
+                                     sessionMetrics.reportEnd(*sessionFacts,
+                                                              static_cast<int>(ms / 1000));
+                                     *sessionStartedAt = 0;
+                                 }
                                  // The share survives the stream: a dropped connection must
                                  // not end the invitation, only an owner action does.
                                  shareManager.setStreaming(slot, false);
