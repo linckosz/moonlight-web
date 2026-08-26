@@ -767,7 +767,6 @@ export class HostListView {
                 h.customName,
                 h.port,
                 h.gpuModel,
-                h.displayModes,
                 // A running session drives the kebab's "Stop session" entry;
                 // without it here the card never re-renders when a Leave leaves
                 // the Sunshine app paused-but-alive.
@@ -789,7 +788,6 @@ export class HostListView {
             host.gpuModel,
             host.wakeSupported,
             host.restartSupported,
-            JSON.stringify(host.displayModes),
             host.currentGameId > 0,
         ].join('|');
     }
@@ -893,11 +891,6 @@ export class HostListView {
                         ${
                             host.displayGpu
                                 ? `<div class="host-gpu">${this.esc(host.displayGpu)}</div>`
-                                : ''
-                        }
-                        ${
-                            host.resolutionText
-                                ? `<div class="host-resolution">${this.esc(host.resolutionText)}</div>`
                                 : ''
                         }
                     </div>
