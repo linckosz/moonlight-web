@@ -1792,14 +1792,14 @@ int main(int argc, char* argv[])
     InternetAccessManager internetAccess(&appSettings);
     GeoIpService geoIpService;
     UpdateChecker updateChecker(QCoreApplication::applicationVersion(),
-                                appSettings.updateRelayEnabled());
+                                appSettings.updateRelayAllowed());
     SelfUpdater selfUpdater(&updateChecker);
     // Aggregate session counts (resolution/fps/codec/transport/duration) for
     // planning. Silent unless the instance allows it AND the build carries the
     // credentials — see SessionMetrics.h for exactly what does and does not
     // leave this machine.
     SessionMetrics sessionMetrics(QCoreApplication::applicationVersion(),
-                                  appSettings.sessionMetricsEnabled());
+                                  appSettings.sessionMetricsAllowed());
 
     // Keep the release cache warm on our own clock instead of on client traffic.
     // statusJson() is stale-while-revalidate: the caller that finds the cache
@@ -1917,6 +1917,59 @@ int main(int argc, char* argv[])
     // then waits for the new build on /api/health (see HostListView).
     server.router()->get("/api/update/status", [&selfUpdater](const HttpRequest&) {
         return HttpResponse::json(selfUpdater.statusJson());
+    });
+
+    // ── Statistics consent (GDPR) ──────────────────────────────────────────
+    // Neither census reports anything until this has been answered, and an
+    // answer takes effect on the spot rather than at the next restart.
+    //
+    // Host-local only, both ways: it is a decision about what this MACHINE
+    // sends, so a remote viewer is neither asked nor allowed to answer for its
+    // owner. The frontend asks the same question of itself before showing the
+    // banner (app.js _isHostLocal), so a guest never even sees it.
+    server.router()->get("/api/metrics/consent", [&appSettings,
+                                                  &updateChecker](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Host-local decision");
+        QJsonObject obj;
+        obj["decision"] = appSettings.metricsConsentDecision();
+        obj["version"] = AppSettings::kMetricsConsentVersion;
+        // What the answer would actually change. A build with no relay
+        // credentials reports nothing whatever the user says, and there is no
+        // point putting a question to someone whose answer cannot matter.
+        obj["reporting"] = appSettings.sessionMetricsAllowed() || appSettings.updateRelayAllowed();
+        obj["available"] = UpdateChecker::relayAvailable();
+        return HttpResponse::json(obj);
+    });
+
+    server.router()->post("/api/metrics/consent", [&appSettings, &updateChecker,
+                                                   &sessionMetrics](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Host-local decision");
+
+        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        if (!body.contains("granted")) return HttpResponse::error(400, "Missing \"granted\"");
+        const bool granted = body["granted"].toBool();
+
+        // The wording that was on screen, stored verbatim. A consent record
+        // that does not say what was agreed to is not worth keeping — and the
+        // text is translated, so only the browser knows which one the user
+        // actually read. Capped: this is a record, not a channel.
+        const QString message = body["message"].toString().left(2000);
+        QString source = body["source"].toString();
+        if (source != QLatin1String("banner") && source != QLatin1String("admin"))
+            source = QStringLiteral("banner");
+
+        appSettings.setMetricsConsent(granted, message, source);
+        // Apply now: someone who just said no must not have their next stream
+        // counted, and someone who said yes should not have to restart to be.
+        updateChecker.setRelayEnabled(appSettings.updateRelayAllowed());
+        sessionMetrics.setEnabled(appSettings.sessionMetricsAllowed());
+        qInfo() << "[metrics] statistics consent" << (granted ? "granted" : "denied") << "via"
+                << source;
+
+        QJsonObject obj;
+        obj["decision"] = appSettings.metricsConsentDecision();
+        obj["reporting"] = appSettings.sessionMetricsAllowed() || appSettings.updateRelayAllowed();
+        return HttpResponse::json(obj);
     });
 
     // GET /api/server/hostname — returns the server's hostname and OS info

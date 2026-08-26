@@ -205,6 +205,53 @@ bool AppSettings::sessionMetricsEnabled() const
     return obj.value("session_metrics_enabled").toBool(true);
 }
 
+// ── Statistics consent ───────────────────────────────────────────────────────
+// Nothing is reported until this says yes. Recorded the way the Internet Access
+// consent is — wording, timestamp, entry point — because "we asked and they
+// agreed" is only worth anything if what they agreed to was written down.
+
+QJsonObject AppSettings::metricsConsent() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("metrics_consent").toObject();
+}
+
+void AppSettings::setMetricsConsent(bool granted, const QString& message, const QString& source)
+{
+    QJsonObject consent;
+    consent["decision"] = granted ? QStringLiteral("granted") : QStringLiteral("denied");
+    consent["message"] = message;
+    consent["at"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    consent["source"] = source;
+    consent["version"] = kMetricsConsentVersion;
+
+    QJsonObject obj = readAll();
+    obj["metrics_consent"] = consent;
+    writeAll(obj);
+}
+
+QString AppSettings::metricsConsentDecision() const
+{
+    const QJsonObject consent = metricsConsent();
+    if (consent.isEmpty()) return {};
+    // An answer given to an older, narrower question does not cover a wording
+    // that describes more: treat it as unasked and put the question again.
+    if (consent.value("version").toInt(0) < kMetricsConsentVersion) return {};
+    const QString decision = consent.value("decision").toString();
+    if (decision != QLatin1String("granted") && decision != QLatin1String("denied")) return {};
+    return decision;
+}
+
+bool AppSettings::updateRelayAllowed() const
+{
+    return metricsConsentDecision() == QLatin1String("granted") && updateRelayEnabled();
+}
+
+bool AppSettings::sessionMetricsAllowed() const
+{
+    return metricsConsentDecision() == QLatin1String("granted") && sessionMetricsEnabled();
+}
+
 void AppSettings::seedDocumentedDefaults()
 {
     QJsonObject obj = readAll();

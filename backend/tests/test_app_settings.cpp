@@ -135,6 +135,53 @@ void run_app_settings_tests()
     CHECK_EQ(s.internetConsent().value("mechanism").toString(), QString("rendezvous"));
     CHECK_EQ(s.internetConsent().value("source").toString(), QString("admin"));
 
+    // ── Statistics consent ────────────────────────────────────────────────
+    // Silence is not consent: until the question has been answered, both
+    // censuses must stay shut whatever the file-only switches say.
+    CHECK_EQ(s.metricsConsentDecision(), QString());
+    CHECK(!s.sessionMetricsAllowed());
+    CHECK(!s.updateRelayAllowed());
+
+    s.setMetricsConsent(false, "the wording that was displayed", "banner");
+    CHECK_EQ(s.metricsConsentDecision(), QString("denied"));
+    CHECK(!s.sessionMetricsAllowed());
+    CHECK(!s.updateRelayAllowed());
+
+    s.setMetricsConsent(true, "the wording that was displayed", "banner");
+    CHECK_EQ(s.metricsConsentDecision(), QString("granted"));
+    CHECK(s.sessionMetricsAllowed());
+    CHECK(s.updateRelayAllowed());
+    // The record has to say what was agreed to, and when.
+    CHECK_EQ(s.metricsConsent().value("message").toString(),
+             QString("the wording that was displayed"));
+    CHECK_EQ(s.metricsConsent().value("source").toString(), QString("banner"));
+    CHECK(!s.metricsConsent().value("at").toString().isEmpty());
+
+    // A file-only opt-out still wins over a granted consent.
+    {
+        QJsonObject obj = s.readAll();
+        obj["session_metrics_enabled"] = false;
+        s.writeAll(obj);
+        CHECK(!s.sessionMetricsAllowed());
+        CHECK(s.updateRelayAllowed()); // the other switch is untouched
+        obj = s.readAll();
+        obj["session_metrics_enabled"] = true;
+        s.writeAll(obj);
+    }
+
+    // An answer given to an older, narrower wording does not carry over to a
+    // question that describes more: it reads as unasked, and reports nothing.
+    {
+        QJsonObject obj = s.readAll();
+        QJsonObject consent = obj["metrics_consent"].toObject();
+        consent["version"] = AppSettings::kMetricsConsentVersion - 1;
+        obj["metrics_consent"] = consent;
+        s.writeAll(obj);
+        CHECK_EQ(s.metricsConsentDecision(), QString());
+        CHECK(!s.sessionMetricsAllowed());
+        CHECK(!s.updateRelayAllowed());
+    }
+
     // Documented file-only defaults are idempotently seeded.
     s.seedDocumentedDefaults();
     s.audioTimeStretch(); // exercised (value documented as true by default)

@@ -113,6 +113,23 @@ UpdateChecker::UpdateChecker(QString currentVersion, bool relayEnabled, QObject*
         Logger::info(QStringLiteral("[Update] checking via the MoonlightWeb update relay"));
 }
 
+bool UpdateChecker::relayAvailable()
+{
+    // Any version does: the question is whether the endpoint can be built at
+    // all, not what would be sent to it.
+    return !buildRelayUrl(QStringLiteral("0")).isEmpty();
+}
+
+void UpdateChecker::setRelayEnabled(bool enabled)
+{
+    const QString url = enabled ? buildRelayUrl(m_current) : QString();
+    if (url == m_relayUrl) return;
+    m_relayUrl = url;
+    Logger::info(m_relayUrl.isEmpty()
+                     ? QStringLiteral("[Update] checking GitHub directly, reporting nothing")
+                     : QStringLiteral("[Update] checking via the MoonlightWeb update relay"));
+}
+
 QJsonObject UpdateChecker::statusJson()
 {
     // Serve the cache; refresh in the background when stale (never blocks the

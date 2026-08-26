@@ -47,9 +47,12 @@ class QNetworkAccessManager;
  * deploy/powerdns/mw-proxy/update.go.
  *
  * The relay is never load-bearing: any failure falls straight back to
- * api.github.com, and the relay is skipped entirely when the instance opts out
- * (settings key "update_relay_enabled" / MW_NO_TELEMETRY) or when the build
- * carries no MW_PDNS_TOKEN — i.e. self-built binaries always go to GitHub.
+ * api.github.com, and it is skipped entirely until the person running this
+ * machine has been asked and has said yes (AppSettings::metricsConsent), if
+ * they opt out afterwards (settings key "update_relay_enabled" /
+ * MW_NO_TELEMETRY), or when the build carries no MW_PDNS_TOKEN — i.e.
+ * self-built binaries always go to GitHub. Checking for updates works
+ * identically in every one of those cases; only the counting stops.
  */
 class UpdateChecker : public QObject
 {
@@ -62,10 +65,22 @@ public:
     static constexpr int kCacheHours = 6;
 
     // relayEnabled: whether this instance may route the check through the
-    // project's relay (AppSettings::updateRelayEnabled()). Even when true, the
-    // relay is only used if the build carries the credentials for it.
+    // project's relay (AppSettings::updateRelayAllowed(): consent given and not
+    // opted out since). Even when true, the relay is only used if the build
+    // carries the credentials for it.
     explicit UpdateChecker(QString currentVersion, bool relayEnabled = true,
                            QObject* parent = nullptr);
+
+    /// Whether this build could report at all: it carries the relay
+    /// credentials and the environment does not forbid it. False on a
+    /// self-built binary — where there is nothing to ask the user about, since
+    /// no answer would change anything.
+    static bool relayAvailable();
+
+    /// Apply a consent answer without a restart. Withdrawing sends the next
+    /// check straight to GitHub, which is exactly what an instance that never
+    /// had the relay does — updates are unaffected either way.
+    void setRelayEnabled(bool enabled);
 
     // Cached result as JSON:
     //   { current, latest, update_available, download_url, release_url,

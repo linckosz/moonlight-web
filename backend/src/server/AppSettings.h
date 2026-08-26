@@ -188,6 +188,43 @@ public:
 
     bool sessionMetricsEnabled() const;
 
+    // ── Statistics consent (GDPR) ──────────────────────────────────────────────
+    //
+    // Neither census above reports ANYTHING until the person running this
+    // machine has been asked and has said yes. The two booleans above are
+    // permanent kill switches for someone editing the file; this is the answer
+    // to the question the app puts on screen at first launch.
+    //
+    // Stored as JSON object "metrics_consent", mirroring "internet_consent":
+    // the exact wording that was displayed, when it was answered, through which
+    // entry point ("banner" | "admin"), the decision, and the version of the
+    // wording — so a later wording that describes MORE than this one can ask
+    // again instead of inheriting an answer given to a different question.
+    //
+    // Absent = never asked = nothing is reported. Refusing changes nothing else
+    // about the application: it is not a cookie wall, it does not touch the
+    // session cookie the app needs to work, and it is unrelated to the separate
+    // Internet Access consent.
+
+    /// Version of the wording currently shown. Bump only when the new text
+    /// covers something the old one did not — an answer to the old question
+    /// does not carry over.
+    static constexpr int kMetricsConsentVersion = 1;
+
+    /// {"decision" ("granted"|"denied"), "message", "at" (ISO-8601 UTC),
+    /// "source", "version"} — empty object if never asked.
+    QJsonObject metricsConsent() const;
+    void setMetricsConsent(bool granted, const QString& message, const QString& source);
+
+    /// "" (never asked / stale wording), "granted" or "denied".
+    QString metricsConsentDecision() const;
+
+    /// The two questions every reporting path actually asks: consent given AND
+    /// the file-only switch left alone. Keeping the rule here means a new
+    /// caller cannot forget half of it.
+    bool updateRelayAllowed() const;
+    bool sessionMetricsAllowed() const;
+
     // Seed documented file-only default keys into settings.json if absent, so they
     // are discoverable/editable in the file. Idempotent.
     void seedDocumentedDefaults();

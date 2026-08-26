@@ -630,6 +630,87 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   Statistics consent bar
+
+   Anchored to the bottom, above the toasts, and deliberately NOT a modal: it
+   asks a question the user is free to ignore, and nothing behind it is blocked
+   while it is up. The app works the same whichever button is pressed — and
+   whether or not one ever is.
+   ════════════════════════════════════════════════════════════════════════ */
+.consent-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1900;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    background-color: var(--surface-2);
+    border-top: 1px solid var(--border-1);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+    animation: consentBarIn 0.25s ease;
+}
+@keyframes consentBarIn {
+    from {
+        transform: translateY(100%);
+    }
+    to {
+        transform: translateY(0);
+    }
+}
+.consent-bar-body {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    line-height: 1.5;
+}
+.consent-bar-title {
+    display: block;
+    margin-bottom: var(--space-1);
+    font-size: var(--fs-md);
+    font-weight: 600;
+    color: var(--text-1);
+}
+.consent-bar-details {
+    margin-top: var(--space-2);
+}
+.consent-bar-details summary {
+    cursor: pointer;
+    color: var(--accent, #35c98f);
+}
+.consent-bar-details ul {
+    margin: var(--space-2) 0 0;
+    padding-left: var(--space-5);
+}
+.consent-bar-details li {
+    margin-bottom: var(--space-1);
+}
+.consent-bar-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--space-2);
+    align-items: center;
+}
+@media (max-width: 700px) {
+    .consent-bar {
+        flex-direction: column;
+        gap: var(--space-3);
+        padding: var(--space-3) var(--space-4);
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+    .consent-bar-actions {
+        width: 100%;
+    }
+    .consent-bar-actions .btn {
+        flex: 1;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    Dialog (pairing + future modal dialogs)
    ════════════════════════════════════════════════════════════════════════ */
 .pairing-overlay {
