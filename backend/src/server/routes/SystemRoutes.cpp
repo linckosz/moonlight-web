@@ -53,16 +53,28 @@ static constexpr int kServiceRestartExitCode = 79;
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
                           std::function<void()> onHostKeyRotated,
-                          std::function<void(bool)> onInternetAccessToggled)
+                          std::function<void(bool)> onInternetAccessToggled,
+                          std::function<QJsonObject()> rendezvousStatus)
 {
     // API route: get Internet Access status
-    server.router()->get("/api/internet/status", [&](const HttpRequest& req) {
+    // rendezvousStatus captured BY VALUE, like the callbacks below: the
+    // parameter dies when this function returns, the route lambda does not.
+    server.router()->get("/api/internet/status", [&, rendezvousStatus](const HttpRequest& req) {
         QJsonObject obj = internetAccess.statusJson();
+        if (rendezvousStatus) obj[QStringLiteral("rendezvous")] = rendezvousStatus();
         // The admin UI runs on localhost and needs the full payload. Remote
         // sessions must not learn the internal network topology / file layout.
+        //
+        // The rendezvous block goes with them, for the reason `unique_id`
+        // already did: it carries this instance's permanent identifier, and an
+        // identifier that never changes is a tracking handle. It names the
+        // machine rather than granting anything — losing it costs nobody access,
+        // and a remote admin who needs the address has it in their own address
+        // bar. Redaction stays keyed on isLocal so there is one rule here, not
+        // two.
         if (!req.isLocal) {
             for (const char* key : {"local_ip", "local_ips", "public_ip", "unique_id", "cert_pem",
-                                    "cert_key", "last_error"})
+                                    "cert_key", "last_error", "rendezvous"})
                 obj.remove(QLatin1String(key));
         }
         return HttpResponse::json(obj);

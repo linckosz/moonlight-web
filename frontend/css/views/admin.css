@@ -43,6 +43,19 @@
 .admin-url-row {
     padding: 6px 0;
     font-family: var(--font-mono);
+    /* The rendezvous row carries a Copy button beside the address; the domain
+       row has none, and flex with a single child lays out exactly as before. */
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+/* One line under the address saying whether it answers right now. Prose, so it
+   leaves the monospace of the row above. */
+.admin-url-note {
+    margin: 0 0 var(--space-2);
+    font-size: var(--fs-xs);
+    color: var(--text-3);
 }
 .pin-consumed-hint {
     color: var(--c-warning);
