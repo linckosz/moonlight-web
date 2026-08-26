@@ -42,11 +42,23 @@ function keySink(overrides = {}) {
         _suppressPasteKeyUpCode: null,
         handleKeyDown: StreamView.prototype.handleKeyDown,
         handleKeyUp: StreamView.prototype.handleKeyUp,
+        handlePaste: StreamView.prototype.handlePaste,
         _sendKeyEvent: StreamView.prototype._sendKeyEvent,
+        _forgetHeldKey: StreamView.prototype._forgetHeldKey,
         _holdsThroughStall: StreamView.prototype._holdsThroughStall,
         _releaseKeysHeldUnderMeta: StreamView.prototype._releaseKeysHeldUnderMeta,
+        _releaseHeldMeta: StreamView.prototype._releaseHeldMeta,
         _sendPendingPasteKey: StreamView.prototype._sendPendingPasteKey,
         ...overrides,
+    };
+}
+
+/** A 'paste' event carrying local clipboard text. */
+function pasteEv(text) {
+    return {
+        target: {},
+        clipboardData: { getData: () => text },
+        preventDefault() {},
     };
 }
 
@@ -120,34 +132,101 @@ describe('Cmd+key on an Apple keyboard', () => {
     });
 });
 
-describe('Cmd+V falling back to a plain paste chord', () => {
-    // The clipboard bridge swallows the Cmd+V keydown and waits for the native
-    // 'paste' event. When none brings text, the chord is forwarded so the host
-    // pastes its own clipboard — and that forward is a real keydown, which
-    // needs the same treatment as any key held under Cmd.
-    it('completes the chord instead of leaving V down', () => {
-        const v = keySink({ _clipboardEnabled: true });
-        v.handleKeyDown(ev('KeyV', 'v', { metaKey: true }));
-        expect(v.sent).toEqual([]); // swallowed, waiting for 'paste'
+/** Cmd is down on the host as the Windows key by the time the paste chord is
+ *  injected — the whole point of these two blocks. */
+function macPasting() {
+    const v = keySink({ _clipboardEnabled: true });
+    v.handleKeyDown(ev('MetaLeft', 'Meta', { metaKey: true }));
+    v.handleKeyDown(ev('KeyV', 'v', { metaKey: true }));
+    v.sent.length = 0;
+    return v;
+}
 
+describe('Cmd+V reaching the host as a paste', () => {
+    // Cmd streams as the host's Windows key and it is still held while the
+    // backend injects Ctrl+V: the host reads Win+Ctrl+V, which pastes nothing.
+    it('lets go of the Windows key before the injected chord', () => {
+        const v = macPasting();
+        v.handlePaste(pasteEv('x'));
+
+        expect(v.sent[0]).toMatchObject({ type: 'keyup', keyCode: VK_LWIN });
+        expect(v.sent[1]).toMatchObject({ type: 'clipboardpaste', text: 'x', injectCtrl: true });
+        expect(v._heldPhysKeys.has('MetaLeft')).toBe(false);
+    });
+
+    // No text to ship (empty or non-text local clipboard): the host pastes its
+    // own clipboard. Forwarding the chord itself would send Win+V, so ask the
+    // backend for the same injected Ctrl+V with nothing to commit.
+    it('asks for a bare chord instead of forwarding Win+V', () => {
+        const v = macPasting();
         v._sendPendingPasteKey(); // what the 150ms timer does
-        expect(v.sent.map((m) => [m.type, m.keyCode])).toEqual([
-            ['keydown', VK_V],
-            ['keyup', VK_V],
-        ]);
+
+        expect(v.sent.map((m) => m.type)).toEqual(['keyup', 'clipboardpaste']);
+        expect(v.sent[1]).toMatchObject({ text: '', injectCtrl: true });
         expect(v._heldPhysKeys.size).toBe(0);
     });
 
-    it('does not double the release when V is let go before the paste event', () => {
-        const v = keySink({ _clipboardEnabled: true });
-        v.handleKeyDown(ev('KeyV', 'v', { metaKey: true }));
-
+    it('does not release V twice when it is let go before the paste event', () => {
+        const v = macPasting();
         v.handleKeyUp(ev('KeyV', 'v', { metaKey: true }));
-        expect(v.sent.map((m) => [m.type, m.keyCode])).toEqual([
-            ['keydown', VK_V],
-            ['keyup', VK_V],
-        ]);
-        expect(v._heldPhysKeys.size).toBe(0);
+
+        expect(v.sent.map((m) => m.type)).toEqual(['keyup', 'clipboardpaste']);
+        expect(v._heldPhysKeys.has('KeyV')).toBe(false);
+    });
+});
+
+describe('Ctrl+V on a Mac', () => {
+    // macOS pastes with Cmd, so Ctrl+V never fires a native 'paste' event.
+    // Routing it through the clipboard bridge meant waiting 150ms for an event
+    // that was not coming, then swallowing V's release — which left V held on
+    // the host, where typematic repeated the paste until another key was hit.
+    it('goes straight to the host as a plain chord', () => {
+        const v = keySink({ _clipboardEnabled: true });
+        v.handleKeyDown(ev('ControlLeft', 'Control', { ctrlKey: true }));
+        v.handleKeyDown(ev('KeyV', 'v', { ctrlKey: true }));
+
+        expect(v._pendingPasteKey).toBe(null);
+        expect(v.sent[1]).toMatchObject({ type: 'keydown', keyCode: VK_V, ctrlKey: true });
+
+        v.handleKeyUp(ev('KeyV', 'v', { ctrlKey: true }));
+        expect(v.sent[2]).toMatchObject({ type: 'keyup', keyCode: VK_V });
+        expect(v._heldPhysKeys.has('KeyV')).toBe(false);
+    });
+
+    // Cmd+V arms a key-up token for a release macOS then eats, so the token is
+    // still armed at the next press of that key. Swallowing that release is
+    // fine; letting the key stay held is what repeated the paste forever.
+    it('never stays held when a stale suppression token eats its release', () => {
+        const v = keySink({ _clipboardEnabled: true, _suppressPasteKeyUpCode: 'KeyV' });
+        v.handleKeyDown(ev('ControlLeft', 'Control', { ctrlKey: true }));
+        v.handleKeyDown(ev('KeyV', 'v', { ctrlKey: true }));
+        expect(v._heldPhysKeys.has('KeyV')).toBe(true);
+
+        v.handleKeyUp(ev('KeyV', 'v', { ctrlKey: true }));
+        expect(v._heldPhysKeys.has('KeyV')).toBe(false);
+        expect(v._suppressPasteKeyUpCode).toBe(null);
+    });
+});
+
+describe('Ctrl+V away from Apple keyboards', () => {
+    it('still goes through the clipboard bridge', () => {
+        const v = keySink({ _clipboardEnabled: true, _appleKeyboard: false });
+        v.handleKeyDown(ev('KeyV', 'v', { ctrlKey: true }));
+        expect(v.sent).toEqual([]); // swallowed, waiting for 'paste'
+
+        v.handlePaste(pasteEv('x'));
+        expect(v.sent).toHaveLength(1);
+        expect(v.sent[0]).toMatchObject({ type: 'clipboardpaste', text: 'x', injectCtrl: false });
+    });
+
+    it('forwards the chord itself when no text comes back', () => {
+        const v = keySink({ _clipboardEnabled: true, _appleKeyboard: false });
+        v.handleKeyDown(ev('KeyV', 'v', { ctrlKey: true }));
+
+        v._sendPendingPasteKey();
+        expect(v.sent).toHaveLength(1);
+        expect(v.sent[0]).toMatchObject({ type: 'keydown', keyCode: VK_V, ctrlKey: true });
+        expect(v._heldPhysKeys.has('KeyV')).toBe(true);
     });
 });
 
