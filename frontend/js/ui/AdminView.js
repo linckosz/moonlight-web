@@ -68,8 +68,6 @@ export class AdminView {
         // so until one is set the door is advertised but opens for nobody.
         this._remoteAdminEnabled = true;
         this._adminPasswordSet = false;
-        // Host key (host machine only) for the post-activation domain redirect.
-        this._localKey = '';
 
         // Server settings state
         this._httpsPort = 443;
@@ -104,7 +102,6 @@ export class AdminView {
         this._active = false; // DNS registration actually succeeded (domain live)
         this._rendezvousUrl = ''; // address a fresh install is reached at, once claimed
         this._rendezvousOnline = false; // the held line is actually up
-        this._hairpinReachable = false; // router reflects our public endpoint to the LAN
         this._lastError = '';
 
         // Activation loader: live step reported by the backend (statusJson.phase).
@@ -182,9 +179,6 @@ export class AdminView {
             this._httpsPort = admin.https_port || 443;
             this._httpPort = admin.http_port || 80;
             this._certAuthEnabled = admin.cert_auth_enabled || false;
-            // Host machine only (absent otherwise): current host key, kept for
-            // the post-activation redirect to the public-domain admin URL.
-            this._localKey = admin.local_key || '';
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
@@ -219,7 +213,6 @@ export class AdminView {
             // is right and answers to nobody.
             this._rendezvousUrl = status.rendezvous?.url || '';
             this._rendezvousOnline = status.rendezvous?.online === true;
-            this._hairpinReachable = status.hairpin_reachable || false;
             this._phase = status.phase || '';
             // The backend refuses to open anything until the user agrees to the
             // current consent wording (the stored record described the retired
@@ -1975,21 +1968,17 @@ export class AdminView {
                         ? t('admin.internetEnabled', { domain: result.domain })
                         : t('admin.internetEnabledLan'),
                 );
-                // Capture the redirect target straight from the enable response —
-                // it carries the final domain, external HTTPS port and hairpin
-                // result, computed by the time start() returned. Reading them here
-                // (rather than from a follow-up request) keeps the redirect correct
-                // even if a later poll transiently fails.
+                // Straight from the enable response — it carries the final domain
+                // and external HTTPS port, computed by the time start() returned,
+                // which a follow-up poll can miss if it transiently fails.
                 this._domain = result.domain || this._domain;
                 this._externalHttpsPort = result.external_https_port || this._externalHttpsPort;
-                this._hairpinReachable = !!result.hairpin_reachable;
                 await this._loadInternetState();
                 this.render();
                 this.bindEvents();
                 if (this._pendingRegistration) {
                     this._startDnsPolling();
                 }
-                this._scheduleParityRedirect();
             } else {
                 Toast.error(t('admin.internetEnableFailed'));
                 this._internetEnabled = false;
@@ -2038,7 +2027,6 @@ export class AdminView {
                     this.render();
                     this.bindEvents();
                     if (this._pendingRegistration) this._startDnsPolling();
-                    if (phase === 'active') this._scheduleParityRedirect();
                 }
             } catch (_err) {
                 // Transient during activation (backend busy) — ignore and retry.
@@ -2053,34 +2041,12 @@ export class AdminView {
         }
     }
 
-    // Once Internet Access is live the canonical origin becomes the public
-    // domain. The local listener is never moved (a dedicated listener was added
-    // for the domain), so this origin stays valid: we only switch away when the
-    // router actually reflects our public endpoint back to this host
-    // (hairpin_reachable, tested server-side — the untrusted-cert localhost page
-    // cannot probe cross-origin itself as Chrome blocks its subresources). The
-    // domain listener is already up, so no timing guesswork is needed; the host
-    // key rides along so the localhost-only admin survives the origin change.
-    // Without hairpin we simply stay on localhost, which keeps working.
-    _scheduleParityRedirect() {
-        if (window.location.protocol !== 'https:') return;
-        if (!this._hairpinReachable || !this._domain || !this._localKey) return;
-
-        const port = String(this._externalHttpsPort || 443);
-        const portPart = port === '443' ? '' : ':' + port;
-        const target =
-            'https://' +
-            this._domain +
-            portPart +
-            '/admin?mwk=' +
-            encodeURIComponent(this._localKey);
-
-        // Small delay so the success toast is seen and the fresh listener has
-        // settled before the navigation.
-        setTimeout(() => {
-            window.location.href = target;
-        }, 800);
-    }
+    // Turning Internet Access on used to move this page to the public
+    // sub-domain, so the host machine ended up on the same origin as every
+    // remote visitor. Removed with the sub-domain itself: remote visitors arrive
+    // through the rendezvous now, the admin page is not reachable that way by
+    // design, and a page that navigates away from loopback the moment a switch
+    // is flipped is a page that took the owner's admin access with it.
 
     async _disableInternet() {
         try {
