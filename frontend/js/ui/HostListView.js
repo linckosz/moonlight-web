@@ -73,6 +73,10 @@ export class HostListView {
     // (host momentarily unreachable — e.g. remote path warming up post-reboot).
     static APP_LIST_RETRY_MS = 4000;
 
+    // How long a refused launch keeps its orange marker before it has faded
+    // back to neutral. Must match the CSS animation on .app-card--launch-failed.
+    static LAUNCH_FAIL_FADE_MS = 1000;
+
     // Update-banner cadence. Asking the host is free — it answers from a cache it
     // refreshes on its own timer (UpdateChecker::kCacheHours), never per request —
     // so 30 min just bounds how long a banner can lag behind that cache. MIN_MS
@@ -98,6 +102,9 @@ export class HostListView {
         this.appsByHost = {};
         // Pending one-shot app-list retry timers, keyed by host uuid.
         this._appRetryTimers = {};
+        // Cards currently fading from "launch refused" orange back to neutral,
+        // each with the timer that will strip the class.
+        this._launchFailTimers = new Map();
         this._active = false;
         this._destroyed = false;
         // Update banner: the cached GitHub-Releases result, and whether an update
@@ -686,6 +693,8 @@ export class HostListView {
         this.stop();
         this._stopProgressAnimation();
         this._progressFill = null;
+        this._launchFailTimers.forEach((id) => clearTimeout(id));
+        this._launchFailTimers.clear();
         if (this._clickHandler) {
             this.container.removeEventListener('click', this._clickHandler);
             this._clickHandler = null;
@@ -1231,10 +1240,27 @@ export class HostListView {
         }
     }
 
-    // Revert any card stuck in the "launching" state (e.g. backend crash/timeout)
-    // back to its idle appearance and restore the original app name.
-    clearLaunching() {
+    /**
+     * Revert any card stuck in the "launching" state back to its idle
+     * appearance and restore the original app name.
+     *
+     * Whatever the reason, the card gives up the focus the click left on it:
+     * the focus ring is the same accent yellow as the launching edge, so a card
+     * that keeps it still reads as "working on it" at the exact moment the
+     * truth is the opposite — and the user has no cue that the thing to do is
+     * click again.
+     *
+     * @param {{failed?: boolean}} [opts] `failed: true` when the launch never
+     *        started and the host list is all the user has to go on: the card
+     *        flashes an alert orange and fades back to neutral within a second.
+     *        Long enough to be seen, short enough that no colour is left behind
+     *        pretending to be a state. Left out when the stream itself died —
+     *        that screen already showed the error, and a second alarm back on
+     *        the host list would only report it twice.
+     */
+    clearLaunching(opts) {
         if (!this.container) return;
+        const failed = !!(opts && opts.failed);
         this.container.querySelectorAll('.app-card--launching').forEach((card) => {
             card.classList.remove('app-card--launching');
             card.removeAttribute('aria-busy');
@@ -1243,7 +1269,26 @@ export class HostListView {
                 nameEl.textContent = nameEl.dataset.label;
                 delete nameEl.dataset.label;
             }
+            const focused = /** @type {HTMLElement | null} */ (document.activeElement);
+            if (focused && card.contains(focused)) focused.blur();
+            if (failed) this._flashLaunchFailed(card);
         });
+    }
+
+    // The orange-to-neutral fade itself. The class comes off on a timer rather
+    // than on `animationend`, because that event never fires where the animation
+    // doesn't run (reduced motion, a background tab) and the card would then
+    // stay orange for good.
+    _flashLaunchFailed(card) {
+        card.classList.add('app-card--launch-failed');
+        clearTimeout(this._launchFailTimers.get(card));
+        this._launchFailTimers.set(
+            card,
+            setTimeout(() => {
+                card.classList.remove('app-card--launch-failed');
+                this._launchFailTimers.delete(card);
+            }, HostListView.LAUNCH_FAIL_FADE_MS),
+        );
     }
 
     _closeAllMenus() {

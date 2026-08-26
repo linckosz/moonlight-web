@@ -1363,7 +1363,7 @@ const MoonlightApp = {
                 iosAudioUnlock.release();
                 this._hideRelaunchLoader();
                 if (this.hostListView) {
-                    this.hostListView.clearLaunching();
+                    this.hostListView.clearLaunching({ failed: true });
                     this.hostListView.start();
                 }
                 Toast.error(t('launch.failed'));
@@ -1376,9 +1376,12 @@ const MoonlightApp = {
             iosAudioUnlock.release();
             this._hideRelaunchLoader();
             // Revert the app card stuck on "Launching..." back to its idle state
-            // and resume the host poll (paused when the launch began).
+            // and resume the host poll (paused when the launch began). The
+            // stream screen never opened, so the card carries the bad news
+            // itself: a one-second orange fade back to neutral, saying "that
+            // didn't take" and leaving a card that is plainly clickable again.
             if (this.hostListView) {
-                this.hostListView.clearLaunching();
+                this.hostListView.clearLaunching({ failed: true });
                 this.hostListView.start();
             }
             // Sunshine couldn't start video capture (503) — usually no awake
@@ -1471,7 +1474,8 @@ const MoonlightApp = {
         const cancel = () => {
             cleanup();
             // Revert the app card stuck on "Launching..." and resume the host poll
-            // (both paused by HostListView before it called onLaunchApp).
+            // (both paused by HostListView before it called onLaunchApp). No
+            // alert colour: nothing failed, the user chose not to go on.
             if (this.hostListView) {
                 this.hostListView.clearLaunching();
                 this.hostListView.start();
@@ -2049,6 +2053,10 @@ const MoonlightApp = {
         this._nav.overlay = null;
         this.transition('host_list');
         if (this.hostListView) {
+            // Neutral, not the orange of a refused launch: the stream screen was
+            // up and said whatever there was to say. Coming back to an alarming
+            // card would report the same failure a second time, on a surface the
+            // user is now looking at to pick something else.
             this.hostListView.clearLaunching();
             this.hostListView.start();
         }

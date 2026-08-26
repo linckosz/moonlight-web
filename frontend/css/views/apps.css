@@ -180,11 +180,54 @@
     }
 }
 
+/* ── Launch refused ─────────────────────────────────────────────────────
+   The launch never started and the user is still on the host list, so the
+   card has to say so itself: an alert orange that fades back to neutral in
+   one second. Long enough to be seen, short enough that no colour is left
+   sitting on the card pretending to be a state — the card ends up plainly
+   clickable again, which is the actual instruction.
+
+   Its own orange rather than a token: --c-warning is an amber that reads as
+   a paler version of the accent yellow the card has just left, and --c-danger
+   is the magenta reserved for destructive things. A launch that didn't take
+   is neither.
+
+   The wash lives in ::after (::before is the launching ring) so nothing has
+   to animate the card's own background or edge back to a computed value. */
+.app-card--launch-failed {
+    position: relative;
+}
+.app-card--launch-failed::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    clip-path: var(--notch-lg);
+    background: rgba(255, 106, 31, 0.18);
+    box-shadow: inset 0 0 0 1px rgba(255, 106, 31, 0.9);
+    pointer-events: none;
+    animation: app-launch-failed 1s ease-out forwards;
+}
+@keyframes app-launch-failed {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .app-card--launching .app-card-name {
         animation: none;
     }
     .app-card--launching::before {
+        animation: none;
+    }
+    /* No fade: the wash simply holds for its second, then the timer in
+       HostListView drops the class. Without this the global reduced-motion
+       override (every animation collapsed to 0.01 ms) would run the fade to
+       completion before the card was ever seen to change. */
+    .app-card--launch-failed::after {
         animation: none;
     }
 }
