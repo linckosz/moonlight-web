@@ -130,7 +130,21 @@ export async function startTunnel() {
     }
 
     hostId = mod.hostIdFromLocation();
-    if (!hostId) return false;
+    if (!hostId) {
+        // We are on the rendezvous — the transport loaded — but nothing names a
+        // machine: a fresh browser opening the bare address, or one whose
+        // remembered machine was cleared. The service worker would happily serve
+        // the cached interface here, and it would come up with no hosts, no
+        // apps and no explanation, which is the worst of the three outcomes.
+        //
+        // Hand back to the bootstrap instead. `?mw=pick` is what tells the
+        // worker to let this navigation reach the network rather than answering
+        // it from the cache.
+        location.replace('/?mw=pick');
+        // Never resolves: the navigation is already under way, and letting the
+        // caller continue would race the application against it.
+        await new Promise(() => {});
+    }
 
     tunnel = new mod.Tunnel(hostId);
     tunnel.onclosed = () => {

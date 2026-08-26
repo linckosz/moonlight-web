@@ -765,16 +765,20 @@ export class AdminView {
         const domainUrl = this._buildDomainUrl();
         // Only a legacy instance (or a custom domain) has a public URL to show;
         // a fresh install's Internet link opens no web port and names nothing.
-        const showDomain = !!this._domain;
         // A fresh install is reached through the rendezvous server, and that
         // address is published nowhere — this row is where its owner learns it.
-        //
-        // A legacy instance sees it TOO, alongside the sub-domain it already
-        // hands out. That is not two competing addresses: the sunset notice
-        // right below promises a replacement link before February 2027, and this
-        // is that link. Hiding it from the only people who need to migrate would
-        // make the notice a promise we are quietly already breaking.
         const showRendezvous = !!this._rendezvousUrl;
+        // The sub-domain is shown only while there is nothing better.
+        //
+        // It used to appear alongside the rendezvous link on a legacy instance,
+        // on the reasoning that the sunset notice below promised a replacement
+        // and this was it. Wrong call: two live addresses for one machine is an
+        // invitation to hand out the one that dies in February 2027 — and it is
+        // the one that puts a home IP address in public DNS and the machine's
+        // existence in Certificate Transparency. Once the replacement is here,
+        // it IS the address; the notice below explains what happened to the old
+        // one, which keeps working meanwhile for anyone who bookmarked it.
+        const showDomain = !!this._domain && !showRendezvous;
 
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
@@ -950,7 +954,10 @@ export class AdminView {
                                 <p class="admin-url-note">${
                                     !this._rendezvousOnline
                                         ? t('admin.rendezvousOffline')
-                                        : showDomain
+                                        : // Keyed on whether a sub-domain EXISTS, not on whether
+                                          // one is displayed — it is no longer displayed, and this
+                                          // sentence is now the only thing that accounts for it.
+                                          this._domain
                                           ? t('admin.rendezvousReplaces')
                                           : t('admin.rendezvousReady')
                                 }</p>

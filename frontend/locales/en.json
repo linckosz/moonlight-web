@@ -329,7 +329,7 @@
         "legacySunset": "This instance uses the sub-domain {{domain}}, served by the shared MoonlightWeb DNS service. That service shuts down in February 2027 and this address will then stop working; a replacement remote-access link will ship in an update before that date.",
         "rendezvousReady": "This address reaches this machine from anywhere. It is not published anywhere else — copy it to the devices you want to stream from.",
         "rendezvousOffline": "The line to the introduction server is down, so this address will not answer until it comes back. It is still the right address.",
-        "rendezvousReplaces": "This address already works, and it is the one that replaces the sub-domain above when that service shuts down. It is published nowhere else — copy it to your devices now and nothing will break in February 2027.",
+        "rendezvousReplaces": "This is your machine's address now. It is published nowhere else — copy it to the devices you stream from. Your older sub-domain keeps working until that service shuts down in February 2027, and is no longer shown here.",
         "consentRequired": "The Internet link is paused: the permission you gave earlier described the former mechanism (public DNS record and certificate), which no longer applies to this installation. Read the description above, then tick the box again to re-enable the link under the current terms.",
         "upnpAvailableNote": "Authorizes UPnP port mapping on your router (available on this network). You can also forward ports manually.",
         "upnpUnavailableNote": "Authorizes UPnP port mapping on your router (not available on this network). You can also forward ports manually.",
