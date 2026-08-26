@@ -20,6 +20,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QDirIterator>
+#include <algorithm>
 #include <QDateTime>
 #include <QLocale>
 
@@ -66,6 +67,17 @@ StaticFileHandler::StaticFileHandler(const QString& rootDir, const QString& vers
 
 QStringList StaticFileHandler::listFiles() const
 {
+    // Directories that exist for the developer and never for a user. A packaged
+    // build has already dropped them (see the install() rules in CMakeLists),
+    // but a developer run points this handler straight at the source tree, and
+    // the difference matters more here than anywhere else: everything named in
+    // this list gets pulled across a data channel before the page can start, so
+    // a stray coverage report is not untidiness, it is a minute of waiting.
+    static const QStringList kDevOnlyDirs = {
+        QStringLiteral("node_modules"), QStringLiteral("test"),     QStringLiteral("scripts"),
+        QStringLiteral("build"),        QStringLiteral("coverage"), QStringLiteral(".claude"),
+    };
+
     QStringList paths;
     const QDir root(m_RootDir);
     if (!root.exists()) return paths;
@@ -74,11 +86,20 @@ QStringList StaticFileHandler::listFiles() const
     while (it.hasNext()) {
         it.next();
         const QString relative = root.relativeFilePath(it.filePath());
-        // Nothing that only exists for the developer. A source map is the one
-        // worth naming: it is served on request but it is dead weight in a set
-        // that has to cross a data channel before the page can start.
+        const QStringList segments = relative.split(QLatin1Char('/'));
+
+        // Dot files are configuration for tools, not content — and the leading
+        // dot is what a scanner probes for, so naming them would be worse than
+        // useless.
+        if (std::any_of(segments.cbegin(), segments.cend(),
+                        [](const QString& s) { return s.startsWith(QLatin1Char('.')); }))
+            continue;
+        if (kDevOnlyDirs.contains(segments.first())) continue;
+
+        // A source map is served on request, for whoever opens the debugger. It
+        // has no business in the set every visitor downloads first.
         if (relative.endsWith(QLatin1String(".map"))) continue;
-        if (relative.startsWith(QLatin1String("node_modules/"))) continue;
+
         paths << QLatin1Char('/') + relative;
     }
     paths.sort();

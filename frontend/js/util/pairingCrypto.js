@@ -32,11 +32,29 @@
  * The byte layout below must stay identical to backend/src/common/PairingCrypto.cpp.
  */
 
+import { tunnelHostId } from '../net/tunnelBridge.js';
+
 const DB_NAME = 'mw-pairing';
 const DB_VERSION = 1;
 const STORE = 'keys';
-/** One record per host origin, so two hosts reached from one browser never share a key. */
-const RECORD_ID = 'mw-bind-v1';
+
+/**
+ * The record this browser's pairing with THIS host lives in.
+ *
+ * One record per host, and working out which host that is depends on how we got
+ * here. Reached at the host's own address, the origin already names it, and the
+ * bare id below is that record — unchanged, so nobody re-pairs.
+ *
+ * Through the rendezvous, every host a person owns is reached at the SAME
+ * origin, and a single record would hand all of them one key. That is not merely
+ * untidy: the host identity stored alongside is trust-on-first-use, so the
+ * second machine would present a different host key, be refused as a
+ * substitution, and simply stop working. Hence the id in the record name there.
+ */
+function recordId() {
+    const hostId = tunnelHostId();
+    return hostId ? `mw-bind-v1:${hostId}` : 'mw-bind-v1';
+}
 
 const PROTOCOL = 'MW-BIND-v1';
 const ALGORITHM = { name: 'ECDSA', namedCurve: 'P-256' };
@@ -157,7 +175,7 @@ export async function loadOrCreateIdentity() {
 
     try {
         const db = await openDb();
-        let record = await dbGet(db, RECORD_ID);
+        let record = await dbGet(db, recordId());
 
         if (!record?.privateKey || !record?.publicKeySpki) {
             const pair = await crypto.subtle.generateKey(ALGORITHM, false, ['sign', 'verify']);
@@ -165,7 +183,7 @@ export async function loadOrCreateIdentity() {
             // `false` above is the whole point: the public half exports, the
             // private half never does.
             record = { privateKey: pair.privateKey, publicKeySpki: spki, hostPublicKey: null };
-            await dbPut(db, RECORD_ID, record);
+            await dbPut(db, recordId(), record);
             console.log('[MW-BIND] Generated a new pairing key for this browser');
         }
 
@@ -201,7 +219,7 @@ export async function rememberHostIdentity(hostPublicKeyBase64, hostId) {
 
     try {
         const db = await openDb();
-        const record = await dbGet(db, RECORD_ID);
+        const record = await dbGet(db, recordId());
         if (!record) return false;
 
         if (record.hostPublicKey && record.hostPublicKey !== hostPublicKeyBase64) {
@@ -214,7 +232,7 @@ export async function rememberHostIdentity(hostPublicKeyBase64, hostId) {
 
         record.hostPublicKey = hostPublicKeyBase64;
         record.hostId = hostId || record.hostId || null;
-        await dbPut(db, RECORD_ID, record);
+        await dbPut(db, recordId(), record);
         return true;
     } catch (e) {
         console.warn('[MW-BIND] Could not store the host identity:', e.message);
@@ -227,7 +245,7 @@ export async function clearIdentity() {
     if (!globalThis.indexedDB) return;
     try {
         const db = await openDb();
-        await dbPut(db, RECORD_ID, undefined);
+        await dbPut(db, recordId(), undefined);
     } catch {
         /* nothing to clear */
     }

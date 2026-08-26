@@ -596,19 +596,31 @@ void ControlTunnel::handleWsOpen(Peer& p, quint32 id, const QByteArray& payload)
 
     const QString sessionId = p.sessionId;
 
-    connect(ws, &QWebSocket::connected, this, [this, sessionId, id]() {
-        if (Peer* pp = peer(sessionId)) sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsOpened, id, QByteArray()));
+    // Two different endings share the disconnected handler below, and telling
+    // them apart is worth the flag: a socket that closes after carrying traffic
+    // is the session ending, while one that never opened means nothing was
+    // listening on that port — ordinarily a slot whose worker has not started.
+    // Reporting both as a bare close leaves a browser with "it closed" and no
+    // way to tell a finished session from one that never began.
+    auto everOpened = std::make_shared<bool>(false);
+
+    connect(ws, &QWebSocket::connected, this, [this, sessionId, id, everOpened]() {
+        *everOpened = true;
+        if (Peer* pp = peer(sessionId))
+            sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsOpened, id, QByteArray()));
     });
     connect(ws, &QWebSocket::textMessageReceived, this,
             [this, sessionId, id](const QString& text) {
                 if (Peer* pp = peer(sessionId))
                     sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsText, id, text.toUtf8()));
             });
-    connect(ws, &QWebSocket::disconnected, this, [this, sessionId, id]() {
+    connect(ws, &QWebSocket::disconnected, this, [this, sessionId, id, everOpened]() {
         Peer* pp = peer(sessionId);
         if (!pp) return;
         if (QPointer<QWebSocket> gone = pp->sockets.take(id)) gone->deleteLater();
-        sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsClose, id, QByteArray()));
+        const QByteArray why =
+            *everOpened ? QByteArray() : QByteArray("no stream is listening on that slot");
+        sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsClose, id, why));
     });
 
     ws->open(QUrl(QStringLiteral("ws://127.0.0.1:%1/").arg(port)));

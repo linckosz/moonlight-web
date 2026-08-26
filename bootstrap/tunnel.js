@@ -66,10 +66,45 @@ export function encodeHead(head, body) {
     return out;
 }
 
-/** A cookie jar for one host, kept in memory for the life of the page. */
+/**
+ * The cookie jar for one host.
+ *
+ * It exists because the browser's own jar cannot be used: there is no HTTP
+ * exchange for it to attach to, and a Set-Cookie on a Response a service worker
+ * constructs is ignored. So this is the user agent for the far end.
+ *
+ * It is kept in sessionStorage, and the choice of sessionStorage over
+ * localStorage is deliberate rather than incidental. On a direct connection the
+ * session cookie is HttpOnly, which puts it out of reach of any script on the
+ * page. Nothing here can reproduce that — a jar the page maintains is a jar the
+ * page can read — so the question is only how long the credential sits at rest.
+ * sessionStorage answers "until this tab closes", which is what it takes for a
+ * reload to keep you signed in, and no longer.
+ *
+ * The cost, stated rather than hidden: "stay signed in on this device" does not
+ * survive closing the tab for someone arriving through the rendezvous. Making it
+ * survive would mean parking a long-lived credential in localStorage, readable
+ * by whatever runs on this origin — the same "steal once, use indefinitely"
+ * exposure the pairing key is generated non-extractable to avoid.
+ */
 class CookieJar {
-    constructor() {
+    constructor(hostId) {
+        this.key = `mw-jar:${hostId}`;
         this.jar = new Map();
+        try {
+            const saved = sessionStorage.getItem(this.key);
+            if (saved) this.jar = new Map(JSON.parse(saved));
+        } catch {
+            /* no storage, or a shape we no longer write: start empty */
+        }
+    }
+
+    _save() {
+        try {
+            sessionStorage.setItem(this.key, JSON.stringify([...this.jar]));
+        } catch {
+            /* the jar still works for this page; only the reload loses it */
+        }
     }
 
     header() {
@@ -103,6 +138,7 @@ class CookieJar {
             if (expired || value === '') this.jar.delete(name);
             else this.jar.set(name, value);
         }
+        this._save();
     }
 }
 
@@ -161,7 +197,7 @@ export class Tunnel {
         this._ws = null;
         this._pc = null;
         this._dc = null;
-        this._cookies = new CookieJar();
+        this._cookies = new CookieJar(hostId);
 
         this._nextId = 1;
         this._pending = new Map(); // request id → { resolve, reject, head, chunks }
@@ -214,8 +250,20 @@ export class Tunnel {
             this._ws = new WebSocket(wsUrl);
             this._ws.onmessage = (ev) => this._onRelayFrame(ev.data, settle);
             this._ws.onerror = () => settle(new Error('Could not reach the introduction server.'));
-            this._ws.onclose = () => {
-                if (!this.connected) settle(new Error('The introduction server hung up.'));
+            this._ws.onclose = (ev) => {
+                // The code and reason are the only account of WHY the line went,
+                // and this is the failure a user reports as "it just stops".
+                console.warn(
+                    `[MW] Signalling line closed: code=${ev.code} reason=${ev.reason || '(none)'}`,
+                );
+                if (!this.connected) {
+                    settle(new Error('The introduction server hung up.'));
+                    return;
+                }
+                // The line dropped under a working tunnel. The host treats that
+                // as the browser leaving and takes its side down, so waiting for
+                // the data channel to notice would only add a silent gap first.
+                this._teardown('the introduction server hung up');
             };
             this._onChannelOpen = settle;
         });
@@ -317,11 +365,19 @@ export class Tunnel {
         this._dc.onclose = () => this._teardown('the channel closed');
         this._dc.onopen = () => {
             this._status('ready');
-            // The introduction server has done its job. Closing the relay here
-            // rather than leaving it open is deliberate: it is one fewer socket
-            // held on someone else's machine, and it makes it plain in a packet
-            // capture that nothing further goes through them.
-            if (this._ws?.readyState === WebSocket.OPEN) this._ws.close();
+            // The relay socket STAYS OPEN for the life of the tunnel.
+            //
+            // It is tempting to close it here — the media path is up, the
+            // introduction server has done its job, and one fewer socket held on
+            // someone else's machine reads as a straightforward win. It is not:
+            // to the host, the rendezvous session and this peer connection are
+            // one lifetime, so hanging up the socket takes the tunnel down with
+            // it. Closing it also throws away candidates that arrive after the
+            // first working pair, which are often the better ones.
+            //
+            // Nothing further crosses it. It carries signalling, it is idle
+            // between renegotiations, and the server already knows this browser
+            // is connected — it is the party that introduced them.
             if (this._onChannelOpen) this._onChannelOpen(null);
         };
         if (this._dc.readyState === 'open') this._dc.onopen();
