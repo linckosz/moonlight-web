@@ -25,6 +25,7 @@
 #include "common/Logger.h"
 
 #include <QCoreApplication>
+#include <QJsonArray>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -633,6 +634,92 @@ bool HttpServer::isLocalRequest(const QString& addr)
     return false;
 }
 
+quint16 HttpServer::authorizeTunnelWebSocket(const HttpRequest& req, QString* outError)
+{
+    auto refuse = [outError](const QString& why) -> quint16 {
+        if (outError) *outError = why;
+        return 0;
+    };
+
+    bool wsIsRelay = false;
+    const int slot = slotFromWsPath(req.path, &wsIsRelay);
+    if (slot < 0) return refuse(QStringLiteral("not a signalling path"));
+
+    // The legacy WebSocket video relay is deliberately unreachable here. It
+    // exists so a browser whose UDP is blocked can still receive frames over the
+    // same TLS connection that serves the page — and there is no such connection
+    // through a tunnel. Its replacement on this path is ICE-TCP, which the
+    // stream's own peer connection negotiates. Carrying video through the
+    // control channel instead would put every frame through one SCTP stream that
+    // is also answering API calls.
+    if (wsIsRelay) return refuse(QStringLiteral("the legacy video relay is not carried"));
+    if (req.path == QLatin1String("/ws/control"))
+        return refuse(QStringLiteral("the control channel is host-local"));
+
+    quint16 targetPort = m_SignalingPort;
+    if (slot > 0) {
+        targetPort = m_SlotPorts.value(slot).signaling;
+        if (targetPort == 0) return refuse(QStringLiteral("no such slot"));
+    }
+
+    const bool playerSlot = slot >= m_FirstPlayerSlot && slot < m_FirstExtraSlot;
+    if (playerSlot) {
+        if (!m_PlayerSlotAuth || !m_PlayerSlotAuth(req, slot)) {
+            m_ConnGuard.reportAuthFailure(req.clientAddress);
+            return refuse(QStringLiteral("not authorised for this player slot"));
+        }
+        return targetPort;
+    }
+
+    // No local exemption on this path, ever — see Arrival. A session is the only
+    // thing that opens it.
+    if (m_AuthManager && !m_AuthManager->validateSession(sessionTokenFromRequest(req))) {
+        m_ConnGuard.reportAuthFailure(req.clientAddress);
+        return refuse(QStringLiteral("authentication required"));
+    }
+    return targetPort;
+}
+
+QMap<QString, QString> HttpServer::securityHeaders(const QString& hostHeader)
+{
+    // The page may only open a WebSocket back to the origin it was served from.
+    // Spelled out as wss://<host> rather than relying on 'self' to cover ws/wss:
+    // CSP3 says it does, but WebKit has historically not honoured that, and this
+    // header gates the streaming signaling channel on iOS.
+    //
+    // Over the rendezvous tunnel the origin is the introduction server's, and
+    // that is deliberate rather than an oversight: the page really does hold one
+    // WebSocket there — the signalling line — and it is the ONLY thing it may
+    // open. Everything else it needs arrives through the tunnel this policy
+    // travels on.
+    const QString wsOrigin = RequestGuard::normalizeAuthority(hostHeader);
+    const QString connectSrc = isPlainAuthority(wsOrigin)
+                                   ? QStringLiteral("'self' wss://%1").arg(wsOrigin)
+                                   : QStringLiteral("'self'");
+
+    QMap<QString, QString> headers;
+    // No Access-Control-Allow-Origin: the frontend is served same-origin by this
+    // server, so CORS is never needed. Omitting it prevents any cross-origin page
+    // from reading API responses.
+    headers["X-Content-Type-Options"] = "nosniff";
+    headers["X-Frame-Options"] = "DENY";
+    headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    // 'wasm-unsafe-eval' allows WebAssembly compilation only (not JS eval) —
+    // required by the WASM Opus decoder fallback used on iOS/WebKit.
+    // Google Fonts: stylesheet from fonts.googleapis.com, font files from
+    // fonts.gstatic.com (graceful fallback to system fonts if offline).
+    headers["Content-Security-Policy"] =
+        QStringLiteral(
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' "
+            "https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src %1; "
+            "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
+            "object-src 'none'")
+            .arg(connectSrc);
+    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload";
+    return headers;
+}
+
 QString HttpServer::cookieFromRequest(const HttpRequest& req, const QString& name)
 {
     QString cookie = req.headers.value("cookie");
@@ -856,6 +943,92 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         return;
     }
 
+    const bool peerLocal = isLocalRequest(req.clientAddress);
+
+    // HTTP→HTTPS redirect for plain HTTP connections.
+    //
+    // Redirect HTTP requests to HTTPS so LAN/public access is always encrypted.
+    //
+    // Exception 1: skip redirect when the client is localhost AND the Host
+    // header is a public domain — this indicates a TLS-terminating tunnel
+    // (e.g. cloudflared, nport TLS mode) that forwards decrypted traffic
+    // to our HTTP port. In that case the browser is already on HTTPS at
+    // the tunnel edge, and redirecting would create a loop.
+    //
+    // Exception 2: skip redirect for a loopback Host (localhost / 127.0.0.1 /
+    // ::1). Serving these over plain HTTP is safe (traffic never leaves the
+    // machine) and lets the local entry points — the setup wizard and admin
+    // page — open without a self-signed-cert warning (which some browsers,
+    // notably Ubuntu's snap Firefox, render as a blank page). Streaming pages
+    // still require HTTPS: the frontend gates them and offers a secure link.
+    //
+    // The redirect URL omits the port when it is the standard 443, so
+    // http://domain → https://domain (clean URL without :443).
+    //
+    // It lives here rather than in serveRequest() because it is a property of
+    // the socket the request arrived on, not of the request: a tunnel carries no
+    // scheme of its own, and there is nowhere for it to redirect to.
+    if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0) {
+        QString host = req.headers.value("host");
+        int portSep = host.lastIndexOf(':');
+        QString hostname = (portSep >= 0) ? host.left(portSep) : host;
+
+        bool isLocalClient = peerLocal;
+        bool isPublicDomain = !isLanHost(hostname);
+        bool isLoopbackHost = hostname.compare("localhost", Qt::CaseInsensitive) == 0 ||
+                              hostname == "127.0.0.1" || hostname == "::1" || hostname == "[::1]";
+
+        // Skip redirect behind a TLS-terminating tunnel (localhost client +
+        // public Host header) or for a loopback Host (served as HTTP directly).
+        if (!((isLocalClient && isPublicDomain) || isLoopbackHost)) {
+            QString portPart;
+            if (m_ActiveHttpsPort != 443) portPart = QString(":%1").arg(m_ActiveHttpsPort);
+
+            QString location = QString("https://%1%2%3").arg(hostname).arg(portPart).arg(req.path);
+            HttpResponse resp;
+            resp.statusCode = 307;
+            resp.headers["Location"] = location;
+            sendResponse(socket, resp);
+            return;
+        }
+    }
+
+    const QString hostHeader = req.headers.value("host");
+    m_PendingAsyncSockets.insert(socket);
+    QTimer::singleShot(ASYNC_TIMEOUT_MS, socket, [this, socket]() {
+        if (m_PendingAsyncSockets.contains(socket)) {
+            qWarning() << "[HttpServer] Async timeout for" << socket
+                       << "peer=" << socket->peerAddress().toString();
+            m_PendingAsyncSockets.remove(socket);
+            sendResponse(socket, HttpResponse::error(504, "Gateway Timeout"));
+        }
+    });
+
+    serveRequest(std::move(req), Arrival::Socket,
+                 [this, socket, hostHeader](const HttpResponse& resp) {
+                     if (m_PendingAsyncSockets.contains(socket)) {
+                         m_PendingAsyncSockets.remove(socket);
+                         sendResponse(socket, resp, hostHeader);
+                     } else {
+                         // The socket is no longer pending because it disconnected
+                         // mid-request: onDisconnected() already did
+                         // socket->deleteLater(), so by the time this async response
+                         // arrives the QTcpSocket is a FREED QObject. Stream its
+                         // ADDRESS as a plain void* — never the QObject* itself,
+                         // because QDebug::operator<<(const QObject*) dereferences it
+                         // (className/objectName) and would crash on the dangling
+                         // object (the UAF that took the whole server down on
+                         // browser-close double /quit).
+                         qWarning() << "[HttpServer] Respond called but socket no longer pending "
+                                       "— response discarded"
+                                    << "socket=" << static_cast<const void*>(socket)
+                                    << "status=" << resp.statusCode;
+                     }
+                 });
+}
+
+void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback respond)
+{
     // ── Access decision ───────────────────────────────────────────────────────
     // The local privilege below is granted on the source IP alone, and a browser
     // running on the host lends that IP to every page it has open: without these
@@ -863,13 +1036,44 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // browser (no CORS header of ours is involved — the response being
     // unreadable does not stop the request from taking effect). The rules live
     // in RequestGuard::evaluate so they can be tested as a unit.
-    const bool peerLocal = isLocalRequest(req.clientAddress);
+    //
+    // A tunnel request is handed to us by code running on this machine, so every
+    // signal that says "local" would say so for a visitor on the other side of
+    // the world. All three of them are therefore forced shut here — §4.3 of the
+    // architecture, and the reason it is a rule and not a heuristic:
+    //
+    //   peerLocal   the address is ours, never the browser's
+    //   hostSession the host key is only readable from the host machine, so a
+    //               tunnel caller cannot have obtained it — but "cannot" is a
+    //               property of another route's guard, and privileges should not
+    //               rest on a second file's correctness
+    //   adminKeyOk  the per-run admin key is only ever served to local callers
+    //
+    // What remains reachable from the tunnel is what remote access has always
+    // been: a session established with the PIN. Admin still needs the machine
+    // itself or the LAN unlock, exactly as it does under the public domain today.
+    const bool viaTunnel = (arrival == Arrival::Tunnel);
+
+    // A target carrying control characters is refused before anything reads it.
+    // The socket path already catches this at parse time; the tunnel builds its
+    // requests itself, so the check belongs here too rather than resting on the
+    // caller having done it.
+    if (req.malformed || req.path.contains(QLatin1Char('\r')) ||
+        req.path.contains(QLatin1Char('\n'))) {
+        Logger::warning(QString("[HttpServer] Malformed request target refused from %1")
+                            .arg(req.clientAddress));
+        m_ConnGuard.reportAuthFailure(req.clientAddress);
+        respond(HttpResponse::error(400, "Bad Request"));
+        return;
+    }
+
+    const bool peerLocal = !viaTunnel && isLocalRequest(req.clientAddress);
     const QString sessionToken = sessionTokenFromRequest(req);
     RequestGuard::Context ctx;
     ctx.peerLocal = peerLocal;
-    ctx.hostSession = m_AuthManager && m_AuthManager->isHostSession(sessionToken);
+    ctx.hostSession = !viaTunnel && m_AuthManager && m_AuthManager->isHostSession(sessionToken);
     ctx.adminSession = m_AuthManager && m_AuthManager->isAdminSession(sessionToken);
-    ctx.adminKeyOk = adminKeyMatches(req);
+    ctx.adminKeyOk = !viaTunnel && adminKeyMatches(req);
     ctx.publicDomain = m_Certs.domain();
 
     const RequestGuard::Decision decision =
@@ -883,7 +1087,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         }
         QJsonObject obj;
         obj["error"] = RequestGuard::blockError(decision.outcome);
-        sendResponse(socket, HttpResponse::json(obj, RequestGuard::blockStatus(decision.outcome)));
+        respond(HttpResponse::json(obj, RequestGuard::blockStatus(decision.outcome)));
         return;
     }
     if (decision.hostUntrusted) {
@@ -922,52 +1126,26 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             break;
         }
         resp.headers["Cache-Control"] = "no-store";
-        sendResponse(socket, resp);
+        respond(resp);
         return;
     }
 
-    // HTTP→HTTPS redirect for plain HTTP connections.
-    //
-    // Redirect HTTP requests to HTTPS so LAN/public access is always encrypted.
-    //
-    // Exception 1: skip redirect when the client is localhost AND the Host
-    // header is a public domain — this indicates a TLS-terminating tunnel
-    // (e.g. cloudflared, nport TLS mode) that forwards decrypted traffic
-    // to our HTTP port. In that case the browser is already on HTTPS at
-    // the tunnel edge, and redirecting would create a loop.
-    //
-    // Exception 2: skip redirect for a loopback Host (localhost / 127.0.0.1 /
-    // ::1). Serving these over plain HTTP is safe (traffic never leaves the
-    // machine) and lets the local entry points — the setup wizard and admin
-    // page — open without a self-signed-cert warning (which some browsers,
-    // notably Ubuntu's snap Firefox, render as a blank page). Streaming pages
-    // still require HTTPS: the frontend gates them and offers a secure link.
-    //
-    // The redirect URL omits the port when it is the standard 443, so
-    // http://domain → https://domain (clean URL without :443).
-    if (!qobject_cast<QSslSocket*>(socket) && m_ActiveHttpsPort > 0) {
-        QString host = req.headers.value("host");
-        int portSep = host.lastIndexOf(':');
-        QString hostname = (portSep >= 0) ? host.left(portSep) : host;
+    // The set of files that make up the application, for a browser that has to
+    // pull all of them through a data channel before it can start. Answered
+    // inline, before the session gate, because every file it names is already
+    // served to anyone who asks — the list adds no reach, only the ability to
+    // fetch them in one pass instead of discovering them one redirect at a time.
+    if (req.path == QLatin1String("/api/app/manifest")) {
+        QJsonArray files;
+        const QStringList paths = m_StaticFiles->listFiles();
+        for (const QString& p : paths) files.append(p);
 
-        bool isLocalClient = peerLocal;
-        bool isPublicDomain = !isLanHost(hostname);
-        bool isLoopbackHost = hostname.compare("localhost", Qt::CaseInsensitive) == 0 ||
-                              hostname == "127.0.0.1" || hostname == "::1" || hostname == "[::1]";
-
-        // Skip redirect behind a TLS-terminating tunnel (localhost client +
-        // public Host header) or for a loopback Host (served as HTTP directly).
-        if (!((isLocalClient && isPublicDomain) || isLoopbackHost)) {
-            QString portPart;
-            if (m_ActiveHttpsPort != 443) portPart = QString(":%1").arg(m_ActiveHttpsPort);
-
-            QString location = QString("https://%1%2%3").arg(hostname).arg(portPart).arg(req.path);
-            HttpResponse resp;
-            resp.statusCode = 307;
-            resp.headers["Location"] = location;
-            sendResponse(socket, resp);
-            return;
-        }
+        HttpResponse manifest = HttpResponse::json(
+            QJsonObject{{QStringLiteral("version"), QCoreApplication::applicationVersion()},
+                        {QStringLiteral("files"), files}});
+        manifest.headers["Cache-Control"] = "no-store";
+        respond(manifest);
+        return;
     }
 
     if (!req.path.startsWith("/api/")) {
@@ -977,7 +1155,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         if (req.method != QLatin1String("GET") && req.method != QLatin1String("HEAD")) {
             HttpResponse notAllowed = HttpResponse::error(405, "Method Not Allowed");
             notAllowed.headers["Allow"] = "GET, HEAD";
-            sendResponse(socket, notAllowed);
+            respond(notAllowed);
             return;
         }
 
@@ -992,7 +1170,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             resp.body =
                 "{\"version\":\"" + QCoreApplication::applicationVersion().toUtf8() + "\"}\n";
             resp.headers["Cache-Control"] = "no-cache, must-revalidate";
-            sendResponse(socket, resp);
+            respond(resp);
             return;
         }
 
@@ -1010,7 +1188,7 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
             resp = m_StaticFiles->serveFile("/", ifNoneMatch);
         // HEAD is the same response without the representation.
         if (req.method == QLatin1String("HEAD")) resp.body.clear();
-        sendResponse(socket, resp, req.headers.value("host"));
+        respond(resp);
         return;
     }
 
@@ -1029,46 +1207,20 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         m_ConnGuard.reportAuthFailure(req.clientAddress);
         QJsonObject obj;
         obj["error"] = "authentication_required";
-        HttpResponse resp = HttpResponse::json(obj, 401);
-        sendResponse(socket, resp);
+        respond(HttpResponse::json(obj, 401));
         return;
     }
 
-    m_PendingAsyncSockets.insert(socket);
-
-    QTimer::singleShot(ASYNC_TIMEOUT_MS, socket, [this, socket]() {
-        if (m_PendingAsyncSockets.contains(socket)) {
-            qWarning() << "[HttpServer] Async timeout for" << socket
-                       << "peer=" << socket->peerAddress().toString();
-            m_PendingAsyncSockets.remove(socket);
-            sendResponse(socket, HttpResponse::error(504, "Gateway Timeout"));
-        }
-    });
-
-    m_Router->dispatchAsync(req, [this, socket](const HttpResponse& resp) {
-        if (m_PendingAsyncSockets.contains(socket)) {
-            m_PendingAsyncSockets.remove(socket);
-            // API answers are per-session state (host list, sessions, settings)
-            // and several are privilege-dependent — the very same URL returns
-            // less to a remote client than to the host. Nothing may keep a copy:
-            // no-store also keeps them out of the browser's on-disk cache, where
-            // they would outlive the session that was allowed to see them.
-            // Handlers that set their own policy keep it.
-            HttpResponse out = resp;
-            if (!out.headers.contains("Cache-Control")) out.headers["Cache-Control"] = "no-store";
-            sendResponse(socket, out);
-        } else {
-            // The socket is no longer pending because it disconnected mid-request:
-            // onDisconnected() already did socket->deleteLater(), so by the time
-            // this async response arrives the QTcpSocket is a FREED QObject. Stream
-            // its ADDRESS as a plain void* — never the QObject* itself, because
-            // QDebug::operator<<(const QObject*) dereferences it (className/
-            // objectName) and would crash on the dangling object (the UAF that took
-            // the whole server down on browser-close double /quit).
-            qWarning()
-                << "[HttpServer] Respond called but socket no longer pending — response discarded"
-                << "socket=" << static_cast<const void*>(socket) << "status=" << resp.statusCode;
-        }
+    m_Router->dispatchAsync(req, [respond](const HttpResponse& resp) {
+        // API answers are per-session state (host list, sessions, settings)
+        // and several are privilege-dependent — the very same URL returns
+        // less to a remote client than to the host. Nothing may keep a copy:
+        // no-store also keeps them out of the browser's on-disk cache, where
+        // they would outlive the session that was allowed to see them.
+        // Handlers that set their own policy keep it.
+        HttpResponse out = resp;
+        if (!out.headers.contains("Cache-Control")) out.headers["Cache-Control"] = "no-store";
+        respond(out);
     });
 }
 
@@ -1284,38 +1436,10 @@ void HttpServer::sendResponse(QTcpSocket* socket, const HttpResponse& response,
     default: statusText = "Unknown"; break;
     }
 
-    // The page may only open a WebSocket back to the origin it was served from.
-    // Spelled out as wss://<host> rather than relying on 'self' to cover ws/wss:
-    // CSP3 says it does, but WebKit has historically not honoured that, and this
-    // header gates the streaming signaling channel on iOS.
-    const QString wsOrigin = RequestGuard::normalizeAuthority(hostHeader);
-    const QString connectSrc = isPlainAuthority(wsOrigin)
-                                   ? QStringLiteral("'self' wss://%1").arg(wsOrigin)
-                                   : QStringLiteral("'self'");
-
     // Defaults first, then the handler's own headers on top: a handler that sets
     // Cache-Control or a stricter policy wins, and neither can be emitted twice.
-    QMap<QString, QString> headers;
+    QMap<QString, QString> headers = securityHeaders(hostHeader);
     headers["Connection"] = "close";
-    // No Access-Control-Allow-Origin: the frontend is served same-origin by this
-    // server, so CORS is never needed. Omitting it prevents any cross-origin page
-    // from reading API responses.
-    headers["X-Content-Type-Options"] = "nosniff";
-    headers["X-Frame-Options"] = "DENY";
-    headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
-    // 'wasm-unsafe-eval' allows WebAssembly compilation only (not JS eval) —
-    // required by the WASM Opus decoder fallback used on iOS/WebKit.
-    // Google Fonts: stylesheet from fonts.googleapis.com, font files from
-    // fonts.gstatic.com (graceful fallback to system fonts if offline).
-    headers["Content-Security-Policy"] =
-        QStringLiteral(
-            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' "
-            "https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src %1; "
-            "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
-            "object-src 'none'")
-            .arg(connectSrc);
-    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload";
 
     for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)
         headers[it.key()] = it.value();

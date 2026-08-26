@@ -62,6 +62,7 @@
 #include "server/Provisioning.h"
 #include "server/HttpServer.h"
 #include "server/ControlChannel.h"
+#include "server/ControlTunnel.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
@@ -3869,6 +3870,18 @@ int main(int argc, char* argv[])
                                  {QStringLiteral("url"), rendezvous.entryUrl()},
                                  {QStringLiteral("online"), rendezvous.isOnline()}};
                          });
+
+    // ── The application, carried to a browser that cannot reach us ───────────
+    //
+    // The line above makes this machine findable; this makes it usable. A
+    // browser that loaded the bootstrap opens a WebRTC connection straight here,
+    // and the interface, the API and the streaming signalling all travel over
+    // it. Nothing is served by the introduction server but those first few
+    // kilobytes, which is the entire point of the arrangement.
+    //
+    // It is created unconditionally: it does nothing at all until the rendezvous
+    // line announces a browser, and the line only runs with consent.
+    ControlTunnel controlTunnel(&server, &authManager, &appSettings, &rendezvous);
 
     // Phase N: System tray icon. Its entries open the public domain (with the
     // host key) once Internet Access is live, https://localhost otherwise.

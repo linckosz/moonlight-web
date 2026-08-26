@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QDirIterator>
 #include <QDateTime>
 #include <QLocale>
 
@@ -61,6 +62,27 @@ StaticFileHandler::StaticFileHandler(const QString& rootDir, const QString& vers
     , m_Version(version.isEmpty() ? QStringLiteral(MW_VERSION) : version)
 {
     if (!m_RootDir.endsWith('/')) m_RootDir += '/';
+}
+
+QStringList StaticFileHandler::listFiles() const
+{
+    QStringList paths;
+    const QDir root(m_RootDir);
+    if (!root.exists()) return paths;
+
+    QDirIterator it(m_RootDir, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        const QString relative = root.relativeFilePath(it.filePath());
+        // Nothing that only exists for the developer. A source map is the one
+        // worth naming: it is served on request but it is dead weight in a set
+        // that has to cross a data channel before the page can start.
+        if (relative.endsWith(QLatin1String(".map"))) continue;
+        if (relative.startsWith(QLatin1String("node_modules/"))) continue;
+        paths << QLatin1Char('/') + relative;
+    }
+    paths.sort();
+    return paths;
 }
 
 HttpResponse StaticFileHandler::serveFile(const QString& requestPath,
