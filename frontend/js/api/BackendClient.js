@@ -624,6 +624,29 @@ export class BackendClient {
         return this.post('/api/setup/sunshine-check', { username, password }, { timeoutMs: 20000 });
     }
 
+    // ── Statistics consent (GDPR) ────────────────────────────────────────────────
+
+    /**
+     * {decision: ''|'granted'|'denied', version, reporting, available}.
+     * `available` is false on a build with no reporting credentials — there is
+     * nothing to ask about there. Host-local only: 403 for anyone else, since
+     * it is a decision about what this machine sends.
+     */
+    static async getMetricsConsent() {
+        return this.get('/api/metrics/consent');
+    }
+    /**
+     * Record the answer, with the exact wording that was on screen so the
+     * stored record says what was agreed to. Takes effect immediately — no
+     * restart, and nothing else about the app changes either way.
+     * @param {boolean} granted
+     * @param {string} message the displayed text, verbatim
+     * @param {'banner'|'admin'} source where it was answered
+     */
+    static async setMetricsConsent(granted, message, source) {
+        return this.post('/api/metrics/consent', { granted, message, source });
+    }
+
     // ── Internet Access (PowerDNS) ───────────────────────────────────────────────────────
 
     static async getInternetStatus() {

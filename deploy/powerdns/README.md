@@ -135,6 +135,12 @@ MoonlightWeb **0.3.0+** points its periodic update check there instead of at
 - clients present the restricted `MW_PDNS_PROXY_KEY`, the same key as the DNS
   path.
 
+**Nobody is counted without being asked.** At first launch the app puts the
+question to the person running the machine — a bar at the bottom of the page,
+listing what is and is not sent — and reports nothing at all until they answer.
+Refusing, or never answering, sends the update check straight to GitHub; the
+answer is withdrawable from the admin page at any time, effective immediately.
+
 **The relay is never load-bearing.** Any failure — unreachable, 502, unusable
 body — makes the client retry against `api.github.com` immediately, and the
 relay itself serves a stale cached release rather than an error whenever GitHub
@@ -204,6 +210,10 @@ identity, **the application launched**, or any raw address. Every value is
 matched against an allowlist or collapsed into a bucket before it goes anywhere
 — there is no free-text field at all — so a forged client can neither inject
 strings into the dashboard nor invent a million distinct rows.
+
+**Consent covers this too.** The same question asked at first launch governs
+both censuses: until it is answered nothing is reported, and withdrawing it in
+the admin page stops this one on the spot.
 
 **It is never load-bearing.** The endpoint answers `204` whether or not it
 counts anything, a failed report is dropped without a retry, and no part of a

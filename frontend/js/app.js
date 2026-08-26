@@ -54,6 +54,7 @@ import { SetupView } from './ui/SetupView.js';
 import { PlayerJoinView } from './ui/PlayerJoinView.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
+import { ConsentBar } from './ui/ConsentBar.js';
 import { VersionGuard } from './util/VersionGuard.js';
 import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
@@ -746,6 +747,13 @@ const MoonlightApp = {
         } catch (err) {
             console.warn('[MW] Server health check failed:', err);
         }
+
+        // Ask, once, whether this machine may report anonymous statistics —
+        // after the page is up, never in front of it. It answers for itself
+        // whether the question applies at all (host's own browser, unanswered,
+        // build able to report); until it is answered the backend reports
+        // nothing, and either answer leaves the application identical.
+        ConsentBar.maybeShow({ isHostLocal: () => this._isHostLocal() });
     },
 
     // =========================================================================

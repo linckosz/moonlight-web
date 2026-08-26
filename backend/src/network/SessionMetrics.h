@@ -51,10 +51,12 @@ class QNetworkAccessManager;
  *
  * When it stays quiet
  * -------------------
- * Reporting is off unless ALL of these hold: the instance has not opted out
- * (settings key "session_metrics_enabled", or MW_NO_TELEMETRY in the
- * environment), and the build carries MW_DOMAIN + MW_PDNS_TOKEN — so a
- * self-built binary never phones our infrastructure at all.
+ * Reporting is off unless ALL of these hold: the person running this machine
+ * was asked at first launch and said yes (AppSettings::metricsConsentDecision),
+ * the instance has not opted out since (settings key "session_metrics_enabled",
+ * or MW_NO_TELEMETRY in the environment), and the build carries MW_DOMAIN +
+ * MW_PDNS_TOKEN — so a self-built binary never phones our infrastructure at
+ * all. Unasked counts as no: silence is not consent.
  *
  * It is never load-bearing: every report is fire-and-forget, a failure is
  * dropped without a retry, and nothing about a stream depends on the answer.
@@ -80,13 +82,19 @@ public:
         QString kind;      ///< owner | player
     };
 
-    /// enabled: the instance's own choice (AppSettings::sessionMetricsEnabled()).
-    /// Even when true, nothing is sent unless the build carries the credentials.
+    /// enabled: consent given AND not opted out
+    /// (AppSettings::sessionMetricsAllowed()). Even when true, nothing is sent
+    /// unless the build carries the credentials.
     explicit SessionMetrics(QString version, bool enabled, QObject* parent = nullptr);
 
     /// Whether anything will actually be sent. Callers do not need to check —
     /// every report is a no-op when this is false — it is for logging.
     bool active() const { return !m_url.isEmpty(); }
+
+    /// Apply a consent answer without a restart: the moment someone says no in
+    /// the UI, the next session must already be uncounted. Re-derives the
+    /// endpoint, so an opt-out still wins on a build that carries credentials.
+    void setEnabled(bool enabled);
 
     /// A session reached the point of carrying a picture.
     void reportStart(const Facts& facts);

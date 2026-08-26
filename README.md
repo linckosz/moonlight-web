@@ -366,14 +366,14 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 | **macOS** | `~/Library/Application Support/MoonlightWeb/MoonlightWeb/settings.json` |
 | **Linux** | `~/.local/share/MoonlightWeb/MoonlightWeb/settings.json` |
 
-Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`, `session_metrics_enabled`.\
+Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`, `session_metrics_enabled`, `metrics_consent`.\
 Restart the server after a manual edit.
 
 #### Update check & version counts
 
 Every few hours the server asks whether a newer MoonlightWeb exists. In official builds that question goes to `https://updates.{MW_DOMAIN}`, which mirrors the GitHub release and records **version, OS and architecture** — nothing else: no identifier, no account, no per-machine history. It is what tells us how many people still run an old version, so a release can drop support for one without stranding anyone.
 
-Set `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, and the check goes straight to GitHub instead, reporting nothing. Updates work identically either way. Builds you compiled yourself never contact the relay at all.
+Nothing is reported until you have been asked and have said yes — see below. Set `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, and the check goes straight to GitHub instead, reporting nothing. Updates work identically either way. Builds you compiled yourself never contact the relay at all.
 
 #### Session counts
 
@@ -381,7 +381,13 @@ When a stream starts and again when it ends, official builds report the **shape*
 
 Never sent: the host's name or identifier, your account, the pairing identity, **which application you launched**, or any address — the receiving end keeps no raw address, only a hash that changes every day. There is no free-text field at all: every value is a number or one of a fixed list of words. It answers questions like "is 720p still in use?" or "did AV1 take off?", and nothing finer.
 
-Set `"session_metrics_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment (which also covers the update relay above), and nothing is reported. Streaming is identical either way, and builds you compiled yourself never report at all.
+#### You are asked first
+
+Both of the above stay **completely silent until you answer**. At first launch a bar at the bottom of the page asks whether this machine may send anonymous statistics; it lists exactly what is and is not sent, and until a button is pressed nothing leaves your machine. Refusing costs you nothing — streaming, updates and every feature behave identically.
+
+It is not a cookie banner: the sign-in cookie the app needs to work is unaffected by either answer, and so is the separate Internet Access agreement. Only the machine's own browser is asked; a remote viewer never sees it, and the backend refuses the answer from anyone else. Change your mind at any time from **Admin → Anonymous statistics**, which takes effect immediately.
+
+Under the hood the answer is stored in `settings.json` as `metrics_consent`, together with the exact wording you were shown and when you answered. The two switches remain as permanent overrides: `"session_metrics_enabled": false` or `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, stop the reporting whatever the answer was.
 
 ### SSL — your own domain & certificate
 
