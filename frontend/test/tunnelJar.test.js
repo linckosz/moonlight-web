@@ -1,0 +1,149 @@
+/*
+ * MoonlightWeb — frontend TNR. Copyright (C) 2026 Bruno Martin. GPLv3.
+ *
+ * Two rules the rendezvous path depends on, both of which have already been got
+ * wrong once.
+ *
+ * The cookie jar is the user agent for the far end — the browser's own jar
+ * cannot be used, because a Set-Cookie on a Response a service worker builds is
+ * ignored. Getting its lifetime wrong is not cosmetic: the access PIN
+ * regenerates after every successful use, so a browser that forgets a session it
+ * was told to keep leaves its owner unable to get back in without walking to the
+ * machine. That is what these tests pin.
+ *
+ * The identifier resolution decides WHICH machine a page talks to. The order
+ * matters for a reason worth stating: a remembered machine must never override
+ * an identifier that is actually in the URL, or following a link to a second
+ * machine would silently open the first.
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+function memoryStorage() {
+    const map = new Map();
+    return {
+        getItem: (k) => (map.has(k) ? map.get(k) : null),
+        setItem: (k, v) => map.set(k, String(v)),
+        removeItem: (k) => map.delete(k),
+        clear: () => map.clear(),
+        get size() {
+            return map.size;
+        },
+    };
+}
+
+let tunnelModule;
+
+beforeEach(async () => {
+    vi.stubGlobal('sessionStorage', memoryStorage());
+    vi.stubGlobal('localStorage', memoryStorage());
+    vi.resetModules();
+    tunnelModule = await import('../../bootstrap/tunnel.js');
+});
+
+describe('cookie jar — where a credential is kept follows what the cookie asks', () => {
+    // The jar is not exported (it is an implementation detail of Tunnel), so it
+    // is exercised the way the code does: through a Tunnel's own jar.
+    const jarOf = (hostId) => new tunnelModule.Tunnel(hostId, 'https://example.test')._cookies;
+
+    it('keeps a cookie with Max-Age across a browser restart', () => {
+        const jar = jarOf('a'.repeat(26));
+        jar.absorb('mw_session=tok; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=7776000');
+
+        // A new browser session: sessionStorage is gone, localStorage is not.
+        const survivor = memoryStorage();
+        for (const key of ['mw-jar:' + 'a'.repeat(26)])
+            survivor.setItem(key, localStorage.getItem(key));
+        vi.stubGlobal('sessionStorage', memoryStorage());
+        vi.stubGlobal('localStorage', survivor);
+
+        expect(jarOf('a'.repeat(26)).header()).toBe('mw_session=tok');
+    });
+
+    it('drops a cookie with no Max-Age when the tab goes', () => {
+        const jar = jarOf('b'.repeat(26));
+        jar.absorb('mw_session=tok; HttpOnly; Secure; Path=/; SameSite=Strict');
+
+        // "Uncheck on a shared computer" is exactly this cookie, and it must not
+        // outlive the tab — storing it forever would quietly ignore the choice.
+        vi.stubGlobal('sessionStorage', memoryStorage());
+        expect(jarOf('b'.repeat(26)).header()).toBeNull();
+    });
+
+    it('honours a deletion, so signing out actually signs out', () => {
+        const id = 'c'.repeat(26);
+        const jar = jarOf(id);
+        jar.absorb('mw_session=tok; Max-Age=7776000');
+        expect(jar.header()).toBe('mw_session=tok');
+
+        jar.absorb('mw_session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0');
+        expect(jar.header()).toBeNull();
+        // And the stored copy is cleared too, or the next start would sign the
+        // user back in with a token the host has already revoked.
+        expect(jarOf(id).header()).toBeNull();
+    });
+
+    it('treats an already-past Expires as a deletion', () => {
+        const jar = jarOf('d'.repeat(26));
+        jar.absorb('mw_session=tok; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+        expect(jar.header()).toBeNull();
+    });
+
+    it('never lets one machine read another machine’s session', () => {
+        // Every host is reached through ONE origin here, so this separation is
+        // the jar's own job — there is no domain to do it.
+        jarOf('e'.repeat(26)).absorb('mw_session=first; Max-Age=7776000');
+        expect(jarOf('f'.repeat(26)).header()).toBeNull();
+    });
+});
+
+describe('which machine a page talks to', () => {
+    const A = 'a'.repeat(26);
+    const B = 'b'.repeat(26);
+
+    const at = (pathname, hash = '') => {
+        vi.stubGlobal('location', { pathname, hash, origin: 'https://example.test' });
+    };
+
+    it('takes the identifier from the path', () => {
+        at(`/${A}`);
+        expect(tunnelModule.hostIdFromLocation()).toBe(A);
+    });
+
+    it('takes it from the fragment once the bootstrap has handed over', () => {
+        at('/', `#${A}`);
+        expect(tunnelModule.hostIdFromLocation()).toBe(A);
+    });
+
+    it('falls back to this tab’s machine when routing drops the fragment', () => {
+        at('/', `#${A}`);
+        tunnelModule.hostIdFromLocation(); // records it for the tab
+        at('/settings');
+        expect(tunnelModule.hostIdFromLocation()).toBe(A);
+    });
+
+    it('opens the last machine used when the address names none', () => {
+        // The bare address is what someone types or bookmarks; before this it
+        // produced an application with no hosts and no explanation.
+        tunnelModule.rememberLastHost(A);
+        at('/');
+        expect(tunnelModule.hostIdFromLocation()).toBe(A);
+    });
+
+    it('lets an explicit identifier beat the remembered one', () => {
+        // THE case that makes remembering safe: a link to a second machine must
+        // open that machine, not the one this browser happens to have used.
+        tunnelModule.rememberLastHost(A);
+        at('/', `#${B}`);
+        expect(tunnelModule.hostIdFromLocation()).toBe(B);
+
+        tunnelModule.rememberLastHost(A);
+        at(`/${B}`);
+        expect(tunnelModule.hostIdFromLocation()).toBe(B);
+    });
+
+    it('answers null rather than guessing at a malformed identifier', () => {
+        at('/not-an-identifier', '#also-not-one');
+        expect(tunnelModule.hostIdFromLocation()).toBeNull();
+    });
+});

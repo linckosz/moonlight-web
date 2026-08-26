@@ -40,6 +40,17 @@ const FRAME_WS_TEXT = 0x06;
 const FRAME_WS_CLOSE = 0x07;
 const FRAME_WS_OPENED = 0x08;
 
+/**
+ * Where the application's files are kept for the service worker to serve.
+ *
+ * One cache, not one per host, and stamped with whose interface is in it (see
+ * boot.js). The service worker cannot read the fragment and so cannot know which
+ * machine a page belongs to; keeping one cache and refilling it when the machine
+ * changes is what makes that safe, at the cost of a re-download when someone
+ * alternates between two machines in one browser.
+ */
+export const SHELL_CACHE = 'mw-shell';
+
 /** How long a request may wait for its first byte before it is given up on. */
 const REQUEST_TIMEOUT_MS = 30000;
 
@@ -71,54 +82,77 @@ export function encodeHead(head, body) {
  *
  * It exists because the browser's own jar cannot be used: there is no HTTP
  * exchange for it to attach to, and a Set-Cookie on a Response a service worker
- * constructs is ignored. So this is the user agent for the far end.
+ * constructs is ignored. So this is the user agent for the far end, and like any
+ * user agent it has to honour what the cookie asks for:
  *
- * It is kept in sessionStorage, and the choice of sessionStorage over
- * localStorage is deliberate rather than incidental. On a direct connection the
- * session cookie is HttpOnly, which puts it out of reach of any script on the
- * page. Nothing here can reproduce that — a jar the page maintains is a jar the
- * page can read — so the question is only how long the credential sits at rest.
- * sessionStorage answers "until this tab closes", which is what it takes for a
- * reload to keep you signed in, and no longer.
+ *   a cookie with an expiry     survives the browser closing  → localStorage
+ *   a cookie without one        dies with the tab             → sessionStorage
  *
- * The cost, stated rather than hidden: "stay signed in on this device" does not
- * survive closing the tab for someone arriving through the rendezvous. Making it
- * survive would mean parking a long-lived credential in localStorage, readable
- * by whatever runs on this origin — the same "steal once, use indefinitely"
- * exposure the pairing key is generated non-extractable to avoid.
+ * That mapping is the whole design, and it is what makes "keep me signed in"
+ * mean the same thing here as on a direct connection. Getting it wrong is not a
+ * small inconvenience: the access PIN regenerates after every successful use, so
+ * a browser that forgets a session it was told to keep leaves its owner unable
+ * to get back in without walking to the machine.
+ *
+ * What is genuinely lost, and cannot be recovered here: on a direct connection
+ * that cookie is HttpOnly, out of reach of any script on the page. A jar the
+ * page maintains is a jar the page can read. The exposure that adds is to code
+ * running on this origin — which, if it is hostile, is already the user agent
+ * and already sees the credential in flight. Storing it at rest lets such code
+ * take the token without waiting for a login, and that is the real cost of the
+ * trade; it is worth it against locking users out of their own machines, and it
+ * is why the PAIRING key next door is generated non-extractable instead.
  */
 class CookieJar {
     constructor(hostId) {
         this.key = `mw-jar:${hostId}`;
+        /** name → { value, expires } — expires null for a session cookie. */
         this.jar = new Map();
+        this._load(sessionStorage);
+        this._load(localStorage);
+    }
+
+    _load(store) {
         try {
-            const saved = sessionStorage.getItem(this.key);
-            if (saved) this.jar = new Map(JSON.parse(saved));
+            const saved = store.getItem(this.key);
+            if (!saved) return;
+            for (const [name, rec] of JSON.parse(saved)) {
+                if (rec.expires && rec.expires <= Date.now()) continue;
+                this.jar.set(name, rec);
+            }
         } catch {
-            /* no storage, or a shape we no longer write: start empty */
+            /* no storage, or a shape we no longer write: skip it */
         }
     }
 
     _save() {
+        const session = [];
+        const persistent = [];
+        for (const [name, rec] of this.jar) (rec.expires ? persistent : session).push([name, rec]);
         try {
-            sessionStorage.setItem(this.key, JSON.stringify([...this.jar]));
+            sessionStorage.setItem(this.key, JSON.stringify(session));
+            // Written even when empty, so signing out actually clears what was
+            // kept rather than leaving a stale token behind.
+            localStorage.setItem(this.key, JSON.stringify(persistent));
         } catch {
-            /* the jar still works for this page; only the reload loses it */
+            /* the jar still works for this page; only the next start pays */
         }
     }
 
     header() {
-        if (this.jar.size === 0) return null;
-        return [...this.jar].map(([k, v]) => `${k}=${v}`).join('; ');
+        const live = [...this.jar].filter(([, r]) => !r.expires || r.expires > Date.now());
+        if (live.length === 0) return null;
+        return live.map(([k, r]) => `${k}=${r.value}`).join('; ');
     }
 
     /**
      * Take what a Set-Cookie says, and no more than that.
      *
-     * Attributes are read only far enough to know whether the cookie is being
-     * deleted. Path and Domain are ignored on purpose: this jar serves exactly
-     * one host over one channel, so there is nothing to scope them against, and
-     * pretending to honour them would be a fiction that hides bugs.
+     * Max-Age and Expires are read because they decide how long the credential
+     * lives and therefore where it is kept. Path and Domain are ignored on
+     * purpose: this jar serves exactly one host over one channel, so there is
+     * nothing to scope them against, and pretending to honour them would be a
+     * fiction that hides bugs.
      */
     absorb(setCookie) {
         for (const line of Array.isArray(setCookie) ? setCookie : [setCookie]) {
@@ -129,14 +163,25 @@ class CookieJar {
             const name = pair.slice(0, eq).trim();
             const value = pair.slice(eq + 1).trim();
 
-            const expired = attrs.some((a) => {
-                const t = a.trim().toLowerCase();
-                if (t.startsWith('max-age=')) return parseInt(t.slice(8), 10) <= 0;
-                if (t.startsWith('expires=')) return new Date(t.slice(8)).getTime() <= Date.now();
-                return false;
-            });
-            if (expired || value === '') this.jar.delete(name);
-            else this.jar.set(name, value);
+            let expires = null;
+            let deleted = false;
+            for (const attr of attrs) {
+                const t = attr.trim().toLowerCase();
+                if (t.startsWith('max-age=')) {
+                    const seconds = parseInt(t.slice(8), 10);
+                    if (Number.isNaN(seconds)) continue;
+                    if (seconds <= 0) deleted = true;
+                    else expires = Date.now() + seconds * 1000;
+                } else if (t.startsWith('expires=')) {
+                    const when = new Date(attr.trim().slice(8)).getTime();
+                    if (Number.isNaN(when)) continue;
+                    if (when <= Date.now()) deleted = true;
+                    else expires = when;
+                }
+            }
+
+            if (deleted || value === '') this.jar.delete(name);
+            else this.jar.set(name, { value, expires });
         }
         this._save();
     }
@@ -543,22 +588,51 @@ export class Tunnel {
     }
 }
 
+const ID_SHAPE = /^[0-9a-z]{26}$/;
+
+/**
+ * Remember this machine as the one this browser last used.
+ *
+ * Written only once a connection actually succeeded, so a mistyped identifier
+ * never becomes the default. Kept in localStorage on purpose: it is what makes
+ * the bare address work, and it is not a credential — it is the same identifier
+ * already sitting in the address bar, in the history, and in any bookmark.
+ */
+export function rememberLastHost(hostId) {
+    try {
+        localStorage.setItem('mw-last-host', hostId);
+    } catch {
+        /* the address bar still carries it */
+    }
+}
+
 /**
  * The identifier this page is bound to, or null.
  *
- * Three places, in order, and each exists for a reason. The path is the
- * canonical address people bookmark and share. The fragment is what the
- * bootstrap moves it to before handing over, so the application keeps a URL it
- * can reload. Session storage is the backstop for the moment the application's
- * own routing rewrites the URL and drops the fragment — it is per tab, so two
- * tabs can hold two different machines at once.
+ * Four places, most specific first, and each earns its place:
+ *
+ *   path       the canonical address people bookmark and share
+ *   fragment   where the bootstrap moves it before handing over, so the
+ *              application keeps a URL that survives a reload
+ *   session    per tab — the backstop for when the application's own routing
+ *              rewrites the URL and drops the fragment, and what lets two tabs
+ *              hold two different machines at once
+ *   last used  per browser — so stream.{domain} with nothing after it opens the
+ *              machine you were on, instead of an application with nothing
+ *              behind it
+ *
+ * The order is what keeps the last two from being a trap: an explicit
+ * identifier in the URL always wins, so following a link to a different machine
+ * goes to that machine. Nothing is shared between them either way — the pairing
+ * key, the cookie jar and the cached interface are each named after the host
+ * they belong to.
  */
 export function hostIdFromLocation() {
     const fromPath = location.pathname.replace(/^\/+|\/+$/g, '');
-    if (/^[0-9a-z]{26}$/.test(fromPath)) return fromPath;
+    if (ID_SHAPE.test(fromPath)) return fromPath;
 
     const fromHash = location.hash.replace(/^#/, '');
-    if (/^[0-9a-z]{26}$/.test(fromHash)) {
+    if (ID_SHAPE.test(fromHash)) {
         try {
             sessionStorage.setItem('mw-host-id', fromHash);
         } catch {
@@ -569,9 +643,16 @@ export function hostIdFromLocation() {
 
     try {
         const stored = sessionStorage.getItem('mw-host-id');
-        if (stored && /^[0-9a-z]{26}$/.test(stored)) return stored;
+        if (stored && ID_SHAPE.test(stored)) return stored;
     } catch {
         /* no session storage */
+    }
+
+    try {
+        const last = localStorage.getItem('mw-last-host');
+        if (last && ID_SHAPE.test(last)) return last;
+    } catch {
+        /* no local storage */
     }
     return null;
 }

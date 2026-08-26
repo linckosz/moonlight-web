@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MoonlightWeb</title>
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#05080b">
 <!--
   The MoonlightWeb BOOTSTRAP — the entry page, and nothing else.
 
@@ -50,46 +51,142 @@
   already covers a same-origin WebSocket and WebKit has not always agreed —
   relying on the disputed reading would break this page on iOS and nowhere else.
   The connection to the user's machine is WebRTC, which CSP does not gate at all.
+
+  The styling below is deliberately self-contained and deliberately NOT the
+  application's stylesheet: this page runs before a single byte of the
+  application exists, so it cannot depend on it. It borrows the palette from
+  frontend/css/tokens.css so the handover is not a jarring change of scene.
+
+  It does NOT borrow the application's web fonts, and that is a decision rather
+  than an omission. The application loads Rajdhani and Share Tech Mono from
+  Google, which is unremarkable when the page comes from the user's own machine.
+  Here it would mean the entry page — the one whose entire purpose is that no
+  third party learns who is talking to whom — telling Google the IP address of
+  every visitor before anything else happens. The look comes from the palette,
+  the grid and the notched edges; the type is a system stack, and `default-src
+  'none'` stays honest.
 -->
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
-<script src="/frame-guard.js"></script>
 <style>
   :root {
-    color-scheme: light dark;
-    --bg: #fbfbfd; --fg: #1c1c1f; --muted: #6b6b76; --line: #e3e3e9; --accent: #4f6bed;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #101013; --fg: #ececf1; --muted: #9a9aa6; --line: #2a2a31; --accent: #7d93f5; }
+    --surface-0: #05080b;
+    --surface-2: #0f141b;
+    --text-1: #eafdff;
+    --text-2: #8ea7b4;
+    --text-3: #51626d;
+    --accent-1: #fcee0a;
+    --neon-cyan: #00e5ff;
+    --neon-magenta: #ff2a6d;
+    --border-1: rgba(0, 229, 255, 0.16);
+    --border-2: rgba(0, 229, 255, 0.34);
+    /* The application's own stacks minus their web fonts — the same families
+       take over, without a byte leaving this origin. */
+    --font-ui: 'Chakra Petch', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Display',
+               'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center;
-    padding: 2rem; background: var(--bg); color: var(--fg);
-    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    padding: max(2rem, env(safe-area-inset-top)) 1.5rem;
+    background: var(--surface-0);
+    color: var(--text-1);
+    font-family: var(--font-ui);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 30rem; width: 100%; }
-  h1 { font-size: 1.15rem; margin: 0 0 .35rem; letter-spacing: -.01em; font-weight: 600; }
-  p { margin: 0; color: var(--muted); font-size: .92rem; }
-  #note { margin-top: 1.25rem; font-size: .85rem; }
+  /* The same faint grid the application draws behind its views, plus a low
+     magenta wash at the bottom — so the handover looks like one product. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(120% 80% at 50% 120%, rgba(255, 42, 109, 0.10), transparent 60%),
+      linear-gradient(var(--border-1) 1px, transparent 1px) 0 0 / 100% 44px,
+      linear-gradient(90deg, var(--border-1) 1px, transparent 1px) 0 0 / 44px 100%;
+    opacity: .5;
+    mask-image: radial-gradient(90% 70% at 50% 45%, #000 30%, transparent 100%);
+    -webkit-mask-image: radial-gradient(90% 70% at 50% 45%, #000 30%, transparent 100%);
+  }
+  main {
+    position: relative;
+    width: 100%;
+    max-width: 30rem;
+    padding: 1.75rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border-1);
+    /* Notched corner, the application's signature shape. */
+    clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+  }
+  .brand {
+    font-size: .78rem;
+    letter-spacing: .34em;
+    text-transform: uppercase;
+    color: var(--accent-1);
+    text-shadow: 0 0 12px rgba(252, 238, 10, .45);
+    margin: 0 0 1.5rem;
+  }
+  h1 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    letter-spacing: .02em;
+    margin: 0 0 .4rem;
+  }
+  p { margin: 0; color: var(--text-2); font-size: .93rem; }
+  #detail { font-family: var(--font-mono); font-size: .82rem; color: var(--text-3); min-height: 1.4em; }
+  #note { margin-top: 1.4rem; font-size: .85rem; color: var(--text-3); }
+  #note a { color: var(--neon-cyan); }
+  code {
+    font-family: var(--font-mono);
+    color: var(--neon-cyan);
+    font-size: .9em;
+    word-break: break-all;
+  }
   .track {
-    height: 3px; margin: 1.5rem 0 0; border-radius: 999px;
-    background: var(--line); overflow: hidden;
+    height: 2px;
+    margin: 1.5rem 0 .75rem;
+    background: rgba(0, 229, 255, .12);
+    overflow: hidden;
   }
   #bar {
-    height: 100%; width: 0; border-radius: 999px; background: var(--accent);
-    transition: width .3s ease;
+    height: 100%;
+    width: 0;
+    background: var(--accent-1);
+    box-shadow: 0 0 10px rgba(252, 238, 10, .8);
+    transition: width .35s ease;
   }
-  body[data-state="failed"] #bar { background: var(--muted); }
+  /* Before any measurable progress, the bar sweeps rather than sitting at zero:
+     the connect phase has no percentage to report and a frozen bar reads as a
+     hang. */
+  body[data-state="working"] #bar[data-indeterminate] {
+    width: 34%;
+    animation: sweep 1.4s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    0%   { transform: translateX(-110%); }
+    100% { transform: translateX(320%); }
+  }
   body[data-state="failed"] .track { display: none; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+  body[data-state="failed"] h1 { color: var(--neon-magenta); }
+  @media (prefers-reduced-motion: reduce) {
+    #bar { animation: none !important; transition: none; }
+  }
 </style>
 </head>
-<body>
+<body data-state="working">
+<script src="/frame-guard.js"></script>
 <main>
+  <p class="brand">MoonlightWeb</p>
   <h1 id="stage">Starting…</h1>
   <p id="detail"></p>
-  <div class="track"><div id="bar"></div></div>
+  <div class="track"><div id="bar" data-indeterminate></div></div>
   <p id="note"></p>
 </main>
 <script type="module" src="/boot.js"></script>

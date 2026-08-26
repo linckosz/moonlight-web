@@ -21,9 +21,7 @@
  * not a guarantee and must never be described as one.
  */
 
-import { Tunnel, hostIdFromLocation } from './tunnel.js';
-
-const SHELL_CACHE = 'mw-shell';
+import { Tunnel, hostIdFromLocation, rememberLastHost, SHELL_CACHE } from './tunnel.js';
 
 const ui = {
     stage: document.getElementById('stage'),
@@ -37,15 +35,22 @@ function say(stage, detail) {
     if (ui.detail) ui.detail.textContent = detail || '';
 }
 
+/** null = no measurable progress yet; the bar sweeps instead of sitting at 0. */
 function progress(fraction) {
-    if (ui.bar) ui.bar.style.width = `${Math.round(fraction * 100)}%`;
+    if (!ui.bar) return;
+    if (fraction === null) {
+        ui.bar.setAttribute('data-indeterminate', '');
+        ui.bar.style.width = '';
+        return;
+    }
+    ui.bar.removeAttribute('data-indeterminate');
+    ui.bar.style.width = `${Math.round(fraction * 100)}%`;
 }
 
 function fail(message, hint) {
     document.body.dataset.state = 'failed';
     say('Not connected', message);
-    if (ui.note && hint) ui.note.textContent = hint;
-    progress(0);
+    if (ui.note) ui.note.textContent = hint || '';
 }
 
 const STAGE_WORDS = {
@@ -57,15 +62,50 @@ const STAGE_WORDS = {
 };
 
 /**
+ * What the cache currently holds, if anything usable.
+ *
+ * Two things have to match, and both for the same reason — the cache is a copy
+ * of ONE machine's interface at ONE version:
+ *
+ *   the host   two machines are reached through the same origin here, so an
+ *              unstamped cache would serve the first machine's application for
+ *              the second. Same product, possibly a different build.
+ *   the version  an update on the host has to reach the browser.
+ *
+ * Stored in localStorage rather than in the cache itself because it must be
+ * readable before deciding whether to open the cache at all.
+ */
+function cachedStamp() {
+    try {
+        return JSON.parse(localStorage.getItem('mw-shell-stamp') || 'null');
+    } catch {
+        return null;
+    }
+}
+
+function writeStamp(hostId, version) {
+    try {
+        localStorage.setItem('mw-shell-stamp', JSON.stringify({ hostId, version }));
+    } catch {
+        /* the application still runs; only the next start pays for it again */
+    }
+}
+
+/**
  * Pull the application down and put it where the service worker will find it.
+ *
+ * Skipped entirely when the cache already holds this machine's interface at this
+ * version — which is the ordinary case, and the difference between an app that
+ * opens and one that downloads itself every time.
  *
  * The file list comes from the host rather than from anything published here.
  * Guessing it by reading index.html would miss every module a script imports at
  * runtime, and hard-coding it here would make this page need a release every
  * time the application gained a file.
  */
-async function fetchShell(tunnel) {
-    say('Fetching the interface…', 'from your machine, not from here');
+async function fetchShell(tunnel, hostId) {
+    say('Checking for updates…', '');
+    progress(null);
 
     const manifestResponse = await tunnel.fetch('/api/app/manifest');
     if (!manifestResponse.ok) throw new Error('your machine did not describe its interface');
@@ -74,8 +114,21 @@ async function fetchShell(tunnel) {
     const files = Array.isArray(manifest.files) ? manifest.files : [];
     if (files.length === 0) throw new Error('your machine reported no interface files');
 
+    const stamp = cachedStamp();
+    if (stamp && stamp.hostId === hostId && stamp.version === manifest.version) {
+        // Trust the stamp only as far as the cache backs it up: a browser may
+        // evict a cache without telling anyone, and a stamp pointing at nothing
+        // would hand the service worker an empty shelf.
+        const cache = await caches.open(SHELL_CACHE);
+        if (await cache.match('/index.html')) return manifest.version;
+    }
+
+    say('Fetching the interface…', 'from your machine, not from here');
+    progress(0);
+
     // Start from nothing rather than merging: a file an update removed would
-    // otherwise be served forever out of a cache nobody prunes.
+    // otherwise be served forever out of a cache nobody prunes, and a cache
+    // half-belonging to another machine is worse still.
     await caches.delete(SHELL_CACHE);
     const fresh = await caches.open(SHELL_CACHE);
 
@@ -103,6 +156,7 @@ async function fetchShell(tunnel) {
     if (!index) throw new Error('your machine did not send its main page');
     await fresh.put('/', index.clone());
 
+    writeStamp(hostId, manifest.version);
     return manifest.version;
 }
 
@@ -134,8 +188,8 @@ async function main() {
     } catch (e) {
         fail(
             e.message,
-            'If your machine is switched off or has no internet access, nothing ' +
-                'here can reach it — that is by design, not a fault.',
+            'If your machine is switched off or has no internet access, nothing here ' +
+                'can reach it — that is by design, not a fault.',
         );
         return;
     }
@@ -149,15 +203,15 @@ async function main() {
         );
     }
 
-    let version;
     try {
-        version = await fetchShell(tunnel);
+        await fetchShell(tunnel, hostId);
     } catch (e) {
         fail(`The interface did not come through: ${e.message}.`, '');
         return;
     }
 
     say('Starting…', '');
+    progress(1);
     try {
         await navigator.serviceWorker.register('/sw.js', { scope: '/' });
         await navigator.serviceWorker.ready;
@@ -166,12 +220,10 @@ async function main() {
         return;
     }
 
-    try {
-        sessionStorage.setItem('mw-host-id', hostId);
-        sessionStorage.setItem('mw-shell-version', version || '');
-    } catch {
-        /* the fragment below carries it just as well */
-    }
+    // Remembered so that stream.{domain} on its own — no identifier — opens the
+    // machine this browser last used, rather than an application with nothing
+    // behind it.
+    rememberLastHost(hostId);
 
     // The identifier moves from the path to the fragment. The application uses
     // ordinary absolute paths for its own routes and its own assets, and a

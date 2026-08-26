@@ -103,36 +103,46 @@ async function askThePage(request, clientId) {
     });
 }
 
-/** The page shown when the cache is empty and there is nothing to serve. */
-function cameBackTooSoon() {
-    return new Response(
-        '<!doctype html><meta charset="utf-8"><title>MoonlightWeb</title>' +
-            '<body style="font:16px/1.6 system-ui;margin:3rem auto;max-width:32rem;padding:0 1rem">' +
-            '<h1 style="font-size:1.2rem">Open your machine’s link again</h1>' +
-            '<p style="color:#666">This tab has nothing stored for it yet. Use the address ' +
-            'your machine gave you — it ends in a 26-character identifier.</p>',
-        { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
-    );
+/**
+ * Fall back to the bootstrap when the cache holds nothing.
+ *
+ * Fetched from the network rather than written out here, so there is one entry
+ * page rather than a second, uglier one that drifts. `?mw=pick` keeps this
+ * request out of the branch above and stops it looping back into the cache.
+ */
+async function bootstrapPage() {
+    try {
+        return await fetch('/?mw=pick', { cache: 'no-store' });
+    } catch {
+        return new Response('Open your machine’s link again — it ends in 26 characters.', {
+            status: 200,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+    }
 }
 
 self.addEventListener('fetch', (event) => {
     const request = event.request;
     const url = new URL(request.url);
 
-    // Anything not on this origin is none of our business — the font
-    // stylesheets, above all, which must keep going out to the network.
+    // Anything not on this origin is none of our business.
     if (url.origin !== self.location.origin) return;
 
     // The bootstrap's own files stay on the network. They are the pinned,
     // published set that a watchdog compares against a reference copy, and
     // serving them from a cache filled over the tunnel would quietly move them
     // out from under that check.
+    //
+    // `?mw=pick` joins them: it is how a page that found no machine to talk to
+    // asks for the entry page back. Answering that from the cache would return
+    // the very application it just gave up on.
     if (
         url.pathname === '/sw.js' ||
         url.pathname === '/boot.js' ||
         url.pathname === '/tunnel.js' ||
         url.pathname === '/pairing.js' ||
         url.pathname === '/frame-guard.js' ||
+        url.searchParams.get('mw') === 'pick' ||
         /^\/[0-9a-z]{26}\/?$/.test(url.pathname)
     )
         return;
@@ -143,7 +153,7 @@ self.addEventListener('fetch', (event) => {
 
             if (request.mode === 'navigate') {
                 const shell = await cache.match('/index.html');
-                return shell || cameBackTooSoon();
+                return shell || (await bootstrapPage());
             }
 
             // /version.json is how the application notices the host was updated,
