@@ -668,6 +668,7 @@
         "instruction": "Indiquez à MoonlightWeb l’API de contrôle de cet hôte. L’enregistrement appaire immédiatement, afin qu’aucun joueur n’ait à saisir de PIN.",
         "type": "Type de backend",
         "apiUrl": "URL de l’API de contrôle",
+        "willIdentify": "Indiquez l'adresse de l'API de contrôle de cet hôte : MoonlightWeb déterminera de quoi il s'agit. Rien d'autre n'est nécessaire.",
         "apiToken": "Jeton d’API",
         "tokenPlaceholder": "Jeton attendu par l’API",
         "tokenKeep": "Laisser vide pour conserver le jeton enregistré",

@@ -934,11 +934,15 @@ export class HostListView {
                                 // the point — the type is never a question put
                                 // to the user.
                                 //
-                                // Wolf is deliberately not reachable from here:
-                                // it cannot be detected (its control API is on a
-                                // Unix socket), so it needs its own entry point,
-                                // owed when its wiring lands.
-                                host.backendType || host.multiSeatDetected
+                                // A host with no Sunshine management API is the
+                                // third case: it speaks GameStream, so it runs
+                                // something, and that something keeps its
+                                // control API somewhere only its owner knows.
+                                // Offering to be pointed at it is the only way
+                                // such a host can ever be set up — and because
+                                // the test is a Sunshine one, a Sunshine card
+                                // still shows nothing at all.
+                                host.backendType || host.multiSeatDetected || host.mayHaveControlApi
                                     ? `<button class="host-menu-item btn-backend" data-uuid="${host.uuid}">${
                                           host.backendType
                                               ? t('hosts.backendManage', { type: host.backendType })

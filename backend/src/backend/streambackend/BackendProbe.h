@@ -58,11 +58,24 @@ class QNetworkAccessManager;
  *    auth toggle before it holds a key). Reaching it needs no credential, which
  *    makes it the one detection that can run unprompted.
  *
- *  - Wolf cannot be probed at all. Its control API listens on a Unix socket and
- *    is only reachable over TCP through a reverse proxy the operator sets up
- *    themselves. There is nothing to knock on, so Wolf is established from the
- *    URL its admin supplies rather than discovered — the type follows from what
- *    answers that URL, and is still never typed in by hand.
+ *  - Sunshine and Apollo carry a management REST API of their own, and it names
+ *    itself without credentials: an unauthenticated GET answers 401 with
+ *    `WWW-Authenticate: Basic realm="Sunshine Gamestream Host"`. Verified live
+ *    against two independent Sunshine hosts. It sits one port above the
+ *    GameStream HTTP port, and BOTH families derive their ports from the same
+ *    base, so it is looked for at `httpPort + 1` rather than at a fixed 47990 —
+ *    an operator who moved the base port keeps working.
+ *
+ *  - Wolf cannot be probed positively. Its control API listens on a Unix socket,
+ *    reachable over TCP only through a reverse proxy the operator sets up
+ *    themselves, at an address only they know. There is nothing to knock on.
+ *
+ * Which is why the Sunshine probe matters beyond Sunshine: on a host that speaks
+ * GameStream, is not MJOLNIR, and has NO Sunshine REST API, the one thing we
+ * know of that fits is Wolf. That inference is worth acting on but is NOT proof
+ * — a fourth GameStream server would match it too — so it may be used to OFFER
+ * to set a control API up, never to label the host. The type still comes from
+ * what answers the URL its admin supplies, and is never typed in by hand.
  */
 namespace BackendProbe {
 
@@ -86,6 +99,63 @@ Detected classifyServerInfo(const QString& serverInfo);
 /// True when @p body is what MultiSeat's public auth endpoint answers. Split
 /// out from the request so the shape can be pinned by a test.
 bool looksLikeMultiSeatAuth(const QByteArray& body);
+
+/// Whether a host carries the Sunshine-family management REST API.
+///
+/// Three values rather than a bool because the difference between "it is not
+/// there" and "we could not tell" is the whole safety of the inference drawn
+/// from a negative: a Sunshine host behind a firewall must land on Unknown, or
+/// it would be offered a control-API setup it has no use for.
+enum class SunshineRest
+{
+    Unknown, ///< no usable answer — assume nothing
+    Present, ///< answered as Sunshine/Apollo
+    Absent,  ///< definitely answered, and it is not that API
+};
+
+/// Port the Sunshine-family web/REST API sits on for a host whose GameStream
+/// HTTP port is @p httpPort. Both families lay their ports out from one base, so
+/// this follows the base instead of hard-coding 47990.
+constexpr quint16 sunshineRestPort(quint16 httpPort)
+{
+    return static_cast<quint16>(httpPort + 1);
+}
+
+/// How far a probe got. The distinction between a refusal and silence is the
+/// whole correctness of this: a refused connection is an ANSWER — nothing is
+/// listening there — while silence could be a firewall in front of a host that
+/// has the API after all.
+///
+/// Measured against a live Wolf host: its GameStream ports connect in ~2 ms and
+/// httpPort + 1 comes back ConnectionRefused. Reading that refusal as silence
+/// would leave the one host this exists for classified as Unknown.
+enum class Reach
+{
+    NoAnswer, ///< timed out, unresolvable, TLS never completed
+    Refused,  ///< the port actively refused — definitely nothing there
+    Answered, ///< an HTTP response came back
+};
+
+/// Classify an unauthenticated answer from that API. Pure; no network.
+SunshineRest classifySunshineRest(Reach reach, int httpStatus,
+                                  const QByteArray& wwwAuthenticate);
+
+/// Knock on <address>:<sunshineRestPort(httpPort)>. Never reports an error: a
+/// host that is not Sunshine is a normal answer, not a fault to log every poll.
+/// Uses a socket of its own rather than the shared network manager: the three
+/// outcomes above are a transport-level distinction, and QNAM collapses all of
+/// them into one timeout.
+void probeSunshineRest(const QString& address, quint16 httpPort,
+                       std::function<void(SunshineRest result)> cb);
+
+/// Work out which backend answers at an address an admin supplied, by asking it.
+/// Reports the type name, or an empty string when nothing we know of answered.
+///
+/// This is what keeps the promise that a type is never typed in by hand: for a
+/// backend we cannot find on our own, the admin gives the one thing only they
+/// know — where it is — and the product identifies itself.
+void identifyControlApi(QNetworkAccessManager* nam, const QString& apiUrl, const QString& apiToken,
+                        std::function<void(QString type)> cb);
 
 /// Knock on <address>:9550 and report whether a MultiSeat control API is there.
 /// Never reports an error: absence and unreachability are the same answer to

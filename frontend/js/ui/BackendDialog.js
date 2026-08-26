@@ -341,10 +341,19 @@ export class BackendDialog {
                 <h3>${this.esc(t('backend.title', { name: this.host.displayName || this.host.name }))}</h3>
                 <p class="pairing-instruction">${t('backend.instruction')}</p>
 
-                <div class="backend-field">
+                ${
+                    // Nothing to show before the address is given: the type is
+                    // what the server reads back from whatever answers it. An
+                    // empty value here, or worse a guess, would be the one thing
+                    // this dialog exists not to do — put the name of a product
+                    // in front of someone and imply they should confirm it.
+                    this.type
+                        ? `<div class="backend-field">
                     <span>${t('backend.type')}</span>
                     <strong class="backend-type-name">${this.esc(this.type)}</strong>
-                </div>
+                </div>`
+                        : `<p class="backend-identify-note">${t('backend.willIdentify')}</p>`
+                }
 
                 ${
                     // Hidden when the server works the address out for itself.

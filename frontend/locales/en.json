@@ -668,6 +668,7 @@
         "instruction": "Point MoonlightWeb at this host’s control API. Saving pairs straight away, so players never have to enter a PIN.",
         "type": "Backend type",
         "apiUrl": "Control API URL",
+        "willIdentify": "Give the address of this host’s control API and MoonlightWeb will work out what it is. Nothing else is needed.",
         "apiToken": "API token",
         "tokenPlaceholder": "Token expected by the API",
         "tokenKeep": "Leave empty to keep the stored token",

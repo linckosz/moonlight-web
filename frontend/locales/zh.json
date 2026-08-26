@@ -668,6 +668,7 @@
         "instruction": "将 MoonlightWeb 指向该主机的控制 API。保存时会立即完成配对，玩家无需输入 PIN。",
         "type": "后端类型",
         "apiUrl": "控制 API 地址",
+        "willIdentify": "请填写该主机控制 API 的地址，MoonlightWeb 会自行判断它是什么。无需其他信息。",
         "apiToken": "API 令牌",
         "tokenPlaceholder": "该 API 所需的令牌",
         "tokenKeep": "留空则保留已存储的令牌",

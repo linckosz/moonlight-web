@@ -574,6 +574,30 @@ void ComputerManager::onPollReplyFinished()
                                     .arg(h->name));
                             emit self->hostsChanged();
                         });
+
+                    // And ask whether the Sunshine-family management API is
+                    // there. A POSITIVE is not what this is for — a Sunshine
+                    // host needs nothing from us. The useful answer is a
+                    // definite negative: a host that speaks GameStream, is not
+                    // the NVIDIA original, and carries no such API has a
+                    // control API we cannot find, and its owner is the only one
+                    // who can say where. That is what turns the setup entry on,
+                    // and it is why Unknown must stay Unknown: a Sunshine host
+                    // behind a firewall would otherwise be offered a setup it
+                    // has no use for.
+                    BackendProbe::probeSunshineRest(
+                        pollAddr.address(), pollAddr.port(),
+                        [self, uuid](BackendProbe::SunshineRest result) {
+                            if (!self || result != BackendProbe::SunshineRest::Absent) return;
+                            NvComputer* h = self->findHostByUuid(uuid);
+                            if (!h || h->mayHaveControlApi) return;
+                            h->mayHaveControlApi = true;
+                            Logger::info(
+                                QString("[Backend] %1 speaks GameStream but carries no Sunshine "
+                                        "management API — offering to point at a control API")
+                                    .arg(h->name));
+                            emit self->hostsChanged();
+                        });
                 }
             }
         } catch (const std::exception& e) {
@@ -1307,6 +1331,39 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
     NvComputer* host = findHostByUuid(uuid);
     if (!host) {
         respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
+        return;
+    }
+
+    // No type given: this is the first-time setup of a backend we could not find
+    // by ourselves. The admin supplied the one thing only they know — where it
+    // is — and the product identifies itself from there. Asking them to NAME it
+    // is the question this whole feature exists to avoid.
+    if (type.isEmpty()) {
+        if (apiUrl.isEmpty()) {
+            respond(HttpResponse::json(
+                {{"status", "error"},
+                 {"message", "An address is needed to work out what runs on this host"}},
+                400));
+            return;
+        }
+        QPointer<ComputerManager> self(this);
+        BackendProbe::identifyControlApi(
+            m_Nam, apiUrl, apiToken,
+            [self, uuid, apiUrl, apiToken, pairUser, pairPassword, respond](QString resolved) {
+                if (!self) return;
+                if (resolved.isEmpty()) {
+                    respond(HttpResponse::json(
+                        {{"status", "error"},
+                         {"message", "Nothing recognisable answered at that address. Check the "
+                                     "URL and the token."}},
+                        400));
+                    return;
+                }
+                Logger::info(QStringLiteral("[Backend] %1 identified itself at %2")
+                                 .arg(resolved, apiUrl));
+                self->handleSetBackend(uuid, resolved, apiUrl, apiToken, pairUser, pairPassword,
+                                       respond);
+            });
         return;
     }
 

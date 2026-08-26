@@ -70,6 +70,13 @@ export class Host {
         // what lets the UI offer that setup to the people who have it and stay
         // completely absent for everyone else — nobody names their own server.
         this.multiSeatDetected = data.multiSeatDetected === true;
+
+        // The server found no Sunshine-family management API on this host, so
+        // whatever runs it has a control API only its owner can point us at.
+        // What this drives is an OFFER, never a label: the observation does not
+        // name the product, and the product names itself once the address is
+        // given.
+        this.mayHaveControlApi = data.mayHaveControlApi === true;
     }
 
     get isOnline() {
