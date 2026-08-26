@@ -3,60 +3,64 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MoonlightWeb — bootstrap</title>
+<title>MoonlightWeb</title>
 <meta name="robots" content="noindex, nofollow">
 <!--
   The MoonlightWeb BOOTSTRAP — the entry page, and nothing else.
 
-  What the bootstrap is
-  ---------------------
-  A few kilobytes of HTML and JavaScript. It installs a Service Worker, performs
-  the MW-BIND-v1 handshake and opens the WebRTC channel to the user's own
-  machine. From that point the application itself — interface and API — is served
-  BY that machine, over the encrypted channel. This page is the only code that
-  ever comes from a server.
+  What it is
+  ----------
+  A few kilobytes of HTML and JavaScript. It opens a WebRTC connection to the
+  machine named in the address, pulls that machine's interface down through it,
+  installs a service worker to serve it, and hands over. From that point the
+  application and its API come from the user's own machine. This page is the
+  only code that ever comes from a server.
 
   Where it is served from
   -----------------------
   Two places, on purpose, and the difference matters:
 
-    stream.{domain}/{id}   the address people actually use. Served by Caddy from
-                           the same box as the rendezvous relay. Its own host
-                           rather than a path on the apex, so signalling can be
-                           moved to another machine later without touching the
-                           marketing site.
+    stream.{domain}/{id}   the address people use. Served by Caddy from the same
+                           box as the rendezvous relay. Its own host rather than
+                           a path on the apex, so signalling can move to another
+                           machine later without touching the marketing site.
 
     app.{domain}           a byte-identical copy on GitHub Pages, published by
-                           .github/workflows/pages.yml, which records the SHA-256
-                           of every file it publishes. Not the address anyone
-                           visits: it is the reference copy the bootstrap
-                           watchdog compares the live host against.
+                           .github/workflows/pages.yml, which records the
+                           SHA-256 of every file it publishes. NOT an address
+                           anyone visits: it is the reference copy a watchdog
+                           compares the live host against.
 
   Be precise about what that buys, because it is easy to overstate. Serving this
   page from the rendezvous box means a compromise of that box CAN hand a browser
-  hostile JavaScript holding a legitimate pairing key — MW-BIND-v1 does not cover
-  that case, since it binds DTLS fingerprints against a RELAYING server, not
-  against one that serves the page. The reference copy does not prevent that; it
-  makes it DETECTABLE, within the watchdog's interval, and gives a published
-  record of what the bytes were supposed to be.
+  hostile JavaScript holding a legitimate pairing key — MW-BIND-v1 does not
+  cover that case, since it binds DTLS fingerprints against a RELAYING server,
+  not against one that serves the page. The reference copy does not prevent
+  that; it makes it DETECTABLE, within the watchdog's interval, and gives a
+  published record of what the bytes were supposed to be.
 
   Content-Security-Policy is declared twice: as a header by Caddy, and in the
   meta tag below for the Pages copy, which gets no headers at all. Both are
   enforced and they intersect — a directive relaxed in one and not the other
   silently becomes the stricter of the two, so change them together. Neither can
-  express frame-ancestors, hence the frame check in bootstrap.js.
+  express frame-ancestors, hence the frame check in frame-guard.js.
 
-  Status: placeholder. The real bootstrap ships with phase 2b.
+  connect-src covers one thing: the WebSocket to the introduction server on this
+  same origin. It names the wss: scheme alongside 'self' because CSP3 says 'self'
+  already covers a same-origin WebSocket and WebKit has not always agreed —
+  relying on the disputed reading would break this page on iOS and nowhere else.
+  The connection to the user's machine is WebRTC, which CSP does not gate at all.
 -->
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<script src="/frame-guard.js"></script>
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #fbfbfd; --fg: #1c1c1f; --muted: #6b6b76; --line: #e3e3e9;
+    --bg: #fbfbfd; --fg: #1c1c1f; --muted: #6b6b76; --line: #e3e3e9; --accent: #4f6bed;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #101013; --fg: #ececf1; --muted: #9a9aa6; --line: #2a2a31; }
+    :root { --bg: #101013; --fg: #ececf1; --muted: #9a9aa6; --line: #2a2a31; --accent: #7d93f5; }
   }
   * { box-sizing: border-box; }
   body {
@@ -64,32 +68,30 @@
     padding: 2rem; background: var(--bg); color: var(--fg);
     font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-  main { max-width: 34rem; }
-  h1 { font-size: 1.35rem; margin: 0 0 .75rem; letter-spacing: -.01em; }
-  p { margin: 0 0 1rem; color: var(--muted); }
-  .tag {
-    display: inline-block; margin-bottom: 1.25rem; padding: .2rem .6rem;
-    border: 1px solid var(--line); border-radius: 999px;
-    font-size: .78rem; letter-spacing: .04em; text-transform: uppercase;
-    color: var(--muted);
+  main { max-width: 30rem; width: 100%; }
+  h1 { font-size: 1.15rem; margin: 0 0 .35rem; letter-spacing: -.01em; font-weight: 600; }
+  p { margin: 0; color: var(--muted); font-size: .92rem; }
+  #note { margin-top: 1.25rem; font-size: .85rem; }
+  .track {
+    height: 3px; margin: 1.5rem 0 0; border-radius: 999px;
+    background: var(--line); overflow: hidden;
   }
+  #bar {
+    height: 100%; width: 0; border-radius: 999px; background: var(--accent);
+    transition: width .3s ease;
+  }
+  body[data-state="failed"] #bar { background: var(--muted); }
+  body[data-state="failed"] .track { display: none; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
 </style>
 </head>
 <body>
 <main>
-  <span class="tag">Placeholder</span>
-  <h1>MoonlightWeb bootstrap</h1>
-  <p>
-    This address will serve the small page that opens a session with your own
-    computer, at <code>/&lt;your&nbsp;id&gt;</code>.
-  </p>
-  <p>
-    Nothing runs here yet. Streaming happens directly between your browser and
-    your machine — this page never carries video, input or credentials.
-  </p>
-  <p><code>github.com/linckosz/moonlight-web</code></p>
+  <h1 id="stage">Starting…</h1>
+  <p id="detail"></p>
+  <div class="track"><div id="bar"></div></div>
+  <p id="note"></p>
 </main>
-<script src="bootstrap.js"></script>
+<script type="module" src="/boot.js"></script>
 </body>
 </html>

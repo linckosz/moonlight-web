@@ -18,6 +18,7 @@
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
 import { armAudioPlayRetry } from '../util/audioAutoplay.js';
 import { forceOpusStereo } from '../util/SdpUtils.js';
+import { openSignalingSocket } from '../net/tunnelBridge.js';
 import {
     beginHandshake,
     helloMessage,
@@ -207,7 +208,7 @@ export class WebRtcMedia {
         if (this._stopping) return;
 
         console.log('[WebRtcMedia] Connecting to signaling:', this.signalingUrl);
-        this.signalingWs = new WebSocket(this.signalingUrl);
+        this.signalingWs = openSignalingSocket(this.signalingUrl);
 
         this.signalingWs.onopen = () => {
             this._wsHadOpen = true;

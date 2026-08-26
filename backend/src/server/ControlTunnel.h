@@ -111,45 +111,9 @@ public:
     /// trust-on-first-use otherwise leaves them without.
     QString hostKeyFingerprint() const;
 
-    // ── Wire format ─────────────────────────────────────────────────────────
-    //
-    // One data channel, "mw-ctl", carrying binary messages. All integers are
-    // big-endian. SCTP already frames messages, so there is no length prefix on
-    // the message itself — only on the parts inside it.
-    //
-    //   0x01 REQUEST   [u8][u32 id][u32 headLen][head JSON][body…]
-    //                  head = {"m":method,"p":path,"h":{header:value,…}}
-    //   0x02 RESPONSE  [u8][u32 id][u32 headLen][head JSON]
-    //                  head = {"s":status,"h":{…}}
-    //   0x03 BODY      [u8][u32 id][chunk…]
-    //   0x04 END       [u8][u32 id]
-    //   0x05 WS_OPEN   [u8][u32 id][u32 headLen][head JSON]
-    //                  head = {"p":path,"h":{header:value,…}} — the cookies decide
-    //   0x06 WS_TEXT   [u8][u32 id][text UTF-8]
-    //   0x07 WS_CLOSE  [u8][u32 id][reason UTF-8]
-    //   0x08 WS_OPENED [u8][u32 id]
-    //
-    // Responses are chunked because SCTP messages have a negotiated ceiling and
-    // the application's own JavaScript bundles sail past it.
-    enum Frame : quint8
-    {
-        FrameRequest = 0x01,
-        FrameResponse = 0x02,
-        FrameBody = 0x03,
-        FrameEnd = 0x04,
-        FrameWsOpen = 0x05,
-        FrameWsText = 0x06,
-        FrameWsClose = 0x07,
-        FrameWsOpened = 0x08,
-    };
-
-    /// Body bytes per BODY frame. Well under the 64 KiB every implementation
-    /// accepts, so no negotiation has to be trusted.
-    static constexpr int kChunkBytes = 16 * 1024;
-
-    /// Largest request a browser may push at us in one frame. The API takes JSON
-    /// documents, not uploads; anything larger is a mistake or an attempt.
-    static constexpr int kMaxRequestBytes = 256 * 1024;
+    // The wire format lives in server/TunnelFrame.h, on its own and free of
+    // libdatachannel — its other half is JavaScript on a machine we will never
+    // see, so it is the one part of this that has to be testable in isolation.
 
 private slots:
     void onSessionOpened(const QString& sessionId);
@@ -215,12 +179,6 @@ private:
     void sendResponse(const QString& sessionId, quint32 id, const HttpResponse& response,
                       const QString& hostHeader);
     void drain(Peer& p);
-
-    static QByteArray buildFrame(quint8 kind, quint32 id, const QByteArray& payload);
-
-    /// Split a `[u32 headLen][head JSON][rest]` payload. False for anything
-    /// that does not decode — a frame we cannot read is dropped, never guessed.
-    static bool decodeHead(const QByteArray& payload, QJsonObject* outHead, QByteArray* outBody);
 
     HttpServer* m_Http = nullptr;
     AuthManager* m_Auth = nullptr;

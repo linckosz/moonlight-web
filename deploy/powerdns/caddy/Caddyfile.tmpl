@@ -162,7 +162,12 @@ stream.@MW_DOMAIN@ {
 			# headers of its own). The two are enforced independently and
 			# intersect, so a directive relaxed in one place and not the other
 			# silently becomes the strictest of the pair — change both together.
-			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+			# connect-src names the wss: scheme as well as 'self'. CSP3 says
+			# 'self' already covers a WebSocket back to the same origin, and
+			# WebKit has not always agreed — this page's only outbound
+			# connection is exactly that WebSocket, so relying on the disputed
+			# reading would break the entry page on iOS and nowhere else.
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 		}
 		encode zstd gzip
 		root * /srv/bootstrap

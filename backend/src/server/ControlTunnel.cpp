@@ -17,6 +17,8 @@
 
 #include "ControlTunnel.h"
 
+#include "server/TunnelFrame.h"
+
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
 #include "network/RendezvousClient.h"
@@ -47,21 +49,7 @@ QString peerLabel(const QString& sessionId)
     return QStringLiteral("tunnel:") + sessionId.left(16);
 }
 
-quint32 readU32(const QByteArray& b, int offset)
-{
-    return (static_cast<quint32>(static_cast<quint8>(b[offset])) << 24) |
-           (static_cast<quint32>(static_cast<quint8>(b[offset + 1])) << 16) |
-           (static_cast<quint32>(static_cast<quint8>(b[offset + 2])) << 8) |
-           static_cast<quint32>(static_cast<quint8>(b[offset + 3]));
-}
 
-void appendU32(QByteArray& b, quint32 v)
-{
-    b.append(static_cast<char>((v >> 24) & 0xFF));
-    b.append(static_cast<char>((v >> 16) & 0xFF));
-    b.append(static_cast<char>((v >> 8) & 0xFF));
-    b.append(static_cast<char>(v & 0xFF));
-}
 
 /// Headers a browser may not dictate over the tunnel.
 ///
@@ -244,7 +232,7 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
             },
             Qt::QueuedConnection);
     });
-    p.dc->setBufferedAmountLowThreshold(kChunkBytes);
+    p.dc->setBufferedAmountLowThreshold(TunnelFrame::kChunkBytes);
 
     Logger::info(QStringLiteral("[Tunnel] Browser arrived on session %1").arg(sessionId.left(8)));
 }
@@ -439,16 +427,6 @@ void ControlTunnel::handleIce(Peer& p, const QJsonObject& msg)
 
 // ── The channel ─────────────────────────────────────────────────────────────
 
-QByteArray ControlTunnel::buildFrame(quint8 kind, quint32 id, const QByteArray& payload)
-{
-    QByteArray out;
-    out.reserve(5 + payload.size());
-    out.append(static_cast<char>(kind));
-    appendU32(out, id);
-    out.append(payload);
-    return out;
-}
-
 void ControlTunnel::sendFrame(Peer& p, const QByteArray& frame)
 {
     p.outbox.append(frame);
@@ -464,7 +442,7 @@ void ControlTunnel::drain(Peer& p)
     // onBufferedAmountLow bring us back. Handing a whole response over at once
     // would park it in libdatachannel's queue, where a browser that walked away
     // leaves it stranded.
-    while (!p.outbox.isEmpty() && p.dc->bufferedAmount() < 4 * kChunkBytes) {
+    while (!p.outbox.isEmpty() && p.dc->bufferedAmount() < 4 * TunnelFrame::kChunkBytes) {
         const QByteArray frame = p.outbox.takeFirst();
         try {
             p.dc->send(reinterpret_cast<const std::byte*>(frame.constData()),
@@ -483,38 +461,24 @@ void ControlTunnel::onChannelMessage(const QString& sessionId, const QByteArray&
 {
     Peer* pp = peer(sessionId);
     if (!pp) return;
-    if (message.size() < 5) return;
 
-    const quint8 kind = static_cast<quint8>(message[0]);
-    const quint32 id = readU32(message, 1);
-    const QByteArray payload = message.mid(5);
+    quint8 kind = 0;
+    quint32 id = 0;
+    QByteArray payload;
+    if (!TunnelFrame::parse(message, &kind, &id, &payload)) return;
 
     switch (kind) {
-    case FrameRequest: handleRequestFrame(*pp, id, payload); break;
-    case FrameWsOpen: handleWsOpen(*pp, id, payload); break;
-    case FrameWsText: handleWsText(*pp, id, QString::fromUtf8(payload)); break;
-    case FrameWsClose: closeWs(*pp, id, QString::fromUtf8(payload)); break;
+    case TunnelFrame::Request: handleRequestFrame(*pp, id, payload); break;
+    case TunnelFrame::WsOpen: handleWsOpen(*pp, id, payload); break;
+    case TunnelFrame::WsText: handleWsText(*pp, id, QString::fromUtf8(payload)); break;
+    case TunnelFrame::WsClose: closeWs(*pp, id, QString::fromUtf8(payload)); break;
     default: break;
     }
 }
 
-bool ControlTunnel::decodeHead(const QByteArray& payload, QJsonObject* outHead, QByteArray* outBody)
-{
-    if (payload.size() < 4) return false;
-    const quint32 headLen = readU32(payload, 0);
-    if (headLen == 0 || static_cast<qsizetype>(headLen) > payload.size() - 4) return false;
-
-    const QJsonDocument doc = QJsonDocument::fromJson(payload.mid(4, static_cast<int>(headLen)));
-    if (!doc.isObject()) return false;
-
-    *outHead = doc.object();
-    if (outBody) *outBody = payload.mid(4 + static_cast<int>(headLen));
-    return true;
-}
-
 void ControlTunnel::handleRequestFrame(Peer& p, quint32 id, const QByteArray& payload)
 {
-    if (payload.size() > kMaxRequestBytes) {
+    if (payload.size() > TunnelFrame::kMaxRequestBytes) {
         sendResponse(p.sessionId, id, HttpResponse::error(413, "Payload Too Large"), QString());
         return;
     }
@@ -525,7 +489,7 @@ void ControlTunnel::handleRequestFrame(Peer& p, quint32 id, const QByteArray& pa
 
     QJsonObject head;
     QByteArray body;
-    if (!decodeHead(payload, &head, &body)) return;
+    if (!TunnelFrame::decodeHead(payload, &head, &body)) return;
 
     HttpRequest req;
     req.method = head.value(QStringLiteral("m")).toString().toUpper();
@@ -584,20 +548,16 @@ void ControlTunnel::sendResponse(const QString& sessionId, quint32 id, const Htt
     for (auto it = response.headers.cbegin(); it != response.headers.cend(); ++it)
         headers.insert(it.key(), it.value());
 
-    const QByteArray headJson =
-        QJsonDocument(QJsonObject{{QStringLiteral("s"), response.statusCode},
-                                  {QStringLiteral("h"), headers}})
-            .toJson(QJsonDocument::Compact);
+    const QByteArray head = TunnelFrame::encodeHead(
+        QJsonObject{{QStringLiteral("s"), response.statusCode}, {QStringLiteral("h"), headers}},
+        QByteArray());
+    sendFrame(*p, TunnelFrame::build(TunnelFrame::Response, id, head));
 
-    QByteArray payload;
-    appendU32(payload, static_cast<quint32>(headJson.size()));
-    payload.append(headJson);
-    sendFrame(*p, buildFrame(FrameResponse, id, payload));
+    for (qsizetype offset = 0; offset < response.body.size(); offset += TunnelFrame::kChunkBytes)
+        sendFrame(*p, TunnelFrame::build(TunnelFrame::Body, id,
+                                         response.body.mid(offset, TunnelFrame::kChunkBytes)));
 
-    for (qsizetype offset = 0; offset < response.body.size(); offset += kChunkBytes)
-        sendFrame(*p, buildFrame(FrameBody, id, response.body.mid(offset, kChunkBytes)));
-
-    sendFrame(*p, buildFrame(FrameEnd, id, QByteArray()));
+    sendFrame(*p, TunnelFrame::build(TunnelFrame::End, id, QByteArray()));
 }
 
 // ── Streaming signalling, carried through ───────────────────────────────────
@@ -605,7 +565,7 @@ void ControlTunnel::sendResponse(const QString& sessionId, quint32 id, const Htt
 void ControlTunnel::handleWsOpen(Peer& p, quint32 id, const QByteArray& payload)
 {
     QJsonObject head;
-    if (!decodeHead(payload, &head, nullptr)) return;
+    if (!TunnelFrame::decodeHead(payload, &head, nullptr)) return;
 
     if (p.sockets.size() >= kMaxSocketsPerPeer) {
         closeWs(p, id, QStringLiteral("too many signalling sockets"));
@@ -637,18 +597,18 @@ void ControlTunnel::handleWsOpen(Peer& p, quint32 id, const QByteArray& payload)
     const QString sessionId = p.sessionId;
 
     connect(ws, &QWebSocket::connected, this, [this, sessionId, id]() {
-        if (Peer* pp = peer(sessionId)) sendFrame(*pp, buildFrame(FrameWsOpened, id, QByteArray()));
+        if (Peer* pp = peer(sessionId)) sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsOpened, id, QByteArray()));
     });
     connect(ws, &QWebSocket::textMessageReceived, this,
             [this, sessionId, id](const QString& text) {
                 if (Peer* pp = peer(sessionId))
-                    sendFrame(*pp, buildFrame(FrameWsText, id, text.toUtf8()));
+                    sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsText, id, text.toUtf8()));
             });
     connect(ws, &QWebSocket::disconnected, this, [this, sessionId, id]() {
         Peer* pp = peer(sessionId);
         if (!pp) return;
         if (QPointer<QWebSocket> gone = pp->sockets.take(id)) gone->deleteLater();
-        sendFrame(*pp, buildFrame(FrameWsClose, id, QByteArray()));
+        sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsClose, id, QByteArray()));
     });
 
     ws->open(QUrl(QStringLiteral("ws://127.0.0.1:%1/").arg(port)));
@@ -666,5 +626,5 @@ void ControlTunnel::closeWs(Peer& p, quint32 id, const QString& reason)
         ws->close();
         ws->deleteLater();
     }
-    sendFrame(p, buildFrame(FrameWsClose, id, reason.toUtf8()));
+    sendFrame(p, TunnelFrame::build(TunnelFrame::WsClose, id, reason.toUtf8()));
 }

@@ -46,6 +46,12 @@ struct HttpRequest
                                 // a LAN address, an mDNS name, or our domain) —
                                 // false means we were reached under someone
                                 // else's name, e.g. a third-party tunnel.
+    bool viaTunnel = false;     // Carried in over a rendezvous control tunnel rather
+                                // than accepted on a socket. Set by HttpServer, never
+                                // by anything a caller sends. It is what the local
+                                // exemption is refused on (§4.3), and it also tells a
+                                // handler that this browser has no HTTP route here —
+                                // which rules out the transports that need one.
     bool malformed = false;     // The request line/headers could not be trusted —
                                 // currently set when the percent-decoded path
                                 // carries control characters (CR/LF smuggled in

@@ -18,6 +18,7 @@
 import * as iosAudioUnlock from '../audio/iosAudioUnlock.js';
 import { armAudioPlayRetry } from '../util/audioAutoplay.js';
 import { forceOpusStereo } from '../util/SdpUtils.js';
+import { openSignalingSocket } from '../net/tunnelBridge.js';
 import {
     beginHandshake,
     helloMessage,
@@ -253,7 +254,11 @@ export class WebRtcDataChannel {
         if (this._stopping) return;
 
         console.log('[WebRTC] Connecting to signaling:', this.signalingUrl);
-        this.signalingWs = new WebSocket(this.signalingUrl);
+        // Through the rendezvous this is a socket carried on the control
+        // channel; on a direct connection it is a plain WebSocket. Only the
+        // signalling comes this way — video and input get their own peer
+        // connection either way, negotiated over whichever this is.
+        this.signalingWs = openSignalingSocket(this.signalingUrl);
 
         if (this._wssMode) {
             // ── WSS mode: direct WebSocket binary passthrough ────────────────

@@ -63,6 +63,7 @@ import { startAspectProbe } from './stream/AspectProbe.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
+import { startTunnel, tunnelHostId } from './net/tunnelBridge.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
@@ -129,6 +130,23 @@ const MoonlightApp = {
 
     async init() {
         console.log('[MW] Initializing MoonlightWeb...');
+
+        // ── The connection to the host, when there is no route to it ────────
+        // Reached at its own address — a LAN IP, localhost, a mesh VPN name —
+        // this does nothing and returns false. Reached through the introduction
+        // server, it is what every request below travels on, so it has to be up
+        // before the first of them is made.
+        try {
+            await startTunnel();
+        } catch (e) {
+            // The page is on the rendezvous and the machine did not answer.
+            // The bootstrap is the one place that can explain that and retry,
+            // and it is where the address in the bar already points.
+            console.error('[MW] The connection to the host failed:', e.message);
+            const id = tunnelHostId();
+            if (id) location.replace(`/${id}`);
+            return;
+        }
 
         // Mark iOS in CSS (UA sniff) — used to restore tick visibility on
         // the settings checkbox, where Safari's native tick is invisible.
