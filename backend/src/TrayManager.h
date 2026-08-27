@@ -19,6 +19,7 @@
 
 #include <functional>
 
+#include <QAction>
 #include <QObject>
 #include <QSystemTrayIcon>
 #include <QMenu>
@@ -70,6 +71,22 @@ public:
         m_UrlProvider = std::move(provider);
     }
 
+    /// The rendezvous admin link, or an empty string when there is none to give.
+    ///
+    /// A second door to the admin page, and the only one that opens under a
+    /// certificate the browser already trusts: the loopback entries above are
+    /// served by a self-signed certificate and always will be. The link carries
+    /// the single-use host key in its FRAGMENT — never a query — so the
+    /// introduction server it is fetched from never sees it.
+    ///
+    /// Asked for at the moment the menu opens rather than cached, because both
+    /// halves move: the line goes up and down with the network, and the key is
+    /// burnt and rotated the instant it is redeemed.
+    void setRemoteAdminLinkProvider(std::function<QString()> provider)
+    {
+        m_RemoteAdminLink = std::move(provider);
+    }
+
     /// Recompute the hover tooltip from the current entry URL. Call after the
     /// HTTPS port or the public domain changed (port parity rebind, Internet
     /// Access becoming ready).
@@ -79,6 +96,7 @@ private slots:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
     void onOpen();
     void onOpenSettings();
+    void onOpenRemoteAdmin();
     void onRestart();
     void onQuit();
 
@@ -90,6 +108,8 @@ private:
     HttpServer* m_Server; // null in client mode
     bool m_ClientMode = false;
     std::function<QUrl(const QString& path)> m_UrlProvider;
+    std::function<QString()> m_RemoteAdminLink; // see setRemoteAdminLinkProvider
+    QAction* m_RemoteAdminAction = nullptr;     // hidden while there is no link to give
     std::function<void()> m_RestartServer; // client mode: restart the remote server
     std::function<void()> m_QuitServer;    // client mode: stop the remote server
     QSystemTrayIcon* m_TrayIcon;

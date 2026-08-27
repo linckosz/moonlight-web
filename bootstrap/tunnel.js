@@ -627,11 +627,43 @@ export function rememberLastHost(hostId) {
  * key, the cookie jar and the cached interface are each named after the host
  * they belong to.
  */
+/**
+ * The fragment, split on '&'. The identifier is the one bare segment; anything
+ * else is `name=value`.
+ *
+ * The fragment is used rather than the query for one reason, and it is the
+ * reason the host key can be carried at all: a browser never sends the fragment
+ * to the server it fetched the page from. The introduction server therefore
+ * sees which machine is being asked for — it has to, that is its job — and
+ * nothing else, whatever else the address carries.
+ */
+function hashParts() {
+    return location.hash.replace(/^#/, '').split('&').filter(Boolean);
+}
+
+/**
+ * The host key this link carries, or null.
+ *
+ * Put there by the machine's own tray so its owner can reach an admin page under
+ * a certificate the browser already trusts. Single-use: the host burns it on
+ * redemption, so a link that reaches anyone else is spent by then, and one that
+ * stays in someone's history is spent too.
+ */
+export function hostKeyFromLocation() {
+    for (const part of hashParts()) {
+        if (part.startsWith('k=')) {
+            const key = decodeURIComponent(part.slice(2));
+            if (key) return key;
+        }
+    }
+    return null;
+}
+
 export function hostIdFromLocation() {
     const fromPath = location.pathname.replace(/^\/+|\/+$/g, '');
     if (ID_SHAPE.test(fromPath)) return fromPath;
 
-    const fromHash = location.hash.replace(/^#/, '');
+    const fromHash = hashParts()[0] || '';
     if (ID_SHAPE.test(fromHash)) {
         try {
             sessionStorage.setItem('mw-host-id', fromHash);

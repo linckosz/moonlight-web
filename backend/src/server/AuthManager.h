@@ -47,6 +47,17 @@ struct SessionInfo
     bool isAdmin = false;   // unlocked admin access from the LAN with the remote
                             // admin password; same privileges as isHost, but this
                             // browser is on another machine
+
+    // This host session was established THROUGH the rendezvous tunnel, by
+    // redeeming the host key from a peer that passed the plausibility gate on
+    // /api/auth/host-key. It is the one kind of host session honoured on that
+    // path (HttpServer::serveRequest); every other one is refused there by
+    // §4.3, and this flag is what keeps the refusal narrow instead of blanket.
+    //
+    // Recorded rather than inferred, on purpose: "this token can only have come
+    // from the host machine" is a property of another route's guard, and the
+    // rule exists precisely so privilege does not rest on that.
+    bool viaTunnel = false;
     bool ephemeral = false; // the visitor unchecked "remember me" at login: this
                             // session is never written to sessions.json and dies
                             // after EPHEMERAL_SESSION_TTL_SECS of inactivity
@@ -76,6 +87,7 @@ struct SessionInfo
         obj["streaming"] = streaming;
         obj["is_host"] = isHost;
         obj["is_admin"] = isAdmin;
+        obj["via_tunnel"] = viaTunnel;
         obj["ephemeral"] = ephemeral;
         return obj;
     }
@@ -157,7 +169,7 @@ public:
     ///                  EPHEMERAL_SESSION_TTL_SECS of inactivity. Meant for a
     ///                  browser that is not the visitor's own (public machine).
     QString createSession(const QString& ip, const QString& machineName = QString(),
-                          bool isHost = false, bool ephemeral = false);
+                          bool isHost = false, bool ephemeral = false, bool viaTunnel = false);
     bool validateSession(const QString& token) const;
     /** True when the raw cookie token belongs to a valid session created without
      *  "remember me". The caller must then keep the cookie session-scoped: a
@@ -171,6 +183,10 @@ public:
     /** True when the raw cookie token belongs to a valid *host* session (created
      *  by redeeming the host key — the browser runs on the host machine). */
     bool isHostSession(const QString& token) const;
+
+    /** Whether this host session was established through the rendezvous tunnel.
+     *  Only meaningful alongside isHostSession(); see SessionInfo::viaTunnel. */
+    bool isTunnelHostSession(const QString& token) const;
     /** True when the raw cookie token belongs to a session that unlocked admin
      *  access with the remote admin password. Orthogonal to isHostSession:
      *  same privileges, different proof. */

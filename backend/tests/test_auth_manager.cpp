@@ -209,6 +209,34 @@ void run_auth_manager_tests()
     CHECK(!auth.isHostSession(adminToken)); // admin, but not the host machine
     CHECK(!auth.promoteSessionToAdmin("bogus-token"));
 
+    // How a host session was born decides what it is worth afterwards. A host
+    // session created on a socket must NOT be honoured on the tunnel — a token
+    // minted at the machine says nothing about who holds it at the far end of a
+    // relayed connection — and HttpServer asks this question to tell them apart.
+    // Only a session created BY a tunnel redemption answers yes.
+    {
+        const QString onSocket = auth.createSession("127.0.0.1", "Host machine", /*isHost=*/true);
+        CHECK(auth.isHostSession(onSocket));
+        CHECK(!auth.isTunnelHostSession(onSocket));
+
+        const QString onTunnel = auth.createSession("192.168.1.44", "Host machine (remote link)",
+                                                   /*isHost=*/true, /*ephemeral=*/false,
+                                                   /*viaTunnel=*/true);
+        CHECK(auth.isHostSession(onTunnel));
+        CHECK(auth.isTunnelHostSession(onTunnel));
+
+        // A plain session is neither, whatever it claims.
+        CHECK(!auth.isTunnelHostSession(adminToken));
+        CHECK(!auth.isTunnelHostSession("bogus-token"));
+
+        // It has to survive a restart, or the owner would silently lose admin
+        // the first time the server came back.
+        auth.saveSessions();
+        auth.loadSessions();
+        CHECK(auth.isTunnelHostSession(onTunnel));
+        CHECK(!auth.isTunnelHostSession(onSocket));
+    }
+
     // Changing the password revokes every unlock the old one bought.
     CHECK(auth.setAdminPassword("another-password"));
     CHECK(!auth.isAdminSession(adminToken));

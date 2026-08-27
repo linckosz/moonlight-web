@@ -1048,15 +1048,26 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     // architecture, and the reason it is a rule and not a heuristic:
     //
     //   peerLocal   the address is ours, never the browser's
-    //   hostSession the host key is only readable from the host machine, so a
-    //               tunnel caller cannot have obtained it — but "cannot" is a
-    //               property of another route's guard, and privileges should not
-    //               rest on a second file's correctness
     //   adminKeyOk  the per-run admin key is only ever served to local callers
     //
-    // What remains reachable from the tunnel is what remote access has always
-    // been: a session established with the PIN. Admin still needs the machine
-    // itself or the LAN unlock, exactly as it does under the public domain today.
+    // hostSession is the one that is no longer blanket, and the exception is
+    // deliberate rather than an erosion. Redeeming the host key THROUGH the
+    // tunnel is now a supported way in — it is how the owner reaches an admin
+    // page without a certificate warning — so a session created that way is
+    // honoured on the path that created it, and only that one. Every other host
+    // session is still refused here: a token minted on a socket says nothing
+    // about who is holding it at the far end of a tunnel.
+    //
+    // What guards the exception is not this file. /api/auth/host-key refuses
+    // redemption unless the peer could plausibly BE the host machine — and on
+    // this path the address it judges is the one ICE actually settled on, not
+    // anything the browser claimed. A stranger with the link arrives from a
+    // public address that is not the host's and is turned away; what is inside
+    // the boundary is the host's own LAN and whatever shares its public
+    // address, which is the same reach the LAN admin unlock already trusts.
+    //
+    // Everything else reachable from the tunnel is what remote access has always
+    // been: a session established with the PIN.
     const bool viaTunnel = (arrival == Arrival::Tunnel);
     req.viaTunnel = viaTunnel;
 
@@ -1075,11 +1086,25 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
 
     const bool peerLocal = !viaTunnel && isLocalRequest(req.clientAddress);
     const QString sessionToken = sessionTokenFromRequest(req);
+
+    // The single exception, computed once so the two lines below cannot drift
+    // apart: a host session that was itself created on this path, by redeeming
+    // the key through the tunnel from a peer the host accepted as its own.
+    const bool tunnelHost =
+        viaTunnel && m_AuthManager && m_AuthManager->isTunnelHostSession(sessionToken);
+
     RequestGuard::Context ctx;
     ctx.peerLocal = peerLocal;
-    ctx.hostSession = !viaTunnel && m_AuthManager && m_AuthManager->isHostSession(sessionToken);
+    ctx.hostSession =
+        m_AuthManager && m_AuthManager->isHostSession(sessionToken) && (!viaTunnel || tunnelHost);
     ctx.adminSession = m_AuthManager && m_AuthManager->isAdminSession(sessionToken);
-    ctx.adminKeyOk = !viaTunnel && adminKeyMatches(req);
+    // The admin key has to follow hostSession, or the exception would be
+    // read-only: admin WRITES require it, so an admin page that loads and then
+    // refuses every change is worse than one that never loads. It costs nothing
+    // to grant here — the key is a CSRF token, handed out only to a caller that
+    // already holds the session, and unreadable to a cross-origin page either
+    // way. What it is not, and never was, is a second proof of location.
+    ctx.adminKeyOk = (!viaTunnel || tunnelHost) && adminKeyMatches(req);
     ctx.publicDomain = m_Certs.domain();
 
     const RequestGuard::Decision decision =

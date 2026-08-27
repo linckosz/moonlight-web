@@ -1041,6 +1041,20 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     tray.setClientMode(true);
     tray.setUrlProvider([&port](const QString& path) { return trayClientUrl(port, path); });
 
+    // The internet link has to be asked for rather than computed: this process
+    // has no rendezvous line and no settings of its own, it only decorates a
+    // server it cannot see. Asked at the moment the menu opens, so a blocking
+    // loopback call is acceptable — and given a short budget so a wedged server
+    // cannot freeze the menu. Empty on any failure, which hides the entry.
+    tray.setRemoteAdminLinkProvider([&port]() -> QString {
+        const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
+                                         : QStringLiteral("https://127.0.0.1:%1").arg(port);
+        const LoopbackReply reply =
+            loopbackRequest(base, QStringLiteral("/api/server/remote-admin-link"), QByteArray(),
+                            2000);
+        return reply.ok ? reply.json.value(QStringLiteral("url")).toString() : QString();
+    });
+
     // Restart / Quit act on the server we decorate, not on this tray. We reach it
     // the same way the CLI reaches an admin route: a loopback POST carrying the
     // per-run admin key (loopbackAdminPost fetches it). The server then exits on
@@ -3787,6 +3801,38 @@ int main(int argc, char* argv[])
                 << (online ? rendezvous.entryUrl() : QString());
     });
 
+    // The way to an admin page under a certificate the browser already trusts.
+    //
+    // The address is the ordinary rendezvous one — the same link anybody uses to
+    // reach this machine — with the host key appended as a FRAGMENT. That is the
+    // whole trick and it is worth stating why it is not a query: a browser never
+    // sends the fragment to the server it fetches from, so the introduction
+    // server sees the identifier and nothing else, while the key reaches this
+    // machine inside the tunnel's own encryption. As a query it would be in the
+    // introduction server's request line, and from there in whatever it logs.
+    //
+    // Empty whenever any half is missing, because a link that cannot work is
+    // worse than no link: it is single-use and the user would have spent it.
+    auto remoteAdminLink = [&]() -> QString {
+        if (!rendezvous.isOnline()) return {};
+        const QString entry = rendezvous.entryUrl();
+        const QString key = appSettings.localKey();
+        if (entry.isEmpty() || key.isEmpty()) return {};
+        return entry + QStringLiteral("#k=") + QString::fromLatin1(QUrl::toPercentEncoding(key));
+    };
+
+    // GET /api/server/remote-admin-link — the same link, for the tray client.
+    // That tray runs in its own process decorating a server it cannot see, so it
+    // asks over loopback. Local callers only: this hands out a live credential,
+    // and everything else already has the machine itself.
+    server.router()->get("/api/server/remote-admin-link",
+                         [remoteAdminLink](const HttpRequest& req) {
+                             if (!req.isLocal)
+                                 return HttpResponse::error(403, "Only available from localhost");
+                             return HttpResponse::json(
+                                 QJsonObject{{QStringLiteral("url"), remoteAdminLink()}});
+                         });
+
     // The switch being on is not enough. A consent recorded for the retired DNS
     // mechanism left it on, and it never described an outbound line announcing
     // this machine — so the gate InternetAccessManager stops at applies here for
@@ -3892,6 +3938,7 @@ int main(int argc, char* argv[])
     // The desktop session gets its tray from runTrayClient() instead.
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
+    trayManager.setRemoteAdminLinkProvider(remoteAdminLink);
     if (hasGuiSession()) trayManager.init();
 
     // Keep every host-side entry point current when the entry URL changes:

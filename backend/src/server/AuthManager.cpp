@@ -178,6 +178,7 @@ void AuthManager::loadSessions()
         info.lastSeen = obj.contains("last_seen") ? static_cast<qint64>(obj["last_seen"].toDouble())
                                                   : info.createdAt;
         info.isHost = obj["is_host"].toBool(false);
+        info.viaTunnel = obj["via_tunnel"].toBool(false);
         info.isAdmin = keepAdminFlags && obj["is_admin"].toBool(false);
 
         // MW-BIND-v1 pairing key. A stored key that no longer parses is dropped
@@ -550,7 +551,7 @@ AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip
 }
 
 QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost,
-                                   bool ephemeral)
+                                   bool ephemeral, bool viaTunnel)
 {
     // Clean IPv4-mapped IPv6 addresses before storing
     QString cleanIp = cleanClientAddress(ip);
@@ -575,6 +576,7 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     info.lastSeen = info.createdAt;
     info.isHost = isHost;
     info.ephemeral = ephemeral;
+    info.viaTunnel = viaTunnel;
 
     m_sessions[id] = info;
     if (!ephemeral) saveSessions();
@@ -620,6 +622,13 @@ bool AuthManager::isHostSession(const QString& token) const
     if (!validateSession(token)) return false;
     auto it = m_sessions.find(hashToken(token));
     return it != m_sessions.end() && it->isHost;
+}
+
+bool AuthManager::isTunnelHostSession(const QString& token) const
+{
+    if (!validateSession(token)) return false;
+    auto it = m_sessions.find(hashToken(token));
+    return it != m_sessions.end() && it->isHost && it->viaTunnel;
 }
 
 bool AuthManager::isAdminSession(const QString& token) const
