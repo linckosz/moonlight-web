@@ -1068,6 +1068,8 @@ export class AdminView {
                         <div class="admin-url-row">
                             <a href="${this.esc(this._buildLocalUrl(ip))}" target="_blank" rel="noopener"
                                class="tunnel-url-link">${this.esc(this._buildLocalUrl(ip))}</a>
+                            <button class="btn btn-secondary btn-copy-local" type="button"
+                                    data-url="${this.esc(this._buildLocalUrl(ip))}">${t('common.copy')}</button>
                         </div>`,
                             )
                             .join('')}
@@ -1618,6 +1620,34 @@ export class AdminView {
                 }
             });
         }
+
+        // Same gesture for the LAN addresses: they are what a phone on the same
+        // Wi-Fi needs, and there can be several of them, so each row gets its own
+        // button rather than one that guesses which interface was meant.
+        this.container.querySelectorAll('.btn-copy-local').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const url = btn.dataset.url || '';
+                if (!url) return;
+                try {
+                    await navigator.clipboard.writeText(url);
+                    btn.textContent = t('common.copied');
+                    setTimeout(() => {
+                        btn.textContent = t('common.copy');
+                    }, 2000);
+                } catch (err) {
+                    console.warn('[Admin] Clipboard write failed:', err);
+                    // Leave the address selected so it can still be copied by hand.
+                    const link = btn.parentElement?.querySelector('.tunnel-url-link');
+                    if (link) {
+                        const range = document.createRange();
+                        range.selectNodeContents(link);
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
+                }
+            });
+        });
 
         // Copy PIN button (only copies a real PIN, not "--------")
         const copyBtn = this.container.querySelector('#btn-copy-pin');
