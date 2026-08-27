@@ -154,11 +154,16 @@
     background: rgba(0, 229, 255, 0.12);
     overflow: hidden;
 }
-/* Driven frame by frame, so no CSS transition: the easing is in the number and
-   a transition on top of it would only add lag. */
+/* The number is recomputed every frame; the movement is not. A jump in the work
+   term would otherwise snap the bar across in a single paint, which reads as a
+   glitch rather than as progress. The transition is retargeted on each frame,
+   so the bar eases toward wherever the number has got to instead of teleporting
+   onto it. It also lands BAR_EASE_MS after the number reaches the end, which is
+   what the hold in SecuringOverlay.js waits out. */
 .securing-bar {
     height: 100%;
     width: 0;
+    transition: width 0.26s cubic-bezier(0.22, 0.61, 0.36, 1);
     background: linear-gradient(90deg, rgba(42, 212, 160, 0.55), var(--c-success));
     box-shadow:
         0 0 10px rgba(42, 212, 160, 0.7),

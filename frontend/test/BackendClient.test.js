@@ -34,6 +34,7 @@ describe('BackendClient', () => {
         localStorage.clear();
         sessionStorage.clear();
         BackendClient._adminKeyPromise = null; // cached across calls by design
+        BackendClient._hadSession = false; // per-document, so per-test
     });
 
     it('GET returns parsed JSON on success', async () => {
@@ -115,10 +116,44 @@ describe('BackendClient', () => {
     });
 
     it('breaks the reload loop using the sessionStorage guard', async () => {
+        BackendClient._hadSession = true; // the reload path only runs for a session that existed
         sessionStorage.setItem('mw_auth_reload', '1'); // pretend we already reloaded once
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ message: 'authentication_required' }, { ok: false, status: 401 })));
         await expect(BackendClient.getHosts()).rejects.toMatchObject({ statusCode: 401 });
         expect(sessionStorage.getItem('mw_auth_reload')).toBeNull(); // guard cleared
+    });
+
+    // THE regression: the login screen called a session-gated endpoint, got the
+    // 401 it was always going to get, and this turned it into a full reload — so
+    // every first visit loaded the application twice. Reloading is how a RUNNING
+    // application returns to the PIN screen; from the PIN screen it achieves
+    // nothing, and any pre-authentication screen can trip it.
+    it('does not reload on a 401 when no session was ever held', async () => {
+        const reload = vi.fn();
+        const original = window.location;
+        Object.defineProperty(window, 'location', { value: { reload }, configurable: true });
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ message: 'authentication_required' }, { ok: false, status: 401 })));
+        await expect(BackendClient.getHosts()).rejects.toMatchObject({ statusCode: 401 });
+        Object.defineProperty(window, 'location', { value: original, configurable: true });
+        expect(reload).not.toHaveBeenCalled();
+        expect(sessionStorage.getItem('mw_auth_reload')).toBeNull(); // never armed either
+    });
+
+    it('reloads on a 401 once the session it had is gone', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ authenticated: true })));
+        await BackendClient.getAuthStatus(); // this is what records the session
+
+        const reload = vi.fn();
+        const original = window.location;
+        Object.defineProperty(window, 'location', { value: { reload }, configurable: true });
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ message: 'authentication_required' }, { ok: false, status: 401 })));
+        // The call never settles — _handleError hands back a pending promise so
+        // the caller cannot race the navigation.
+        BackendClient.getHosts();
+        await Promise.resolve();
+        await Promise.resolve();
+        Object.defineProperty(window, 'location', { value: original, configurable: true });
+        expect(reload).toHaveBeenCalled();
     });
 
     it('aborts a POST after the client timeout', async () => {

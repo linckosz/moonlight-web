@@ -228,11 +228,17 @@
     background: rgba(0, 229, 255, .12);
     overflow: hidden;
   }
-  /* Driven frame by frame from boot.js, so no CSS transition: the easing is in
-     the number, and a transition on top of it would only add lag. */
+  /* The number is recomputed every frame; the movement is not. A jump in the
+     work term — the shell arriving, the last file landing — would otherwise
+     snap the bar across in one paint, which reads as a glitch rather than as
+     progress. The transition is retargeted on each frame, so the bar eases
+     toward wherever the number has got to instead of teleporting onto it.
+     It also lands ~.26s AFTER the number reaches the end, which is why the
+     hold in boot.js waits that long before starting to count. */
   #bar {
     height: 100%;
     width: 0;
+    transition: width .26s cubic-bezier(.22, .61, .36, 1);
     background: linear-gradient(90deg, rgba(42, 212, 160, .55), var(--seal));
     box-shadow: 0 0 10px rgba(42, 212, 160, .7), 0 0 22px rgba(42, 212, 160, .3);
   }

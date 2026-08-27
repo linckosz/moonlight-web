@@ -36,6 +36,10 @@ import { loadOrCreateIdentity, rememberHostIdentity } from '../util/pairingCrypt
 export class BackendClient {
     /** Cached promise for the per-run admin key (see _adminKey). */
     static _adminKeyPromise = null;
+    /* Set once this document has actually held a session. It gates the reload
+       below: "the session went away" is only a story that makes sense if there
+       was one to begin with. */
+    static _hadSession = false;
 
     /**
      * The host's admin key, or null when this browser is not entitled to one
@@ -97,9 +101,21 @@ export class BackendClient {
         // Player routes answer 401 for a wrong PIN or a dead link — that is the
         // normal path for a guest who has no session at all, and reloading the
         // page would throw away the join screen instead of showing the error.
+        //
+        // And only when this document HAS held a session. Reloading is how a
+        // running application gets back to the PIN screen after its session is
+        // revoked; on the PIN screen itself it achieves nothing and costs a
+        // second full load. That is not hypothetical — the login screen called a
+        // session-gated endpoint and every first visit reloaded once because of
+        // it. Any screen that runs before authentication can trip this, so the
+        // condition belongs here rather than in a list of exempt paths.
         const isAuthEndpoint =
             path.startsWith('/api/auth/') || path.startsWith('/api/share/player/');
-        if (!isAuthEndpoint && (resp.status === 401 || msg === 'authentication_required')) {
+        if (
+            this._hadSession &&
+            !isAuthEndpoint &&
+            (resp.status === 401 || msg === 'authentication_required')
+        ) {
             if (!sessionStorage.getItem('mw_auth_reload')) {
                 sessionStorage.setItem('mw_auth_reload', '1');
                 console.warn('[MW] Authentication required — reloading page');
@@ -422,6 +438,9 @@ export class BackendClient {
         if (resp?.host_public_key) {
             await rememberHostIdentity(resp.host_public_key, resp.host_id);
         }
+        // Credentials accepted is a session held, and the application carries on
+        // from here without asking /api/auth/status again.
+        this._hadSession = true;
         return resp;
     }
 
@@ -475,7 +494,11 @@ export class BackendClient {
         return this.post('/api/admin/pin/clear');
     }
     static async getAuthStatus() {
-        return this.get('/api/auth/status');
+        const status = await this.get('/api/auth/status');
+        // The one place that can say so. Everything else the application does is
+        // downstream of this answer.
+        if (status.authenticated || status.is_localhost) this._hadSession = true;
+        return status;
     }
     /** End this browser's own session and clear its cookie. Works from anywhere
      *  (no localhost gate) — it is the visitor's way out of a public machine. */
@@ -485,7 +508,9 @@ export class BackendClient {
     /** Redeem the host key (?mwk=... from the host machine's own entry points)
      *  for a localhost-equivalent session over the public domain. */
     static async redeemHostKey(key) {
-        return this.post('/api/auth/host-key', { key });
+        const resp = await this.post('/api/auth/host-key', { key });
+        this._hadSession = true;
+        return resp;
     }
     /** Spend the remote admin password to give this (already authenticated,
      *  LAN) session the same admin access the host machine has. */
@@ -519,6 +544,9 @@ export class BackendClient {
         if (resp?.host_public_key) {
             await rememberHostIdentity(resp.host_public_key, resp.host_id);
         }
+        // Credentials accepted is a session held, and the application carries on
+        // from here without asking /api/auth/status again.
+        this._hadSession = true;
         return resp;
     }
 
