@@ -1,0 +1,120 @@
+# Watches the live entry page against the copy that was published.
+#
+# The bootstrap is the one piece of this project's code a browser ever loads
+# from a server. Everything else — the interface, the API, the video — comes
+# from the user's own machine over a connection that page sets up. So the honest
+# mitigation for "what if the server serves something else" is not a promise; it
+# is that the bytes are few, identical for everyone, published with their
+# digests, and compared on a schedule by something that is not the server.
+#
+# This is that comparison. It fetches every bootstrap file from the rendezvous
+# host and from the reference copy on GitHub Pages and requires them to be
+# byte-identical.
+#
+# Be precise about what it buys, because it is easy to overstate:
+#
+#   it catches   a rendezvous box serving modified bytes to everyone, within
+#                the interval below.
+#
+#   it does NOT  catch a box that serves the good bytes to whoever is checking
+#   catch        and different ones to a chosen victim. Nothing an outsider can
+#                run catches that. The comparison covers the untargeted case,
+#                which is nearly all of them, and it is not a guarantee.
+#
+# A failure here is not automatically an attack — the far more likely cause is a
+# deploy caught halfway, which is why a mismatch is retried before it is
+# believed. What it always means is that the published record and the live site
+# disagree, and that is worth a human looking.
+name: bootstrap-watch
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub runs scheduled jobs on a best-effort basis and
+    # skews them under load, so treat the interval as "about half an hour", not
+    # as a guarantee — the window an unnoticed swap could live in is the honest
+    # number to quote, and it is larger than the cron line suggests.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bootstrap-watch
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    env:
+      LIVE: https://stream.moonlightweb.top
+      REFERENCE: https://app.moonlightweb.top
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the live entry page against the published copy
+        run: |
+          set -uo pipefail
+
+          # The file list comes from the repository rather than from either
+          # host: a host that decides what it is checked on is not being
+          # checked. CNAME is Pages plumbing and is not served by the other.
+          files=$(cd bootstrap && find . -type f ! -name CNAME | sed 's|^\./||' | sort)
+
+          # Assign, then override on failure: a failed curl still feeds an empty
+          # stream to sha256sum, which happily hashes nothing. Reporting that
+          # hash as if it were the file is how a check quietly stops checking.
+          fetch() {  # fetch <base> <path> -> sha256, or the word "unreachable"
+            out=$(curl -fsS --max-time 20 --retry 2 --retry-delay 3 "$1/$2" \
+                  | sha256sum | cut -d' ' -f1) || out=unreachable
+            printf '%s' "$out"
+          }
+
+          compare() {
+            bad=0
+            for f in $files; do
+              live=$(fetch "$LIVE" "$f")
+              ref=$(fetch "$REFERENCE" "$f")
+              if [ "$live" = "$ref" ] && [ "$live" != unreachable ]; then
+                printf 'ok    %-16s %s\n' "$f" "${live:0:16}"
+              else
+                printf 'DIFF  %-16s live=%s reference=%s\n' "$f" "${live:0:16}" "${ref:0:16}"
+                bad=1
+              fi
+            done
+            return $bad
+          }
+
+          # A deploy in flight is the ordinary explanation for a mismatch: the
+          # two hosts are updated by different pipelines, minutes apart. Give it
+          # time to settle before calling it anything else.
+          if compare; then
+            echo "the live entry page matches the published copy"
+            exit 0
+          fi
+
+          echo "::warning::mismatch — waiting 120s in case a deploy is in flight"
+          sleep 120
+
+          if compare | tee "$GITHUB_STEP_SUMMARY"; then
+            echo "matched on the second pass — a deploy was in flight"
+            exit 0
+          fi
+
+          echo "::error::the live entry page does not match the published copy"
+          exit 1
+
+      # A file being identical to the reference is only reassuring if the
+      # reference is itself the released code. Pages deploys from this
+      # repository, so a lasting difference here means Pages is stale — worth
+      # saying, not worth failing over, since the check above is the one that
+      # protects anybody.
+      - name: Check the reference copy is current
+        if: always()
+        run: |
+          set -uo pipefail
+          for f in $(cd bootstrap && find . -type f ! -name CNAME | sed 's|^\./||' | sort); do
+            ref=$(curl -fsS --max-time 20 "$REFERENCE/$f" | sha256sum | cut -d' ' -f1)
+            local_sum=$(sha256sum "bootstrap/$f" | cut -d' ' -f1)
+            [ "$ref" = "$local_sum" ] || echo "::warning::$f differs from this commit — Pages may not have deployed it yet"
+          done

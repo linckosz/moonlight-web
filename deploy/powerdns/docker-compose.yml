@@ -68,6 +68,10 @@ services:
       MW_PDNS_OWNER_SECRET: ${MW_PDNS_OWNER_SECRET}
       # New-subdomain rate limit per client IP per hour (0 = unlimited).
       MW_PROXY_MAX_NEW_PER_HOUR: ${MW_PROXY_MAX_NEW_PER_HOUR:-20}
+      # `off` stops NEW sub-domains being created; existing ones keep updating
+      # and renewing until February 2027. Thrown the day 0.3.0 ships — see
+      # README.md §Retiring the sub-domains.
+      MW_SUBDOMAIN_REGISTRATION: ${MW_SUBDOMAIN_REGISTRATION:-on}
       # Update relay (updates.${MW_DOMAIN} → /v1/update). Counts which versions
       # are still running, so migrations can be planned on data. Leave
       # MW_UMAMI_WEBSITE_ID empty and the relay still serves updates, counting

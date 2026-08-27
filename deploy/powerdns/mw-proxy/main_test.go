@@ -229,6 +229,114 @@ func TestUnreachableUpstreamClaimsNothing(t *testing.T) {
 	}
 }
 
+// ── Sub-domain retirement ───────────────────────────────────────────────────
+//
+// The promise being tested is not "new registrations are refused" — it is the
+// pair. Refusing new names is worthless if it also breaks the names already out
+// there, because those have to keep working until February 2027 on installs
+// nobody can update remotely.
+
+// A PowerDNS stand-in that knows which uids exist, so the existence check has
+// something truthful to ask. It answers PATCHes with 204.
+func testProxyZone(t *testing.T, closed bool, existing ...string) *proxy {
+	t.Helper()
+	has := map[string]bool{}
+	for _, uid := range existing {
+		has[uid] = true
+	}
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		name := r.URL.Query().Get("rrset_name")
+		uid := strings.TrimSuffix(name, "."+testZone)
+		w.Header().Set("Content-Type", "application/json")
+		if has[uid] {
+			_, _ = w.Write([]byte(`{"rrsets":[{"records":[{"content":"1.2.3.4"}]}]}`))
+		} else {
+			_, _ = w.Write([]byte(`{"rrsets":[]}`))
+		}
+	}))
+	t.Cleanup(up.Close)
+	store, err := newOwnerStore(t.TempDir()+"/owners.json", []byte("test-secret"))
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	cfg := config{
+		zone:               testZone,
+		upstream:           up.URL,
+		realKey:            "real-pdns-key",
+		proxyKey:           "restricted-key",
+		maxBodyBytes:       64 * 1024,
+		registrationClosed: closed,
+	}
+	return newProxy(cfg, store)
+}
+
+func TestClosedRegistrationRefusesNewNames(t *testing.T) {
+	p := testProxyZone(t, true)
+	code, msg := doPatch(p, "tokenA", "1.1.1.1", aReplace("ab12cd34"))
+	if code != http.StatusForbidden {
+		t.Fatalf("a name that does not exist should be refused, got %d", code)
+	}
+	// The message is the whole point of refusing here rather than earlier: an
+	// 0.2.x instance shows this text to someone who cannot read a log.
+	for _, want := range []string{"0.3.0", "local network", "February 2027"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal should mention %q, got %q", want, msg)
+		}
+	}
+	if len(p.store.owners) != 0 {
+		t.Fatalf("a refused claim must record nothing, store = %v", p.store.owners)
+	}
+}
+
+func TestClosedRegistrationKeepsExistingNamesWorking(t *testing.T) {
+	// The zone has this sub-domain but the store has no owner for it — exactly
+	// the state of every name registered before ownership was recorded. It must
+	// still be updatable, and updating it records the owner from then on.
+	p := testProxyZone(t, true, "ab12cd34")
+	if code, msg := doPatch(p, "tokenA", "1.1.1.1", aReplace("ab12cd34")); code != 0 {
+		t.Fatalf("an existing sub-domain must still be updatable: %d %s", code, msg)
+	}
+	if p.store.owners["ab12cd34"] != p.store.hash("tokenA") {
+		t.Fatalf("the update should record ownership, store = %v", p.store.owners)
+	}
+	// And its certificate must keep renewing: the ACME challenge is a TXT under
+	// a uid whose A record exists, and the check never looks at TXT names.
+	acme := `{"rrsets":[{"name":"_acme-challenge.ab12cd34.` + testZone +
+		`","type":"TXT","changetype":"REPLACE"}]}`
+	if code, msg := doPatch(p, "tokenA", "1.1.1.1", acme); code != 0 {
+		t.Fatalf("certificate renewal must survive the closure: %d %s", code, msg)
+	}
+	// So must releasing it.
+	if code, msg := doPatch(p, "tokenA", "1.1.1.1", aDelete("ab12cd34")); code != 0 {
+		t.Fatalf("deleting an owned sub-domain must still work: %d %s", code, msg)
+	}
+}
+
+func TestOpenRegistrationIsTheDefault(t *testing.T) {
+	// A config with the field unset — a missing variable, or a test like this
+	// one — must leave the door as it is today. Closing by accident would strand
+	// every new install with no way to diagnose it.
+	p := testProxyZone(t, false)
+	if code, msg := doPatch(p, "tokenA", "1.1.1.1", aReplace("ab12cd34")); code != 0 {
+		t.Fatalf("registration should be open by default: %d %s", code, msg)
+	}
+}
+
+func TestClosedRegistrationAllowsWhenTheZoneCannotBeAsked(t *testing.T) {
+	// PowerDNS unreachable. The choice here is between refusing someone who can
+	// do nothing about it and letting a registration through during an outage;
+	// the second is recoverable, the first is not.
+	p := testProxyZone(t, true)
+	p.cfg.upstream = "http://127.0.0.1:1" // nothing listens
+	if code, msg := doPatch(p, "tokenA", "1.1.1.1", aReplace("ab12cd34")); code != 0 {
+		t.Fatalf("an unanswerable existence check must not refuse: %d %s", code, msg)
+	}
+}
+
 func TestQuotaSweepsIdleAddresses(t *testing.T) {
 	q := newQuota(2)
 

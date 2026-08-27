@@ -31,7 +31,7 @@ Moonlight‑Web turns **any device with a modern browser** (PC, Mac, tablet, pho
 - ⌨️🖱️🎮 **Full input**: keyboard, mouse (pointer‑lock), touch trackpad, **Xbox/PS gamepads** with rumble.
 - 🔎 **Auto‑discovery** of Sunshine hosts on the LAN (mDNS) + manual IP add.
 - 🔐 Secure **pairing**, multi‑host, persistent sessions.
-- 🌍 **Internet access** opt‑in: remote streaming sessions over WebRTC. A new remote entry link is in the works; installs that already hold a sub‑domain keep it until February 2027.
+- 🌍 **Internet access** opt‑in: reached from anywhere at a `stream.moonlightweb.top/「id」` address, over WebRTC, with nothing published in your name. Installs that already hold a sub‑domain keep it until February 2027.
 - 🪄 **Video Enhancement** (bonus): GPU upscaling & sharpening in the browser.
 - 👥 **Session sharing**: invite up to 3 people into your stream, as viewer, gamepad player, or full control.
 
@@ -323,7 +323,9 @@ It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transpo
 
 Nothing else is opened or published: **no public DNS record, no certificate, ports 80/443 stay closed**. Turning the consent off closes the mappings immediately.
 
-**Remote entry link.** A new way to reach your PC from anywhere — without exposing the web interface — is in development; it will use an outgoing connection from your PC to an introduction server, and will be announced in the release notes.
+**Remote access.** Your PC holds one outgoing connection to an introduction server and is reached at `https://stream.moonlightweb.top/「id」` — the address is on the admin page and in the tray menu. Nothing is published: no DNS record, no certificate, no open port to the interface. The address names your machine; it does not let anyone in, and a visitor still faces the access PIN.
+
+What the browser loads from that server is a few kilobytes of entry page. It opens a WebRTC connection straight to your machine, checks the machine's identity key against the one it remembers, then pulls the interface — and every API call after it — down that connection. The video never goes near the server. It is [published byte for byte](https://app.moonlightweb.top) and [checked on a schedule](.github/workflows/bootstrap-watch.yml) against what the live server actually serves; the honest limit of that check is written in the workflow.
 
 **Existing installs (≤ v0.2.4)** that enabled Internet Access keep their `「id」.moonlightweb.top` sub‑domain, its certificate renewals and their 80/443 forwards, unchanged, **until the shared DNS service shuts down in February 2027**. The admin page shows this notice.
 
