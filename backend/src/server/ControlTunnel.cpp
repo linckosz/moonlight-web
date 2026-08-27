@@ -53,18 +53,32 @@ QString peerLabel(const QString& sessionId)
 
 /// Headers a browser may not dictate over the tunnel.
 ///
-/// The admin key is only ever handed to a local caller, so accepting one off the
-/// wire would undo that in a line. The rest are artefacts of a hop that does not
-/// exist here, and Content-Length is recomputed from what actually arrived.
-/// Everything else is forwarded untouched — this is a proxy, and a proxy that
-/// edits what it carries stops being predictable.
+/// Artefacts of a hop that does not exist here, plus Content-Length, which is
+/// recomputed from what actually arrived. Everything else is forwarded
+/// untouched — this is a proxy, and a proxy that edits what it carries stops
+/// being predictable.
+///
+/// X-MW-Admin-Key USED to be on this list, on the reasoning that the key is only
+/// ever handed to a local caller so accepting one off the wire would undo that
+/// in a line. That premise no longer holds: a host session redeemed through the
+/// tunnel is granted the key deliberately, because admin WRITES require it and
+/// an admin page that loads and then refuses every change is worse than one that
+/// never loads. Stripping it here would have made that grant ornamental.
+///
+/// Forwarding it gives nothing away. The key is a CSRF token, not a claim about
+/// where the caller sits; sending a wrong one achieves nothing, and obtaining
+/// the right one already requires being the host machine or holding the LAN
+/// admin unlock. Whether it is HONOURED is decided in one place — HttpServer's
+/// ctx.adminKeyOk, which accepts it on this path only for a session that was
+/// itself created by a tunnel redemption. Keep the decision there; a second copy
+/// of it here is how the two would drift.
 bool isForbiddenHeader(const QString& name)
 {
     static const QStringList kBlocked = {
-        QStringLiteral("x-mw-admin-key"), QStringLiteral("connection"),
-        QStringLiteral("upgrade"),        QStringLiteral("transfer-encoding"),
-        QStringLiteral("content-length"), QStringLiteral("expect"),
-        QStringLiteral("keep-alive"),     QStringLiteral("te"),
+        QStringLiteral("connection"),       QStringLiteral("upgrade"),
+        QStringLiteral("transfer-encoding"), QStringLiteral("content-length"),
+        QStringLiteral("expect"),           QStringLiteral("keep-alive"),
+        QStringLiteral("te"),
     };
     return kBlocked.contains(name);
 }
