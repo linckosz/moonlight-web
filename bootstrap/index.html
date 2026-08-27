@@ -149,34 +149,91 @@
     font-size: .9em;
     word-break: break-all;
   }
+
+  /* ── The seal ───────────────────────────────────────────────────────────
+     A small app card in its launching state — the notched yellow tile with a
+     light trail running round its rim — holding a padlock instead of cover
+     art. The application draws that card with a conic gradient whose ANGLE is
+     animated, which needs @property; here the same sweep is a rotated element
+     behind a face that covers all but a 2px rim, so it turns in every browser
+     that will run this page at all. */
+  .seal {
+    position: relative;
+    width: 86px;
+    aspect-ratio: 3 / 4;
+    margin: 1.6rem auto .25rem;
+    overflow: hidden;
+    background: rgba(252, 238, 10, .22);
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+  .seal::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 240%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    background: conic-gradient(transparent 0deg, transparent 215deg,
+                               rgba(252, 238, 10, .85) 322deg, transparent 360deg);
+    animation: seal-spin 3.2s linear infinite;
+  }
+  @keyframes seal-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  .seal-face {
+    position: absolute;
+    inset: 2px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(rgba(252, 238, 10, .14), rgba(252, 238, 10, .14)), var(--surface-2);
+    box-shadow: inset 0 0 0 1px rgba(252, 238, 10, .30), inset 0 1px 0 rgba(0, 229, 255, .08);
+    clip-path: polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 11px 100%, 0 calc(100% - 11px));
+    transition: background .3s ease;
+  }
+  .seal-face svg {
+    width: 38px;
+    height: 38px;
+    color: var(--accent-1);
+    filter: drop-shadow(0 0 9px rgba(252, 238, 10, .5));
+    transition: filter .3s ease;
+  }
+  /* Done: the trail stops running and the lock brightens — the difference
+     between "working on it" and "closed" has to be visible at a glance. */
+  body[data-state="secured"] .seal::before { opacity: 0; transition: opacity .3s ease; }
+  body[data-state="secured"] .seal-face {
+    background: linear-gradient(rgba(252, 238, 10, .24), rgba(252, 238, 10, .24)), var(--surface-2);
+  }
+  body[data-state="secured"] .seal-face svg { filter: drop-shadow(0 0 16px rgba(252, 238, 10, .85)); }
+
   .track {
-    height: 2px;
-    margin: 1.5rem 0 .75rem;
+    height: 3px;
+    margin: 1.25rem 0 .7rem;
     background: rgba(0, 229, 255, .12);
     overflow: hidden;
   }
+  /* Driven frame by frame from boot.js, so no CSS transition: the easing is in
+     the number, and a transition on top of it would only add lag. */
   #bar {
     height: 100%;
     width: 0;
-    background: var(--accent-1);
-    box-shadow: 0 0 10px rgba(252, 238, 10, .8);
-    transition: width .35s ease;
+    background: linear-gradient(90deg, rgba(252, 238, 10, .6), var(--accent-1));
+    box-shadow: 0 0 10px rgba(252, 238, 10, .75), 0 0 22px rgba(252, 238, 10, .32);
   }
-  /* Before any measurable progress, the bar sweeps rather than sitting at zero:
-     the connect phase has no percentage to report and a frozen bar reads as a
-     hang. */
-  body[data-state="working"] #bar[data-indeterminate] {
-    width: 34%;
-    animation: sweep 1.4s ease-in-out infinite;
+  #status { text-align: center; font-size: .93rem; letter-spacing: .02em; }
+  body[data-state="secured"] #status {
+    color: var(--accent-1);
+    text-shadow: 0 0 12px rgba(252, 238, 10, .45);
   }
-  @keyframes sweep {
-    0%   { transform: translateX(-110%); }
-    100% { transform: translateX(320%); }
-  }
-  body[data-state="failed"] .track { display: none; }
-  body[data-state="failed"] h1 { color: var(--neon-magenta); }
+  body[data-state="working"] #detail,
+  body[data-state="secured"] #detail { text-align: center; }
+  /* The headline is the failure voice: while this is working, the seal and the
+     line under the bar say everything, and a second heading would compete. */
+  h1 { display: none; }
+  body[data-state="failed"] h1 { display: block; color: var(--neon-magenta); }
+  body[data-state="failed"] .seal,
+  body[data-state="failed"] .track,
+  body[data-state="failed"] #status { display: none; }
   @media (prefers-reduced-motion: reduce) {
-    #bar { animation: none !important; transition: none; }
+    .seal::before { animation: none; }
   }
 </style>
 </head>
@@ -185,8 +242,19 @@
 <main>
   <p class="brand">MoonlightWeb</p>
   <h1 id="stage">Starting…</h1>
+  <div class="seal" aria-hidden="true">
+    <div class="seal-face">
+      <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="7" y="14" width="18" height="13" rx="1.5"/>
+        <path d="M11 14v-3.2a5 5 0 0 1 10 0V14"/>
+        <path d="M16 19v3.4"/>
+      </svg>
+    </div>
+  </div>
+  <div class="track"><div id="bar"></div></div>
+  <p id="status">Securing the communication…</p>
   <p id="detail"></p>
-  <div class="track"><div id="bar" data-indeterminate></div></div>
   <p id="note"></p>
 </main>
 <script type="module" src="/boot.js"></script>
