@@ -87,6 +87,7 @@ let work = 0;
 let shown = 0;
 let secured = false;
 let done = false;
+let heartbeat = null;
 
 function build() {
     const root = document.createElement('div');
@@ -112,30 +113,40 @@ function build() {
     return root;
 }
 
-function tick() {
-    if (!el) return;
+/** Compute and paint one frame. Idempotent, so anything may call it. */
+function render() {
+    if (!el || secured) return;
     const elapsed = performance.now() - startedAt;
     const target = WORK_WEIGHT * work + TIME_WEIGHT * Math.min(elapsed / TIME_SPAN_MS, 1);
     shown = Math.max(shown, target);
     bar.style.width = `${(shown * 100).toFixed(1)}%`;
+    if (shown < 0.999) return;
 
-    if (shown >= 0.999 && !secured) {
-        secured = true;
-        el.dataset.state = 'secured';
-        status.textContent = t('securing.done');
-        // Hold at a full bar, then respect the floor, then lift.
-        const remaining = Math.max(
-            HOLD_FULL_MS,
-            MIN_VISIBLE_MS - (performance.now() - startedAt),
-        );
-        setTimeout(dismiss, remaining);
-        return;
-    }
-    requestAnimationFrame(tick);
+    secured = true;
+    el.dataset.state = 'secured';
+    status.textContent = t('securing.done');
+    // Hold at a full bar, then respect the floor, then lift.
+    setTimeout(dismiss, Math.max(HOLD_FULL_MS, MIN_VISIBLE_MS - elapsed));
+}
+
+/*
+ * Two clocks, and the second one is not a nicety: requestAnimationFrame does
+ * not run at all in a hidden tab. This seal covers the application, so a frozen
+ * bar is a covered application — a link opened in a background tab, or a
+ * session restored at startup, would show a dead page the moment it was looked
+ * at. The timer is throttled to about a second while hidden, which nobody sees
+ * and which is enough to finish. Keep something ticking that a hidden tab gets.
+ */
+function raf() {
+    if (!el || secured) return;
+    render();
+    requestAnimationFrame(raf);
 }
 
 function dismiss() {
     if (!el) return;
+    clearInterval(heartbeat);
+    heartbeat = null;
     const leaving = el;
     el.dataset.leaving = '';
     el = null;
@@ -164,7 +175,8 @@ export const SecuringOverlay = {
         status = el.querySelector('.securing-status');
         document.body.appendChild(el);
         startedAt = performance.now();
-        requestAnimationFrame(tick);
+        requestAnimationFrame(raf);
+        heartbeat = setInterval(render, 250);
     },
 
     /** A connect stage was reported. Ignored when the seal is not up. */
