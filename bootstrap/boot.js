@@ -80,7 +80,8 @@ function markSecured() {
     if (ui.status) ui.status.textContent = 'Secured';
 }
 
-function tick() {
+/** Compute and paint one frame. Idempotent, so anything may call it. */
+function render() {
     if (!ticking) return;
     const elapsed = performance.now() - startedAt;
     const target =
@@ -88,23 +89,49 @@ function tick() {
     shown = Math.max(shown, target);
     if (ui.bar) ui.bar.style.width = `${(shown * 100).toFixed(1)}%`;
     if (shown >= 0.999 && !secured) markSecured();
-    requestAnimationFrame(tick);
 }
-requestAnimationFrame(tick);
+
+/*
+ * Two clocks, and the second one is not a nicety.
+ *
+ * requestAnimationFrame is the smooth one, and it does not run AT ALL in a
+ * hidden tab. Since the handover waits for this bar to finish, a link opened in
+ * a background tab — or a session restored at startup, where every tab but one
+ * begins hidden — would sit here forever with the bar frozen at zero and never
+ * start the application. The page would look like it had crashed the moment it
+ * was finally looked at.
+ *
+ * So a timer runs the same frame as well. Browsers throttle it to about once a
+ * second while hidden, which nobody sees, and it is enough to carry the
+ * sequence to the end. Whoever changes the pacing here must keep something
+ * ticking that a hidden tab still gets.
+ */
+function raf() {
+    if (!ticking) return;
+    render();
+    requestAnimationFrame(raf);
+}
+requestAnimationFrame(raf);
+const heartbeat = setInterval(render, 250);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Wait for the bar to actually reach the end, then let it be seen there. */
 async function settle() {
     progress(1);
-    while (!secured) await new Promise((resolve) => requestAnimationFrame(resolve));
+    // Polled on a timer, for the reason above: awaiting a frame here would be
+    // awaiting one that a hidden tab never delivers.
+    while (!secured) await sleep(50);
     await sleep(HOLD_FULL_MS);
     const remaining = MIN_VISIBLE_MS - (performance.now() - startedAt);
     if (remaining > 0) await sleep(remaining);
+    clearInterval(heartbeat);
+    ticking = false;
 }
 
 function fail(message, hint) {
     ticking = false;
+    clearInterval(heartbeat);
     document.body.dataset.state = 'failed';
     say('Not connected', message);
     if (ui.note) ui.note.textContent = hint || '';
