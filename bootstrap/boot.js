@@ -60,6 +60,10 @@ function say(stage, detail) {
 const WORK_WEIGHT = 0.7;
 const TIME_WEIGHT = 0.3;
 const TIME_SPAN_MS = 1200;
+/* The bar eases into its new value rather than jumping to it, so it arrives this
+   long after the number does. Waited out before the hold, or the moment at a
+   full bar would be spent watching the bar still travelling. */
+const BAR_EASE_MS = 260;
 const HOLD_FULL_MS = 300;
 const MIN_VISIBLE_MS = 1600;
 
@@ -122,7 +126,7 @@ async function settle() {
     // Polled on a timer, for the reason above: awaiting a frame here would be
     // awaiting one that a hidden tab never delivers.
     while (!secured) await sleep(50);
-    await sleep(HOLD_FULL_MS);
+    await sleep(BAR_EASE_MS + HOLD_FULL_MS);
     const remaining = MIN_VISIBLE_MS - (performance.now() - startedAt);
     if (remaining > 0) await sleep(remaining);
     clearInterval(heartbeat);

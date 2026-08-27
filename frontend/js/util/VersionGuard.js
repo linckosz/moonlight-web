@@ -61,7 +61,12 @@ export const VersionGuard = {
         if (document.body.classList.contains('streaming-active')) return;
         const hostId = tunnelHostId();
         if (pageCameThroughTunnel() && hostId) {
-            console.log('[MW] New version', v, '(was', this._boot + ') — fetching it from the host');
+            console.log(
+                '[MW] New version',
+                v,
+                '(was',
+                this._boot + ') — fetching it from the host',
+            );
             location.replace(`/${hostId}`);
             return;
         }

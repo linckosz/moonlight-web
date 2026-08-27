@@ -33,8 +33,9 @@
  * The time term exists because the connect phases have no denominator to report
  * and a frozen bar reads as a hang; with work owning the larger share the bar
  * cannot reach the end before the connection does. Then 300 ms at a full bar so
- * the completion is seen, and 1.6 s on screen in total — a deliberate cost, and
- * the reason the seal is worth drawing.
+ * the completion is seen — after the bar has finished easing into it — and 1.6 s
+ * on screen in total: a deliberate cost, and the reason the seal is worth
+ * drawing.
  */
 
 import { t } from '../i18n/i18n.js';
@@ -42,6 +43,10 @@ import { t } from '../i18n/i18n.js';
 const WORK_WEIGHT = 0.7;
 const TIME_WEIGHT = 0.3;
 const TIME_SPAN_MS = 1200;
+/* The bar eases into its new value rather than jumping to it (securing.css), so
+   it arrives this long after the number does. Waited out before the hold, or
+   "300 ms at a full bar" would be spent watching the bar still travelling. */
+const BAR_EASE_MS = 260;
 const HOLD_FULL_MS = 300;
 const MIN_VISIBLE_MS = 1600;
 const FADE_MS = 320;
@@ -125,8 +130,8 @@ function render() {
     secured = true;
     el.dataset.state = 'secured';
     status.textContent = t('securing.done');
-    // Hold at a full bar, then respect the floor, then lift.
-    setTimeout(dismiss, Math.max(HOLD_FULL_MS, MIN_VISIBLE_MS - elapsed));
+    // Let the bar finish travelling, hold at full, respect the floor, then lift.
+    setTimeout(dismiss, Math.max(BAR_EASE_MS + HOLD_FULL_MS, MIN_VISIBLE_MS - elapsed));
 }
 
 /*

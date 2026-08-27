@@ -100,30 +100,30 @@ export class LoginView {
     }
 
     /**
-     * The host machine reaches its own server under the public domain like
-     * everybody else, so once its host session is gone (revoked, expired) this
-     * PIN page is all it gets — even though it sits right in front of the
-     * machine. Loopback is the one address that proves where the browser runs,
-     * and a page loaded there hands the host key back and bounces to the domain
-     * (app.js _maybeRedirectToDomain), restoring admin access for every tab on
-     * that origin. So the way home is simply "open this on localhost".
+     * The way home for whoever is sitting at the machine: once the host session
+     * is gone (revoked, expired) this PIN page is all they get, even though the
+     * machine is right in front of them. Loopback is the one address that proves
+     * where the browser runs, so the offer is simply "open this on localhost".
      *
-     * Best-effort: the port comes from the public /api/server/status, and the
-     * link is dropped entirely when it cannot be read.
+     * The port is taken from the address bar, not asked for. It used to come
+     * from /api/server/status, which is session-gated — so on the one screen
+     * that has no session the request answered 401 every time, the link never
+     * appeared, and BackendClient turned that 401 into a full page reload. A
+     * first visit therefore loaded the application twice, and once the seal
+     * existed you could watch it happen. The 401 also fed the ban guard, which
+     * spent one of the visitor's attempts before they had typed anything.
+     *
+     * Offered only when an IP literal names us, which is the case where the
+     * address bar's port IS the port this server listens on. Under a name — the
+     * rendezvous, a legacy sub-domain — the public port can be a different one
+     * mapped through the router, and a link to the wrong local port is worse
+     * than no link.
      */
     async _resolveLocalUrl() {
-        const hostname = window.location.hostname;
+        const { hostname, port } = window.location;
         if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') return;
-        try {
-            const status = await BackendClient.getServerStatus();
-            const port = status.https_port || 443;
-            this._localUrl =
-                'https://localhost' +
-                (port !== 443 ? ':' + port : '') +
-                (window.location.pathname || '/');
-        } catch (err) {
-            console.warn('[Login] Could not read the server ports:', err);
-        }
+        if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) && !hostname.startsWith('[')) return;
+        this._localUrl = 'https://localhost' + (port ? ':' + port : '') + '/';
     }
 
     /**
