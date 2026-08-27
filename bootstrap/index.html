@@ -115,15 +115,14 @@
     mask-image: radial-gradient(90% 70% at 50% 45%, #000 30%, transparent 100%);
     -webkit-mask-image: radial-gradient(90% 70% at 50% 45%, #000 30%, transparent 100%);
   }
+  /* No panel. The seal, the bar and one line sit straight on the grid, which is
+     the only background this page has and the one the application opens onto —
+     a slab of flat surface colour under them would be a second scene to leave.
+     The notched panel belonged to a page with more to hold. */
   main {
     position: relative;
     width: 100%;
     max-width: 30rem;
-    padding: 1.75rem;
-    background: var(--surface-2);
-    border: 1px solid var(--border-1);
-    /* Notched corner, the application's signature shape. */
-    clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
   }
   .brand {
     font-size: .78rem;
