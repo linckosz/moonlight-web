@@ -63,7 +63,12 @@ import { startAspectProbe } from './stream/AspectProbe.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
-import { startTunnel, tunnelHostId, pageCameThroughTunnel } from './net/tunnelBridge.js';
+import {
+    startTunnel,
+    tunnelHostId,
+    takeTunnelHostKey,
+    pageCameThroughTunnel,
+} from './net/tunnelBridge.js';
 import { SecuringOverlay } from './ui/SecuringOverlay.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
@@ -798,29 +803,51 @@ const MoonlightApp = {
      * Returns true if the app should continue initializing, false otherwise.
      */
     /**
-     * Redeem a host key passed as ?mwk=... in the URL (added by the host
-     * machine's Desktop shortcut / tray / startup open when they point at the
-     * public domain). On success the backend sets a session cookie flagged as
-     * "host", making is_localhost true even though the peer address is the
-     * router. The key is stripped from the address bar either way.
+     * Redeem the host key this page was opened with, if it was opened with one.
+     *
+     * It says "the browser asking is running on the host machine", and the
+     * backend answers with a session flagged as the host's — admin access,
+     * without the peer address having to be loopback. Two places carry it, and
+     * the difference is not cosmetic:
+     *
+     *   ?mwk=   a local address (the desktop shortcut, the tray, startup open).
+     *           A query is fine there because the only server that sees it is
+     *           this machine.
+     *   #k=     a rendezvous link. The fragment is the one part of a URL a
+     *           browser never sends to the server it fetched the page from, so
+     *           the introduction server sees which machine is wanted and not the
+     *           key to it. This is how the owner gets an admin page under a
+     *           certificate the browser already trusts, instead of accepting a
+     *           warning on loopback.
+     *
+     * Single-use at the far end: the host burns the key as it redeems it. So it
+     * comes out of the address bar either way — a spent key in the history is
+     * pointless, and a refused one is worse than pointless.
      */
     async _redeemHostKey() {
         const params = new URLSearchParams(window.location.search);
-        const key = params.get('mwk');
+        const key = params.get('mwk') || takeTunnelHostKey();
         if (!key) return;
+
+        // Out of the address first, so nothing below can leave it behind. The
+        // fragment is rebuilt from the identifier alone, dropping the key with
+        // it; the tunnel keeps the identifier in this tab either way.
+        params.delete('mwk');
+        const query = params.toString();
+        const id = tunnelHostId();
+        const hash = id ? `#${id}` : window.location.hash;
+        history.replaceState(
+            history.state,
+            '',
+            window.location.pathname + (query ? '?' + query : '') + hash,
+        );
+
         try {
             await BackendClient.redeemHostKey(key);
             console.log('[MW] Host key redeemed — host-machine session granted');
         } catch (err) {
             console.warn('[MW] Host key redemption failed:', err);
         }
-        params.delete('mwk');
-        const query = params.toString();
-        history.replaceState(
-            history.state,
-            '',
-            window.location.pathname + (query ? '?' + query : '') + window.location.hash,
-        );
     },
 
     /**

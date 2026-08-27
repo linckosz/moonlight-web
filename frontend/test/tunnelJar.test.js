@@ -146,4 +146,47 @@ describe('which machine a page talks to', () => {
         at('/not-an-identifier', '#also-not-one');
         expect(tunnelModule.hostIdFromLocation()).toBeNull();
     });
+
+    // The fragment carries a second thing now: the host key the machine's own
+    // tray puts there so its owner reaches admin under a trusted certificate.
+    // It is in the fragment and not the query for one reason — a browser never
+    // sends the fragment to the server it fetched the page from — so the
+    // identifier has to survive sharing the space with it.
+    describe('and the key it may carry', () => {
+        it('reads the identifier and the key out of one fragment', () => {
+            at('/', `#${A}&k=SEKRIT`);
+            expect(tunnelModule.hostIdFromLocation()).toBe(A);
+            expect(tunnelModule.hostKeyFromLocation()).toBe('SEKRIT');
+        });
+
+        it('reads a key that arrived alongside an identifier in the path', () => {
+            // The shape of the link the tray hands out, before any handover.
+            at(`/${A}`, '#k=SEKRIT');
+            expect(tunnelModule.hostIdFromLocation()).toBe(A);
+            expect(tunnelModule.hostKeyFromLocation()).toBe('SEKRIT');
+        });
+
+        it('decodes a key that had to be escaped', () => {
+            at('/', `#${A}&k=${encodeURIComponent('a+b/c=d&e')}`);
+            expect(tunnelModule.hostKeyFromLocation()).toBe('a+b/c=d&e');
+        });
+
+        it('answers null when the fragment carries no key', () => {
+            at('/', `#${A}`);
+            expect(tunnelModule.hostKeyFromLocation()).toBeNull();
+            at(`/${A}`);
+            expect(tunnelModule.hostKeyFromLocation()).toBeNull();
+        });
+
+        it('never reads a key out of the query, which the server would have seen', () => {
+            at('/', '');
+            vi.stubGlobal('location', {
+                pathname: `/${A}`,
+                hash: '',
+                search: '?k=SEKRIT',
+                origin: 'https://example.test',
+            });
+            expect(tunnelModule.hostKeyFromLocation()).toBeNull();
+        });
+    });
 });

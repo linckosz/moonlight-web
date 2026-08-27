@@ -183,12 +183,29 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     });
 
     // POST /api/auth/host-key — prove the browser runs on the host machine.
-    // The host's own entry points (Desktop shortcut, tray, startup open) embed a
-    // persistent random key (?mwk=...) when they point at the public domain; the
-    // frontend redeems it here to obtain a localhost-equivalent session (admin
-    // access), since over the domain the peer address is the router/NAT-hairpin
-    // address, not loopback. Redemption is refused for peers that cannot
-    // plausibly be the host machine itself.
+    // The host's own entry points embed a persistent random key; the frontend
+    // redeems it here to obtain a localhost-equivalent session (admin access),
+    // since anywhere but loopback the peer address is not the machine's own.
+    // Redemption is refused for peers that cannot plausibly be the host machine
+    // itself.
+    //
+    // Two ways in, and the difference is recorded on the session because it
+    // decides what that session is worth afterwards:
+    //
+    //   socket  the key rides in ?mwk= on a local URL. The query reaches only
+    //           this machine, so it is safe there and nowhere else.
+    //   tunnel  the key rides in the FRAGMENT of a rendezvous link (#k=...),
+    //           which is the one part of a URL a browser never sends to the
+    //           server it fetched from — so the introduction server never sees
+    //           it, and it reaches this handler inside the tunnel's own
+    //           encryption. This is what gives the owner an admin page under a
+    //           certificate the browser already trusts.
+    //
+    // The plausibility gate below is what makes the tunnel case safe, and it is
+    // stronger there than it looks: for a tunnel peer clientAddress is the
+    // address ICE actually settled on — where our own stack is sending packets,
+    // not anything the browser said. A forwarded link redeemed from elsewhere on
+    // the internet arrives from an address that is neither private nor ours.
     // onHostKeyRotated captured by value: the parameter dies when this
     // registration function returns, but the route lambda lives on.
     server.router()->post("/api/auth/host-key", [&, onHostKeyRotated](const HttpRequest& req) {
@@ -207,8 +224,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             return HttpResponse::error(403, "Invalid host key");
         }
 
-        QString token =
-            authManager.createSession(req.clientAddress, QStringLiteral("Host machine"), true);
+        QString token = authManager.createSession(req.clientAddress,
+                                                  req.viaTunnel
+                                                      ? QStringLiteral("Host machine (remote link)")
+                                                      : QStringLiteral("Host machine"),
+                                                  true, false, req.viaTunnel);
         Logger::info(QStringLiteral("[Auth] Host session created for %1 (via host key)").arg(addr));
 
         // Single-use: burn the redeemed key and rewrite the entry points that

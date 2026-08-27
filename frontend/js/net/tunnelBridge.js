@@ -45,10 +45,25 @@
 
 let tunnel = null;
 let hostId = null;
+let hostKey = null;
 
 /** The identifier this tab is bound to, or null when there is no tunnel. */
 export function tunnelHostId() {
     return hostId;
+}
+
+/**
+ * The host key this link arrived with, read once and forgotten.
+ *
+ * It is what the machine's own tray puts in the fragment so its owner reaches an
+ * admin page under a certificate the browser already trusts. Single-use at the
+ * far end, so it is single-use here too: whoever asks first gets it, and a
+ * second caller gets null rather than a chance to replay it.
+ */
+export function takeTunnelHostKey() {
+    const key = hostKey;
+    hostKey = null;
+    return key;
 }
 
 /** Whether this page is reached through the introduction server. */
@@ -144,6 +159,7 @@ export async function startTunnel(onStage) {
     }
 
     hostId = mod.hostIdFromLocation();
+    hostKey = mod.hostKeyFromLocation();
     if (!hostId) {
         // We are on the rendezvous — the transport loaded — but nothing names a
         // machine: a fresh browser opening the bare address, or one whose

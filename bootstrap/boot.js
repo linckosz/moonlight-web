@@ -21,7 +21,13 @@
  * not a guarantee and must never be described as one.
  */
 
-import { Tunnel, hostIdFromLocation, rememberLastHost, SHELL_CACHE } from './tunnel.js';
+import {
+    Tunnel,
+    hostIdFromLocation,
+    hostKeyFromLocation,
+    rememberLastHost,
+    SHELL_CACHE,
+} from './tunnel.js';
 
 const ui = {
     stage: document.getElementById('stage'),
@@ -88,8 +94,7 @@ function markSecured() {
 function render() {
     if (!ticking) return;
     const elapsed = performance.now() - startedAt;
-    const target =
-        WORK_WEIGHT * work + TIME_WEIGHT * Math.min(elapsed / TIME_SPAN_MS, 1);
+    const target = WORK_WEIGHT * work + TIME_WEIGHT * Math.min(elapsed / TIME_SPAN_MS, 1);
     shown = Math.max(shown, target);
     if (ui.bar) ui.bar.style.width = `${(shown * 100).toFixed(1)}%`;
     if (shown >= 0.999 && !secured) markSecured();
@@ -350,7 +355,13 @@ async function main() {
     // ordinary absolute paths for its own routes and its own assets, and a
     // prefix in the path would break every one of them; a fragment is invisible
     // to all of it and still survives a reload.
-    location.replace(`/#${hostId}`);
+    //
+    // A host key rides along when the link carried one — it arrived in the
+    // fragment and it stays there, because this page hands over by navigating
+    // and a query would put it in the introduction server's next request line.
+    // The application spends it and strips it; nothing here reads it.
+    const key = hostKeyFromLocation();
+    location.replace(`/#${hostId}${key ? `&k=${encodeURIComponent(key)}` : ''}`);
 }
 
 main().catch((e) => fail(e.message, ''));
