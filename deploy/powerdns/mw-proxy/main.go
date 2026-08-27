@@ -43,6 +43,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,6 +65,21 @@ type config struct {
 	storePath    string // MW_PROXY_STORE             (default "/data/owners.json")
 	maxNewPerHr  int    // MW_PROXY_MAX_NEW_PER_HOUR  (default 20; 0 = unlimited)
 	maxBodyBytes int64  // MW_PROXY_MAX_BODY_BYTES    (default 64 KiB)
+
+	// MW_SUBDOMAIN_REGISTRATION=off — no NEW sub-domain may be created.
+	//
+	// The retirement, expressed as one switch. Existing sub-domains are
+	// untouched by it: their A record still follows a changing home IP and
+	// their certificate still renews, right up to the February 2027 shutdown.
+	// Only the creation of a name that does not exist yet is refused.
+	//
+	// Deliberately a switch and not a date. It is flipped the day 0.3.0 is
+	// published, because that is the day there is somewhere else to send
+	// people; a date compiled in here would either arrive before the release
+	// or need editing to match it. The field is "closed" rather than "open" so
+	// that its zero value — a missing variable, a config built in a test —
+	// leaves the door as it is today rather than silently shutting it.
+	registrationClosed bool
 
 	// The update relay served on /v1/update — see update.go.
 	update updateConfig
@@ -116,6 +132,9 @@ func loadConfig() config {
 			umamiWebsite: os.Getenv("MW_UMAMI_SESSIONS_WEBSITE_ID"),
 			hostname:     "metrics." + domain,
 		},
+	}
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("MW_SUBDOMAIN_REGISTRATION"))); v != "" {
+		c.registrationClosed = v == "off" || v == "false" || v == "0" || v == "closed"
 	}
 	if v := os.Getenv("MW_PROXY_MAX_NEW_PER_HOUR"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -332,17 +351,20 @@ type proxy struct {
 	store    *ownerStore
 	quota    *quota
 	client   *http.Client
-	zonePath string // /api/v1/servers/localhost/zones/{zone}
+	// Existence checks only — see zoneHasA, which runs under the store lock.
+	zoneClient *http.Client
+	zonePath   string // /api/v1/servers/localhost/zones/{zone}
 }
 
 func newProxy(cfg config, store *ownerStore) *proxy {
 	return &proxy{
-		cfg:      cfg,
-		matchers: buildMatchers(cfg.zone),
-		store:    store,
-		quota:    newQuota(cfg.maxNewPerHr),
-		client:   &http.Client{Timeout: 20 * time.Second},
-		zonePath: "/api/v1/servers/localhost/zones/" + cfg.zone,
+		cfg:        cfg,
+		matchers:   buildMatchers(cfg.zone),
+		store:      store,
+		quota:      newQuota(cfg.maxNewPerHr),
+		client:     &http.Client{Timeout: 20 * time.Second},
+		zoneClient: &http.Client{Timeout: 3 * time.Second},
+		zonePath:   "/api/v1/servers/localhost/zones/" + cfg.zone,
 	}
 }
 
@@ -409,6 +431,73 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErr(w, http.StatusMethodNotAllowed, "only GET and PATCH are allowed")
 	}
+}
+
+// What a machine still running 0.2.x is told when it tries to register a name
+// after the switch is thrown. Its admin page shows this sentence, prefixed by
+// the client's own "create/update A record failed (HTTP 403):".
+//
+// It has to say three things, because the person reading it did nothing wrong
+// and is looking at a red box: this way of doing it is over, here is the way
+// that works now, and the part you were already using is unaffected.
+const subdomainClosedMessage = "This machine cannot be published under its own " +
+	"name any more. MoonlightWeb 0.3.0 replaced per-machine sub-domains with an " +
+	"introduction service: your machine is reached at a moonlightweb.top address " +
+	"without any DNS record or certificate being created in your name. Update to " +
+	"0.3.0 or later to use internet access. Streaming over your local network is " +
+	"unaffected and keeps working on this version. Sub-domains registered before " +
+	"this change keep working until February 2027."
+
+// zoneHasA reports whether {uid}.{zone} already has an A record.
+//
+// The owner store cannot answer this. It records ownership on first write, so
+// it is empty for every sub-domain registered before that mechanism existed —
+// and reading "no owner on file" as "this is new" would refuse exactly the
+// instances the retirement promises to keep serving. The zone is the only place
+// that knows what exists.
+//
+// Any doubt answers "it exists", i.e. allow. Refusal is a hard stop for someone
+// who cannot do anything about it; an upstream hiccup must never become one.
+//
+// Called with the store lock held, hence its own short-timeout client: the
+// worst case is a few seconds of serialised writes on a service that handles a
+// handful a day, not the 20 s the forwarding client allows.
+func (p *proxy) zoneHasA(uid string) bool {
+	u := p.cfg.upstream + p.zonePath +
+		"?rrset_name=" + url.QueryEscape(uid+"."+p.cfg.zone) + "&rrset_type=A"
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return true
+	}
+	req.Header.Set("X-API-Key", p.cfg.realKey)
+	resp, err := p.zoneClient.Do(req)
+	if err != nil {
+		log.Printf("[mw-proxy] WARN existence check for %s failed: %v — allowing", uid, err)
+		return true
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[mw-proxy] WARN existence check for %s: upstream HTTP %d — allowing",
+			uid, resp.StatusCode)
+		return true
+	}
+	var z struct {
+		RRSets []struct {
+			Records []struct {
+				Content string `json:"content"`
+			} `json:"records"`
+		} `json:"rrsets"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&z); err != nil {
+		log.Printf("[mw-proxy] WARN existence check for %s: bad JSON: %v — allowing", uid, err)
+		return true
+	}
+	for _, rs := range z.RRSets {
+		if len(rs.Records) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // checkGet enforces that reads always carry a valid rrset_name filter, so the
@@ -491,6 +580,20 @@ func (p *proxy) checkPatch(r *http.Request, body []byte) (commit func(), code in
 		if existing == "" {
 			if otHash == "" {
 				return noop, http.StatusForbidden, "X-MW-Owner required to claim a subdomain"
+			}
+			// The retirement. Only a name that does not already exist in the
+			// zone is refused, so every sub-domain already published keeps
+			// working exactly as before.
+			//
+			// Checked on the A record and nowhere else, on purpose. It is the
+			// last write a registering instance makes and the only one whose
+			// refusal reaches its user as words: the 0.2.x client renders the
+			// body of a failed A-record write, and reports its TXT failures as
+			// a bare status code. Refusing earlier would be tidier, cost an
+			// inert orphan TXT less, and tell the person in front of the screen
+			// nothing at all.
+			if p.cfg.registrationClosed && kind == kindA && !p.zoneHasA(uid) {
+				return noop, http.StatusForbidden, subdomainClosedMessage
 			}
 			if other, held := p.ownerHoldsOtherUID(otHash, uid, claims, releases); held {
 				return noop, http.StatusConflict,
@@ -638,6 +741,17 @@ func main() {
 		Addr:              cfg.listen,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+	// Which side of the retirement this box is on. Said at startup because it
+	// is invisible from outside until someone tries to register — and the day it
+	// is thrown, "did the variable actually take?" is the only question that
+	// matters.
+	if cfg.registrationClosed {
+		log.Printf("[mw-proxy] sub-domain registration CLOSED — existing names keep " +
+			"working (updates, renewals, deletes); new ones are refused")
+	} else {
+		log.Printf("[mw-proxy] sub-domain registration open — set " +
+			"MW_SUBDOMAIN_REGISTRATION=off to close it when 0.3.0 ships")
 	}
 	log.Printf("[mw-proxy] listening on %s → %s (zone %s)", cfg.listen, cfg.upstream, cfg.zone)
 	log.Fatal(srv.ListenAndServe())
