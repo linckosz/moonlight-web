@@ -48,7 +48,7 @@ Per-browser preferences (stored in `localStorage`, with server defaults) are edi
 |:---:|:---:|
 | ![Stream settings](../screenshots/settings.png) | ![Advanced options (mobile)](../screenshots/advanced.png) |
 
-- **Bitrate** 1–150 Mbps or auto (recommendation derived from resolution/FPS/HDR), **resolution** 720p–2160p or *Native Host*, **FPS** 15–240, **codec** auto/H.264/HEVC/AV1 (unsupported options greyed out live via `VideoDecoder.isConfigSupported`), **HDR**, **4:4:4 chroma**, aspect ratio, allow-tearing (off = VSync pacing), performance stats, gaming mode, touch sensitivity / touch-screen mode (mobile & tablet only), and a mobile **Power Saving** mode that forces the lightest pipeline.
+- **Bitrate** 1–150 Mbps or auto (recommendation derived from resolution/FPS/HDR), **resolution** 720p–2160p or *Native Host*, **FPS** 15–240, **codec** auto/H.264/HEVC/AV1 (unsupported options greyed out live via `VideoDecoder.isConfigSupported`), **HDR**, **4:4:4 chroma**, aspect ratio, allow-tearing (on by default where the browser can tear; off = VSync pacing), performance stats, gaming mode, touch sensitivity / touch-screen mode (mobile & tablet only), and a mobile **Power Saving** mode that forces the lightest pipeline.
 - Changing quality mid-stream is **seamless**: a second stream is prepared in the background and the display switches on its first frame — no loader, no reconnection (the same mechanism the automatic congestion ladder uses).
 - **Video Enhancement** (WebGPU upscaling + sharpening) with algorithm choice (auto / SGSR / FSR1):
 

@@ -175,6 +175,26 @@ export function pickAutoEnhancer() {
 export const SUPPORTS_CANVAS_TEARING =
     platform.type === 'desktop' && /chrome\/\d+/i.test(navigator.userAgent || '');
 
+/**
+ * Resolve the effective "allow tearing" preference from a saved settings blob.
+ *
+ * Tearing is the DEFAULT wherever the platform can actually tear (Chromium
+ * desktop): frames are presented on decode instead of waiting for the next
+ * compositor swap. Everywhere else the flag is a no-op, so it is forced off and
+ * the render loop keeps its VSync pacing.
+ *
+ * `tearing_default_v2` marks a value the user actually chose under that default.
+ * Anything saved before it — a `tearing_enabled` written while the default was
+ * OFF, or the even older inverted `vsync_enabled` — records an old default, not
+ * a decision, so the new default wins once. Every save from the Settings overlay
+ * carries the marker from now on and is honoured as-is, tearing off included.
+ */
+export function resolveTearing(settings) {
+    if (!SUPPORTS_CANVAS_TEARING) return false;
+    const s = settings || {};
+    return s.tearing_default_v2 !== true || s.tearing_enabled === true;
+}
+
 /** True when the app runs as an installed PWA (no browser chrome). */
 export const IS_STANDALONE =
     window.navigator.standalone === true ||

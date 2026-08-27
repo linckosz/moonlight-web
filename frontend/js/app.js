@@ -56,7 +56,7 @@ import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { ConsentBar } from './ui/ConsentBar.js';
 import { VersionGuard } from './util/VersionGuard.js';
-import { IS_MOBILE_OR_TABLET } from './util/BrowserDetect.js';
+import { IS_MOBILE_OR_TABLET, resolveTearing } from './util/BrowserDetect.js';
 import { computeAutoBitrate } from './util/AutoBitrate.js';
 import { DEFAULT_ASPECT, loadHostAspect, saveHostAspect } from './util/AspectRatio.js';
 import { startAspectProbe } from './stream/AspectProbe.js';
@@ -1724,13 +1724,11 @@ const MoonlightApp = {
                 : 2.2;
         // Mobile only: direct touch-screen input (absolute) instead of trackpad.
         const touchScreen = streamingSettings.touch_screen === true;
-        // Allow tearing (default off): disables VSync pacing and presents frames
-        // on decode via a desynchronized canvas (Chromium desktop only — the
-        // flag is ignored elsewhere). Migrates the legacy inverted vsync key.
-        const tearing =
-            streamingSettings.tearing_enabled === true ||
-            (streamingSettings.tearing_enabled === undefined &&
-                streamingSettings.vsync_enabled === false);
+        // Allow tearing (default on): disables VSync pacing and presents frames
+        // on decode via a desynchronized canvas (Chromium desktop only — forced
+        // off elsewhere, where the flag is a no-op). resolveTearing also decides
+        // what an older save — written under the previous OFF default — means.
+        const tearing = resolveTearing(streamingSettings);
         // Video worker mode: 'auto' (heuristic — desktop only), 'on' or 'off'.
         const videoWorker = streamingSettings.video_worker;
         // Video enhancement (WebGPU upscale/sharpen). Forced OFF on MediaTrack:
