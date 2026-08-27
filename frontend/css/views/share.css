@@ -1,20 +1,21 @@
 /* MoonlightWeb — Session sharing
  *
- * Two surfaces: the owner's Share menu in the stream header, and the invited
- * player's page. Both follow the CP2077 tokens; the pale state colours asked
- * for in the spec are tinted versions of the semantic neons, dimmed enough to
- * read as "status" rather than "alarm" on the near-black header.
+ * Three surfaces: the Share button in the stream header, the sharing board it
+ * opens (also reachable from a host's kebab, with nothing streaming), and the
+ * invited player's page. All follow the CP2077 tokens; the pale state colours
+ * are tinted versions of the semantic neons, dimmed enough to read as "status"
+ * rather than "alarm" on the near-black chrome.
  */
 
-/* ── Owner: Share button + dropdown ────────────────────────────────────── */
+/* ── Owner: Share button ───────────────────────────────────────────────── */
 
 .share-menu {
     position: relative;
-    /* The dropdown hangs below the header, over the picture — and the stream's
-       transparent input layer sits there at z-index 50. Without a stacking
-       context above it the rows would be painted underneath: visible (the
-       layer is transparent) but unclickable, every click landing in the game
-       as a mouse press on the host. */
+    /* The stream's transparent input layer sits at z-index 50, over the
+       header's own ground. Without a stacking context above it the button
+       would be painted underneath: visible (the layer is transparent) but
+       unclickable, the click landing in the game as a mouse press on the
+       host. */
     z-index: 300;
     margin-right: 10px;
 }
@@ -46,137 +47,171 @@
     box-shadow: inset 0 0 0 1px var(--c-info);
 }
 
-.share-dropdown {
-    position: absolute;
-    top: calc(100% + 10px);
-    right: 0;
-    z-index: 1;
-    width: 320px;
+/* ── Owner: the sharing board ──────────────────────────────────────────── */
+
+/* Over everything, with the page it was opened from blurred behind it: the
+   board is the only thing that matters while it is up, and the host list or
+   the game underneath stays recognisable without competing for attention. */
+.share-board-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 20px;
+    background: rgba(3, 5, 10, 0.74);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.share-board {
+    width: min(920px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 20px 24px 24px;
     background:
         var(--bg-grid) 0 0 / var(--bg-grid-size),
         linear-gradient(160deg, var(--surface-2), var(--surface-1));
     box-shadow:
         var(--edge-cyan),
-        0 18px 44px rgba(0, 0, 0, 0.62);
+        0 24px 64px rgba(0, 0, 0, 0.66);
     clip-path: var(--notch-lg);
 }
 
-.share-dropdown[hidden] {
-    display: none;
+/* Sticky: the board is taller than the viewport once every row shows its own
+   half, and the ✕ is now the only way out — it must never scroll away. */
+.share-board-head {
+    position: sticky;
+    top: -20px;
+    z-index: 2;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    margin: -20px -24px 0;
+    padding: 20px 24px 14px;
+    background: linear-gradient(160deg, var(--surface-2), var(--surface-1));
+    border-bottom: 1px solid var(--border-1);
 }
 
-.share-dropdown-title {
-    margin: 2px 2px 4px;
+.share-board-title {
     font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.18em;
+    font-size: 12px;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
+    color: var(--neon-cyan);
+}
+
+.share-board-context {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
     color: var(--text-3);
 }
 
-/* One row per invitable player, built like a host card: round status glyph,
-   name + one-line hint, uppercase badge. */
-.share-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    width: 100%;
-    padding: 8px 12px 8px 10px;
-    font-family: inherit;
-    line-height: 1.35;
-    text-align: left;
-    color: var(--text-1);
-    background: var(--surface-2);
+.share-board-close {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    font-size: 15px;
+    line-height: 1;
+    color: var(--text-3);
+    background: none;
     border: none;
-    /* Left tick in the state colour — the CP2077 status rail. */
+    cursor: pointer;
+}
+
+.share-board-close:hover {
+    color: var(--c-danger);
+}
+
+.share-board-note {
+    margin: 8px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-3);
+}
+
+.share-board-note.is-warning {
+    color: var(--c-warning);
+}
+
+.share-board-app {
+    padding: 14px 2px 4px;
+    border-bottom: 1px solid var(--border-1);
+}
+
+.share-app-select {
+    width: min(340px, 100%);
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-1);
+    background: var(--surface-0);
+    border: 1px solid var(--border-1);
+}
+
+.share-board-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+/* One block per person: the header line and everything that belongs to it,
+   under a single status rail running their full height. Two stacked boxes with
+   separate rails made the board read as six things instead of three. */
+.share-player {
+    background-color: var(--surface-2);
     box-shadow: inset 3px 0 0 var(--row-accent, var(--text-3));
     clip-path: var(--notch-sm);
-    cursor: pointer;
-    transition:
-        background 0.15s,
-        filter 0.2s;
+    transition: background-image 0.15s;
 }
 
-.share-row:hover {
-    background: var(--surface-3);
-    filter: drop-shadow(0 0 7px var(--row-glow, transparent));
+/* Two percent of white, and no more: enough to draw the boundary of the block
+   under the cursor, which is the answer to "whose options am I about to
+   change?", without turning a hover into an event. A step to --surface-3 was
+   too loud for a board where three cards sit under each other. */
+.share-player:hover {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0.022));
 }
 
-.share-row:active {
-    transform: translateY(1px);
+.share-player[data-state='off'] {
+    --row-accent: var(--text-3);
+}
+.share-player[data-state='shared'] {
+    --row-accent: var(--c-warning);
+}
+.share-player[data-state='binded'] {
+    --row-accent: var(--c-success);
 }
 
-.share-row:disabled {
-    cursor: progress;
-    opacity: 0.72;
+/* The header line. The grid keeps the columns aligned down the whole board, so
+   the eye reads a table rather than three independent cards. */
+.share-brow {
+    display: grid;
+    grid-template-columns: 34px 72px minmax(140px, 1fr) auto 92px 104px;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 10px 12px;
 }
 
-.share-row .status-icon {
+.share-brow .status-icon {
     flex-shrink: 0;
     width: 30px;
     height: 30px;
     font-size: 0.95rem;
 }
 
-.share-row-info {
-    flex: 1;
-    min-width: 0;
-}
-
-.share-row-name {
-    display: block;
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    letter-spacing: 0.03em;
-}
-
-.share-row-hint {
-    display: block;
-    margin-top: 1px;
-    font-size: var(--fs-xs);
-    color: var(--text-3);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.share-row .status-badge {
-    flex-shrink: 0;
-}
-
-/* off / shared / streaming — the semantic trio, same hues as the host list. */
-.share-row[data-state='off'] {
-    --row-accent: var(--c-danger);
-    --row-glow: rgba(255, 42, 109, 0.35);
-}
-.share-row[data-state='shared'] {
-    --row-accent: var(--c-success);
-    --row-glow: rgba(42, 212, 160, 0.35);
-}
-.share-row[data-state='streaming'] {
-    --row-accent: var(--c-info);
-    --row-glow: rgba(0, 229, 255, 0.4);
-}
-.share-row[data-state='busy'] {
-    --row-accent: var(--text-3);
-}
-
-/* "Live" is the one status the hosts page has no equivalent for. */
-.status-icon.live {
-    color: var(--c-info);
-    background-color: var(--c-info-soft);
-}
-.status-badge.live {
-    color: var(--c-info);
-    background-color: var(--c-info-soft);
-}
-
 /* Someone is on the other end right now — the row should breathe. */
-.share-row[data-state='streaming'] .status-icon {
+.share-player[data-streaming] {
+    --row-accent: var(--c-info);
+}
+.share-brow[data-streaming] .status-icon {
+    color: var(--c-info);
+    background-color: var(--c-info-soft);
     animation: shareLivePulse 1.8s ease-in-out infinite;
 }
 
@@ -191,8 +226,429 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .share-row[data-state='streaming'] .status-icon {
+    .share-brow[data-streaming] .status-icon {
         animation: none;
+    }
+}
+
+/* The invitation's state, spelled out. The rail colour and the glyph say the
+   same thing faster, but only to someone who already knows the code — the word
+   is what makes the row readable the first time. */
+.share-brow-state {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--row-accent, var(--text-3));
+}
+
+.share-brow-id {
+    min-width: 0;
+}
+
+.share-brow-hint {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The name reads as text until you touch it — a field that announced itself
+   with a box would make four permanent input widgets out of a status table. */
+.share-name-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.share-name-input {
+    width: 100%;
+    min-width: 0;
+    padding: 3px 6px;
+    font-family: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--text-1);
+    background: transparent;
+    border: 1px solid transparent;
+}
+
+.share-name-input:hover {
+    border-color: var(--border-1);
+}
+
+.share-name-input:focus {
+    outline: none;
+    background: var(--surface-0);
+    border-color: var(--accent-ring);
+}
+
+.share-name-pencil {
+    flex-shrink: 0;
+    color: var(--text-3);
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.share-name-field:hover .share-name-pencil {
+    opacity: 0.7;
+}
+
+.share-brow-perms {
+    display: flex;
+    gap: 16px;
+}
+
+.share-brow-perms .share-check {
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* The access badge: one word for what the two boxes add up to. Its colour is
+   the whole point — the owner should be able to scan the column and see who
+   can do what without reading it. */
+.share-access-badge {
+    justify-self: start;
+    padding: 3px 9px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    background: var(--surface-3);
+    clip-path: var(--notch-sm);
+}
+
+.share-access-badge[data-level='gamer'] {
+    color: var(--c-success);
+    background: var(--c-success-soft);
+}
+.share-access-badge[data-level='desktop'] {
+    color: var(--c-warning);
+    background: var(--c-warning-soft);
+}
+/* Full hands over the keyboard and mouse of this machine — the one level that
+   should read as a warning rather than a label. */
+.share-access-badge[data-level='full'] {
+    color: var(--c-danger-text);
+    background: var(--c-danger-soft);
+}
+
+.share-brow-action {
+    justify-self: end;
+}
+
+.share-toggle-btn {
+    width: 100%;
+    padding: 7px 10px;
+    font-size: 12px;
+}
+
+/* The lower half of a player: link, PIN, lifetime. Inside their block, under
+   their rail, separated from the header line by a hairline rather than by a
+   gap — it is the same person, not the next one. */
+/* No background of its own: the whole card has to lift together on hover, or
+   the gesture would light the header and leave the options it is meant to
+   attach to it sitting in the dark. The hairline carries the separation. */
+.share-brow-detail {
+    margin: 0 0 0 3px;
+    padding: 14px 18px 16px 43px;
+    border-top: 1px solid var(--border-1);
+}
+
+.share-detail-line + .share-detail-line {
+    margin-top: 12px;
+}
+
+.share-detail-line .share-field-label {
+    margin-top: 0;
+}
+
+/* Nothing started on this row yet: the link and the PIN do not exist, so they
+   are shown empty and dimmed rather than hidden. The row keeps its shape, which
+   is the point of a board that never folds — you can see what a row *will*
+   hold before you commit to it. */
+.share-detail-line.is-idle,
+.share-detail-pin.is-idle {
+    opacity: 0.42;
+}
+
+/* PIN on the left, lifetime on the right: the two things you set and read
+   together when handing an invitation out. Stretched, not top-aligned, so the
+   lifetime column knows how tall the PIN field is and can line its bar up with
+   the middle of it. */
+.share-detail-split {
+    display: flex;
+    align-items: stretch;
+    gap: 24px;
+}
+
+.share-detail-pin {
+    flex: 0 0 auto;
+}
+
+/* Six digits and no more: left to flex:1 it would stretch across the room the
+   lifetime needs. */
+.share-detail-pin .share-pin {
+    flex: 0 0 auto;
+    width: 190px;
+    font-size: 24px;
+}
+
+.share-detail-ttl {
+    flex: 1;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* The bar sits on the PIN field's midline. Both columns open with the same
+   label, so this body is exactly as tall as the PIN row beside it and only has
+   to centre itself in it.
+ *
+ * The padding is the correction, not a nudge: centring [track + scale] as a
+ * pair puts the TRACK half a scale-height too high, and padding-top of P shifts
+ * a centred box down by P/2. One scale-height of padding therefore lands the
+ * track itself, not the pair, on the midline. */
+.share-ttl-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-top: 15px;
+}
+
+.share-expiry {
+    color: var(--accent-1);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.share-regen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex-shrink: 0;
+    padding: 8px 14px;
+    font-size: 12px;
+}
+
+/* A PIN that has been spent is not a secret to copy any more — it is a fact
+   about the invitation, so it stops looking like a field. */
+.share-pin-spent {
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    color: var(--c-success);
+    background: var(--c-success-soft);
+    clip-path: var(--notch-sm);
+}
+
+/* Someone else opened this link with the right PIN. Before the board existed
+   this happened silently — surfacing it is half the reason the board does. */
+.share-refused {
+    margin: 10px 0 0;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--c-warning);
+    background: var(--c-warning-soft);
+    box-shadow: inset 3px 0 0 var(--c-warning);
+}
+
+/* What "desktop" or "full" actually hands over, spelled out.
+ *
+ * Hidden for now: the badge names the level, and a sentence under every row a
+ * guest was granted anything makes the board a wall of text. Whether people
+ * read the badge the way we mean it is a question feedback answers — so the
+ * markup stays and only this rule stands between it and the screen. */
+.share-warning {
+    display: none;
+    margin: 10px 0 0;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--c-warning);
+    background: var(--c-warning-soft);
+    box-shadow: inset 3px 0 0 var(--c-warning);
+}
+
+/* Full control is the one level that hands over this machine outright. */
+.share-warning[data-level='full'] {
+    color: var(--c-danger-text);
+    background: var(--c-danger-soft);
+    box-shadow: inset 3px 0 0 var(--c-danger);
+}
+
+/* The lifetime rides the same slider as the bitrate in Settings, thumb and
+   cursor included: two sliders in one app that behave differently is one
+   slider too many. Only the track is repainted, to say something the bitrate
+   slider has no need to say — that this is a quantity draining on its own. */
+/* Symmetric margins on purpose: uneven ones shift the bar off the midline the
+   body centres it on, by half their difference. */
+.share-ttl-track {
+    position: relative;
+    display: block;
+    margin: 6px 0;
+}
+
+/* Three regions, all keyed off two custom properties the view sets:
+ *
+ *   0 ────────── --live ────────── --fill ────────── 100%
+ *   │  solid yellow  │ dim yellow   │     neutral    │
+ *   │  time left     │ time spent   │  time never granted
+ *
+ * The middle band is filled, not just outlined: left neutral it looked like the
+ * scale beyond the thumb, which says the opposite thing — that the time was
+ * never given at all. Dim enough to read as spent, yellow enough to say it was
+ * part of what this invitation was worth.
+ *
+ * The solid bar's LENGTH is the time remaining, so it drains towards zero while
+ * the spent band opens up behind it. Both offsets arrive as colour stops rather
+ * than background sizes: a percentage background-position is proportional to
+ * the leftover room, so naming a percentage there lands somewhere else. */
+.share-ttl-slider {
+    --ttl-edge: rgba(252, 238, 10, 0.6);
+    --ttl-spent: rgba(252, 238, 10, 0.28);
+    display: block;
+    margin: 0;
+    background:
+        linear-gradient(
+                to right,
+                transparent 0,
+                transparent var(--live, 0%),
+                var(--ttl-edge) var(--live, 0%),
+                var(--ttl-edge) var(--fill, 0%),
+                transparent var(--fill, 0%)
+            )
+            no-repeat 0 0 / 100% 1px,
+        linear-gradient(
+                to right,
+                transparent 0,
+                transparent var(--live, 0%),
+                var(--ttl-edge) var(--live, 0%),
+                var(--ttl-edge) var(--fill, 0%),
+                transparent var(--fill, 0%)
+            )
+            no-repeat 0 100% / 100% 1px,
+        linear-gradient(
+                to right,
+                transparent 0,
+                transparent var(--live, 0%),
+                var(--ttl-spent) var(--live, 0%),
+                var(--ttl-spent) var(--fill, 0%),
+                transparent var(--fill, 0%)
+            )
+            no-repeat 0 50% / 100% 100%,
+        linear-gradient(
+                to right,
+                var(--accent-1) 0,
+                var(--accent-1) var(--live, 0%),
+                transparent var(--live, 0%)
+            )
+            no-repeat 0 50% / 100% 100%,
+        var(--surface-4);
+}
+
+/* A share that has started is a clock running, so a light travels the bar it is
+   running out of. Same family as the ring that sweeps an app card while it
+   launches (views/apps.css): a bright core rather than a wash, screened over
+   the yellow so it reads as light on the bar and not as paint over it. The
+   first attempt at this was white at a third opacity over six pixels, which is
+   another way of saying invisible. */
+.share-ttl-track::after {
+    content: '';
+    position: absolute;
+    /* Over the solid bar only: it is the part that is running out. */
+    left: 0;
+    right: calc(100% - var(--live, 0%));
+    top: 50%;
+    height: 8px;
+    transform: translateY(-50%);
+    border-radius: var(--radius-pill);
+    pointer-events: none;
+    opacity: 0;
+    mix-blend-mode: screen;
+    background-image: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 252, 190, 0.25) 30%,
+        rgba(255, 255, 255, 0.95) 50%,
+        rgba(255, 252, 190, 0.25) 70%,
+        transparent 100%
+    );
+    background-size: 34% 100%;
+    background-repeat: no-repeat;
+}
+
+.share-player:not([data-state='off']) .share-ttl-track::after {
+    opacity: 1;
+    animation: shareTtlSheen 2.6s linear infinite;
+}
+
+@keyframes shareTtlSheen {
+    from {
+        background-position: -40% 0;
+    }
+    to {
+        background-position: 140% 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .share-player:not([data-state='off']) .share-ttl-track::after {
+        animation: none;
+        opacity: 0;
+    }
+}
+
+.share-ttl-scale {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+}
+
+.share-ttl-tick.is-on {
+    color: var(--accent-1);
+}
+
+/* ∞ at the scale's own size is a smudge. It is the one tick that is a glyph
+   rather than a word, so it gets the size a glyph needs to be read. */
+.share-ttl-tick[data-ttl='0'] {
+    font-size: 17px;
+    line-height: 0.7;
+}
+
+/* Narrow: the grid columns stop fitting side by side long before the overlay
+   does, so the row folds into two lines rather than crushing the name. */
+@media (max-width: 720px) {
+    .share-brow {
+        grid-template-columns: 34px 72px 1fr;
+        row-gap: 8px;
+    }
+    .share-brow-id {
+        grid-column: 3;
+    }
+    .share-brow-perms {
+        grid-column: 2 / -1;
+    }
+    .share-access-badge {
+        grid-column: 2 / span 1;
+    }
+    .share-brow-action {
+        grid-column: 3;
+    }
+    .share-brow-detail {
+        padding-left: 18px;
     }
 }
 

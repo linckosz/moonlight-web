@@ -584,53 +584,61 @@
     "sharing": {
         "share": "Share",
         "shareCount": "Share ({{count}})",
-        "dropdownTitle": "Invite players",
         "playerN": "Player {{n}}",
         "working": "Working...",
-        "state": {
-            "off": "Off",
-            "shared": "Shared",
-            "streaming": "Live"
-        },
-        "hint": {
-            "off": "Click to create a link",
-            "shared": "Waiting for the guest",
-            "streaming": "Click to disconnect"
-        },
-        "popinTitle": "Invite {{player}}",
-        "managePopinTitle": "Sharing with {{player}}",
-        "manageShared": "The link is live. Nobody has joined yet.",
-        "manageStreaming": "Someone is streaming through this link right now.",
+        "gamepad": "Gamepad",
+        "keyboardMouse": "Keyboard / Mouse",
         "linkLabel": "Link",
         "pinLabel": "PIN code",
         "pinHint": "Send the PIN separately from the link - together they let someone in, apart they are useless.",
-        "inputsLabel": "Inputs allowed",
-        "inputsLocked": "Frozen for this link. To change it, unshare and share again.",
-        "gamepad": "Gamepad",
-        "keyboardMouse": "Keyboard / Mouse",
-        "access": {
-            "viewer": "Viewer - can watch only",
-            "gamer": "Gamer - gamepad only",
-            "full": "Full control"
-        },
-        "warning": {
-            "viewer": "They will see your screen and hear your sound.",
-            "gamer": "They will see your screen and play with a gamepad.",
-            "full": "They will control the keyboard and mouse of this PC. Only share this with someone you trust completely."
-        },
-        "expiry": "The link works for 8 hours, or until you turn this player off.",
-        "expiresInH": "Expires in {{h}} h {{m}} min.",
-        "expiresInM": "Expires in {{m}} min.",
-        "secretsLost": "The link and PIN of this share were forgotten when the server restarted. Unshare and share again for a fresh pair.",
-        "unshare": "Unshare",
+        "expiresInH": "in {{h}} h {{m}} min",
+        "expiresInM": "in {{m}} min",
         "regenerate": "Regenerate",
-        "regenerateHint": "Regenerating mints a new link and PIN and kills these ones — anyone streaming on them is disconnected.",
         "exitTitle": "Stop, or just leave?",
         "exitBody": "People are connected through your invitations. What should happen to them?",
         "exitLeave": "Leave",
         "exitLeaveDesc": "you disconnect, the game keeps running and your players keep playing.",
         "exitStop": "Stop everything",
-        "exitStopDesc": "the game closes and every player is disconnected."
+        "exitStopDesc": "the game closes and every player is disconnected.",
+        "boardTitle": "Session sharing",
+        "start": "Start",
+        "stop": "Stop",
+        "state": {
+            "off": "Off",
+            "shared": "Shared",
+            "binded": "Binded"
+        },
+        "nameLabel": "Name",
+        "access": {
+            "viewer": "Viewer",
+            "gamer": "Gamer",
+            "desktop": "Desktop",
+            "full": "Full"
+        },
+        "warning": {
+            "desktop": "They can use the keyboard and mouse of this PC, but not a gamepad.",
+            "full": "They control the keyboard and mouse of this PC. Only share this with someone you trust completely."
+        },
+        "hint": {
+            "off": "Not shared",
+            "shared": "Waiting for the PIN",
+            "bindedSince": "{{device}} · joined at {{time}}",
+            "streamingSince": "{{device}} · streaming since {{time}}"
+        },
+        "deviceUnknown": "Unknown device",
+        "pinSpent": "Used. This link now answers to one machine only.",
+        "expiresLabel": "Expires",
+        "expiresNever": "never",
+        "ttlHours": "{{h}}h",
+        "ttlUnlimited": "∞",
+        "regenerateHint": "Regenerating a new link disconnects whoever is streaming on the previous one.",
+        "secretsLost": "The link and PIN were forgotten when the server restarted. The invitation still works for whoever holds it; regenerate to get a pair you can read.",
+        "refused": "Another device ({{device}}) opened this link with the right PIN at {{time}}, and was turned away.",
+        "appLabel": "App to share",
+        "appHint": "Nothing is running, so the first guest to enter their PIN is what starts this app.",
+        "noApps": "This host has no apps to share yet.",
+        "unavailable": "Session sharing is not available on this server.",
+        "openFailed": "Could not open this invitation."
     },
     "player": {
         "loading": "Loading...",
@@ -653,7 +661,8 @@
         "access": {
             "viewer": "You can watch, but not play.",
             "gamer": "You can play with a gamepad.",
-            "full": "You have keyboard and mouse control."
+            "full": "You have keyboard and mouse control.",
+            "desktop": "You have keyboard and mouse control, but no gamepad."
         },
         "pinTitle": "Enter your PIN",
         "pinBody": "The person who invited you sent a 6-digit code along with this link.",
@@ -662,10 +671,12 @@
         "pinLocked": "Too many attempts - try again in {{seconds}}s.",
         "deadTitle": "Nothing here",
         "deadBody": "This invitation has expired, or it was turned off. You have arrived in the void where old game links go.",
-        "deadHint": "Ask for a fresh link - they only last 8 hours.",
+        "deadHint": "Ask for a fresh link.",
         "endedTitle": "The session is over",
         "endedBody": "Your host stopped the game, so the stream stopped with it. Nothing broke - you were just unplugged.",
-        "endedHint": "Give them a ring and ask for a new link."
+        "endedHint": "Give them a ring and ask for a new link.",
+        "appGone": "The app this invitation was made for is no longer on the host. Ask for a new link.",
+        "alreadyBound": "This invitation is already tied to another machine. Ask for a fresh link."
     },
     "backend": {
         "title": "Backend for {{name}}",

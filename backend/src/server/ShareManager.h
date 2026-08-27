@@ -27,16 +27,22 @@
 class QTimer;
 
 /**
- * Session sharing — the owner invites up to three Players into the stream that
- * is already running, each as viewer, gamepad-only, or full control.
+ * Session sharing — the owner invites up to three Players into a stream, each
+ * as viewer, gamepad-only, desktop or full control.
  *
- * Every share is an *activation*: one click on a Player row mints a fresh
- * link token AND a fresh 6-digit PIN, both valid for eight hours and for that
- * click only. Clicking again mints a new pair and kills the old one. The link
- * is expected to travel over Discord, SMS, anything — so it is never a
+ * Every share is an *activation*: opening a Player row mints a fresh link token
+ * AND a fresh 6-digit PIN, both valid for that row's chosen lifetime and for
+ * that opening only. Opening again mints a new pair and kills the old one. The
+ * link is expected to travel over Discord, SMS, anything — so it is never a
  * credential on its own: joining needs the token (in the URL) *and* the PIN
  * (sent separately). What the player's browser keeps afterwards is a cookie
  * bound to that activation, so a reload does not ask for the PIN again.
+ *
+ * One activation binds exactly one device (kMaxCookiesPerActivation). A correct
+ * PIN offered from a second device is not a failure — it is the interesting
+ * event, the one that tells an owner their invitation was forwarded — so it is
+ * answered AlreadyBound, recorded for the board to show, and costs the
+ * legitimate holder none of their PIN attempts.
  *
  * Nothing here is stored in the clear: token, PIN and cookies live as SHA-256
  * digests and are compared in constant time, the same policy AuthManager
@@ -64,22 +70,30 @@ public:
     static constexpr int kSlotCount = 3;
     static constexpr int kLastSlot = kFirstSlot + kSlotCount - 1;
 
-    /// How long an activation lives. Only an owner action cuts it short.
+    /// Default lifetime of an activation, and the choices the board offers.
+    /// 0 means unlimited: only an owner action ends it. Anything not on this
+    /// list is refused — the lifetime arrives from a browser.
     static constexpr qint64 kTtlSecs = 8 * 3600;
+    static bool isValidTtl(qint64 secs);
 
     /// Wrong PINs before the activation is destroyed outright. Whoever holds a
     /// leaked link can therefore kill the share, never brute-force into it.
     static constexpr int kMaxPinFailures = 10;
 
-    /// Cookies kept per activation (phone + laptop is legitimate; a crowd is
-    /// not). Each one still costs a correct PIN to obtain.
-    static constexpr int kMaxCookiesPerActivation = 4;
+    /// Devices per activation. One, so that "Binded" means what it says on the
+    /// board: this invitation answers to a single machine. The cost is that a
+    /// guest changing browser needs a fresh link; the gain is that forwarding
+    /// the link *and* the PIN no longer buys a second seat.
+    static constexpr int kMaxCookiesPerActivation = 1;
+
+    /// Longest a name may be. It is typed by the owner and shown back to them.
+    static constexpr int kMaxNameLength = 32;
 
     enum class State
     {
-        Off,      ///< no live activation
-        Shared,   ///< link alive, nobody streaming
-        Streaming ///< the player is streaming
+        Off,    ///< no live activation
+        Shared, ///< link alive, PIN not consumed yet
+        Binded  ///< the PIN was consumed: this link answers to one device now
     };
 
     /// Why a player's session is being ended — drives the message they see.
@@ -97,19 +111,40 @@ public:
         bool gamepad = false;
         bool keyboardMouse = false;
 
-        /// "viewer" | "gamer" | "full" — what the popin warns about.
+        /// The badge the board shows. A real table over both flags: keyboard
+        /// and mouse without a gamepad is "desktop", not "full" — the two are
+        /// different promises, and calling them the same misled the owner.
+        ///
+        ///   ✗ ✗ → "viewer"   ✓ ✗ → "gamer"
+        ///   ✗ ✓ → "desktop"  ✓ ✓ → "full"
         QString accessLevel() const;
         QJsonObject toJson() const;
         static Permissions fromJson(const QJsonObject& obj);
+    };
+
+    /// A device that spent the PIN. The owner sees these on the board, which is
+    /// the whole point: an invitation that was forwarded stops being invisible.
+    struct BoundDevice
+    {
+        qint64 boundAt = 0;
+        QString userAgent; ///< raw UA, trimmed; the board turns it into "Chrome · Windows"
     };
 
     struct SlotStatus
     {
         int slot = 0;
         State state = State::Off;
+        QString name; ///< owner-given label, empty means "Player N"
         Permissions permissions;
-        bool locked = false;  ///< permissions frozen (popin closed or joined)
-        qint64 expiresAt = 0; ///< unix secs, 0 when Off
+        bool streaming = false; ///< orthogonal to state: a Binded row may be idle
+        qint64 ttlSecs = kTtlSecs;
+        qint64 expiresAt = 0; ///< unix secs; 0 when Off or unlimited
+        QList<BoundDevice> devices;
+
+        /// Last time a correct PIN arrived from a device that was not the bound
+        /// one. 0 when it never happened. The board surfaces it verbatim.
+        qint64 lastRefusedAt = 0;
+        QString lastRefusedAgent;
     };
 
     explicit ShareManager(QObject* parent = nullptr);
@@ -123,11 +158,13 @@ public:
     QList<SlotStatus> status();
 
     /// Mint a new activation on @p slot, revoking any previous one. @p hostUuid
-    /// (and @p appId) is the host the owner is streaming *right now*: the share is
-    /// bound to it, and a player is only ever routed there — never to whatever
-    /// other host happens to be up when they join. Returns false for a slot
-    /// outside the player range, or when @p hostUuid is empty (nothing to share).
-    bool activate(int slot, const QString& hostUuid, int appId, QString& outToken,
+    /// (and @p appId) is the host this invitation is bound to — either the one
+    /// the owner is streaming right now, or the one they picked when opening the
+    /// row cold. A player is only ever routed there, never to whatever other host
+    /// happens to be up when they join. @p ttlSecs must be one of the offered
+    /// lifetimes (0 = unlimited). Returns false for a slot outside the player
+    /// range, an empty @p hostUuid (nothing to bind to), or an unlisted lifetime.
+    bool activate(int slot, const QString& hostUuid, int appId, qint64 ttlSecs, QString& outToken,
                   QString& outPin, SlotStatus& outStatus);
 
     /// The raw link token and PIN of a live activation, so the owner reopening
@@ -136,13 +173,32 @@ public:
     /// memory only, share.json keeps digests.
     bool secrets(int slot, QString& outToken, QString& outPin);
 
-    /// Update the input permissions while the popin is still open. Returns
-    /// false when the slot is Off or already locked.
+    /// Update the input permissions. Accepted at any time, including while the
+    /// player is streaming: permissionsChanged() carries the new policy down to
+    /// the live worker, so a guest is promoted or demoted without a reconnect.
+    /// On a slot with nothing shared it records the choice the next activation
+    /// will be minted with, so the board's poll cannot undo a fresh tick.
+    /// Returns false only for a slot outside the player range.
     bool setPermissions(int slot, const Permissions& perms);
 
-    /// Freeze the permissions for the rest of this activation (popin closed).
-    /// Idempotent; false only for a slot with no activation.
-    bool lockPermissions(int slot);
+    /// Change how long this invitation still has to live, counted from *now*.
+    ///
+    /// It can only ever shorten: the new deadline is min(now + @p ttlSecs, the
+    /// deadline already in force). Picking 8 h on a 24 h invitation with 20 h
+    /// left leaves 8 h; picking it with 3 h left leaves 3 h, not 8. Measuring
+    /// from the opening instead would make the same gesture mean "expire now"
+    /// on an old invitation and "add five hours" on a fresh one. Unlimited is
+    /// therefore only reachable at START — nothing here hands a live link more
+    /// time than it already had.
+    ///
+    /// On a slot with nothing shared there is no deadline to cap, so this just
+    /// records the lifetime START will use. False for an unlisted lifetime.
+    bool setTtl(int slot, qint64 ttlSecs);
+
+    /// Rename a player row. An empty name restores the default "Player N".
+    /// False for a slot outside the player range.
+    bool setName(int slot, const QString& name);
+    QString name(int slot);
 
     /// Revoke the activation: token, PIN and cookies die, and any live stream
     /// is asked to disconnect. Returns false when the slot was already Off.
@@ -159,8 +215,9 @@ public:
     enum class PinResult
     {
         Ok,
-        Invalid,     ///< wrong PIN, unknown token, or expired activation
-        RateLimited, ///< too many attempts from this caller, try later
+        Invalid,      ///< wrong PIN, unknown token, or expired activation
+        RateLimited,  ///< too many attempts from this caller, try later
+        AlreadyBound, ///< right PIN, wrong device: this link already has one
     };
 
     struct PinOutcome
@@ -174,8 +231,12 @@ public:
 
     /// Trade a (link token, PIN) pair for a player cookie. @p rateKey is the
     /// caller's rate-limit bucket key (an address prefix), never shown to the
-    /// user. An unknown token and a wrong PIN are answered identically.
-    PinOutcome redeemPin(const QString& token, const QString& pin, const QString& rateKey);
+    /// user; @p userAgent is recorded so the owner can see which machine took
+    /// the invitation. An unknown token and a wrong PIN are answered
+    /// identically. A correct PIN on an invitation that is already bound is
+    /// answered AlreadyBound and charges nobody's attempt counter.
+    PinOutcome redeemPin(const QString& token, const QString& pin, const QString& rateKey,
+                         const QString& userAgent = QString());
 
     /// The slot a raw mw_player cookie unlocks, -1 when it matches no live
     /// activation. This is the only thing that opens /ws2../ws4 and the player
@@ -200,7 +261,12 @@ public:
 
     Permissions permissions(int slot);
     State state(int slot);
+    /// Whether a worker is up on this slot. Orthogonal to state(): a Binded row
+    /// whose guest closed their tab is bound but idle.
+    bool isStreaming(int slot);
     qint64 expiresAt(int slot);
+    /// This activation's chosen lifetime, 0 when unlimited or the slot is Off.
+    qint64 ttlSecs(int slot);
 
     /// The host uuid this slot's live activation is bound to, empty when Off.
     /// The player join uses this — and only this — to decide which host to reach,
@@ -210,12 +276,17 @@ public:
     int appForSlot(int slot);
 
 signals:
-    /// A slot's observable state changed — the owner's dropdown should refresh.
+    /// A slot's observable state changed — the owner's board should refresh.
     void slotChanged(int slot);
 
     /// A live player stream must be torn down. Carries EndReason as an int so
     /// the signal crosses to main.cpp without dragging the enum along.
     void playerMustDisconnect(int slot, int reason);
+
+    /// The input policy of a slot changed. main.cpp forwards it to the slot's
+    /// worker, which swaps it under the running stream — no reconnect, and the
+    /// keys held under the old policy are released on the way.
+    void permissionsChanged(int slot, bool gamepad, bool keyboardMouse);
 
 private:
     struct Activation
@@ -224,11 +295,24 @@ private:
         QString tokenHash;
         QString pinHash;
         QStringList cookieHashes;
+        QList<BoundDevice> devices; ///< parallel to cookieHashes, same order
         Permissions permissions;
-        bool locked = false;
+        /// The lifetime the owner picked, purely so the board can put the
+        /// slider back where they left it. The deadline below is the truth.
+        qint64 ttlSecs = kTtlSecs; ///< 0 = unlimited
+        /// When this dies, unix seconds; 0 = never. Stored rather than derived
+        /// from activatedAt + ttlSecs, because setTtl() moves it to a value
+        /// that is not activatedAt plus any offered lifetime (see setTtl).
+        qint64 expiresAtSecs = 0;
         qint64 activatedAt = 0;
         int pinFailures = 0;
         bool streaming = false; ///< runtime only, never persisted
+
+        /// A correct PIN from a device this activation had no room for. Kept so
+        /// the board can say "someone else opened this link at 21:37" — the
+        /// answer to not knowing an invitation had been passed along.
+        qint64 lastRefusedAt = 0;
+        QString lastRefusedAgent;
 
         /// The host the owner was streaming when this share was minted. A player
         /// on this activation is only ever routed here — the share is per-host, so
@@ -244,11 +328,14 @@ private:
         QString pinClear;
 
         bool live() const { return !tokenHash.isEmpty(); }
+        qint64 expiresAt() const { return expiresAtSecs; }
     };
 
     struct Slot
     {
-        Permissions lastPermissions; ///< prefills the next popin
+        QString name;                ///< owner label, empty means "Player N"
+        Permissions lastPermissions; ///< prefills the next opening
+        qint64 lastTtlSecs = kTtlSecs;
         Activation activation;
     };
 
@@ -285,6 +372,9 @@ private:
     static bool constantTimeEquals(const QString& a, const QString& b);
     static QString randomToken();
     static QString randomPin();
+
+    /// Trim and clamp a name the owner typed. Plain text; the board escapes it.
+    static QString sanitizeName(const QString& name);
 
     QHash<int, Slot> m_Slots;
     QHash<QString, RateEntry> m_RateLimits;

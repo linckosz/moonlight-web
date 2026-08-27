@@ -223,9 +223,16 @@ export class PlayerJoinView {
             } catch (ex) {
                 const body = ex && ex.responseBody;
                 const lockout = body && body.lockout_seconds;
-                err.textContent = lockout
-                    ? t('player.pinLocked', { seconds: lockout })
-                    : t('player.pinWrong');
+                // The code was right, but this invitation already answers to
+                // another machine. Not a wrong PIN, and telling them so is what
+                // stops them retyping it ten times — those attempts would not
+                // count anyway, and the message would stay just as wrong.
+                err.textContent =
+                    body && body.error === 'already_bound'
+                        ? t('player.alreadyBound')
+                        : lockout
+                          ? t('player.pinLocked', { seconds: lockout })
+                          : t('player.pinWrong');
                 err.hidden = false;
                 input.disabled = false;
                 input.value = '';
@@ -384,8 +391,16 @@ export class PlayerJoinView {
                     this.renderEnded();
                     return;
                 }
+                // An invitation opened cold names the app the guest's arrival
+                // launches. Between the link being sent and this click, that app
+                // can have been removed from the host — say so, rather than
+                // leaving them with a generic failure they cannot act on.
                 err.textContent =
-                    code === 'stream_in_progress' ? t('player.busy') : t('player.joinFailed');
+                    code === 'stream_in_progress'
+                        ? t('player.busy')
+                        : code === 'app_unavailable'
+                          ? t('player.appGone')
+                          : t('player.joinFailed');
                 err.hidden = false;
                 /** @type {HTMLButtonElement} */ (joinBtn).disabled = false;
                 joinBtn.textContent = t('player.joinButton');

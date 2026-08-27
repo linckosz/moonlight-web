@@ -57,6 +57,12 @@ struct ShareRoutesDeps
     /// the link can never later be routed to a different machine.
     std::function<std::pair<QString, int>()> currentOwnerContext;
 
+    /// Whether @p hostUuid is a known, paired host and @p appId one of its apps.
+    /// Checked when an invitation is opened cold — with no stream running, the
+    /// host and app come from the board rather than from what is already up, so
+    /// they are input and get treated as such.
+    std::function<bool(const QString& hostUuid, int appId)> hostAppExists;
+
     /// The host machine's display name, shown on the "Join <machine>" button.
     std::function<QString()> machineName;
 

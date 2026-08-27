@@ -584,53 +584,61 @@
     "sharing": {
         "share": "Partager",
         "shareCount": "Partager ({{count}})",
-        "dropdownTitle": "Inviter des joueurs",
         "playerN": "Joueur {{n}}",
         "working": "En cours...",
-        "state": {
-            "off": "Off",
-            "shared": "Partagé",
-            "streaming": "En direct"
-        },
-        "hint": {
-            "off": "Cliquez pour créer un lien",
-            "shared": "En attente de l'invité",
-            "streaming": "Cliquez pour déconnecter"
-        },
-        "popinTitle": "Inviter {{player}}",
-        "managePopinTitle": "Partage avec {{player}}",
-        "manageShared": "Le lien est actif. Personne n'a encore rejoint.",
-        "manageStreaming": "Quelqu'un est en train de streamer via ce lien.",
-        "linkLabel": "Lien",
-        "pinLabel": "Code PIN",
-        "pinHint": "Envoie le code séparément du lien — ensemble ils ouvrent la session, séparés ils ne servent à rien.",
-        "inputsLabel": "Entrées autorisées",
-        "inputsLocked": "Figé pour ce lien. Pour changer, arrêtez le partage et repartagez.",
         "gamepad": "Manette",
         "keyboardMouse": "Clavier / Souris",
-        "access": {
-            "viewer": "Spectateur — regarde seulement",
-            "gamer": "Joueur — manette uniquement",
-            "full": "Contrôle total"
-        },
-        "warning": {
-            "viewer": "Cette personne verra ton écran et entendra ton son.",
-            "gamer": "Cette personne verra ton écran et jouera à la manette.",
-            "full": "Cette personne contrôlera le clavier et la souris de ce PC. À ne partager qu'avec quelqu'un en qui tu as entièrement confiance."
-        },
-        "expiry": "Le lien fonctionne 8 heures, ou jusqu'à ce que tu coupes ce joueur.",
-        "expiresInH": "Expire dans {{h}} h {{m}} min.",
-        "expiresInM": "Expire dans {{m}} min.",
-        "secretsLost": "Le lien et le PIN de ce partage ont été oubliés au redémarrage du serveur. Arrêtez le partage et repartagez pour en obtenir de nouveaux.",
-        "unshare": "Arrêter le partage",
+        "linkLabel": "Lien",
+        "pinLabel": "Code PIN",
+        "pinHint": "Envoie le code séparément du lien : ensemble ils ouvrent la session, séparés ils ne servent à rien.",
+        "expiresInH": "dans {{h}} h {{m}} min",
+        "expiresInM": "dans {{m}} min",
         "regenerate": "Regénérer",
-        "regenerateHint": "Regénérer crée un nouveau lien et un nouveau PIN et tue ceux-ci — quiconque streame dessus est déconnecté.",
         "exitTitle": "Arrêter, ou juste partir ?",
         "exitBody": "Des personnes sont connectées via vos invitations. Que faut-il en faire ?",
         "exitLeave": "Partir",
         "exitLeaveDesc": "vous vous déconnectez, le jeu continue et vos joueurs aussi.",
         "exitStop": "Tout arrêter",
-        "exitStopDesc": "le jeu se ferme et tous les joueurs sont déconnectés."
+        "exitStopDesc": "le jeu se ferme et tous les joueurs sont déconnectés.",
+        "boardTitle": "Partage de session",
+        "start": "Démarrer",
+        "stop": "Arrêter",
+        "state": {
+            "off": "Off",
+            "shared": "Partagé",
+            "binded": "Lié"
+        },
+        "nameLabel": "Nom",
+        "access": {
+            "viewer": "Spectateur",
+            "gamer": "Joueur",
+            "desktop": "Bureau",
+            "full": "Total"
+        },
+        "warning": {
+            "desktop": "Cette personne pourra utiliser le clavier et la souris de ce PC, mais pas de manette.",
+            "full": "Cette personne contrôlera le clavier et la souris de ce PC. À ne partager qu'avec quelqu'un en qui tu as entièrement confiance."
+        },
+        "hint": {
+            "off": "Non partagé",
+            "shared": "En attente du PIN",
+            "bindedSince": "{{device}} · a rejoint à {{time}}",
+            "streamingSince": "{{device}} · en direct depuis {{time}}"
+        },
+        "deviceUnknown": "Appareil inconnu",
+        "pinSpent": "Utilisé. Ce lien ne répond plus qu'à une seule machine.",
+        "expiresLabel": "Expiration",
+        "expiresNever": "jamais",
+        "ttlHours": "{{h}} h",
+        "ttlUnlimited": "∞",
+        "regenerateHint": "Regénérer un nouveau lien déconnecte quiconque streame avec le lien précédent.",
+        "secretsLost": "Le lien et le PIN ont été oubliés au redémarrage du serveur. L'invitation fonctionne toujours pour qui la détient ; regénère pour obtenir une paire lisible.",
+        "refused": "Un autre appareil ({{device}}) a ouvert ce lien avec le bon PIN à {{time}}, et a été refusé.",
+        "appLabel": "Application à partager",
+        "appHint": "Rien ne tourne : c'est le premier invité à saisir son PIN qui lancera cette application.",
+        "noApps": "Cet hôte n'a encore aucune application à partager.",
+        "unavailable": "Le partage de session n'est pas disponible sur ce serveur.",
+        "openFailed": "Impossible d'ouvrir cette invitation."
     },
     "player": {
         "loading": "Chargement...",
@@ -653,7 +661,8 @@
         "access": {
             "viewer": "Tu peux regarder, mais pas jouer.",
             "gamer": "Tu peux jouer à la manette.",
-            "full": "Tu as le contrôle du clavier et de la souris."
+            "full": "Tu as le contrôle du clavier et de la souris.",
+            "desktop": "Tu as le contrôle du clavier et de la souris, mais pas de manette."
         },
         "pinTitle": "Entre ton code",
         "pinBody": "La personne qui t'a invité t'a envoyé un code à 6 chiffres avec ce lien.",
@@ -662,10 +671,12 @@
         "pinLocked": "Trop de tentatives — réessaie dans {{seconds}} s.",
         "deadTitle": "Il n'y a rien ici",
         "deadBody": "Cette invitation a expiré, ou elle a été coupée. Te voilà dans le néant où finissent les vieux liens de jeu.",
-        "deadHint": "Demande un nouveau lien — ils ne durent que 8 heures.",
+        "deadHint": "Demande un nouveau lien.",
         "endedTitle": "La session est terminée",
         "endedBody": "Ton hôte a arrêté le jeu, et le flux s'est arrêté avec lui. Rien n'est cassé — on t'a juste débranché.",
-        "endedHint": "Passe-lui un coup de fil et demande un nouveau lien."
+        "endedHint": "Passe-lui un coup de fil et demande un nouveau lien.",
+        "appGone": "L'application prévue pour cette invitation n'est plus sur l'hôte. Demande un nouveau lien.",
+        "alreadyBound": "Cette invitation est déjà liée à une autre machine. Demande un nouveau lien."
     },
     "backend": {
         "title": "Backend de {{name}}",

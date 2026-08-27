@@ -78,15 +78,17 @@ Owner routes need a normal session (any authenticated user — deliberately not 
 
 | Method & path | Access | Description |
 |---|---|---|
-| `GET /api/share/status` | 🔑 | The three player rows: `{slot, state ∈ off\|shared\|streaming, permissions, access_level, locked, expires_at}` + `streaming` count. |
-| `POST /api/share/slots/:n/activate` | 🔑 | Mint a link + PIN, revoking the slot's previous pair. Returns `{url, pin, …}`. |
-| `POST /api/share/slots/:n/credentials` | 🔑 | The same `{url, pin}` again, for an owner reopening the popin on a live share. `{available:false}` when the process restarted since — only the digests are persisted. POST, not GET: it hands out a credential, so it goes through the CSRF/origin gate. |
-| `POST /api/share/slots/:n/permissions` | 🔑 | `{gamepad, keyboardMouse}` while the popin is open. **409** once locked. |
-| `POST /api/share/slots/:n/lock` | 🔑 | Popin closed — the permissions are final for this activation. |
+| `GET /api/share/status` | 🔑 | The three player rows: `{slot, state ∈ off\|shared\|binded, name, permissions, access_level ∈ viewer\|gamer\|desktop\|full, streaming, ttl_secs, expires_at, devices[], last_refused?}` + `streaming` count + `owner_name`. `expires_at` is **null** on an unlimited invitation, never 0. |
+| `POST /api/share/slots/:n/activate` | 🔑 | Mint a link + PIN, revoking the slot's previous pair. Body `{ttl_secs}`, plus `{host_uuid, app_id}` when no stream is running (the board opened cold from a host's ⋯ menu) — **400** for an unlisted lifetime or a missing host, **404** for an unknown host/app. With a stream up, the running host and app win and the body's are ignored. Returns `{url, pin, …}`. |
+| `POST /api/share/slots/:n/credentials` | 🔑 | The same `{url, pin}` again, for an owner reopening the row on a live share. `{available:false}` when the process restarted since — only the digests are persisted. POST, not GET: it hands out a credential, so it goes through the CSRF/origin gate. |
+| `POST /api/share/slots/:n/permissions` | 🔑 | `{gamepad, keyboardMouse}`, accepted **at any time**, mid-stream included — the new policy is pushed down to the live worker. **409** only when the slot has no activation. |
+| `POST /api/share/slots/:n/ttl` | 🔑 | `{ttl_secs}` ∈ 3600 / 14400 / 28800 / 86400 / 172800 / 0 (unlimited). **400** otherwise. Shortening below the time already served expires the invitation on the spot. |
+| `POST /api/share/slots/:n/name` | 🔑 | `{name}` — the row's label, 32 chars, empty restores "Player N". Player slots only: **404** for an owner slot. |
+| `POST /api/share/owner/name` | 🔑 | `{name}` — the owner's own row label. Its own route so nothing that can reach a player's permissions can address the owner's line. |
 | `POST /api/share/slots/:n/deactivate` | 🔑 | Disconnect the player and revoke link, PIN and cookies. |
-| `POST /api/share/player/pin` | 🌐 | `{token, pin}` → sets `mw_player` (HttpOnly, Secure, SameSite=Strict, 8 h). Rate-limited; 10 failures on one activation destroy it. |
+| `POST /api/share/player/pin` | 🌐 | `{token, pin}` → sets `mw_player` (HttpOnly, Secure, SameSite=Strict, the invitation's own lease). Rate-limited; 10 failures on one activation destroy it. **409** `already_bound` when the PIN is right but the invitation already has its one device — this does *not* count as a failure, and is surfaced to the owner on the board. |
 | `GET /api/share/player/info?token=` | 🍪 | `{needs_pin:true}` without the cookie; otherwise `{machine_name, state, access_level, expires_at, owner_streaming}`. **404** for a dead link. |
-| `POST /api/share/player/join` | 🍪 | `{token, height ∈ 720\|1080\|1440}` → starts the player's worker and answers like `/api/hosts/:id/start`. **409** `stream_in_progress` / `session_ended`. |
+| `POST /api/share/player/join` | 🍪 | `{token, height ∈ 720\|1080\|1440}` → starts the player's worker and answers like `/api/hosts/:id/start`. Nothing running on the bound host is no longer fatal: an invitation opened cold **launches** the app it names. **409** `stream_in_progress` / `session_ended` / `app_unavailable` (the app was removed from the host since the link was sent). |
 | `POST /api/share/player/leave` | 🍪 | Frees the slot; the invitation stays valid. |
 
 ## 8.4 Admin, settings, internet, setup, system (`SystemRoutes.cpp`)

@@ -31,6 +31,7 @@ import { Host } from '../models/Host.js';
 import { App } from '../models/App.js';
 import { PairDialog } from './PairDialog.js';
 import { BackendDialog } from './BackendDialog.js';
+import { ShareBoard } from './ShareBoard.js';
 import { Toast } from './Toast.js';
 import { t } from '../i18n/i18n.js';
 import { Icons } from './icons.js';
@@ -249,6 +250,14 @@ export class HostListView {
                         this._closeAllMenus();
                         this.refresh();
                     });
+                return;
+            }
+
+            const shareBtn = e.target.closest('.btn-share');
+            if (shareBtn) {
+                this._closeAllMenus();
+                const host = this.hosts.find((h) => h.uuid === shareBtn.dataset.uuid);
+                if (host) this._openShareBoard(host);
                 return;
             }
 
@@ -901,6 +910,17 @@ export class HostListView {
                         <div class="host-menu" hidden>
                             <button class="host-menu-item btn-rename" data-uuid="${host.uuid}">${t('hosts.rename')}</button>
                             ${
+                                // Sharing without a stream: the board opens
+                                // cold, the owner picks the app, and the first
+                                // guest to spend their PIN is what launches it.
+                                // Gated on the declared lobby capability, not
+                                // the product name — a co-op host manages its
+                                // own players in its own streamed UI.
+                                host.isAvailable && host.supportsLobbies !== true
+                                    ? `<button class="host-menu-item btn-share" data-uuid="${host.uuid}">${t('sharing.share')}</button>`
+                                    : ''
+                            }
+                            ${
                                 // Offered only where the server holds a control
                                 // path of its own — its Sunshine, or a backend
                                 // API that can bounce the service. It never asks
@@ -1362,6 +1382,23 @@ export class HostListView {
     /** Rename a host: ask for a name, then store it server-side. The alias is
      *  local to MoonlightWeb — nothing is written on the host — so it works just
      *  as well on an offline or never-paired card. */
+    /**
+     * The sharing board, opened cold from a host's kebab. Nothing is streaming,
+     * so the board picks the app an invitation binds to and the first guest to
+     * spend their PIN is what starts it.
+     */
+    async _openShareBoard(host) {
+        const board = new ShareBoard({
+            hostUuid: host.uuid,
+            hostName: host.displayName || host.name,
+            streaming: false,
+        });
+        board.onClose = () => this.refresh();
+        // False means the backend was built with sharing off: every share route
+        // answers 404, so say nothing rather than showing an empty overlay.
+        if (!(await board.open())) Toast.show(t('sharing.unavailable'), 'error');
+    }
+
     async _renameHost(host) {
         const name = await this._promptHostName(host);
         if (name === null) return; // cancelled

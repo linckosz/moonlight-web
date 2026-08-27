@@ -761,6 +761,46 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     }
 }
 
+void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)
+{
+    m_InputPolicy = policy;
+
+    // Every object below lives on the relay thread. The policy is read there on
+    // each inbound message, so it has to be written there too — a plain setter
+    // from this thread would be a data race on the hot path.
+    // StreamRelay is not a RelayBase (the legacy WSS path predates it) but
+    // carries the same setter, so the templated lambda covers all three.
+    auto push = [policy](auto* relay) {
+        if (!relay) return;
+        QMetaObject::invokeMethod(
+            relay, [relay, policy]() { relay->setInputPolicy(policy); }, Qt::QueuedConnection);
+    };
+    push(m_Relay);
+    push(m_MediaTrackRelay);
+    push(m_StreamRelay);
+
+    if (MoonlightShim* shim = m_Shim) {
+        QMetaObject::invokeMethod(
+            shim,
+            [shim, policy]() {
+                shim->setWakeNudgeAllowed(policy.keyboardMouse);
+                // Release everything, then let the client's next heartbeat put
+                // back whatever it still holds *and* is still allowed to hold
+                // (filterHeldState runs against the new policy). Anything else
+                // leaves a key down on the host that nobody can lift: the guest
+                // can no longer send the key-up, and the owner never pressed it.
+                // Blunter than releasing only what was revoked, and right for
+                // the same reason — a demotion is rare, a stuck key is not
+                // recoverable.
+                shim->releaseHeldInputs(true);
+            },
+            Qt::QueuedConnection);
+    }
+
+    qInfo() << "[Session] Input policy changed — gamepad:" << policy.gamepad
+            << "keyboard/mouse:" << policy.keyboardMouse;
+}
+
 void StreamSession::onShimConnectionStarted()
 {
     qDebug() << "[Session] LiStartConnection succeeded — sending response to browser";

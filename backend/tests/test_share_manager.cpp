@@ -12,6 +12,7 @@
 
 #include "server/ShareManager.h"
 
+#include <QDateTime>
 #include <QFile>
 #include <QObject>
 #include <QStandardPaths>
@@ -26,6 +27,8 @@ const int kSlot = ShareManager::kFirstSlot;
 // that context wherever a test does not care which host it is.
 const QString kHost = QStringLiteral("host-uuid-A");
 const int kApp = 42;
+/// The lifetime every test but the TTL one takes for granted.
+const qint64 kTtl = ShareManager::kTtlSecs;
 
 /// A manager as it would be on a fresh install. The state file is removed
 /// first, so remembered permissions from an earlier test — or from an earlier
@@ -45,7 +48,7 @@ void test_activation_mints_distinct_secrets()
 
     QString token1, pin1;
     ShareManager::SlotStatus st1;
-    CHECK(mgr->activate(kSlot, kHost, kApp, token1, pin1, st1));
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token1, pin1, st1));
     CHECK(st1.state == ShareManager::State::Shared);
     // 32 random bytes, base64url, unpadded.
     CHECK(token1.size() >= 40);
@@ -54,7 +57,7 @@ void test_activation_mints_distinct_secrets()
 
     QString token2, pin2;
     ShareManager::SlotStatus st2;
-    CHECK(mgr->activate(kSlot, kHost, kApp, token2, pin2, st2));
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st2));
     CHECK(token1 != token2);
     // Re-sharing kills the old link outright — that is the only way to change
     // the permissions, so it must not leave the previous one usable.
@@ -64,11 +67,11 @@ void test_activation_mints_distinct_secrets()
     // A slot outside the player range is not a slot.
     QString t3, p3;
     ShareManager::SlotStatus s3;
-    CHECK(!mgr->activate(0, kHost, kApp, t3, p3, s3));
-    CHECK(!mgr->activate(ShareManager::kLastSlot + 1, kHost, kApp, t3, p3, s3));
+    CHECK(!mgr->activate(0, kHost, kApp, kTtl, t3, p3, s3));
+    CHECK(!mgr->activate(ShareManager::kLastSlot + 1, kHost, kApp, kTtl, t3, p3, s3));
     // And an activation with no host to bind to is refused: an unbound link is
     // exactly the cross-host hole the binding closes.
-    CHECK(!mgr->activate(kSlot, QString(), kApp, t3, p3, s3));
+    CHECK(!mgr->activate(kSlot, QString(), kApp, kTtl, t3, p3, s3));
 
     delete mgr;
 }
@@ -80,7 +83,7 @@ void test_pin_is_required_and_bound_to_the_link()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
 
     // The link alone opens nothing.
     ShareManager::PinOutcome wrong = mgr->redeemPin(token, QStringLiteral("000000"), "1.2.3.4");
@@ -101,7 +104,7 @@ void test_pin_is_required_and_bound_to_the_link()
 
     // A cookie is worthless once the owner re-shares.
     QString token2, pin2;
-    mgr->activate(kSlot, kHost, kApp, token2, pin2, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st);
     CHECK_EQ(mgr->slotForCookie(ok.cookie), -1);
 
     delete mgr;
@@ -114,7 +117,7 @@ void test_pin_bruteforce_kills_the_activation()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
 
     // Each attempt comes from its own bucket so the per-caller lockout never
     // fires — this is the attacker with a botnet, and the per-activation
@@ -143,7 +146,7 @@ void test_rate_limit_locks_a_single_caller()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
 
     bool sawLockout = false;
     for (int i = 0; i < 4; ++i) {
@@ -162,14 +165,34 @@ void test_rate_limit_locks_a_single_caller()
     delete mgr;
 }
 
-void test_permissions_freeze_when_the_popin_closes()
+void test_access_level_reads_both_flags()
 {
-    SECTION("share: permissions are final once locked");
+    SECTION("share: the access badge is a table over both flags");
+    ShareManager::Permissions p;
+    CHECK_EQ(p.accessLevel(), QStringLiteral("viewer"));
+    p.gamepad = true;
+    CHECK_EQ(p.accessLevel(), QStringLiteral("gamer"));
+    // Keyboard and mouse without a gamepad is its own thing. Reporting it as
+    // "full" promised the owner a gamepad they had not granted.
+    p.gamepad = false;
+    p.keyboardMouse = true;
+    CHECK_EQ(p.accessLevel(), QStringLiteral("desktop"));
+    p.gamepad = true;
+    CHECK_EQ(p.accessLevel(), QStringLiteral("full"));
+}
+
+void test_permissions_follow_the_board_live()
+{
+    SECTION("share: permissions move at any time, and the worker is told");
     ShareManager* mgr = freshManager();
+
+    QVector<QPair<bool, bool>> pushed;
+    QObject::connect(mgr, &ShareManager::permissionsChanged,
+                     [&pushed](int, bool gamepad, bool km) { pushed.append({gamepad, km}); });
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
 
     // A fresh share starts as viewer — the safe default, not the last one.
     CHECK(!st.permissions.gamepad);
@@ -179,25 +202,188 @@ void test_permissions_freeze_when_the_popin_closes()
     gamer.gamepad = true;
     CHECK(mgr->setPermissions(kSlot, gamer));
     CHECK_EQ(mgr->permissions(kSlot).accessLevel(), QStringLiteral("gamer"));
+    CHECK_EQ(pushed.size(), 1);
 
-    CHECK(mgr->lockPermissions(kSlot));
-
+    // Nothing freezes on a join any more: the guest streaming is precisely when
+    // the owner is most likely to want to hand them the keyboard — or take it
+    // back — and neither should cost them their picture.
+    mgr->setStreaming(kSlot, true);
     ShareManager::Permissions full;
     full.gamepad = true;
     full.keyboardMouse = true;
-    // Refused: a worker may already be enforcing the old policy, and the player
-    // was told what they were getting.
-    CHECK(!mgr->setPermissions(kSlot, full));
-    CHECK_EQ(mgr->permissions(kSlot).accessLevel(), QStringLiteral("gamer"));
+    CHECK(mgr->setPermissions(kSlot, full));
+    CHECK_EQ(mgr->permissions(kSlot).accessLevel(), QStringLiteral("full"));
+    CHECK_EQ(pushed.size(), 2);
 
-    // The next share remembers the choice as its starting point.
+    // Demotion travels the same way, and is what releases the held keys.
+    CHECK(mgr->setPermissions(kSlot, ShareManager::Permissions{}));
+    CHECK_EQ(mgr->permissions(kSlot).accessLevel(), QStringLiteral("viewer"));
+    CHECK_EQ(pushed.size(), 3);
+
+    // Setting the same thing twice is not a change: a worker woken for nothing
+    // would release the guest's held keys for nothing.
+    CHECK(mgr->setPermissions(kSlot, ShareManager::Permissions{}));
+    CHECK_EQ(pushed.size(), 3);
+
+    // An Off slot takes the choice too: it is what the next START will be
+    // minted with. Refusing it here is what let the board's poll repaint a tick
+    // the owner had just made — the server had never been told.
+    const int idle = ShareManager::kFirstSlot + 1;
+    CHECK(mgr->setPermissions(idle, full));
+    CHECK_EQ(mgr->permissions(idle).accessLevel(), QStringLiteral("full"));
+    // No worker exists on an idle slot, so nothing was pushed anywhere.
+    CHECK_EQ(pushed.size(), 3);
+
+    QString idleToken, idlePin;
+    ShareManager::SlotStatus idleStatus;
+    mgr->activate(idle, kHost, kApp, kTtl, idleToken, idlePin, idleStatus);
+    CHECK_EQ(idleStatus.permissions.accessLevel(), QStringLiteral("full"));
+
+    // The next share remembers the last choice as its starting point.
+    mgr->setStreaming(kSlot, false);
+    CHECK(mgr->setPermissions(kSlot, gamer));
     QString token2, pin2;
     ShareManager::SlotStatus st2;
-    mgr->activate(kSlot, kHost, kApp, token2, pin2, st2);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st2);
     CHECK(st2.permissions.gamepad);
     CHECK(!st2.permissions.keyboardMouse);
 
     delete mgr;
+}
+
+void test_one_device_per_invitation()
+{
+    SECTION("share: a forwarded link buys no second seat, and shows up");
+    ShareManager* mgr = freshManager();
+
+    QString token, pin;
+    ShareManager::SlotStatus st;
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
+    CHECK(mgr->state(kSlot) == ShareManager::State::Shared);
+
+    const ShareManager::PinOutcome first =
+        mgr->redeemPin(token, pin, "192.0.2.10", QStringLiteral("Mozilla/5.0 Chrome Windows"));
+    CHECK(first.result == ShareManager::PinResult::Ok);
+    // Spending the PIN is what makes a row Binded — not streaming.
+    CHECK(mgr->state(kSlot) == ShareManager::State::Binded);
+    CHECK(!mgr->isStreaming(kSlot));
+
+    // The same PIN, elsewhere. Right secret, wrong device: refused, and not
+    // counted as a wrong PIN — ten of these must not destroy the invitation the
+    // legitimate guest is using.
+    for (int i = 0; i < ShareManager::kMaxPinFailures + 2; ++i) {
+        const ShareManager::PinOutcome again =
+            mgr->redeemPin(token, pin, QStringLiteral("192.0.2.%1").arg(20 + i),
+                           QStringLiteral("Mozilla/5.0 Firefox Linux"));
+        CHECK(again.result == ShareManager::PinResult::AlreadyBound);
+        CHECK(again.cookie.isEmpty());
+    }
+    CHECK(mgr->tokenIsLive(token));
+    CHECK_EQ(mgr->slotForCookie(first.cookie), kSlot);
+
+    // And the owner can see it happened — the thing that was invisible before.
+    const ShareManager::SlotStatus row = mgr->status().at(kSlot - ShareManager::kFirstSlot);
+    CHECK_EQ(row.devices.size(), 1);
+    CHECK(row.devices.at(0).userAgent.contains(QStringLiteral("Chrome")));
+    CHECK(row.lastRefusedAt > 0);
+    CHECK(row.lastRefusedAgent.contains(QStringLiteral("Firefox")));
+
+    // Re-opening the row clears the binding: that is how a guest who changed
+    // browser gets back in.
+    QString token2, pin2;
+    mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st);
+    CHECK(mgr->state(kSlot) == ShareManager::State::Shared);
+    CHECK_EQ(mgr->slotForCookie(first.cookie), -1);
+    const ShareManager::PinOutcome fresh = mgr->redeemPin(token2, pin2, "192.0.2.99");
+    CHECK(fresh.result == ShareManager::PinResult::Ok);
+
+    delete mgr;
+}
+
+void test_lifetime_is_per_player()
+{
+    SECTION("share: each invitation carries its own lifetime");
+    ShareManager* mgr = freshManager();
+
+    QString token, pin;
+    ShareManager::SlotStatus st;
+
+    // Only the offered lifetimes. Anything else arrives from a browser.
+    CHECK(!mgr->activate(kSlot, kHost, kApp, 1234, token, pin, st));
+    CHECK(!ShareManager::isValidTtl(7200));
+    CHECK(ShareManager::isValidTtl(3600));
+    CHECK(ShareManager::isValidTtl(48 * 3600));
+    CHECK(ShareManager::isValidTtl(0));
+
+    CHECK(mgr->activate(kSlot, kHost, kApp, 24 * 3600, token, pin, st));
+    CHECK_EQ(st.ttlSecs, qint64(24 * 3600));
+    CHECK(st.expiresAt > 0);
+
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+
+    // Counted from now, so a fresh 24 h invitation set to 8 h has 8 h left.
+    CHECK(mgr->setTtl(kSlot, 8 * 3600));
+    CHECK(qAbs(mgr->expiresAt(kSlot) - (now + 8 * 3600)) <= 2);
+
+    // And it only ever shortens. Asking for 24 h back does not buy the link a
+    // day it never had; measuring from the opening instead would make the same
+    // gesture mean "expire now" on an old invitation and "add hours" on a new
+    // one.
+    CHECK(mgr->setTtl(kSlot, 24 * 3600));
+    CHECK(qAbs(mgr->expiresAt(kSlot) - (now + 8 * 3600)) <= 2);
+    CHECK_EQ(mgr->ttlSecs(kSlot), qint64(24 * 3600)); // the slider still moved
+
+    // Unlimited on a dated invitation is an extension, so it is refused the
+    // same way. It stays reachable at START, which is where it belongs.
+    CHECK(mgr->setTtl(kSlot, 0));
+    CHECK(qAbs(mgr->expiresAt(kSlot) - (now + 8 * 3600)) <= 2);
+
+    CHECK(!mgr->setTtl(kSlot, 99));
+
+    // An invitation opened unlimited has no deadline for the sweep to invent,
+    // and can still be cut short afterwards.
+    QString t2, p2;
+    CHECK(mgr->activate(kSlot, kHost, kApp, 0, t2, p2, st));
+    CHECK_EQ(mgr->expiresAt(kSlot), qint64(0));
+    CHECK(mgr->tokenIsLive(t2));
+    CHECK(mgr->setTtl(kSlot, 4 * 3600));
+    CHECK(qAbs(mgr->expiresAt(kSlot) - (now + 4 * 3600)) <= 2);
+    delete mgr;
+
+    // The deadline survives a restart, not just the lifetime that produced it.
+    auto* restarted = new ShareManager();
+    CHECK(qAbs(restarted->expiresAt(kSlot) - (now + 4 * 3600)) <= 2);
+    CHECK_EQ(restarted->ttlSecs(kSlot), qint64(4 * 3600));
+    restarted->deactivateAll(ShareManager::EndReason::OwnerStop);
+    delete restarted;
+}
+
+void test_rows_can_be_named()
+{
+    SECTION("share: the board's rows carry the owner's own labels");
+    ShareManager* mgr = freshManager();
+
+    CHECK(mgr->name(kSlot).isEmpty()); // empty means "Player N"
+    CHECK(mgr->setName(kSlot, QStringLiteral("  Léo  ")));
+    CHECK_EQ(mgr->name(kSlot), QStringLiteral("Léo"));
+
+    // Long enough for a name, and no longer.
+    mgr->setName(kSlot, QString(200, QLatin1Char('x')));
+    CHECK_EQ(mgr->name(kSlot).size(), ShareManager::kMaxNameLength);
+
+    // Control characters never reach the board's markup.
+    mgr->setName(kSlot, QStringLiteral("a\nb\tc"));
+    CHECK_EQ(mgr->name(kSlot), QStringLiteral("a b c"));
+
+    mgr->setName(kSlot, QStringLiteral("Marie"));
+    CHECK(!mgr->setName(0, QStringLiteral("nope"))); // the owner slots are not ours
+    delete mgr;
+
+    // Names are settings, not credentials: they outlive both restarts and the
+    // invitations they were typed next to.
+    auto* restarted = new ShareManager();
+    CHECK_EQ(restarted->name(kSlot), QStringLiteral("Marie"));
+    delete restarted;
 }
 
 void test_a_dropped_stream_does_not_end_the_share()
@@ -207,19 +393,15 @@ void test_a_dropped_stream_does_not_end_the_share()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
 
     mgr->setStreaming(kSlot, true);
-    CHECK(mgr->state(kSlot) == ShareManager::State::Streaming);
+    CHECK(mgr->isStreaming(kSlot));
     CHECK_EQ(mgr->streamingCount(), 1);
-    // Joining freezes the permissions even if the popin is still open.
-    ShareManager::Permissions p;
-    p.keyboardMouse = true;
-    CHECK(!mgr->setPermissions(kSlot, p));
 
     // The player's connection drops (tab closed, ICE dead, host hiccup).
     mgr->setStreaming(kSlot, false);
-    CHECK(mgr->state(kSlot) == ShareManager::State::Shared);
+    CHECK(!mgr->isStreaming(kSlot));
     CHECK_EQ(mgr->streamingCount(), 0);
     CHECK(mgr->tokenIsLive(token));
 
@@ -243,13 +425,13 @@ void test_revoking_a_live_stream_asks_for_a_disconnect()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
 
     // Nothing streaming → nothing to disconnect.
     mgr->deactivate(kSlot, ShareManager::EndReason::OwnerToggle);
     CHECK_EQ(disconnects.size(), 0);
 
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
     mgr->setStreaming(kSlot, true);
     mgr->deactivate(kSlot, ShareManager::EndReason::OwnerStop);
     CHECK_EQ(disconnects.size(), 1);
@@ -268,8 +450,8 @@ void test_slots_are_independent()
 
     QString tokenA, pinA, tokenB, pinB;
     ShareManager::SlotStatus st;
-    mgr->activate(ShareManager::kFirstSlot, kHost, kApp, tokenA, pinA, st);
-    mgr->activate(ShareManager::kFirstSlot + 1, kHost, kApp, tokenB, pinB, st);
+    mgr->activate(ShareManager::kFirstSlot, kHost, kApp, kTtl, tokenA, pinA, st);
+    mgr->activate(ShareManager::kFirstSlot + 1, kHost, kApp, kTtl, tokenB, pinB, st);
 
     // The right link with the wrong PIN is still refused.
     const ShareManager::PinOutcome crossed = mgr->redeemPin(tokenA, pinB, "198.51.100.1");
@@ -306,7 +488,7 @@ void test_persistence_survives_a_restart()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
     ShareManager::Permissions p;
     p.gamepad = true;
     mgr->setPermissions(kSlot, p);
@@ -319,7 +501,9 @@ void test_persistence_survives_a_restart()
     // worker died with the process, so nothing is streaming any more.
     auto* restarted = new ShareManager();
     CHECK(restarted->tokenIsLive(token));
-    CHECK(restarted->state(kSlot) == ShareManager::State::Shared);
+    // Still Binded: the device that spent the PIN is remembered, so the guest
+    // comes back without being asked for it again.
+    CHECK(restarted->state(kSlot) == ShareManager::State::Binded);
     CHECK_EQ(restarted->streamingCount(), 0);
     CHECK_EQ(restarted->slotForCookie(ok.cookie), kSlot);
     CHECK(restarted->permissions(kSlot).gamepad);
@@ -340,7 +524,7 @@ void test_clear_secrets_are_memory_only()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    mgr->activate(kSlot, kHost, kApp, token, pin, st);
+    mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
 
     // The owner reopening the popin gets the same pair back, not a new one.
     QString again, againPin;
@@ -379,13 +563,13 @@ void test_share_is_bound_to_its_host()
 
     QString token, pin;
     ShareManager::SlotStatus st;
-    CHECK(mgr->activate(kSlot, kHost, kApp, token, pin, st));
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st));
     CHECK_EQ(mgr->hostForSlot(kSlot), kHost);
     CHECK_EQ(mgr->appForSlot(kSlot), kApp);
 
     // Re-sharing rebinds to whatever host is up at that moment.
     QString token2, pin2;
-    CHECK(mgr->activate(kSlot, QStringLiteral("host-uuid-B"), 7, token2, pin2, st));
+    CHECK(mgr->activate(kSlot, QStringLiteral("host-uuid-B"), 7, kTtl, token2, pin2, st));
     CHECK_EQ(mgr->hostForSlot(kSlot), QStringLiteral("host-uuid-B"));
     CHECK_EQ(mgr->appForSlot(kSlot), 7);
     delete mgr;
@@ -411,7 +595,11 @@ void run_share_manager_tests()
     test_pin_is_required_and_bound_to_the_link();
     test_pin_bruteforce_kills_the_activation();
     test_rate_limit_locks_a_single_caller();
-    test_permissions_freeze_when_the_popin_closes();
+    test_access_level_reads_both_flags();
+    test_permissions_follow_the_board_live();
+    test_one_device_per_invitation();
+    test_lifetime_is_per_player();
+    test_rows_can_be_named();
     test_a_dropped_stream_does_not_end_the_share();
     test_revoking_a_live_stream_asks_for_a_disconnect();
     test_slots_are_independent();

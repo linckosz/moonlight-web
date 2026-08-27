@@ -353,31 +353,45 @@ export class BackendClient {
     }
 
     // ── Session sharing ────────────────────────────────────────────────────
-    // Owner side: the three player rows behind the Share button. Any
-    // authenticated user may share; no admin key involved.
+    // Owner side: the rows of the sharing board. Any authenticated user may
+    // share; no admin key involved.
 
     static async getShareStatus() {
         return this.get('/api/share/status');
     }
-    /** Mint a fresh link + PIN for a player slot, revoking the previous pair. */
-    static async shareActivate(slot) {
-        return this.post(`/api/share/slots/${slot}/activate`);
+    /**
+     * Open a player row: mint a fresh link + PIN, revoking the previous pair.
+     * With a stream running the invitation binds to it and `target` is ignored.
+     * With nothing running — the board opened from a host's kebab — `target`
+     * says which host and app the guest's arrival should start.
+     * @param {number} slot
+     * @param {{host_uuid?: string, app_id?: number, ttl_secs?: number}} [target]
+     */
+    static async shareActivate(slot, target) {
+        return this.post(`/api/share/slots/${slot}/activate`, target || {});
     }
     /**
      * The link and PIN of a share that is already live, for an owner reopening
-     * the popin. Answers {available:false} when the backend restarted since:
+     * the board. Answers {available:false} when the backend restarted since:
      * only the digests are persisted.
      */
     static async shareCredentials(slot) {
         return this.post(`/api/share/slots/${slot}/credentials`);
     }
-    /** Update input permissions while the popin is still open. */
+    /**
+     * Move a player's input permissions. Accepted at any time — the backend
+     * carries the change down to a running stream rather than freezing it.
+     */
     static async sharePermissions(slot, permissions) {
         return this.post(`/api/share/slots/${slot}/permissions`, permissions);
     }
-    /** Freeze the permissions for the rest of this activation (popin closed). */
-    static async shareLock(slot) {
-        return this.post(`/api/share/slots/${slot}/lock`);
+    /** How long this invitation lives; 0 is unlimited. */
+    static async shareTtl(slot, ttlSecs) {
+        return this.post(`/api/share/slots/${slot}/ttl`, { ttl_secs: ttlSecs });
+    }
+    /** Label a player row. An empty name restores the default "Player N". */
+    static async shareRename(slot, name) {
+        return this.post(`/api/share/slots/${slot}/name`, { name });
     }
     /** Revoke a share: link, PIN and any live stream on that slot. */
     static async shareDeactivate(slot) {

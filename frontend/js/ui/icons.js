@@ -64,4 +64,17 @@ export const Icons = {
     ),
     // Play — the invited player is streaming right now
     play: svg('<polygon points="7 4 20 12 7 20 7 4" fill="currentColor" stroke-width="1.5"/>'),
+    // Monitor — an invitation bound to one machine (the sharing board's
+    // "binded" state): the link now answers to that device and no other.
+    monitor: svg(
+        '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/>' +
+            '<line x1="12" y1="17" x2="12" y2="21"/>',
+    ),
+    // Pencil — rename a row on the sharing board
+    pencil: svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>'),
+    // Refresh — mint a new link and PIN, killing the old pair
+    refresh: svg(
+        '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>' +
+            '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+    ),
 };

@@ -26,6 +26,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUuid>
@@ -37,6 +38,10 @@ QString sharePath()
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
            QStringLiteral("/share.json");
 }
+
+/// The lifetimes the board offers, in seconds. 0 is unlimited and last on
+/// purpose: it is a deliberate choice, not somewhere a slider lands by accident.
+constexpr qint64 kTtlChoices[] = {3600, 4 * 3600, 8 * 3600, 24 * 3600, 48 * 3600, 0};
 
 const char* reasonName(ShareManager::EndReason reason)
 {
@@ -51,11 +56,31 @@ const char* reasonName(ShareManager::EndReason reason)
 
 } // namespace
 
+bool ShareManager::isValidTtl(qint64 secs)
+{
+    for (const qint64 choice : kTtlChoices)
+        if (secs == choice) return true;
+    return false;
+}
+
+QString ShareManager::sanitizeName(const QString& name)
+{
+    QString out = name.simplified();
+    // Control characters would travel straight into the board's markup; the
+    // view escapes what it prints, but there is no reason to store them.
+    out.remove(QRegularExpression(QStringLiteral("[\\x00-\\x1F\\x7F]")));
+    return out.left(kMaxNameLength);
+}
+
 // ── Permissions ─────────────────────────────────────────────────────────────
 
 QString ShareManager::Permissions::accessLevel() const
 {
-    if (keyboardMouse) return QStringLiteral("full");
+    // Both flags matter. Keyboard and mouse alone is "desktop" — someone who can
+    // drive the machine but not play; it used to report "full", which promised
+    // the owner a gamepad they had not granted.
+    if (gamepad && keyboardMouse) return QStringLiteral("full");
+    if (keyboardMouse) return QStringLiteral("desktop");
     if (gamepad) return QStringLiteral("gamer");
     return QStringLiteral("viewer");
 }
@@ -132,10 +157,13 @@ void ShareManager::pruneExpired()
     QList<int> expired;
     for (auto it = m_Slots.constBegin(); it != m_Slots.constEnd(); ++it) {
         const Activation& act = it.value().activation;
-        if (act.live() && now - act.activatedAt >= kTtlSecs) expired.append(it.key());
+        // A deadline of 0 is unlimited: it outlives the sweep, and only an
+        // owner action ends it.
+        if (act.live() && act.expiresAtSecs > 0 && now >= act.expiresAtSecs)
+            expired.append(it.key());
     }
     for (int slot : expired) {
-        Logger::info(QStringLiteral("[Share] Slot %1 activation expired (8h)").arg(slot));
+        Logger::info(QStringLiteral("[Share] Slot %1 activation expired").arg(slot));
         clearActivation(slot, EndReason::Expired);
     }
     if (!expired.isEmpty()) save();
@@ -166,31 +194,39 @@ QList<ShareManager::SlotStatus> ShareManager::status()
         const Slot* s = &m_Slots[slot];
         SlotStatus st;
         st.slot = slot;
+        st.name = s->name;
         if (!s->activation.live()) {
             st.state = State::Off;
             // Off rows still show a choice: the one this player had last time.
             st.permissions = s->lastPermissions;
-            st.locked = false;
+            st.ttlSecs = s->lastTtlSecs;
             st.expiresAt = 0;
         } else {
-            st.state = s->activation.streaming ? State::Streaming : State::Shared;
+            // Binded is about the invitation, not the picture: a guest who
+            // spent the PIN and then closed their tab is still bound to it.
+            st.state = s->activation.devices.isEmpty() ? State::Shared : State::Binded;
             st.permissions = s->activation.permissions;
-            st.locked = s->activation.locked;
-            st.expiresAt = s->activation.activatedAt + kTtlSecs;
+            st.streaming = s->activation.streaming;
+            st.ttlSecs = s->activation.ttlSecs;
+            st.expiresAt = s->activation.expiresAt();
+            st.devices = s->activation.devices;
+            st.lastRefusedAt = s->activation.lastRefusedAt;
+            st.lastRefusedAgent = s->activation.lastRefusedAgent;
         }
         out.append(st);
     }
     return out;
 }
 
-bool ShareManager::activate(int slot, const QString& hostUuid, int appId, QString& outToken,
-                            QString& outPin, SlotStatus& outStatus)
+bool ShareManager::activate(int slot, const QString& hostUuid, int appId, qint64 ttlSecs,
+                            QString& outToken, QString& outPin, SlotStatus& outStatus)
 {
     if (!isPlayerSlot(slot)) return false;
-    // A share is an invitation into a *running* stream on a *specific* host.
-    // With no host there is nothing to bind the link to, and an unbound link is
-    // exactly the cross-host hole we are closing.
+    // A share is an invitation onto a *specific* host. With no host there is
+    // nothing to bind the link to, and an unbound link is exactly the cross-host
+    // hole we are closing.
     if (hostUuid.isEmpty()) return false;
+    if (!isValidTtl(ttlSecs)) return false;
     pruneExpired();
 
     Slot* s = slotFor(slot);
@@ -210,25 +246,30 @@ bool ShareManager::activate(int slot, const QString& hostUuid, int appId, QStrin
     act.tokenClear = outToken;
     act.pinClear = outPin;
     act.permissions = s->lastPermissions; // viewer on a fresh install
-    act.locked = false;
+    act.ttlSecs = ttlSecs;
     act.activatedAt = QDateTime::currentSecsSinceEpoch();
+    act.expiresAtSecs = ttlSecs > 0 ? act.activatedAt + ttlSecs : 0;
     act.hostUuid = hostUuid;
     act.appId = appId;
     s->activation = act;
+    s->lastTtlSecs = ttlSecs;
 
     save();
     emit slotChanged(slot);
 
     outStatus.slot = slot;
     outStatus.state = State::Shared;
+    outStatus.name = s->name;
     outStatus.permissions = act.permissions;
-    outStatus.locked = false;
-    outStatus.expiresAt = act.activatedAt + kTtlSecs;
+    outStatus.ttlSecs = ttlSecs;
+    outStatus.expiresAt = act.expiresAt();
 
-    Logger::info(QStringLiteral("[Share] Slot %1 shared on host %2 (access=%3, 8h)")
+    Logger::info(QStringLiteral("[Share] Slot %1 shared on host %2 (access=%3, ttl=%4)")
                      .arg(slot)
                      .arg(hostUuid)
-                     .arg(act.permissions.accessLevel()));
+                     .arg(act.permissions.accessLevel())
+                     .arg(ttlSecs > 0 ? QStringLiteral("%1s").arg(ttlSecs)
+                                      : QStringLiteral("unlimited")));
     return true;
 }
 
@@ -249,31 +290,89 @@ bool ShareManager::setPermissions(int slot, const Permissions& perms)
 {
     pruneExpired();
     Slot* s = slotFor(slot);
-    if (!s || !s->activation.live()) return false;
-    // Once frozen the answer is no: the player was told what they were getting,
-    // and a worker already carries this policy.
-    if (s->activation.locked) return false;
+    if (!s) return false;
+
+    // Nothing shared yet: this is the choice the next START will be minted
+    // with, so it is remembered rather than refused. Refusing it left the
+    // board's own poll free to repaint the row from a server that had never
+    // been told — the tick came back off a second after the owner made it.
+    if (!s->activation.live()) {
+        if (s->lastPermissions.gamepad == perms.gamepad &&
+            s->lastPermissions.keyboardMouse == perms.keyboardMouse)
+            return true;
+        s->lastPermissions = perms;
+        save();
+        emit slotChanged(slot);
+        return true;
+    }
+
+    if (s->activation.permissions.gamepad == perms.gamepad &&
+        s->activation.permissions.keyboardMouse == perms.keyboardMouse)
+        return true;
 
     s->activation.permissions = perms;
-    s->lastPermissions = perms; // remembered for the next popin
+    s->lastPermissions = perms; // remembered for the next opening
+    save();
+
+    Logger::info(QStringLiteral("[Share] Slot %1 access now %2")
+                     .arg(slot)
+                     .arg(perms.accessLevel()));
+    // Down to the worker before the board hears about it: a demotion that shows
+    // in the UI before it takes effect on the host is a lie for as long as the
+    // round trip lasts.
+    emit permissionsChanged(slot, perms.gamepad, perms.keyboardMouse);
+    emit slotChanged(slot);
+    return true;
+}
+
+bool ShareManager::setTtl(int slot, qint64 ttlSecs)
+{
+    if (!isValidTtl(ttlSecs)) return false;
+    pruneExpired();
+    Slot* s = slotFor(slot);
+    if (!s) return false;
+    s->lastTtlSecs = ttlSecs;
+    if (!s->activation.live()) {
+        save();
+        emit slotChanged(slot);
+        return true;
+    }
+
+    Activation& act = s->activation;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    // Counted from now, and capped by the deadline already in force. See the
+    // header: the same gesture has to mean the same thing on a fresh invitation
+    // and on one that has nearly run out, and it may never buy a live link
+    // more time than it already had.
+    const qint64 candidate = ttlSecs > 0 ? now + ttlSecs : 0;
+    if (act.expiresAtSecs == 0)
+        act.expiresAtSecs = candidate; // unlimited can still be cut short
+    else if (candidate > 0)
+        act.expiresAtSecs = qMin(candidate, act.expiresAtSecs);
+    // candidate == 0 on a dated invitation: unlimited would be an extension.
+
+    act.ttlSecs = ttlSecs;
     save();
     emit slotChanged(slot);
     return true;
 }
 
-bool ShareManager::lockPermissions(int slot)
+bool ShareManager::setName(int slot, const QString& name)
 {
-    pruneExpired();
     Slot* s = slotFor(slot);
-    if (!s || !s->activation.live()) return false;
-    if (s->activation.locked) return true;
-
-    s->activation.locked = true;
+    if (!s) return false;
+    const QString clean = sanitizeName(name);
+    if (s->name == clean) return true;
+    s->name = clean;
     save();
-    Logger::info(QStringLiteral("[Share] Slot %1 permissions locked (access=%2)")
-                     .arg(slot)
-                     .arg(s->activation.permissions.accessLevel()));
+    emit slotChanged(slot);
     return true;
+}
+
+QString ShareManager::name(int slot)
+{
+    Slot* s = slotFor(slot);
+    return s ? s->name : QString();
 }
 
 bool ShareManager::deactivate(int slot, EndReason reason)
@@ -316,7 +415,8 @@ int ShareManager::streamingCount()
 // ── Player side ─────────────────────────────────────────────────────────────
 
 ShareManager::PinOutcome ShareManager::redeemPin(const QString& token, const QString& pin,
-                                                 const QString& rateKey)
+                                                 const QString& rateKey,
+                                                 const QString& userAgent)
 {
     pruneExpired();
 
@@ -360,11 +460,35 @@ ShareManager::PinOutcome ShareManager::redeemPin(const QString& token, const QSt
 
     Activation& act = s->activation;
     act.pinFailures = 0;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    // Long enough to name a browser and an OS, short enough that nobody can use
+    // the header as storage.
+    const QString agent = userAgent.simplified().left(256);
+
+    // One device per invitation. A correct PIN offered by a second one is
+    // neither an attack nor a typo: the link was passed along. Refuse it, keep
+    // the legitimate holder's attempts intact, and put it where the owner will
+    // see it — not knowing this had happened was the whole complaint.
+    if (act.cookieHashes.size() >= kMaxCookiesPerActivation) {
+        act.lastRefusedAt = now;
+        act.lastRefusedAgent = agent;
+        save();
+        emit slotChanged(slot);
+        Logger::warning(QStringLiteral("[Share] Slot %1 refused a second device — this "
+                                       "invitation is already bound")
+                            .arg(slot));
+        out.result = PinResult::AlreadyBound;
+        out.slot = slot;
+        return out;
+    }
+
     out.cookie = randomToken();
     act.cookieHashes.append(hash(out.cookie));
-    while (act.cookieHashes.size() > kMaxCookiesPerActivation)
-        act.cookieHashes.removeFirst();
+    act.devices.append(BoundDevice{now, agent});
     save();
+    // Shared → Binded: the board has a new row to draw, and the owner has a
+    // device to recognise or disown.
+    emit slotChanged(slot);
 
     out.result = PinResult::Ok;
     out.slot = slot;
@@ -412,7 +536,8 @@ void ShareManager::setStreaming(int slot, bool streaming)
     s->activation.streaming = streaming;
     // A stream that drops — tab closed, ICE dead, host hiccup — leaves the
     // activation alive on purpose: only an owner action or the TTL ends a share.
-    if (streaming && !s->activation.locked) lockPermissions(slot);
+    // Nothing freezes here any more: the policy follows the owner's board for
+    // the whole life of the stream (see permissionsChanged).
     emit slotChanged(slot);
 }
 
@@ -428,14 +553,27 @@ ShareManager::State ShareManager::state(int slot)
     pruneExpired();
     Slot* s = slotFor(slot);
     if (!s || !s->activation.live()) return State::Off;
-    return s->activation.streaming ? State::Streaming : State::Shared;
+    return s->activation.devices.isEmpty() ? State::Shared : State::Binded;
+}
+
+bool ShareManager::isStreaming(int slot)
+{
+    Slot* s = slotFor(slot);
+    return s && s->activation.live() && s->activation.streaming;
 }
 
 qint64 ShareManager::expiresAt(int slot)
 {
     Slot* s = slotFor(slot);
     if (!s || !s->activation.live()) return 0;
-    return s->activation.activatedAt + kTtlSecs;
+    return s->activation.expiresAt();
+}
+
+qint64 ShareManager::ttlSecs(int slot)
+{
+    Slot* s = slotFor(slot);
+    if (!s || !s->activation.live()) return 0;
+    return s->activation.ttlSecs;
 }
 
 QString ShareManager::hostForSlot(int slot)
@@ -529,7 +667,9 @@ void ShareManager::save()
         const Slot& s = m_Slots[slot];
         QJsonObject obj;
         obj[QStringLiteral("slot")] = slot;
+        obj[QStringLiteral("name")] = s.name;
         obj[QStringLiteral("lastPermissions")] = s.lastPermissions.toJson();
+        obj[QStringLiteral("lastTtlSecs")] = s.lastTtlSecs;
         if (s.activation.live()) {
             QJsonObject act;
             act[QStringLiteral("id")] = s.activation.id;
@@ -537,12 +677,23 @@ void ShareManager::save()
             act[QStringLiteral("pinHash")] = s.activation.pinHash;
             act[QStringLiteral("cookieHashes")] =
                 QJsonArray::fromStringList(s.activation.cookieHashes);
+            QJsonArray devices;
+            for (const BoundDevice& d : s.activation.devices) {
+                QJsonObject dev;
+                dev[QStringLiteral("boundAt")] = d.boundAt;
+                dev[QStringLiteral("userAgent")] = d.userAgent;
+                devices.append(dev);
+            }
+            act[QStringLiteral("devices")] = devices;
             act[QStringLiteral("permissions")] = s.activation.permissions.toJson();
-            act[QStringLiteral("locked")] = s.activation.locked;
+            act[QStringLiteral("ttlSecs")] = s.activation.ttlSecs;
+            act[QStringLiteral("expiresAt")] = s.activation.expiresAtSecs;
             act[QStringLiteral("activatedAt")] = s.activation.activatedAt;
             act[QStringLiteral("pinFailures")] = s.activation.pinFailures;
             act[QStringLiteral("hostUuid")] = s.activation.hostUuid;
             act[QStringLiteral("appId")] = s.activation.appId;
+            act[QStringLiteral("lastRefusedAt")] = s.activation.lastRefusedAt;
+            act[QStringLiteral("lastRefusedAgent")] = s.activation.lastRefusedAgent;
             obj[QStringLiteral("activation")] = act;
         }
         slotArray.append(obj);
@@ -569,24 +720,42 @@ void ShareManager::load()
     if (!doc.isObject()) return;
 
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    const QJsonArray slotArray = doc.object().value(QStringLiteral("slots")).toArray();
+    const QJsonObject root = doc.object();
+    const QJsonArray slotArray = root.value(QStringLiteral("slots")).toArray();
     for (const QJsonValue& v : slotArray) {
         const QJsonObject obj = v.toObject();
         const int slot = obj.value(QStringLiteral("slot")).toInt(-1);
         if (!isPlayerSlot(slot)) continue;
 
         Slot& s = m_Slots[slot];
+        s.name = sanitizeName(obj.value(QStringLiteral("name")).toString());
         s.lastPermissions =
             Permissions::fromJson(obj.value(QStringLiteral("lastPermissions")).toObject());
+        const qint64 lastTtl =
+            static_cast<qint64>(obj.value(QStringLiteral("lastTtlSecs")).toDouble(kTtlSecs));
+        s.lastTtlSecs = isValidTtl(lastTtl) ? lastTtl : kTtlSecs;
 
         const QJsonObject act = obj.value(QStringLiteral("activation")).toObject();
         if (act.isEmpty()) continue;
 
         const qint64 activatedAt =
             static_cast<qint64>(act.value(QStringLiteral("activatedAt")).toDouble());
+        if (activatedAt <= 0) continue;
+        // A lifetime that is not on the list any more (hand-edited file, older
+        // build) falls back to the default rather than becoming unlimited by
+        // accident — unlimited has to be asked for.
+        const qint64 ttl = static_cast<qint64>(act.value(QStringLiteral("ttlSecs")).toDouble(kTtlSecs));
+        const qint64 ttlSecs = isValidTtl(ttl) ? ttl : kTtlSecs;
+        // The deadline is stored, not derived. A file written before it was
+        // (or hand-edited) falls back to the old rule so nothing that was alive
+        // becomes immortal on upgrade.
+        const qint64 expiresAt = act.contains(QStringLiteral("expiresAt"))
+                                     ? static_cast<qint64>(
+                                           act.value(QStringLiteral("expiresAt")).toDouble())
+                                     : (ttlSecs > 0 ? activatedAt + ttlSecs : 0);
         // A link handed out before a restart keeps working: only an owner action
-        // or the eight hours end a share, and a restart is neither.
-        if (activatedAt <= 0 || now - activatedAt >= kTtlSecs) continue;
+        // or its own deadline ends a share, and a restart is neither.
+        if (expiresAt > 0 && now >= expiresAt) continue;
 
         Activation a;
         a.id = act.value(QStringLiteral("id")).toString();
@@ -594,22 +763,39 @@ void ShareManager::load()
         a.pinHash = act.value(QStringLiteral("pinHash")).toString();
         for (const QJsonValue& c : act.value(QStringLiteral("cookieHashes")).toArray())
             a.cookieHashes.append(c.toString());
+        for (const QJsonValue& d : act.value(QStringLiteral("devices")).toArray()) {
+            const QJsonObject dev = d.toObject();
+            a.devices.append(BoundDevice{
+                static_cast<qint64>(dev.value(QStringLiteral("boundAt")).toDouble()),
+                dev.value(QStringLiteral("userAgent")).toString()});
+        }
+        // Cookies are what actually open a session; the device list is only what
+        // the board draws. Keep them the same length so a Binded row can never
+        // be shown as Shared (or the reverse) after a hand-edit or an upgrade
+        // from a build that had no device list.
+        while (a.devices.size() < a.cookieHashes.size()) a.devices.append(BoundDevice{});
+        a.devices = a.devices.mid(0, a.cookieHashes.size());
         a.permissions = Permissions::fromJson(act.value(QStringLiteral("permissions")).toObject());
-        a.locked = act.value(QStringLiteral("locked")).toBool(false);
+        a.ttlSecs = ttlSecs;
+        a.expiresAtSecs = expiresAt;
         a.activatedAt = activatedAt;
         a.pinFailures = act.value(QStringLiteral("pinFailures")).toInt(0);
         a.streaming = false; // the worker died with the process
         a.hostUuid = act.value(QStringLiteral("hostUuid")).toString();
         a.appId = act.value(QStringLiteral("appId")).toInt(-1);
+        a.lastRefusedAt =
+            static_cast<qint64>(act.value(QStringLiteral("lastRefusedAt")).toDouble());
+        a.lastRefusedAgent = act.value(QStringLiteral("lastRefusedAgent")).toString();
         if (a.tokenHash.isEmpty() || a.pinHash.isEmpty()) continue;
         // An activation with no bound host predates the per-host binding (or was
         // hand-edited): drop it rather than let it resolve to an arbitrary host.
         if (a.hostUuid.isEmpty()) continue;
         s.activation = a;
 
-        Logger::info(QStringLiteral("[Share] Slot %1 activation restored (%2s left)")
+        Logger::info(QStringLiteral("[Share] Slot %1 activation restored (%2)")
                          .arg(slot)
-                         .arg(kTtlSecs - (now - activatedAt)));
+                         .arg(expiresAt > 0 ? QStringLiteral("%1s left").arg(expiresAt - now)
+                                            : QStringLiteral("unlimited")));
     }
 }
 
