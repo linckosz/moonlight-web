@@ -74,4 +74,30 @@ describe('VersionGuard', () => {
         Object.defineProperty(window, 'location', { value: original, configurable: true });
         expect(reload).not.toHaveBeenCalled();
     });
+
+    // Through the rendezvous a reload cannot pick up an update and would spin
+    // forever: the page is served by a service worker from a cache that only
+    // the entry page can refill, so reloading serves the same old files, which
+    // see the same new version, and reload again. The update has to go back
+    // through the entry page.
+    it('_check goes through the entry page when the app came down a tunnel', async () => {
+        VersionGuard._boot = '1.0.0';
+        vi.spyOn(VersionGuard, '_fetch').mockResolvedValue('2.0.0');
+        vi.stubGlobal('navigator', { serviceWorker: { controller: {} } });
+        const bridge = await import('../js/net/tunnelBridge.js');
+        vi.spyOn(bridge, 'tunnelHostId').mockReturnValue('a'.repeat(26));
+
+        const reload = vi.fn();
+        const replace = vi.fn();
+        const original = window.location;
+        Object.defineProperty(window, 'location', {
+            value: { reload, replace },
+            configurable: true,
+        });
+        await VersionGuard._check();
+        Object.defineProperty(window, 'location', { value: original, configurable: true });
+
+        expect(reload).not.toHaveBeenCalled();
+        expect(replace).toHaveBeenCalledWith('/' + 'a'.repeat(26));
+    });
 });

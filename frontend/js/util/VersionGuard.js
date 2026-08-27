@@ -30,7 +30,16 @@
  * returns to the foreground (the common iOS resume case). A reload is never
  * triggered during an active stream — it would kill the session — so it is
  * deferred until streaming ends.
+ *
+ * Through the rendezvous a reload is the one thing that CANNOT pick up an
+ * update, and would loop forever trying: the page is served by a service worker
+ * out of a cache filled once, so reloading serves the same old files, which
+ * notice the same new version, and reload again. Only the entry page can refill
+ * that cache — it holds the manifest and the connection to fetch from — so
+ * there the update goes through it instead.
  */
+import { pageCameThroughTunnel, tunnelHostId } from '../net/tunnelBridge.js';
+
 export const VersionGuard = {
     _boot: null,
     _interval: null,
@@ -50,6 +59,12 @@ export const VersionGuard = {
         if (!v || v === this._boot) return;
         // Never interrupt an active stream — retry on the next check.
         if (document.body.classList.contains('streaming-active')) return;
+        const hostId = tunnelHostId();
+        if (pageCameThroughTunnel() && hostId) {
+            console.log('[MW] New version', v, '(was', this._boot + ') — fetching it from the host');
+            location.replace(`/${hostId}`);
+            return;
+        }
         console.log('[MW] New version', v, '(was', this._boot + ') — reloading');
         location.reload();
     },
