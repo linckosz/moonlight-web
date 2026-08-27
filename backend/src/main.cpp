@@ -19,6 +19,7 @@
 #include <QCommandLineParser>
 #include <QDesktopServices>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1043,9 +1044,10 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
 
     // The internet link has to be asked for rather than computed: this process
     // has no rendezvous line and no settings of its own, it only decorates a
-    // server it cannot see. Asked at the moment the menu opens, so a blocking
-    // loopback call is acceptable — and given a short budget so a wedged server
-    // cannot freeze the menu. Empty on any failure, which hides the entry.
+    // server it cannot see. Asked at the moment Server Settings is clicked, so a
+    // blocking loopback call is acceptable — and given a short budget so a
+    // wedged server cannot freeze the menu. Empty on any failure, which is the
+    // same answer as "no internet way in": the entry falls back to loopback.
     tray.setRemoteAdminLinkProvider([&port]() -> QString {
         const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
                                          : QStringLiteral("https://127.0.0.1:%1").arg(port);
@@ -3739,12 +3741,21 @@ int main(int argc, char* argv[])
     // URL for the host machine's own entry points (Desktop shortcut, installer
     // post-install page, Dock, tray, startup open).
     //
-    // Always loopback. These entry points are, by construction, clicked by
-    // someone sitting AT the machine, and loopback is the one address that is
-    // always true for them: it needs no DNS, no certificate order, no port
-    // forwarding, and no cooperation from the router. It is also the only
-    // address that proves where the browser runs, so admin is granted by the
-    // connection itself rather than by a key travelling in a URL.
+    // Loopback. These entry points are, by construction, clicked by someone
+    // sitting AT the machine, and loopback is the one address that is always
+    // true for them: it needs no DNS, no certificate order, no port forwarding,
+    // and no cooperation from the router. It is also the only address that
+    // proves where the browser runs, so admin is granted by the connection
+    // itself rather than by a key travelling in a URL.
+    //
+    // Two of them make an exception, and only when the internet way in has been
+    // consented to AND answers when asked: the tray's Server Settings, and the
+    // admin page opened at launch. Those two lead to a page whose worth is in
+    // being readable without an interstitial, and the rendezvous carries it
+    // under a certificate the browser trusts. Everything else here — the
+    // shortcut, the tooltip, Open, the post-install page — stays on loopback,
+    // because a file written to disk cannot hold a single-use key and an address
+    // that is sometimes right is worse than one that is always plain.
     //
     // It used to prefer the public sub-domain whenever one was published,
     // trusted and reflected back to the LAN, on the reasoning that the host
@@ -3852,6 +3863,73 @@ int main(int argc, char* argv[])
                 << (online ? rendezvous.entryUrl() : QString());
     });
 
+    // The switch being on is not enough. A consent recorded for the retired DNS
+    // mechanism left it on, and it never described an outbound line announcing
+    // this machine — so the gate InternetAccessManager stops at applies here for
+    // exactly the same reason.
+    auto rendezvousShouldRun = [&]() {
+        return appSettings.internetAccessEnabled() && !internetAccess.consentRequired();
+    };
+
+    // ── Does the internet way in actually answer? ────────────────────────────
+    //
+    // The held line already says a great deal: it is pinged and watchdogged, so
+    // "online" means a browser can reach this machine THROUGH the introduction
+    // server. It does not cover the first half of the journey — the browser has
+    // to fetch an entry page from that server over ordinary HTTPS first, which
+    // is a different front and can be down on its own. So the address is asked
+    // the question a browser would ask it.
+    //
+    // Asked in the background, never with a nested event loop. This runs on the
+    // same thread that serves HTTP, and blocking it while connections come and
+    // go is how a server acquires a rare crash — one of the callers below IS a
+    // request handler. Everything reads the last verdict instead, and asking
+    // for it refreshes it for next time.
+    //
+    // Unknown counts as "no". Loopback always works; the internet link, when
+    // this check is wrong about it, is a dead page that has already spent a
+    // single-use key.
+    QNetworkAccessManager entryProbeNam;
+    bool entryAnswers = false;
+    QNetworkReply* entryProbeReply = nullptr;
+    QElapsedTimer entryProbedAt;
+    auto probeEntry = [&]() {
+        const QString url = rendezvous.entryUrl();
+        if (url.isEmpty() || !rendezvous.isOnline() || entryProbeReply) return;
+        if (entryProbedAt.isValid() && entryProbedAt.elapsed() < 60000) return;
+        entryProbedAt.restart();
+
+        QNetworkRequest req{QUrl(url)};
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+        req.setTransferTimeout(5000);
+        entryProbeReply = entryProbeNam.get(req);
+        QObject::connect(entryProbeReply, &QNetworkReply::finished, &app, [&]() {
+            const int status =
+                entryProbeReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            // Below 400 only. A 404 means the introduction server does not know
+            // this identity, which is precisely the failure being looked for.
+            const bool ok = entryProbeReply->error() == QNetworkReply::NoError && status >= 200 &&
+                            status < 400;
+            if (ok != entryAnswers)
+                qInfo() << "[main] the internet entry page"
+                        << (ok ? "answers" : "does not answer — falling back to loopback")
+                        << "status" << status << entryProbeReply->errorString();
+            entryAnswers = ok;
+            entryProbedAt.restart();
+            entryProbeReply->deleteLater();
+            entryProbeReply = nullptr;
+        });
+    };
+    QObject::connect(&rendezvous, &RendezvousClient::onlineChanged, &app, [&](bool online) {
+        // A line that just dropped tells us nothing about the entry page, and a
+        // line that just came up deserves a fresh answer rather than the one
+        // from before it went away.
+        entryAnswers = false;
+        entryProbedAt.invalidate();
+        if (online) probeEntry();
+    });
+
     // The way to an admin page under a certificate the browser already trusts.
     //
     // The address is the ordinary rendezvous one — the same link anybody uses to
@@ -3862,14 +3940,25 @@ int main(int argc, char* argv[])
     // machine inside the tunnel's own encryption. As a query it would be in the
     // introduction server's request line, and from there in whatever it logs.
     //
-    // Empty whenever any half is missing, because a link that cannot work is
-    // worse than no link: it is single-use and the user would have spent it.
+    // The fragment carries a second thing: which page to land on. The path of
+    // the address itself is spent on the identifier, and the bootstrap frees it
+    // only after it has handed over — so without this the owner would arrive at
+    // the front door and have to walk to the settings page. It is read and
+    // validated by the bootstrap, which accepts one plain path segment.
+    //
+    // Empty whenever any part is missing or the internet is not an option here,
+    // because a link that cannot work is worse than no link: it is single-use
+    // and the user would have spent it. Every caller falls back to loopback.
     auto remoteAdminLink = [&]() -> QString {
-        if (!rendezvous.isOnline()) return {};
+        if (!rendezvousShouldRun() || !rendezvous.isOnline()) return {};
+        // Refreshes the verdict for next time; this call reads the last one.
+        probeEntry();
+        if (!entryAnswers) return {};
         const QString entry = rendezvous.entryUrl();
         const QString key = appSettings.localKey();
         if (entry.isEmpty() || key.isEmpty()) return {};
-        return entry + QStringLiteral("#k=") + QString::fromLatin1(QUrl::toPercentEncoding(key));
+        return entry + QStringLiteral("#k=") + QString::fromLatin1(QUrl::toPercentEncoding(key)) +
+               QStringLiteral("&p=/admin");
     };
 
     // GET /api/server/remote-admin-link — the same link, for the tray client.
@@ -3884,13 +3973,6 @@ int main(int argc, char* argv[])
                                  QJsonObject{{QStringLiteral("url"), remoteAdminLink()}});
                          });
 
-    // The switch being on is not enough. A consent recorded for the retired DNS
-    // mechanism left it on, and it never described an outbound line announcing
-    // this machine — so the gate InternetAccessManager stops at applies here for
-    // exactly the same reason.
-    auto rendezvousShouldRun = [&]() {
-        return appSettings.internetAccessEnabled() && !internetAccess.consentRequired();
-    };
     if (rendezvousShouldRun()) rendezvous.start();
 
     // Write the Desktop admin shortcut with the best URL known at this point.
@@ -4024,16 +4106,38 @@ int main(int argc, char* argv[])
         const QString path =
             appSettings.setupCompleted() ? QStringLiteral("/admin") : QStringLiteral("/setup");
 #endif
-        // Public domain when Internet Access is live (valid cert + host key),
-        // HTTPS loopback otherwise; the browser asks to accept the self-signed
-        // cert once. (If a user later reaches the hosts page over plain http://,
-        // the frontend gates it with a secure link.)
-        const QString url = entryUrl(path);
-        // Defer so the TLS listener is fully accepting before the browser hits it.
-        QTimer::singleShot(1200, &app, [url]() {
-            qInfo() << "[main] Opening web UI:" << url;
+        // The internet link when the option is on and it answers, HTTPS loopback
+        // otherwise — the same rule the tray's Server Settings follows, and for
+        // the same reason: reached that way the page arrives under a certificate
+        // the browser already trusts, instead of an interstitial to accept.
+        //
+        // Only /admin has an internet form worth preferring. /setup is the
+        // first-run wizard: it runs before any of this exists, and it configures
+        // the local desktop anyway.
+        //
+        // Waiting, and why it is bounded: the line takes a moment to come up and
+        // the entry page a moment more to be asked. About six seconds covers
+        // both on an ordinary connection, and a machine with no internet does
+        // not sit staring at nothing — it opens loopback, which is exactly what
+        // it did before.
+        const bool wantRemote = path == QStringLiteral("/admin") && rendezvousShouldRun();
+        auto attemptsLeft = std::make_shared<int>(wantRemote ? 14 : 1);
+        QTimer* opener = new QTimer(&app);
+        opener->setInterval(400);
+        QObject::connect(opener, &QTimer::timeout, &app, [=]() {
+            const QString link = wantRemote ? remoteAdminLink() : QString();
+            if (link.isEmpty() && --(*attemptsLeft) > 0) return;
+            opener->stop();
+            opener->deleteLater();
+            const QString url = link.isEmpty() ? entryUrl(path) : link;
+            // Without its fragment: that is where the host key rides.
+            QUrl logged(url);
+            logged.setFragment(QString());
+            qInfo() << "[main] Opening web UI:" << logged.toString();
             openInBrowser(url);
         });
+        // Defer so the TLS listener is fully accepting before the browser hits it.
+        QTimer::singleShot(1200, opener, [opener]() { opener->start(); });
     } else if (!appSettings.setupCompleted()) {
         qInfo() << "[main] Setup pending, browser not auto-opened — visit /setup";
     }

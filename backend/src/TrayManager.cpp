@@ -99,14 +99,6 @@ bool TrayManager::init()
     }
     QAction* openAction = m_Menu->addAction(tr("&Open"));
     QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
-    // Deliberately an addition rather than a replacement. The two entries above
-    // go to loopback, which works with no network, no router and no third party,
-    // and must keep doing so: an entry that sometimes lands on a dead page is
-    // worse than one that always shows a certificate warning. This one is the
-    // way to an admin page under a trusted certificate, and it only appears when
-    // there is actually a line to carry it.
-    m_RemoteAdminAction = m_Menu->addAction(tr("Open Admin (&internet link)"));
-    m_RemoteAdminAction->setVisible(false);
     m_Menu->addSeparator();
     QAction* restartAction =
         m_Menu->addAction(m_ClientMode ? tr("&Restart Server") : tr("&Restart"));
@@ -115,12 +107,6 @@ bool TrayManager::init()
 
     connect(openAction, &QAction::triggered, this, &TrayManager::onOpen);
     connect(controlPanelAction, &QAction::triggered, this, &TrayManager::onOpenSettings);
-    connect(m_RemoteAdminAction, &QAction::triggered, this, &TrayManager::onOpenRemoteAdmin);
-    // Asked at the moment the menu opens: the line goes up and down with the
-    // network, and there is nothing to show while it is down.
-    connect(m_Menu, &QMenu::aboutToShow, this, [this]() {
-        m_RemoteAdminAction->setVisible(m_RemoteAdminLink && !m_RemoteAdminLink().isEmpty());
-    });
     connect(restartAction, &QAction::triggered, this, &TrayManager::onRestart);
     connect(quitAction, &QAction::triggered, this, &TrayManager::onQuit);
     connect(m_TrayIcon, &QSystemTrayIcon::activated, this, &TrayManager::onActivated);
@@ -207,8 +193,33 @@ void TrayManager::onOpen()
     QDesktopServices::openUrl(url);
 }
 
+// One entry, two possible addresses, and the choice is not the user's to make.
+//
+// The internet link is preferred whenever there is one, for a single reason: it
+// is the only address that reaches this page under a certificate the browser
+// already trusts. Loopback never will be — it is served by the self-signed
+// certificate, and every visit costs an acceptance or a scary interstitial.
+//
+// The provider answers empty whenever that link would not work: the option is
+// off, the line is down, or the introduction server did not respond when asked.
+// So the fallback is not a guess — by the time we reach it, the internet has
+// already been tried and found wanting, and loopback is what is left that
+// always works. Nothing is said about it either way; the owner asked for the
+// settings page, not for a report on how it was reached.
 void TrayManager::onOpenSettings()
 {
+    const QString link = m_RemoteAdminLink ? m_RemoteAdminLink() : QString();
+    if (!link.isEmpty()) {
+        // Logged without its fragment. The key in there is single-use, but it is
+        // still a credential, and a log file is exactly the place it must not
+        // outlive its one use in.
+        QUrl logged(link);
+        logged.setFragment(QString());
+        qInfo() << "[TrayManager] Opening settings over the internet link" << logged.toString();
+        QDesktopServices::openUrl(QUrl(link));
+        return;
+    }
+
     QUrl url = localUrl(QStringLiteral("/admin"));
     if (url.isEmpty()) {
         qWarning() << "[TrayManager] Cannot open settings — no HTTP/HTTPS listener running";
@@ -216,22 +227,6 @@ void TrayManager::onOpenSettings()
     }
     qInfo() << "[TrayManager] Opening settings" << url.toString();
     QDesktopServices::openUrl(url);
-}
-
-void TrayManager::onOpenRemoteAdmin()
-{
-    const QString link = m_RemoteAdminLink ? m_RemoteAdminLink() : QString();
-    if (link.isEmpty()) {
-        qWarning() << "[TrayManager] No internet link to open — the rendezvous line is down";
-        return;
-    }
-    // Logged without its fragment. The key in there is single-use, but it is
-    // still a credential, and a log file is exactly the place it must not
-    // outlive its one use in.
-    QUrl logged(link);
-    logged.setFragment(QString());
-    qInfo() << "[TrayManager] Opening the admin page over the internet link" << logged.toString();
-    QDesktopServices::openUrl(QUrl(link));
 }
 
 void TrayManager::onRestart()
