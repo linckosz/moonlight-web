@@ -27,27 +27,84 @@ const ui = {
     stage: document.getElementById('stage'),
     detail: document.getElementById('detail'),
     bar: document.getElementById('bar'),
+    status: document.getElementById('status'),
     note: document.getElementById('note'),
 };
 
 function say(stage, detail) {
+    // The heading is the failure voice and is hidden while this works; the line
+    // under the bar carries the same words in the meantime.
     if (ui.stage) ui.stage.textContent = stage;
-    if (ui.detail) ui.detail.textContent = detail || '';
+    if (ui.detail) ui.detail.textContent = detail || stage || '';
 }
 
-/** null = no measurable progress yet; the bar sweeps instead of sitting at 0. */
+/* ── The meter ────────────────────────────────────────────────────────────
+ *
+ * What the bar shows is not what the work has done. It is
+ *
+ *     0.7 × (work actually done)  +  0.3 × (min(elapsed, 1.2s) / 1.2s)
+ *
+ * and it never goes backwards. The time term is there for one reason: a bar
+ * that only tracks work sits frozen through every phase that has no percentage
+ * to report — opening the connection, checking the machine's identity — and a
+ * frozen bar reads as a hang. This way it always moves, and it still cannot
+ * reach the end before the work does, because the work owns the larger share.
+ *
+ * Then the page stays for a moment longer than it strictly needs to: 300 ms at
+ * a full bar so the completion is actually seen, and 1.6 s on screen in total.
+ * That is a deliberate cost — a warm start could hand over sooner — paid so the
+ * one moment where this page can say what it is doing is long enough to read.
+ * Keep it honest: the seal closes when the connection is genuinely established
+ * and the interface genuinely came down it, never on a timer alone.
+ */
+const WORK_WEIGHT = 0.7;
+const TIME_WEIGHT = 0.3;
+const TIME_SPAN_MS = 1200;
+const HOLD_FULL_MS = 300;
+const MIN_VISIBLE_MS = 1600;
+
+const startedAt = performance.now();
+let work = 0; // real progress, 0…1
+let shown = 0; // what the bar displays, monotonic
+let secured = false;
+let ticking = true;
+
+/** Milestone reached. Monotonic: a later, smaller number is ignored. */
 function progress(fraction) {
-    if (!ui.bar) return;
-    if (fraction === null) {
-        ui.bar.setAttribute('data-indeterminate', '');
-        ui.bar.style.width = '';
-        return;
-    }
-    ui.bar.removeAttribute('data-indeterminate');
-    ui.bar.style.width = `${Math.round(fraction * 100)}%`;
+    work = Math.max(work, Math.min(1, fraction));
+}
+
+function markSecured() {
+    secured = true;
+    document.body.dataset.state = 'secured';
+    if (ui.status) ui.status.textContent = 'Secured';
+}
+
+function tick() {
+    if (!ticking) return;
+    const elapsed = performance.now() - startedAt;
+    const target =
+        WORK_WEIGHT * work + TIME_WEIGHT * Math.min(elapsed / TIME_SPAN_MS, 1);
+    shown = Math.max(shown, target);
+    if (ui.bar) ui.bar.style.width = `${(shown * 100).toFixed(1)}%`;
+    if (shown >= 0.999 && !secured) markSecured();
+    requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Wait for the bar to actually reach the end, then let it be seen there. */
+async function settle() {
+    progress(1);
+    while (!secured) await new Promise((resolve) => requestAnimationFrame(resolve));
+    await sleep(HOLD_FULL_MS);
+    const remaining = MIN_VISIBLE_MS - (performance.now() - startedAt);
+    if (remaining > 0) await sleep(remaining);
 }
 
 function fail(message, hint) {
+    ticking = false;
     document.body.dataset.state = 'failed';
     say('Not connected', message);
     if (ui.note) ui.note.textContent = hint || '';
@@ -60,6 +117,18 @@ const STAGE_WORDS = {
     connecting: 'Opening a direct connection…',
     ready: 'Connected.',
 };
+
+// Where each stage sits on the bar. Guesses, but ordered ones: the share left
+// to the download is the part with a real denominator, and it is the largest.
+const STAGE_PROGRESS = {
+    identity: 0.06,
+    calling: 0.12,
+    binding: 0.22,
+    connecting: 0.3,
+    ready: 0.38,
+};
+const MANIFEST_AT = 0.45;
+const SHELL_AT = 0.92;
 
 /**
  * What the cache currently holds, if anything usable.
@@ -105,11 +174,12 @@ function writeStamp(hostId, version) {
  */
 async function fetchShell(tunnel, hostId) {
     say('Checking for updates…', '');
-    progress(null);
 
     const manifestResponse = await tunnel.fetch('/api/app/manifest');
     if (!manifestResponse.ok) throw new Error('your machine did not describe its interface');
     const manifest = await manifestResponse.json();
+
+    progress(MANIFEST_AT);
 
     const files = Array.isArray(manifest.files) ? manifest.files : [];
     if (files.length === 0) throw new Error('your machine reported no interface files');
@@ -120,11 +190,13 @@ async function fetchShell(tunnel, hostId) {
         // evict a cache without telling anyone, and a stamp pointing at nothing
         // would hand the service worker an empty shelf.
         const cache = await caches.open(SHELL_CACHE);
-        if (await cache.match('/index.html')) return manifest.version;
+        if (await cache.match('/index.html')) {
+            progress(SHELL_AT);
+            return manifest.version;
+        }
     }
 
     say('Fetching the interface…', 'from your machine, not from here');
-    progress(0);
 
     // Start from nothing rather than merging: a file an update removed would
     // otherwise be served forever out of a cache nobody prunes, and a cache
@@ -144,7 +216,7 @@ async function fetchShell(tunnel, hostId) {
             const response = await tunnel.fetch(path);
             if (response.ok) await fresh.put(path, response);
             done++;
-            progress(done / files.length);
+            progress(MANIFEST_AT + (SHELL_AT - MANIFEST_AT) * (done / files.length));
             say('Fetching the interface…', `${done} of ${files.length} files`);
         }
     };
@@ -181,7 +253,10 @@ async function main() {
     }
 
     const tunnel = new Tunnel(hostId);
-    tunnel.onstatus = (stage) => say(STAGE_WORDS[stage] || stage, '');
+    tunnel.onstatus = (stage) => {
+        say(STAGE_WORDS[stage] || stage, '');
+        if (STAGE_PROGRESS[stage]) progress(STAGE_PROGRESS[stage]);
+    };
 
     try {
         await tunnel.connect();
@@ -211,7 +286,6 @@ async function main() {
     }
 
     say('Starting…', '');
-    progress(1);
     try {
         await navigator.serviceWorker.register('/sw.js', { scope: '/' });
         await navigator.serviceWorker.ready;
@@ -219,6 +293,10 @@ async function main() {
         fail(`This browser refused to install the application: ${e.message}.`, '');
         return;
     }
+
+    // Everything real is done. The rest is the bar catching up, its moment at
+    // the end, and the floor on how briefly this page may exist.
+    await settle();
 
     // Remembered so that stream.{domain} on its own — no identifier — opens the
     // machine this browser last used, rather than an application with nothing
