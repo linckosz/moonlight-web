@@ -32,7 +32,11 @@ import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { noticeDetailsHtml, plainText } from './PrivacyNotice.js';
-import { SUPPORTS_CANVAS_TEARING, IS_MOBILE_OR_TABLET } from '../util/BrowserDetect.js';
+import {
+    SUPPORTS_CANVAS_TEARING,
+    IS_MOBILE_OR_TABLET,
+    resolveTearing,
+} from '../util/BrowserDetect.js';
 import { aspectToNumber, computeAutoBitrate } from '../util/AutoBitrate.js';
 import { ASPECT_VALUES, SCREEN_ASPECTS } from '../util/AspectRatio.js';
 
@@ -62,9 +66,10 @@ export class SettingsView {
         // Mobile only: direct touch-screen input (absolute) instead of the
         // relative trackpad model. Off by default.
         this._touchScreen = false;
-        // Allow tearing (default off = VSync pacing). Only meaningful on
-        // Chromium desktop (desynchronized canvas); forced off elsewhere.
-        this._tearing = false;
+        // Allow tearing (default ON = present on decode). Only meaningful on
+        // Chromium desktop (desynchronized canvas); forced off elsewhere, where
+        // the render loop keeps its VSync pacing.
+        this._tearing = SUPPORTS_CANVAS_TEARING;
         // Worker decode mode: 'auto' (heuristic, default), 'on' or 'off' (explicit).
         this._videoWorker = 'auto';
         this._mediaTrackOnlyH264 = false;
@@ -277,13 +282,9 @@ export class SettingsView {
                 ? data.touch_sensitivity
                 : 2.2;
         this._touchScreen = data.touch_screen === true;
-        // Allow tearing (default off). Migrates the legacy inverted key
-        // (vsync_enabled:false meant "tearing allowed"); forced off where the
-        // platform cannot tear anyway (non-Chromium or non-desktop).
-        this._tearing =
-            data.tearing_enabled === true ||
-            (data.tearing_enabled === undefined && data.vsync_enabled === false);
-        if (!SUPPORTS_CANVAS_TEARING) this._tearing = false;
+        // Allow tearing (default on): resolveTearing() owns the default, the
+        // legacy keys and the "cannot tear anyway" gate — see BrowserDetect.
+        this._tearing = resolveTearing(data);
         // Back-compat: older saves stored a boolean; map it onto the tri-state.
         const vw = data.video_worker;
         this._videoWorker =
@@ -352,6 +353,12 @@ export class SettingsView {
             touch_sensitivity: this._touchSensitivity,
             touch_screen: this._touchScreen,
             tearing_enabled: this._tearing,
+            // Marks the value above as a real choice rather than the old OFF
+            // default (see resolveTearing). Only a browser that can actually
+            // tear stamps it: elsewhere tearing_enabled is a forced false, not
+            // a preference worth propagating to the other devices through the
+            // server-side defaults.
+            ...(SUPPORTS_CANVAS_TEARING ? { tearing_default_v2: true } : {}),
             video_worker: this._videoWorker,
             video_enhancement: this._videoEnhancement,
             video_enhancement_algo: this._videoEnhancementAlgo,
@@ -580,7 +587,7 @@ export class SettingsView {
         this._muteHostAudio = true;
         this._touchSensitivity = 2.2;
         this._touchScreen = false;
-        this._tearing = false;
+        this._tearing = SUPPORTS_CANVAS_TEARING;
         this._videoWorker = 'auto';
         this._videoEnhancement = 'on';
         this._videoEnhancementAlgo = 'auto';
@@ -647,10 +654,14 @@ export class SettingsView {
                 if (this._hdrEnabled === false) this._hdrEnabled = b.hdr_enabled;
                 if (this._chroma444 === false) this._chroma444 = b.chroma_444_enabled;
                 if (this._videoEnhancement === 'off') this._videoEnhancement = b.video_enhancement;
-                // Old backups stored the inverted vsync_enabled key — skip them
-                // (tearing then simply stays at its off default).
-                if (this._tearing === false && b.tearing_enabled !== undefined)
-                    this._tearing = b.tearing_enabled;
+                // Old backups stored the inverted vsync_enabled key — with
+                // nothing to restore, fall back to the default (on wherever the
+                // platform can tear) instead of leaving a stale off behind.
+                if (this._tearing === false)
+                    this._tearing =
+                        b.tearing_enabled === undefined
+                            ? SUPPORTS_CANVAS_TEARING
+                            : b.tearing_enabled === true && SUPPORTS_CANVAS_TEARING;
                 if (this._streamHeight === 720) this._streamHeight = b.stream_height;
                 if (this._streamFps === 60) this._streamFps = b.stream_fps;
                 if (this._streamBitrateMbps === psBitrate)
