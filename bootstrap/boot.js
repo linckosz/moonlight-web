@@ -303,6 +303,18 @@ async function main() {
     // behind it.
     rememberLastHost(hostId);
 
+    // The application draws this same seal on every start, because every later
+    // start makes the same connection with nothing to download. Leave it a note
+    // saying the seal has just been shown, or the first visit to a machine
+    // would show it twice in a row. The application reads this once and deletes
+    // it, so only this handover is covered — a refresh a second later shows the
+    // seal, which is the point of it being there at all.
+    try {
+        sessionStorage.setItem('mw-seal', String(Date.now()));
+    } catch {
+        /* worst case the seal is shown twice; nothing breaks */
+    }
+
     // The identifier moves from the path to the fragment. The application uses
     // ordinary absolute paths for its own routes and its own assets, and a
     // prefix in the path would break every one of them; a fragment is invisible

@@ -57,6 +57,20 @@ export function isTunnelMode() {
 }
 
 /**
+ * The same question, answered synchronously and before anything is loaded.
+ *
+ * A controlling service worker means this document was served by one, and the
+ * bootstrap's is the only service worker in this project — the application
+ * registers none on a direct connection, where it is served by the host's own
+ * HTTP server. So a controller present is exactly "this page came down a
+ * tunnel", available at the first statement of startup rather than after an
+ * import that has to fail to answer.
+ */
+export function pageCameThroughTunnel() {
+    return !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+}
+
+/**
  * A WebSocket, or something shaped like one.
  *
  * On a direct connection this is `new WebSocket(url)` and nothing more. Through
@@ -111,7 +125,7 @@ function serveWorkerRequests() {
  * the page IS on the rendezvous and the connection could not be made, because
  * there is nothing to start in that case.
  */
-export async function startTunnel() {
+export async function startTunnel(onStage) {
     if (!('serviceWorker' in navigator)) return false;
 
     // The bootstrap's transport, from the bootstrap's own origin. On a direct
@@ -147,6 +161,9 @@ export async function startTunnel() {
     }
 
     tunnel = new mod.Tunnel(hostId);
+    // Reported so the seal on screen can follow something real rather than a
+    // timer: identity, calling, binding, connecting, ready.
+    if (onStage) tunnel.onstatus = onStage;
     tunnel.onclosed = () => {
         // Go back through the bootstrap. It is the one path that can re-establish
         // everything — connection, cached interface, worker — and it says what is
