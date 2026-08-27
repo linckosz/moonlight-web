@@ -161,6 +161,10 @@
         "playerStatsOn": "L’ordinateur que vous rejoignez envoie des statistiques anonymes sur la session qu’il exécute pour vous. C’est le choix de son propriétaire, pas le vôtre — mais voici exactement ce que cela couvre.",
         "playerStatsOff": "L’ordinateur que vous rejoignez n’envoie rien du tout au sujet de cette session."
     },
+    "securing": {
+        "working": "Sécurisation de la communication…",
+        "done": "Sécurisé"
+    },
     "secure": {
         "title": "Connexion sécurisée requise",
         "explain": "Vous avez ouvert MoonlightWeb via une connexion non chiffrée. Le streaming nécessite une page sécurisée (HTTPS). Cliquez ci-dessous pour la rouvrir en sécurisé — votre navigateur vous demandera d'accepter le certificat local une seule fois.",

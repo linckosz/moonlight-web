@@ -161,6 +161,10 @@
         "playerStatsOn": "The computer you are joining reports anonymous statistics about the session it runs for you. It is its owner’s choice, not yours to make — but here is exactly what it covers.",
         "playerStatsOff": "The computer you are joining reports nothing at all about this session."
     },
+    "securing": {
+        "working": "Securing the communication…",
+        "done": "Secured"
+    },
     "secure": {
         "title": "Secure connection required",
         "explain": "You opened MoonlightWeb over an unencrypted connection. Streaming needs a secure (HTTPS) page. Click below to reopen it securely — your browser will ask you to accept the local certificate once.",

@@ -1,0 +1,184 @@
+/* MoonlightWeb — the securing seal, shown while the connection to the machine
+   is being made.
+ *
+ * Only on the rendezvous path. Reached at its own address — localhost, a LAN
+ * IP, a mesh name — the browser already has a route to the machine and there is
+ * no identity check to watch; a padlock there would be decoration.
+ *
+ * ⚠ The same seal is drawn a second time, inline, in bootstrap/index.html. It
+ * has to be: that page runs before a single byte of this application exists, so
+ * it cannot link this file. The two are shown to the same person seconds apart
+ * and any drift between them reads as a glitch — change both together.
+ */
+
+.securing {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: grid;
+    place-items: center;
+    padding: max(2rem, env(safe-area-inset-top)) 1.5rem;
+    /* The application's own atmosphere, so the seal lifting reveals the same
+       scene rather than cutting to it. */
+    background-color: var(--surface-0);
+    background-image: var(--app-bg);
+    opacity: 1;
+    transition: opacity 0.32s ease;
+}
+.securing::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: var(--bg-grid);
+    background-size: var(--bg-grid-size);
+    mask-image: radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(120% 120% at 50% 0%, #000 30%, transparent 80%);
+}
+.securing[data-leaving] {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.securing-inner {
+    position: relative;
+    width: 100%;
+    max-width: 30rem;
+}
+
+/* The header title, since it is the same name the next screen shows. */
+.securing-brand {
+    font-size: var(--fs-lg);
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--text-1);
+    text-shadow: 0 0 12px var(--accent-ring);
+    margin: 0 0 1.5rem;
+}
+
+/* An app card in its launching state, holding a padlock instead of cover art.
+   Green rather than the accent yellow: yellow is what this product uses for the
+   thing you act on, and a padlock is not one. */
+.securing-seal {
+    position: relative;
+    width: 62px;
+    aspect-ratio: 1;
+    margin: 1.5rem auto 0.25rem;
+    overflow: hidden;
+    background: var(--c-success-soft);
+    background-color: rgba(42, 212, 160, 0.28);
+    clip-path: polygon(
+        0 0,
+        calc(100% - 10px) 0,
+        100% 10px,
+        100% 100%,
+        10px 100%,
+        0 calc(100% - 10px)
+    );
+}
+/* The light trail. A rotated conic gradient behind a face that covers all but a
+   2px rim — the application animates the gradient's angle instead, which needs
+   @property; this way turns everywhere. */
+.securing-seal::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 240%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    background: conic-gradient(
+        transparent 0deg,
+        transparent 215deg,
+        rgba(42, 212, 160, 0.9) 322deg,
+        transparent 360deg
+    );
+    animation: securing-spin 3.2s linear infinite;
+}
+@keyframes securing-spin {
+    to {
+        transform: translate(-50%, -50%) rotate(360deg);
+    }
+}
+.securing-face {
+    position: absolute;
+    inset: 2px;
+    display: grid;
+    place-items: center;
+    background:
+        linear-gradient(rgba(42, 212, 160, 0.12), rgba(42, 212, 160, 0.12)), var(--surface-2);
+    box-shadow:
+        inset 0 0 0 1px rgba(42, 212, 160, 0.3),
+        inset 0 1px 0 rgba(0, 229, 255, 0.08);
+    clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
+    transition: background 0.3s ease;
+}
+.securing-face svg {
+    width: 30px;
+    height: 30px;
+    color: var(--c-success);
+}
+/* The shackle breathes while the connection is being made, and stops when it is
+   made — the only moving light on the padlock, carrying "closing" versus
+   "closed" without a word. */
+.securing-shackle {
+    animation: securing-shackle 1.9s ease-in-out infinite;
+}
+@keyframes securing-shackle {
+    0%,
+    100% {
+        filter: drop-shadow(0 0 1px rgba(42, 212, 160, 0.3));
+    }
+    50% {
+        filter: drop-shadow(0 0 6px rgba(42, 212, 160, 0.75));
+    }
+}
+.securing[data-state='secured'] .securing-seal::before {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.securing[data-state='secured'] .securing-shackle {
+    animation: none;
+    filter: none;
+}
+.securing[data-state='secured'] .securing-face {
+    background: linear-gradient(rgba(42, 212, 160, 0.2), rgba(42, 212, 160, 0.2)), var(--surface-2);
+}
+
+.securing-track {
+    height: 3px;
+    width: 66%;
+    margin: 1.25rem auto 0.7rem;
+    background: rgba(0, 229, 255, 0.12);
+    overflow: hidden;
+}
+/* Driven frame by frame, so no CSS transition: the easing is in the number and
+   a transition on top of it would only add lag. */
+.securing-bar {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, rgba(42, 212, 160, 0.55), var(--c-success));
+    box-shadow:
+        0 0 10px rgba(42, 212, 160, 0.7),
+        0 0 22px rgba(42, 212, 160, 0.3);
+}
+.securing-status {
+    text-align: center;
+    font-size: 0.93rem;
+    letter-spacing: 0.02em;
+    color: var(--text-2);
+    margin: 0;
+}
+.securing[data-state='secured'] .securing-status {
+    color: var(--c-success);
+    text-shadow: 0 0 12px rgba(42, 212, 160, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .securing-seal::before,
+    .securing-shackle {
+        animation: none;
+    }
+}

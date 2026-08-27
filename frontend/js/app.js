@@ -63,7 +63,8 @@ import { startAspectProbe } from './stream/AspectProbe.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
-import { startTunnel, tunnelHostId } from './net/tunnelBridge.js';
+import { startTunnel, tunnelHostId, pageCameThroughTunnel } from './net/tunnelBridge.js';
+import { SecuringOverlay } from './ui/SecuringOverlay.js';
 
 // ── Global error handler ──────────────────────────────────────────────────────
 window.addEventListener('error', (evt) => {
@@ -131,14 +132,25 @@ const MoonlightApp = {
     async init() {
         console.log('[MW] Initializing MoonlightWeb...');
 
+        // Before anything is on screen: the seal, whenever this page arrived
+        // down a tunnel. The wait that follows is the connection being made and
+        // the machine's identity being checked, and it happens on every open —
+        // the cached interface removed the download, not the handshake.
+        SecuringOverlay.show(pageCameThroughTunnel());
+
         // ── The connection to the host, when there is no route to it ────────
         // Reached at its own address — a LAN IP, localhost, a mesh VPN name —
         // this does nothing and returns false. Reached through the introduction
         // server, it is what every request below travels on, so it has to be up
         // before the first of them is made.
         try {
-            await startTunnel();
+            await startTunnel((stage) => SecuringOverlay.stage(stage));
+            // Closes the padlock and lifts the seal on its own schedule. Not
+            // awaited: everything below renders behind it, so the moment it
+            // holds costs the reveal and not the work.
+            SecuringOverlay.finish();
         } catch (e) {
+            SecuringOverlay.abort();
             // The page is on the rendezvous and the machine did not answer.
             // The bootstrap is the one place that can explain that and retry,
             // and it is where the address in the bar already points.
