@@ -659,6 +659,31 @@ export function hostKeyFromLocation() {
     return null;
 }
 
+/**
+ * Where inside the application this link asks to land, or null.
+ *
+ * At handover the identifier moves out of the path, which frees the path for the
+ * application's own routes — but the address that started all this had to spend
+ * its path on the identifier, so it has no other way to say "the settings page"
+ * rather than "the front door". This is that way. The machine's own tray uses it;
+ * an ordinary link carries nothing and lands at the root, as before.
+ *
+ * One segment, letters, digits, '-' and '_'. That is not fussiness: the value is
+ * handed to location.replace(), and "//somewhere.else" is a perfectly valid URL
+ * that leaves this origin altogether.
+ */
+const LANDING_SHAPE = /^\/[A-Za-z0-9_-]{1,32}$/;
+
+export function landingPathFromLocation() {
+    for (const part of hashParts()) {
+        if (part.startsWith('p=')) {
+            const path = decodeURIComponent(part.slice(2));
+            if (LANDING_SHAPE.test(path)) return path;
+        }
+    }
+    return null;
+}
+
 export function hostIdFromLocation() {
     const fromPath = location.pathname.replace(/^\/+|\/+$/g, '');
     if (ID_SHAPE.test(fromPath)) return fromPath;

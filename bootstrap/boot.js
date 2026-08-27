@@ -25,6 +25,7 @@ import {
     Tunnel,
     hostIdFromLocation,
     hostKeyFromLocation,
+    landingPathFromLocation,
     rememberLastHost,
     SHELL_CACHE,
 } from './tunnel.js';
@@ -360,8 +361,13 @@ async function main() {
     // fragment and it stays there, because this page hands over by navigating
     // and a query would put it in the introduction server's next request line.
     // The application spends it and strips it; nothing here reads it.
+    //
+    // The path, freed by that same move, is where the link says which page it
+    // meant. The machine's own tray asks for /admin; everything else asks for
+    // nothing and lands at the root, which is what every link did before this.
     const key = hostKeyFromLocation();
-    location.replace(`/#${hostId}${key ? `&k=${encodeURIComponent(key)}` : ''}`);
+    const landing = landingPathFromLocation() || '/';
+    location.replace(`${landing}#${hostId}${key ? `&k=${encodeURIComponent(key)}` : ''}`);
 }
 
 main().catch((e) => fail(e.message, ''));

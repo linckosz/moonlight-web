@@ -189,4 +189,44 @@ describe('which machine a page talks to', () => {
             expect(tunnelModule.hostKeyFromLocation()).toBeNull();
         });
     });
+
+    // And a third thing: which page to land on. The address spends its path on
+    // the identifier, so a link that means "the settings page" has nowhere else
+    // to say so. The bootstrap hands this value to location.replace(), which is
+    // why the shape is checked rather than trusted.
+    describe('and the page it asks to land on', () => {
+        it('reads the landing path out of the fragment', () => {
+            at(`/${A}`, '#k=SEKRIT&p=/admin');
+            expect(tunnelModule.landingPathFromLocation()).toBe('/admin');
+            expect(tunnelModule.hostIdFromLocation()).toBe(A);
+            expect(tunnelModule.hostKeyFromLocation()).toBe('SEKRIT');
+        });
+
+        it('answers null when the link asks for nothing', () => {
+            at(`/${A}`, '#k=SEKRIT');
+            expect(tunnelModule.landingPathFromLocation()).toBeNull();
+        });
+
+        it('refuses anything that could leave this origin', () => {
+            // THE reason this is validated: every one of these is a URL the
+            // browser would happily navigate to, and two of them go somewhere
+            // else entirely.
+            for (const bad of [
+                '//evil.test',
+                '/\\evil.test',
+                'https://evil.test',
+                '/admin/../../x',
+                'admin',
+                '/',
+            ]) {
+                at(`/${A}`, `#p=${encodeURIComponent(bad)}`);
+                expect(tunnelModule.landingPathFromLocation()).toBeNull();
+            }
+        });
+
+        it('refuses a path the application does not have room for', () => {
+            at(`/${A}`, `#p=/${'x'.repeat(33)}`);
+            expect(tunnelModule.landingPathFromLocation()).toBeNull();
+        });
+    });
 });
