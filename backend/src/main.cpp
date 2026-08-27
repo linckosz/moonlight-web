@@ -3892,11 +3892,6 @@ int main(int argc, char* argv[])
     // The desktop session gets its tray from runTrayClient() instead.
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
-    // Deliberately a different provider from the one above: the tray's Open
-    // entry must stay on loopback (it carries the host-key privilege, and going
-    // out to the internet to reach this same machine would be absurd). This one
-    // exists only to hand the address to another device.
-    trayManager.setRemoteUrlProvider([&rendezvous]() { return rendezvous.entryUrl(); });
     if (hasGuiSession()) trayManager.init();
 
     // Keep every host-side entry point current when the entry URL changes:

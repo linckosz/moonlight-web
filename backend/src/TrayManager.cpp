@@ -27,7 +27,6 @@
 #include <QProcess>
 #include <QCoreApplication>
 #include <QAction>
-#include <QClipboard>
 #include <QGuiApplication>
 #include <QMenu>
 
@@ -100,27 +99,6 @@ bool TrayManager::init()
     }
     QAction* openAction = m_Menu->addAction(tr("&Open"));
     QAction* controlPanelAction = m_Menu->addAction(tr("&Server Settings"));
-    // Hidden until there is an address to copy. Shown rather than greyed out:
-    // an entry that is present but dead invites the question "why can I not
-    // click this", and the answer — no line held yet — is not one a menu can
-    // give. Visibility is refreshed each time the menu opens.
-    m_CopyRemoteAction = m_Menu->addAction(tr("&Copy remote address"));
-    m_CopyRemoteAction->setVisible(false);
-    connect(m_Menu, &QMenu::aboutToShow, this, [this]() {
-        m_CopyRemoteAction->setVisible(m_RemoteUrlProvider &&
-                                       !m_RemoteUrlProvider().isEmpty());
-    });
-    connect(m_CopyRemoteAction, &QAction::triggered, this, [this]() {
-        if (!m_RemoteUrlProvider) return;
-        const QString url = m_RemoteUrlProvider();
-        if (url.isEmpty()) return;
-        QGuiApplication::clipboard()->setText(url);
-        // Confirm it: a clipboard write is otherwise completely silent, and the
-        // whole point of the entry is trusting that something was copied before
-        // walking to another device.
-        m_TrayIcon->showMessage(tr("MoonlightWeb"), tr("Address copied: %1").arg(url),
-                                QSystemTrayIcon::Information, 4000);
-    });
     m_Menu->addSeparator();
     QAction* restartAction =
         m_Menu->addAction(m_ClientMode ? tr("&Restart Server") : tr("&Restart"));

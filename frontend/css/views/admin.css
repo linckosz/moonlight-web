@@ -43,8 +43,9 @@
 .admin-url-row {
     padding: 6px 0;
     font-family: var(--font-mono);
-    /* The rendezvous row carries a Copy button beside the address; the domain
-       row has none, and flex with a single child lays out exactly as before. */
+    /* The rendezvous and local-access rows carry a Copy button beside the
+       address; the domain row has none, and flex with a single child lays out
+       exactly as before. */
     display: flex;
     align-items: center;
     gap: var(--space-2);
