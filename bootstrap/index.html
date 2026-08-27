@@ -124,13 +124,19 @@
     width: 100%;
     max-width: 30rem;
   }
+  /* The application's own header title, to the letter: --fs-lg, weight 700,
+     2px tracking, --text-1, and the yellow ring as a halo (layout.css
+     .app-header h1, uppercased by the HUD heading rule in base.css). Copied
+     rather than approximated — this is the name the next screen shows, and the
+     handover should not look like a change of typeface. */
   .brand {
-    font-size: .78rem;
-    letter-spacing: .34em;
+    font-size: 1.125rem;
+    font-weight: 700;
+    letter-spacing: 2px;
     text-transform: uppercase;
     text-align: center;
-    color: var(--accent-1);
-    text-shadow: 0 0 12px rgba(252, 238, 10, .45);
+    color: var(--text-1);
+    text-shadow: 0 0 12px rgba(252, 238, 10, .55);
     margin: 0 0 1.5rem;
   }
   /* Except when it heads an explanation, where a centred label floating over
