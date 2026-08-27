@@ -584,53 +584,61 @@
     "sharing": {
         "share": "共享",
         "shareCount": "共享 ({{count}})",
-        "dropdownTitle": "邀请玩家",
         "playerN": "玩家 {{n}}",
         "working": "处理中...",
-        "state": {
-            "off": "关闭",
-            "shared": "已共享",
-            "streaming": "直播中"
-        },
-        "hint": {
-            "off": "点击创建链接",
-            "shared": "等待访客加入",
-            "streaming": "点击断开连接"
-        },
-        "popinTitle": "邀请{{player}}",
-        "managePopinTitle": "与 {{player}} 共享中",
-        "manageShared": "链接已生效，还没有人加入。",
-        "manageStreaming": "有人正在通过此链接观看。",
-        "linkLabel": "链接",
-        "pinLabel": "PIN 码",
-        "pinHint": "请分开发送链接和 PIN 码——两者合起来才能进入，单独则无效。",
-        "inputsLabel": "允许的输入",
-        "inputsLocked": "此链接已锁定。如需更改，请停止共享后重新共享。",
         "gamepad": "手柄",
         "keyboardMouse": "键盘 / 鼠标",
-        "access": {
-            "viewer": "观众 — 仅可观看",
-            "gamer": "玩家 — 仅限手柄",
-            "full": "完全控制"
-        },
-        "warning": {
-            "viewer": "对方将看到你的屏幕并听到你的声音。",
-            "gamer": "对方将看到你的屏幕并使用手柄游玩。",
-            "full": "对方将控制这台电脑的键盘和鼠标。请仅分享给你完全信任的人。"
-        },
-        "expiry": "链接有效期为 8 小时，或直到你关闭该玩家。",
-        "expiresInH": "{{h}} 小时 {{m}} 分钟后过期。",
-        "expiresInM": "{{m}} 分钟后过期。",
-        "secretsLost": "服务器重启后，此共享的链接和 PIN 码已被遗忘。请停止共享后重新共享以获取新的一对。",
-        "unshare": "停止共享",
+        "linkLabel": "链接",
+        "pinLabel": "PIN 码",
+        "pinHint": "请将 PIN 与链接分开发送：两者合在一起才能进入，分开则毫无用处。",
+        "expiresInH": "{{h}} 小时 {{m}} 分后",
+        "expiresInM": "{{m}} 分后",
         "regenerate": "重新生成",
-        "regenerateHint": "重新生成会创建新的链接和 PIN 码并作废当前的 —— 正在使用它们观看的人会被断开。",
         "exitTitle": "停止，还是仅退出？",
         "exitBody": "有人正通过你的邀请连接。他们该怎么办？",
         "exitLeave": "退出",
         "exitLeaveDesc": "你断开连接，游戏继续运行，玩家也继续游玩。",
         "exitStop": "全部停止",
-        "exitStopDesc": "游戏关闭，所有玩家都会断开连接。"
+        "exitStopDesc": "游戏关闭，所有玩家都会断开连接。",
+        "boardTitle": "会话共享",
+        "start": "开始",
+        "stop": "停止",
+        "state": {
+            "off": "未开",
+            "shared": "已共享",
+            "binded": "已绑定"
+        },
+        "nameLabel": "名称",
+        "access": {
+            "viewer": "观看",
+            "gamer": "手柄",
+            "desktop": "桌面",
+            "full": "完全"
+        },
+        "warning": {
+            "desktop": "对方可以使用这台电脑的键盘和鼠标，但不能使用手柄。",
+            "full": "对方将控制这台电脑的键盘和鼠标。只分享给你完全信任的人。"
+        },
+        "hint": {
+            "off": "未共享",
+            "shared": "等待输入 PIN",
+            "bindedSince": "{{device}} · {{time}} 加入",
+            "streamingSince": "{{device}} · 自 {{time}} 起串流中"
+        },
+        "deviceUnknown": "未知设备",
+        "pinSpent": "已使用。此链接现在只对一台机器有效。",
+        "expiresLabel": "有效期",
+        "expiresNever": "永不",
+        "ttlHours": "{{h}} 小时",
+        "ttlUnlimited": "∞",
+        "regenerateHint": "重新生成新链接会断开正在使用旧链接串流的人。",
+        "secretsLost": "服务器重启后，链接和 PIN 已被遗忘。邀请对持有者仍然有效；重新生成即可获得可读的一对。",
+        "refused": "另一台设备（{{device}}）在 {{time}} 用正确的 PIN 打开了此链接，已被拒绝。",
+        "appLabel": "要共享的应用",
+        "appHint": "当前没有运行任何内容，第一位输入 PIN 的访客将启动此应用。",
+        "noApps": "此主机暂无可共享的应用。",
+        "unavailable": "此服务器不支持会话共享。",
+        "openFailed": "无法开启此邀请。"
     },
     "player": {
         "loading": "加载中...",
@@ -653,7 +661,8 @@
         "access": {
             "viewer": "你可以观看，但不能操作。",
             "gamer": "你可以使用手柄游玩。",
-            "full": "你拥有键盘和鼠标控制权。"
+            "full": "你拥有键盘和鼠标控制权。",
+            "desktop": "你拥有键盘和鼠标控制权，但没有手柄。"
         },
         "pinTitle": "输入你的 PIN 码",
         "pinBody": "邀请你的人会随链接发送一个 6 位数字代码。",
@@ -662,10 +671,12 @@
         "pinLocked": "尝试次数过多——请在 {{seconds}} 秒后重试。",
         "deadTitle": "这里什么都没有",
         "deadBody": "此邀请已过期或已被关闭。你来到了旧游戏链接归宿的虚空。",
-        "deadHint": "请索取新链接——它们只有 8 小时有效期。",
+        "deadHint": "请索取新链接。",
         "endedTitle": "会话已结束",
         "endedBody": "主机停止了游戏，串流也随之结束。没有出错——只是被拔掉了插头。",
-        "endedHint": "打个电话，请对方给你一个新链接。"
+        "endedHint": "打个电话，请对方给你一个新链接。",
+        "appGone": "此邀请对应的应用已不在主机上。请索取新链接。",
+        "alreadyBound": "此邀请已绑定到另一台机器。请索取新链接。"
     },
     "backend": {
         "title": "{{name}} 的后端",

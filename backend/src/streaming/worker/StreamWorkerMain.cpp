@@ -59,6 +59,7 @@ void emitEvent(const QJsonObject& event)
 /// path can tear the graph down the same way main.cpp's /quit route does.
 struct WorkerState
 {
+    QPointer<StreamSession> session;
     QPointer<DataChannelRelay> relay;
     QPointer<MediaTrackRelay> mediaRelay;
     QPointer<StreamRelay> streamRelay;
@@ -233,9 +234,9 @@ int runStreamWorker(QCoreApplication& app)
     session->setAutoMode(cfg["autoMode"].toBool(true));
     session->setWsPath(cfg["wsPath"].toString(QStringLiteral("/ws")));
     // A shared session (invited player) arrives with the permissions the owner
-    // ticked. Absent = the owner's own session: unrestricted. The policy is
-    // fixed for the life of this worker — the popin froze it before the link
-    // was ever usable, so there is nothing to update at runtime.
+    // ticked. Absent = the owner's own session: unrestricted. This is only the
+    // starting value: the owner can move it from the sharing board at any time,
+    // and it arrives here as a "setPolicy" command on stdin.
     if (cfg.contains(QStringLiteral("inputPolicy"))) {
         const QJsonObject pol = cfg["inputPolicy"].toObject();
         InputMsg::Policy policy;
@@ -274,6 +275,11 @@ int runStreamWorker(QCoreApplication& app)
                          [resolver, session]() { resolver->begin(session->launchKey()); });
     }
 
+    // Kept so the stdin pump can reach the live graph: a policy change from the
+    // owner's board lands on the session, which pushes it to whichever relay
+    // exists and releases what the old policy had held down.
+    state.session = session;
+
     // ── Relay tracking: unexpected end → "ended" event + teardown + exit ─────
     // (The parent owns the Sunshine /cancel, keyed by this session's uniqueid.)
     QObject::connect(session, &StreamSession::relayCreated, qApp, [&state](DataChannelRelay* r) {
@@ -311,6 +317,18 @@ int runStreamWorker(QCoreApplication& app)
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("sessionEnded")) {
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(3); }, Qt::QueuedConnection);
+            } else if (cmd == QLatin1String("setPolicy")) {
+                // The owner moved this player's inputs while they were playing.
+                // Not a teardown: the stream carries on under the new rules.
+                InputMsg::Policy policy;
+                policy.gamepad = msg["gamepad"].toBool(false);
+                policy.keyboardMouse = msg["keyboardMouse"].toBool(false);
+                QMetaObject::invokeMethod(
+                    qApp,
+                    [policy]() {
+                        if (g_State && g_State->session) g_State->session->applyInputPolicy(policy);
+                    },
+                    Qt::QueuedConnection);
             }
         }
         // EOF: the parent is gone — never stream without a supervisor.

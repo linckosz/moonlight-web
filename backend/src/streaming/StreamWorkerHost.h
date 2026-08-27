@@ -54,6 +54,11 @@ public:
     /// teardown (worker side).
     void notifySessionEnded();
 
+    /// Swap the input policy under a running stream. The owner moved this
+    /// player's permissions on the sharing board; the worker applies them to the
+    /// live relays and releases whatever the old policy had held down.
+    void setInputPolicy(bool gamepad, bool keyboardMouse);
+
     bool isRunning() const;
 
 signals:
@@ -76,6 +81,7 @@ private:
     void onStdout();
     void onFinished(int exitCode, QProcess::ExitStatus status);
     void sendCommand(const char* cmd);
+    void sendJson(const QJsonObject& msg);
 
     QProcess* m_Proc = nullptr;
     QByteArray m_Buf;

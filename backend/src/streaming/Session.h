@@ -159,10 +159,19 @@ public:
     void setWsPath(const QString& path) { m_WsPath = path; }
 
     /// What this session's client may send to the host. Unrestricted for the
-    /// owner; an invited player gets whatever the owner ticked when creating
-    /// their share link. Restricting it also shuts clipboard sync off — the
-    /// host's clipboard is not a guest's to read.
+    /// owner; an invited player gets whatever the owner ticked on the sharing
+    /// board. Restricting it also shuts clipboard sync off — the host's
+    /// clipboard is not a guest's to read.
+    ///
+    /// Call before start() only: this writes the field directly, and the relays
+    /// read it from their own thread once they exist.
     void setInputPolicy(const InputMsg::Policy& policy) { m_InputPolicy = policy; }
+
+    /// Change the policy of a session that is already streaming — the owner
+    /// moved this player's permissions while they were playing. Safe to call
+    /// from the main thread: every write lands on the relay thread that owns
+    /// the objects it touches.
+    void applyInputPolicy(const InputMsg::Policy& policy);
 
     /// Shift this session's controller numbers so gamepads from concurrent
     /// sessions land on distinct virtual pads instead of all arriving as

@@ -58,14 +58,19 @@ body::after {
         to bottom,
         rgba(0, 0, 0, 0) 0,
         rgba(0, 0, 0, 0) 2px,
-        rgba(0, 0, 0, 0.16) 3px);
+        rgba(0, 0, 0, 0.16) 3px
+    );
     opacity: 0.5;
 }
 /* App chrome sits above the atmosphere layers. */
-#app { position: relative; z-index: 1; }
+#app {
+    position: relative;
+    z-index: 1;
+}
 
 /* ── HUD headings ──────────────────────────────────────────────────────── */
-h1, h2,
+h1,
+h2,
 .settings-section-title {
     text-transform: uppercase;
     letter-spacing: 1.5px;
@@ -90,24 +95,32 @@ h1, h2,
     outline: none;
 }
 
-/* ── Scrollbar (the only scroll container is #main-content) ─────────────── */
-#main-content {
+/* ── Scrollbar ─────────────────────────────────────────────────────────────
+   The page's own scroll container plus any overlay tall enough to need one of
+   its own. A second scrollbar in the default OS chrome, right next to this one,
+   reads as a different application. */
+#main-content,
+.share-board {
     scrollbar-width: thin;
     scrollbar-color: var(--surface-4) transparent;
 }
-#main-content::-webkit-scrollbar {
+#main-content::-webkit-scrollbar,
+.share-board::-webkit-scrollbar {
     width: 10px;
 }
-#main-content::-webkit-scrollbar-track {
+#main-content::-webkit-scrollbar-track,
+.share-board::-webkit-scrollbar-track {
     background: transparent;
 }
-#main-content::-webkit-scrollbar-thumb {
+#main-content::-webkit-scrollbar-thumb,
+.share-board::-webkit-scrollbar-thumb {
     background: var(--surface-4);
     border-radius: var(--radius-pill);
     border: 2px solid transparent;
     background-clip: padding-box;
 }
-#main-content::-webkit-scrollbar-thumb:hover {
+#main-content::-webkit-scrollbar-thumb:hover,
+.share-board::-webkit-scrollbar-thumb:hover {
     background: var(--accent-strong);
     background-clip: padding-box;
     border: 2px solid transparent;

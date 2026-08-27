@@ -2765,7 +2765,7 @@ export class StreamView {
         // model is settled. Gate on the declared capability, not the product
         // name: the day this comes back, it comes back for every co-op backend.
         if (this.host?.supportsLobbies === true) return;
-        const menu = new ShareMenu(header, quitBtn);
+        const menu = new ShareMenu(header, quitBtn, this.host);
         this._shareMenu = menu;
         menu.mount().then((mounted) => {
             if (!mounted && this._shareMenu === menu) this._shareMenu = null;
@@ -5284,15 +5284,17 @@ export class StreamView {
     //
     /**
      * True when a keystroke belongs to the page, not the game: a text field, or
-     * anything inside a dialog layered over the stream (the share popin). The
-     * whole surface is a keyboard capture, so without this exclusion typing a
-     * link or copying a PIN sends the chord to the host and does nothing here.
+     * anything inside a dialog layered over the stream (the share popin, the
+     * sharing board). The whole surface is a keyboard capture, so without this
+     * exclusion typing a guest's name or copying a PIN sends the chord to the
+     * host and does nothing here.
      */
     static isLocalKeyboardTarget(target) {
         const el = /** @type {Element|null} */ (target);
         if (!el || typeof el.closest !== 'function') return false;
         return !!el.closest(
-            'input, textarea, select, [contenteditable="true"], .share-popin-overlay',
+            'input, textarea, select, [contenteditable="true"], ' +
+                '.share-popin-overlay, .share-board-overlay',
         );
     }
 

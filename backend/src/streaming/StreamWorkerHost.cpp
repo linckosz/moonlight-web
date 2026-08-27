@@ -89,6 +89,23 @@ void StreamWorkerHost::sendCommand(const char* cmd)
     m_Proc->write(QByteArray("{\"cmd\":\"") + cmd + "\"}\n");
 }
 
+void StreamWorkerHost::sendJson(const QJsonObject& msg)
+{
+    if (!isRunning()) return;
+    // One line, no newlines inside: the worker's pump reads with std::getline.
+    m_Proc->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + "\n");
+}
+
+void StreamWorkerHost::setInputPolicy(bool gamepad, bool keyboardMouse)
+{
+    // Fire-and-forget, unlike the teardown commands: nothing here kills the
+    // worker, and a worker that has already exited simply has no policy left to
+    // change.
+    sendJson(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("setPolicy")},
+                         {QStringLiteral("gamepad"), gamepad},
+                         {QStringLiteral("keyboardMouse"), keyboardMouse}});
+}
+
 void StreamWorkerHost::requestQuit()
 {
     if (!isRunning()) return;

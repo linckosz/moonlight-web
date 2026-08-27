@@ -1726,6 +1726,17 @@ int main(int argc, char* argv[])
                              detachWorkerSlot(slot, false, true);
                      });
 
+    // The owner moved a player's inputs on the board. The worker swaps the
+    // policy under the running stream — a demotion must not cost the guest their
+    // picture, and a promotion must not cost them a reconnect. A slot with no
+    // worker needs nothing: the policy travels in its config when it starts.
+    QObject::connect(&shareManager, &ShareManager::permissionsChanged, qApp,
+                     [&g_Pool](int slot, bool gamepad, bool keyboardMouse) {
+                         if (slot < kOwnerSlots || slot >= kTotalSlots) return;
+                         if (auto* worker = g_Pool.workerAs<StreamWorkerHost>(slot))
+                             worker->setInputPolicy(gamepad, keyboardMouse);
+                     });
+
     // Suspend host polling whenever a relay is active, so we stop hammering
     // Sunshine's HTTP server while a stream is running (avoids wedging it and
     // making the host appear offline to native clients).
@@ -3354,6 +3365,16 @@ int main(int argc, char* argv[])
     shareDeps.ownerStreamAlive = ownerStreamAlive;
     shareDeps.statsReporting = [&appSettings]() { return appSettings.sessionMetricsAllowed(); };
     shareDeps.currentOwnerContext = ownerContext;
+    shareDeps.hostAppExists = [&computerManager](const QString& hostUuid, int appId) {
+        NvComputer* host = computerManager.getHost(hostUuid);
+        if (!host || appId <= 0) return false;
+        // An empty list means the host has not been polled yet, not that it has
+        // no apps — do not refuse an invitation over a cache that never filled.
+        if (host->appList.isEmpty()) return true;
+        for (const NvApp& app : host->appList)
+            if (app.id() == appId) return true;
+        return false;
+    };
     shareDeps.machineName = []() {
 #ifdef Q_OS_WIN
         wchar_t buf[256];
@@ -3419,11 +3440,38 @@ int main(int argc, char* argv[])
                 if (appId < 0) appId = g_LastOwnerAppId;
                 ownerOnBoundHost = true;
             }
-            NvComputer* host =
-                ownerOnBoundHost ? computerManager.getHost(hostUuid) : nullptr;
+            NvComputer* host = computerManager.getHost(hostUuid);
             if (!host) {
+                // The host this invitation was bound to is gone from the list.
                 respond(HttpResponse::json(QJsonObject{{"error", "session_ended"}}, 409));
                 return;
+            }
+
+            // Nothing up on the bound host: this invitation was opened cold, and
+            // the guest's arrival is what starts the app it was opened on. The
+            // owner chose that app when they opened the row — the guest never
+            // picks, and never reaches anything else on the machine.
+            const bool coldStart = !ownerOnBoundHost;
+            if (coldStart) {
+                // The app may have been renamed away, or removed from Sunshine,
+                // in the hours since the link was handed out. Say so now, to the
+                // person looking at the screen, rather than letting the launch
+                // fail somewhere they cannot read.
+                bool appStillThere = appId > 0;
+                if (appStillThere && !host->appList.isEmpty()) {
+                    appStillThere = false;
+                    for (const NvApp& app : host->appList)
+                        if (app.id() == appId) {
+                            appStillThere = true;
+                            break;
+                        }
+                }
+                if (!appStillThere) {
+                    qWarning() << "[main] Player slot" << slot << "cold start refused — app"
+                               << appId << "is no longer on host" << hostUuid;
+                    respond(HttpResponse::json(QJsonObject{{"error", "app_unavailable"}}, 409));
+                    return;
+                }
             }
 
             // A player joining twice replaces its own worker, never anyone
@@ -3527,9 +3575,12 @@ int main(int argc, char* argv[])
             // restrictive: no LAN candidate, and STUN available.
             cfg["clientKind"] = NetClassify::toString(NetClassify::Kind::Public);
             cfg["autoMode"] = true;
-            // Never /launch: Sunshine refuses it while an app runs, and a player
-            // has no business starting one anyway.
-            cfg["preferResume"] = true;
+            // Resume into whatever the owner has up — Sunshine refuses /launch
+            // while an app runs, and a guest joining a live session has no
+            // business starting another. On a cold start there is nothing to
+            // resume into, so this one guest does launch the app their
+            // invitation names, and only that one.
+            cfg["preferResume"] = !coldStart;
             // The host the player typed, so the signaling URL they get back
             // points at the same place — an empty one made the browser fall
             // back to /ws and land on the owner's signaling server.

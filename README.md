@@ -75,48 +75,61 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 
 ## Session sharing
 
-While you are streaming, the **Share** button (left of Stop) invites up to three
-people into the same session. Each of them gets their own stream — their own
-resolution, their own bitrate — on the app you already have running.
+The **sharing board** invites up to three people into the same session. Each of
+them gets their own stream — their own resolution, their own bitrate — on the
+app you have running.
 
-![Share popin — manage who is invited and what they may do](docs/screenshots/share.png)
+It opens from two places, and it is the same board from both: the **Share**
+button in a running stream's header, and the **Share** entry in a host's ⋯ menu,
+where nothing is streaming yet. Opened cold you pick the app the invitation
+leads to, and the first guest to enter their PIN is what starts it.
 
-Pick a player row and you get **a link and a 6‑digit PIN**. Send them
+![The sharing board — who is invited, and what they may do](docs/screenshots/share.png)
+
+Open a player row and you get **a link and a 6‑digit PIN**. Send them
 separately: the link is expected to travel over chat and can leak, so on its own
 it opens nothing. The PIN is what the guest is asked for the moment they open
 the link, before they are even told which machine it is.
 
-In the same popin you choose what they may do:
+Each row says what it grants:
 
 | Level | They can |
 |---|---|
 | **Viewer** (default) | watch and listen |
 | **Gamer** | watch and play with a gamepad |
-| **Full control** | watch, and use the keyboard and mouse of your PC |
+| **Desktop** | watch, and use the keyboard and mouse of your PC |
+| **Full** | all of it — gamepad, keyboard and mouse |
 
 | ![A viewer's stream — watch and listen only](docs/screenshots/share_viewer.png) | ![Full control — the guest drives keyboard and mouse](docs/screenshots/share_fullcontrol.png) |
 |---|---|
 | A **Viewer** just watches and listens. | **Full control** hands over the keyboard and mouse. |
 
-The choice **freezes when you close the popin** — from that moment the link is
-out in the world. To change it, turn the player off and share again, which mints
-a new link and PIN and kills the old ones. Permissions are enforced in the
+You choose the level **before** opening a row, so a link never exists before you
+have decided what it grants — and you can **keep moving it afterwards, including
+while they are playing**. Handing a friend the keyboard mid‑game, or taking it
+back, costs them nothing: the change reaches the running stream, and anything
+they were holding down is released on the way. Permissions are enforced in the
 backend, not in the guest's page: a viewer's browser can send whatever it likes
 and nothing reaches the host. Clipboard sync is off for guests entirely.
 
-Reopening a live player row shows the same link and PIN again, so you can send
-them to a second device without re‑sharing. They are held in memory only: a
-restart forgets them while the invitation itself keeps working. **Regenerate**
-in that same popin mints a fresh pair and kills the old one on the spot —
-whoever was streaming on it is disconnected — which is what to reach for when a
-link has gone somewhere you did not intend.
+**One invitation, one machine.** The first device to enter the PIN is bound to
+that link; the board then shows which one it is, and the same code offered from
+anywhere else is refused. If someone else tries, you see that too — the row says
+so, with the browser and the time. A guest who changes browser needs a fresh
+link, which is the trade: forwarding the link *and* the PIN no longer buys a
+second seat.
 
-An invitation lasts **8 hours**. Nothing else ends it — a guest closing their
-tab or a dropped connection leave it valid, and they can rejoin. It ends when
-you click the player row, when you press Stop, or when the 8 hours are up; the
-row then goes back to red on its own and is ready to share again. One stream at
-a time per invitation: a second device on the same link is told the seat is
-taken rather than stealing it.
+**Regenerate** mints a fresh pair and kills the old one on the spot — whoever
+was streaming on it is disconnected — which is what to reach for when a link has
+gone somewhere you did not intend. The clear link and PIN are held in memory
+only: a restart forgets them while the invitation itself keeps working, and the
+row says so rather than pretending the link is gone.
+
+You pick how long each invitation lives — **1 h, 4 h, 8 h, 24 h, 48 h or
+unlimited** — per player. Nothing else ends it: a guest closing their tab or a
+dropped connection leave it valid, and they can rejoin. It ends when you press
+Close on the row, when you press Stop, or when its time is up; the row then goes
+back to off on its own and is ready to open again.
 
 **While a link is live, your own quality stops moving.** The automatic ladder
 would relaunch your stream on the other slot to shave a few megabits, which on a
