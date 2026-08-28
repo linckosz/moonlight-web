@@ -255,17 +255,23 @@ export class PlayerJoinView {
 
         // The two choices name themselves — "Trackpad | Touch" needs no label
         // saying "Touch" above it. The group keeps one for screen readers.
-        const row = (key, labelKey, offKey, onKey, on) => `
+        // `hints` is optional and only worth passing where hovering exists:
+        // "Seamless" and "Immersive" say nothing about the mouse escaping the
+        // frame, and a guest has no settings page to go read.
+        const row = (key, labelKey, offKey, onKey, on, hints) => {
+            const hint = (which) => (hints ? ` title="${escapeHtml(t(hints[which]))}"` : '');
+            return `
             <div class="player-toggle" data-pref="${key}">
                 <div class="player-toggle-choice" role="group"
                      aria-label="${escapeHtml(t(labelKey))}">
                     <button class="btn player-toggle-btn ${on ? '' : 'is-selected'}"
-                            type="button" data-value="off">${escapeHtml(t(offKey))}</button>
+                            type="button" data-value="off"${hint('off')}>${escapeHtml(t(offKey))}</button>
                     <button class="btn player-toggle-btn ${on ? 'is-selected' : ''}"
-                            type="button" data-value="on">${escapeHtml(t(onKey))}</button>
+                            type="button" data-value="on"${hint('on')}>${escapeHtml(t(onKey))}</button>
                 </div>
             </div>
         `;
+        };
 
         return `
             <div class="player-toggles">
@@ -278,6 +284,10 @@ export class PlayerJoinView {
                               'player.seamless',
                               'player.immersive',
                               this._prefs.immersive,
+                              {
+                                  off: 'player.seamlessHint',
+                                  on: 'player.immersiveHint',
+                              },
                           )
                 }
                 ${
