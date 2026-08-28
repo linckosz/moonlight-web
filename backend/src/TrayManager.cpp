@@ -182,9 +182,35 @@ QUrl TrayManager::localUrl(const QString& path) const
     return QUrl();
 }
 
-void TrayManager::onOpen()
+// One entry, two possible addresses, and the choice is not the user's to make.
+//
+// The internet link is preferred whenever there is one, for a single reason: it
+// is the only address that reaches these pages under a certificate the browser
+// already trusts. Loopback never will be — it is served by the self-signed
+// certificate, and every visit costs an acceptance or a scary interstitial.
+//
+// The provider answers empty whenever that link would not work: the option is
+// off, the line is down, or the introduction server did not respond when asked.
+// So the fallback is not a guess — by the time we reach it, the internet has
+// already been tried and found wanting, and loopback is what is left that
+// always works. Nothing is said about it either way; the owner asked for a page,
+// not for a report on how it was reached.
+void TrayManager::openAppPage(const QString& path)
 {
-    QUrl url = localUrl(QString());
+    const QString link = m_RemoteLink ? m_RemoteLink(path) : QString();
+    if (!link.isEmpty()) {
+        // Logged without its fragment. The key in there is single-use, but it is
+        // still a credential, and a log file is exactly the place it must not
+        // outlive its one use in.
+        QUrl logged(link);
+        logged.setFragment(QString());
+        qInfo() << "[TrayManager] Opening" << (path.isEmpty() ? QStringLiteral("/") : path)
+                << "over the internet link" << logged.toString();
+        QDesktopServices::openUrl(QUrl(link));
+        return;
+    }
+
+    QUrl url = localUrl(path);
     if (url.isEmpty()) {
         qWarning() << "[TrayManager] Cannot open — no HTTP/HTTPS listener running";
         return;
@@ -193,40 +219,14 @@ void TrayManager::onOpen()
     QDesktopServices::openUrl(url);
 }
 
-// One entry, two possible addresses, and the choice is not the user's to make.
-//
-// The internet link is preferred whenever there is one, for a single reason: it
-// is the only address that reaches this page under a certificate the browser
-// already trusts. Loopback never will be — it is served by the self-signed
-// certificate, and every visit costs an acceptance or a scary interstitial.
-//
-// The provider answers empty whenever that link would not work: the option is
-// off, the line is down, or the introduction server did not respond when asked.
-// So the fallback is not a guess — by the time we reach it, the internet has
-// already been tried and found wanting, and loopback is what is left that
-// always works. Nothing is said about it either way; the owner asked for the
-// settings page, not for a report on how it was reached.
+void TrayManager::onOpen()
+{
+    openAppPage(QString());
+}
+
 void TrayManager::onOpenSettings()
 {
-    const QString link = m_RemoteAdminLink ? m_RemoteAdminLink() : QString();
-    if (!link.isEmpty()) {
-        // Logged without its fragment. The key in there is single-use, but it is
-        // still a credential, and a log file is exactly the place it must not
-        // outlive its one use in.
-        QUrl logged(link);
-        logged.setFragment(QString());
-        qInfo() << "[TrayManager] Opening settings over the internet link" << logged.toString();
-        QDesktopServices::openUrl(QUrl(link));
-        return;
-    }
-
-    QUrl url = localUrl(QStringLiteral("/admin"));
-    if (url.isEmpty()) {
-        qWarning() << "[TrayManager] Cannot open settings — no HTTP/HTTPS listener running";
-        return;
-    }
-    qInfo() << "[TrayManager] Opening settings" << url.toString();
-    QDesktopServices::openUrl(url);
+    openAppPage(QStringLiteral("/admin"));
 }
 
 void TrayManager::onRestart()
