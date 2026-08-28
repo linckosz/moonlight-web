@@ -162,10 +162,17 @@
 
 /* One block per person: the header line and everything that belongs to it,
    under a single status rail running their full height. Two stacked boxes with
-   separate rails made the board read as six things instead of three. */
+   separate rails made the board read as six things instead of three.
+
+   The rail turns the corner and runs along the top edge as well. Down the left
+   alone it read as a tick in the margin rather than a boundary, and three
+   blocks ten pixels apart looked like one list; the top edge is what says where
+   a person begins. */
 .share-player {
     background-color: var(--surface-2);
-    box-shadow: inset 3px 0 0 var(--row-accent, var(--text-3));
+    box-shadow:
+        inset 3px 0 0 var(--row-accent, var(--text-3)),
+        inset 0 3px 0 var(--row-accent, var(--text-3));
     clip-path: var(--notch-sm);
     transition: background-image 0.15s;
 }
