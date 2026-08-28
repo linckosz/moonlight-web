@@ -69,6 +69,48 @@ struct WorkerState
 
 WorkerState* g_State = nullptr;
 
+/// Swap the input policy under a running stream.
+///
+/// It goes to the RELAY, never to the session. StreamSession is ephemeral by
+/// design — it hands the graph over and deletes itself the moment the
+/// connection is up ("StreamSession is ephemeral — relay lives on") — so the
+/// QPointer this file keeps to it is null for the entire life of every stream.
+/// Dispatching through it meant the owner's demotion reached nothing at all:
+/// a guest moved from full control to gamer kept their keyboard and mouse, and
+/// the board said otherwise. The relay is what outlives the launch, what every
+/// inbound message is checked against, and what owns the shim.
+void applyPolicyToLiveGraph(const InputMsg::Policy& policy)
+{
+    if (!g_State) return;
+
+    // The policy is read on the relay thread on every inbound message, so it is
+    // written there too: a plain setter from the stdin pump would be a data race
+    // on the hot path. StreamRelay is not a RelayBase (the legacy WSS path
+    // predates it) but carries the same two accessors, so one templated lambda
+    // covers all three.
+    auto push = [policy](auto* relay) {
+        if (!relay) return;
+        QMetaObject::invokeMethod(
+            relay,
+            [relay, policy]() {
+                relay->setInputPolicy(policy);
+                MoonlightShim* shim = relay->moonlightShim();
+                if (!shim) return;
+                shim->setWakeNudgeAllowed(policy.keyboardMouse);
+                // Release everything, then let the client's next heartbeat put
+                // back whatever it still holds *and* is still allowed to hold.
+                // Anything else leaves a key down on the host that nobody can
+                // lift: the guest can no longer send the key-up, and the owner
+                // never pressed it.
+                shim->releaseHeldInputs(true);
+            },
+            Qt::QueuedConnection);
+    };
+    push(g_State->relay.data());
+    push(g_State->mediaRelay.data());
+    push(g_State->streamRelay.data());
+}
+
 /// Mirror of the /quit teardown in main.cpp: stop the shim FIRST (so moonlight
 /// stops calling back into a relay about to be destroyed), then stop + delete
 /// the relay. Exits the process once done (short grace for the relay thread).
@@ -325,10 +367,18 @@ int runStreamWorker(QCoreApplication& app)
                 InputMsg::Policy policy;
                 policy.gamepad = msg["gamepad"].toBool(false);
                 policy.keyboardMouse = msg["keyboardMouse"].toBool(false);
+                qInfo() << "[StreamWorker] Input policy now: gamepad=" << policy.gamepad
+                        << "keyboardMouse=" << policy.keyboardMouse;
                 QMetaObject::invokeMethod(
                     qApp,
                     [policy]() {
+                        // Both, and in this order. The session only still
+                        // exists in the sliver before the connection comes up,
+                        // where it is the thing that will build the relay and
+                        // has to be told; after that it is gone and the relay
+                        // is the only thing left to tell.
                         if (g_State && g_State->session) g_State->session->applyInputPolicy(policy);
+                        applyPolicyToLiveGraph(policy);
                     },
                     Qt::QueuedConnection);
             }
