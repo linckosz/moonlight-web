@@ -374,6 +374,15 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         // player 1's cookie opening player 2's link is a new guest, and must
         // enter player 2's PIN — otherwise it would be shown player 1's state.
         if (share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie)) != slot) {
+            // Once the invitation has its device, a PIN form here is a form no
+            // answer can pass — every correct PIN is already AlreadyBound. Show
+            // the dead-link page instead: it costs the real guest nothing (they
+            // hold the cookie), and it gives whoever else has the link nothing
+            // to sit and guess against.
+            if (share.isBound(slot)) {
+                obj[QStringLiteral("error")] = QStringLiteral("dead_link");
+                return HttpResponse::json(obj, 404);
+            }
             obj[QStringLiteral("needs_pin")] = true;
             return HttpResponse::json(obj);
         }

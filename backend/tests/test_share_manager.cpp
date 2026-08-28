@@ -261,9 +261,15 @@ void test_one_device_per_invitation()
     mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st);
     CHECK(mgr->state(kSlot) == ShareManager::State::Shared);
 
+    // Nobody has spent the PIN yet, so the join page still has a PIN to ask for.
+    CHECK(!mgr->isBound(kSlot));
+
     const ShareManager::PinOutcome first =
         mgr->redeemPin(token, pin, "192.0.2.10", QStringLiteral("Mozilla/5.0 Chrome Windows"));
     CHECK(first.result == ShareManager::PinResult::Ok);
+    // From here every correct PIN is answered AlreadyBound, so the join page
+    // stops offering the form and shows the dead-link screen instead.
+    CHECK(mgr->isBound(kSlot));
     // Spending the PIN is what makes a row Binded — not streaming.
     CHECK(mgr->state(kSlot) == ShareManager::State::Binded);
     CHECK(!mgr->isStreaming(kSlot));
@@ -294,6 +300,7 @@ void test_one_device_per_invitation()
     mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st);
     CHECK(mgr->state(kSlot) == ShareManager::State::Shared);
     CHECK_EQ(mgr->slotForCookie(first.cookie), -1);
+    CHECK(!mgr->isBound(kSlot));
     const ShareManager::PinOutcome fresh = mgr->redeemPin(token2, pin2, "192.0.2.99");
     CHECK(fresh.result == ShareManager::PinResult::Ok);
 

@@ -560,6 +560,15 @@ bool ShareManager::isStreaming(int slot)
     return s && s->activation.live() && s->activation.streaming;
 }
 
+bool ShareManager::isBound(int slot)
+{
+    Slot* s = slotFor(slot);
+    // Same test redeemPin answers AlreadyBound on, so the join page and the PIN
+    // endpoint can never disagree about whether the link is still open.
+    return s && s->activation.live() &&
+           s->activation.cookieHashes.size() >= kMaxCookiesPerActivation;
+}
+
 qint64 ShareManager::expiresAt(int slot)
 {
     Slot* s = slotFor(slot);

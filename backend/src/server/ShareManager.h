@@ -264,6 +264,10 @@ public:
     /// Whether a worker is up on this slot. Orthogonal to state(): a Binded row
     /// whose guest closed their tab is bound but idle.
     bool isStreaming(int slot);
+    /// Whether this slot's activation has already spent its PIN on a device.
+    /// The join page asks so it can stop offering a PIN form nobody can pass:
+    /// past this point the only correct answer is AlreadyBound.
+    bool isBound(int slot);
     qint64 expiresAt(int slot);
     /// This activation's chosen lifetime, 0 when unlimited or the slot is Off.
     qint64 ttlSecs(int slot);
