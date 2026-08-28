@@ -161,7 +161,14 @@ services:
       - --log-file=stdout
       - --simple-log
     security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]                               # binds :3478, no caps needed
+    # NET_BIND_SERVICE is not about the port — 3478 is unprivileged. The
+    # turnserver binary carries that capability as a FILE capability, and the
+    # kernel refuses to exec a capability-carrying binary when the capability is
+    # missing from the bounding set: dropping ALL on its own makes the container
+    # die with "Operation not permitted" before turnserver prints a line. Keep
+    # the pair together.
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
     pids_limit: 100
     mem_limit: 64m
 
