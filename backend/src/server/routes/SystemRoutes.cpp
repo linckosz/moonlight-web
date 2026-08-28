@@ -251,7 +251,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     // install + pair the local Sunshine. Endpoints are localhost-only.
 
     // GET /api/setup/status — what the wizard needs to render its steps.
-    server.router()->get("/api/setup/status", [&](const HttpRequest& req) {
+    // rendezvousStatus captured BY VALUE, for the reason given above.
+    server.router()->get("/api/setup/status", [&, rendezvousStatus](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         QJsonObject obj;
@@ -314,6 +315,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         inet["active"] = internetAccess.isActive();
         inet["domain"] = internetAccess.domain();
         inet["phase"] = internetAccess.statusJson().value("phase");
+        // The address this machine is actually reached at. `domain` is empty on
+        // every fresh install — the wizard had nothing else to show, so it
+        // congratulated the user on an Internet link and named no address at
+        // all. No redaction concern: this route is localhost-only.
+        if (rendezvousStatus) inet["rendezvous"] = rendezvousStatus();
         obj["internet"] = inet;
 
         // Live checklist written by /api/setup/apply (reuses the installer's file).
@@ -362,7 +368,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
     // POST /api/setup/apply — run the wizard actions synchronously; the frontend
     // polls /api/setup/status meanwhile to animate the checklist.
-    server.router()->post("/api/setup/apply", [&](const HttpRequest& req) {
+    server.router()->post("/api/setup/apply", [&, onInternetAccessToggled,
+                                               rendezvousStatus](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
         QJsonObject body = QJsonDocument::fromJson(req.body).object();
@@ -425,6 +432,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                                            QStringLiteral("setup"), QStringLiteral("rendezvous"));
             appSettings.setInternetAccessEnabled(true);
             internetAccess.start();
+            // The rendezvous line follows the same switch, and nothing else
+            // throws it: /api/internet/enable calls this, the wizard did not, so
+            // a machine set up here stayed unreachable from the internet until
+            // the next restart brought the line up at boot.
+            if (onInternetAccessToggled) onInternetAccessToggled(true);
             const bool active = internetAccess.isActive();
             // start() returns once the A record resolves, but the ACME order for
             // that domain is still in flight — and it cannot progress while this
@@ -438,6 +450,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             result["internet_active"] = active;
             result["certificate_pending"] = certPending;
             result["domain"] = internetAccess.domain();
+            // Usually empty right here: the claim is a round-trip that cannot
+            // run while this handler holds the event loop. The wizard picks the
+            // address up from /api/setup/status, which it is already polling.
+            if (rendezvousStatus) result["rendezvous"] = rendezvousStatus();
         }
 
         // Mark setup done even if an optional step failed: the user retries from

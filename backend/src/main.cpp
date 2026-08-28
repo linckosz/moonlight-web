@@ -4214,6 +4214,17 @@ int main(int argc, char* argv[])
         for (const QString& ip : internetAccess.localIps())
             Logger::info("  From another machine on this network: https://" + ip + portSuffix);
 
+        // A fresh install has no domain and never will: it is reached through
+        // the rendezvous server instead, and that address is published nowhere.
+        // This block used to know only about the sub-domain, so such an instance
+        // was told about localhost and its LAN — and nothing else, on a machine
+        // whose whole point is being reachable from elsewhere.
+        //
+        // Deliberately without the "the line is down" caveat `--status` prints:
+        // the line is opened moments after this, so at this instant it is down
+        // by construction and saying so would be alarming and wrong. When it
+        // comes up, `[main] rendezvous line up — <url>` says so.
+        const QString rdvUrl = rendezvous.entryUrl();
         if (internetAccess.isActive() && !internetAccess.domain().isEmpty()) {
             quint16 extPort = internetAccess.externalHttpsPort();
             if (extPort == 0) extPort = activePort;
@@ -4223,6 +4234,16 @@ int main(int argc, char* argv[])
                               ? QStringLiteral(" (certificate still being issued — retry in a "
                                                "minute)")
                               : QString()));
+            // A legacy instance gets BOTH: the sub-domain it hands out today,
+            // and the address that replaces it when that service shuts down.
+            if (!rdvUrl.isEmpty())
+                Logger::info("  From the internet: " + rdvUrl +
+                             " (works now; replaces the address above in February 2027)");
+        } else if (!rdvUrl.isEmpty()) {
+            Logger::info("  From the internet: " + rdvUrl);
+        } else if (rendezvousShouldRun()) {
+            Logger::info("  From the internet: claiming an address — it is logged when the line "
+                         "comes up");
         }
         // Nothing is printed when Internet Access is off: the operator turned it
         // off, or never turned it on. --status is where that gets explained.
