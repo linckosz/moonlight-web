@@ -85,12 +85,14 @@ Owner routes need a normal session (any authenticated user — deliberately not 
 **The shape of `url`.** Recomposed on every read, so an invitation minted before an
 address changed hands out the current form without being revoked.
 
-- Reachable: `https://stream.{MW_DOMAIN}/{rendezvous-id}#p=/p&t={token}`. The path
+- Reachable: `https://stream.{MW_DOMAIN}/{rendezvous-id}#t={token}`. The path
   names the machine, which the introduction server has to see to route the call.
   The token rides in the **fragment**, which a browser never sends to the server
   it fetched the page from, so it never reaches that server in a path, a query or
-  a referrer. The bootstrap carries it across the handover and the guest's page
-  ends up at `/p#{id}&t={token}`.
+  a referrer. Nothing names the guest page: a token is only ever for that page,
+  so the bootstrap infers it. The bootstrap carries the token across the handover
+  and the guest's page ends up at `/p#{id}&t={token}`. A link minted before this
+  and spelling the page out (`#p=/p&t={token}`) is still honoured.
 - Otherwise: `https://{LAN IPv4}[:port]/p/{token}`, and `local_only` is **true**.
   Self-signed, same network only. Never loopback — the guest is on another PC.
 
