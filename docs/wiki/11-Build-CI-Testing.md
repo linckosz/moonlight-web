@@ -1,4 +1,4 @@
-[← PowerDNS Stack](10-PowerDNS-Stack.md) · **Build, CI & Testing** · [Next: Agentic Coding →](12-Agentic-Coding.md)
+[← Infrastructure Stack](10-Infrastructure-Stack.md) · **Build, CI & Testing** · [Next: Agentic Coding →](12-Agentic-Coding.md)
 
 ---
 
@@ -29,7 +29,7 @@ Toolchain: CMake ≥ 3.21, Ninja, **Qt 6.11** (Core, Network, **WebSockets**), C
 `backend/CMakeLists.txt` also:
 
 - builds the native submodules statically via `add_subdirectory` (libdatachannel, miniupnpc, moonlight-common-c, qmdnsengine) — no manual per-dep step,
-- bakes `MW_VERSION` (overridden by the release tag in CI) and the **embedded env defaults** (`MW_DOMAIN`, `MW_PDNS_*`, `MW_ZEROSSL_*` from CI secrets) as compile definitions,
+- bakes `MW_VERSION` (overridden by the release tag in CI) and the **embedded env defaults** (`MW_DOMAIN`, `MW_PDNS_TOKEN` from CI secrets) as compile definitions,
 - can embed a fallback cert (`MW_CERT_PEM`/`MW_CERT_KEY` read from `.env` at build time),
 - installs the frontend next to the binary and generates the app icon resource (`app_icon.rc.in`).
 
@@ -114,7 +114,7 @@ Triggers, and the reasoning behind each:
 | `pull_request` (paths-filtered) | Build only, `outputs: type=cacheonly`, never pushed, and only when the image's own files change — so a Dockerfile edit is never merged unbuilt. Both architectures build, so an arm64-only break is caught. `backend/**` is deliberately absent from this filter: it would spend two full C++ builds on every backend PR, and the push trigger already covers a backend dependency that breaks the image. |
 | `workflow_dispatch` | An image from any branch, on demand. |
 
-GHCR authenticates with the run's own `GITHUB_TOKEN` — no PAT, nothing to rotate. As with `package`, every scope this workflow requests (`contents: read`, `packages: write`) has to be granted by the calling job in `ci.yml` or the run dies at startup. `secrets: inherit` matters here too — the `MW_*` DNS/ACME secrets reach the build as **build-stage `ARG`s**, and without them the published image would be LAN-only. The `MoonlightWeb` environment that holds them is requested conditionally (`${{ github.event_name != 'pull_request' && 'MoonlightWeb' || '' }}`): a fork's PR cannot read environment secrets anyway, and an environment with a required reviewer would leave the PR check pending on a build that is thrown away. `${GITHUB_REPOSITORY@L}` lower-cases the image path, which `ghcr.io` requires and a fork's owner may well not have.
+GHCR authenticates with the run's own `GITHUB_TOKEN` — no PAT, nothing to rotate. As with `package`, every scope this workflow requests (`contents: read`, `packages: write`) has to be granted by the calling job in `ci.yml` or the run dies at startup. `secrets: inherit` matters here too — the `MW_*` service credentials reach the build as **build-stage `ARG`s**, and without them the published image would silently lose the update relay and the censuses. The `MoonlightWeb` environment that holds them is requested conditionally (`${{ github.event_name != 'pull_request' && 'MoonlightWeb' || '' }}`): a fork's PR cannot read environment secrets anyway, and an environment with a required reviewer would leave the PR check pending on a build that is thrown away. `${GITHUB_REPOSITORY@L}` lower-cases the image path, which `ghcr.io` requires and a fork's owner may well not have.
 
 The version string is computed exactly as `release.yml`'s `setup.ver` does — a `v*` tag ships `1.2.3`, anything else `<last tag>-<3-char sha>` — so `moonlightweb --version` inside a container names the commit the image came from. The image itself is documented in [Installers §9.3bis](09-Installers-and-Packaging.md) and [`docker/README.md`](../../docker/README.md).
 
@@ -142,4 +142,4 @@ The streaming pipeline (relays, shim, WebRTC) is validated end-to-end — `docs/
 
 ---
 
-[← PowerDNS Stack](10-PowerDNS-Stack.md) · [Home](Home.md) · [Next: Agentic Coding →](12-Agentic-Coding.md)
+[← Infrastructure Stack](10-Infrastructure-Stack.md) · [Home](Home.md) · [Next: Agentic Coding →](12-Agentic-Coding.md)

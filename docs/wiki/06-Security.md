@@ -8,7 +8,7 @@ MoonlightWeb exposes a streaming server to the LAN and, optionally, to the publi
 
 ## 6.1 Threat model in one paragraph
 
-A legacy instance may be reachable from the Internet on `https://{uniqueId}.{MW_DOMAIN}` (until the shared DNS service shuts down in February 2027); a fresh install exposes at most a per-session media port. Attackers can: scan/guess the PIN, flood connections, replay stolen artifacts, or try to hijack a legacy instance's subdomain. Trusted parties: the local machine (localhost is always admin), LAN clients (exempt from bans, still need a PIN when remote-auth applies), the DNS box operator. Out of scope: volumetric DDoS (see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)), a compromised host OS.
+An instance opened to the Internet publishes no name, takes no certificate in its own name and opens no web port; what it exposes is a **held outbound line** and, during a stream, one media port. So there is no address to scan and no hostname in Certificate Transparency: a stranger's way in is to arrive at a known entry identifier and then get past the PIN. Attackers can: guess an identifier (128 bits, quota-bounded — [Infrastructure §10.12](10-Infrastructure-Stack.md#1012-hardening--limits)), scan/guess the PIN, flood connections, or replay stolen artifacts. Trusted parties: the local machine (localhost is always admin), LAN clients (exempt from bans, still need a PIN when remote-auth applies). The introduction server is **partially** trusted — it knows which identifiers are online and sees residential addresses on its sockets, and it is deliberately kept out of the signalling's meaning by [§6.6](#66-the-entry-identifier-and-mw-bind-v1). Out of scope: volumetric DDoS, a compromised host OS.
 
 ## 6.2 Authentication
 
@@ -88,23 +88,30 @@ A share link is *designed* to leave the machine — it travels over chat apps, g
 ## 6.5 TLS
 
 - **LAN**: a self-signed certificate is generated on first run (browser shows a one-time warning — inherent to self-signed TLS).
-- **Legacy Internet Access** (instances holding a pre-retirement subdomain): a real certificate is issued via the native **ACMEv2 client** (`AcmeClient`) with the **DNS-01 challenge** through the PowerDNS API — ZeroSSL DV90 when EAB credentials are configured, Let's Encrypt otherwise. Renewal below 30 days remaining; `certificateChanged` performs a **hot TLS reload** (no restart, new connections get the new cert). Note: a publicly trusted certificate lands in **Certificate Transparency** logs, so those hostnames are public information permanently — one of the reasons the mechanism is retired. A fresh install is never issued a certificate.
+- **From the Internet**: there is no certificate for this machine, and that is the design rather than a gap. A remote browser never opens a TLS socket to it: the page comes from the entry host under that host's own certificate, and everything after it travels inside the tunnel's **DTLS**, whose peer is verified against a key the browser pinned to this machine's identifier (§6.6). No certificate is issued, so no hostname of a user's machine ever lands in **Certificate Transparency** — which a publicly trusted certificate would have made permanent, public information.
 - **Bring your own**: set `domain` to your FQDN and point `cert_pem`/`cert_key` at your PEM files (or drop them in the data dir's `cert/` folder). A certificate is accepted when it covers the domain by **CN or SAN**, wildcards included; renewal and lifecycle are the user's, and a certificate close to expiry is kept, never downgraded to self-signed. Full procedure, with the DNS/router side: [Settings Reference §7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate).
-- Qt's TLS backend is forced to **OpenSSL** (Windows Schannel cannot import ACME PEM keys — it would silently fall back to the self-signed cert and break the public domain).
-- Historical ACME pitfalls fixed and guarded: finalize-URL handling, self-signed↔ACME key collision, `loadCertFiles` ordering, hot reload.
+- Qt's TLS backend is forced to **OpenSSL** (Windows Schannel cannot import PEM keys — a user-supplied certificate would silently be dropped in favour of the self-signed one).
+- `CertManager` guards the ordering traps that produced silent downgrades in the past: `loadCertFiles` precedence, a self-signed key colliding with a supplied one, and hot reload without dropping live connections.
 
-## 6.6 DNS subdomain ownership (legacy)
+## 6.6 The entry identifier and MW-BIND-v1
 
-Two instances (or a malicious actor) must never overwrite each other's A record. Ownership is enforced **server-side** by the `mw-proxy` gateway (0.2.0+; see [PowerDNS Stack §10.7](10-PowerDNS-Stack.md)) rather than cooperatively:
+Being reachable and being trusted are two different things here, and the split is the point.
 
-- Each instance holds a random per-instance `owner_token`, sent as the **`X-MW-Owner` header** on every write (`PdnsClient`/`AcmeClient`). It is **never published in DNS**, so it cannot be read via `dig` and replayed.
-- The first writer of a `uid` claims it (Trust-On-First-Use); `mw-proxy` stores `HMAC(owner_token)` keyed by `uid` and rejects (`403`) any later write whose header does not match. **One subdomain per owner** is enforced, and the restricted key can only touch `{uid}` A / `_owner` / `_acme-challenge` records (never NS/SOA/DNSSEC/other zones).
-- Reserved labels (`www`, `api`, `dnsapi`, `stats`, `stream`, `ns1/ns2`, `mail`, apex, anything starting `_`) are rejected as `unique_id` values — backend-side (`isReservedSubdomain`), by a boot-time guard against `settings.json` edits, and again by mw-proxy's 8-hex `uid` rule.
-- Changing `unique_id` releases the previous subdomain (deleting its A record frees the ownership entry) so one owner never holds two live subdomains.
+**The identifier is a locator.** `rendezvous_id` — 26 Crockford base32 characters, 128 bits — says *which machine*, and nothing more. Anyone may hold one; holding it lets nobody in. It is long so the set cannot be walked, and it never rotates so it can be bookmarked. What grants access is still the PIN, the certificate file or an invitation ([§6.2](#62-authentication), [§6.4b](#64b-session-sharing-invited-players)).
+
+**Ownership of an identifier** is claimed once against the introduction server, which stores only `HMAC(rendezvous_token)` keyed by the identifier and requires the matching token on every later use (trust-on-first-use, per-IP quota on new claims). The token is a separate value from anything else the instance holds, deliberately: one credential authorising two unrelated things is one credential that cannot be retired independently.
+
+**The introduction server is out of the middle, by construction.** It relays the DTLS fingerprints the two peers use to find each other — so a compromised one could substitute its own and sit between them. **MW-BIND-v1** is what stops that: the fingerprint is signed with the pairing key, which that server never sees, and the payloads it copies are opaque to it (`docs/design/pairing-signature.md`, `bootstrap/pairing.js`).
+
+Be precise about what the binding proves: **the absence of a substituted peer**, not who is holding the browser. It is trust-on-first-use, keyed per host identifier in the browser's own storage, so the first connection to a machine is the one that establishes what "this machine" means. Authorisation is a separate question, and it is answered by the PIN.
+
+A browser arriving at the login screen holds no session, so the host cannot look its key up. It **presents** the key and the host signs against the key it was shown — enough to prove the channel was not substituted, and no claim at all about identity. See [Backend §3.4](03-Backend.md#34-internet-access-and-the-way-in).
 
 ## 6.7 Internet-access consent & audit
 
-Enabling Internet Access is an **explicit opt-in**, and nowhere is either answer pre-selected. The installer asks with two buttons — **Passer** / **Accepter**, in that order, the affirmative one on the right — and the page cannot be walked past without pressing one; the setup wizard does the same with a two-button choice that holds its *Start* button until it is answered. Only the admin page keeps a checkbox, because there it is a state switch rather than a question. The consent is the mechanism that actually opens things: it gates the per-session media mapping, and withdrawing it removes the router mappings immediately. The exact agreement text, timestamp (ISO-8601 UTC), entry point (`admin` | `setup` | `installer`) and **mechanism version** are persisted (`internet_consent` in settings). A consent only covers the mechanism its wording described: a record without a `version` field was worded for the retired DNS mechanism, and a non-legacy instance re-asks (phase `consent_required`) before opening anything. On legacy instances, **every A-record registration request appends a JSONL audit entry** referencing the consent — legal traceability for exposing a user's machine publicly.
+Enabling Internet Access is an **explicit opt-in**, and nowhere is either answer pre-selected. The installer asks with two buttons — **Passer** / **Accepter**, in that order, the affirmative one on the right — and the page cannot be walked past without pressing one; the setup wizard does the same with a two-button choice that holds its *Start* button until it is answered. Only the admin page keeps a checkbox, because there it is a state switch rather than a question. The consent is the mechanism that actually opens things: it gates the per-session media mapping, and withdrawing it removes the router mappings immediately. The exact agreement text, timestamp (ISO-8601 UTC), entry point (`admin` | `setup` | `installer`) and **mechanism version** are persisted (`internet_consent` in settings) — the record keeps *what the user was actually shown*, not a reference to a document that can be edited afterwards.
+
+A consent only covers the mechanism its wording described. When the wording changes materially, a stored record from before it no longer authorises anything: the manager parks in phase `consent_required` and opens nothing until the user agrees again under the current text. That check is why the switch being left "on" across an upgrade is not, on its own, permission.
 
 ## 6.8 Other hardening
 
@@ -114,9 +121,11 @@ Enabling Internet Access is an **explicit opt-in**, and nowhere is either answer
 - Per-browser `client_uniqueid` values are sanitized to hex (max 32 chars) before reaching launch URLs.
 - Session cookies are the only client-held secret; settings/keys/certs are server-side only.
 - Frontend escapes all interpolated HTML (`escapeHtml.js`).
-- CI embeds DNS/ACME secrets (`MW_*`) into the binary at build time — installers ship **no editable secrets** on disk; runtime env/.env still override.
+- A request that arrives through the tunnel **never** obtains the local-address exemption, enforced in `HttpServer::serveRequest()` rather than at the call site.
+- CI embeds the `MW_*` service credentials into the binary at build time — installers ship **no editable secrets** on disk; runtime env/.env still override.
 - **Distribution integrity**: Windows binaries and the installer are Authenticode-signed via SignPath; the APT repository is trusted through a signed `InRelease`, the DNF one through both a signed `repomd.xml` and per-package `rpmsign` signatures; the Homebrew cask and AUR package pin a sha256 of the exact release asset. The signing key lives only in the `GPG_PRIVATE_KEY` CI secret and the maintainer's keyring — `*.asc` is gitignored so an exported half can never be staged. Details in [Installers & Packaging §9.1–9.3](09-Installers-and-Packaging.md).
-- The DNS stack has its own hardening (rate limits, non-root containers, no published API port) — see [PowerDNS Stack](10-PowerDNS-Stack.md).
+- The infrastructure stack has its own hardening (per-IP quotas on claims and browser connections, rate limits, STUN without relay, non-root containers, no published API port) — see [Infrastructure Stack §10.12](10-Infrastructure-Stack.md#1012-hardening--limits).
+- **The bootstrap is the one piece of this project's code a browser loads from a server**, so it is kept small enough to read and compared on a schedule against a reference copy published elsewhere — [Infrastructure §10.8](10-Infrastructure-Stack.md#108-the-bootstrap-entry-page), including what that comparison does *not* catch.
 - Backend security-focused tests exist (`backend/tests/security_main.cpp`, `test_auth_manager.cpp`, `test_connection_guard.cpp`, `test_input_crypto.cpp`).
 
 ---
