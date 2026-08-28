@@ -574,10 +574,24 @@ const MoonlightApp = {
 
     /**
      * Best-effort: resolve the URL other devices use to reach this server.
-     *   - Internet Access active → the public domain URL (with external port).
+     *   - A claimed rendezvous address → that, whoever is asking. It is the one
+     *     address that works from the next room and from another country, and it
+     *     is served under a certificate the browser already trusts.
+     *   - Legacy sub-domain (Internet Access active, pre-retirement instance) →
+     *     the public domain URL, with the external (router-side) port.
      *   - Otherwise → the LAN IP URL (with local HTTPS port).
-     * Returns { url, domain, localIp, httpsPort, extPort, upnpAvailable,
-     * internetActive } or null on failure (url may be '' when nothing is known).
+     *
+     * The order is the one AdminView and the share links already use, and for
+     * the same reason: two live addresses for one machine is an invitation to
+     * hand out the one that stops working in February 2027. The sub-domain is
+     * only offered while there is nothing better.
+     *
+     * `remote` says whether the address reaches beyond this LAN — callers use it
+     * instead of re-deriving "is this just the LAN IP" from the parts.
+     *
+     * Returns { url, remote, rendezvousUrl, rendezvousOnline, domain, localIp,
+     * httpsPort, extPort, upnpAvailable, internetActive } or null on failure
+     * (url may be '' when nothing is known).
      * Host-machine only in practice — callers gate on _isHostLocal().
      */
     async _computeRemoteAccessUrls() {
@@ -587,6 +601,8 @@ const MoonlightApp = {
         let localIp = '';
         let upnpAvailable = false;
         let internetActive = false;
+        let rendezvousUrl = '';
+        let rendezvousOnline = false;
         try {
             const [admin, status] = await Promise.all([
                 BackendClient.getAdminSettings(),
@@ -598,28 +614,51 @@ const MoonlightApp = {
             extPort = status.external_https_port || httpsPort;
             upnpAvailable = !!status.upnp_available;
             internetActive = !!status.active && !!status.internet_access_enabled;
+            // Redacted for anything but a loopback caller (it carries this
+            // instance's permanent identifier), which a LAN admin unlocked with
+            // the password is not — they fall through to the LAN IP below, the
+            // address they are already reading this page on.
+            rendezvousUrl = (status.rendezvous && status.rendezvous.url) || '';
+            rendezvousOnline = !!(status.rendezvous && status.rendezvous.online);
         } catch (err) {
             console.warn('[MW] Could not read remote-access info:', err);
             return null;
         }
 
         let url = '';
-        if (internetActive && domain) {
+        let remote = false;
+        if (rendezvousUrl) {
+            // Not gated on the line being up: while it is down the address is
+            // still the right one, and callers say so from `rendezvousOnline`.
+            url = rendezvousUrl;
+            remote = true;
+        } else if (internetActive && domain) {
             url = 'https://' + domain + (extPort !== 443 ? ':' + extPort : '');
+            remote = true;
         } else if (localIp) {
             url = 'https://' + localIp + (httpsPort !== 443 ? ':' + httpsPort : '');
         }
-        return { url, domain, localIp, httpsPort, extPort, upnpAvailable, internetActive };
+        return {
+            url,
+            remote,
+            rendezvousUrl,
+            rendezvousOnline,
+            domain,
+            localIp,
+            httpsPort,
+            extPort,
+            upnpAvailable,
+            internetActive,
+        };
     },
 
     /**
      * On the host machine, show an informative banner at the top of the hosts
-     * page telling the user how other devices reach this server:
-     *   - Internet Access active → the full public domain URL only (the local
-     *     HTTPS port equals the router-forwarded port, so one URL fits all).
-     *   - Otherwise → the LAN IP URL, plus (when UPnP is available) a discreet
-     *     "enable internet access" link that opens the admin page scrolled to
-     *     the INTERNET section.
+     * page telling the user how other devices reach this server — one address,
+     * picked by _computeRemoteAccessUrls (rendezvous → legacy sub-domain → LAN).
+     * When that address only reaches this LAN and a UPnP router answered, a
+     * discreet "enable internet access" link opens the admin page scrolled to
+     * the INTERNET section.
      * Best-effort and host-machine-only; silently skipped otherwise.
      */
     async _maybeShowRemoteAccessBanner() {
@@ -635,9 +674,17 @@ const MoonlightApp = {
             `<a href="${encodeURI(u)}" target="_blank" rel="noopener">${escapeHtml(u)}</a>`;
 
         let bodyHtml = `${t('hosts.remoteAccess')} ${linkHtml(info.url)}`;
-        // LAN URL (Internet Access off) + UPnP available → offer the discreet
-        // shortcut to open this server to the Internet.
-        if (!(info.internetActive && info.domain) && info.upnpAvailable) {
+        // A held connection, not a published record: while it is down the
+        // address is correct and answers to nobody. Saying so beats showing a
+        // link that silently fails.
+        if (info.rendezvousUrl && !info.rendezvousOnline) {
+            bodyHtml += `<br><span class="banner-internet-hint">${escapeHtml(
+                t('admin.rendezvousOffline'),
+            )}</span>`;
+        }
+        // LAN URL (nothing reaches this machine from outside) + UPnP available →
+        // offer the discreet shortcut to open this server to the Internet.
+        if (!info.remote && info.upnpAvailable) {
             bodyHtml +=
                 `<br><span class="banner-internet-hint">${t('hosts.internetAvailableHint')}` +
                 ` <a href="#" id="banner-enable-internet" class="consent-highlight">` +
@@ -1460,9 +1507,12 @@ const MoonlightApp = {
 
     /**
      * Playful confirmation shown when the user is about to stream the very PC
-     * they're sitting at (the "Inception" loop). Offers the LAN/domain URL to use
-     * from another device, a "Stream anyway" escape hatch, and a Cancel. Cancel
-     * (or Escape / backdrop click) reverts the launching card and resumes polling;
+     * they're sitting at (the "Inception" loop). Offers the address another
+     * device reaches this machine at (rendezvous, else the legacy sub-domain,
+     * else the LAN IP — see _computeRemoteAccessUrls), a "Stream anyway" escape
+     * hatch, and a Cancel.
+     *
+     * Cancel (or Escape / backdrop click) reverts the launching card and resumes polling;
      * "Stream anyway" re-invokes launchApp with the warning suppressed — done from
      * the button's own click so the iOS audio-unlock user gesture stays valid.
      */
@@ -1479,9 +1529,13 @@ const MoonlightApp = {
         overlay.className = 'pairing-overlay self-stream-overlay';
         // Plain (non-clickable) text so the user can select and copy the URL to
         // paste into a browser on another device.
+        const offlineHtml =
+            info && info.rendezvousUrl && !info.rendezvousOnline
+                ? `<p class="setting-desc">${escapeHtml(t('admin.rendezvousOffline'))}</p>`
+                : '';
         const urlHtml = url
             ? `<p class="self-stream-url">${escapeHtml(t('selfStream.useUrl'))}
-                   <span class="self-stream-url-value">${escapeHtml(url)}</span></p>`
+                   <span class="self-stream-url-value">${escapeHtml(url)}</span></p>${offlineHtml}`
             : '';
         overlay.innerHTML = `
             <div class="pairing-dialog">

@@ -41,6 +41,11 @@ export class SetupView {
         this._autostartInstalled = false;
         this._internetActive = false;
         this._domain = '';
+        this._destroyed = false;
+        // The address a fresh install is actually reached at. `_domain` is the
+        // legacy sub-domain and is empty on every install made since it was
+        // retired, so it can no longer be the only thing this screen knows.
+        this._rendezvousUrl = '';
         this._httpsPort = 443; // for the "Open MoonlightWeb" switch to HTTPS
         this._error = '';
 
@@ -83,6 +88,18 @@ export class SetupView {
         this._activeSteps = [];
     }
 
+    /**
+     * The address to put in front of the user, whole: the rendezvous one when
+     * this instance has claimed it, the legacy sub-domain otherwise. Same order
+     * as the admin page and the share links, and for the same reason — two live
+     * addresses for one machine is an invitation to hand out the one that stops
+     * working in February 2027. Empty when neither is known, which is what
+     * `internetActiveLan` is worded for.
+     */
+    _publicAddress() {
+        return this._rendezvousUrl || this._domain;
+    }
+
     async start() {
         this._step = 'loading';
         this.render();
@@ -98,6 +115,9 @@ export class SetupView {
             this._displayKeptAwake = !!(status.display_sleep && status.display_sleep.kept_awake);
             this._internetActive = !!(status.internet && status.internet.active);
             this._domain = (status.internet && status.internet.domain) || '';
+            this._rendezvousUrl =
+                (status.internet && status.internet.rendezvous && status.internet.rendezvous.url) ||
+                '';
             this._httpsPort = status.https_port || 443;
             // The backend says whether it can auto-install Sunshine here (macOS
             // DMG, or Linux .deb on Debian/Ubuntu-family distros with polkit).
@@ -124,6 +144,9 @@ export class SetupView {
 
     destroy() {
         this._stopPolling();
+        // Also ends the background address poll (see _fillPublicAddressLater):
+        // a closed wizard must not keep asking, nor re-render a detached view.
+        this._destroyed = true;
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────
@@ -181,10 +204,11 @@ export class SetupView {
                 <p class="setup-note">${t('setup.sunshineManual')}</p>`;
         }
 
+        const address = this._publicAddress();
         const internetBlock = this._internetActive
             ? this._okNote(
-                  this._domain
-                      ? t('setup.internetActive', { domain: this._domain })
+                  address
+                      ? t('setup.internetActive', { domain: address })
                       : t('setup.internetActiveLan'),
               )
             : `
@@ -331,9 +355,10 @@ export class SetupView {
     }
 
     _renderDone() {
+        const address = this._publicAddress();
         const domainLine =
-            this._internetActive && this._domain
-                ? `<p class="setup-note">${t('setup.doneDomain', { domain: this.esc(this._domain) })}</p>`
+            this._internetActive && address
+                ? `<p class="setup-note">${t('setup.doneDomain', { domain: this.esc(address) })}</p>`
                 : '';
         // TCC permissions hint only when Sunshine was actually touched this run
         // (a fully-paired setup revisit has nothing left to grant).
@@ -506,6 +531,7 @@ export class SetupView {
             if (result.internet_active !== undefined) {
                 this._internetActive = !!result.internet_active;
                 this._domain = result.domain || '';
+                this._rendezvousUrl = (result.rendezvous && result.rendezvous.url) || '';
             }
             this._displaySleepError = result.display_sleep_error || '';
             if (result.display_kept_awake) this._displayKeptAwake = true;
@@ -542,6 +568,13 @@ export class SetupView {
             this._step = 'done';
             this.render();
             this.bindEvents();
+            // Claiming the rendezvous address is a round-trip that only gets the
+            // backend's event loop back now that /apply has returned, so it is
+            // almost never in the response above. The done screen goes up
+            // immediately and the address drops in when it lands — holding the
+            // wizard on a finished checklist for it would read as a hang, and on
+            // a fresh install this screen is where its owner learns the address.
+            if (this._internetActive && !this._publicAddress()) this._fillPublicAddressLater();
         } catch (err) {
             this._stopPolling();
             console.error('[Setup] apply failed:', err);
@@ -603,6 +636,35 @@ export class SetupView {
             if (status.steps && terminal.includes(status.steps[key])) return status.steps[key];
         }
         return 'timeout';
+    }
+
+    // Poll for the rendezvous address in the background and re-render the done
+    // screen once it lands. Gives up quietly: the screen then says the link is
+    // active without naming an address — what it did before the address existed
+    // — and the admin page shows it live whenever the claim completes. Stops as
+    // soon as the user leaves the done screen, so a closed wizard polls nothing.
+    async _fillPublicAddressLater() {
+        const live = () => this._step === 'done' && !this._destroyed;
+        const deadline = Date.now() + 30000;
+        while (Date.now() < deadline && live()) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (!live()) return;
+            let status;
+            try {
+                status = await BackendClient.getSetupStatus();
+            } catch (_e) {
+                continue; // transient while the backend is busy — keep waiting
+            }
+            const url =
+                (status.internet && status.internet.rendezvous && status.internet.rendezvous.url) ||
+                '';
+            if (!url) continue;
+            this._rendezvousUrl = url;
+            if (!live()) return;
+            this.render();
+            this.bindEvents();
+            return;
+        }
     }
 
     // Poll the live checklist while the (blocking) apply request runs.

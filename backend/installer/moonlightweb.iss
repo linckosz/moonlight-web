@@ -3,7 +3,8 @@
 ;
 ;  Produces a stepped wizard (MoonlightWeb-installer-<version>-win-<arch>.exe) that:
 ;    1. installs the app + Start-Menu shortcuts (app, admin page, uninstaller),
-;    2. asks the user to authorize the Internet link (named public domain),
+;    2. asks the user to authorize the Internet link (no DNS record, no
+;       certificate, no open web port — see InternetPageBody),
 ;    3. detects Sunshine and adapts a Skip/Next/Cancel page to what it finds —
 ;       absent (install it silently with the prefilled admin/admin credentials),
 ;       installed but unpaired (ask for its real credentials), or already paired
