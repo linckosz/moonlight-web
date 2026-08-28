@@ -26,6 +26,7 @@ import {
     hostIdFromLocation,
     hostKeyFromLocation,
     landingPathFromLocation,
+    shareTokenFromLocation,
     rememberLastHost,
     SHELL_CACHE,
 } from './tunnel.js';
@@ -362,12 +363,22 @@ async function main() {
     // and a query would put it in the introduction server's next request line.
     // The application spends it and strips it; nothing here reads it.
     //
+    // An invitation token rides along the same way and for the same reason, with
+    // one difference: it is not spent. It is what the guest's page IS, so it
+    // stays in the fragment and survives every reload of that page.
+    //
     // The path, freed by that same move, is where the link says which page it
-    // meant. The machine's own tray asks for /admin; everything else asks for
-    // nothing and lands at the root, which is what every link did before this.
+    // meant. The machine's own tray asks for /admin, an invitation for /p;
+    // everything else asks for nothing and lands at the root, which is what every
+    // link did before this.
     const key = hostKeyFromLocation();
+    const share = shareTokenFromLocation();
     const landing = landingPathFromLocation() || '/';
-    location.replace(`${landing}#${hostId}${key ? `&k=${encodeURIComponent(key)}` : ''}`);
+    location.replace(
+        `${landing}#${hostId}` +
+            (key ? `&k=${encodeURIComponent(key)}` : '') +
+            (share ? `&t=${encodeURIComponent(share)}` : ''),
+    );
 }
 
 main().catch((e) => fail(e.message, ''));

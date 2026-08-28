@@ -684,6 +684,38 @@ export function landingPathFromLocation() {
     return null;
 }
 
+/**
+ * The invitation token this link carries, or null.
+ *
+ * An owner shares a slot of their session and the guest arrives here holding
+ * this. It rides beside the landing path rather than inside it, and the
+ * difference is the whole point: the token never appears in a URL path, at any
+ * step, so no navigation can ever carry it to the introduction server. A path
+ * would be answered from the cache by the service worker in the ordinary case —
+ * but "the ordinary case" is not a property to rest a credential on, and the one
+ * time that worker is missing is the one time the token would be in a request
+ * line somebody else keeps.
+ *
+ * Read, not consumed — the opposite of the host key above. That key is spent on
+ * redemption and must never be replayed; an invitation is what this page IS, and
+ * it has to survive every reload of it.
+ *
+ * The shape is checked because the value is put back into what is handed to
+ * location.replace() at handover. It is base64url at the far end, so anything
+ * outside that alphabet is not a token this machine ever minted.
+ */
+const SHARE_TOKEN_SHAPE = /^[A-Za-z0-9_-]{16,128}$/;
+
+export function shareTokenFromLocation() {
+    for (const part of hashParts()) {
+        if (part.startsWith('t=')) {
+            const token = decodeURIComponent(part.slice(2));
+            if (SHARE_TOKEN_SHAPE.test(token)) return token;
+        }
+    }
+    return null;
+}
+
 export function hostIdFromLocation() {
     const fromPath = location.pathname.replace(/^\/+|\/+$/g, '');
     if (ID_SHAPE.test(fromPath)) return fromPath;

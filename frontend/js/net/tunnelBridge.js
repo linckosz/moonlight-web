@@ -46,6 +46,7 @@
 let tunnel = null;
 let hostId = null;
 let hostKey = null;
+let shareToken = null;
 
 /** The identifier this tab is bound to, or null when there is no tunnel. */
 export function tunnelHostId() {
@@ -64,6 +65,21 @@ export function takeTunnelHostKey() {
     const key = hostKey;
     hostKey = null;
     return key;
+}
+
+/**
+ * The invitation token this link arrived with, or null.
+ *
+ * Read as often as needed, unlike the host key next door. That key is single-use
+ * at both ends; an invitation is the guest's whole page and has to survive every
+ * reload of it.
+ *
+ * It is here rather than in the path because the path is the one part of the
+ * address the introduction server reads. Through the tunnel the guest's page is
+ * /p and the token is beside it in the fragment.
+ */
+export function tunnelShareToken() {
+    return shareToken;
 }
 
 /** Whether this page is reached through the introduction server. */
@@ -160,6 +176,7 @@ export async function startTunnel(onStage) {
 
     hostId = mod.hostIdFromLocation();
     hostKey = mod.hostKeyFromLocation();
+    shareToken = mod.shareTokenFromLocation();
     if (!hostId) {
         // We are on the rendezvous — the transport loaded — but nothing names a
         // machine: a fresh browser opening the bare address, or one whose

@@ -124,7 +124,18 @@ export class ShareBoard {
         this._pendingTtl = new Map();
         this._pollTimer = null;
         this.overlay = null;
-        this._secrets = new Map(); // slot → {url, pin} | {available:false}
+        this._secrets = new Map(); // slot → {url, pin, local_only} | {available:false}
+        /**
+         * Whether this machine answers from outside at this moment.
+         *
+         * It changes nothing about the links — an invitation outlives a line
+         * that comes and goes, and its characters do not move — so it is not
+         * kept per slot and never gates anything. It exists so the board can say
+         * "not right now" instead of letting an owner send an address believing
+         * it is being answered. Assumed true until told otherwise: crying wolf
+         * over a field that did not arrive would be worse than staying quiet.
+         */
+        this._remoteReachable = true;
         /** Last refusal worth showing the owner; cleared by the next success. */
         this._error = '';
         /**
@@ -226,6 +237,7 @@ export class ShareBoard {
     async _load() {
         const data = await BackendClient.getShareStatus();
         this.slots = Array.isArray(data.slots) ? data.slots : [];
+        this._remoteReachable = data.remote_reachable !== false;
 
         // Every live row shows its link and PIN, so every live row needs them.
         // Only ones we have never read: they do not change under us, and asking
@@ -250,6 +262,7 @@ export class ShareBoard {
     _signature() {
         return JSON.stringify([
             this.appId,
+            this._remoteReachable,
             this.slots.map((s) => [
                 s.slot,
                 s.state,
@@ -505,6 +518,17 @@ export class ShareBoard {
                        data-ttl="${secs}">${escapeHtml(this._ttlLabel(secs))}</span>`,
         ).join('');
 
+        // What is wrong with this link, if anything. Two causes, and they must
+        // never be confused: one says the link cannot leave this network at all,
+        // the other says it can and the machine simply is not answering just now.
+        // The first is fixed by turning internet access on; the second fixes
+        // itself, and the link is already in someone's chat window either way.
+        let reach = '';
+        if (live && creds?.available !== false) {
+            if (creds?.local_only) reach = 'lanOnly';
+            else if (!this._remoteReachable) reach = 'offline';
+        }
+
         // Built, then hidden by CSS (.share-warning). The badge already names
         // the level and the board is meant to stay scannable, so the sentence is
         // noise today — but whether people actually understand what "desktop"
@@ -533,6 +557,13 @@ export class ShareBoard {
                             ${Icons.refresh}<span>${escapeHtml(t('sharing.regenerate'))}</span>
                         </button>
                     </div>
+                    ${
+                        reach
+                            ? `<p class="share-reach" data-reach="${reach}">${escapeHtml(
+                                  t(`sharing.${reach}`),
+                              )}</p>`
+                            : ''
+                    }
                 </div>
 
                 <div class="share-detail-line share-detail-split">
@@ -853,7 +884,12 @@ export class ShareBoard {
                 target.app_id = this.appId;
             }
             const data = await this._write(() => BackendClient.shareActivate(slot, target));
-            this._secrets.set(slot, { available: true, url: data.url, pin: data.pin });
+            this._secrets.set(slot, {
+                available: true,
+                url: data.url,
+                pin: data.pin,
+                local_only: data.local_only,
+            });
             this._error = '';
         } catch (err) {
             // The refusals worth reading are the owner's to fix: no host picked,

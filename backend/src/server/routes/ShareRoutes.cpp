@@ -117,16 +117,37 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
 
     RestRouter* router = server.router();
 
-    // The base a player's link is built on: the public domain once Internet
-    // Access is live, otherwise this machine's LAN address and HTTPS port.
+    // The address a guest opens, whole.
+    //
+    // The rendezvous answers it whenever this machine has a line to the outside:
+    // the path names the machine and the invitation rides in the fragment, where
+    // the introduction server never sees it. When there is no such line the only
+    // thing left to offer is this machine's own LAN address, which reaches a
+    // guest on the same network and nobody else — so the caller is told, and the
+    // board says so rather than letting an owner send a link that cannot open.
+    //
+    // Never loopback either way: the guest is on another PC.
+    //
+    // Both answers come out of one look, deliberately. Asking twice would let a
+    // line that dropped in between hand out a rendezvous address flagged as
+    // LAN-only, or the reverse — a rare disagreement, and the kind nobody would
+    // ever reproduce.
+    //
     // Copied into the route closures, and holds only references to objects that
     // outlive them (both live in main).
-    auto shareOrigin = [&deps, &server]() -> QString {
-        QString origin = deps.publicOrigin ? deps.publicOrigin() : QString();
-        if (!origin.isEmpty()) return origin;
+    auto fillLink = [&deps, &server](QJsonObject& obj, const QString& token) {
+        const QString remote = deps.playerLink ? deps.playerLink(token) : QString();
+        if (!remote.isEmpty()) {
+            obj[QStringLiteral("url")] = remote;
+            obj[QStringLiteral("local_only")] = false;
+            return;
+        }
         const quint16 port = server.activeHttpsPort();
-        return port == 443 ? QStringLiteral("https://%1").arg(lanIPv4())
-                           : QStringLiteral("https://%1:%2").arg(lanIPv4()).arg(port);
+        const QString origin = port == 443
+                                   ? QStringLiteral("https://%1").arg(lanIPv4())
+                                   : QStringLiteral("https://%1:%2").arg(lanIPv4()).arg(port);
+        obj[QStringLiteral("url")] = origin + QStringLiteral("/p/") + token;
+        obj[QStringLiteral("local_only")] = true;
     };
 
     // ── Owner side ──────────────────────────────────────────────────────────
@@ -135,7 +156,7 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     // admin-only. Cross-site drive-by is already refused by RequestGuard.
 
     // GET /api/share/status — the four rows of the sharing board.
-    router->get(QStringLiteral("/api/share/status"), [&share](const HttpRequest&) {
+    router->get(QStringLiteral("/api/share/status"), [&share, &deps](const HttpRequest&) {
         // Not named `slots`: Qt's moc keyword macro would eat it.
         QJsonArray slotArray;
         for (const ShareManager::SlotStatus& st : share.status())
@@ -144,13 +165,18 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         QJsonObject obj;
         obj[QStringLiteral("slots")] = slotArray;
         obj[QStringLiteral("streaming")] = share.streamingCount();
+        // Whether this machine answers from outside at this moment. It changes
+        // nothing about the links — an invitation outlives a line that comes and
+        // goes — it only lets the board say so instead of letting an owner hand
+        // out an address believing it is being answered.
+        obj[QStringLiteral("remote_reachable")] = deps.remoteReachable && deps.remoteReachable();
         return HttpResponse::json(obj);
     });
 
     // POST /api/share/slots/:n/activate — open a row: mint its link + PIN.
     router->post(
         QStringLiteral("/api/share/slots/:n/activate"),
-        [&share, &deps, shareOrigin](const HttpRequest& req) {
+        [&share, &deps, fillLink](const HttpRequest& req) {
             const int slot = slotParam(req);
             if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
 
@@ -188,7 +214,7 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
                 return HttpResponse::error(500, "Could not share this slot");
 
             QJsonObject obj = slotJson(st);
-            obj[QStringLiteral("url")] = shareOrigin() + QStringLiteral("/p/") + token;
+            fillLink(obj, token);
             obj[QStringLiteral("pin")] = pin;
             return HttpResponse::json(obj);
         });
@@ -198,7 +224,7 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     // it hands out a credential, so it goes through the full CSRF/origin gate
     // rather than being reachable by a top-level navigation.
     router->post(QStringLiteral("/api/share/slots/:n/credentials"),
-                 [&share, shareOrigin](const HttpRequest& req) {
+                 [&share, fillLink](const HttpRequest& req) {
                      const int slot = slotParam(req);
                      if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
 
@@ -214,7 +240,7 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
                          return HttpResponse::json(obj);
                      }
                      obj[QStringLiteral("available")] = true;
-                     obj[QStringLiteral("url")] = shareOrigin() + QStringLiteral("/p/") + token;
+                     fillLink(obj, token);
                      obj[QStringLiteral("pin")] = pin;
                      return HttpResponse::json(obj);
                  });
@@ -359,8 +385,13 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
         obj[QStringLiteral("access_level")] = perms.accessLevel();
         obj[QStringLiteral("permissions")] = perms.toJson();
         obj[QStringLiteral("expires_at")] = share.expiresAt(slot);
-        obj[QStringLiteral("owner_streaming")] =
-            deps.ownerStreamAlive ? deps.ownerStreamAlive() : false;
+        // Nothing running is no longer a wall: the guest's arrival is what
+        // starts the app the owner chose. Say which one, and say that pressing
+        // Join will wake the machine, so nobody boots a game by surprise.
+        const std::pair<QString, bool> target =
+            deps.joinTarget ? deps.joinTarget(slot) : std::pair<QString, bool>{};
+        obj[QStringLiteral("app_name")] = target.first;
+        obj[QStringLiteral("cold_start")] = target.second;
         // Transparency, not a choice: the guest's session is counted (or not)
         // by the machine they are joining, and the privacy panel says which.
         obj[QStringLiteral("stats_reporting")] =

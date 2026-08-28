@@ -3329,6 +3329,36 @@ int main(int argc, char* argv[])
             (*sendNext)();
         });
 
+    // ── Rendezvous line ──────────────────────────────────────────────────────
+    //
+    // The outbound connection that replaces the sub-domain: while it is held,
+    // this machine is reachable at https://stream.{domain}/{id}; when it is
+    // down, it simply is not. Nothing is published and nothing is polled.
+    //
+    // It follows internet_access_enabled, and that is the whole point of the
+    // switch. The line tells a third party that this machine is online and
+    // shows it a residential address on the socket — exactly the class of thing
+    // the user opted into, so refusing consent must leave it closed, like every
+    // other opening.
+    RendezvousClient rendezvous(&appSettings);
+
+    QObject::connect(&rendezvous, &RendezvousClient::onlineChanged, &app, [&](bool online) {
+        qInfo() << "[main] rendezvous line" << (online ? "up" : "down")
+                << (online ? rendezvous.entryUrl() : QString());
+    });
+
+    // The switch being on is not enough. A consent recorded for the retired DNS
+    // mechanism left it on, and it never described an outbound line announcing
+    // this machine — so the gate InternetAccessManager stops at applies here for
+    // exactly the same reason.
+    auto rendezvousShouldRun = [&]() {
+        return appSettings.internetAccessEnabled() && !internetAccess.consentRequired();
+    };
+
+    // Everything below this line that the rendezvous touches lives further down;
+    // it is declared here because the sharing deps need it, and a lambda holding
+    // a reference to an object that does not exist yet is undefined behaviour.
+
     // ── Session sharing: the player side of the stream lifecycle ───────────
     // A player never launches anything: they resume into the app the owner is
     // already streaming, on a slot of their own. Everything that is not the
@@ -3347,24 +3377,42 @@ int main(int argc, char* argv[])
         return std::pair<QString, int>{g_ActiveHostUuid, 0};
     };
 
-    // Is there a Sunshine app a player could resume into? Not "is the owner
-    // watching": Leave (keep_host_session) takes the owner's leg down without a
-    // /cancel exactly so the guests carry on, and a guest handed a link before
-    // that must still be able to use it. g_LiveSunshineUids is the registry of
-    // sessions we hold and have not cancelled, so it answers the question the
-    // owner's slots cannot.
-    auto ownerStreamAlive = [&g_Pool, &g_LiveSunshineUids, &g_ActiveRelay,
-                             &g_ActiveMediaTrackRelay, &g_ActiveStreamRelay]() {
+    // What a guest would get by pressing Join, resolved on the host their
+    // invitation is bound to. Not "is the owner watching": Leave
+    // (keep_host_session) takes the owner's leg down without a /cancel exactly
+    // so the guests carry on, and g_LiveSunshineUids is the registry of sessions
+    // we hold and have not cancelled. This mirrors startPlayerStream's
+    // resolution on purpose, so the page never promises a launch the join then
+    // turns into a resume, or the other way round.
+    auto joinTarget = [&g_Pool, &g_LiveSunshineUids, &shareManager,
+                       &computerManager](int slot) -> std::pair<QString, bool> {
+        const QString hostUuid = shareManager.hostForSlot(slot);
+        if (hostUuid.isEmpty()) return {};
+        int appId = shareManager.appForSlot(slot);
+        bool live = false;
         for (int i = 0; i < kOwnerSlots; ++i)
-            if (!g_Pool.at(i).worker.isNull()) return true;
-        if (!g_LiveSunshineUids.isEmpty()) return true;
-        // Legacy in-process path (stream_worker_enabled off).
-        return !g_ActiveRelay.isNull() || !g_ActiveMediaTrackRelay.isNull() ||
-               !g_ActiveStreamRelay.isNull();
+            if (g_Pool.at(i).worker && g_Pool.at(i).hostUuid == hostUuid) {
+                appId = g_Pool.at(i).appId;
+                live = true;
+                break;
+            }
+        if (!live && g_LastOwnerHostUuid == hostUuid && !g_LiveSunshineUids.isEmpty()) {
+            if (appId <= 0) appId = g_LastOwnerAppId;
+            live = true;
+        }
+        QString name;
+        NvComputer* host = computerManager.getHost(hostUuid);
+        if (host && appId > 0)
+            for (const NvApp& app : host->appList)
+                if (app.id() == appId) {
+                    name = app.name();
+                    break;
+                }
+        return {name, !live};
     };
 
     ShareRoutesDeps shareDeps;
-    shareDeps.ownerStreamAlive = ownerStreamAlive;
+    shareDeps.joinTarget = joinTarget;
     shareDeps.statsReporting = [&appSettings]() { return appSettings.sessionMetricsAllowed(); };
     shareDeps.currentOwnerContext = ownerContext;
     shareDeps.hostAppExists = [&computerManager](const QString& hostUuid, int appId) {
@@ -3387,19 +3435,40 @@ int main(int argc, char* argv[])
         return QHostInfo::localHostName();
 #endif
     };
-    shareDeps.publicOrigin = [&internetAccess, &appSettings, &server]() -> QString {
-        // Same bar as the Desktop shortcut: the domain is only worth handing out
-        // once it is published AND covered by a real certificate. Otherwise the
-        // caller falls back to the LAN address — never loopback, the player is
-        // on another machine.
-        if (!internetAccess.isActive() || internetAccess.domain().isEmpty() ||
-            internetAccess.certificateIssuing() || appSettings.certPem().isEmpty())
-            return {};
-        quint16 p = internetAccess.externalHttpsPort();
-        if (p == 0) p = server.activeHttpsPort();
-        return p == 443 ? QStringLiteral("https://%1").arg(internetAccess.domain())
-                        : QStringLiteral("https://%1:%2").arg(internetAccess.domain()).arg(p);
+    // The address a guest opens. One form, and the same one everybody else uses
+    // to reach this machine.
+    //
+    // It used to be the public sub-domain, and a legacy instance still has one.
+    // It is not offered here any more, for the reason the entry points below
+    // give at length: two live addresses for one machine is an invitation to
+    // hand out the one that stops working in February 2027 — and a share link is
+    // precisely the address that leaves this machine and lives in somebody
+    // else's chat window for weeks.
+    //
+    // The invitation travels in the FRAGMENT. A browser never sends that to the
+    // server it fetched the page from, so the introduction server sees which
+    // machine is wanted — it has to, that is the whole of its job — and not the
+    // token to it. In the path it would be in that server's request line, and
+    // from there in whatever it logs. The bootstrap carries it across the
+    // handover for the same reason, and hands it to the application there.
+    //
+    // Not gated on the line being up at this instant, deliberately, and this is
+    // where it differs from remoteAdminLink() further down. That link is spent
+    // the moment it is used, so handing out one that cannot work loses it. An
+    // invitation is opened later — tonight, tomorrow — and refusing to mint one
+    // over a thirty-second blip would be absurd. The board says when the machine
+    // is not answering; the link itself stays valid and stays the same
+    // characters.
+    shareDeps.playerLink = [&rendezvous, rendezvousShouldRun](const QString& token) -> QString {
+        if (!rendezvousShouldRun()) return {};
+        // Empty until the identifier has been claimed: an address that answers
+        // to nobody is worse than no address.
+        const QString entry = rendezvous.entryUrl();
+        if (entry.isEmpty()) return {};
+        return entry + QStringLiteral("#p=/p&t=") +
+               QString::fromLatin1(QUrl::toPercentEncoding(token));
     };
+    shareDeps.remoteReachable = [&rendezvous]() { return rendezvous.isOnline(); };
     shareDeps.stopPlayerStream = [&g_Pool, &detachWorkerSlot,
                                   &shareManager](int slot, bool notifyEnded) {
         if (slot < kOwnerSlots || slot >= kTotalSlots) return;
@@ -3844,32 +3913,6 @@ int main(int argc, char* argv[])
                                                                        ? QStringLiteral("done")
                                                                        : QStringLiteral("failed"));
     }
-
-    // ── Rendezvous line ──────────────────────────────────────────────────────
-    //
-    // The outbound connection that replaces the sub-domain: while it is held,
-    // this machine is reachable at https://stream.{domain}/{id}; when it is
-    // down, it simply is not. Nothing is published and nothing is polled.
-    //
-    // It follows internet_access_enabled, and that is the whole point of the
-    // switch. The line tells a third party that this machine is online and
-    // shows it a residential address on the socket — exactly the class of thing
-    // the user opted into, so refusing consent must leave it closed, like every
-    // other opening.
-    RendezvousClient rendezvous(&appSettings);
-
-    QObject::connect(&rendezvous, &RendezvousClient::onlineChanged, &app, [&](bool online) {
-        qInfo() << "[main] rendezvous line" << (online ? "up" : "down")
-                << (online ? rendezvous.entryUrl() : QString());
-    });
-
-    // The switch being on is not enough. A consent recorded for the retired DNS
-    // mechanism left it on, and it never described an outbound line announcing
-    // this machine — so the gate InternetAccessManager stops at applies here for
-    // exactly the same reason.
-    auto rendezvousShouldRun = [&]() {
-        return appSettings.internetAccessEnabled() && !internetAccess.consentRequired();
-    };
 
     // ── Does the internet way in actually answer? ────────────────────────────
     //
