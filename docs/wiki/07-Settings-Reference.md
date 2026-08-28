@@ -122,25 +122,29 @@ CI bakes `MW_DOMAIN` and `MW_PDNS_TOKEN` (from repo secrets, via CMake defines) 
 
 Bringing your own domain is how you serve the web interface under a name of your own, as an alternative to (or alongside) the entry link: set `domain` in `settings.json` and the manager runs in a **network-only mode** — public-IP detection and the NAT-hairpin test still run, the zone and the certificate are yours, and the 443 forward on your router is yours to create. This is the one configuration in which a browser opens a TLS socket to your machine directly, so it is also the one in which a certificate matters.
 
-**1. DNS — A record on your public IP.** In `mywebsite.com`'s zone create `stream` → **your router's public IPv4** (the WAN address, *not* the machine's `192.168.x.x`). Check it with `curl https://api.ipify.org` on the host, or read *Public IP* on the admin page. IPv6-only reachability needs an AAAA record instead. A dynamic ISP address needs a DDNS updater; a **CGNAT** address (`100.64.0.0/10`) can never be port-forwarded — the admin page detects and reports that case.
+**1. DNS — A record on your public IP.** In `example.com`'s zone create `stream` → **your router's public IPv4** (the WAN address, *not* the machine's `192.168.x.x`). Check it with `curl https://api.ipify.org` on the host, or read *Public IP* on the admin page. IPv6-only reachability needs an AAAA record instead. A dynamic ISP address needs a DDNS updater; a **CGNAT** address (`100.64.0.0/10`) can never be port-forwarded — the admin page detects and reports that case.
 
-**2. Router — port forwarding with port parity.** External port **must equal** internal port: the browser builds every REST/WebSocket URL from the origin it was served on, so a rewritten port breaks the signaling URL.
+**2. Router — port forwarding.**
 
 | Forward | To | Why |
 |---|---|---|
-| **TCP 443** (mandatory) | `<LAN IP of the MoonlightWeb machine>`:443 | Page, REST API, WSS signaling and the `wss` fallback transport all ride the single HTTPS port. |
-| TCP 80 (optional) | same host:80 | HTTP→HTTPS redirect; also needed if you renew with an HTTP-01 ACME client on that machine. |
-| UDP 48010–48014 (recommended) | same host, same ports | Direct WebRTC media (`SignalingServer` maps the first free port of that range). Without it the fallback chain still works over ICE-TCP, then `wss`, at a worse latency profile. |
+| **TCP 443** (mandatory) | `<LAN IP>`:*the bound HTTPS port* | Page, REST API, WSS signalling and the `wss` fallback transport all ride the single HTTPS port. |
+| UDP 48010 + one per slot (recommended) | same host, **same ports** | Direct WebRTC media (`kMediaBasePort = 48010`, then `48010 + slot`). Without it the fallback chain still works over ICE-TCP, then `wss`, at a worse latency profile. |
+| TCP 80 | — | **Leave it closed.** See below. |
 
-With `upnp_enabled: true` **and** Internet Access on, the per-session media ports (UDP 48010-48014) are still mapped for you; the TCP 443 (and optional 80) rules above are always manual with a custom domain.
+**The TCP rule may translate the port; the UDP rules may not.** The web side survives `443 → 8443` because the frontend keeps only the *path* from the backend's signalling URL and rebuilds it on `window.location.host` (`_streamWsUrl` in `app.js`), so every REST and WebSocket call follows the origin the page was served on. The media rules are the opposite case: the port travels inside the ICE candidates, so a rewritten one points the browser at a port nothing is listening on.
 
-**3. Certificate.** Issue one for `stream.mywebsite.com` (certbot / win-acme / lego with your DNS provider, or any commercial CA). You need two **unencrypted PEM** files: the full chain and the private key (RSA or EC). A wildcard (`*.mywebsite.com`) works too.
+**Why 80 is better left shut.** It buys only the HTTP→HTTPS redirect, and that redirect is built from the *internal* port (`m_ActiveHttpsPort`, `HttpServer.cpp`): a machine listening on 8443 behind an external 443 would redirect visitors to `https://stream.example.com:8443`, which is not open. It is also an unauthenticated surface for the sake of saving five characters of typing. Open it only if you renew with an HTTP-01 client on that same machine.
+
+With `upnp_enabled: true` **and** Internet Access on, the per-session media ports are still mapped for you; the TCP 443 rule is always manual with a custom domain.
+
+**3. Certificate.** Issue one for `stream.example.com` (certbot / win-acme / lego with your DNS provider, or any commercial CA). You need two **unencrypted PEM** files: the full chain and the private key (RSA or EC). A wildcard (`*.example.com`) works too.
 
 **4. Declare the domain and install the certificate.** Stop the server, edit `settings.json` (path in [§7.1](#71-settingsjson-location)), then restart:
 
 ```jsonc
 {
-  "domain": "stream.mywebsite.com",
+  "domain": "stream.example.com",
   // optional — absolute paths to your PEM files; omit to use the cert/ folder
   "cert_pem": "C:/certs/fullchain.pem",
   "cert_key": "C:/certs/privkey.pem"
@@ -149,7 +153,7 @@ With `upnp_enabled: true` **and** Internet Access on, the per-session media port
 
 Without `cert_pem`/`cert_key`, drop both files (`*.pem`, same folder) into the data dir's `cert/` subfolder — `%APPDATA%\MoonlightWeb\MoonlightWeb\cert\` on Windows, `~/Library/Application Support/MoonlightWeb/MoonlightWeb/cert/` on macOS, `~/.local/share/MoonlightWeb/MoonlightWeb/cert/` on Linux. `CertManager` scans recursively for a certificate that **covers the domain (CN or SAN, wildcards included)** plus a private key beside it.
 
-Confirm in `logs/moonlightweb.log`: `SSL certificate loaded: CN=stream.mywebsite.com`. **Renewal is yours**: replace the files and restart. A certificate near expiry is kept and logged as *renew it soon* — it is never silently downgraded to a self-signed one.
+Confirm in `logs/moonlightweb.log`: `SSL certificate loaded: CN=stream.example.com`. **Renewal is yours**: replace the files and restart. A certificate near expiry is kept and logged as *renew it soon* — it is never silently downgraded to a self-signed one.
 
 **5. Internet Access — optional.** With a custom domain it registers nothing and requests no certificate; it re-detects the public IP, tests NAT hairpin, and allows the per-session media mapping (`cfg["upnpEnabled"] = upnp_enabled && internet_access_enabled`, `main.cpp`). Turn it off and the 48010+ mappings become manual too. `GET /api/internet/status` reports `custom_domain: true` in that mode.
 
@@ -159,8 +163,9 @@ Authentication is unchanged: remote devices still need the admin PIN or the cert
 
 **Caveats**
 
-- Reaching `stream.mywebsite.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry. The host machine itself needs nothing — see the note in step 5.
-- **Port parity is not optional and it is the usual trap.** The URL people type carries the port the machine actually listens on, so an unprivileged install whose HTTPS listener fell back to 8443 has to be forwarded 8443 → 8443 and reached at `https://stream.mywebsite.com:8443`. Check `https_port` in `settings.json` (the *bound* port is persisted back) or the admin page before writing the router rule.
+- Reaching `stream.example.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry. The host machine itself needs nothing — see the note in step 5.
+- **Check the bound HTTPS port before writing the router rule.** An unprivileged install cannot take 443 and falls back to 8443 (then 18443, 28443…); the *bound* port is persisted back into `https_port`, and that is the internal side of the forward. Externally you still publish 443, so visitors type the bare name — but if you also want to reach it without a forward at all, the URL carries the port.
+- Everything on this page is about the **certificate** and **the machine's own name**. The certificate is not needed for remote access as such: the entry link is served under the introduction server's certificate and the tunnel is bound to the machine's own key, so an instance with no domain and no PEM file is already reachable from anywhere ([Security §6.5](06-Security.md#65-tls)).
 - `unique_id` and `rendezvous_id` are untouched: the entry link keeps working alongside your own name, and restoring `"domain": "MW_DOMAIN"` simply leaves the instance with no public DNS name again.
 - The `stream` label is only reserved on the project's shared domain, never on yours.
 
