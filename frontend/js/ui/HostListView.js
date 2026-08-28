@@ -864,13 +864,28 @@ export class HostListView {
                 card = tmp.firstElementChild;
                 card.dataset.fingerprint = fp;
             } else if (card.dataset.fingerprint !== fp) {
-                // Data changed — replace just this card
-                const tmp = document.createElement('div');
-                tmp.innerHTML = this.renderCard(host);
-                const newCard = /** @type {HTMLElement} */ (tmp.firstElementChild);
-                newCard.dataset.fingerprint = fp;
-                card.replaceWith(newCard);
-                card = newCard;
+                // Data changed — replace just this card, unless its kebab is
+                // open.
+                //
+                // A card is replaced whole, so a rebuild under an open menu
+                // takes the menu with it, and the click already on its way to
+                // "Share" lands on the card underneath instead. This is not a
+                // narrow race: a host's status flaps on its own every few
+                // seconds — a poll that fails, a session starting — and the
+                // menu is open for as long as it takes to read it.
+                //
+                // The stale card keeps its old fingerprint, so it is rebuilt by
+                // the render that follows the menu closing.
+                if (card.querySelector('.host-menu:not([hidden])')) {
+                    this._staleCards = true;
+                } else {
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = this.renderCard(host);
+                    const newCard = /** @type {HTMLElement} */ (tmp.firstElementChild);
+                    newCard.dataset.fingerprint = fp;
+                    card.replaceWith(newCard);
+                    card = newCard;
+                }
             }
 
             // Keep DOM order in sync with the sorted hosts array.
@@ -1315,6 +1330,22 @@ export class HostListView {
         this.container
             .querySelectorAll('.btn-host-menu[aria-expanded="true"]')
             .forEach((b) => b.setAttribute('aria-expanded', 'false'));
+        if (this._staleCards) setTimeout(() => this._flushStaleCards(), 0);
+    }
+
+    /**
+     * Rebuild the cards renderList() left alone while a menu was open.
+     *
+     * A tick late on purpose. Opening a kebab closes every other one first, and
+     * a rebuild in that gap would detach the very menu about to be shown — so
+     * this runs after the handler has finished and checks again that nothing is
+     * open. If something is, the flag stays set and the next close gets it.
+     */
+    _flushStaleCards() {
+        if (this._destroyed || !this._staleCards) return;
+        if (this.container.querySelector('.host-menu:not([hidden])')) return;
+        this._staleCards = false;
+        this.renderList();
     }
 
     renderError(message) {
