@@ -123,8 +123,8 @@ void test_pin_bruteforce_kills_the_activation()
     // fires — this is the attacker with a botnet, and the per-activation
     // counter is what stops them.
     for (int i = 0; i < ShareManager::kMaxPinFailures; ++i) {
-        const QString wrong = QStringLiteral("%1").arg((pin.toInt() + i + 1) % 1000000, 6, 10,
-                                                       QLatin1Char('0'));
+        const QString wrong =
+            QStringLiteral("%1").arg((pin.toInt() + i + 1) % 1000000, 6, 10, QLatin1Char('0'));
         const ShareManager::PinOutcome out =
             mgr->redeemPin(token, wrong, QStringLiteral("10.0.0.%1").arg(i));
         CHECK(out.result != ShareManager::PinResult::Ok);
@@ -150,8 +150,8 @@ void test_rate_limit_locks_a_single_caller()
 
     bool sawLockout = false;
     for (int i = 0; i < 4; ++i) {
-        const QString wrong = QStringLiteral("%1").arg((pin.toInt() + i + 1) % 1000000, 6, 10,
-                                                       QLatin1Char('0'));
+        const QString wrong =
+            QStringLiteral("%1").arg((pin.toInt() + i + 1) % 1000000, 6, 10, QLatin1Char('0'));
         const ShareManager::PinOutcome out = mgr->redeemPin(token, wrong, "203.0.113.9");
         if (out.result == ShareManager::PinResult::RateLimited) sawLockout = true;
     }
