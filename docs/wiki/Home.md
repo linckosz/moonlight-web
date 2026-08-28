@@ -8,7 +8,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 
 - **New contributor?** Read [Overview](01-Overview.md) → [Architecture](02-Architecture.md) → the chapter that matches the area you want to change, then [Build, CI & Testing](11-Build-CI-Testing.md) before opening a PR.
 - **AI agent?** Start with [Architecture](02-Architecture.md) (component map + data flow), then [Settings Reference](07-Settings-Reference.md) and [REST API](08-REST-API.md) (the machine-readable contracts). The [Agentic Coding](12-Agentic-Coding.md) chapter describes the recommended agent configuration for this repo.
-- **Deploying the (legacy) DNS stack?** Go straight to [PowerDNS Stack](10-PowerDNS-Stack.md) — it serves pre-retirement subdomains until February 2027.
+- **Running the server side?** Go straight to [Infrastructure Stack](10-Infrastructure-Stack.md) — the introduction server, the entry page, STUN and DNS, on one VM.
 
 ## Table of contents
 
@@ -19,11 +19,11 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | 3 | [Backend](03-Backend.md) | C++/Qt server: modules, code architecture, HTTP/HTTPS server, session lifecycle |
 | 4 | [Frontend](04-Frontend.md) | Vanilla JS app: views/overlays, renderers, audio pipeline, input, i18n |
 | 5 | [Streaming & Transports](05-Streaming-and-Transports.md) | Transport fallback chain, video/audio/input mechanics, canvas vs `<video>`, HDR limitations, workarounds |
-| 6 | [Security](06-Security.md) | Auth (PIN/certificate/host-key), sessions, rate limiting, TLS, the versioned internet consent, legacy DNS ownership |
+| 6 | [Security](06-Security.md) | Auth (PIN/certificate/host-key), sessions, rate limiting, TLS, the pairing signature that keeps the introduction server out of the middle, the versioned internet consent |
 | 7 | [Settings Reference](07-Settings-Reference.md) | Every `settings.json` key, `.env` variables, build-time embedded secrets |
 | 8 | [REST API](08-REST-API.md) | Every HTTP endpoint and WebSocket surface exposed by the server |
 | 9 | [Installers & Packaging](09-Installers-and-Packaging.md) | Windows (Inno Setup, SignPath), macOS (.pkg, Homebrew cask), Linux (.deb/.rpm/AppImage, signed APT/DNF repositories, AUR), Docker images on GHCR, services, auto-update |
-| 10 | [PowerDNS Stack](10-PowerDNS-Stack.md) | Legacy DNS infrastructure (serves pre-retirement subdomains until Feb 2027): Docker stack, installer, network, manual steps |
+| 10 | [Infrastructure Stack](10-Infrastructure-Stack.md) | The one public VM: introduction server, bootstrap entry page, STUN, authoritative DNS, update relay & censuses — Docker stack, installer, manual steps |
 | 11 | [Build, CI & Testing](11-Build-CI-Testing.md) | CMake build, GitHub Actions pipelines, test suites and coverage gates |
 | 12 | [Agentic Coding](12-Agentic-Coding.md) | Recommended AI-agent setup (Claude Code, GitHub Copilot): master agent, skills, sub-agents |
 | 13 | [Roadmap & Constraints](13-Roadmap-and-Constraints.md) | Known remaining work, current constraints, improvement leads |
@@ -39,7 +39,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | **Backend** | C++17 / Qt 6.11, `moonlight-common-c`, `libdatachannel`, `miniupnpc`, `qmdnsengine`, OpenSSL 3 |
 | **Frontend** | Vanilla JS (ES6 modules, no build step), WebCodecs, WebGPU, AudioWorklet, WebRTC |
 | **Build system** | CMake (single canonical build system; qmake removed) |
-| **Repository root** | `backend/` (server), `frontend/` (web app), `deploy/powerdns/` (DNS stack), `website/` (landing page), `.github/` (CI), `scripts/`, `docs/` |
+| **Repository root** | `backend/` (server), `frontend/` (web app), `bootstrap/` (entry page), `deploy/powerdns/` (infrastructure stack), `website/` (landing page), `.github/` (CI), `scripts/`, `docs/` |
 
 ## Conventions used throughout
 

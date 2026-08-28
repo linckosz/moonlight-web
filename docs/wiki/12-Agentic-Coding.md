@@ -12,7 +12,8 @@ This chapter defines how AI coding agents (Claude Code, GitHub Copilot, or any L
 2. **Respect the invariants** (non-exhaustive): shim stops before relay destruction; new session start deferred on `destroyed()`; browser owns transport fallback; no nested `QEventLoop` in HTTP dispatch; no frontend reorder buffer; no JS audio gain; latency = sum of measured legs; WS URLs from `window.location.host`; never bind mDNS 5353 at boot.
 3. **Match the local style**: C++17/Qt idioms, English comments (1–2 lines max, explaining constraints not mechanics); frontend vanilla ES6, no new dependencies, no build step.
 4. **Gate before proposing**: `bash scripts/run-tests.sh` (Vitest + Qt Test) and `cd frontend && npm run check`; `clang-format==19.1.7` on `backend/src`. Conventional Commits.
-5. **Never commit secrets** (`.env`, `MW_PDNS_TOKEN`, EAB creds) and never edit `deploy/powerdns/certs/`.
+5. **Never commit secrets** (`.env`, `MW_PDNS_TOKEN`, `MW_RDV_OWNER_SECRET`) and never edit `deploy/powerdns/certs/`.
+6. **`RendezvousId::normalise()` and `normaliseID()` in `mw-rendezvous/store.go` are one contract in two languages** — change either and you must change both, or instances silently lose their own address ([Infrastructure §10.7](10-Infrastructure-Stack.md#107-the-introduction-server-mw-rendezvous)).
 
 ## 12.2 Recommended architecture: one master agent + on-demand skills + scoped sub-agents
 
@@ -37,7 +38,7 @@ The recommended model is a **single senior "master" agent, selected by default**
                   │ sunshine-  │   │ moonlight-refs (expert on │
                   │   api      │   │   moonlight-qt/xbox/rust  │
                   │ transports │   │   reference codebases)    │
-                  │ powerdns   │   └──────────────────────────┘
+                  │ infra      │   └──────────────────────────┘
                   │ release    │
                   └────────────┘
 ```
@@ -50,7 +51,7 @@ The recommended model is a **single senior "master" agent, selected by default**
 | `test-e2e` | Launch the server, probe `/api/health` and key endpoints, drive a smoke stream | verifying runtime behavior |
 | `sunshine-api` | The two Sunshine APIs (GameStream NvHTTP/XML/pairing/RTSP vs modern REST :47990), ports, auth | anything touching `backend/src/backend/` |
 | `transports` | The five modes, the fallback chain, framing/IDR/backpressure invariants (distills [ch. 5](05-Streaming-and-Transports.md)) | anything under `streaming/` or the stream JS |
-| `powerdns` | Stack layout, pdnsutil commands, delegation debugging (distills [ch. 10](10-PowerDNS-Stack.md)) | `deploy/powerdns/` changes |
+| `infra` | Stack layout, the introduction server's endpoints and quotas, pdnsutil commands, delegation debugging (distills [ch. 10](10-Infrastructure-Stack.md)) | `deploy/powerdns/` or `bootstrap/` changes |
 | `release` | Artifact naming, installer builds, symbolizing minidumps with cdb+PDB | packaging/CI changes |
 
 ### When the master should spawn a sub-agent
@@ -75,7 +76,7 @@ CLAUDE.md                        # ≤ 1 page: pointers to docs/wiki, invariants
 │   ├── test-e2e/SKILL.md
 │   ├── sunshine-api/SKILL.md
 │   ├── transports/SKILL.md
-│   ├── powerdns/SKILL.md
+│   ├── infra/SKILL.md
 │   └── release/SKILL.md
 └── settings.json                # permissions allowlist (cmake/ninja/npm/ctest…), hooks
 ```

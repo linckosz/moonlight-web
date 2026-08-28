@@ -18,7 +18,22 @@
  └───────────────────────────┘ fall)└──────────────────────────────┘ UDP  └──────────────────┘
 ```
 
-*(A decoupled DNS stack — dnsdist, PowerDNS, Caddy in Docker on a separate machine — still serves the subdomains of legacy installs until February 2027; see [PowerDNS Stack](10-PowerDNS-Stack.md).)*
+That is the whole picture on a LAN. From outside, the browser has no way to *reach* the server — it publishes no name and opens no web port — so one more party joins, for the introduction only:
+
+```
+   BROWSER                    INTRODUCTION SERVER              MoonlightWeb SERVER
+ ┌──────────────┐   1. GET /{id}   ┌──────────────┐                ┌──────────────┐
+ │  bootstrap   │◄────────────────►│  stream.     │  0. held line  │ Rendezvous   │
+ │  (~5 files)  │   2. signalling  │  {domain}    │◄══════════════►│ Client       │
+ │              │◄────────────────►│  (mw-rdv)    │   (WebSocket)  │              │
+ │  the app ────┼──── 3. WebRTC DataChannel ──────────────────────►│ ControlTunnel│
+ └──────────────┘      HTTP + WS, straight to the machine          └──────────────┘
+```
+
+0. The instance holds one outbound WebSocket open. **That line is the reachability** — nothing is published and nothing is polled.
+1. The browser loads a few kilobytes of bootstrap ([§10.8](10-Infrastructure-Stack.md#108-the-bootstrap-entry-page)).
+2. The two exchange WebRTC signalling through the introduction server, which copies opaque payloads and is bound out of the middle by MW-BIND-v1 ([Security §6.6](06-Security.md#66-the-entry-identifier-and-mw-bind-v1)).
+3. Everything after the first byte — the interface, the REST API, the streaming signalling — travels over the direct connection. The introduction server is not in that path, and no media ever crosses it.
 
 The MoonlightWeb server plays three roles at once:
 
@@ -26,7 +41,7 @@ The MoonlightWeb server plays three roles at once:
 2. **GameStream client** — embeds `moonlight-common-c` and speaks NvHTTP/RTSP/RTP/ENet to Sunshine, exactly like moonlight-qt would.
 3. **Streaming bridge** — re-encapsulates the decoded-protocol media (H.264/HEVC/AV1 frames, Opus packets) and input into browser-reachable transports: WebRTC DataChannels, WebRTC RTP media tracks, or a WSS relay. Each session actually runs in a **child process** (`--stream-worker`), which is what lets two of them coexist despite the `moonlight-common-c` singleton.
 
-The **DNS stack is decoupled**: it runs on a separate machine and only provides the marketing site plus subdomain upkeep for legacy installs (a fresh install never talks to it). A legacy MoonlightWeb reaches it through a REST API (`MW_PDNS_URL`/`MW_PDNS_TOKEN`).
+The **infrastructure stack is decoupled** and stays out of the data path: it introduces peers, serves the entry page, answers STUN, and hosts the site, the release relay and the censuses. It never sees a stream, an input event or a credential ([Infrastructure Stack](10-Infrastructure-Stack.md)). An instance that is never opened to the internet talks to none of it.
 
 ## 2.2 The three-party exchange in detail
 
@@ -37,12 +52,14 @@ The **DNS stack is decoupled**: it runs on a separate machine and only provides 
 | **HTTPS REST** (`/api/...`) | Hosts/apps/pairing, settings, admin, auth, internet access. Full reference in [REST API](08-REST-API.md). |
 | **WSS `/ws` (signaling)** | WebRTC SDP/ICE exchange, proxied by the HTTPS server to an internal signaling WebSocket server (default port 48001). The WS URL is always anchored on `window.location.host` (the page origin), never on a backend-computed host — this is what keeps non-default external ports working. |
 | **WebRTC PeerConnection** | The stream itself: video over a DataChannel or an RTP track (per transport family), audio always an RTP Opus track, input always a DataChannel (see [Streaming & Transports](05-Streaming-and-Transports.md)). |
-| **WSS `/ws/stream`** | Legacy/fallback full-stream relay (video+audio+input over one WebSocket) when WebRTC cannot connect. |
+| **WSS `/ws/stream`** | Last-resort full-stream relay (video+audio+input over one WebSocket) when WebRTC cannot connect. |
 | **WSS `/ws1`, `/ws1/stream`** | The same two surfaces for the **second stream slot** (internal 48011/48012) — the standby leg of seamless quality switching. |
 | **WSS `/ws2`…`/ws4` (+ `/stream`)** | One pair per **invited player** (internal 48021/48022, 48031/48032, 48041/48042). Ports follow the slot: signaling = 48001 + 10 × slot, relay = that + 1. These are the only WebSocket surfaces that do *not* accept a session cookie: they require the `mw_player` cookie bound to that slot's live share activation (see [Security](06-Security.md)). |
 | **WSS `/ws/control`** | Tiny control channel every open tab keeps: used for single-tab dedup (a second app launch redirects an existing tab to `/admin` instead of opening a duplicate). |
 
 All WebSocket surfaces share the single HTTPS port: the HTTP server detects the `Upgrade` header and proxies the socket to the right internal WS server. One public port (443 by default) carries everything.
+
+A browser arriving through the remote entry link speaks the **same** surfaces, tunnelled: `ControlTunnel` hands each request to `HttpServer::serveRequest()`, the same router behind the same access decision. It is not a second web server — a tunnel with its own copy of the pipeline would drift, and the half that drifts is always the guard. The one deliberate difference is that a request arriving that way never obtains the local-address exemption, enforced inside `serveRequest()` so no future caller can forget it.
 
 ### MoonlightWeb ↔ Sunshine
 
@@ -86,16 +103,18 @@ Key invariants (hard-won, do not regress):
 
 | Choice | Rationale |
 |---|---|
-| **C++17 + Qt 6.11** (backend) | `moonlight-common-c` is C; Qt provides the cross-platform event loop, networking (QSslSocket), JSON, tray icon, and mature TLS handling on all three OSes with a single codebase. Qt 6.11 is the tested baseline; the **OpenSSL TLS backend is forced** on Windows (Schannel cannot load ACME PEM keys). |
+| **C++17 + Qt 6.11** (backend) | `moonlight-common-c` is C; Qt provides the cross-platform event loop, networking (QSslSocket), JSON, tray icon, and mature TLS handling on all three OSes with a single codebase. Qt 6.11 is the tested baseline; the **OpenSSL TLS backend is forced** on Windows (Schannel cannot import PEM keys). |
 | **`moonlight-common-c`** (submodule) | The canonical, battle-tested GameStream protocol core used by every Moonlight client. Reimplementing RTSP/RTP/ENet/FEC would be folly. |
 | **`libdatachannel`** (submodule) | Lightweight C++ WebRTC implementation (DataChannels *and* RTP media tracks) without pulling the enormous libwebrtc. Built statically via CMake `add_subdirectory`. |
 | **`qmdnsengine`**, **`miniupnpc`** (submodules) | mDNS discovery and UPnP port mapping, both small and embeddable. |
-| **OpenSSL 3** | Pairing crypto (AES/RSA per GameStream), input encryption (AES-128-GCM), ACME JOSE signing. Bundled on Windows (`backend/libs/windows/`). |
+| **OpenSSL 3** | Pairing crypto (AES/RSA per GameStream), input encryption (AES-128-GCM), certificate handling. Bundled on Windows (`backend/libs/windows/`). |
 | **Vanilla JS, no framework, no build step** (frontend) | The app is served by an embedded C++ web server: zero build tooling means the server ships plain files and contributors need only a browser. ES6 modules give structure; Prettier+ESLint+Vitest+tsc(advisory) give quality without a bundler. |
 | **WebCodecs + WebGPU/Canvas** (video) | WebCodecs exposes the browser's hardware H.264/HEVC/AV1 decoders with frame-level control (latency!); rendering to canvas allows the WebGPU enhancement pipeline. A `<video>`-sink alternative exists for HDR (see [Transports](05-Streaming-and-Transports.md)). |
 | **AudioWorklet + WebCodecs AudioDecoder** (audio) | Opus decode on the native decoder, playback on the real-time audio thread with an adaptive jitter buffer and WSOLA time-stretch. |
 | **CMake** (single build system) | qmake was removed 2026-06-28. One `CMakeLists.txt` covers Windows x64/ARM64 (MSVC/Ninja), Linux, macOS, plus tests, coverage and `compile_commands.json`. |
-| **PowerDNS + dnsdist + Caddy in Docker** (DNS, legacy) | Official images, one process per container, REST API for record management — the smallest self-hostable authoritative-DNS-with-API stack. Serves legacy subdomains until February 2027. See [PowerDNS Stack](10-PowerDNS-Stack.md). |
+| **Go, stdlib only** (introduction server, gateway) | `mw-rendezvous` and `mw-proxy` are the two pieces of this project exposed to the whole internet with no user in front of them. A poisoned dependency is a realistic way in, and neither has anything worth importing one for. See [Infrastructure Stack](10-Infrastructure-Stack.md). |
+| **A held WebSocket, not a published record** (reachability) | The address a browser needs is the reflexive candidate — a port that exists only while a connection is being made. There is nothing an instance could usefully announce in advance, so the line *is* the reachability. It also means opting in publishes no DNS record and takes no certificate, and therefore puts nothing in Certificate Transparency. |
+| **PowerDNS + dnsdist + Caddy in Docker** (infrastructure) | Official images, one process per container — the smallest self-hostable authoritative-DNS-with-API stack, which the project needs for its own names. See [Infrastructure Stack](10-Infrastructure-Stack.md). |
 | **Server-side settings** (`settings.json`) | The server is the single source of truth (no accounts/multi-user); per-browser *streaming* preferences live in `localStorage`, everything else server-side. |
 
 ## 2.4 Repository layout
@@ -111,8 +130,8 @@ moonlight-web/
 │   │   │   └── routes/         # AuthRoutes, HostRoutes, SystemRoutes
 │   │   ├── streaming/          # Session, relays (DC/media/WSS), shim, input, signaling
 │   │   │   └── worker/         # --stream-worker child-process entry point
-│   │   ├── network/            # InternetAccess: PDNS, STUN, UPnP, ACME, GeoIP, updates
-│   │   └── common/             # Logger, CrashHandler, shared types
+│   │   ├── network/            # InternetAccess: RendezvousClient, STUN, UPnP, GeoIP, updates
+│   │   └── common/             # Logger, CrashHandler, RendezvousId, shared types
 │   ├── tests/                  # Qt Test suites + coverage scripts
 │   ├── third_party/            # git submodules (moonlight-common-c, libdatachannel, …)
 │   ├── installer/              # Windows Inno Setup + macOS .pkg plugin
@@ -124,8 +143,9 @@ moonlight-web/
 │   ├── css/                    # design tokens + per-view stylesheets
 │   ├── locales/                # en/fr/zh runtime i18n catalogs (Tolgee-compatible)
 │   └── test/                   # Vitest unit tests (jsdom)
-├── deploy/powerdns/            # self-hosted DNS stack (Docker) + installer
-├── website/                    # static landing page served by the DNS box's Caddy
+├── bootstrap/                  # the entry page: ~5 files, the only code loaded from a server
+├── deploy/powerdns/            # infrastructure stack (Docker) + installer
+├── website/                    # static landing page served by the infrastructure box's Caddy
 ├── scripts/                    # run-tests.sh (full TNR gate), build_stream_image.py
 ├── docs/                       # design docs, audits, screenshots, this wiki
 └── .github/workflows/          # ci.yml, release.yml, build-asan.yml
@@ -133,7 +153,7 @@ moonlight-web/
 
 ## 2.5 Code architecture principles
 
-- **Composition root in `main.cpp`** — all wiring (routes, relay lifecycle tracking, tray, internet access, control channel) happens there with lambdas capturing `QPointer`s; classes stay decoupled.
+- **Composition root in `main.cpp`** — all wiring (routes, relay lifecycle tracking, tray, internet access, the rendezvous line and its tunnel, control channel) happens there with lambdas capturing `QPointer`s; classes stay decoupled. The route modules never learn that a rendezvous exists: they are handed callbacks (`onInternetAccessToggled`, `rendezvousStatus`), which is what keeps the switch and the line on the same side of the consent boundary without coupling them.
 - **Event-driven, no nested event loops** — HTTP dispatch uses sync or **async routes with a `ResponseCallback`**; pairing and NvHTTP are fully asynchronous. A nested `QEventLoop` in the HTTP dispatch path historically caused a use-after-free crash and is banned.
 - **Relay threading** — each relay runs its stream pumping off the main thread (dedicated relay thread); teardown ownership lives in `qApp`-context lambdas in `main.cpp` (a relay whose teardown lived elsewhere was never destroyed, producing 504s).
 - **Frontend: one main view + overlays** — `hosts` is the single history-backed view; `admin`, `settings` and `streaming` are overlays with guard `pushState` (see `frontend/js/app.js` header comment).

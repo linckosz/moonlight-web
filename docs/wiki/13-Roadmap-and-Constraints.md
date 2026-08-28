@@ -4,7 +4,7 @@
 
 # 13. Roadmap, Constraints & Improvement Leads
 
-An honest inventory of what remains, what constrains the design, and where the leverage is. Sources: in-repo plans (`docs/moonlightweb-plan.md`, `docs/audit-*` — `docs/internet-plan.md` describes the retired DNS design and is kept as an archive), TODO-class comments, and the development history.
+An honest inventory of what remains, what constrains the design, and where the leverage is. Sources: in-repo plans (`docs/moonlightweb-plan.md`, `docs/audit-*` — `docs/internet-plan.md` describes a superseded design and is kept only as an archive — this wiki, not that file, is current), TODO-class comments, and the development history.
 
 ## 13.1 Known remaining work
 
@@ -28,11 +28,12 @@ An honest inventory of what remains, what constrains the design, and where the l
 | **The `/start` response precedes ICE** | The client must own transport fallback; the server can never know a transport failed. |
 | **Self-signed cert on LAN** | A first-visit browser warning is unavoidable without a user-provided domain and certificate. |
 | **UPnP/NAT reality** | CGNAT/double-NAT cannot be traversed (detected + reported); routers rarely hairpin UDP (hence local-candidate advertisement to LAN clients). |
-| **Single DNS box** | The shared legacy-domain infrastructure is one VM: no anycast, no volumetric-DDoS absorption. It only has to hold until the February 2027 shutdown. |
+| **Single infrastructure box** | The introduction server, STUN and the authoritative DNS all run on one VM: no anycast, no volumetric-DDoS absorption. While it is down, no *new* remote session can be introduced — established streams are peer-to-peer and unaffected. `stream.` is a name of its own precisely so it can be repointed, or spread, without moving anything else ([§10.4](10-Infrastructure-Stack.md#104-caddy-caddy)). |
+| **Reachability depends on a held line** | An instance is reachable exactly while its WebSocket is up. This is the price of publishing nothing, and it means a remote session — LAN included, since there is no separate local path any more — depends on the instance having internet. |
 | **No accounts / single settings store** | By design (server-side `settings.json`, no multi-user) — features requiring per-user server state should map to per-browser localStorage or be rethought. |
 | **Sunshine's HTTP fragility** | Host polling must stay suspended during streams; one HTTPS request per host at a time. |
 | **macOS notarization needs a paid Apple Developer ID** | No free tier, no OSS programme — a *downloaded* `.pkg` will always be refused by Gatekeeper. The Homebrew cask and `install.sh` route around it (`installer(8)` never consults Gatekeeper), so the fix is a documented command, not a signature ([§9.2](09-Installers-and-Packaging.md)). |
-| **Compile-time DNS/ACME secrets** | Any build system that compiles from source on its own infrastructure (PPA, COPR, OBS) yields a silently LAN-only binary — hence self-hosted signed APT/DNF repositories shipping the same binary as the release ([§9.3](09-Installers-and-Packaging.md)). Likewise Flatpak/Snap are out: a sandbox can neither run the host package manager to install Sunshine nor open firewall ports. |
+| **Compile-time service credentials** | Any build system that compiles from source on its own infrastructure (PPA, COPR, OBS) yields a binary that silently loses the update relay and the censuses — hence self-hosted signed APT/DNF repositories shipping the same binary as the release ([§9.3](09-Installers-and-Packaging.md)). Likewise Flatpak/Snap are out: a sandbox can neither run the host package manager to install Sunshine nor open firewall ports. |
 
 ## 13.3 Improvement leads
 
@@ -47,7 +48,7 @@ An honest inventory of what remains, what constrains the design, and where the l
 **Platform & ops**
 - Make the ASan workflow a scheduled job; add clang-tidy to CI as advisory → blocking.
 - Linux ARM (Raspberry-class LAN bridges) is a natural next build target given the CMake matrix.
-- (Dropped with the DNS retirement: a second authoritative instance/`ns2` — the stack only lives until February 2027.)
+- A second introduction server behind `stream.` (and a real `ns2` on another IP): the name is already separate and the block self-contained, so what remains is sharing the claim store rather than moving anything.
 - Symbol upload + crash-report ingestion (currently: local minidumps + manual cdb symbolization).
 
 **Product**

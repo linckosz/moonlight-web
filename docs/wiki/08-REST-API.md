@@ -10,9 +10,9 @@ Everything the frontend (or any client) can call. Routes are registered in `back
 
 - 🌐 *public* — no auth (also exempted from the 401 guard: `health`, `server/hostname`, `auth/*`).
 - 🔑 *session* — localhost, or a valid `mw_session` cookie.
-- 🏠 *admin* — `req.isLocal`, i.e. a **loopback peer, a host-key session** (the host's own browser reaching the server through the public domain) **or a LAN session that unlocked the remote admin password** ([Security §6.2.1](06-Security.md#621-remote-admin-password-lan-only)), **and** the admin key on writes (below). `/api/admin/*` returns 403 otherwise; the setup/internet/system/local routes apply the same check inside their handlers.
+- 🏠 *admin* — `req.isLocal`, i.e. a **loopback peer, a host-key session** (the host's own browser, arriving through the entry link with a single-use key) **or a LAN session that unlocked the remote admin password** ([Security §6.2.1](06-Security.md#621-remote-admin-password-lan-only)), **and** the admin key on writes (below). `/api/admin/*` returns 403 otherwise; the setup/internet/system/local routes apply the same check inside their handlers.
 - 🖥️ *host machine* — `req.isHostMachine`: 🏠 minus the password unlock. Reserved for what needs the local desktop or identifies the host itself (`local_key`, the first-run wizard).
-- 🍪 *invited player* — the `mw_player` cookie bound to one live share activation ([§8.3b](#83b-session-sharing-sharoutescpp)). Not a session: it opens that player's own slot and nothing else, and is exempt from the 401 guard like 🌐.
+- 🍪 *invited player* — the `mw_player` cookie bound to one live share activation ([§8.3b](#83b-session-sharing-shareroutescpp)). Not a session: it opens that player's own slot and nothing else, and is exempt from the 401 guard like 🌐.
 
 **Request requirements** (enforced in `RequestGuard` + `HttpServer::processRequest`, before routing)
 
@@ -22,7 +22,7 @@ The address-based trust above is something a malicious page can borrow — it ma
 |---|---|---|
 | `Sec-Fetch-Site` must be `same-origin`/`none` (falling back to `Origin` vs `Host` on engines that lack it). Absent on both = non-browser client, allowed. | 403 `cross_site_request_blocked` | A page cannot forge either header, so this is what separates our frontend from any other site. |
 | A non-empty body must be `Content-Type: application/json`. | 415 `unsupported_media_type` | Not CORS-safelisted, so a cross-origin write needs a preflight we never answer. |
-| `Host` must be loopback, a private/LAN address, `*.local`, or the configured public domain — **otherwise the request keeps working but loses 🔑/🏠 privileges**. | — | DNS rebinding makes the attacker same-origin with us (able to *read* the PIN, `local_key`, TLS key) but cannot change the name in `Host`. |
+| `Host` must be loopback, a private/LAN address, `*.local`, or a configured own-domain FQDN — **otherwise the request keeps working but loses 🔑/🏠 privileges**. | — | DNS rebinding makes the attacker same-origin with us (able to *read* the PIN, `local_key`, TLS key) but cannot change the name in `Host`. A request off the tunnel is judged by its arrival, not its `Host`, and never obtains the local exemption at all. |
 | Writes (`POST`/`DELETE`) to 🏠 routes must carry `X-MW-Admin-Key`. Reads do not. | route's own 403 | A custom header cannot cross origins without a preflight. `GET /api/admin/token` serves the key to 🏠 callers only; it is regenerated at every server start, and `BackendClient` refetches + replays once on a 403. |
 
 WebSocket upgrades are screened the same way on `Origin` (they bypass CORS entirely, and `/ws` carries input events).
@@ -96,9 +96,12 @@ address changed hands out the current form without being revoked.
 - Otherwise: `https://{LAN IPv4}[:port]/p/{token}`, and `local_only` is **true**.
   Self-signed, same network only. Never loopback — the guest is on another PC.
 
-The public sub-domain is deliberately **not** offered here any more, legacy
-instance or not: a share link lives for weeks in somebody else's chat window, and
-that address stops working in February 2027.
+Only those two forms are ever minted. A share link lives for weeks in somebody
+else's chat window, so it is deliberately **not** gated on the line being up at
+the moment it is created: an invitation is opened tonight or tomorrow, and
+refusing to mint one over a thirty-second blip would be absurd. `remote_reachable`
+on the board is what says the machine is not answering right now; the link itself
+stays valid and stays the same characters.
 | `POST /api/share/slots/:n/permissions` | 🔑 | `{gamepad, keyboardMouse}`, accepted **at any time**, mid-stream included — the new policy is pushed down to the live worker. **409** only when the slot has no activation. |
 | `POST /api/share/slots/:n/ttl` | 🔑 | `{ttl_secs}` ∈ 3600 / 14400 / 28800 / 86400 / 172800 / 0 (unlimited). **400** otherwise. Shortening below the time already served expires the invitation on the spot. |
 | `POST /api/share/slots/:n/name` | 🔑 | `{name}` — the row's label, 32 chars, empty restores "Player N". Player slots only: **404** for an owner slot. |
@@ -113,14 +116,15 @@ that address stops working in February 2027.
 | Method & path | Access | Description |
 |---|---|---|
 | `GET /api/admin/token` | 🏠 | `{token}` — the per-run admin key required on 🏠 writes (`X-MW-Admin-Key`). Handled in `processRequest`, not the router, so it can never be reached ahead of the screening rules above. |
-| `GET /api/admin/settings` | 🏠 | `{http_port, https_port, cert_auth_enabled}` + `local_key` for 🖥️ callers only (lets the admin page carry its session to the public domain). |
+| `GET /api/admin/settings` | 🏠 | `{http_port, https_port, cert_auth_enabled}` + `local_key` for 🖥️ callers only (the single-use host key that lets the host's own browser carry its admin session through the entry link). |
+| `GET /api/server/remote-link` | 🏠 | `{url}` — the entry link with that host key in its **fragment**, plus an optional `?p=` naming a page. Localhost-only: it hands out a live credential. The path is validated against the shape the bootstrap accepts rather than passed through, so this route can never put an arbitrary string into a link the machine hands its owner. Empty when the line is down — a single-use link that cannot work is worse than none, because the user spends it. |
 | `POST /api/admin/settings` | 🏠 | Accepts **`https_port`** (rebinds live, deferred) and **`cert_auth_enabled`** only; anything else → 400. |
 | `GET /api/settings/streaming` / `POST /api/settings/streaming` | 🔑 / 🏠 | Server-side streaming defaults, `transport_mode` included (moved here from `/api/internet/enable` — it is a streaming setting). The browser seeds its localStorage from these; POST is localhost-only and silently ignores per-device keys it doesn't know. |
-| `GET /api/internet/status` | 🔑 | Full Internet-Access state: phase, domain, `custom_domain` (user-owned FQDN → DNS/ACME inert), `legacy_dns` (pre-retirement subdomain still served), `consent_version`, public IP, external ports, hairpin, cert expiry, transport mode, last error. |
-| `POST /api/internet/enable` | 🏠 | Opt-in (records the versioned consent `{message, source, version, mechanism}` — the server picks the mechanism, `dns` for a legacy instance, `rendezvous` otherwise) + start the manager. Also the write route for `unique_id` (only while unset, reserved labels rejected), `public_ip`, `auto_ip_detection`, `upnp_enabled`. |
-| `POST /api/internet/disable` / `POST /api/internet/refresh` / `POST /api/internet/renew-cert` | 🏠 | Stop / force IP+DNS re-check / force ACME renewal. |
+| `GET /api/internet/status` | 🔑 | Full Internet-Access state: phase, `custom_domain` (user-owned FQDN → network-only mode), `consent_version`, public IP, external ports, hairpin, transport mode, last error, and **`rendezvous: {url, online}`** — the machine's address and whether its line is up. Those are two separate answers on purpose: an address that exists but is not being held is a link that would fail, and showing it as if it worked is worse than showing nothing. 🔑-but-remote callers get `local_ip(s)`, `public_ip`, `unique_id`, cert material **and the whole `rendezvous` block** redacted — that block carries this instance's permanent identifier, and a permanent identifier is a tracking handle. A remote admin who needs the address already has it in their address bar. |
+| `POST /api/internet/enable` | 🏠 | Opt-in (records the versioned consent `{message, source, version, mechanism}`) + start the manager **and** the rendezvous line. Also the write route for `unique_id` (only while unset), `public_ip`, `auto_ip_detection`, `upnp_enabled`. |
+| `POST /api/internet/disable` / `POST /api/internet/refresh` | 🏠 | Stop (line closed, router mappings removed) / force a public-IP and reachability re-check. |
 | `GET /api/internet/upnp-probe` | 🏠 | On-demand IGD discovery → `{available, gateway, lan_ip, external_ip}`. `upnp_available` in `/api/internet/status` is only meaningful once the manager has run a discovery, so a LAN-only install always reads false there. **Blocks ~2 s** on the main thread (M-SEARCH) — an explicit operator action, never polled. Reuses a live IGD rather than re-discovering under an active session. |
-| `GET /api/setup/status` / `POST /api/setup/apply` | 🏠 | First-run wizard state + apply (internet consent, Sunshine install/pair) with live checklist. `headless: true` when no desktop session — the wizard then drops the Sunshine step entirely (nothing to capture, no GPU, and `pkexec` has no agent to ask). |
+| `GET /api/setup/status` / `POST /api/setup/apply` | 🏠 | First-run wizard state + apply (internet consent, Sunshine install/pair) with live checklist. `internet.rendezvous` carries `{url, online}` — the address the machine is reached at, which the wizard's done screen names (it is usually still empty in `apply`'s own response, since the claim is a round trip that cannot run while that handler holds the event loop: the wizard picks it up from `status`); `apply` throws the same Internet-access switch as `/api/internet/enable`, rendezvous line included. `headless: true` when no desktop session — the wizard then drops the Sunshine step entirely (nothing to capture, no GPU, and `pkexec` has no agent to ask). |
 | `POST /api/system/open-screen-recording` | 🏠 | macOS: open the Screen-Recording TCC pane (Sunshine permission). |
 | `POST /api/system/start-sunshine` / `POST /api/system/stop-sunshine` | 🏠 | Control the local Sunshine (liveness probed on port 47989). |
 
@@ -131,7 +135,7 @@ All are reached through the **single HTTPS port** — `HttpServer` recognizes th
 | Path | Internal port (default) | Purpose |
 |---|---|---|
 | `/ws` | 48001 (`--ws-port`) | **Signaling** for WebRTC: JSON SDP offers/answers + ICE candidates, per-session (stream slot 0). |
-| `/ws/stream` | 48002 | **Legacy WSS transport**: binary multiplexed video/audio/input when WebRTC can't connect (slot 0). |
+| `/ws/stream` | 48002 | **Fallback WSS transport**: binary multiplexed video/audio/input when WebRTC can't connect (slot 0). |
 | `/ws1`, `/ws1/stream` | 48011, 48012 | The same two surfaces for **stream slot 1** — the standby leg of seamless quality switching. Both slots' worker children can listen at once. |
 | `/ws2`…`/ws4` (+ `/stream`) | 48021/48022, 48031/48032, 48041/48042 | One pair per **invited player** (slot *n* → 48001 + 10 × *n*). Gated on the `mw_player` cookie of *that* slot's live share activation — a session cookie and even a loopback peer are refused here. |
 | `/ws/control` | 48003 | **Control channel**: every open tab holds one; used to redirect a tab to `/admin` on a second app launch (single-tab dedup). |

@@ -110,11 +110,11 @@ Browser events (kbd/mouse/touch/gamepad/clipboard)
 
 Rules specific to the dual path:
 
-- **A standby launch is the capability probe.** Hosts that refuse a second concurrent session are remembered per host (`dual_supported:false` / `status:"dual_unavailable"` in the `/start` response) and the frontend reverts to the legacy relaunch. Heuristic backstop: slot 0 dying within ~3 s of a standby launch means the host took over instead of adding a session.
-- **Always retire, never plain-quit, when a twin stream exists.** The frontend's `quit({retire:true})` sends `keep_host_session:true`, which disconnects the leg *without* a Sunshine `/cancel`. Both legs share one Sunshine app: a `/cancel` kills the surviving leg too and cascades into `Failed to decrypt RTSP` on it. This applies to the standby swap **and** to the legacy relaunch path.
-- `/quit` with `session_slot` tears down that slot only; without it, every slot owned by the caller's `client_uniqueid` (legacy semantics).
+- **A standby launch is the capability probe.** Hosts that refuse a second concurrent session are remembered per host (`dual_supported:false` / `status:"dual_unavailable"` in the `/start` response) and the frontend reverts to the plain relaunch (quit, then launch again). Heuristic backstop: slot 0 dying within ~3 s of a standby launch means the host took over instead of adding a session.
+- **Always retire, never plain-quit, when a twin stream exists.** The frontend's `quit({retire:true})` sends `keep_host_session:true`, which disconnects the leg *without* a Sunshine `/cancel`. Both legs share one Sunshine app: a `/cancel` kills the surviving leg too and cascades into `Failed to decrypt RTSP` on it. This applies to the standby swap **and** to the plain relaunch path.
+- `/quit` with `session_slot` tears down that slot only; without it, every slot owned by the caller's `client_uniqueid`.
 - The parent tracks which uniqueids still have a live Sunshine app (workers are fresh processes with no in-process resume hint), so a relaunch goes straight to `/resume` — Sunshine rejects `/launch` while an app is running.
-- Set `stream_worker_enabled:false` to fall back to the legacy in-process, single-stream mode; the ordering rules below then apply in-process and are also what the worker executes internally.
+- Set `stream_worker_enabled:false` to fall back to the in-process, single-stream mode; the ordering rules below then apply in-process and are also what the worker executes internally.
 
 ### Ordering rules
 
@@ -137,7 +137,7 @@ These prevent whole bug classes (crashes, 504s, zombie sessions):
 | iOS mute switch silences streaming audio | Looping silent `<audio>` unlock | `iosAudioUnlock.js` |
 | Chrome swallows `cursor:none` set while unfocused (double cursor) | Toggle default→none on refocus | `StreamView` |
 | iOS/Gboard virtual keyboards send unreliable key events | Diff `input` events against a sentinel | `StreamViewTouch` / mobile keyboard |
-| Windows Schannel can't load ACME PEM keys | Force Qt TLS backend to OpenSSL at boot | `main.cpp` |
+| Windows Schannel can't load PEM keys | Force Qt TLS backend to OpenSSL at boot | `main.cpp` |
 | mDNS port 5353 conflicts with Sunshine on the same machine | Never bind 5353 at boot; ephemeral scans only | `ComputerManager` |
 | Virtual adapters (VPN) captured as mDNS source → 502 | `chooseBestMdnsAddress` picks the default-route subnet | `ComputerManager` |
 | Sunshine HTTP wedges if polled during a stream | Poll suspension predicate while any relay is alive | `main.cpp` |
