@@ -56,6 +56,8 @@ const REQUEST_TIMEOUT_MS = 30000;
 
 /** How long the whole connect sequence may take before it is called failed. */
 const CONNECT_TIMEOUT_MS = 25000;
+/** How many of the host's candidates to hold before its offer arrives. */
+const MAX_EARLY_CANDIDATES = 64;
 
 export function encodeFrame(kind, id, payload) {
     const body = payload ?? new Uint8Array(0);
@@ -243,6 +245,9 @@ export class Tunnel {
         this._pc = null;
         this._dc = null;
         this._cookies = new CookieJar(hostId);
+        // Candidates the host sent before there was anywhere to put them. See
+        // _onRemoteCandidate: nearly all of them arrive that early.
+        this._earlyCandidates = [];
 
         this._nextId = 1;
         this._pending = new Map(); // request id → { resolve, reject, head, chunks }
@@ -388,6 +393,12 @@ export class Tunnel {
         };
 
         await this._pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+
+        // Now there is somewhere to put them. Emptied before the answer is even
+        // made, so the checks start on the earliest paths rather than on
+        // whichever one happened to arrive late.
+        await this._flushEarlyCandidates();
+
         const answer = await this._pc.createAnswer();
 
         const sig = await signAnswer(this.identity, msg.nonce, verdict.fingerprintHost, answer.sdp);
@@ -400,8 +411,46 @@ export class Tunnel {
         this._status('connecting');
     }
 
+    /**
+     * A candidate from the host.
+     *
+     * Held rather than dropped when it arrives before the offer has been
+     * verified and applied, because that is what happens to nearly all of them.
+     * The host builds its peer connection the moment the session opens and its
+     * local addresses are ready within milliseconds, while this end has a
+     * signature to check, an answer to make and an answer to sign first. Every
+     * one of those candidates used to be thrown away in the gap.
+     *
+     * What survived was the single reflexive candidate, which arrives a second
+     * or two later because it costs a round trip to a STUN server. So a
+     * connection that had a working path over the local network — or over IPv6 —
+     * was left betting everything on the one address that has to come back in
+     * through a NAT. On a router without hairpin, or from a guest's network with
+     * a NAT of its own, there was nothing left to try and the page sat at
+     * "Opening a direct connection…" until it timed out.
+     *
+     * The queue is bounded because it is filled from the relay before the far
+     * end has been authenticated: whoever is on that session can push into it.
+     * The bound is far above what a host emits (ten or so) and far below
+     * anything that costs memory.
+     */
     async _onRemoteCandidate(msg) {
-        if (!this._pc?.remoteDescription) return;
+        if (!this._pc?.remoteDescription) {
+            if (this._earlyCandidates.length < MAX_EARLY_CANDIDATES)
+                this._earlyCandidates.push(msg);
+            return;
+        }
+        await this._addCandidate(msg);
+    }
+
+    /** Hand over everything held, in the order the host sent it. */
+    async _flushEarlyCandidates() {
+        const held = this._earlyCandidates;
+        this._earlyCandidates = [];
+        for (const candidate of held) await this._addCandidate(candidate);
+    }
+
+    async _addCandidate(msg) {
         try {
             await this._pc.addIceCandidate({
                 candidate: msg.candidate,

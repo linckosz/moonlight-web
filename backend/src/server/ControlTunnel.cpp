@@ -226,7 +226,18 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
             state != rtc::PeerConnection::State::Closed)
             return;
         QMetaObject::invokeMethod(
-            this, [this, id]() { dropPeer(id, QStringLiteral("the peer connection ended")); },
+            this,
+            [this, id]() {
+                // The introduction server is told, and that is not a courtesy.
+                // It is the only party that knows this session is over: the
+                // browser's socket to it is still open — a page whose connection
+                // failed keeps its socket, it has nothing else — and a session
+                // it still counts is one of the few a machine is allowed at
+                // once. Left unsaid, a handful of failed attempts is a machine
+                // that answers nobody until the tabs are closed.
+                m_Rendezvous->closeSession(id);
+                dropPeer(id, QStringLiteral("the peer connection ended"));
+            },
             Qt::QueuedConnection);
     });
 
