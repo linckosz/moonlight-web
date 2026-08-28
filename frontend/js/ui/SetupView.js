@@ -45,9 +45,14 @@ export class SetupView {
         this._error = '';
 
         // User choices (config step). Internet Access is opt-in: opening the
-        // machine to the Internet (UPnP + public DNS record) requires an
-        // explicit click — never a pre-ticked box.
-        this._internetAuth = false;
+        // machine to the Internet (a per-session UPnP mapping, an outgoing line
+        // to the introduction server) requires an explicit click.
+        //
+        // null until one of the two buttons is pressed, and the page will not
+        // apply while it is null. A checkbox nobody touched cannot be told apart
+        // from a question nobody read, and this answer is recorded and stored —
+        // it has to be one somebody actually gave.
+        this._internetAuth = null;
         this._installSunshine = true;
         this._autoStart = true;
         // Keeping the display awake rewrites the user's own power settings, so it
@@ -184,10 +189,22 @@ export class SetupView {
               )
             : `
                 <p class="setup-note">${t('setup.internetBody')}</p>
-                <label class="setup-check">
-                    <input type="checkbox" id="chk-internet" ${this._internetAuth ? 'checked' : ''} />
-                    <span class="consent-highlight">${t('setup.internetOption')}</span>
-                </label>`;
+                <p class="consent-highlight">${t('setup.internetOption')}</p>
+                <div class="setup-choice" role="group"
+                     aria-label="${this.esc(t('setup.internetTitle'))}">
+                    <button type="button" id="btn-internet-skip"
+                            class="btn btn-neutral setup-choice-btn${
+                                this._internetAuth === false ? ' is-chosen' : ''
+                            }" aria-pressed="${this._internetAuth === false}">
+                        ${t('setup.internetSkip')}
+                    </button>
+                    <button type="button" id="btn-internet-accept"
+                            class="btn btn-neutral setup-choice-btn${
+                                this._internetAuth === true ? ' is-chosen' : ''
+                            }" aria-pressed="${this._internetAuth === true}">
+                        ${t('setup.internetAccept')}
+                    </button>
+                </div>`;
 
         const autostartBlock = this._autostartInstalled
             ? this._okNote(t('setup.autostartInstalled'))
@@ -242,7 +259,7 @@ export class SetupView {
             ${this._error ? `<p class="login-error">${this.esc(this._error)}</p>` : ''}
 
             <button id="btn-setup-start" class="btn btn-neutral login-submit"
-                    ${this._checking ? 'disabled' : ''}>
+                    ${this._checking || this._internetNeedsAnswer() ? 'disabled' : ''}>
                 ${
                     this._checking
                         ? `<span class="tunnel-spinner"></span>${t('setup.checkingCreds')}`
@@ -389,6 +406,18 @@ export class SetupView {
                     this._keepDisplayAwake = chkDisplay.checked;
                 });
             }
+            // The two Internet buttons re-render: the pressed one takes the
+            // chosen style and Start stops being disabled.
+            const choose = (value) => {
+                this._internetAuth = value;
+                this.render();
+                this.bindEvents();
+            };
+            const skipNet = this.container.querySelector('#btn-internet-skip');
+            if (skipNet) skipNet.addEventListener('click', () => choose(false));
+            const acceptNet = this.container.querySelector('#btn-internet-accept');
+            if (acceptNet) acceptNet.addEventListener('click', () => choose(true));
+
             const start = this.container.querySelector('#btn-setup-start');
             if (start) start.addEventListener('click', () => this._apply());
             const skip = this.container.querySelector('#btn-setup-skip');
@@ -402,11 +431,18 @@ export class SetupView {
         }
     }
 
+    // True while the Internet question is on screen and still unanswered. An
+    // instance whose link is already up is not asking anything, so it never
+    // holds the page.
+    _internetNeedsAnswer() {
+        return !this._internetActive && this._internetAuth === null;
+    }
+
     async _apply() {
+        if (this._internetNeedsAnswer()) return;
         // Steps already satisfied are rendered as "✓ done" (no controls) and
         // must not run again: their flags are forced off here.
-        this._internetAuth =
-            !this._internetActive && !!this.container.querySelector('#chk-internet')?.checked;
+        this._internetAuth = !this._internetActive && this._internetAuth === true;
         this._autoStart =
             !this._autostartInstalled && !!this.container.querySelector('#chk-autostart')?.checked;
         this._keepDisplayAwake =

@@ -26,6 +26,7 @@ import {
     verifyHostSignature,
     extractFingerprint,
 } from '../util/pairingCrypto.js';
+import { defaultIceServers } from './IceServers.js';
 
 /**
  * Describe a WebSocket close code for diagnostic logging.
@@ -102,15 +103,11 @@ export class WebRtcMedia {
         this.dataChannels = { input: null };
         this.connected = false;
 
-        // ICE config — populated dynamically by backend ice-config message.
-        // Fallback: Google public STUN if no message received before PC creation.
+        // ICE config — populated dynamically by the host's ice-config message,
+        // which is authoritative and may legitimately be an empty list (LAN).
+        // The fallback below only applies when no such message ever arrives.
         this._dynamicIceServers = null;
-        this._defaultIceServers = [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun.cloudflare.com:3478' },
-            { urls: 'stun:stun.nextcloud.com:443' },
-            { urls: 'stun:relay.metered.ca:80' },
-        ];
+        this._defaultIceServers = defaultIceServers();
 
         // Video element for native decoding of RTP media track
         this.videoElement = options.videoElement || null;
@@ -408,8 +405,9 @@ export class WebRtcMedia {
     _createPeerConnection() {
         console.log('[WebRtcMedia] Creating RTCPeerConnection');
 
-        // Use dynamically-received ICE servers from backend, or fall back
-        // to the default Google public STUN server.
+        // What the host said, or the fallback list when it said nothing. An
+        // empty array from the host is an answer — "no STUN" — and survives the
+        // `||` because an empty array is truthy.
         const iceServers = this._dynamicIceServers || this._defaultIceServers;
         /** @type {RTCConfiguration} */
         const config = {

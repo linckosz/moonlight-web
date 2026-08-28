@@ -51,7 +51,6 @@ An honest inventory of what remains, what constrains the design, and where the l
 - Symbol upload + crash-report ingestion (currently: local minidumps + manual cdb symbolization).
 
 **Product**
-- The **remote entry link**: reaching the instance from anywhere without exposing the web ports — an outgoing connection from the host to an introduction server, replacing the retired per-instance subdomain. In design.
 - Multi-session beyond the current two slots: the per-stream worker process shipped, so what remains is a variable-size slot table (ports, take-over rules, UI) instead of a hard-coded pair.
 - Bring-your-own-domain is configured by hand in `settings.json` ([§7.5](07-Settings-Reference.md#75-bring-your-own-domain--certificate)); an admin-page field + a certificate panel (CN, expiry, source) would remove the file editing and surface an ageing certificate before the browser does.
 - Host-side virtual display management (resolution matching without changing the host desktop).

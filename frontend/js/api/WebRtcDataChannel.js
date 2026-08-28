@@ -26,6 +26,7 @@ import {
     verifyHostSignature,
     extractFingerprint,
 } from '../util/pairingCrypto.js';
+import { defaultIceServers } from './IceServers.js';
 
 /**
  * Describe a WebSocket close code for diagnostic logging.
@@ -128,15 +129,11 @@ export class WebRtcDataChannel {
         // When false (legacy): [channel:1][flags:1][payload...]
         this._wssFragmented = options.wssFragmented === true;
 
-        // ICE config — populated dynamically by backend ice-config message.
-        // Fallback: Google public STUN if no message received before PC creation.
+        // ICE config — populated dynamically by the host's ice-config message,
+        // which is authoritative and may legitimately be an empty list (LAN).
+        // The fallback below only applies when no such message ever arrives.
         this._dynamicIceServers = null;
-        this._defaultIceServers = [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun.cloudflare.com:3478' },
-            { urls: 'stun:stun.nextcloud.com:443' },
-            { urls: 'stun:relay.metered.ca:80' },
-        ];
+        this._defaultIceServers = defaultIceServers();
 
         // Callbacks — set by the caller
         this.onOpen = null; // All DataChannels open
@@ -659,8 +656,9 @@ export class WebRtcDataChannel {
     _createPeerConnection() {
         console.log('[WebRTC] Creating RTCPeerConnection');
 
-        // Use dynamically-received ICE servers from backend, or fall back
-        // to the default Google public STUN server.
+        // What the host said, or the fallback list when it said nothing. An
+        // empty array from the host is an answer — "no STUN" — and survives the
+        // `||` because an empty array is truthy.
         const iceServers = this._dynamicIceServers || this._defaultIceServers;
         /** @type {RTCConfiguration} */
         const config = {
@@ -908,8 +906,10 @@ export class WebRtcDataChannel {
                 this._handleFallbackWs();
             }
         } else if (msg.type === 'ice-config') {
-            // Dynamic ICE server configuration from backend.
-            // Overrides the default Google STUN with the user-configured server.
+            // The host's own ICE servers, which replace the fallback list —
+            // including when the host sends an empty list, which is what a LAN
+            // session does rather than pointing the browser at a STUN server
+            // this side has already decided not to use.
             console.log('[WebRTC] Received ice-config:', JSON.stringify(msg.iceServers));
             this._dynamicIceServers = msg.iceServers;
             // Adopt the host's ICE deadline: it classified where this client

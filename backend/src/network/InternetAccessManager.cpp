@@ -1035,8 +1035,19 @@ bool InternetAccessManager::detectPublicIp()
         }
 
         if (!host.isEmpty()) {
-            // Prepend the configured STUN server as first priority
-            servers.prepend({host, port});
+            // Prepend the configured STUN server as first priority — unless the
+            // default chain already leads with it, which it does whenever
+            // stun_server is unset and both fall back to our own server. Two
+            // entries for one host would cost a second timeout before the
+            // fallback when that host is the one that is down.
+            bool already = false;
+            for (const StunClient::StunServer& s : servers) {
+                if (s.host.compare(host, Qt::CaseInsensitive) == 0 && s.port == port) {
+                    already = true;
+                    break;
+                }
+            }
+            if (!already) servers.prepend({host, port});
         }
     }
 

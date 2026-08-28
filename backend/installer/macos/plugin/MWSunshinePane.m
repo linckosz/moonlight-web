@@ -135,7 +135,7 @@ typedef NS_ENUM(NSInteger, MWSunshineCase) {
         initWithString:MWInternetConsentText()
             attributes:@{
                 NSForegroundColorAttributeName : [NSColor systemGreenColor],
-                NSFontAttributeName : [NSFont systemFontOfSize:11],
+                NSFontAttributeName : [NSFont systemFontOfSize:10],
                 NSParagraphStyleAttributeName : wrap
             }];
     _internetCheck.state =

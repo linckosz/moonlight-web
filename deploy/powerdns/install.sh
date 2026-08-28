@@ -149,7 +149,8 @@ case "$PM" in
 esac
 
 # ── Firewall ─────────────────────────────────────────────────────────────────
-# Public ports for the stack: 22 (ssh), 53/udp+tcp (dnsdist), 80+443 (caddy).
+# Public ports for the stack: 22 (ssh), 53/udp+tcp (dnsdist), 80+443 (caddy),
+# 3478/udp+tcp (coturn, STUN only — the TCP half is for networks that block UDP).
 step "Configuring host firewall"
 fw_done=""
 if command -v ufw >/dev/null 2>&1; then
@@ -159,6 +160,8 @@ if command -v ufw >/dev/null 2>&1; then
     ufw allow 53/tcp   >/dev/null 2>&1 || true
     ufw allow 80/tcp   >/dev/null 2>&1 || true
     ufw allow 443/tcp  >/dev/null 2>&1 || true
+    ufw allow 3478/udp >/dev/null 2>&1 || true
+    ufw allow 3478/tcp >/dev/null 2>&1 || true
     ufw --force enable >/dev/null 2>&1 || true
     fw_done="ufw"
 elif command -v firewall-cmd >/dev/null 2>&1; then
@@ -170,6 +173,8 @@ elif command -v firewall-cmd >/dev/null 2>&1; then
     firewall-cmd --permanent --add-port=53/tcp  >/dev/null 2>&1 || true
     firewall-cmd --permanent --add-port=80/tcp  >/dev/null 2>&1 || true
     firewall-cmd --permanent --add-port=443/tcp >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-port=3478/udp >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-port=3478/tcp >/dev/null 2>&1 || true
     firewall-cmd --reload >/dev/null 2>&1 || true
     fw_done="firewalld"
 fi
@@ -184,11 +189,11 @@ if [ -n "$fw_done" ]; then
         systemctl is-active --quiet firewalld 2>/dev/null && fw_active=1
         fw_rules="$(firewall-cmd --list-ports 2>/dev/null || true)"
     fi
-    for p in 22/tcp 53/udp 53/tcp 80/tcp 443/tcp; do
+    for p in 22/tcp 53/udp 53/tcp 80/tcp 443/tcp 3478/udp 3478/tcp; do
         printf '%s' "$fw_rules" | grep -q "$p" || missing="$missing $p"
     done
     if [ -n "$fw_active" ] && [ -z "$missing" ]; then
-        ok "host firewall ACTIVE ($fw_done): 22/tcp, 53/udp, 53/tcp, 80/tcp, 443/tcp verified open"
+        ok "host firewall ACTIVE ($fw_done): 22/tcp, 53/udp, 53/tcp, 80/tcp, 443/tcp, 3478/udp, 3478/tcp verified open"
     else
         [ -z "$fw_active" ] && warn "host firewall ($fw_done) is NOT active — enable it, then re-run"
         [ -n "$missing" ]   && warn "firewall ($fw_done) missing rules:$missing — re-run or add manually"
@@ -196,7 +201,8 @@ if [ -n "$fw_done" ]; then
     fi
 else
     warn "no managed firewall (ufw/firewalld) detected — relying on your cloud"
-    warn "security group / NSG. Make sure 53/udp, 53/tcp, 80/tcp, 443/tcp are open there."
+    warn "security group / NSG. Make sure 53/udp, 53/tcp, 80/tcp, 443/tcp, 3478/udp"
+    warn "and 3478/tcp are open there."
 fi
 
 # ── Free port 53 (systemd-resolved stub) ─────────────────────────────────────

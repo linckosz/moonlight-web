@@ -190,6 +190,40 @@ Visitors/Views/Pages at zero.) Two caveats worth knowing:
   (the version is part of the hash input), which is exactly what you want when
   watching a migration progress.
 
+## STUN (coturn)
+
+`stream.{MW_DOMAIN}:3478` answers one question — *what address did this packet
+come from?* — and nothing else. It is what lets a host and a browser learn their
+own public addresses so WebRTC can find a direct path between them.
+
+It runs `--stun-only`: there is no relay, so no stream ever passes through this
+machine, and it cannot be conscripted as a TURN server by anyone else. There is
+no DNS record to add — `stream.` already points here for the introduction server,
+which is the whole reason that name was chosen over a new one on a signed zone.
+
+**Why it is here at all.** Both ends used to ask Google's public STUN servers. A
+STUN binding hands the server the public address of whoever asked, so that put
+every host's home address, and every invited player's, in front of a third party
+the consent text never named. Running our own makes the operator the one the user
+already agreed to when they enabled the Internet link. The clients keep the public
+servers behind it as a fallback (`StunClient::defaultServers`), because a peer
+that cannot discover its own address cannot connect at all.
+
+**Host networking, deliberately.** Docker's default UDP publishing goes through
+the userland proxy, which rewrites the source address — a STUN server behind it
+would answer every client with the bridge gateway's address, confidently and
+wrongly. `network_mode: host` is what lets it see the real one.
+
+Check it from another machine:
+
+```bash
+turnutils_stunclient -p 3478 stream.example.com   # coturn's own client
+# or, without coturn installed:
+docker run --rm coturn/coturn:4.6-alpine turnutils_stunclient -p 3478 stream.example.com
+```
+
+A working answer prints your own public address.
+
 ## Session census
 
 The relay above says which builds are alive. It says nothing about how they are
@@ -293,7 +327,8 @@ spike in `dur-0-1m` reads as "the first transport is not working here", not as
 deploy/powerdns/
 ├── install.sh               # one-shot installer (Docker, security, firewall, up)
 ├── renew-certs.sh           # re-issue TLS certs once DNS delegation has propagated
-├── docker-compose.yml       # dnsdist + pdns + mw-proxy + caddy + umami (+ umami-db)
+├── docker-compose.yml       # dnsdist + pdns + mw-proxy + mw-rendezvous + coturn
+│                            #   + caddy + umami (+ umami-db)
 ├── mw-proxy/
 │   ├── main.go              # least-privilege filtering gateway (stdlib only)
 │   ├── update.go            # release relay + installed-version census (0.3.0+)
@@ -412,6 +447,10 @@ az network nsg rule create -g $RG --nsg-name $NSG -n Allow-DNS-TCP --priority 11
   --access Allow --protocol Tcp --direction Inbound --destination-port-ranges 53
 az network nsg rule create -g $RG --nsg-name $NSG -n Allow-Web --priority 120 \
   --access Allow --protocol Tcp --direction Inbound --destination-port-ranges 80 443
+az network nsg rule create -g $RG --nsg-name $NSG -n Allow-STUN-UDP --priority 125 \
+  --access Allow --protocol Udp --direction Inbound --destination-port-ranges 3478
+az network nsg rule create -g $RG --nsg-name $NSG -n Allow-STUN-TCP --priority 126 \
+  --access Allow --protocol Tcp --direction Inbound --destination-port-ranges 3478
 # SSH restricted to your IP
 az network nsg rule create -g $RG --nsg-name $NSG -n Allow-SSH --priority 130 \
   --access Allow --protocol Tcp --direction Inbound --destination-port-ranges 22 \
@@ -507,6 +546,8 @@ this machine. DNS needs both UDP and TCP.
 | 53   | TCP      | dnsdist   | Fallback for truncated responses, DNSSEC |
 | 80   | TCP      | caddy     | Let's Encrypt HTTP-01 challenge + HTTP→HTTPS redirect |
 | 443  | TCP      | caddy     | `api.{MW_DOMAIN}` REST API + presentation site (`{MW_DOMAIN}`/`www`) + `stats.{MW_DOMAIN}` analytics |
+| 3478 | UDP      | coturn    | STUN — hosts and browsers discover their public address (primary path) |
+| 3478 | TCP      | coturn    | STUN for clients on a network that blocks UDP |
 
 PowerDNS' own ports (`5300` DNS, `8081` API) stay on the internal compose
 network — never published.

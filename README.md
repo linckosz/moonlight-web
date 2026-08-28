@@ -331,7 +331,7 @@ It controls: admin **PIN**, active **sessions**, HTTP/HTTPS **ports**, **transpo
 
 **Internet Access is an opt‑in consent, off by default.** While it is on, the server:
 
-1. **Detects your public IP** (STUN, HTTPS fallback) and reports CGNAT/double‑NAT when it sees one.
+1. **Detects your public IP** (STUN, HTTPS fallback) and reports CGNAT/double‑NAT when it sees one. The STUN server asked is ours — `stream.moonlightweb.top:3478`, the same machine the entry link already talks to — with the public ones (Google, Cloudflare) kept behind it only for when ours cannot be reached. Asking tells whoever answers your public address, so the default is the operator the consent already names. A **LAN** stream asks nobody: the browser is told to use no STUN server at all.
 2. **Asks your router (UPnP) to open a streaming port during each session**, and closes it when the session ends. Whoever connects reaches this PC directly — each side of a peer‑to‑peer connection sees the other's public IP address.
 
 Nothing else is opened or published: **no public DNS record, no certificate, ports 80/443 stay closed**. Turning the consent off closes the mappings immediately.
@@ -381,14 +381,14 @@ Most settings live in the UI and are stored **server‑side** in `settings.json`
 | **macOS** | `~/Library/Application Support/MoonlightWeb/MoonlightWeb/settings.json` |
 | **Linux** | `~/.local/share/MoonlightWeb/MoonlightWeb/settings.json` |
 
-Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`, `session_metrics_enabled`, `metrics_consent`.\
+Notable keys not exposed in the UI: `domain` (custom FQDN), `cert_pem` / `cert_key` (your own cert, path or env‑var name), `audio_time_stretch`, `http_port` / `https_port`, `stun_server`, `update_relay_enabled`, `session_metrics_enabled`, `session_location_enabled`, `metrics_consent`.\
 Restart the server after a manual edit.
 
 #### Update check & version counts
 
 Every few hours the server asks whether a newer MoonlightWeb exists. In official builds that question goes to `https://updates.{MW_DOMAIN}`, which mirrors the GitHub release and records **version, OS and architecture** — nothing else: no identifier, no account, no per-machine history. It is what tells us how many people still run an old version, so a release can drop support for one without stranding anyone.
 
-Nothing is reported until you have been asked and have said yes — see below. Set `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, and the check goes straight to GitHub instead, reporting nothing. Updates work identically either way. Builds you compiled yourself never contact the relay at all.
+Nothing is reported until you have been asked and have said yes — see below. Set `"update_relay_enabled": false` in `settings.json` and the check goes straight to GitHub instead, reporting nothing. `MW_NO_TELEMETRY=1` in the environment goes further and stops the check happening at all — it used to merely send it to GitHub, which reports nothing but is still a request to a third party every six hours, and that is not what someone setting that variable is asking for. Updates work identically either way; with `MW_NO_TELEMETRY` you find out about them yourself. Builds you compiled yourself never contact the relay at all.
 
 #### Session counts
 
@@ -403,6 +403,10 @@ Both of the above stay **completely silent until you answer**. At first launch a
 It is not a cookie banner: the sign-in cookie the app needs to work is unaffected by either answer, and so is the separate Internet Access agreement. Only the machine's own browser is asked; a remote viewer never sees it, and the backend refuses the answer from anyone else. Change your mind at any time from **Settings → Privacy**, which takes effect immediately. That section is visible to every signed-in user, and invited players get the same disclosure from the **Cookies** button on their join page — in both cases the switch itself stays the machine's own.
 
 Under the hood the answer is stored in `settings.json` as `metrics_consent`, together with the exact wording you were shown and when you answered. The two switches remain as permanent overrides: `"session_metrics_enabled": false` or `"update_relay_enabled": false` in `settings.json`, or `MW_NO_TELEMETRY=1` in the environment, stop the reporting whatever the answer was.
+
+#### Where a session came from
+
+The admin sessions list can show a city and a country next to a connection. Working that out means sending an address to `ipwho.is`, and the address is the **visitor's** — so an invited player's IP would reach a company they have never heard of, to show the person who invited them a place name. Neither of them was asked, so it is **off** unless you set `"session_location_enabled": true` in `settings.json`. Private addresses are never sent whatever it says.
 
 ### SSL — your own domain & certificate
 

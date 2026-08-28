@@ -87,12 +87,12 @@
         {
           "@type": "Question",
           "name": "How do I play over the Internet, away from home?",
-          "acceptedAnswer": {"@type": "Answer", "text": "Streams are direct, peer-to-peer WebRTC between your browser and your PC. A redesigned remote entry link - no public sub-domain, no exposed web ports - is in development; instances that already hold a sub-domain keep it until February 2027. You can also bring your own domain and certificate."}
+          "acceptedAnswer": {"@type": "Answer", "text": "Streams are direct, peer-to-peer WebRTC between your browser and your PC. Your PC holds one outgoing connection to an introduction server and is reached at a link of its own - no public sub-domain, no exposed web ports; instances that already hold a sub-domain keep it until February 2027. You can also bring your own domain and certificate."}
         },
         {
           "@type": "Question",
           "name": "Is it secure? Where does my stream go?",
-          "acceptedAnswer": {"@type": "Answer", "text": "MoonlightWeb is self-hosted: the stream goes directly from your PC to your browser, never through anyone else's cloud. Hosts are paired with a PIN, and Internet access uses HTTPS with a free auto-renewed TLS certificate."}
+          "acceptedAnswer": {"@type": "Answer", "text": "MoonlightWeb is self-hosted: the stream goes directly from your PC to your browser, never through anyone else's cloud. Hosts are paired with a PIN, and the entry link is served over HTTPS under a certificate we maintain - nothing is issued for, or published about, your machine."}
         },
         {
           "@type": "Question",
@@ -216,15 +216,16 @@
   <h2 data-i18n="h2.internet">Internet play &amp; security</h2>
   <details>
     <summary data-i18n="q12.s">How do I play over the Internet, away from home?</summary>
-    <div class="a" data-i18n-html="q12.a"><p>Streams are direct, peer-to-peer WebRTC between your browser and your PC. A redesigned
-      remote entry link — no public sub-domain, no exposed web ports — is in development; instances that
-      already hold a sub-domain keep it until February 2027. You can also bring your own domain and certificate.</p></div>
+    <div class="a" data-i18n-html="q12.a"><p>Streams are direct, peer-to-peer WebRTC between your browser and your PC. Your PC holds one
+      outgoing connection to an introduction server and is reached at a link of its own — no public
+      sub-domain, no exposed web ports; instances that already hold a sub-domain keep it until
+      February 2027. You can also bring your own domain and certificate.</p></div>
   </details>
   <details>
     <summary data-i18n="q13.s">Is it secure? Where does my stream go?</summary>
     <div class="a" data-i18n-html="q13.a"><p>MoonlightWeb is self-hosted: the stream goes directly from your PC to your browser,
-      never through anyone else's cloud. Hosts are paired with a PIN, and Internet access uses HTTPS with a
-      free auto-renewed TLS certificate.</p></div>
+      never through anyone else's cloud. Hosts are paired with a PIN, and the entry link is served over
+      HTTPS under a certificate we maintain — nothing is issued for, or published about, your machine.</p></div>
   </details>
   <details>
     <summary data-i18n="q14.s">How does MoonlightWeb work under the hood?</summary>
@@ -256,6 +257,13 @@
       updates work exactly the same. You can change your mind at any time in the app’s settings, where every
       signed-in user can also read what is counted; invited players get the same disclosure from the Cookies
       button on their join page.</p>
+      <p><strong>When you play over the internet.</strong> Two things have to happen for your
+      browser to find your PC at all, and neither is a statistic. Your PC keeps one outgoing
+      connection to our introduction server, which therefore knows its public address and when it is
+      online — never what you play, nor who you are. And both ends ask a STUN server, also ours,
+      what their own public address is, because that is how two machines locate each other directly.
+      Both are spelled out in the agreement the app shows before you turn Internet access on, and
+      neither happens while it is off.</p>
       <p><strong>On this website.</strong> Visits are counted with a self-hosted, cookieless analytics tool
       (<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>) that we run ourselves: no cookie,
       no advertising, no tracking across other sites, and your IP address is not stored — it is turned into a
@@ -312,15 +320,15 @@ window.MW_DICTS = {
     'q11.a':'<p>Le transport bascule automatiquement : UDP d’abord pour la latence la plus faible, puis TCP, puis WSS. Le stream continue de fonctionner à travers les réseaux restrictifs — il choisit simplement le meilleur chemin disponible.</p>',
     'h2.internet':'Jeu sur Internet et sécurité',
     'q12.s':'Comment jouer sur Internet, loin de chez moi ?',
-    'q12.a':'<p>Le flux est une connexion WebRTC directe, pair-à-pair, entre votre navigateur et votre PC. Un lien d’accès distant repensé — sans sous-domaine public, sans port web exposé — est en développement ; les installations qui détiennent déjà un sous-domaine le conservent jusqu’en février 2027. Vous pouvez aussi utiliser votre propre domaine et certificat.</p>',
+    'q12.a':'<p>Le flux est une connexion WebRTC directe, pair-à-pair, entre votre navigateur et votre PC. Votre PC maintient une connexion sortante vers un serveur d’introduction et se rejoint par un lien qui lui est propre — sans sous-domaine public, sans port web exposé ; les installations qui détiennent déjà un sous-domaine le conservent jusqu’en février 2027. Vous pouvez aussi utiliser votre propre domaine et certificat.</p>',
     'q13.s':'Est-ce sécurisé ? Où va mon stream ?',
-    'q13.a':'<p>MoonlightWeb est auto-hébergé : le stream va directement de votre PC à votre navigateur, jamais par le cloud d’un tiers. Les hôtes sont appairés par un code PIN, et l’accès Internet utilise HTTPS avec un certificat TLS gratuit et auto-renouvelé.</p>',
+    'q13.a':'<p>MoonlightWeb est auto-hébergé : le stream va directement de votre PC à votre navigateur, jamais par le cloud d’un tiers. Les hôtes sont appairés par un code PIN, et le lien d’accès est servi en HTTPS sous un certificat que nous maintenons — rien n’est émis pour votre machine, ni publié à son sujet.</p>',
     'q14.s':'Comment MoonlightWeb fonctionne-t-il en coulisses ?',
     'q14.a':'<p>Un petit serveur C++/Qt tourne sur le PC gamer à côté de Sunshine. Il embarque <code>moonlight-common-c</code>, parle le protocole GameStream (RTSP/RTP/ENet) à Sunshine, et relaie la vidéo, l’audio et les entrées vers les navigateurs via WebRTC. Dans le navigateur : WebCodecs décode, WebGPU affiche, et un AudioWorklet joue l’audio Opus.</p>',
     'q15.s':'Pourquoi mon système m’avertit-il à propos de l’installateur ?',
     'q15.a':'<p>Parce que les installateurs ne sont pas signés avec un certificat payant — SmartScreen sous Windows et Gatekeeper sous macOS signalent tout ce qu’ils ne reconnaissent pas, signé ou non, sûr ou non. Le code est public : vous pouvez lire exactement ce que vous installez.</p><p>Sous <strong>Windows</strong> : cliquez sur <em>Informations complémentaires</em>, puis <em>Exécuter quand même</em>.</p><p>Sous <strong>macOS</strong>, évitez complètement l’avertissement — il ne concerne que les téléchargements par navigateur :</p><pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre><pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre><p>Ou gardez le fichier téléchargé et autorisez-le dans <strong>Réglages Système → Confidentialité et sécurité → Ouvrir quand même</strong>. Détails dans le <a href="/guides/macos.html">guide macOS</a>.</p>',
     'q16.s':'Quelles données MoonlightWeb collecte-t-il ?',
-    'q16.a':'<p>Rien qui vous concerne, et rien que vous n’ayez accepté. Il n’y a aucun compte à créer, et vos sessions vont directement de votre PC à votre navigateur — elles ne passent jamais par nous.</p><p><strong>Dans l’application.</strong> Au premier lancement, elle demande une fois si elle peut envoyer des statistiques anonymes : résolution, fréquence d’images, codec, type de connexion, durée de la session, plus la version de MoonlightWeb et le système d’exploitation. Jamais le nom de votre PC, votre compte, ce que vous lancez, ni votre adresse IP. Tant que vous n’avez pas répondu, rien n’est envoyé — et refuser ne change rien d’autre : le streaming et les mises à jour fonctionnent à l’identique. Vous pouvez changer d’avis à tout moment dans les réglages de l’application, où chaque utilisateur connecté peut aussi lire ce qui est compté ; les joueurs invités retrouvent la même information via le bouton Cookies de leur page d’accueil.</p><p><strong>Sur ce site.</strong> Les visites sont comptées avec un outil de mesure d’audience sans cookie que nous hébergeons nous-mêmes (<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>) : aucun cookie, aucune publicité, aucun suivi sur d’autres sites, et votre adresse IP n’est pas conservée — elle est transformée en un numéro qui change chaque jour. C’est pourquoi aucun bandeau cookies ne vous accueille ici. La seule chose que ce site garde dans votre navigateur est la langue que vous avez choisie.</p>',
+    'q16.a':'<p>Rien qui vous concerne, et rien que vous n’ayez accepté. Il n’y a aucun compte à créer, et vos sessions vont directement de votre PC à votre navigateur — elles ne passent jamais par nous.</p><p><strong>Dans l’application.</strong> Au premier lancement, elle demande une fois si elle peut envoyer des statistiques anonymes : résolution, fréquence d’images, codec, type de connexion, durée de la session, plus la version de MoonlightWeb et le système d’exploitation. Jamais le nom de votre PC, votre compte, ce que vous lancez, ni votre adresse IP. Tant que vous n’avez pas répondu, rien n’est envoyé — et refuser ne change rien d’autre : le streaming et les mises à jour fonctionnent à l’identique. Vous pouvez changer d’avis à tout moment dans les réglages de l’application, où chaque utilisateur connecté peut aussi lire ce qui est compté ; les joueurs invités retrouvent la même information via le bouton Cookies de leur page d’accueil.</p><p><strong>Quand vous jouez depuis Internet.</strong> Deux choses doivent se produire pour que votre navigateur trouve votre PC, et ce ne sont pas des statistiques. Votre PC maintient une connexion sortante vers notre serveur d’introduction, qui connaît donc son adresse publique et ses périodes de présence en ligne — jamais ce que vous jouez, ni qui vous êtes. Et les deux extrémités demandent à un serveur STUN, le nôtre également, quelle est leur propre adresse publique, car c’est ainsi que deux machines se localisent directement. Les deux sont décrits dans l’accord que l’application affiche avant que vous n’activiez l’accès Internet, et aucun n’a lieu tant qu’il est désactivé.</p><p><strong>Sur ce site.</strong> Les visites sont comptées avec un outil de mesure d’audience sans cookie que nous hébergeons nous-mêmes (<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>) : aucun cookie, aucune publicité, aucun suivi sur d’autres sites, et votre adresse IP n’est pas conservée — elle est transformée en un numéro qui change chaque jour. C’est pourquoi aucun bandeau cookies ne vous accueille ici. La seule chose que ce site garde dans votre navigateur est la langue que vous avez choisie.</p>',
     'h2.start':'Pour commencer',
     'x.win.t':'Installer sur Windows', 'x.win.d':'Installateur guidé — Sunshine inclus dans l’assistant.',
     'x.mac.t':'Installer sur macOS', 'x.mac.d':'Guide Apple Silicon avec l’installateur .pkg.',
@@ -359,15 +367,15 @@ window.MW_DICTS = {
     'q11.a':'<p>传输会自动回退：先用 UDP 以获得最低延迟，然后 TCP，再然后 WSS。串流会穿过受限网络继续工作——它只会挑选可用的最佳路径。</p>',
     'h2.internet':'互联网远程游玩与安全',
     'q12.s':'我如何在外地通过互联网游玩？',
-    'q12.a':'<p>串流是浏览器与 PC 之间点对点的 WebRTC 直连。重新设计的远程接入链接——没有公开子域名、不暴露 Web 端口——正在开发中；已持有子域名的安装可继续使用至 2027 年 2 月。你也可以使用自己的域名和证书。</p>',
+    'q12.a':'<p>串流是浏览器与 PC 之间点对点的 WebRTC 直连。你的电脑会保持一条到介绍服务器的出站连接，并通过一个专属链接被访问——没有公开子域名、不暴露 Web 端口；已持有子域名的安装可继续使用至 2027 年 2 月。你也可以使用自己的域名和证书。</p>',
     'q13.s':'它安全吗？我的串流去了哪里？',
-    'q13.a':'<p>MoonlightWeb 是自托管的：串流直接从你的 PC 到你的浏览器，绝不经过任何他人的云。主机通过 PIN 码配对，互联网访问使用 HTTPS，配有免费自动续期的 TLS 证书。</p>',
+    'q13.a':'<p>MoonlightWeb 是自托管的：串流直接从你的 PC 到你的浏览器，绝不经过任何他人的云。主机通过 PIN 码配对，接入链接由我们维护的证书以 HTTPS 提供——不会为你的机器签发任何证书，也不会公开与它有关的任何信息。</p>',
     'q14.s':'MoonlightWeb 底层是如何工作的？',
     'q14.a':'<p>一个小型 C++/Qt 服务器在游戏 PC 上紧挨 Sunshine 运行。它内嵌 <code>moonlight-common-c</code>，用 GameStream 协议（RTSP/RTP/ENet）与 Sunshine 通信，并通过 WebRTC 把视频、音频和输入转发到浏览器。在浏览器中：WebCodecs 解码，WebGPU 渲染，AudioWorklet 播放 Opus 音频。</p>',
     'q15.s':'为什么我的系统会对安装程序发出警告？',
     'q15.a':'<p>因为安装程序没有用付费证书签名——Windows SmartScreen 和 macOS Gatekeeper 会标记一切它们不认识的东西，无论是否已签名、是否安全。代码是公开的，你可以确切地看到自己安装的是什么。</p><p>在 <strong>Windows</strong> 上：点击<em>更多信息</em>，然后<em>仍要运行</em>。</p><p>在 <strong>macOS</strong> 上可以完全避开警告——它只针对浏览器下载的文件：</p><pre><code>brew install --cask linckosz/tap/moonlightweb</code></pre><pre><code>curl -fsSL https://moonlightweb.top/install.sh | bash</code></pre><p>或者保留已下载的文件，在<strong>系统设置 → 隐私与安全性 → 仍要打开</strong>中放行。详见 <a href="/guides/macos.html">macOS 指南</a>。</p>',
     'q16.s':'MoonlightWeb 会收集哪些数据？',
-    'q16.a':'<p>不收集任何关于你的信息，也不收集你未同意的任何内容。无需注册账号，你的串流直接从你的电脑到你的浏览器——从不经过我们。</p><p><strong>在应用中。</strong>首次启动时会询问一次，是否允许发送匿名统计：分辨率、帧率、编解码器、连接方式、会话时长，以及 MoonlightWeb 版本和操作系统。从不包括你的电脑名称、账号、你启动的内容，也不包括你的 IP 地址。在你回答之前，不会发送任何内容；拒绝也不会改变其他任何事情：串流和更新完全照常。你可以随时在应用的设置中改变主意；每一位登录的用户都能在那里看到到底统计了什么，受邀的玩家则可以通过加入页面上的 Cookie 按钮查看同样的说明。</p><p><strong>在本网站。</strong>访问量由我们自己托管的无 Cookie 统计工具（<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>）统计：没有 Cookie、没有广告、不跨站追踪，且不保存你的 IP 地址——它会被转换成每天都变化的一串数字。这就是为什么这里没有 Cookie 横幅。本站在你浏览器中保存的只有你选择的语言。</p>',
+    'q16.a':'<p>不收集任何关于你的信息，也不收集你未同意的任何内容。无需注册账号，你的串流直接从你的电脑到你的浏览器——从不经过我们。</p><p><strong>在应用中。</strong>首次启动时会询问一次，是否允许发送匿名统计：分辨率、帧率、编解码器、连接方式、会话时长，以及 MoonlightWeb 版本和操作系统。从不包括你的电脑名称、账号、你启动的内容，也不包括你的 IP 地址。在你回答之前，不会发送任何内容；拒绝也不会改变其他任何事情：串流和更新完全照常。你可以随时在应用的设置中改变主意；每一位登录的用户都能在那里看到到底统计了什么，受邀的玩家则可以通过加入页面上的 Cookie 按钮查看同样的说明。</p><p><strong>当你从互联网游玩时。</strong>要让浏览器找到你的电脑，有两件事必须发生，它们都不是统计。你的电脑会保持一条到我们介绍服务器的出站连接，该服务器因此知道它的公网地址及其在线时间——但从不知道你在玩什么，也不知道你是谁。此外，两端都会向 STUN 服务器（同样是我们的）查询自己的公网地址，因为两台机器正是这样彼此直接定位的。这两点都写在应用启用互联网访问前向你展示的协议中；只要该功能处于关闭状态，它们都不会发生。</p><p><strong>在本网站。</strong>访问量由我们自己托管的无 Cookie 统计工具（<a href="https://umami.is" target="_blank" rel="noopener">Umami</a>）统计：没有 Cookie、没有广告、不跨站追踪，且不保存你的 IP 地址——它会被转换成每天都变化的一串数字。这就是为什么这里没有 Cookie 横幅。本站在你浏览器中保存的只有你选择的语言。</p>',
     'h2.start':'开始使用',
     'x.win.t':'在 Windows 上安装', 'x.win.d':'向导式安装程序——Sunshine 已包含在向导中。',
     'x.mac.t':'在 macOS 上安装', 'x.mac.d':'Apple Silicon 指南，附 .pkg 安装程序。',

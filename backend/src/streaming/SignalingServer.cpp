@@ -196,17 +196,24 @@ QString SignalingServer::wsUrl() const
 
 // --- ICE configuration push to browser ---
 
-void SignalingServer::sendIceConfig(int iceTimeoutMs)
+void SignalingServer::sendIceConfig(bool needStun, int iceTimeoutMs)
 {
     if (!m_WsClient || !m_WsClient->isValid()) {
         qWarning() << "[SignalingServer] Cannot send ice-config: no WS client";
         return;
     }
 
-    QJsonObject iceServer;
-    iceServer["urls"] = m_StunServerUrl;
+    // An empty list is the message, not the absence of one: it replaces the
+    // browser's built-in fallback, which would otherwise ask four public STUN
+    // servers where a LAN browser lives — for a connection that is going to be
+    // made on host candidates either way. The browser only keeps its own list
+    // when no ice-config arrives at all (an older host).
     QJsonArray iceServers;
-    iceServers.append(iceServer);
+    if (needStun) {
+        QJsonObject iceServer;
+        iceServer["urls"] = m_StunServerUrl;
+        iceServers.append(iceServer);
+    }
 
     QJsonObject msg;
     msg["type"] = "ice-config";
@@ -219,7 +226,8 @@ void SignalingServer::sendIceConfig(int iceTimeoutMs)
 
     QJsonDocument doc(msg);
     m_WsClient->sendTextMessage(QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
-    qInfo() << "[SignalingServer] Sent ice-config: stun=" << m_StunServerUrl
+    qInfo() << "[SignalingServer] Sent ice-config: stun="
+            << (needStun ? m_StunServerUrl : QStringLiteral("(none — LAN)"))
             << "iceTimeoutMs=" << iceTimeoutMs;
 }
 
@@ -289,7 +297,9 @@ void SignalingServer::onNewWsConnection()
     // classification the relay uses below.
     const int iceTimeoutMs =
         isInternet ? RelayBase::kIceTimeoutInternetMs : RelayBase::kIceTimeoutLocalMs;
-    sendIceConfig(iceTimeoutMs);
+    // Same condition buildIceConfig uses below, so the two ends of the
+    // connection never disagree about whether STUN is in play.
+    sendIceConfig(isInternet || m_ForceIceTcp, iceTimeoutMs);
 
     // Build ICE configuration: STUN + optionally UPnP-aware fixed port
     // m_ForceIceTcp controls whether ICE-TCP candidates are generated

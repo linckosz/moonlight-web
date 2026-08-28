@@ -33,11 +33,18 @@ static inline NSString *MWSunshineDmgURL(void)
 // The Internet opt-in checkbox label. Single source of truth: displayed in the
 // pane AND handed to the server as the consent text of its versioned consent
 // record — so it has to say what enabling actually does, and what it does not.
+//
+// Shorter than the same agreement on Windows and in the web wizard, and that is
+// a constraint rather than a choice: the pane's content view is 470x240 points
+// and this label shares it with the Sunshine credentials. It must still name
+// every party that learns something — the router, the peer, the introduction
+// server, the STUN server — because what is recorded has to be what was read.
 static inline NSString *MWInternetConsentText(void)
 {
-    return @"Allow the Internet link (recommended) — asks the router (UPnP) to open a "
-           @"streaming port during sessions; peers connect directly and see this Mac's "
-           @"public IP. No DNS record, no certificate, ports 80/443 stay closed.";
+    return @"Allow the Internet link (recommended) — the router is asked (UPnP) to open a "
+           @"streaming port per session; peers connect directly and see each other's public "
+           @"IP; the MoonlightWeb introduction and STUN servers see this Mac's public IP and "
+           @"when it is online. No DNS record, no certificate, ports 80/443 stay closed.";
 }
 
 // True when a prior install already authorized the public Internet link: the

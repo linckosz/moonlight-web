@@ -361,8 +361,17 @@ export class Tunnel {
         }
         this.firstContact = verdict.firstContact;
 
+        // The introduction server answers STUN on 3478, and it is the one host
+        // this page is already talking to — so discovering our own address adds
+        // no third party to the ones already involved. Google's public server
+        // was here, on the page that refuses Google's web fonts three files
+        // over precisely so that nobody outside learns who is connecting to
+        // whom; the fonts were the smaller half of that leak.
+        //
+        // No fallback list, deliberately. If this server is unreachable the
+        // WebSocket above is down too and there is no session to rescue.
         this._pc = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+            iceServers: [{ urls: `stun:${location.hostname}:3478` }],
         });
         this._pc.onicecandidate = (ev) => {
             if (ev.candidate)

@@ -16,6 +16,8 @@
  */
 
 #include "GeoIpService.h"
+
+#include "server/AppSettings.h"
 #include "common/Logger.h"
 
 #include <QJsonDocument>
@@ -23,8 +25,9 @@
 #include <QUrl>
 #include <QUrlQuery>
 
-GeoIpService::GeoIpService(QObject* parent)
+GeoIpService::GeoIpService(AppSettings* settings, QObject* parent)
     : QObject(parent)
+    , m_settings(settings)
     , m_nam(new QNetworkAccessManager(this))
 {}
 
@@ -55,6 +58,15 @@ void GeoIpService::lookupIp(const QString& ip, const GeoCallback& callback)
     auto pendingIt = m_pending.find(ip);
     if (pendingIt != m_pending.end()) {
         pendingIt->append(callback);
+        return;
+    }
+
+    // Asked last, and on purpose: the private-address and cache checks above
+    // answer without telling anyone anything, so the setting only has to gate
+    // the one path that leaves this machine. Reading it here also means a
+    // switch flipped mid-session takes effect on the next lookup.
+    if (!m_settings || !m_settings->sessionLocationEnabled()) {
+        callback(QString(), QString());
         return;
     }
 

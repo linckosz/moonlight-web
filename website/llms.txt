@@ -19,9 +19,10 @@
 - Zero-config: Sunshine hosts are auto-discovered on the LAN via mDNS, paired with
   a PIN.
 - Internet access (opt-in): direct peer-to-peer WebRTC streams; per-session
-  UPnP port mapping; no public DNS record or certificate. A redesigned remote
-  entry link is in development; pre-existing sub-domains keep working until
-  February 2027.
+  UPnP port mapping; no public DNS record or certificate. The host holds one
+  outgoing connection to an introduction server and is reached at a link of its
+  own; both ends ask a self-hosted STUN server for their public address.
+  Pre-existing sub-domains keep working until February 2027.
 
 ## How it works
 

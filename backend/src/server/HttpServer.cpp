@@ -711,15 +711,17 @@ QMap<QString, QString> HttpServer::securityHeaders(const QString& hostHeader)
     headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     // 'wasm-unsafe-eval' allows WebAssembly compilation only (not JS eval) —
     // required by the WASM Opus decoder fallback used on iOS/WebKit.
-    // Google Fonts: stylesheet from fonts.googleapis.com, font files from
-    // fonts.gstatic.com (graceful fallback to system fonts if offline).
+    //
+    // No font or style host but this one. The two display faces are served from
+    // frontend/assets/fonts (see css/fonts.css); allowing Google's hosts here
+    // was what let every viewer's address reach them, and leaving the allowance
+    // behind after removing the <link> would only invite it back.
     headers["Content-Security-Policy"] =
-        QStringLiteral(
-            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' "
-            "https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src %1; "
-            "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
-            "object-src 'none'")
+        QStringLiteral("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+                       "style-src 'self' 'unsafe-inline'; font-src 'self'; "
+                       "img-src 'self' data: blob:; connect-src %1; "
+                       "worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; "
+                       "form-action 'self'; object-src 'none'")
             .arg(connectSrc);
     headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload";
     return headers;
