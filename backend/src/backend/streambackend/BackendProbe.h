@@ -86,9 +86,9 @@ constexpr quint16 kMultiSeatApiPort = 9550;
 /// each value is something we can actually stand behind.
 enum class Detected
 {
-    Unknown,     ///< nothing usable answered
-    GameStream,  ///< speaks GameStream — Sunshine, Apollo or Wolf, see the note above
-    NvidiaGfe,   ///< the original GeForce Experience (state says MJOLNIR)
+    Unknown,    ///< nothing usable answered
+    GameStream, ///< speaks GameStream — Sunshine, Apollo or Wolf, see the note above
+    NvidiaGfe,  ///< the original GeForce Experience (state says MJOLNIR)
 };
 
 QString toString(Detected d);
@@ -137,8 +137,7 @@ enum class Reach
 };
 
 /// Classify an unauthenticated answer from that API. Pure; no network.
-SunshineRest classifySunshineRest(Reach reach, int httpStatus,
-                                  const QByteArray& wwwAuthenticate);
+SunshineRest classifySunshineRest(Reach reach, int httpStatus, const QByteArray& wwwAuthenticate);
 
 /// Knock on <address>:<sunshineRestPort(httpPort)>. Never reports an error: a
 /// host that is not Sunshine is a normal answer, not a fault to log every poll.

@@ -91,7 +91,8 @@ void bindKeyFromLoginBody(AuthManager& authManager, const QString& token, const 
     }
     reply["pairing_key"] = "bound";
     const QJsonObject identity = hostPairingIdentity(settings);
-    for (auto it = identity.constBegin(); it != identity.constEnd(); ++it) reply[it.key()] = it.value();
+    for (auto it = identity.constBegin(); it != identity.constEnd(); ++it)
+        reply[it.key()] = it.value();
 }
 
 } // namespace
@@ -198,13 +199,14 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
     server.router()->post("/api/auth/pairing-key", [&authManager,
                                                     &settings](const HttpRequest& req) {
         const QString token = HttpServer::sessionTokenFromRequest(req);
-        if (!authManager.validateSession(token)) return HttpResponse::error(401, "Not authenticated");
+        if (!authManager.validateSession(token))
+            return HttpResponse::error(401, "Not authenticated");
 
         const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
         if (!NetClassify::isTrustedPeer(kind)) {
             Logger::warning(QStringLiteral("[Auth] Refused silent pairing-key registration from %1 "
-                                        "(%2) — PIN required from the internet")
-                             .arg(req.clientAddress, NetClassify::toString(kind)));
+                                           "(%2) — PIN required from the internet")
+                                .arg(req.clientAddress, NetClassify::toString(kind)));
             return HttpResponse::error(403, "Pair with a PIN from this network");
         }
 

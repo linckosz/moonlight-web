@@ -267,10 +267,12 @@ int runStreamWorker(QCoreApplication& app)
     // now (Wolf UI), not ours — see docs/integration-multiseat-wolf.md.
     {
         auto* resolver = new CoopSessionResolver(
-            backend, [](const QString& sessionId) {
+            backend,
+            [](const QString& sessionId) {
                 emitEvent({{QStringLiteral("event"), QStringLiteral("coopSession")},
                            {QStringLiteral("sessionId"), sessionId}});
-            }, qApp);
+            },
+            qApp);
         QObject::connect(session, &StreamSession::sessionStarted, qApp,
                          [resolver, session]() { resolver->begin(session->launchKey()); });
     }

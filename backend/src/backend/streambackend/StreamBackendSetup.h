@@ -48,7 +48,6 @@ using PairingCommit = std::function<void(const QString& uuid, const QByteArray& 
 
 /// Registers every known type. Safe to call once per process; the registry
 /// keeps the last registration for a type.
-void registerAll(NvHTTP* http, QNetworkAccessManager* nam, HostLookup lookup,
-                 PairingCommit commit);
+void registerAll(NvHTTP* http, QNetworkAccessManager* nam, HostLookup lookup, PairingCommit commit);
 
 } // namespace StreamBackendSetup

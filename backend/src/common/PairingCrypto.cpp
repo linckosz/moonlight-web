@@ -163,7 +163,8 @@ QByteArray generatePrivateKeyPem()
 
     BioPtr bio(BIO_new(BIO_s_mem()));
     if (!bio) return {};
-    if (PEM_write_bio_PrivateKey(bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr) != 1) {
+    if (PEM_write_bio_PrivateKey(bio.get(), key.get(), nullptr, nullptr, 0, nullptr, nullptr) !=
+        1) {
         return {};
     }
 
@@ -205,7 +206,8 @@ QByteArray buildSignedMessage(const QVector<QByteArray>& fields)
 {
     QByteArray out;
     int total = 0;
-    for (const QByteArray& f : fields) total += 4 + f.size();
+    for (const QByteArray& f : fields)
+        total += 4 + f.size();
     out.reserve(total);
 
     for (const QByteArray& f : fields) {

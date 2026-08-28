@@ -194,29 +194,29 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
                                                 std::move(respond));
         });
 
-    server.router()->delAsync(
-        "/api/hosts/:id/seats/:seatId",
-        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-            QString uuid = req.pathParams.value("id");
-            QString seatId = req.pathParams.value("seatId");
-            if (uuid.isEmpty() || seatId.isEmpty()) {
-                respond(HttpResponse::error(400, "Missing host or seat ID"));
-                return;
-            }
-            computerManager.handleTeardownSeat(uuid, seatId, std::move(respond));
-        });
+    server.router()->delAsync("/api/hosts/:id/seats/:seatId",
+                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+                                  QString uuid = req.pathParams.value("id");
+                                  QString seatId = req.pathParams.value("seatId");
+                                  if (uuid.isEmpty() || seatId.isEmpty()) {
+                                      respond(HttpResponse::error(400, "Missing host or seat ID"));
+                                      return;
+                                  }
+                                  computerManager.handleTeardownSeat(uuid, seatId,
+                                                                     std::move(respond));
+                              });
 
-    server.router()->delAsync(
-        "/api/hosts/:id/seats/:seatId/owner",
-        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-            QString uuid = req.pathParams.value("id");
-            QString seatId = req.pathParams.value("seatId");
-            if (uuid.isEmpty() || seatId.isEmpty()) {
-                respond(HttpResponse::error(400, "Missing host or seat ID"));
-                return;
-            }
-            computerManager.handleReleaseSeatOwner(uuid, seatId, std::move(respond));
-        });
+    server.router()->delAsync("/api/hosts/:id/seats/:seatId/owner",
+                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
+                                  QString uuid = req.pathParams.value("id");
+                                  QString seatId = req.pathParams.value("seatId");
+                                  if (uuid.isEmpty() || seatId.isEmpty()) {
+                                      respond(HttpResponse::error(400, "Missing host or seat ID"));
+                                      return;
+                                  }
+                                  computerManager.handleReleaseSeatOwner(uuid, seatId,
+                                                                         std::move(respond));
+                              });
 
     server.router()->getAsync("/api/hosts/:id/profiles",
                               [&computerManager](const HttpRequest& req, ResponseCallback respond) {
@@ -248,19 +248,18 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
     });
 
     // Phase 4: App list (async — fetches from Sunshine via HTTPS)
-    server.router()->getAsync("/api/hosts/:id/apps",
-                              [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-                                  QString uuid = req.pathParams.value("id");
-                                  if (uuid.isEmpty()) {
-                                      respond(HttpResponse::error(400, "Missing host ID"));
-                                      return;
-                                  }
-                                  // Same field the browser already sends on /start, so one identity
-                                  // follows a user through the whole flow.
-                                  computerManager.handleGetAppList(
-                                      uuid, req.queryParams.value("client_uniqueid"),
-                                      std::move(respond));
-                              });
+    server.router()->getAsync("/api/hosts/:id/apps", [&computerManager](const HttpRequest& req,
+                                                                        ResponseCallback respond) {
+        QString uuid = req.pathParams.value("id");
+        if (uuid.isEmpty()) {
+            respond(HttpResponse::error(400, "Missing host ID"));
+            return;
+        }
+        // Same field the browser already sends on /start, so one identity
+        // follows a user through the whole flow.
+        computerManager.handleGetAppList(uuid, req.queryParams.value("client_uniqueid"),
+                                         std::move(respond));
+    });
 
     // Phase 4: App asset proxy — PNG (async, fetches on demand if not cached)
     server.router()->getAsync(

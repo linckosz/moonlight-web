@@ -32,12 +32,12 @@
 namespace {
 
 // Envelope types on the line. Must match hub.go.
-const char* const kMsgOpen  = "open";
-const char* const kMsgMsg   = "msg";
+const char* const kMsgOpen = "open";
+const char* const kMsgMsg = "msg";
 const char* const kMsgClose = "close";
 
 // Error codes from the server's 409s. Must match main.go.
-const char* const kErrIdTaken       = "id_taken";
+const char* const kErrIdTaken = "id_taken";
 const char* const kErrOwnerHasOther = "owner_has_other";
 
 // Our own ping cadence. The server pings too (Qt answers those by itself), but
@@ -53,7 +53,7 @@ constexpr int kPongTimeoutMs = 20 * 1000;
 // Backoff bounds. Capped so a machine left running overnight still recovers
 // promptly once the server returns.
 constexpr int kRetryBaseMs = 2 * 1000;
-constexpr int kRetryMaxMs  = 60 * 1000;
+constexpr int kRetryMaxMs = 60 * 1000;
 
 // Redraws allowed per process. See the header.
 constexpr int kMaxIdentityRedraws = 2;
@@ -91,8 +91,10 @@ RendezvousClient::RendezvousClient(AppSettings* settings, QObject* parent)
 
     connect(&m_RetryTimer, &QTimer::timeout, this, [this]() {
         if (!m_Running) return;
-        if (m_Settings->rendezvousClaimed()) openLine();
-        else claim();
+        if (m_Settings->rendezvousClaimed())
+            openLine();
+        else
+            claim();
     });
     connect(&m_KeepAliveTimer, &QTimer::timeout, this, &RendezvousClient::onKeepAlive);
     connect(&m_Watchdog, &QTimer::timeout, this, &RendezvousClient::onWatchdog);
@@ -115,7 +117,8 @@ QString RendezvousClient::baseUrl()
 {
     QString url = QString::fromUtf8(qgetenv("MW_RENDEZVOUS_URL"));
     if (!url.isEmpty()) {
-        while (url.endsWith(QLatin1Char('/'))) url.chop(1);
+        while (url.endsWith(QLatin1Char('/')))
+            url.chop(1);
         return url;
     }
     QString domain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
@@ -141,8 +144,10 @@ void RendezvousClient::start()
     m_RetryCount = 0;
 
     ensureIdentity();
-    if (m_Settings->rendezvousClaimed()) openLine();
-    else claim();
+    if (m_Settings->rendezvousClaimed())
+        openLine();
+    else
+        claim();
 }
 
 void RendezvousClient::stop()
@@ -201,8 +206,7 @@ void RendezvousClient::claim()
         m_Claiming = false;
         if (!m_Running) return;
 
-        const int status =
-            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray payload = reply->readAll();
         const QJsonObject answer = QJsonDocument::fromJson(payload).object();
 
@@ -210,7 +214,7 @@ void RendezvousClient::claim()
             m_Settings->setRendezvousClaimed(true);
             m_RetryCount = 0;
             qInfo() << "[RDV] identifier claimed"
-                       << (answer.value("claimed").toBool() ? "(new)" : "(already ours)");
+                    << (answer.value("claimed").toBool() ? "(new)" : "(already ours)");
             emit identityChanged(id);
             openLine();
             return;
@@ -231,8 +235,8 @@ void RendezvousClient::claim()
                 scheduleRetry("redraw after conflict");
                 return;
             }
-            qCritical() << "[RDV] identifier conflict persists after"
-                        << kMaxIdentityRedraws << "redraws — giving up until restart";
+            qCritical() << "[RDV] identifier conflict persists after" << kMaxIdentityRedraws
+                        << "redraws — giving up until restart";
             return;
         }
 
@@ -264,8 +268,8 @@ void RendezvousClient::claim()
 
         // Everything else — no network, server down, 5xx — is transient by
         // assumption. There is no state to repair locally, only a wait.
-        qWarning() << "[RDV] claim failed:" << (status ? QString::number(status)
-                                                       : reply->errorString());
+        qWarning() << "[RDV] claim failed:"
+                   << (status ? QString::number(status) : reply->errorString());
         scheduleRetry("claim failed");
     });
 }

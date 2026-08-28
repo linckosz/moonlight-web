@@ -50,8 +50,7 @@ BackendError toBackendError(const MultiSeatApiError& err)
     case MultiSeatApiError::Protocol:
         return BackendError::make(BackendError::Protocol, err.message, err.httpStatus);
     case MultiSeatApiError::None:
-    default:
-        return BackendError{};
+    default: return BackendError{};
     }
 }
 
@@ -87,8 +86,7 @@ MultiSeatBackend::MultiSeatBackend(QString hostUuid, HostResolver resolver, NvHT
     , m_SeatHttp(http)
     , m_Nam(nam)
     , m_PinPusher(new SunshineRestClient(this))
-{
-}
+{}
 
 MultiSeatBackend::~MultiSeatBackend() = default;
 
@@ -163,11 +161,11 @@ void MultiSeatBackend::pairSeat(const MultiSeatSeat& seat, const QString& addres
 
             // Unlike Sunshine, nobody is typing here: a refused PIN means the
             // credentials are wrong, not that a human is slow.
-            cb(false, BackendError::make(
-                          BackendError::NotPaired,
-                          QStringLiteral("Could not pair seat %1. Check the seat admin "
-                                         "credentials, which are what authorise the PIN.")
-                              .arg(accountName)));
+            cb(false,
+               BackendError::make(BackendError::NotPaired,
+                                  QStringLiteral("Could not pair seat %1. Check the seat admin "
+                                                 "credentials, which are what authorise the PIN.")
+                                      .arg(accountName)));
         });
 }
 
@@ -239,14 +237,14 @@ void MultiSeatBackend::ensurePaired(BackendVoidCallback cb)
     // Nothing to pair: the control API authenticates with a key. Prove the key
     // is accepted, which is the only thing an admin can get wrong at setup —
     // and the one failure worth reporting differently from "host is down".
-    m_Api->listSeats([cb = std::move(cb)](bool ok, const MultiSeatApiError& err,
-                                          const QVector<MultiSeatSeat>&) {
-        if (!ok) {
-            cb(false, toBackendError(err));
-            return;
-        }
-        cb(true, BackendError{});
-    });
+    m_Api->listSeats(
+        [cb = std::move(cb)](bool ok, const MultiSeatApiError& err, const QVector<MultiSeatSeat>&) {
+            if (!ok) {
+                cb(false, toBackendError(err));
+                return;
+            }
+            cb(true, BackendError{});
+        });
 }
 
 void MultiSeatBackend::listSeats(BackendSeatListCallback cb)
@@ -282,9 +280,9 @@ void MultiSeatBackend::listSeats(BackendSeatListCallback cb)
             // offer a dead Apollo as if it were ready.
             if (!seat.isUsable()) {
                 if (!seat.errorMessage.isEmpty()) {
-                    Logger::info(QStringLiteral("MultiSeat: seat %1 unusable at step %2 — %3")
-                                     .arg(seat.accountName, seat.provisioningStep,
-                                          seat.errorMessage));
+                    Logger::info(
+                        QStringLiteral("MultiSeat: seat %1 unusable at step %2 — %3")
+                            .arg(seat.accountName, seat.provisioningStep, seat.errorMessage));
                 }
                 continue;
             }
@@ -359,7 +357,8 @@ void MultiSeatBackend::claimOwnership(const QString& deviceSessionId, const QStr
 {
     if (deviceSessionId.isEmpty()) return;
     QSettings().setValue(ownershipKey(deviceSessionId), seatId);
-    Logger::info(QStringLiteral("MultiSeat: seat %1 now belongs to %2").arg(seatId, deviceSessionId));
+    Logger::info(
+        QStringLiteral("MultiSeat: seat %1 now belongs to %2").arg(seatId, deviceSessionId));
 }
 
 void MultiSeatBackend::releaseOwnership(const QString& deviceSessionId)
@@ -427,14 +426,14 @@ void MultiSeatBackend::resume(const QString& seatId, const LaunchRequest& req,
 void MultiSeatBackend::quit(const QString& seatId, const QString& clientUniqueId,
                             BackendVoidCallback cb)
 {
-    withSeatBackend(seatId, [seatId, clientUniqueId, cb](GameStreamBackend* backend,
-                                                         const BackendError& err) {
-        if (!backend) {
-            cb(false, err);
-            return;
-        }
-        backend->quit(seatId, clientUniqueId, cb);
-    });
+    withSeatBackend(
+        seatId, [seatId, clientUniqueId, cb](GameStreamBackend* backend, const BackendError& err) {
+            if (!backend) {
+                cb(false, err);
+                return;
+            }
+            backend->quit(seatId, clientUniqueId, cb);
+        });
 }
 
 void MultiSeatBackend::provisionSeat(const QJsonObject& params, BackendSeatCallback cb)
@@ -498,7 +497,8 @@ void MultiSeatBackend::releaseSeatOwner(const QString& seatId, BackendVoidCallba
         return;
     }
 
-    Logger::info(QStringLiteral("MultiSeat: seat %1 released, it can be claimed again").arg(seatId));
+    Logger::info(
+        QStringLiteral("MultiSeat: seat %1 released, it can be claimed again").arg(seatId));
     cb(true, BackendError{});
 }
 
@@ -544,9 +544,9 @@ void MultiSeatBackend::restartService(BackendVoidCallback cb)
 
 void MultiSeatBackend::teardownSeat(const QString& seatId, BackendVoidCallback cb)
 {
-    m_Api->teardownSeat(seatId, [this, seatId, cb = std::move(cb)](bool ok,
-                                                                  const MultiSeatApiError& err) {
-        if (ok) releaseSeat(seatId);
-        cb(ok, toBackendError(err));
-    });
+    m_Api->teardownSeat(seatId,
+                        [this, seatId, cb = std::move(cb)](bool ok, const MultiSeatApiError& err) {
+                            if (ok) releaseSeat(seatId);
+                            cb(ok, toBackendError(err));
+                        });
 }

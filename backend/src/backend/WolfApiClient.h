@@ -100,14 +100,14 @@ struct WolfApiError
 };
 
 using WolfVoidCallback = std::function<void(bool ok, const WolfApiError& error)>;
-using WolfPendingPairsCallback =
-    std::function<void(bool ok, const WolfApiError& error, const QVector<WolfPendingPair>& pending)>;
-using WolfPairedClientsCallback =
-    std::function<void(bool ok, const WolfApiError& error, const QVector<WolfPairedClient>& clients)>;
+using WolfPendingPairsCallback = std::function<void(bool ok, const WolfApiError& error,
+                                                    const QVector<WolfPendingPair>& pending)>;
+using WolfPairedClientsCallback = std::function<void(bool ok, const WolfApiError& error,
+                                                     const QVector<WolfPairedClient>& clients)>;
 using WolfJsonArrayCallback =
     std::function<void(bool ok, const WolfApiError& error, const QJsonArray& items)>;
-using WolfSessionsCallback =
-    std::function<void(bool ok, const WolfApiError& error, const QVector<WolfStreamSession>& sessions)>;
+using WolfSessionsCallback = std::function<void(bool ok, const WolfApiError& error,
+                                                const QVector<WolfStreamSession>& sessions)>;
 using WolfLobbiesCallback =
     std::function<void(bool ok, const WolfApiError& error, const QVector<WolfLobby>& lobbies)>;
 
@@ -205,8 +205,7 @@ public:
     /// Not needed to end a stream: stopSession() takes the session out of its
     /// lobby too (lobbies.cpp routes StopStreamEvent to the same handler). This
     /// is for going back to one's own Wolf UI *while staying connected*.
-    void leaveLobby(const QString& lobbyId, const QString& moonlightSessionId,
-                    WolfVoidCallback cb);
+    void leaveLobby(const QString& lobbyId, const QString& moonlightSessionId, WolfVoidCallback cb);
 
     /// POST /api/v1/lobbies/stop {lobby_id, pin?} — tears the lobby down, ejecting
     /// every connected session.
@@ -246,8 +245,8 @@ public:
     static QVector<WolfLobby> parseLobbies(const QJsonDocument& doc);
 
 private:
-    void get(const QString& path, std::function<void(bool, const WolfApiError&,
-                                                     const QJsonDocument&)> cb);
+    void get(const QString& path,
+             std::function<void(bool, const WolfApiError&, const QJsonDocument&)> cb);
     void post(const QString& path, const QJsonObject& body,
               std::function<void(bool, const WolfApiError&, const QJsonDocument&)> cb);
 

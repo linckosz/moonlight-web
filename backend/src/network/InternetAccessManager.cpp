@@ -171,8 +171,8 @@ void InternetAccessManager::start()
     // Step 1: Ensure identifiers exist (already done eagerly at startup,
     // but called again here in case setUniqueId was changed via API).
     ensureIdentifiers();
-    qInfo() << "[InternetAccess] Step 1 OK — domain:" << m_Domain
-            << "legacy:" << m_LegacyDns << "custom:" << m_CustomDomain;
+    qInfo() << "[InternetAccess] Step 1 OK — domain:" << m_Domain << "legacy:" << m_LegacyDns
+            << "custom:" << m_CustomDomain;
 
     // Consent gate. A consent record without a version was obtained for the
     // retired DNS mechanism ("create an A record pointing at your IP") — it

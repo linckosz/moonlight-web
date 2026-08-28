@@ -307,7 +307,8 @@ QNetworkReply* NvHTTP::resumeAppAsync(const NvAddress& address, quint16 httpsPor
     qDebug() << "[NvHTTP] resumeApp URL:" << url.toString();
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(timeoutMs > 0 ? timeoutMs : LAUNCH_TIMEOUT_MS); // resume blocks like launch
+    req.setTransferTimeout(timeoutMs > 0 ? timeoutMs
+                                         : LAUNCH_TIMEOUT_MS); // resume blocks like launch
     req.setRawHeader("User-Agent", "MoonlightWeb/0.1");
 
     QSslConfiguration sslConfig = req.sslConfiguration();

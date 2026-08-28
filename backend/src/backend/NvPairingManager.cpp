@@ -109,8 +109,8 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
     url.setPort(scheme == "https" ? m_HttpsPort : m_HttpPort);
     url.setPath("/" + command);
 
-    QString query = "uniqueid=" + m_UniqueId +
-                    "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString query =
+        "uniqueid=" + m_UniqueId + "&uuid=" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     if (!arguments.isEmpty()) query += "&" + arguments;
     url.setQuery(query);
 

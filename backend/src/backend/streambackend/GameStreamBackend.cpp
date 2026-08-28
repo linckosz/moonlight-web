@@ -63,8 +63,7 @@ GameStreamBackend::GameStreamBackend(QString hostUuid, HostResolver resolver, Nv
     , m_ResolveHost(std::move(resolver))
     , m_Http(http)
     , m_Nam(nam)
-{
-}
+{}
 
 NvComputer* GameStreamBackend::requireReadyHost(BackendError& err) const
 {
@@ -132,7 +131,8 @@ void GameStreamBackend::allocateSeat(const QString& deviceSessionId, BackendSeat
     // no notion of per-user isolation. Multi-seat backends override this.
     Q_UNUSED(deviceSessionId);
 
-    listSeats([cb = std::move(cb)](bool ok, const BackendError& err, const QVector<SeatRef>& seats) {
+    listSeats([cb = std::move(cb)](bool ok, const BackendError& err,
+                                   const QVector<SeatRef>& seats) {
         if (!ok || seats.isEmpty()) {
             cb(false,
                ok ? BackendError::make(BackendError::NotFound, QStringLiteral("No seat available"))
@@ -177,10 +177,10 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
     };
 
     QTimer::singleShot(NvHTTP::REQUEST_TIMEOUT_MS + 2000, reply, [answer]() {
-        answer(false,
-               BackendError::make(BackendError::Timeout,
-                                  QStringLiteral("App list request timed out")),
-               {});
+        answer(
+            false,
+            BackendError::make(BackendError::Timeout, QStringLiteral("App list request timed out")),
+            {});
     });
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, answer]() {
@@ -197,10 +197,10 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
             // caller owns both the host-state bookkeeping and the user-facing
             // wording.
             if (httpStatus == 401) {
-                answer(false,
-                       BackendError::make(BackendError::NotPaired, reply->errorString(),
-                                          httpStatus),
-                       {});
+                answer(
+                    false,
+                    BackendError::make(BackendError::NotPaired, reply->errorString(), httpStatus),
+                    {});
             } else {
                 answer(false,
                        BackendError::make(transportErrorKind(reply->error()), reply->errorString(),
@@ -216,10 +216,10 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
         try {
             NvHTTP::verifyResponseStatus(xml);
         } catch (const std::exception& e) {
-            answer(false,
-                   BackendError::make(BackendError::Protocol, QString::fromUtf8(e.what()),
-                                      httpStatus),
-                   {});
+            answer(
+                false,
+                BackendError::make(BackendError::Protocol, QString::fromUtf8(e.what()), httpStatus),
+                {});
             reply->deleteLater();
             return;
         }
@@ -242,8 +242,7 @@ void GameStreamBackend::launch(const QString& seatId, const LaunchRequest& req,
     }
 
     IdentityManager* im = IdentityManager::get();
-    const QString uniqueId =
-        req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
+    const QString uniqueId = req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
     // Empty seat = the default identity, so a plain host is dialled exactly as
     // before and no browser has to pair again.
     const ClientIdentity identity = im->identityForSeat(req.clientIdentitySeat);
@@ -269,8 +268,7 @@ void GameStreamBackend::resume(const QString& seatId, const LaunchRequest& req,
     }
 
     IdentityManager* im = IdentityManager::get();
-    const QString uniqueId =
-        req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
+    const QString uniqueId = req.clientUniqueId.isEmpty() ? im->getUniqueId() : req.clientUniqueId;
     // Empty seat = the default identity, so a plain host is dialled exactly as
     // before and no browser has to pair again.
     const ClientIdentity identity = im->identityForSeat(req.clientIdentitySeat);
@@ -297,9 +295,10 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
     // actually given, or the default when the caller named none.
     const int deadlineMs = req.timeoutMs > 0 ? req.timeoutMs : NvHTTP::LAUNCH_TIMEOUT_MS;
     QTimer::singleShot(deadlineMs + 2000, reply, [answer]() {
-        answer(false,
-               BackendError::make(BackendError::Timeout, QStringLiteral("Launch request timed out")),
-               MediaDescriptor{});
+        answer(
+            false,
+            BackendError::make(BackendError::Timeout, QStringLiteral("Launch request timed out")),
+            MediaDescriptor{});
     });
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, req, answer]() {
@@ -328,10 +327,10 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
         try {
             NvHTTP::verifyResponseStatus(xml);
         } catch (const std::exception& e) {
-            answer(false,
-                   BackendError::make(BackendError::Protocol, QString::fromUtf8(e.what()),
-                                      httpStatus),
-                   MediaDescriptor{});
+            answer(
+                false,
+                BackendError::make(BackendError::Protocol, QString::fromUtf8(e.what()), httpStatus),
+                MediaDescriptor{});
             reply->deleteLater();
             return;
         }
@@ -409,10 +408,9 @@ void GameStreamBackend::quit(const QString& seatId, const QString& clientUniqueI
 
     connect(reply, &QNetworkReply::finished, this, [reply, answer]() {
         if (reply->error() != QNetworkReply::NoError) {
-            answer(false,
-                   BackendError::make(
-                       transportErrorKind(reply->error()), reply->errorString(),
-                       reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()));
+            answer(false, BackendError::make(
+                              transportErrorKind(reply->error()), reply->errorString(),
+                              reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()));
         } else {
             answer(true, BackendError{});
         }

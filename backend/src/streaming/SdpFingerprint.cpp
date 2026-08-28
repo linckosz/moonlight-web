@@ -56,8 +56,8 @@ QString extract(const QString& sdp)
 
     // SDP lines are CRLF-terminated by the RFC but LF-only in practice; split on
     // both rather than trusting either.
-    const QStringList lines = sdp.split(QRegularExpression(QStringLiteral("[\r\n]+")),
-                                        Qt::SkipEmptyParts);
+    const QStringList lines =
+        sdp.split(QRegularExpression(QStringLiteral("[\r\n]+")), Qt::SkipEmptyParts);
 
     for (const QString& rawLine : lines) {
         const QString line = rawLine.trimmed();

@@ -71,12 +71,12 @@ struct LaunchRequest
 // keys a session by client certificate.
 struct SeatRef
 {
-    QString id;             // stable, backend-scoped
-    QString name;           // shown to the user
+    QString id;   // stable, backend-scoped
+    QString name; // shown to the user
     QString address;
     quint16 httpPort = 0;
     quint16 httpsPort = 0;
-    bool busy = false;      // already streaming
+    bool busy = false; // already streaming
 };
 
 // What a backend can do beyond the baseline. The frontend keys UI off these:
@@ -84,9 +84,9 @@ struct SeatRef
 // and nothing extra is rendered.
 struct BackendCapabilities
 {
-    bool multiUser = false;     // independent concurrent seats/sessions
-    bool provisioning = false;  // seats can be created/destroyed on demand
-    bool lobbies = false;       // native co-op (Wolf) — otherwise ShareManager
+    bool multiUser = false;    // independent concurrent seats/sessions
+    bool provisioning = false; // seats can be created/destroyed on demand
+    bool lobbies = false;      // native co-op (Wolf) — otherwise ShareManager
     // The control API can bounce the host's streaming service on its own. Only
     // true where that costs no new credential: MoonlightWeb refuses to hold a
     // Sunshine web-UI password, so a plain GameStream host — whose only restart
@@ -100,20 +100,21 @@ struct BackendCapabilities
 // as a generic 502).
 struct BackendError
 {
-    enum Kind {
+    enum Kind
+    {
         None,
-        NotFound,     // no such host/seat/app
-        NotPaired,    // upstream rejected our client cert
-        NoAddress,    // nothing to dial (host known, but no usable address)
-        Unreachable,  // transport failure while dialing
+        NotFound,    // no such host/seat/app
+        NotPaired,   // upstream rejected our client cert
+        NoAddress,   // nothing to dial (host known, but no usable address)
+        Unreachable, // transport failure while dialing
         Timeout,
-        Protocol,     // reached it, but the answer made no sense
-        Unsupported,  // capability the backend doesn't have
+        Protocol,    // reached it, but the answer made no sense
+        Unsupported, // capability the backend doesn't have
     };
 
     Kind kind = None;
-    int httpStatus = 0;  // upstream status when there was one, else 0
-    QString message;     // user-facing
+    int httpStatus = 0; // upstream status when there was one, else 0
+    QString message;    // user-facing
 
     static BackendError make(Kind k, const QString& msg, int status = 0)
     {
@@ -268,8 +269,7 @@ public:
     virtual void endCoopSession(const QString& sessionId, BackendVoidCallback cb)
     {
         Q_UNUSED(sessionId);
-        cb(false,
-           BackendError::make(BackendError::Unsupported,
-                              QStringLiteral("This backend has no co-op sessions")));
+        cb(false, BackendError::make(BackendError::Unsupported,
+                                     QStringLiteral("This backend has no co-op sessions")));
     }
 };

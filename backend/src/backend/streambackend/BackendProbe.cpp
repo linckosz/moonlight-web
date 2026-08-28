@@ -131,14 +131,13 @@ void probeMultiSeat(QNetworkAccessManager* nam, const QString& address,
 
     QObject::connect(reply, &QNetworkReply::finished, reply, [reply, cb]() {
         reply->deleteLater();
-        const bool ok = reply->error() == QNetworkReply::NoError &&
-                        looksLikeMultiSeatAuth(reply->readAll());
+        const bool ok =
+            reply->error() == QNetworkReply::NoError && looksLikeMultiSeatAuth(reply->readAll());
         if (cb) cb(ok);
     });
 }
 
-SunshineRest classifySunshineRest(Reach reach, int httpStatus,
-                                  const QByteArray& wwwAuthenticate)
+SunshineRest classifySunshineRest(Reach reach, int httpStatus, const QByteArray& wwwAuthenticate)
 {
     // Actively refused: something is up at that address and nothing is listening
     // on that port. That is a definite answer, and it is the one a host without
@@ -221,8 +220,8 @@ void probeSunshineRest(const QString& address, quint16 httpPort,
         // Minimal and complete: HTTP/1.1 needs a Host header, and Connection:
         // close stops us holding open a server that handles one client at a time.
         const QByteArray crlf = "\r\n";
-        const QByteArray req = "GET /api/apps HTTP/1.1" + crlf + "Host: " + address.toUtf8() +
-                               ':' + QByteArray::number(port) + crlf + "Connection: close" + crlf +
+        const QByteArray req = "GET /api/apps HTTP/1.1" + crlf + "Host: " + address.toUtf8() + ':' +
+                               QByteArray::number(port) + crlf + "Connection: close" + crlf +
                                "User-Agent: MoonlightWeb" + crlf + crlf;
         sock->write(req);
     });
@@ -262,7 +261,7 @@ void probeSunshineRest(const QString& address, quint16 httpPort,
                          // else (timeout, unreachable, a handshake that failed for
                          // its own reasons) leaves the question open.
                          settle(err == QAbstractSocket::ConnectionRefusedError ? Reach::Refused
-                                                                              : Reach::NoAnswer,
+                                                                               : Reach::NoAnswer,
                                 0, QByteArray());
                      });
 

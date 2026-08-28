@@ -211,13 +211,12 @@ int StreamSession::launchTimeoutMs()
     // /launch that has not already retried and has not fallen back to /resume.
     // While it is still possible, keep its share of the budget back; once it is
     // gone this attempt may spend everything that is left.
-    const bool retryAvailable =
-        m_LaunchAttempted && !m_ResumeAttempted && !m_LaunchTimeoutRetried;
-    const qint64 left = kLaunchBudgetMs - m_LaunchBudget.elapsed() -
-                        (retryAvailable ? kLaunchRetryReserveMs : 0);
+    const bool retryAvailable = m_LaunchAttempted && !m_ResumeAttempted && !m_LaunchTimeoutRetried;
+    const qint64 left =
+        kLaunchBudgetMs - m_LaunchBudget.elapsed() - (retryAvailable ? kLaunchRetryReserveMs : 0);
 
-    return static_cast<int>(qBound<qint64>(qint64{kLaunchMinTimeoutMs}, left,
-                                          qint64{NvHTTP::LAUNCH_TIMEOUT_MS}));
+    return static_cast<int>(
+        qBound<qint64>(qint64{kLaunchMinTimeoutMs}, left, qint64{NvHTTP::LAUNCH_TIMEOUT_MS}));
 }
 
 void StreamSession::doResumeApp()
@@ -380,9 +379,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // browser's own /start deadline is worse than no retry, because the
         // browser relaunches on top of it and both workers then wait on the
         // same unresponsive host.
-        const bool budgetLeft =
-            m_LaunchBudget.isValid() &&
-            (kLaunchBudgetMs - m_LaunchBudget.elapsed()) >= kLaunchMinTimeoutMs;
+        const bool budgetLeft = m_LaunchBudget.isValid() &&
+                                (kLaunchBudgetMs - m_LaunchBudget.elapsed()) >= kLaunchMinTimeoutMs;
         if (err.kind == BackendError::Timeout && m_LaunchAttempted && !m_ResumeAttempted &&
             !m_LaunchTimeoutRetried && budgetLeft) {
             m_LaunchTimeoutRetried = true;
@@ -390,10 +388,9 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
                           "/launch once ("
                        << (kLaunchBudgetMs - m_LaunchBudget.elapsed()) << "ms of budget left)";
             QPointer<StreamSession> self(this);
-            m_Backend->quit(m_Host->uuid, effectiveUniqueId(),
-                            [self](bool, const BackendError&) {
-                                if (self) self->doLaunchApp();
-                            });
+            m_Backend->quit(m_Host->uuid, effectiveUniqueId(), [self](bool, const BackendError&) {
+                if (self) self->doLaunchApp();
+            });
             return;
         }
 
@@ -455,14 +452,12 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
 #endif
             m_Respond(HttpResponse::json(errObj, 503));
         } else if (err.kind == BackendError::Protocol) {
-            m_Respond(
-                HttpResponse::error(502, QString("Launch error: %1").arg(err.message)));
+            m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(err.message)));
         } else {
-            m_Respond(HttpResponse::error(
-                502, QString("Launch failed: %1 (target: %2:%3)")
-                         .arg(err.message)
-                         .arg(m_Host->activeAddress.address())
-                         .arg(m_Host->activeHttpsPort)));
+            m_Respond(HttpResponse::error(502, QString("Launch failed: %1 (target: %2:%3)")
+                                                   .arg(err.message)
+                                                   .arg(m_Host->activeAddress.address())
+                                                   .arg(m_Host->activeHttpsPort)));
         }
 
         emit sessionFailed(err.message);
@@ -484,7 +479,6 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // Session is now live on the host for this uniqueid: remember it so a later
     // reconnect (reload) resumes instead of relaunching. Cleared in quit().
     s_ActiveUniqueIds.insert(effectiveUniqueId());
-
 
     // ── Media engine selection ───────────────────────────────────────────────
     // The single place a transport is chosen. Adding one (punktfunk's QUIC

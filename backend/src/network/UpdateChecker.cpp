@@ -225,7 +225,8 @@ void UpdateChecker::fetchFrom(const QString& url, bool viaRelay)
         const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
         if (!doc.isObject()) {
             if (viaRelay) {
-                Logger::info(QStringLiteral("[Update] relay sent an unusable body — asking GitHub"));
+                Logger::info(
+                    QStringLiteral("[Update] relay sent an unusable body — asking GitHub"));
                 done.dismiss();
                 fetchFrom(QString::fromLatin1(kReleasesApi), false);
                 return;

@@ -25,9 +25,10 @@
 
 CoopSessionResolver::CoopSessionResolver(std::shared_ptr<IStreamBackend> backend,
                                          SessionIdReporter report, QObject* parent)
-    : QObject(parent), m_Backend(std::move(backend)), m_Report(std::move(report))
-{
-}
+    : QObject(parent)
+    , m_Backend(std::move(backend))
+    , m_Report(std::move(report))
+{}
 
 void CoopSessionResolver::begin(const QByteArray& launchKey)
 {
@@ -43,33 +44,33 @@ void CoopSessionResolver::begin(const QByteArray& launchKey)
 void CoopSessionResolver::attempt()
 {
     QPointer<CoopSessionResolver> self(this);
-    m_Backend->resolveCoopSessionId(
-        m_LaunchKey, [self](bool ok, const BackendError& err, const QString& sessionId) {
-            if (!self) return;
+    m_Backend->resolveCoopSessionId(m_LaunchKey, [self](bool ok, const BackendError& err,
+                                                        const QString& sessionId) {
+        if (!self) return;
 
-            // Landed: report once and stop. A stable answer never changes for the
-            // life of the stream, so there is nothing to keep polling for.
-            if (ok && !sessionId.isEmpty()) {
-                if (self->m_Report) self->m_Report(sessionId);
-                return;
-            }
+        // Landed: report once and stop. A stable answer never changes for the
+        // life of the stream, so there is nothing to keep polling for.
+        if (ok && !sessionId.isEmpty()) {
+            if (self->m_Report) self->m_Report(sessionId);
+            return;
+        }
 
-            // A failed call and an empty answer are both "not yet": the session
-            // may still be registering, or the request was dropped in the proxy.
-            // Keep trying on a cadence — a single miss is exactly what used to
-            // leave the session unreaped — until it lands or the budget runs out.
-            if (++self->m_Attempts >= kMaxAttempts) {
-                if (!ok)
-                    qWarning() << "[Coop] Gave up asking the host for our session id after"
-                               << self->m_Attempts << "tries; last error:" << err.message;
-                else
-                    qWarning() << "[Coop] No session matched our launch key after"
-                               << self->m_Attempts << "tries — it likely never started, or "
-                                                      "ended before we could see it";
-                return;
-            }
-            QTimer::singleShot(kRetryMs, self, [self]() {
-                if (self) self->attempt();
-            });
+        // A failed call and an empty answer are both "not yet": the session
+        // may still be registering, or the request was dropped in the proxy.
+        // Keep trying on a cadence — a single miss is exactly what used to
+        // leave the session unreaped — until it lands or the budget runs out.
+        if (++self->m_Attempts >= kMaxAttempts) {
+            if (!ok)
+                qWarning() << "[Coop] Gave up asking the host for our session id after"
+                           << self->m_Attempts << "tries; last error:" << err.message;
+            else
+                qWarning() << "[Coop] No session matched our launch key after" << self->m_Attempts
+                           << "tries — it likely never started, or "
+                              "ended before we could see it";
+            return;
+        }
+        QTimer::singleShot(kRetryMs, self, [self]() {
+            if (self) self->attempt();
         });
+    });
 }

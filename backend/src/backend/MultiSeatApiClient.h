@@ -60,17 +60,14 @@ struct MultiSeatSeat
     /// Apollo's GFE ports for this seat, from Constants.cs. Offsets are -5 and
     /// 0; the rest of the block (video, control, audio, mic, RTSP) is Apollo's
     /// own business and never dialled from here.
-    quint16 gfeHttpsPort() const
-    {
-        return portBase > 0 ? static_cast<quint16>(portBase - 5) : 0;
-    }
+    quint16 gfeHttpsPort() const { return portBase > 0 ? static_cast<quint16>(portBase - 5) : 0; }
     quint16 gfeHttpPort() const { return portBase > 0 ? static_cast<quint16>(portBase) : 0; }
 
     /// Only a Ready or Streaming seat has a usable Apollo behind it.
     bool isUsable() const
     {
-        return portBase > 0
-               && (status == QStringLiteral("Ready") || status == QStringLiteral("Streaming"));
+        return portBase > 0 &&
+               (status == QStringLiteral("Ready") || status == QStringLiteral("Streaming"));
     }
 };
 

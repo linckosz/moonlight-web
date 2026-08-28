@@ -161,6 +161,4 @@ private:
     // Kept alive for the whole handshake, like WolfBackend does.
     std::unique_ptr<NvPairingManager> m_Pairing;
     SunshineRestClient* m_PinPusher = nullptr;
-
-
 };
