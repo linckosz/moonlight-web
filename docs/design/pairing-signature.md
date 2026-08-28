@@ -299,6 +299,22 @@ Two details worth knowing before touching this code:
   `ShareManager`, not from a PIN-paired `AuthManager` session, so they hold no
   pairing key and their signaling runs unsigned exactly as before.
 
+  **Amended 2026-08-28, and the amendment narrows this considerably.** A guest is
+  now reached through the rendezvous like everybody else, and their signaling
+  travels *inside* the control tunnel rather than beside it. That tunnel is bound
+  by MW-BIND-v1 with a key held per host identifier
+  (`bootstrap/pairing.js`, trust-on-first-use), so the introduction server sees
+  DTLS frames and never the SDP it would have to substitute. The relay is out of
+  the middle for a guest on that path — which was the whole of why this was
+  listed as a phase-2 *blocker*, and it no longer is.
+
+  What the tunnel's binding proves is that no peer was substituted. It proves
+  nothing about who holds the browser, and it does not make the guest's
+  credential device-bound. That half is still unbuilt, and the one-device cap
+  (`kMaxCookiesPerActivation = 1`) is what stands in for it meanwhile. On the LAN
+  fallback the guest reaches the machine directly and there is no relay to keep
+  out at all.
+
   **Decided 2026-08-22, to be built with phase 2**: a guest's key is bound to
   their *device*, registered at the moment they enter the share PIN — the same
   shape as the owner's pairing, at the same point in the flow. The guest keeps

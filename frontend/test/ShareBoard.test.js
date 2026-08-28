@@ -50,7 +50,7 @@ const slot = (n, over = {}) => ({
     ...over,
 });
 
-const status = (rows) => ({ slots: rows, streaming: 0 });
+const status = (rows, over = {}) => ({ slots: rows, streaming: 0, ...over });
 
 /** The lifetimes the slider walks, in its own order. */
 const TTL = [3600, 4 * 3600, 8 * 3600, 24 * 3600, 48 * 3600, 0];
@@ -64,8 +64,9 @@ describe('ShareBoard', () => {
     const openBoard = async (
         rows,
         ctx = { streaming: true, hostUuid: 'h', hostName: 'DUALRTX' },
+        statusOver = {},
     ) => {
-        BackendClient.getShareStatus.mockResolvedValue(status(rows));
+        BackendClient.getShareStatus.mockResolvedValue(status(rows, statusOver));
         board = new ShareBoard(ctx);
         await board.open();
     };
@@ -359,6 +360,71 @@ describe('ShareBoard', () => {
         expect(idle.querySelector('.share-regen-btn').disabled).toBe(true);
         expect(idle.querySelector('.share-ttl-slider').disabled).toBe(false);
         expect(started.querySelector('.share-copy-btn').disabled).toBe(false);
+    });
+
+    // How far a link reaches. Two causes, and the board must never mix them up:
+    // one is a standing fact the owner has to act on, the other is the weather.
+    describe('says how far the link actually reaches', () => {
+        const detailFor = (n) => document.querySelector(`.share-brow-detail[data-slot="${n}"]`);
+        const reachOf = (n) => detailFor(n).querySelector('.share-reach');
+        const live = () => slot(2, { state: 'shared' });
+
+        // clearAllMocks() clears the calls, not the implementation — a
+        // mockResolvedValue set by one of these tests would otherwise decide
+        // what the next one sees.
+        beforeEach(() => {
+            BackendClient.shareCredentials.mockResolvedValue({
+                available: true,
+                url: 'https://x/p/tok',
+                pin: '482917',
+                local_only: false,
+            });
+        });
+
+        it('says nothing at all when the link reaches the internet', async () => {
+            await openBoard([live(), slot(3), slot(4)], undefined, { remote_reachable: true });
+            expect(reachOf(2)).toBeNull();
+        });
+
+        it('warns when the link cannot leave this network', async () => {
+            BackendClient.shareCredentials.mockResolvedValue({
+                available: true,
+                url: 'https://192.168.1.24:18443/p/tok',
+                pin: '482917',
+                local_only: true,
+            });
+            await openBoard([live(), slot(3), slot(4)], undefined, { remote_reachable: true });
+            expect(reachOf(2).dataset.reach).toBe('lanOnly');
+            expect(reachOf(2).textContent).toContain('sharing.lanOnly');
+        });
+
+        it('says the machine is not answering, without touching the link', async () => {
+            await openBoard([live(), slot(3), slot(4)], undefined, { remote_reachable: false });
+            expect(reachOf(2).dataset.reach).toBe('offline');
+            // The link is good and stays good: an owner who reads this must not
+            // be nudged into regenerating a perfectly valid invitation.
+            expect(detailFor(2).querySelector('.share-link-input').value).toBe('https://x/p/tok');
+        });
+
+        // The confusion this whole block exists to forbid. A LAN-only link is
+        // ALSO unreachable from outside, so both conditions are true at once —
+        // and only the one the owner can act on may be shown.
+        it('never says both at once', async () => {
+            BackendClient.shareCredentials.mockResolvedValue({
+                available: true,
+                url: 'https://192.168.1.24:18443/p/tok',
+                pin: '482917',
+                local_only: true,
+            });
+            await openBoard([live(), slot(3), slot(4)], undefined, { remote_reachable: false });
+            expect(detailFor(2).querySelectorAll('.share-reach')).toHaveLength(1);
+            expect(reachOf(2).dataset.reach).toBe('lanOnly');
+        });
+
+        it('says nothing on a row that was never opened', async () => {
+            await openBoard([slot(2), slot(3), slot(4)], undefined, { remote_reachable: false });
+            expect(reachOf(2)).toBeNull();
+        });
     });
 
     it('keeps the board up when the backdrop is clicked', async () => {

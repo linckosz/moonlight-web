@@ -78,16 +78,31 @@ Owner routes need a normal session (any authenticated user — deliberately not 
 
 | Method & path | Access | Description |
 |---|---|---|
-| `GET /api/share/status` | 🔑 | The three player rows: `{slot, state ∈ off\|shared\|binded, name, permissions, access_level ∈ viewer\|gamer\|desktop\|full, streaming, ttl_secs, expires_at, devices[], last_refused?}` + `streaming` count + `owner_name`. `expires_at` is **null** on an unlimited invitation, never 0. |
-| `POST /api/share/slots/:n/activate` | 🔑 | Mint a link + PIN, revoking the slot's previous pair. Body `{ttl_secs}`, plus `{host_uuid, app_id}` when no stream is running (the board opened cold from a host's ⋯ menu) — **400** for an unlisted lifetime or a missing host, **404** for an unknown host/app. With a stream up, the running host and app win and the body's are ignored. Returns `{url, pin, …}`. |
-| `POST /api/share/slots/:n/credentials` | 🔑 | The same `{url, pin}` again, for an owner reopening the row on a live share. `{available:false}` when the process restarted since — only the digests are persisted. POST, not GET: it hands out a credential, so it goes through the CSRF/origin gate. |
+| `GET /api/share/status` | 🔑 | The three player rows: `{slot, state ∈ off\|shared\|binded, name, permissions, access_level ∈ viewer\|gamer\|desktop\|full, streaming, ttl_secs, expires_at, devices[], last_refused?}` + `streaming` count + `owner_name` + `remote_reachable`. `expires_at` is **null** on an unlimited invitation, never 0. `remote_reachable` is whether the rendezvous line is up **at this instant** — it never changes a link, it only lets the board say the machine is not answering right now. |
+| `POST /api/share/slots/:n/activate` | 🔑 | Mint a link + PIN, revoking the slot's previous pair. Body `{ttl_secs}`, plus `{host_uuid, app_id}` when no stream is running (the board opened cold from a host's ⋯ menu) — **400** for an unlisted lifetime or a missing host, **404** for an unknown host/app. With a stream up, the running host and app win and the body's are ignored. Returns `{url, pin, local_only, …}`. |
+| `POST /api/share/slots/:n/credentials` | 🔑 | The same `{url, pin, local_only}` again, for an owner reopening the row on a live share. `{available:false}` when the process restarted since — only the digests are persisted. POST, not GET: it hands out a credential, so it goes through the CSRF/origin gate. |
+
+**The shape of `url`.** Recomposed on every read, so an invitation minted before an
+address changed hands out the current form without being revoked.
+
+- Reachable: `https://stream.{MW_DOMAIN}/{rendezvous-id}#p=/p&t={token}`. The path
+  names the machine, which the introduction server has to see to route the call.
+  The token rides in the **fragment**, which a browser never sends to the server
+  it fetched the page from, so it never reaches that server in a path, a query or
+  a referrer. The bootstrap carries it across the handover and the guest's page
+  ends up at `/p#{id}&t={token}`.
+- Otherwise: `https://{LAN IPv4}[:port]/p/{token}`, and `local_only` is **true**.
+  Self-signed, same network only. Never loopback — the guest is on another PC.
+
+The public sub-domain is deliberately **not** offered here any more, legacy
+instance or not: a share link lives for weeks in somebody else's chat window, and
+that address stops working in February 2027.
 | `POST /api/share/slots/:n/permissions` | 🔑 | `{gamepad, keyboardMouse}`, accepted **at any time**, mid-stream included — the new policy is pushed down to the live worker. **409** only when the slot has no activation. |
 | `POST /api/share/slots/:n/ttl` | 🔑 | `{ttl_secs}` ∈ 3600 / 14400 / 28800 / 86400 / 172800 / 0 (unlimited). **400** otherwise. Shortening below the time already served expires the invitation on the spot. |
 | `POST /api/share/slots/:n/name` | 🔑 | `{name}` — the row's label, 32 chars, empty restores "Player N". Player slots only: **404** for an owner slot. |
-| `POST /api/share/owner/name` | 🔑 | `{name}` — the owner's own row label. Its own route so nothing that can reach a player's permissions can address the owner's line. |
 | `POST /api/share/slots/:n/deactivate` | 🔑 | Disconnect the player and revoke link, PIN and cookies. |
 | `POST /api/share/player/pin` | 🌐 | `{token, pin}` → sets `mw_player` (HttpOnly, Secure, SameSite=Strict, the invitation's own lease). Rate-limited; 10 failures on one activation destroy it. **409** `already_bound` when the PIN is right but the invitation already has its one device — this does *not* count as a failure, and is surfaced to the owner on the board. |
-| `GET /api/share/player/info?token=` | 🍪 | `{needs_pin:true}` without the cookie; otherwise `{machine_name, state, access_level, expires_at, owner_streaming}`. **404** for a dead link. |
+| `GET /api/share/player/info?token=` | 🍪 | `{needs_pin:true}` without the cookie; otherwise `{machine_name, state, access_level, expires_at, app_name, cold_start}`. `cold_start` says the guest's arrival would *launch* `app_name` rather than join something already up, resolved on the host the invitation is bound to. **404** for a dead link. |
 | `POST /api/share/player/join` | 🍪 | `{token, height ∈ 720\|1080\|1440}` → starts the player's worker and answers like `/api/hosts/:id/start`. Nothing running on the bound host is no longer fatal: an invitation opened cold **launches** the app it names. **409** `stream_in_progress` / `session_ended` / `app_unavailable` (the app was removed from the host since the link was sent). |
 | `POST /api/share/player/leave` | 🍪 | Frees the slot; the invitation stays valid. |
 

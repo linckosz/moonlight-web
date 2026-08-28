@@ -314,7 +314,11 @@ export class PlayerJoinView {
     _renderJoin() {
         const machine = this.info.machine_name || t('player.thisPc');
         const busy = this.info.state === 'streaming';
-        const noSession = this.info.owner_streaming === false;
+        // Nothing up on the bound host is not a dead end: the guest's arrival is
+        // what starts the app the owner picked when they opened the row. Say so,
+        // because pressing Join then wakes a machine nobody is sitting at.
+        const app = this.info.app_name || '';
+        const willLaunch = this.info.cold_start === true;
 
         this._shell(`
             <h1>${escapeHtml(t('player.joinTitle', { machine }))}</h1>
@@ -323,9 +327,14 @@ export class PlayerJoinView {
             ${
                 busy
                     ? `<p class="player-error">${escapeHtml(t('player.busy'))}</p>`
-                    : noSession
-                      ? `<p class="player-error">${escapeHtml(t('player.noSession'))}</p>`
-                      : `
+                    : `
+                ${
+                    willLaunch
+                        ? `<p class="player-hint">${escapeHtml(
+                              app ? t('player.willLaunchApp', { app }) : t('player.willLaunch'),
+                          )}</p>`
+                        : ''
+                }
                 <div class="player-quality" role="group" aria-label="${escapeHtml(t('player.quality'))}">
                     ${HEIGHTS.map(
                         (h) => `
@@ -336,17 +345,16 @@ export class PlayerJoinView {
                 </div>
                 ${this._inputToggles()}
                 <button class="btn btn-open player-join-btn" type="button">
-                    ${escapeHtml(t('player.joinButton'))}
+                    ${escapeHtml(willLaunch ? t('player.launchButton') : t('player.joinButton'))}
                 </button>
             `
             }
             <p class="player-error player-join-error" hidden></p>
             ${
                 // Only worth offering while the guest is waiting on someone
-                // else: the other screen to let go, or the host to start a
-                // game. With a Join button on screen it was a second button
-                // that did nothing they wanted.
-                busy || noSession
+                // else to let go of the screen. With a Join button on screen it
+                // was a second button that did nothing they wanted.
+                busy
                     ? `<button class="btn btn-secondary player-refresh" type="button">${escapeHtml(t('player.checkAgain'))}</button>`
                     : ''
             }

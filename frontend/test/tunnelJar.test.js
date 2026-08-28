@@ -229,4 +229,68 @@ describe('which machine a page talks to', () => {
             expect(tunnelModule.landingPathFromLocation()).toBeNull();
         });
     });
+
+    // And a fourth: the invitation an owner shared. It rides beside the landing
+    // path rather than inside it, so the token never appears in a URL path at
+    // any step — no navigation can carry it to the introduction server, whether
+    // or not a service worker happens to be answering.
+    describe('and the invitation it may carry', () => {
+        const TOKEN = 'KCWUyMuvoh9WO5qmA9PfKc1NTyg0EIu6GkQFZs87f4g';
+
+        it('reads the identifier, the landing page and the token together', () => {
+            at(`/${A}`, `#p=/p&t=${TOKEN}`);
+            expect(tunnelModule.hostIdFromLocation()).toBe(A);
+            expect(tunnelModule.landingPathFromLocation()).toBe('/p');
+            expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+        });
+
+        it('still reads it after the handover moved the identifier', () => {
+            at('/p', `#${A}&t=${TOKEN}`);
+            expect(tunnelModule.hostIdFromLocation()).toBe(A);
+            expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+        });
+
+        // The whole difference from the host key next door. That one is burnt on
+        // use; an invitation IS the guest's page and has to survive every reload
+        // of it, so reading it must not consume it.
+        it('answers the same token however often it is asked', () => {
+            at('/p', `#${A}&t=${TOKEN}`);
+            expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+            expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+            expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+        });
+
+        it('decodes a token that had to be escaped', () => {
+            at('/p', `#${A}&t=${encodeURIComponent(TOKEN)}`);
+            expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+        });
+
+        it('answers null when the fragment carries no invitation', () => {
+            at(`/${A}`, '#p=/admin&k=SEKRIT');
+            expect(tunnelModule.shareTokenFromLocation()).toBeNull();
+            at(`/${A}`);
+            expect(tunnelModule.shareTokenFromLocation()).toBeNull();
+        });
+
+        it('never reads a token out of the query, which the server would have seen', () => {
+            at('/', '');
+            vi.stubGlobal('location', {
+                pathname: '/p',
+                hash: '',
+                search: `?t=${TOKEN}`,
+                origin: 'https://example.test',
+            });
+            expect(tunnelModule.shareTokenFromLocation()).toBeNull();
+        });
+
+        // The value goes back into what is handed to location.replace() at
+        // handover, so it is checked rather than trusted — same discipline as
+        // the landing path.
+        it('refuses anything this machine could not have minted', () => {
+            for (const bad of ['', 'short', `${TOKEN}&k=SEKRIT`, '../../x', 'a'.repeat(129)]) {
+                at('/p', `#${A}&t=${encodeURIComponent(bad)}`);
+                expect(tunnelModule.shareTokenFromLocation()).toBeNull();
+            }
+        });
+    });
 });

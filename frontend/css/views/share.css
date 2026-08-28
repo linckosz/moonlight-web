@@ -461,6 +461,30 @@
     box-shadow: inset 3px 0 0 var(--c-warning);
 }
 
+/* How far this link actually reaches. Two states, deliberately weighted apart.
+ *
+ * "lanOnly" is a fact about the invitation that will not change on its own: it
+ * cannot leave this network, and the owner has to do something about it. It
+ * warns.
+ *
+ * "offline" is a fact about right now. The link is good, it will keep being
+ * good, and it is already in somebody's chat window — so it informs, and it
+ * must not look like something went wrong, or an owner would regenerate a
+ * perfectly valid invitation to make the colour go away. */
+.share-reach {
+    margin: 8px 0 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-3);
+}
+
+.share-reach[data-reach='lanOnly'] {
+    padding: 8px 12px;
+    color: var(--c-warning);
+    background: var(--c-warning-soft);
+    box-shadow: inset 3px 0 0 var(--c-warning);
+}
+
 /* What "desktop" or "full" actually hands over, spelled out.
  *
  * Hidden for now: the badge names the level, and a sentence under every row a
@@ -888,6 +912,12 @@ body.player-mode {
 
 .player-error {
     color: var(--c-danger-text);
+    font-size: 13px;
+}
+
+/* Joining will wake the host: worth a notice, not a warning. */
+.player-hint {
+    color: var(--text-3);
     font-size: 13px;
 }
 

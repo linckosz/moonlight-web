@@ -67,6 +67,7 @@ import {
     startTunnel,
     tunnelHostId,
     takeTunnelHostKey,
+    tunnelShareToken,
     pageCameThroughTunnel,
 } from './net/tunnelBridge.js';
 import { SecuringOverlay } from './ui/SecuringOverlay.js';
@@ -177,11 +178,15 @@ const MoonlightApp = {
         // Block browser zoom on the app UI (allowed only on the stream surfaces).
         this._initZoomGuard();
 
-        // ── Invited player (/p/<token>) ────────────────────────────────────
+        // ── Invited player (/p/<token> or /p) ──────────────────────────────
         // A guest has no account and no host list: their page is the join
         // screen and, after that, the stream. Handled before the auth check,
         // which would otherwise bounce them to a login they cannot pass.
-        if (window.location.pathname.startsWith('/p/')) {
+        //
+        // Two addresses, one page. Reached directly, the token is in the path.
+        // Reached through the introduction server it is not, and cannot be — see
+        // _initPlayerMode.
+        if (window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')) {
             await this._initPlayerMode();
             return;
         }
@@ -331,7 +336,21 @@ const MoonlightApp = {
      * invitation, and that is the guest's only credential.
      */
     async _initPlayerMode() {
-        const token = decodeURIComponent(window.location.pathname.slice('/p/'.length));
+        // The path first, the fragment second — the same order as the host
+        // identifier, and for the same reason: what the address says out loud
+        // beats what was carried across the handover.
+        //
+        // Direct or on the LAN, the invitation is /p/<token> and the token is
+        // right there. Through the introduction server it is not: the path of
+        // that address is spent naming this machine, and the token travels in
+        // the fragment so that server never sees it. The page it lands on is
+        // /p, and the token is beside it.
+        const fromPath = window.location.pathname.startsWith('/p/')
+            ? decodeURIComponent(window.location.pathname.slice('/p/'.length))
+            : '';
+        // Neither: somebody typed /p by hand. PlayerJoinView answers an empty
+        // token with its dead-link screen, which is the honest reply.
+        const token = fromPath || tunnelShareToken() || '';
         const container = document.getElementById('app');
 
         // A guest sees no app chrome at all.

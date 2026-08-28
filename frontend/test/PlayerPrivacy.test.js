@@ -29,7 +29,7 @@ const JOINABLE = {
     state: 'idle',
     access_level: 'full',
     permissions: {},
-    owner_streaming: true,
+    cold_start: false,
 };
 
 describe('PlayerJoinView privacy corner', () => {
