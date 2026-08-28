@@ -3467,7 +3467,12 @@ int main(int argc, char* argv[])
         // to nobody is worse than no address.
         const QString entry = rendezvous.entryUrl();
         if (entry.isEmpty()) return {};
-        return entry + QStringLiteral("#p=/p&t=") +
+        // The token alone. It used to be spelled out as "#p=/p&t=<token>", and
+        // the first half of that said nothing the second half did not: the
+        // guest page is the only page an invitation is ever for, so the
+        // bootstrap infers it. Five characters off something a person pastes
+        // into a message, and one thing in the link instead of two.
+        return entry + QStringLiteral("#t=") +
                QString::fromLatin1(QUrl::toPercentEncoding(token));
     };
     shareDeps.remoteReachable = [&rendezvous]() { return rendezvous.isOnline(); };

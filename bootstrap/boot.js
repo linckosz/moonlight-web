@@ -368,9 +368,10 @@ async function main() {
     // stays in the fragment and survives every reload of that page.
     //
     // The path, freed by that same move, is where the link says which page it
-    // meant. The machine's own tray asks for /admin, an invitation for /p;
-    // everything else asks for nothing and lands at the root, which is what every
-    // link did before this.
+    // meant. The machine's own tray asks for /admin outright; an invitation does
+    // not have to ask, because a token is only ever for the guest page and
+    // landingPathFromLocation() reads that off it. Everything else asks for
+    // nothing and lands at the root, which is what every link did before this.
     const key = hostKeyFromLocation();
     const share = shareTokenFromLocation();
     const landing = landingPathFromLocation() || '/';

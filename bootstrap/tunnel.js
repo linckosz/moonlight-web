@@ -729,6 +729,12 @@ export function hostKeyFromLocation() {
  * One segment, letters, digits, '-' and '_'. That is not fussiness: the value is
  * handed to location.replace(), and "//somewhere.else" is a perfectly valid URL
  * that leaves this origin altogether.
+ *
+ * An invitation needs no such part: it says where it goes by existing. The
+ * guest page is the only page a token is ever for, so a link that carried both
+ * spelled the same fact twice and made the thing a person pastes into a message
+ * longer for it. An explicit request still wins, so an older link that does
+ * carry one keeps working.
  */
 const LANDING_SHAPE = /^\/[A-Za-z0-9_-]{1,32}$/;
 
@@ -739,6 +745,7 @@ export function landingPathFromLocation() {
             if (LANDING_SHAPE.test(path)) return path;
         }
     }
+    if (shareTokenFromLocation()) return '/p';
     return null;
 }
 
@@ -746,13 +753,13 @@ export function landingPathFromLocation() {
  * The invitation token this link carries, or null.
  *
  * An owner shares a slot of their session and the guest arrives here holding
- * this. It rides beside the landing path rather than inside it, and the
- * difference is the whole point: the token never appears in a URL path, at any
- * step, so no navigation can ever carry it to the introduction server. A path
- * would be answered from the cache by the service worker in the ordinary case —
- * but "the ordinary case" is not a property to rest a credential on, and the one
- * time that worker is missing is the one time the token would be in a request
- * line somebody else keeps.
+ * this. It is the whole of what the link carries — the page it opens follows
+ * from it — and it never appears in a URL path, at any step, so no navigation
+ * can ever carry it to the introduction server. A path would be answered from
+ * the cache by the service worker in the ordinary case — but "the ordinary
+ * case" is not a property to rest a credential on, and the one time that worker
+ * is missing is the one time the token would be in a request line somebody else
+ * keeps.
  *
  * Read, not consumed — the opposite of the host key above. That key is spent on
  * redemption and must never be replayed; an invitation is what this page IS, and

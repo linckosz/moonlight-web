@@ -230,18 +230,43 @@ describe('which machine a page talks to', () => {
         });
     });
 
-    // And a fourth: the invitation an owner shared. It rides beside the landing
-    // path rather than inside it, so the token never appears in a URL path at
-    // any step — no navigation can carry it to the introduction server, whether
-    // or not a service worker happens to be answering.
+    // And a fourth: the invitation an owner shared. It never appears in a URL
+    // path at any step — no navigation can carry it to the introduction server,
+    // whether or not a service worker happens to be answering.
     describe('and the invitation it may carry', () => {
         const TOKEN = 'KCWUyMuvoh9WO5qmA9PfKc1NTyg0EIu6GkQFZs87f4g';
 
-        it('reads the identifier, the landing page and the token together', () => {
+        // The shape a machine mints today: the token and nothing else. The page
+        // it opens is not spelled out because it does not vary — a token is only
+        // ever for the guest page — and every character here is one a person has
+        // to paste into a message.
+        it('lands on the guest page on the strength of the token alone', () => {
+            at(`/${A}`, `#t=${TOKEN}`);
+            expect(tunnelModule.hostIdFromLocation()).toBe(A);
+            expect(tunnelModule.landingPathFromLocation()).toBe('/p');
+            expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+        });
+
+        // Links minted before that live for as long as their invitation does.
+        it('still honours a link that spells the page out', () => {
             at(`/${A}`, `#p=/p&t=${TOKEN}`);
             expect(tunnelModule.hostIdFromLocation()).toBe(A);
             expect(tunnelModule.landingPathFromLocation()).toBe('/p');
             expect(tunnelModule.shareTokenFromLocation()).toBe(TOKEN);
+        });
+
+        // The inference is a default, not an override: a link that asks for
+        // somewhere else is taken at its word rather than second-guessed.
+        it('lets an explicit page win over the one the token implies', () => {
+            at(`/${A}`, `#p=/admin&t=${TOKEN}`);
+            expect(tunnelModule.landingPathFromLocation()).toBe('/admin');
+        });
+
+        // A malformed token buys nothing: it is not a token, so it cannot send
+        // anyone to the guest page either.
+        it('infers nothing from a token this machine could not have minted', () => {
+            at(`/${A}`, '#t=short');
+            expect(tunnelModule.landingPathFromLocation()).toBeNull();
         });
 
         it('still reads it after the handover moved the identifier', () => {
