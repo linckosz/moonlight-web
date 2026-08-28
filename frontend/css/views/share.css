@@ -171,8 +171,8 @@
 .share-player {
     background-color: var(--surface-2);
     box-shadow:
-        inset 3px 0 0 var(--row-accent, var(--text-3)),
-        inset 0 3px 0 var(--row-accent, var(--text-3));
+        inset 2px 0 0 var(--row-accent, var(--text-3)),
+        inset 0 2px 0 var(--row-accent, var(--text-3));
     clip-path: var(--notch-sm);
     transition: background-image 0.15s;
 }
