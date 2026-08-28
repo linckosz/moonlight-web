@@ -97,11 +97,6 @@ public:
         m_RemoteLink = std::move(provider);
     }
 
-    /// Recompute the hover tooltip from the current entry URL. Call after the
-    /// HTTPS port or the public domain changed (port parity rebind, Internet
-    /// Access becoming ready).
-    void refreshTooltip();
-
 private slots:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
     void onOpen();

@@ -86,7 +86,11 @@ bool TrayManager::init()
     }
     m_TrayIcon->setIcon(icon);
 
-    refreshTooltip();
+    // The name and nothing else. A hover tooltip is read at a glance, by someone
+    // who is already at this machine and about to click the menu that knows the
+    // right address; spelling out a port there was a third place claiming to
+    // know the way in, and the one least able to keep up with it.
+    m_TrayIcon->setToolTip(QStringLiteral("MoonlightWeb"));
 
     // Build context menu. In client mode the server is a service in another
     // session this process cannot see: the header says so, and Restart / Quit act
@@ -142,15 +146,6 @@ bool TrayManager::init()
     qInfo() << "[TrayManager] System tray icon created" << (m_ClientMode ? "(client mode)" : "")
             << "for" << logged.toString();
     return true;
-}
-
-void TrayManager::refreshTooltip()
-{
-    if (!m_TrayIcon) return;
-    QUrl url = localUrl(QString());
-    // Never expose the host key (?mwk=...) in the hover tooltip.
-    url.setQuery(QString());
-    m_TrayIcon->setToolTip(QStringLiteral("MoonlightWeb\n") + url.toString());
 }
 
 void TrayManager::onActivated(QSystemTrayIcon::ActivationReason reason)

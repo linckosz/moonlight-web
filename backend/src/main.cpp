@@ -1092,7 +1092,7 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
     int silentPolls = 0;
     QTimer portPoll;
     portPoll.setInterval(60000);
-    QObject::connect(&portPoll, &QTimer::timeout, &app, [&port, &tray, &silentPolls]() {
+    QObject::connect(&portPoll, &QTimer::timeout, &app, [&port, &silentPolls]() {
         const quint16 p = findRunningHttpsPort(port);
         if (p == 0) {
             if (++silentPolls < 5) return;
@@ -1104,7 +1104,6 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
         if (p == port) return;
         Logger::info(QStringLiteral("Tray client: server moved to port %1").arg(p));
         port = p;
-        tray.refreshTooltip();
     });
     portPoll.start();
 
@@ -4136,25 +4135,18 @@ int main(int argc, char* argv[])
     trayManager.setRemoteLinkProvider(remoteLink);
     if (hasGuiSession()) trayManager.init();
 
-    // Keep every host-side entry point current when the entry URL changes:
-    // parity rebind moves the HTTPS port, 'ready' switches links to the domain.
+    // Keep the one host-side entry point that is written down current when the
+    // entry URL changes: a parity rebind moves the HTTPS port under it. The menu
+    // needs no such upkeep — it resolves its address at the click — and the
+    // tooltip carries no address at all any more.
     QObject::connect(&internetAccess, &InternetAccessManager::httpsPortChanged, &trayManager,
-                     [&trayManager, adminUrl](quint16) {
-                         writeAdminShortcut(adminUrl());
-                         trayManager.refreshTooltip();
-                     });
-    QObject::connect(
-        &internetAccess, &InternetAccessManager::ready, &trayManager,
-        [&trayManager](const QString&, const QString&) { trayManager.refreshTooltip(); });
+                     [adminUrl](quint16) { writeAdminShortcut(adminUrl()); });
     // The hairpin verdict decides between the domain and loopback, and it can
     // flip long after startup (router reconfigured, periodic re-test): rebuild
-    // the entry points rather than leaving them on an address that stopped
-    // working — or on loopback when the nicer one became usable.
+    // the shortcut rather than leaving it on an address that stopped working —
+    // or on loopback when the nicer one became usable.
     QObject::connect(&internetAccess, &InternetAccessManager::hairpinChanged, &trayManager,
-                     [&trayManager, adminUrl](bool) {
-                         writeAdminShortcut(adminUrl());
-                         trayManager.refreshTooltip();
-                     });
+                     [adminUrl](bool) { writeAdminShortcut(adminUrl()); });
 
     // The app is windowless, so on a manual launch (Apps / Start-menu click) the
     // browser IS the app surface: open it — the setup wizard on first run
