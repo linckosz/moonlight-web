@@ -30,13 +30,26 @@ if not defined VSINSTALLDIR (
     if !errorlevel! neq 0 goto vs_fail
 )
 
-REM ---- Qt: highest 6.x MSVC kit under C:\Qt, unless QTDIR overrides ----
+REM ---- Qt: QTDIR wins, then whatever the environment already set up, then the
+REM      highest 6.x MSVC kit under C:\Qt ----
+REM  The environment step is not a nicety: on CI the kit lives beside the
+REM  checkout (D:\a\...\Qt\6.11.0\msvc2022_64), never under C:\Qt, and
+REM  install-qt-action@v4 announces it through QT_ROOT_DIR alone: it exports
+REM  neither CMAKE_PREFIX_PATH nor Qt6_DIR. Scanning C:\Qt first is what turned
+REM  this script into a hard "No Qt kit found" on the runner.
 if not defined QTDIR (
-    for /d %%d in ("C:\Qt\6.*") do (
-        if exist "%%d\msvc2022_64\lib\cmake\Qt6\Qt6Config.cmake" set "QTDIR=%%d\msvc2022_64"
+    if defined QT_ROOT_DIR (
+        set "QTDIR=!QT_ROOT_DIR!"
+    ) else if defined CMAKE_PREFIX_PATH (
+        set "QTDIR=!CMAKE_PREFIX_PATH!"
+    ) else (
+        for /d %%d in ("C:\Qt\6.*") do (
+            if exist "%%d\msvc2022_64\lib\cmake\Qt6\Qt6Config.cmake" set "QTDIR=%%d\msvc2022_64"
+        )
     )
 )
 if not defined QTDIR goto qt_fail
+if not exist "!QTDIR!\lib\cmake\Qt6\Qt6Config.cmake" goto qt_bad
 echo [INFO] Qt kit : !QTDIR!
 set "PATH=!QTDIR!\bin;%PATH%"
 
@@ -79,8 +92,13 @@ echo [ERROR] No MSVC x64 toolset found. Install "Desktop development with C++"
 echo         (MSVC v143 + Windows SDK), or run this from a Developer Prompt.
 exit /b 1
 :qt_fail
-echo [ERROR] No Qt 6.x MSVC kit found under C:\Qt. Set QTDIR, e.g.:
+echo [ERROR] No Qt 6.x MSVC kit found: neither QTDIR nor QT_ROOT_DIR is set and
+echo         nothing usable sits under C:\Qt. Set QTDIR, e.g.:
 echo             set QTDIR=C:\Qt\6.10.3\msvc2022_64
+exit /b 1
+:qt_bad
+echo [ERROR] Qt kit "!QTDIR!" has no lib\cmake\Qt6\Qt6Config.cmake.
+echo         Point QTDIR at the kit directory itself, not its parent.
 exit /b 1
 :cfg_fail
 echo [ERROR] CMake configure failed
