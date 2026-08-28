@@ -71,16 +71,16 @@ public:
         m_UrlProvider = std::move(provider);
     }
 
-    /// The admin page over the internet link, or an empty string when there is
-    /// no such link to give.
+    /// `path` over the internet link — empty for the front door, "/admin" for
+    /// the settings page — or an empty string when there is no such link.
     ///
-    /// This is what "Server Settings" opens when it can, because it is the only
-    /// door to that page that opens under a certificate the browser already
-    /// trusts — loopback is served by a self-signed certificate and always will
-    /// be. The link carries the single-use host key in its FRAGMENT, never a
-    /// query, so the introduction server it is fetched from never sees it.
+    /// This is what Open and Server Settings use when they can, because it is
+    /// the only door that opens under a certificate the browser already trusts —
+    /// loopback is served by a self-signed certificate and always will be. The
+    /// link carries the single-use host key in its FRAGMENT, never a query, so
+    /// the introduction server it is fetched from never sees it.
     ///
-    /// It is one entry, not two. A second menu item would have asked the owner
+    /// Each is one entry, not two. A second menu item would have asked the owner
     /// to know which of two addresses reaches their own machine, which is not
     /// something they should have to hold an opinion about. Empty means "the
     /// internet is not an option here, or not one that answers right now", and
@@ -89,10 +89,12 @@ public:
     /// Asked for at the moment it is clicked rather than cached, because every
     /// part of the answer moves: the option can be switched off, the line goes
     /// up and down with the network, and the key is burnt and rotated the
-    /// instant it is redeemed.
-    void setRemoteAdminLinkProvider(std::function<QString()> provider)
+    /// instant it is redeemed. That is also why only the menu gets this and the
+    /// tooltip and the desktop shortcut do not: they are written down ahead of
+    /// the click, and a single-use key cannot be.
+    void setRemoteLinkProvider(std::function<QString(const QString& path)> provider)
     {
-        m_RemoteAdminLink = std::move(provider);
+        m_RemoteLink = std::move(provider);
     }
 
     /// Recompute the hover tooltip from the current entry URL. Call after the
@@ -112,10 +114,14 @@ private:
     /// no listener is up.
     QUrl localUrl(const QString& path) const;
 
+    /// Open `path` over the internet link if there is one, over loopback
+    /// otherwise. Both menu entries that lead into the app go through here.
+    void openAppPage(const QString& path);
+
     HttpServer* m_Server; // null in client mode
     bool m_ClientMode = false;
     std::function<QUrl(const QString& path)> m_UrlProvider;
-    std::function<QString()> m_RemoteAdminLink; // see setRemoteAdminLinkProvider
+    std::function<QString(const QString& path)> m_RemoteLink; // see setRemoteLinkProvider
     std::function<void()> m_RestartServer; // client mode: restart the remote server
     std::function<void()> m_QuitServer;    // client mode: stop the remote server
     QSystemTrayIcon* m_TrayIcon;

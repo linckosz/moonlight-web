@@ -31,6 +31,7 @@
 #include <QNetworkRequest>
 #include <QPointer>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSslCertificate>
 #include <QSslConfiguration>
 #include <QSslSocket>
@@ -1044,16 +1045,18 @@ static int runTrayClient(QApplication& app, quint16 persistedHttpsPort, bool own
 
     // The internet link has to be asked for rather than computed: this process
     // has no rendezvous line and no settings of its own, it only decorates a
-    // server it cannot see. Asked at the moment Server Settings is clicked, so a
+    // server it cannot see. Asked at the moment the entry is clicked, so a
     // blocking loopback call is acceptable — and given a short budget so a
     // wedged server cannot freeze the menu. Empty on any failure, which is the
     // same answer as "no internet way in": the entry falls back to loopback.
-    tray.setRemoteAdminLinkProvider([&port]() -> QString {
+    tray.setRemoteLinkProvider([&port](const QString& path) -> QString {
         const QString base = port == 443 ? QStringLiteral("https://127.0.0.1")
                                          : QStringLiteral("https://127.0.0.1:%1").arg(port);
-        const LoopbackReply reply =
-            loopbackRequest(base, QStringLiteral("/api/server/remote-admin-link"), QByteArray(),
-                            2000);
+        // Sent raw: the server accepts one plain path segment and nothing else,
+        // so there is never anything here that needs escaping.
+        const QString query = path.isEmpty() ? QString() : QStringLiteral("?p=") + path;
+        const LoopbackReply reply = loopbackRequest(
+            base, QStringLiteral("/api/server/remote-link") + query, QByteArray(), 2000);
         return reply.ok ? reply.json.value(QStringLiteral("url")).toString() : QString();
     });
 
@@ -3817,14 +3820,19 @@ int main(int argc, char* argv[])
     // proves where the browser runs, so admin is granted by the connection
     // itself rather than by a key travelling in a URL.
     //
-    // Two of them make an exception, and only when the internet way in has been
-    // consented to AND answers when asked: the tray's Server Settings, and the
-    // admin page opened at launch. Those two lead to a page whose worth is in
-    // being readable without an interstitial, and the rendezvous carries it
-    // under a certificate the browser trusts. Everything else here — the
-    // shortcut, the tooltip, Open, the post-install page — stays on loopback,
-    // because a file written to disk cannot hold a single-use key and an address
-    // that is sometimes right is worse than one that is always plain.
+    // Some of them make an exception, and only when the internet way in has been
+    // consented to AND answers when asked: both tray entries that lead into the
+    // app — Open and Server Settings — and the admin page opened at launch. They
+    // lead to pages whose worth is in being readable without an interstitial,
+    // and the rendezvous carries them under a certificate the browser trusts.
+    //
+    // What separates those from the rest is not which page they lead to, it is
+    // WHEN the address is decided. They are resolved at the click, so the answer
+    // can be "the internet, right now, and here is a key spent on this one
+    // visit". The shortcut, the tooltip and the post-install page are written
+    // down ahead of any click: a file on disk cannot hold a single-use key, and
+    // an address that is sometimes right is worse than one that is always plain.
+    // They stay on loopback.
     //
     // It used to prefer the public sub-domain whenever one was published,
     // trusted and reflected back to the LAN, on the reasoning that the host
@@ -3834,8 +3842,8 @@ int main(int argc, char* argv[])
     // sub-domain is a legacy path being retired in February 2027. Sending the
     // owner to a dying address — with the host key in the query string, and
     // therefore in browser history — to reach a page that is one hop away is
-    // three costs for no benefit. The remote link belongs in the tray's "copy
-    // link" entry, which hands out the rendezvous address.
+    // three costs for no benefit. The rendezvous address is what the exceptions
+    // above hand out, and it carries its key in the fragment instead.
     //
     // The cost, stated plainly: a legacy instance whose sub-domain has a real
     // certificate loses the warning-free page locally, because loopback is
@@ -3973,7 +3981,8 @@ int main(int argc, char* argv[])
         if (online) probeEntry();
     });
 
-    // The way to an admin page under a certificate the browser already trusts.
+    // The way into this machine's own pages under a certificate the browser
+    // already trusts.
     //
     // The address is the ordinary rendezvous one — the same link anybody uses to
     // reach this machine — with the host key appended as a FRAGMENT. That is the
@@ -3985,14 +3994,15 @@ int main(int argc, char* argv[])
     //
     // The fragment carries a second thing: which page to land on. The path of
     // the address itself is spent on the identifier, and the bootstrap frees it
-    // only after it has handed over — so without this the owner would arrive at
-    // the front door and have to walk to the settings page. It is read and
-    // validated by the bootstrap, which accepts one plain path segment.
+    // only after it has handed over — so without this the owner asking for the
+    // settings page would arrive at the front door and have to walk there. It is
+    // read and validated by the bootstrap, which accepts one plain path segment.
+    // An empty `path` means the front door, and then nothing is said at all.
     //
     // Empty whenever any part is missing or the internet is not an option here,
     // because a link that cannot work is worse than no link: it is single-use
     // and the user would have spent it. Every caller falls back to loopback.
-    auto remoteAdminLink = [&]() -> QString {
+    auto remoteLink = [&](const QString& path) -> QString {
         if (!rendezvousShouldRun() || !rendezvous.isOnline()) return {};
         // Refreshes the verdict for next time; this call reads the last one.
         probeEntry();
@@ -4001,20 +4011,29 @@ int main(int argc, char* argv[])
         const QString key = appSettings.localKey();
         if (entry.isEmpty() || key.isEmpty()) return {};
         return entry + QStringLiteral("#k=") + QString::fromLatin1(QUrl::toPercentEncoding(key)) +
-               QStringLiteral("&p=/admin");
+               (path.isEmpty() ? QString() : QStringLiteral("&p=") + path);
+    };
+    auto remoteAdminLink = [remoteLink]() -> QString {
+        return remoteLink(QStringLiteral("/admin"));
     };
 
-    // GET /api/server/remote-admin-link — the same link, for the tray client.
-    // That tray runs in its own process decorating a server it cannot see, so it
-    // asks over loopback. Local callers only: this hands out a live credential,
-    // and everything else already has the machine itself.
-    server.router()->get("/api/server/remote-admin-link",
-                         [remoteAdminLink](const HttpRequest& req) {
-                             if (!req.isLocal)
-                                 return HttpResponse::error(403, "Only available from localhost");
-                             return HttpResponse::json(
-                                 QJsonObject{{QStringLiteral("url"), remoteAdminLink()}});
-                         });
+    // GET /api/server/remote-link — the same link, for the tray client. That
+    // tray runs in its own process decorating a server it cannot see, so it asks
+    // over loopback. Local callers only: this hands out a live credential, and
+    // everything else already has the machine itself.
+    //
+    // `?p=` names the page, absent means the front door. It is checked against
+    // the shape the bootstrap will accept rather than passed through, so this
+    // route can never be the thing that puts an arbitrary string into a link
+    // this machine hands its owner.
+    server.router()->get("/api/server/remote-link", [remoteLink](const HttpRequest& req) {
+        if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
+        const QString path = req.queryParams.value(QStringLiteral("p"));
+        static const QRegularExpression shape(QStringLiteral("^/[A-Za-z0-9_-]{1,32}$"));
+        if (!path.isEmpty() && !shape.match(path).hasMatch())
+            return HttpResponse::error(400, "Bad page");
+        return HttpResponse::json(QJsonObject{{QStringLiteral("url"), remoteLink(path)}});
+    });
 
     if (rendezvousShouldRun()) rendezvous.start();
 
@@ -4114,7 +4133,7 @@ int main(int argc, char* argv[])
     // The desktop session gets its tray from runTrayClient() instead.
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
-    trayManager.setRemoteAdminLinkProvider(remoteAdminLink);
+    trayManager.setRemoteLinkProvider(remoteLink);
     if (hasGuiSession()) trayManager.init();
 
     // Keep every host-side entry point current when the entry URL changes:
