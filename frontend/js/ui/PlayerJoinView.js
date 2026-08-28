@@ -251,19 +251,23 @@ export class PlayerJoinView {
         // Both toggles only shape how the mouse and keyboard reach the host, so
         // they mean nothing to a viewer (no input) or a gamepad-only guest. Same
         // on mobile: the touch model drives the pointer, which they can't use.
-        if (this.info.access_level !== 'full') return '';
+        // "desktop" is keyboard and mouse without a gamepad — every bit as
+        // entitled to these rows as "full", and it used to lose them both.
+        const level = this.info.access_level;
+        if (level !== 'full' && level !== 'desktop') return '';
 
-        // The two choices name themselves — "Trackpad | Touch" needs no label
-        // saying "Touch" above it. The group keeps one for screen readers.
-        // `hints` is optional and only worth passing where hovering exists:
-        // "Seamless" and "Immersive" say nothing about the mouse escaping the
-        // frame, and a guest has no settings page to go read.
+        // The buttons carry the answer, not the question: "Seamless | Immersive"
+        // reads as two unrelated words until something above them says they are
+        // both mouse modes. `hints` is optional and only worth passing where
+        // hovering exists — a guest has no settings page to go read.
         const row = (key, labelKey, offKey, onKey, on, hints) => {
             const hint = (which) => (hints ? ` title="${escapeHtml(t(hints[which]))}"` : '');
+            const labelId = `player-toggle-${key}-label`;
             return `
             <div class="player-toggle" data-pref="${key}">
+                <span class="player-field-label" id="${labelId}">${escapeHtml(t(labelKey))}</span>
                 <div class="player-toggle-choice" role="group"
-                     aria-label="${escapeHtml(t(labelKey))}">
+                     aria-labelledby="${labelId}">
                     <button class="btn player-toggle-btn ${on ? '' : 'is-selected'}"
                             type="button" data-value="off"${hint('off')}>${escapeHtml(t(offKey))}</button>
                     <button class="btn player-toggle-btn ${on ? 'is-selected' : ''}"
@@ -280,7 +284,7 @@ export class PlayerJoinView {
                         ? ''
                         : row(
                               'immersive',
-                              'player.desktopMode',
+                              'player.mouseMode',
                               'player.seamless',
                               'player.immersive',
                               this._prefs.immersive,
@@ -345,13 +349,18 @@ export class PlayerJoinView {
                           )}</p>`
                         : ''
                 }
-                <div class="player-quality" role="group" aria-label="${escapeHtml(t('player.quality'))}">
-                    ${HEIGHTS.map(
-                        (h) => `
-                        <button class="btn player-quality-btn ${h === this._height ? 'is-selected' : ''}"
-                                type="button" data-height="${h}">${h}p</button>
-                    `,
-                    ).join('')}
+                <div class="player-quality">
+                    <span class="player-field-label" id="player-quality-label"
+                          >${escapeHtml(t('player.quality'))}</span>
+                    <div class="player-quality-choice" role="group"
+                         aria-labelledby="player-quality-label">
+                        ${HEIGHTS.map(
+                            (h) => `
+                            <button class="btn player-quality-btn ${h === this._height ? 'is-selected' : ''}"
+                                    type="button" data-height="${h}">${h}p</button>
+                        `,
+                        ).join('')}
+                    </div>
                 </div>
                 ${this._inputToggles()}
                 <button class="btn btn-open player-join-btn" type="button">

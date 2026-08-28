@@ -954,9 +954,15 @@ body.player-mode {
 
 .player-quality {
     display: flex;
-    gap: 8px;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
     margin-bottom: 16px;
+}
+
+.player-quality-choice {
+    display: flex;
+    gap: 8px;
 }
 
 .player-quality-btn {
@@ -988,8 +994,18 @@ body.player-mode {
 
 .player-toggle {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
+    gap: 5px;
+}
+
+/* The question a row of buttons is answering — resolution, mouse mode, touch
+   model. Quiet enough that the answers stay the loud part. */
+.player-field-label {
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-3);
 }
 
 .player-toggle-choice {
