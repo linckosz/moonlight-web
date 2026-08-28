@@ -151,13 +151,16 @@ Without `cert_pem`/`cert_key`, drop both files (`*.pem`, same folder) into the d
 
 Confirm in `logs/moonlightweb.log`: `SSL certificate loaded: CN=stream.mywebsite.com`. **Renewal is yours**: replace the files and restart. A certificate near expiry is kept and logged as *renew it soon* — it is never silently downgraded to a self-signed one.
 
-**5. Internet Access — optional.** With a custom domain it registers nothing and requests no certificate; it re-detects the public IP, tests NAT hairpin, allows the per-session media mapping, and points the tray/shortcut entry URLs at your domain — but only when that hairpin test succeeds. Without it the host's own entry points stay on `https://localhost:<port>`, which is the address that works from the machine itself; every other device still uses the domain. Turn it off to manage everything by hand. `GET /api/internet/status` reports `custom_domain: true` in that mode.
+**5. Internet Access — optional.** With a custom domain it registers nothing and requests no certificate; it re-detects the public IP, tests NAT hairpin, and allows the per-session media mapping (`cfg["upnpEnabled"] = upnp_enabled && internet_access_enabled`, `main.cpp`). Turn it off and the 48010+ mappings become manual too. `GET /api/internet/status` reports `custom_domain: true` in that mode.
+
+The host machine's **own** entry points — tray menu, Desktop shortcut, browser auto-open — stay on `https://localhost:<port>` whatever you configure here. They are not built from `domain` at all: the tray resolves its address at the click and prefers the entry link with a single-use host key, everything else is written down ahead of the click and stays on loopback. Your domain is for every *other* device.
 
 Authentication is unchanged: remote devices still need the admin PIN or the certificate-auth token file (see [Security](06-Security.md)).
 
 **Caveats**
 
-- Reaching `stream.mywebsite.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry. The host machine itself needs nothing: the tray, the shortcut and the auto-open fall back to loopback on their own.
+- Reaching `stream.mywebsite.com` from *inside* your own LAN requires NAT-hairpin support on the router; otherwise use `https://<LAN IP>` at home (self-signed warning) or add a split-horizon DNS entry. The host machine itself needs nothing — see the note in step 5.
+- **Port parity is not optional and it is the usual trap.** The URL people type carries the port the machine actually listens on, so an unprivileged install whose HTTPS listener fell back to 8443 has to be forwarded 8443 → 8443 and reached at `https://stream.mywebsite.com:8443`. Check `https_port` in `settings.json` (the *bound* port is persisted back) or the admin page before writing the router rule.
 - `unique_id` and `rendezvous_id` are untouched: the entry link keeps working alongside your own name, and restoring `"domain": "MW_DOMAIN"` simply leaves the instance with no public DNS name again.
 - The `stream` label is only reserved on the project's shared domain, never on yours.
 
