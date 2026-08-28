@@ -39,13 +39,13 @@ enum class MediaType
 // /launch (or /resume) response plus the host it talked to.
 struct GameStreamMedia
 {
-    QString rtspSessionUrl;          // NvHTTP::parseSessionUrl() of the launch XML
-    QString hostAddress;             // address moonlight-common-c should dial
-    QString appVersion;              // host-reported, drives protocol quirks
+    QString rtspSessionUrl; // NvHTTP::parseSessionUrl() of the launch XML
+    QString hostAddress;    // address moonlight-common-c should dial
+    QString appVersion;     // host-reported, drives protocol quirks
     QString gfeVersion;
-    int serverCodecModeSupport = 0;  // host codec capability bitmap
-    QByteArray aesKey;               // rikey — 16 random bytes
-    int rikeyid = 0;                 // rikeyid — IV prefix
+    int serverCodecModeSupport = 0; // host codec capability bitmap
+    QByteArray aesKey;              // rikey — 16 random bytes
+    int rikeyid = 0;                // rikeyid — IV prefix
 };
 
 struct MediaDescriptor

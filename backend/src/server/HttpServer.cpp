@@ -1171,7 +1171,8 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     if (req.path == QLatin1String("/api/app/manifest")) {
         QJsonArray files;
         const QStringList paths = m_StaticFiles->listFiles();
-        for (const QString& p : paths) files.append(p);
+        for (const QString& p : paths)
+            files.append(p);
 
         HttpResponse manifest = HttpResponse::json(
             QJsonObject{{QStringLiteral("version"), QCoreApplication::applicationVersion()},

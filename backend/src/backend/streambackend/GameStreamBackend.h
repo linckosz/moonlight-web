@@ -61,10 +61,8 @@ public:
 
     void getAppList(const QString& seatId, BackendAppListCallback cb) override;
 
-    void launch(const QString& seatId, const LaunchRequest& req,
-                BackendMediaCallback cb) override;
-    void resume(const QString& seatId, const LaunchRequest& req,
-                BackendMediaCallback cb) override;
+    void launch(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb) override;
+    void resume(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb) override;
     void quit(const QString& seatId, const QString& clientUniqueId,
               BackendVoidCallback cb) override;
 

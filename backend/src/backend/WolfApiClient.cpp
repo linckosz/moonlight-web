@@ -58,61 +58,60 @@ void WolfApiClient::finish(QNetworkReply* reply,
     QObject::connect(timer, &QTimer::timeout, reply, [reply]() { reply->abort(); });
     timer->start();
 
-    QObject::connect(reply, &QNetworkReply::finished, this,
-                     [this, reply, cb = std::move(cb)]() mutable {
-        reply->deleteLater();
+    QObject::connect(
+        reply, &QNetworkReply::finished, this, [this, reply, cb = std::move(cb)]() mutable {
+            reply->deleteLater();
 
-        const int status =
-            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        const QByteArray body = reply->readAll();
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray body = reply->readAll();
 
-        if (reply->error() != QNetworkReply::NoError && status == 0) {
-            const bool aborted = reply->error() == QNetworkReply::OperationCanceledError;
-            cb(false,
-               WolfApiError::make(aborted ? WolfApiError::Timeout : WolfApiError::Unreachable,
-                                  reply->errorString()),
-               QJsonDocument());
-            return;
-        }
-
-        QJsonParseError parseError{};
-        const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
-
-        if (status < 200 || status >= 300) {
-            // Wolf reports failures as {"success": false, "error": "..."} — use
-            // that wording when it is there, since it is far more specific than
-            // the bare status line.
-            QString message = QStringLiteral("Wolf API returned HTTP %1").arg(status);
-            if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
-                const QString upstream = doc.object().value(QStringLiteral("error")).toString();
-                if (!upstream.isEmpty()) message = upstream;
+            if (reply->error() != QNetworkReply::NoError && status == 0) {
+                const bool aborted = reply->error() == QNetworkReply::OperationCanceledError;
+                cb(false,
+                   WolfApiError::make(aborted ? WolfApiError::Timeout : WolfApiError::Unreachable,
+                                      reply->errorString()),
+                   QJsonDocument());
+                return;
             }
-            cb(false, WolfApiError::make(WolfApiError::HttpError, message, status), doc);
-            return;
-        }
 
-        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-            cb(false,
-               WolfApiError::make(WolfApiError::Protocol,
-                                  QStringLiteral("Malformed JSON from Wolf API: %1")
-                                      .arg(parseError.errorString()),
-                                  status),
-               QJsonDocument());
-            return;
-        }
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(body, &parseError);
 
-        // A 2xx carrying success == false is still a failure.
-        const QJsonObject obj = doc.object();
-        if (obj.contains(QStringLiteral("success")) &&
-            !obj.value(QStringLiteral("success")).toBool()) {
-            QString message = obj.value(QStringLiteral("error")).toString();
-            if (message.isEmpty()) message = QStringLiteral("Wolf API reported failure");
-            cb(false, WolfApiError::make(WolfApiError::Protocol, message, status), doc);
-            return;
-        }
+            if (status < 200 || status >= 300) {
+                // Wolf reports failures as {"success": false, "error": "..."} — use
+                // that wording when it is there, since it is far more specific than
+                // the bare status line.
+                QString message = QStringLiteral("Wolf API returned HTTP %1").arg(status);
+                if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+                    const QString upstream = doc.object().value(QStringLiteral("error")).toString();
+                    if (!upstream.isEmpty()) message = upstream;
+                }
+                cb(false, WolfApiError::make(WolfApiError::HttpError, message, status), doc);
+                return;
+            }
 
-        cb(true, WolfApiError{}, doc);
-    });
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                cb(false,
+                   WolfApiError::make(WolfApiError::Protocol,
+                                      QStringLiteral("Malformed JSON from Wolf API: %1")
+                                          .arg(parseError.errorString()),
+                                      status),
+                   QJsonDocument());
+                return;
+            }
+
+            // A 2xx carrying success == false is still a failure.
+            const QJsonObject obj = doc.object();
+            if (obj.contains(QStringLiteral("success")) &&
+                !obj.value(QStringLiteral("success")).toBool()) {
+                QString message = obj.value(QStringLiteral("error")).toString();
+                if (message.isEmpty()) message = QStringLiteral("Wolf API reported failure");
+                cb(false, WolfApiError::make(WolfApiError::Protocol, message, status), doc);
+                return;
+            }
+
+            cb(true, WolfApiError{}, doc);
+        });
 }
 
 void WolfApiClient::get(const QString& path,
@@ -120,7 +119,8 @@ void WolfApiClient::get(const QString& path,
 {
     QNetworkRequest request{QUrl(m_BaseUrl + QStringLiteral("/api/v1") + path)};
     if (!m_AuthToken.isEmpty()) {
-        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_AuthToken).toUtf8());
+        request.setRawHeader("Authorization",
+                             QStringLiteral("Bearer %1").arg(m_AuthToken).toUtf8());
     }
 
     finish(m_Nam->get(request), std::move(cb));
@@ -132,7 +132,8 @@ void WolfApiClient::post(const QString& path, const QJsonObject& body,
     QNetworkRequest request{QUrl(m_BaseUrl + QStringLiteral("/api/v1") + path)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     if (!m_AuthToken.isEmpty()) {
-        request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(m_AuthToken).toUtf8());
+        request.setRawHeader("Authorization",
+                             QStringLiteral("Bearer %1").arg(m_AuthToken).toUtf8());
     }
 
     finish(m_Nam->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)), std::move(cb));
@@ -140,14 +141,14 @@ void WolfApiClient::post(const QString& path, const QJsonObject& body,
 
 void WolfApiClient::getArray(const QString& path, const QString& key, WolfJsonArrayCallback cb)
 {
-    get(path, [key, cb = std::move(cb)](bool ok, const WolfApiError& err,
-                                        const QJsonDocument& doc) {
-        if (!ok) {
-            cb(false, err, QJsonArray());
-            return;
-        }
-        cb(true, WolfApiError{}, doc.object().value(key).toArray());
-    });
+    get(path,
+        [key, cb = std::move(cb)](bool ok, const WolfApiError& err, const QJsonDocument& doc) {
+            if (!ok) {
+                cb(false, err, QJsonArray());
+                return;
+            }
+            cb(true, WolfApiError{}, doc.object().value(key).toArray());
+        });
 }
 
 void WolfApiClient::pendingPairRequests(WolfPendingPairsCallback cb)
@@ -160,8 +161,7 @@ void WolfApiClient::pendingPairRequests(WolfPendingPairsCallback cb)
             }
 
             QVector<WolfPendingPair> pending;
-            const QJsonArray requests =
-                doc.object().value(QStringLiteral("requests")).toArray();
+            const QJsonArray requests = doc.object().value(QStringLiteral("requests")).toArray();
             pending.reserve(requests.size());
             for (const QJsonValue& value : requests) {
                 const QJsonObject obj = value.toObject();
@@ -184,7 +184,8 @@ void WolfApiClient::submitPin(const QString& pairSecret, const QString& pin, Wol
     post(QStringLiteral("/pair/client"), body,
          [cb = std::move(cb)](bool ok, const WolfApiError& err, const QJsonDocument&) {
              if (!ok) {
-                 Logger::warning(QStringLiteral("Wolf auto-pair: PIN rejected (%1)").arg(err.message));
+                 Logger::warning(
+                     QStringLiteral("Wolf auto-pair: PIN rejected (%1)").arg(err.message));
              }
              cb(ok, err);
          });
@@ -336,8 +337,8 @@ void addPin(QJsonObject& body, const QVector<int>& pin)
 
 } // namespace
 
-QJsonObject WolfApiClient::joinLobbyBody(const QString& lobbyId,
-                                         const QString& moonlightSessionId, const QVector<int>& pin)
+QJsonObject WolfApiClient::joinLobbyBody(const QString& lobbyId, const QString& moonlightSessionId,
+                                         const QVector<int>& pin)
 {
     QJsonObject body;
     body[QStringLiteral("lobby_id")] = lobbyId;
@@ -349,8 +350,7 @@ QJsonObject WolfApiClient::joinLobbyBody(const QString& lobbyId,
     return body;
 }
 
-QJsonObject WolfApiClient::leaveLobbyBody(const QString& lobbyId,
-                                          const QString& moonlightSessionId)
+QJsonObject WolfApiClient::leaveLobbyBody(const QString& lobbyId, const QString& moonlightSessionId)
 {
     QJsonObject body;
     body[QStringLiteral("lobby_id")] = lobbyId;

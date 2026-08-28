@@ -36,6 +36,9 @@ QString normalise(const QString& raw);
 bool isValid(const QString& id);
 
 /// Convenience: normalise, then validate.
-inline bool isValidLoose(const QString& raw) { return isValid(normalise(raw)); }
+inline bool isValidLoose(const QString& raw)
+{
+    return isValid(normalise(raw));
+}
 
 } // namespace RendezvousId

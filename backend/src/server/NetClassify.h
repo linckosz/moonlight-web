@@ -31,7 +31,8 @@
 /// rewritten to the public IP, and the tunnel path was silently destroyed.
 namespace NetClassify {
 
-enum class Kind {
+enum class Kind
+{
     Loopback, ///< 127.0.0.0/8, ::1 — this machine.
     Private,  ///< RFC1918, link-local, IPv6 ULA — same LAN.
     Tunnel,   ///< 100.64.0.0/10. Carrier-grade NAT range, also what mesh VPNs
@@ -72,8 +73,8 @@ inline Kind classify(const QString& ip)
 
     if (addr.protocol() == QAbstractSocket::IPv6Protocol) {
         const Q_IPV6ADDR raw = addr.toIPv6Address();
-        if ((raw[0] & 0xFE) == 0xFC) return Kind::Private;                    // fc00::/7 ULA
-        if (raw[0] == 0xFE && (raw[1] & 0xC0) == 0x80) return Kind::Private;  // fe80::/10
+        if ((raw[0] & 0xFE) == 0xFC) return Kind::Private;                   // fc00::/7 ULA
+        if (raw[0] == 0xFE && (raw[1] & 0xC0) == 0x80) return Kind::Private; // fe80::/10
     }
 
     return Kind::Public;

@@ -341,8 +341,7 @@ void AppSettings::setStreamAspect(const QString& aspect)
     // "auto" = the client probes the host's real format from the black bars
     // Sunshine encodes and asks again with it; the explicit ratios are manual
     // overrides, ordered by market share in the Settings dropdown.
-    const QStringList valid = {"auto",  "16:9", "16:10", "21:9",
-                               "4:3",   "3:2",  "32:9",  "5:4"};
+    const QStringList valid = {"auto", "16:9", "16:10", "21:9", "4:3", "3:2", "32:9", "5:4"};
     obj["stream_aspect"] = valid.contains(aspect) ? aspect : QStringLiteral("auto");
     writeAll(obj);
 }

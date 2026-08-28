@@ -234,11 +234,12 @@ void ComputerManager::init()
     // reason: the path we are trying is not the one that used to answer.
     for (auto it = m_Hosts.cbegin(); it != m_Hosts.cend(); ++it) {
         QStringList candidates;
-        for (const NvAddress& na : it.value()->uniqueAddresses()) candidates << na.toString();
+        for (const NvAddress& na : it.value()->uniqueAddresses())
+            candidates << na.toString();
         Logger::info(QString("[NETWORK] host %1 candidates: %2")
-                         .arg(it.value()->name,
-                              candidates.isEmpty() ? QStringLiteral("(none — never polled)")
-                                                   : candidates.join(QStringLiteral(", "))));
+                         .arg(it.value()->name, candidates.isEmpty()
+                                                    ? QStringLiteral("(none — never polled)")
+                                                    : candidates.join(QStringLiteral(", "))));
     }
 }
 
@@ -630,12 +631,11 @@ void ComputerManager::startMdnsDiscovery()
     // a discovery that bound nothing still logged "window opened" and then found
     // no host, which reads as "there is no Sunshine on this network".
     connect(m_MdnsServer, &QMdnsEngine::Server::error, this, [](const QString& message) {
-        Logger::warning(QString("[NETWORK] mDNS socket error: %1 — discovery will find nothing")
-                            .arg(message));
+        Logger::warning(
+            QString("[NETWORK] mDNS socket error: %1 — discovery will find nothing").arg(message));
     });
 
-    m_MdnsBrowser =
-        new QMdnsEngine::Browser(m_MdnsServer, "_nvstream._tcp.local.", nullptr, this);
+    m_MdnsBrowser = new QMdnsEngine::Browser(m_MdnsServer, "_nvstream._tcp.local.", nullptr, this);
 
     connect(m_MdnsBrowser, &QMdnsEngine::Browser::serviceAdded, this,
             &ComputerManager::onMdnsServiceAdded);
@@ -1003,7 +1003,7 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
 // it would also be useless on the cards that need a name most: an offline or
 // never-paired host, which cannot be asked anything at all.
 std::pair<int, QJsonObject> ComputerManager::handleRenameHost(const QString& uuid,
-                                                             const QString& name)
+                                                              const QString& name)
 {
     NvComputer* host = findHostByUuid(uuid);
     if (!host) return {404, {{"status", "error"}, {"message", "Host not found"}}};
@@ -1027,9 +1027,8 @@ std::pair<int, QJsonObject> ComputerManager::handleRenameHost(const QString& uui
     saveHosts();
     emit hostsChanged();
 
-    Logger::info(alias.isEmpty()
-                     ? QString("Host %1 renamed back to \"%2\"").arg(uuid, host->name)
-                     : QString("Host %1 renamed to \"%2\"").arg(uuid, alias));
+    Logger::info(alias.isEmpty() ? QString("Host %1 renamed back to \"%2\"").arg(uuid, host->name)
+                                 : QString("Host %1 renamed to \"%2\"").arg(uuid, alias));
 
     QJsonObject result;
     result["status"] = "ok";
@@ -1130,7 +1129,6 @@ QString ComputerManager::clientUniqueId()
 
 // --- Pairing ----------------------------------------------------------------
 // Client generates a random PIN, user enters it in Sunshine (stdin or Web UI).
-
 
 std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& uuid)
 {
@@ -1270,57 +1268,57 @@ void ComputerManager::startPairingChain(const QString& uuid)
     //
     // No announcer: on a Sunshine host a person is already reading the PIN off
     // our UI and typing it in.
-    PairingChain::run(pm, m_PairingPins.value(uuid), {},
-                      [this, uuid](const PairingChain::Result& result) {
-        // Re-resolve the session: while in flight nothing frees it, but the host
-        // could still be gone if the whole ComputerManager path changed.
-        auto it = m_ActivePairings.find(uuid);
-        if (it == m_ActivePairings.end()) {
-            m_SubmitInFlight.remove(uuid);
-            return;
-        }
-        NvPairingManager* pm = it.value();
-
-        switch (result.outcome) {
-        case PairingChain::Outcome::Paired: {
-            NvComputer* host = findHostByUuid(uuid);
-            if (host) {
-                host->serverCertPem = result.serverCertPem;
-                host->pairState = NvComputer::PS_PAIRED;
-                host->state = NvComputer::CS_ONLINE;
-                saveHosts();
-                emit hostsChanged();
+    PairingChain::run(
+        pm, m_PairingPins.value(uuid), {}, [this, uuid](const PairingChain::Result& result) {
+            // Re-resolve the session: while in flight nothing frees it, but the host
+            // could still be gone if the whole ComputerManager path changed.
+            auto it = m_ActivePairings.find(uuid);
+            if (it == m_ActivePairings.end()) {
+                m_SubmitInFlight.remove(uuid);
+                return;
             }
-            m_ActivePairings.erase(it);
-            m_PairingPins.remove(uuid);
-            delete pm;
-            break;
-        }
+            NvPairingManager* pm = it.value();
 
-        case PairingChain::Outcome::Retry:
-            // Stage 1 never landed, or the PIN was not accepted yet — keep the
-            // session so the next poll restarts the chain.
-            break;
+            switch (result.outcome) {
+            case PairingChain::Outcome::Paired: {
+                NvComputer* host = findHostByUuid(uuid);
+                if (host) {
+                    host->serverCertPem = result.serverCertPem;
+                    host->pairState = NvComputer::PS_PAIRED;
+                    host->state = NvComputer::CS_ONLINE;
+                    saveHosts();
+                    emit hostsChanged();
+                }
+                m_ActivePairings.erase(it);
+                m_PairingPins.remove(uuid);
+                delete pm;
+                break;
+            }
 
-        case PairingChain::Outcome::HostBusy:
-            m_ActivePairings.erase(it);
-            m_PairingPins.remove(uuid);
-            delete pm;
-            m_PairingError[uuid] = "Pairing already in progress on host.";
-            break;
+            case PairingChain::Outcome::Retry:
+                // Stage 1 never landed, or the PIN was not accepted yet — keep the
+                // session so the next poll restarts the chain.
+                break;
 
-        case PairingChain::Outcome::Failed:
-        default:
-            m_ActivePairings.erase(it);
-            m_PairingPins.remove(uuid);
-            delete pm;
-            m_PairingError[uuid] =
-                "Pairing failed. Close any running games on the host and try again.";
-            break;
-        }
+            case PairingChain::Outcome::HostBusy:
+                m_ActivePairings.erase(it);
+                m_PairingPins.remove(uuid);
+                delete pm;
+                m_PairingError[uuid] = "Pairing already in progress on host.";
+                break;
 
-        m_SubmitInFlight.remove(uuid);
-    });
+            case PairingChain::Outcome::Failed:
+            default:
+                m_ActivePairings.erase(it);
+                m_PairingPins.remove(uuid);
+                delete pm;
+                m_PairingError[uuid] =
+                    "Pairing failed. Close any running games on the host and try again.";
+                break;
+            }
+
+            m_SubmitInFlight.remove(uuid);
+        });
 }
 
 void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
@@ -1359,8 +1357,8 @@ void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,
                         400));
                     return;
                 }
-                Logger::info(QStringLiteral("[Backend] %1 identified itself at %2")
-                                 .arg(resolved, apiUrl));
+                Logger::info(
+                    QStringLiteral("[Backend] %1 identified itself at %2").arg(resolved, apiUrl));
                 self->handleSetBackend(uuid, resolved, apiUrl, apiToken, pairUser, pairPassword,
                                        respond);
             });
@@ -1471,22 +1469,15 @@ HttpResponse backendFailure(const BackendError& err)
 {
     int status = 502;
     switch (err.kind) {
-    case BackendError::NotFound:
-        status = 404;
-        break;
+    case BackendError::NotFound: status = 404; break;
     case BackendError::Unsupported:
         // The backend is fine; it just does not offer this. Distinct from a
         // failure so the UI can hide the control rather than show an error.
         status = 501;
         break;
-    case BackendError::NotPaired:
-        status = 401;
-        break;
-    case BackendError::Timeout:
-        status = 504;
-        break;
-    default:
-        break;
+    case BackendError::NotPaired: status = 401; break;
+    case BackendError::Timeout: status = 504; break;
+    default: break;
     }
     return HttpResponse::json({{"status", "error"}, {"message", err.message}}, status);
 }
@@ -1546,15 +1537,15 @@ void ComputerManager::handleReleaseSeatOwner(const QString& uuid, const QString&
         return;
     }
 
-    backend->releaseSeatOwner(seatId, [respond = std::move(respond), backend](
-                                          bool ok, const BackendError& err) {
-        if (!ok) {
-            respond(backendFailure(err));
-        } else {
-            respond(HttpResponse::json({{"status", "ok"}}));
-        }
-        QTimer::singleShot(0, [backend]() {});
-    });
+    backend->releaseSeatOwner(
+        seatId, [respond = std::move(respond), backend](bool ok, const BackendError& err) {
+            if (!ok) {
+                respond(backendFailure(err));
+            } else {
+                respond(HttpResponse::json({{"status", "ok"}}));
+            }
+            QTimer::singleShot(0, [backend]() {});
+        });
 }
 
 void ComputerManager::handleTeardownSeat(const QString& uuid, const QString& seatId,
@@ -1566,15 +1557,15 @@ void ComputerManager::handleTeardownSeat(const QString& uuid, const QString& sea
         return;
     }
 
-    backend->teardownSeat(seatId, [respond = std::move(respond), backend](bool ok,
-                                                                          const BackendError& err) {
-        if (!ok) {
-            respond(backendFailure(err));
-        } else {
-            respond(HttpResponse::json({{"status", "ok"}}));
-        }
-        QTimer::singleShot(0, [backend]() {});
-    });
+    backend->teardownSeat(
+        seatId, [respond = std::move(respond), backend](bool ok, const BackendError& err) {
+            if (!ok) {
+                respond(backendFailure(err));
+            } else {
+                respond(HttpResponse::json({{"status", "ok"}}));
+            }
+            QTimer::singleShot(0, [backend]() {});
+        });
 }
 
 // The restart never travels with a credential we asked the user for. Two paths
@@ -1628,24 +1619,24 @@ void ComputerManager::handleRestartHost(const QString& uuid, ResponseCallback re
         return;
     }
 
-    backend->restartService([respond = std::move(respond), backend](bool ok,
-                                                                    const BackendError& err) {
-        if (!ok) {
-            respond(backendFailure(err));
-        } else {
-            respond(HttpResponse::json({{"status", "ok"}}));
-        }
-        // Released a turn later: see handleSetBackend for why.
-        QTimer::singleShot(0, [backend]() {});
-    });
+    backend->restartService(
+        [respond = std::move(respond), backend](bool ok, const BackendError& err) {
+            if (!ok) {
+                respond(backendFailure(err));
+            } else {
+                respond(HttpResponse::json({{"status", "ok"}}));
+            }
+            // Released a turn later: see handleSetBackend for why.
+            QTimer::singleShot(0, [backend]() {});
+        });
 }
 
 namespace {
 
 /// Both listings answer the same shape, so they share one adapter.
 void respondWithJsonArray(ResponseCallback respond, const QString& key,
-                          std::shared_ptr<IStreamBackend> backend, bool ok,
-                          const BackendError& err, const QJsonArray& items)
+                          std::shared_ptr<IStreamBackend> backend, bool ok, const BackendError& err,
+                          const QJsonArray& items)
 {
     if (!ok) {
         respond(backendFailure(err));
@@ -1664,8 +1655,8 @@ void ComputerManager::handleListProfiles(const QString& uuid, ResponseCallback r
         respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
         return;
     }
-    backend->listProfiles([respond = std::move(respond), backend](
-                              bool ok, const BackendError& err, const QJsonArray& items) mutable {
+    backend->listProfiles([respond = std::move(respond), backend](bool ok, const BackendError& err,
+                                                                  const QJsonArray& items) mutable {
         respondWithJsonArray(std::move(respond), QStringLiteral("profiles"), backend, ok, err,
                              items);
     });
@@ -1678,9 +1669,10 @@ void ComputerManager::handleListLobbies(const QString& uuid, ResponseCallback re
         respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
         return;
     }
-    backend->listLobbies([respond = std::move(respond), backend](
-                             bool ok, const BackendError& err, const QJsonArray& items) mutable {
-        respondWithJsonArray(std::move(respond), QStringLiteral("lobbies"), backend, ok, err, items);
+    backend->listLobbies([respond = std::move(respond), backend](bool ok, const BackendError& err,
+                                                                 const QJsonArray& items) mutable {
+        respondWithJsonArray(std::move(respond), QStringLiteral("lobbies"), backend, ok, err,
+                             items);
     });
 }
 
@@ -1825,8 +1817,8 @@ void ComputerManager::onPairCheckFinished()
 // a host has.
 static QString boxArtETag(const QByteArray& png)
 {
-    return QStringLiteral("\"%1\"").arg(QString::fromLatin1(
-        QCryptographicHash::hash(png, QCryptographicHash::Md5).toHex()));
+    return QStringLiteral("\"%1\"").arg(
+        QString::fromLatin1(QCryptographicHash::hash(png, QCryptographicHash::Md5).toHex()));
 }
 
 static void applyBoxArtCacheHeaders(HttpResponse& resp, const QString& etag)
@@ -2020,7 +2012,7 @@ void ComputerManager::fetchNextBoxArtInBackground(const QString& uuid)
 // a 401, caching the app list, kicking off box-art prefetch — plus the exact
 // response shapes this route has always returned.
 void ComputerManager::handleGetAppList(const QString& uuid, const QString& deviceSessionId,
-                                      ResponseCallback respond)
+                                       ResponseCallback respond)
 {
     auto backend = std::shared_ptr<IStreamBackend>(backendForHost(uuid));
     if (!backend) {
@@ -2031,101 +2023,102 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
     // Whose app list this is. A plain host answers with itself, so this is the
     // same call it has always made; a multi-seat backend resolves the seat the
     // asking user owns, because its apps live on that seat's own Apollo.
-    backend->allocateSeat(deviceSessionId, [this, uuid, respond, backend](
-                                               bool seatOk, const BackendError& seatErr,
-                                               const SeatRef& seat) {
-    if (!seatOk) {
-        respond(backendFailure(seatErr));
-        return;
-    }
+    backend->allocateSeat(deviceSessionId, [this, uuid, respond,
+                                            backend](bool seatOk, const BackendError& seatErr,
+                                                     const SeatRef& seat) {
+        if (!seatOk) {
+            respond(backendFailure(seatErr));
+            return;
+        }
 
-    // `backend` is captured so it outlives the async call.
-    backend->getAppList(seat.id, [this, uuid, respond, backend](bool ok, const BackendError& err,
-                                                             const QVector<NvApp>& apps) {
-        if (!ok) {
-            // Pre-flight failure: the host was already gone when we looked.
-            if (err.kind == BackendError::NotFound) {
-                respond(
-                    HttpResponse::json({{"status", "error"}, {"message", "Host not found"}}, 404));
-                return;
+        // `backend` is captured so it outlives the async call.
+        backend->getAppList(seat.id, [this, uuid, respond, backend](bool ok,
+                                                                    const BackendError& err,
+                                                                    const QVector<NvApp>& apps) {
+            if (!ok) {
+                // Pre-flight failure: the host was already gone when we looked.
+                if (err.kind == BackendError::NotFound) {
+                    respond(HttpResponse::json({{"status", "error"}, {"message", "Host not found"}},
+                                               404));
+                    return;
+                }
+
+                // The NvComputer may have been deleted (handleDeleteHost) during the
+                // async request.
+                NvComputer* host = findHostByUuid(uuid);
+                if (!host) {
+                    respond(HttpResponse::error(404, "Host removed while fetching app list"));
+                    return;
+                }
+
+                switch (err.kind) {
+                case BackendError::NotPaired:
+                    // httpStatus 0 = we never sent the request; 401 = the host
+                    // rejected our certificate mid-flight.
+                    if (err.httpStatus != 401) {
+                        respond(HttpResponse::json(
+                            {{"status", "error"}, {"message", "Host not paired"}}, 400));
+                        return;
+                    }
+                    Logger::warning(
+                        QString("App list fetch failed for %1: %2").arg(host->name, err.message));
+                    if (host->pairState == NvComputer::PS_PAIRED) {
+                        host->pairState = NvComputer::PS_NOT_PAIRED;
+                        host->serverCertPem.clear();
+                        saveHosts();
+                        emit hostsChanged();
+                        respond(HttpResponse::json(
+                            {{"status", "error"},
+                             {"message", "Host is no longer paired. Please pair again."}},
+                            401));
+                    } else {
+                        respond(HttpResponse::error(502, err.message));
+                    }
+                    return;
+
+                case BackendError::NoAddress:
+                    respond(HttpResponse::json(
+                        {{"status", "error"}, {"message", "Host has no reachable address"}}, 400));
+                    return;
+
+                case BackendError::Timeout:
+                    respond(HttpResponse::error(504, "App list request timed out"));
+                    return;
+
+                case BackendError::Protocol:
+                    // Bad XML / non-OK status in the payload: no warning line here,
+                    // matching the original behaviour.
+                    respond(HttpResponse::error(502, err.message));
+                    return;
+
+                default:
+                    Logger::warning(
+                        QString("App list fetch failed for %1: %2").arg(host->name, err.message));
+                    respond(HttpResponse::error(502, err.message));
+                    return;
+                }
             }
 
-            // The NvComputer may have been deleted (handleDeleteHost) during the
-            // async request.
             NvComputer* host = findHostByUuid(uuid);
             if (!host) {
                 respond(HttpResponse::error(404, "Host removed while fetching app list"));
                 return;
             }
 
-            switch (err.kind) {
-            case BackendError::NotPaired:
-                // httpStatus 0 = we never sent the request; 401 = the host
-                // rejected our certificate mid-flight.
-                if (err.httpStatus != 401) {
-                    respond(HttpResponse::json(
-                        {{"status", "error"}, {"message", "Host not paired"}}, 400));
-                    return;
-                }
-                Logger::warning(
-                    QString("App list fetch failed for %1: %2").arg(host->name, err.message));
-                if (host->pairState == NvComputer::PS_PAIRED) {
-                    host->pairState = NvComputer::PS_NOT_PAIRED;
-                    host->serverCertPem.clear();
-                    saveHosts();
-                    emit hostsChanged();
-                    respond(HttpResponse::json(
-                        {{"status", "error"},
-                         {"message", "Host is no longer paired. Please pair again."}},
-                        401));
-                } else {
-                    respond(HttpResponse::error(502, err.message));
-                }
-                return;
+            host->appList = apps;
 
-            case BackendError::NoAddress:
-                respond(HttpResponse::json(
-                    {{"status", "error"}, {"message", "Host has no reachable address"}}, 400));
-                return;
+            // Start background box art pre-fetching
+            if (!apps.isEmpty()) fetchNextBoxArtInBackground(uuid);
 
-            case BackendError::Timeout:
-                respond(HttpResponse::error(504, "App list request timed out"));
-                return;
+            QJsonArray appsArr;
+            for (const auto& app : apps)
+                appsArr.append(app.toJson());
 
-            case BackendError::Protocol:
-                // Bad XML / non-OK status in the payload: no warning line here,
-                // matching the original behaviour.
-                respond(HttpResponse::error(502, err.message));
-                return;
-
-            default:
-                Logger::warning(
-                    QString("App list fetch failed for %1: %2").arg(host->name, err.message));
-                respond(HttpResponse::error(502, err.message));
-                return;
-            }
-        }
-
-        NvComputer* host = findHostByUuid(uuid);
-        if (!host) {
-            respond(HttpResponse::error(404, "Host removed while fetching app list"));
-            return;
-        }
-
-        host->appList = apps;
-
-        // Start background box art pre-fetching
-        if (!apps.isEmpty()) fetchNextBoxArtInBackground(uuid);
-
-        QJsonArray appsArr;
-        for (const auto& app : apps)
-            appsArr.append(app.toJson());
-
-        QJsonObject result;
-        result["status"] = "ok";
-        result["apps"] = appsArr;
-        respond(HttpResponse::json(result));
-    });
+            QJsonObject result;
+            result["status"] = "ok";
+            result["apps"] = appsArr;
+            respond(HttpResponse::json(result));
+        });
     });
 }
 

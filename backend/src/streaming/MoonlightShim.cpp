@@ -369,11 +369,10 @@ int MoonlightShim::drSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
     // says something about the relay thread, not about Sunshine. Read by the
     // encoder wake-up to tell "the host has nothing to send" apart from "the
     // host is not capturing at all".
-    instance->m_LastHostFrameTimeUs.store(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count(),
-        std::memory_order_release);
+    instance->m_LastHostFrameTimeUs.store(std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::steady_clock::now().time_since_epoch())
+                                              .count(),
+                                          std::memory_order_release);
     instance->m_ConsecutiveWakeNudges.store(0, std::memory_order_release);
 
     // Worker→relay queue bound: if the relay thread is backed up, drop deltas
@@ -1125,8 +1124,8 @@ void MoonlightShim::maybeWakeHostEncoder()
     m_LastWakeNudgeUs.store(nowUs, std::memory_order_release);
 
     qInfo() << "[MoonlightShim] Host silent for" << (sinceUs / 1000)
-            << "ms with an IDR pending — nudging the pointer to force a capture (attempt"
-            << attempt << "of" << kMaxWakeNudges << ")";
+            << "ms with an IDR pending — nudging the pointer to force a capture (attempt" << attempt
+            << "of" << kMaxWakeNudges << ")";
     // One pixel out and back: enough damage for Sunshine to capture, small
     // enough to be invisible in a game. Both events are sent even at a screen
     // edge, where the host clamps one of them (worst case: a 1px drift).

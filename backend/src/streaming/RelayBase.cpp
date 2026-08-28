@@ -75,7 +75,6 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
     // through the UPnP-opened router port.
     if (m_ForceHostPublic && !m_PublicIP.empty() && m_PublicPort > 0 &&
         candidate.type() == rtc::Candidate::Type::Host) {
-
         if (kind == NetClassify::Kind::Tunnel) {
             // A mesh VPN interface carries its own NAT traversal and is already
             // reachable by any peer that can see it. Rewriting it to the public
@@ -103,8 +102,8 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
                 emit signalingIceCandidate(candidate.candidate(), std::string(candidate.mid()));
             try {
                 modCandidate.changeAddress(m_PublicIP, m_PublicPort);
-                qInfo() << logTag << "Host candidate ->" << QString::fromStdString(m_PublicIP) << ":"
-                        << m_PublicPort << (m_EmitLanCandidate ? "(+ LAN)" : "");
+                qInfo() << logTag << "Host candidate ->" << QString::fromStdString(m_PublicIP)
+                        << ":" << m_PublicPort << (m_EmitLanCandidate ? "(+ LAN)" : "");
             } catch (const std::exception& e) {
                 qWarning() << logTag << "Failed to rewrite candidate:" << e.what();
             }

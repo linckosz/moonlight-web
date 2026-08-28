@@ -252,8 +252,7 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
         // a consent the user just gave, and must not overwrite the one they did.
         if (settings.internetConsent().isEmpty()) {
             settings.setInternetConsent(obj.value(QStringLiteral("consent_message")).toString(),
-                                        QStringLiteral("installer"),
-                                        QStringLiteral("rendezvous"));
+                                        QStringLiteral("installer"), QStringLiteral("rendezvous"));
         }
         settings.setInternetAccessEnabled(true);
         Logger::info(QStringLiteral("Provisioning: Internet Access authorized"));

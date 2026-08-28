@@ -700,10 +700,11 @@ bool AuthManager::bindSessionKey(const QString& token, const QByteArray& spkiDer
         // browser cannot do this — its key is non-extractable and stable — so
         // this is either a stolen cookie trying to pair itself, or a bug. Refuse
         // and say so: silently overwriting would hand the session away.
-        Logger::warning(QStringLiteral(
-            "[AuthManager] Refused to replace the pairing key of session %1 — a session keeps "
-            "the key it was bound to; revoke it if the device really changed")
-                         .arg(it->token.left(8)));
+        Logger::warning(
+            QStringLiteral(
+                "[AuthManager] Refused to replace the pairing key of session %1 — a session keeps "
+                "the key it was bound to; revoke it if the device really changed")
+                .arg(it->token.left(8)));
         return false;
     }
 

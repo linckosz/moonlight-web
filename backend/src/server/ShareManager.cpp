@@ -264,12 +264,12 @@ bool ShareManager::activate(int slot, const QString& hostUuid, int appId, qint64
     outStatus.ttlSecs = ttlSecs;
     outStatus.expiresAt = act.expiresAt();
 
-    Logger::info(QStringLiteral("[Share] Slot %1 shared on host %2 (access=%3, ttl=%4)")
-                     .arg(slot)
-                     .arg(hostUuid)
-                     .arg(act.permissions.accessLevel())
-                     .arg(ttlSecs > 0 ? QStringLiteral("%1s").arg(ttlSecs)
-                                      : QStringLiteral("unlimited")));
+    Logger::info(
+        QStringLiteral("[Share] Slot %1 shared on host %2 (access=%3, ttl=%4)")
+            .arg(slot)
+            .arg(hostUuid)
+            .arg(act.permissions.accessLevel())
+            .arg(ttlSecs > 0 ? QStringLiteral("%1s").arg(ttlSecs) : QStringLiteral("unlimited")));
     return true;
 }
 
@@ -314,9 +314,8 @@ bool ShareManager::setPermissions(int slot, const Permissions& perms)
     s->lastPermissions = perms; // remembered for the next opening
     save();
 
-    Logger::info(QStringLiteral("[Share] Slot %1 access now %2")
-                     .arg(slot)
-                     .arg(perms.accessLevel()));
+    Logger::info(
+        QStringLiteral("[Share] Slot %1 access now %2").arg(slot).arg(perms.accessLevel()));
     // Down to the worker before the board hears about it: a demotion that shows
     // in the UI before it takes effect on the host is a lie for as long as the
     // round trip lasts.
@@ -415,8 +414,7 @@ int ShareManager::streamingCount()
 // ── Player side ─────────────────────────────────────────────────────────────
 
 ShareManager::PinOutcome ShareManager::redeemPin(const QString& token, const QString& pin,
-                                                 const QString& rateKey,
-                                                 const QString& userAgent)
+                                                 const QString& rateKey, const QString& userAgent)
 {
     pruneExpired();
 
@@ -744,15 +742,16 @@ void ShareManager::load()
         // A lifetime that is not on the list any more (hand-edited file, older
         // build) falls back to the default rather than becoming unlimited by
         // accident — unlimited has to be asked for.
-        const qint64 ttl = static_cast<qint64>(act.value(QStringLiteral("ttlSecs")).toDouble(kTtlSecs));
+        const qint64 ttl =
+            static_cast<qint64>(act.value(QStringLiteral("ttlSecs")).toDouble(kTtlSecs));
         const qint64 ttlSecs = isValidTtl(ttl) ? ttl : kTtlSecs;
         // The deadline is stored, not derived. A file written before it was
         // (or hand-edited) falls back to the old rule so nothing that was alive
         // becomes immortal on upgrade.
-        const qint64 expiresAt = act.contains(QStringLiteral("expiresAt"))
-                                     ? static_cast<qint64>(
-                                           act.value(QStringLiteral("expiresAt")).toDouble())
-                                     : (ttlSecs > 0 ? activatedAt + ttlSecs : 0);
+        const qint64 expiresAt =
+            act.contains(QStringLiteral("expiresAt"))
+                ? static_cast<qint64>(act.value(QStringLiteral("expiresAt")).toDouble())
+                : (ttlSecs > 0 ? activatedAt + ttlSecs : 0);
         // A link handed out before a restart keeps working: only an owner action
         // or its own deadline ends a share, and a restart is neither.
         if (expiresAt > 0 && now >= expiresAt) continue;
@@ -765,15 +764,16 @@ void ShareManager::load()
             a.cookieHashes.append(c.toString());
         for (const QJsonValue& d : act.value(QStringLiteral("devices")).toArray()) {
             const QJsonObject dev = d.toObject();
-            a.devices.append(BoundDevice{
-                static_cast<qint64>(dev.value(QStringLiteral("boundAt")).toDouble()),
-                dev.value(QStringLiteral("userAgent")).toString()});
+            a.devices.append(
+                BoundDevice{static_cast<qint64>(dev.value(QStringLiteral("boundAt")).toDouble()),
+                            dev.value(QStringLiteral("userAgent")).toString()});
         }
         // Cookies are what actually open a session; the device list is only what
         // the board draws. Keep them the same length so a Binded row can never
         // be shown as Shared (or the reverse) after a hand-edit or an upgrade
         // from a build that had no device list.
-        while (a.devices.size() < a.cookieHashes.size()) a.devices.append(BoundDevice{});
+        while (a.devices.size() < a.cookieHashes.size())
+            a.devices.append(BoundDevice{});
         a.devices = a.devices.mid(0, a.cookieHashes.size());
         a.permissions = Permissions::fromJson(act.value(QStringLiteral("permissions")).toObject());
         a.ttlSecs = ttlSecs;

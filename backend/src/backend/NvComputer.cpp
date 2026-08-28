@@ -156,9 +156,8 @@ void NvComputer::serialize(QSettings& settings) const
 bool NvComputer::isEqualSerialized(const NvComputer& that) const
 {
     return name == that.name && customName == that.customName && uuid == that.uuid &&
-           macAddress == that.macAddress &&
-           activeAddress == that.activeAddress && localAddress == that.localAddress &&
-           remoteAddress == that.remoteAddress &&
+           macAddress == that.macAddress && activeAddress == that.activeAddress &&
+           localAddress == that.localAddress && remoteAddress == that.remoteAddress &&
            manualAddress == that.manualAddress && serverCertPem == that.serverCertPem &&
            activeHttpsPort == that.activeHttpsPort;
 }

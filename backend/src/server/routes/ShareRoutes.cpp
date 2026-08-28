@@ -174,50 +174,50 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     });
 
     // POST /api/share/slots/:n/activate — open a row: mint its link + PIN.
-    router->post(
-        QStringLiteral("/api/share/slots/:n/activate"),
-        [&share, &deps, fillLink](const HttpRequest& req) {
-            const int slot = slotParam(req);
-            if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+    router->post(QStringLiteral("/api/share/slots/:n/activate"),
+                 [&share, &deps, fillLink](const HttpRequest& req) {
+                     const int slot = slotParam(req);
+                     if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
 
-            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+                     const QJsonObject body = QJsonDocument::fromJson(req.body).object();
 
-            // Where this invitation leads. A stream in progress decides it — the
-            // guest joins what the owner is already playing. With nothing
-            // running the board says so instead, which is what lets a row be
-            // opened cold from the host's kebab menu.
-            const std::pair<QString, int> owner =
-                deps.currentOwnerContext ? deps.currentOwnerContext() : std::pair<QString, int>{};
-            QString hostUuid = owner.first;
-            int appId = owner.second;
-            if (hostUuid.isEmpty()) {
-                hostUuid = body.value(QStringLiteral("host_uuid")).toString();
-                appId = body.value(QStringLiteral("app_id")).toInt(-1);
-                if (hostUuid.isEmpty())
-                    return HttpResponse::error(400, "Pick a host to share");
-                // Cold, so the pair is input rather than a fact about a running
-                // stream. An app that does not exist would only fail much later,
-                // in front of the guest.
-                if (deps.hostAppExists && !deps.hostAppExists(hostUuid, appId))
-                    return HttpResponse::error(404, "Unknown host or app");
-            }
+                     // Where this invitation leads. A stream in progress decides it — the
+                     // guest joins what the owner is already playing. With nothing
+                     // running the board says so instead, which is what lets a row be
+                     // opened cold from the host's kebab menu.
+                     const std::pair<QString, int> owner = deps.currentOwnerContext
+                                                               ? deps.currentOwnerContext()
+                                                               : std::pair<QString, int>{};
+                     QString hostUuid = owner.first;
+                     int appId = owner.second;
+                     if (hostUuid.isEmpty()) {
+                         hostUuid = body.value(QStringLiteral("host_uuid")).toString();
+                         appId = body.value(QStringLiteral("app_id")).toInt(-1);
+                         if (hostUuid.isEmpty())
+                             return HttpResponse::error(400, "Pick a host to share");
+                         // Cold, so the pair is input rather than a fact about a running
+                         // stream. An app that does not exist would only fail much later,
+                         // in front of the guest.
+                         if (deps.hostAppExists && !deps.hostAppExists(hostUuid, appId))
+                             return HttpResponse::error(404, "Unknown host or app");
+                     }
 
-            const qint64 ttl = static_cast<qint64>(
-                body.value(QStringLiteral("ttl_secs")).toDouble(ShareManager::kTtlSecs));
-            if (!ShareManager::isValidTtl(ttl))
-                return HttpResponse::error(400, "Unsupported lifetime");
+                     const qint64 ttl = static_cast<qint64>(
+                         body.value(QStringLiteral("ttl_secs")).toDouble(ShareManager::kTtlSecs));
+                     if (!ShareManager::isValidTtl(ttl))
+                         return HttpResponse::error(400, "Unsupported lifetime");
 
-            QString token;
-            QString pin;
-            ShareManager::SlotStatus st;
-            if (!share.activate(slot, hostUuid, appId, ttl, token, pin, st))
-                return HttpResponse::error(500, "Could not share this slot");
+                     QString token;
+                     QString pin;
+                     ShareManager::SlotStatus st;
+                     if (!share.activate(slot, hostUuid, appId, ttl, token, pin, st))
+                         return HttpResponse::error(500, "Could not share this slot");
 
-            QJsonObject obj = slotJson(st);
-            fillLink(obj, token);
-            obj[QStringLiteral("pin")] = pin;
-            return HttpResponse::json(obj);
-        });
+                     QJsonObject obj = slotJson(st);
+                     fillLink(obj, token);
+                     obj[QStringLiteral("pin")] = pin;
+                     return HttpResponse::json(obj);
+                 });
 
     // POST /api/share/slots/:n/credentials — the same link and PIN again, for an
     // owner reopening the popin on a share that is already live. POST, not GET:
@@ -400,63 +400,62 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     });
 
     // POST /api/share/player/join — {token, height} → start this player's stream.
-    router->postAsync(
-        QStringLiteral("/api/share/player/join"),
-        [&share, &deps, &server](const HttpRequest& req, ResponseCallback respond) {
-            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-            const QString token = body.value(QStringLiteral("token")).toString();
+    router->postAsync(QStringLiteral("/api/share/player/join"), [&share, &deps, &server](
+                                                                    const HttpRequest& req,
+                                                                    ResponseCallback respond) {
+        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+        const QString token = body.value(QStringLiteral("token")).toString();
 
-            // Both factors, every time, and they must name the *same* slot: the
-            // link says which player this is, the cookie proves that link's PIN
-            // was entered on this device.
-            const int slot = share.slotForToken(token);
-            if (slot < 0 ||
-                share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie)) != slot ||
-                share.state(slot) == ShareManager::State::Off) {
-                server.reportAuthFailure(req.clientAddress);
-                QJsonObject obj;
-                obj[QStringLiteral("error")] = QStringLiteral("dead_link");
-                respond(HttpResponse::json(obj, 403));
-                return;
-            }
+        // Both factors, every time, and they must name the *same* slot: the
+        // link says which player this is, the cookie proves that link's PIN
+        // was entered on this device.
+        const int slot = share.slotForToken(token);
+        if (slot < 0 ||
+            share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie)) != slot ||
+            share.state(slot) == ShareManager::State::Off) {
+            server.reportAuthFailure(req.clientAddress);
+            QJsonObject obj;
+            obj[QStringLiteral("error")] = QStringLiteral("dead_link");
+            respond(HttpResponse::json(obj, 403));
+            return;
+        }
 
-            if (share.isStreaming(slot)) {
-                // Never steal a running stream: the other device has to leave.
-                QJsonObject obj;
-                obj[QStringLiteral("error")] = QStringLiteral("stream_in_progress");
-                respond(HttpResponse::json(obj, 409));
-                return;
-            }
+        if (share.isStreaming(slot)) {
+            // Never steal a running stream: the other device has to leave.
+            QJsonObject obj;
+            obj[QStringLiteral("error")] = QStringLiteral("stream_in_progress");
+            respond(HttpResponse::json(obj, 409));
+            return;
+        }
 
-            // Nothing running is no longer a dead end: an invitation opened cold
-            // carries the app it was opened on, and the guest's arrival is what
-            // starts it. startPlayerStream decides between resuming into a live
-            // session and launching that app — including telling the guest when
-            // the app has since been removed from the host.
+        // Nothing running is no longer a dead end: an invitation opened cold
+        // carries the app it was opened on, and the guest's arrival is what
+        // starts it. startPlayerStream decides between resuming into a live
+        // session and launching that app — including telling the guest when
+        // the app has since been removed from the host.
 
-            // Only the resolution comes from the player: the height from a fixed
-            // set, plus their screen aspect ("W:H") so the stream fills their
-            // display. Everything else — fps, codec, bitrate — is decided here.
-            const int requested = body.value(QStringLiteral("height")).toInt(1080);
-            const int height = (requested == 720 || requested == 1440) ? requested : 1080;
-            const QString aspect = body.value(QStringLiteral("aspect")).toString();
+        // Only the resolution comes from the player: the height from a fixed
+        // set, plus their screen aspect ("W:H") so the stream fills their
+        // display. Everything else — fps, codec, bitrate — is decided here.
+        const int requested = body.value(QStringLiteral("height")).toInt(1080);
+        const int height = (requested == 720 || requested == 1440) ? requested : 1080;
+        const QString aspect = body.value(QStringLiteral("aspect")).toString();
 
-            if (!deps.startPlayerStream) {
-                respond(HttpResponse::error(503, "Streaming unavailable"));
-                return;
-            }
+        if (!deps.startPlayerStream) {
+            respond(HttpResponse::error(503, "Streaming unavailable"));
+            return;
+        }
 
-            // The signaling URL the worker hands back has to name the host this
-            // player actually reached — the public domain, the LAN IP, whatever
-            // is in their address bar. Leaving it empty produced an unparseable
-            // URL, and the browser fell back to /ws: the owner's slot.
-            QString serverHost = req.headers.value(QStringLiteral("host"));
-            const int colon = serverHost.indexOf(QLatin1Char(':'));
-            if (colon >= 0) serverHost = serverHost.left(colon);
+        // The signaling URL the worker hands back has to name the host this
+        // player actually reached — the public domain, the LAN IP, whatever
+        // is in their address bar. Leaving it empty produced an unparseable
+        // URL, and the browser fell back to /ws: the owner's slot.
+        QString serverHost = req.headers.value(QStringLiteral("host"));
+        const int colon = serverHost.indexOf(QLatin1Char(':'));
+        if (colon >= 0) serverHost = serverHost.left(colon);
 
-            deps.startPlayerStream(slot, height, aspect, share.permissions(slot), serverHost,
-                                   respond);
-        });
+        deps.startPlayerStream(slot, height, aspect, share.permissions(slot), serverHost, respond);
+    });
 
     // POST /api/share/player/leave — the player pressed Leave.
     router->post(

@@ -153,10 +153,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         if (body.value("internet_access_enabled").toBool(false) &&
             body.contains("consent_message")) {
             const bool legacy = !appSettings.registeredUid().isEmpty();
-            appSettings.setInternetConsent(body["consent_message"].toString(),
-                                           QStringLiteral("admin"),
-                                           legacy ? QStringLiteral("dns")
-                                                  : QStringLiteral("rendezvous"));
+            appSettings.setInternetConsent(
+                body["consent_message"].toString(), QStringLiteral("admin"),
+                legacy ? QStringLiteral("dns") : QStringLiteral("rendezvous"));
         }
 
         bool enabled =
@@ -224,11 +223,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             return HttpResponse::error(403, "Invalid host key");
         }
 
-        QString token = authManager.createSession(req.clientAddress,
-                                                  req.viaTunnel
-                                                      ? QStringLiteral("Host machine (remote link)")
-                                                      : QStringLiteral("Host machine"),
-                                                  true, false, req.viaTunnel);
+        QString token =
+            authManager.createSession(req.clientAddress,
+                                      req.viaTunnel ? QStringLiteral("Host machine (remote link)")
+                                                    : QStringLiteral("Host machine"),
+                                      true, false, req.viaTunnel);
         Logger::info(QStringLiteral("[Auth] Host session created for %1 (via host key)").arg(addr));
 
         // Single-use: burn the redeemed key and rewrite the entry points that
@@ -423,8 +422,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             // The wizard only runs on a fresh install, which never registers a
             // subdomain — the consent is for the rendezvous-era behaviour.
             appSettings.setInternetConsent(body.value("consent_message").toString(),
-                                           QStringLiteral("setup"),
-                                           QStringLiteral("rendezvous"));
+                                           QStringLiteral("setup"), QStringLiteral("rendezvous"));
             appSettings.setInternetAccessEnabled(true);
             internetAccess.start();
             const bool active = internetAccess.isActive();
@@ -558,21 +556,21 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     });
 
     // API route: disable Internet Access
-    server.router()->post("/api/internet/disable",
-                          [&, onInternetAccessToggled](const HttpRequest& req) {
-        // Only localhost can modify internet access settings
-        if (!req.isLocal)
-            return HttpResponse::error(
-                403, "Internet access settings can only be modified from localhost");
+    server.router()->post(
+        "/api/internet/disable", [&, onInternetAccessToggled](const HttpRequest& req) {
+            // Only localhost can modify internet access settings
+            if (!req.isLocal)
+                return HttpResponse::error(
+                    403, "Internet access settings can only be modified from localhost");
 
-        internetAccess.stop();
-        appSettings.setInternetAccessEnabled(false);
-        if (onInternetAccessToggled) onInternetAccessToggled(false);
+            internetAccess.stop();
+            appSettings.setInternetAccessEnabled(false);
+            if (onInternetAccessToggled) onInternetAccessToggled(false);
 
-        QJsonObject obj;
-        obj["status"] = "disabled";
-        return HttpResponse::json(obj);
-    });
+            QJsonObject obj;
+            obj["status"] = "disabled";
+            return HttpResponse::json(obj);
+        });
 
     // API route: force refresh (re-check IP, DNS, certificate)
     server.router()->post("/api/internet/refresh", [&](const HttpRequest& req) {

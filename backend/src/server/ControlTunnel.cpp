@@ -49,8 +49,6 @@ QString peerLabel(const QString& sessionId)
     return QStringLiteral("tunnel:") + sessionId.left(16);
 }
 
-
-
 /// Headers a browser may not dictate over the tunnel.
 ///
 /// Artefacts of a hop that does not exist here, plus Content-Length, which is
@@ -75,9 +73,12 @@ QString peerLabel(const QString& sessionId)
 bool isForbiddenHeader(const QString& name)
 {
     static const QStringList kBlocked = {
-        QStringLiteral("connection"),       QStringLiteral("upgrade"),
-        QStringLiteral("transfer-encoding"), QStringLiteral("content-length"),
-        QStringLiteral("expect"),           QStringLiteral("keep-alive"),
+        QStringLiteral("connection"),
+        QStringLiteral("upgrade"),
+        QStringLiteral("transfer-encoding"),
+        QStringLiteral("content-length"),
+        QStringLiteral("expect"),
+        QStringLiteral("keep-alive"),
         QStringLiteral("te"),
     };
     return kBlocked.contains(name);
@@ -90,7 +91,11 @@ constexpr int kMaxInFlightRequests = 24;
 
 ControlTunnel::ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* settings,
                              RendezvousClient* rendezvous, QObject* parent)
-    : QObject(parent), m_Http(http), m_Auth(auth), m_Settings(settings), m_Rendezvous(rendezvous)
+    : QObject(parent)
+    , m_Http(http)
+    , m_Auth(auth)
+    , m_Settings(settings)
+    , m_Rendezvous(rendezvous)
 {
     connect(m_Rendezvous, &RendezvousClient::sessionOpened, this, &ControlTunnel::onSessionOpened);
     connect(m_Rendezvous, &RendezvousClient::sessionClosed, this, &ControlTunnel::onSessionClosed);
@@ -102,7 +107,8 @@ ControlTunnel::ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* s
 ControlTunnel::~ControlTunnel()
 {
     const QStringList ids = m_Peers.keys();
-    for (const QString& id : ids) dropPeer(id, QStringLiteral("shutting down"));
+    for (const QString& id : ids)
+        dropPeer(id, QStringLiteral("shutting down"));
 }
 
 QString ControlTunnel::hostKeyFingerprint() const
@@ -114,7 +120,8 @@ QString ControlTunnel::hostKeyFingerprint() const
     QStringList parts;
     parts.reserve(digest.size());
     for (char c : digest)
-        parts << QStringLiteral("%1").arg(static_cast<quint8>(c), 2, 16, QLatin1Char('0')).toUpper();
+        parts
+            << QStringLiteral("%1").arg(static_cast<quint8>(c), 2, 16, QLatin1Char('0')).toUpper();
     return parts.join(QLatin1Char(':'));
 }
 
@@ -311,7 +318,8 @@ void ControlTunnel::abort(Peer& p, const QString& why)
     // The session id is copied out first: dropPeer() destroys the peer this
     // reference points into.
     const QString id = p.sessionId;
-    Logger::error(QStringLiteral("[Tunnel] MW-BIND-v1 refused session %1: %2").arg(id.left(8), why));
+    Logger::error(
+        QStringLiteral("[Tunnel] MW-BIND-v1 refused session %1: %2").arg(id.left(8), why));
     m_Rendezvous->closeSession(id);
     dropPeer(id, QStringLiteral("pairing verification failed"));
 }
@@ -324,9 +332,12 @@ void ControlTunnel::onSignal(const QString& sessionId, const QJsonObject& payloa
     if (!p) return;
 
     const QString type = payload.value(QStringLiteral("type")).toString();
-    if (type == QLatin1String("hello")) handleHello(*p, payload);
-    else if (type == QLatin1String("sdp")) handleAnswer(*p, payload);
-    else if (type == QLatin1String("ice")) handleIce(*p, payload);
+    if (type == QLatin1String("hello"))
+        handleHello(*p, payload);
+    else if (type == QLatin1String("sdp"))
+        handleAnswer(*p, payload);
+    else if (type == QLatin1String("ice"))
+        handleIce(*p, payload);
 }
 
 void ControlTunnel::handleHello(Peer& p, const QJsonObject& msg)
@@ -386,17 +397,16 @@ void ControlTunnel::sendSignedOffer(Peer& p)
     }
 
     m_Rendezvous->sendSignal(
-        p.sessionId,
-        QJsonObject{
-            {QStringLiteral("type"), QStringLiteral("sdp")},
-            {QStringLiteral("sdp"), QString::fromStdString(p.pendingOffer)},
-            {QStringLiteral("protocol"), QString::fromLatin1(PairingCrypto::PROTOCOL)},
-            {QStringLiteral("host_id"), hostId},
-            {QStringLiteral("host_key"),
-             QString::fromLatin1(m_Settings->hostSigningPublicKey().toBase64())},
-            {QStringLiteral("nonce"), QString::fromLatin1(p.nonceHost.toBase64())},
-            {QStringLiteral("sig"), QString::fromLatin1(sig.toBase64())},
-        });
+        p.sessionId, QJsonObject{
+                         {QStringLiteral("type"), QStringLiteral("sdp")},
+                         {QStringLiteral("sdp"), QString::fromStdString(p.pendingOffer)},
+                         {QStringLiteral("protocol"), QString::fromLatin1(PairingCrypto::PROTOCOL)},
+                         {QStringLiteral("host_id"), hostId},
+                         {QStringLiteral("host_key"),
+                          QString::fromLatin1(m_Settings->hostSigningPublicKey().toBase64())},
+                         {QStringLiteral("nonce"), QString::fromLatin1(p.nonceHost.toBase64())},
+                         {QStringLiteral("sig"), QString::fromLatin1(sig.toBase64())},
+                     });
     p.pendingOffer.clear();
 }
 
@@ -536,7 +546,8 @@ void ControlTunnel::handleRequestFrame(Peer& p, quint32 id, const QByteArray& pa
     req.path = target.path();
     const QUrlQuery query(target);
     const auto items = query.queryItems(QUrl::FullyDecoded);
-    for (const auto& item : items) req.queryParams.insert(item.first, item.second);
+    for (const auto& item : items)
+        req.queryParams.insert(item.first, item.second);
 
     const QJsonObject headers = head.value(QStringLiteral("h")).toObject();
     for (auto it = headers.begin(); it != headers.end(); ++it) {
@@ -639,11 +650,10 @@ void ControlTunnel::handleWsOpen(Peer& p, quint32 id, const QByteArray& payload)
         if (Peer* pp = peer(sessionId))
             sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsOpened, id, QByteArray()));
     });
-    connect(ws, &QWebSocket::textMessageReceived, this,
-            [this, sessionId, id](const QString& text) {
-                if (Peer* pp = peer(sessionId))
-                    sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsText, id, text.toUtf8()));
-            });
+    connect(ws, &QWebSocket::textMessageReceived, this, [this, sessionId, id](const QString& text) {
+        if (Peer* pp = peer(sessionId))
+            sendFrame(*pp, TunnelFrame::build(TunnelFrame::WsText, id, text.toUtf8()));
+    });
     connect(ws, &QWebSocket::disconnected, this, [this, sessionId, id, everOpened]() {
         Peer* pp = peer(sessionId);
         if (!pp) return;

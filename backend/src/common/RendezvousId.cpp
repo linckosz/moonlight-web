@@ -39,21 +39,12 @@ QString normalise(const QString& raw)
     for (const QChar& c : raw.trimmed().toLower()) {
         switch (c.unicode()) {
         case u'-':
-        case u' ':
-            continue; // grouping only, never part of the value
+        case u' ': continue; // grouping only, never part of the value
         case u'i':
-        case u'l':
-            out.append(QLatin1Char('1'));
-            break;
-        case u'o':
-            out.append(QLatin1Char('0'));
-            break;
-        case u'u':
-            out.append(QLatin1Char('v'));
-            break;
-        default:
-            out.append(c);
-            break;
+        case u'l': out.append(QLatin1Char('1')); break;
+        case u'o': out.append(QLatin1Char('0')); break;
+        case u'u': out.append(QLatin1Char('v')); break;
+        default: out.append(c); break;
         }
     }
     return out;
@@ -66,8 +57,8 @@ bool isValid(const QString& id)
         const char16_t u = c.unicode();
         const bool digit = (u >= u'0' && u <= u'9');
         // The alphabet is a-z minus i, l, o and u.
-        const bool letter = (u >= u'a' && u <= u'z')
-                            && u != u'i' && u != u'l' && u != u'o' && u != u'u';
+        const bool letter =
+            (u >= u'a' && u <= u'z') && u != u'i' && u != u'l' && u != u'o' && u != u'u';
         if (!digit && !letter) return false;
     }
     return true;

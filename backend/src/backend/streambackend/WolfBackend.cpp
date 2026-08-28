@@ -53,30 +53,27 @@ BackendError toBackendError(const WolfApiError& err)
         // unreachable URL.
         return BackendError::make(
             BackendError::Timeout,
-            QStringLiteral("Control API did not respond — is the URL reachable?"),
-            err.httpStatus);
+            QStringLiteral("Control API did not respond — is the URL reachable?"), err.httpStatus);
     case WolfApiError::HttpError:
     case WolfApiError::Protocol:
         return BackendError::make(BackendError::Protocol, err.message, err.httpStatus);
     case WolfApiError::None:
-    default:
-        return BackendError{};
+    default: return BackendError{};
     }
 }
 
 } // namespace
 
 WolfBackend::WolfBackend(QString hostUuid, HostResolver resolver, NvHTTP* http,
-                         QNetworkAccessManager* nam, const QString& apiUrl,
-                         const QString& apiToken, PairingCommit commit, QObject* parent)
+                         QNetworkAccessManager* nam, const QString& apiUrl, const QString& apiToken,
+                         PairingCommit commit, QObject* parent)
     : QObject(parent)
     , m_HostUuid(std::move(hostUuid))
     , m_ResolveHost(std::move(resolver))
     , m_Commit(std::move(commit))
     , m_Api(new WolfApiClient(apiUrl, apiToken, nam, this))
     , m_GameStream(std::make_unique<GameStreamBackend>(m_HostUuid, m_ResolveHost, http, nam))
-{
-}
+{}
 
 WolfBackend::~WolfBackend() = default;
 
@@ -106,9 +103,9 @@ void WolfBackend::announcePin(const QString& pin, const QSet<QString>& knownSecr
         return;
     }
 
-    m_Api->pendingPairRequests([this, pin, knownSecrets, attemptsLeft](
-                                   bool ok, const WolfApiError& err,
-                                   const QVector<WolfPendingPair>& pending) {
+    m_Api->pendingPairRequests([this, pin, knownSecrets,
+                                attemptsLeft](bool ok, const WolfApiError& err,
+                                              const QVector<WolfPendingPair>& pending) {
         if (!ok) {
             Logger::warning(
                 QStringLiteral("Wolf auto-pair: /pair/pending failed (%1)").arg(err.message));
@@ -127,10 +124,9 @@ void WolfBackend::announcePin(const QString& pin, const QSet<QString>& knownSecr
             return;
         }
 
-        QTimer::singleShot(kPendingPollIntervalMs, this,
-                           [this, pin, knownSecrets, attemptsLeft]() {
-                               announcePin(pin, knownSecrets, attemptsLeft - 1);
-                           });
+        QTimer::singleShot(kPendingPollIntervalMs, this, [this, pin, knownSecrets, attemptsLeft]() {
+            announcePin(pin, knownSecrets, attemptsLeft - 1);
+        });
     });
 }
 
@@ -156,14 +152,13 @@ void WolfBackend::pairIdentity(const QString& seatId, BackendVoidCallback cb)
             // non-functional anyway — no seat list, no player auto-pair — even when
             // the stream certificate is still valid. This runs only on the
             // admin-initiated ensurePaired() path, never on the launch hot path.
-            m_Api->pairedClients(
-                [cb = std::move(cb)](bool ok, const WolfApiError& err,
-                                     const QVector<WolfPairedClient>&) mutable {
-                    if (ok)
-                        cb(true, BackendError{});
-                    else
-                        cb(false, toBackendError(err));
-                });
+            m_Api->pairedClients([cb = std::move(cb)](bool ok, const WolfApiError& err,
+                                                      const QVector<WolfPairedClient>&) mutable {
+                if (ok)
+                    cb(true, BackendError{});
+                else
+                    cb(false, toBackendError(err));
+            });
             return;
         }
     } else if (isSeatPaired(seatId)) {
@@ -298,28 +293,28 @@ void WolfBackend::listSeats(BackendSeatListCallback cb)
     // The identities Wolf already knows. These are what exists server-side; a
     // seat for a brand-new device session is minted by allocateSeat() and only
     // shows up here once it has paired.
-    m_Api->pairedClients([cb = std::move(cb), address, httpsPort](
-                             bool ok, const WolfApiError& err,
-                             const QVector<WolfPairedClient>& clients) {
-        if (!ok) {
-            cb(false, toBackendError(err), {});
-            return;
-        }
+    m_Api->pairedClients(
+        [cb = std::move(cb), address, httpsPort](bool ok, const WolfApiError& err,
+                                                 const QVector<WolfPairedClient>& clients) {
+            if (!ok) {
+                cb(false, toBackendError(err), {});
+                return;
+            }
 
-        QVector<SeatRef> seats;
-        seats.reserve(clients.size());
-        for (const WolfPairedClient& client : clients) {
-            SeatRef seat;
-            seat.id = client.clientId;
-            seat.name = client.clientId;
-            seat.address = address;
-            seat.httpPort = MW_HTTP_PORT;
-            seat.httpsPort = httpsPort;
-            seats.append(seat);
-        }
+            QVector<SeatRef> seats;
+            seats.reserve(clients.size());
+            for (const WolfPairedClient& client : clients) {
+                SeatRef seat;
+                seat.id = client.clientId;
+                seat.name = client.clientId;
+                seat.address = address;
+                seat.httpPort = MW_HTTP_PORT;
+                seat.httpsPort = httpsPort;
+                seats.append(seat);
+            }
 
-        cb(true, BackendError{}, seats);
-    });
+            cb(true, BackendError{}, seats);
+        });
 }
 
 void WolfBackend::allocateSeat(const QString& deviceSessionId, BackendSeatCallback cb)
@@ -417,8 +412,7 @@ void WolfBackend::withPairedSeat(const LaunchRequest& req, PreparedLaunchCallbac
     });
 }
 
-void WolfBackend::quit(const QString& seatId, const QString& clientUniqueId,
-                       BackendVoidCallback cb)
+void WolfBackend::quit(const QString& seatId, const QString& clientUniqueId, BackendVoidCallback cb)
 {
     Q_UNUSED(clientUniqueId);
     // The seat IS the identity here, so it is what scopes the quit.
@@ -431,8 +425,9 @@ void WolfBackend::provisionSeat(const QJsonObject& params, BackendSeatCallback c
 {
     Q_UNUSED(params);
     cb(false,
-       BackendError::make(BackendError::Unsupported,
-                          QStringLiteral("Wolf profiles are created from Wolf UI, not provisioned")),
+       BackendError::make(
+           BackendError::Unsupported,
+           QStringLiteral("Wolf profiles are created from Wolf UI, not provisioned")),
        SeatRef{});
 }
 
