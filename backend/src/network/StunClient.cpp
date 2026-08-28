@@ -60,7 +60,17 @@ StunClient::StunClient(QObject* parent)
 
 QList<StunClient::StunServer> StunClient::defaultServers()
 {
+    // Ours first, and the public ones only behind it. A STUN binding hands the
+    // server the address it is asking about, so whoever answers learns this
+    // machine's public IP — which is exactly what the consent text names, and it
+    // names the introduction server's operator, not Google's. The rest stay as a
+    // fallback because a machine that cannot learn its own address cannot be
+    // reached at all, and that is a worse answer than a widely-used third party.
+    QString domain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
+    if (domain.isEmpty()) domain = QStringLiteral("moonlightweb.top");
+
     return {
+        {QStringLiteral("stream.") + domain, 3478},
         {QStringLiteral("stun.l.google.com"), 19302},
         {QStringLiteral("stun1.l.google.com"), 19302},
         {QStringLiteral("stun.cloudflare.com"), 3478},

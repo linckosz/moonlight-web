@@ -157,6 +157,12 @@ void UpdateChecker::refresh()
 
 void UpdateChecker::doFetch()
 {
+    // MW_NO_TELEMETRY means what it says. It used to only steer the check away
+    // from the relay and on to GitHub, which reports nothing but is still an
+    // outgoing request every six hours to a third party — not what someone who
+    // set that variable was asking for. Nothing to check means no check.
+    if (!qEnvironmentVariableIsEmpty("MW_NO_TELEMETRY")) return;
+
     // The relay when this build has one, GitHub otherwise. Either way a single
     // release JSON comes back in the same shape, so nothing downstream cares
     // which one answered.

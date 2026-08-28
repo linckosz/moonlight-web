@@ -118,7 +118,7 @@ Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 en.AutoStartTask=Start MoonlightWeb at logon
 en.InternetPageCaption=Internet Link
 en.InternetPageDesc=Allow access from the Internet?
-en.InternetPageBody=MoonlightWeb can allow streaming from outside your local network. Your router is asked (UPnP) to open a streaming port during each session, and whoever connects reaches this PC directly — each side of a peer-to-peer connection sees the other's public IP address. A future update will add the remote entry link, an outgoing connection to the MoonlightWeb introduction server, which then sees this PC's public IP address and when it is online.%n%nNo public DNS record is created, no certificate is issued for this machine, and ports 80/443 stay closed. You can turn this off at any time from the Admin page.
+en.InternetPageBody=MoonlightWeb can allow streaming from outside your local network. Your router is asked (UPnP) to open a streaming port during each session, and whoever connects reaches this PC directly — each side of a peer-to-peer connection sees the other's public IP address. This PC holds one outgoing connection to the MoonlightWeb introduction server, which sees its public IP address and when it is online, and asks a MoonlightWeb STUN server what that public address is; if that server cannot be reached, a public one (Google, Cloudflare) is tried instead.%n%nNo public DNS record is created, no certificate is issued for this machine, and ports 80/443 stay closed. You can turn this off at any time from the Admin page.
 en.InternetPageOption=Allow the Internet link (recommended)
 en.SunshinePageCaption=Sunshine
 en.SunshinePageDesc=Sunshine streaming server
@@ -128,6 +128,8 @@ en.SunshineDetected=The installer detected that Sunshine is already installed on
 en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically. The credentials below are the ones it will be created with — change them if you prefer.
 en.SunshineAlreadyPaired=Sunshine is already installed on this machine and already paired with MoonlightWeb.%n%nThere is nothing to set up here — click Next to continue.
 en.ButtonSkip=&Skip
+en.InternetBtnSkip=&Skip
+en.InternetBtnAccept=&Accept
 en.SunshineUserLabel=Username
 en.SunshinePassLabel=Password
 en.SunshineCredsRequired=Please enter the Sunshine username and password so MoonlightWeb can pair automatically.
@@ -160,7 +162,7 @@ en.UninstConfigDetail=Settings, accounts, certificates and Sunshine pairings are
 fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
 fr.InternetPageDesc=Autoriser l'accès depuis Internet ?
-fr.InternetPageBody=MoonlightWeb peut autoriser le streaming depuis l'extérieur de votre réseau local. Votre box se voit demander (UPnP) l'ouverture d'un port de streaming pendant chaque session, et celui qui se connecte joint ce PC directement — chaque côté d'une connexion pair-à-pair voit l'adresse IP publique de l'autre. Une future mise à jour ajoutera le lien d'accès distant, une connexion sortante vers le serveur d'introduction MoonlightWeb, qui voit alors l'adresse IP publique de ce PC et ses périodes de présence en ligne.%n%nAucun enregistrement DNS public n'est créé, aucun certificat n'est émis pour cette machine, et les ports 80/443 restent fermés. Désactivable à tout moment depuis la page admin.
+fr.InternetPageBody=MoonlightWeb peut autoriser le streaming depuis l'extérieur de votre réseau local. Votre box se voit demander (UPnP) l'ouverture d'un port de streaming pendant chaque session, et celui qui se connecte joint ce PC directement — chaque côté d'une connexion pair-à-pair voit l'adresse IP publique de l'autre. Ce PC maintient une connexion sortante vers le serveur d'introduction MoonlightWeb, qui voit alors son adresse IP publique et ses périodes de présence en ligne, et demande à un serveur STUN MoonlightWeb quelle est cette adresse publique ; si ce serveur est injoignable, un serveur public (Google, Cloudflare) est essayé à la place.%n%nAucun enregistrement DNS public n'est créé, aucun certificat n'est émis pour cette machine, et les ports 80/443 restent fermés. Désactivable à tout moment depuis la page admin.
 fr.InternetPageOption=Autoriser le lien Internet (recommandé)
 fr.SunshinePageCaption=Sunshine
 fr.SunshinePageDesc=Serveur de streaming Sunshine
@@ -170,6 +172,8 @@ fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé s
 fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement. Les identifiants ci-dessous sont ceux qui lui seront attribués — modifiez-les si vous le souhaitez.
 fr.SunshineAlreadyPaired=Sunshine est déjà installé sur cette machine et déjà appairé avec MoonlightWeb.%n%nIl n'y a rien à configurer ici — cliquez sur Suivant pour continuer.
 fr.ButtonSkip=&Ignorer
+fr.InternetBtnSkip=&Passer
+fr.InternetBtnAccept=&Accepter
 fr.SunshineUserLabel=Identifiant
 fr.SunshinePassLabel=Mot de passe
 fr.SunshineCredsRequired=Veuillez saisir l'identifiant et le mot de passe Sunshine pour que MoonlightWeb puisse appairer automatiquement.
@@ -202,7 +206,7 @@ fr.UninstConfigDetail=Les réglages, comptes, certificats et appairages Sunshine
 zh.AutoStartTask=登录时启动 MoonlightWeb
 zh.InternetPageCaption=互联网链接
 zh.InternetPageDesc=是否允许从互联网访问？
-zh.InternetPageBody=MoonlightWeb 可以允许从本地网络之外进行串流。每次串流会话期间会通过 UPnP 请求路由器开放一个串流端口，连接方将直接连到这台电脑——点对点连接的双方都能看到对方的公网 IP 地址。未来的更新将加入远程接入链接：一条到 MoonlightWeb 介绍服务器的出站连接，该服务器因此能看到这台电脑的公网 IP 地址及其在线时间。%n%n不会创建任何公开 DNS 记录，不会为这台机器签发任何证书，端口 80/443 保持关闭。可随时在管理页面关闭。
+zh.InternetPageBody=MoonlightWeb 可以允许从本地网络之外进行串流。每次串流会话期间会通过 UPnP 请求路由器开放一个串流端口，连接方将直接连到这台电脑——点对点连接的双方都能看到对方的公网 IP 地址。这台电脑会保持一条到 MoonlightWeb 介绍服务器的出站连接，该服务器因此能看到这台电脑的公网 IP 地址及其在线时间；同时会向 MoonlightWeb STUN 服务器查询该公网地址，若该服务器无法连接，则改用公共服务器（Google、Cloudflare）。%n%n不会创建任何公开 DNS 记录，不会为这台机器签发任何证书，端口 80/443 保持关闭。可随时在管理页面关闭。
 zh.InternetPageOption=允许互联网链接（推荐）
 zh.SunshinePageCaption=Sunshine
 zh.SunshinePageDesc=Sunshine 串流服务器
@@ -212,6 +216,8 @@ zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n�
 zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装。下方的凭据即为将要设置的凭据 — 如需更改请自行修改。
 zh.SunshineAlreadyPaired=此计算机上已安装 Sunshine，并且已与 MoonlightWeb 配对。%n%n此处无需任何设置 — 点击“下一步”继续。
 zh.ButtonSkip=跳过(&S)
+zh.InternetBtnSkip=跳过(&S)
+zh.InternetBtnAccept=接受(&A)
 zh.SunshineUserLabel=用户名
 zh.SunshinePassLabel=密码
 zh.SunshineCredsRequired=请输入 Sunshine 的用户名和密码，以便 MoonlightWeb 自动配对。
@@ -289,7 +295,16 @@ const
   UpdateSilentArgs = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-';
 
 var
-  InternetPage: TInputOptionWizardPage;
+  InternetPage: TWizardPage;
+  InternetBodyLabel: TNewStaticText;
+  InternetOptionLabel: TNewStaticText;
+  // The Internet page asks with two buttons rather than a checkbox: "Passer"
+  // takes the Back button's slot, "Accepter" is the Next button wearing another
+  // caption. InternetSkipped is what tells the two apart, because Skip reaches
+  // NextButtonClick through a simulated Next click (see InternetSkipClick).
+  InternetSkipButton: TNewButton;
+  InternetSkipped: Boolean;
+  InternetAuthorized: Boolean;
   SunshinePage: TWizardPage;
   SunshineInstallCheck: TNewCheckBox;
   SunshineUserEdit: TNewEdit;
@@ -490,6 +505,16 @@ begin
   WizardForm.NextButton.OnClick(WizardForm.NextButton);
 end;
 
+// "Passer": decline the Internet link and move on. Inno has no API to advance
+// the wizard, so this simulates Next — which means NextButtonClick fires for
+// this page either way, and InternetSkipped is the only thing that tells a
+// declined page from an accepted one.
+procedure InternetSkipClick(Sender: TObject);
+begin
+  InternetSkipped := True;
+  WizardForm.NextButton.OnClick(WizardForm.NextButton);
+end;
+
 // Reads a top-level boolean from the server's settings.json. Returns True only
 // when the key is present with the JSON value `true`. The file is written by
 // QJsonDocument (indented) as `"key": true`, so we locate `"key":` and test the
@@ -538,20 +563,53 @@ begin
   PrevVersion := InstalledVersion();
   UpdateMode := PreviousInstallExists();
 
-  // Step: Internet link authorization. Highlighted in a positive green tint.
-  // Pre-ticked only when a previous install already authorized Internet access
-  // (settings.json persists internet_access_enabled) — a re-install / upgrade
-  // must not silently forget the user's prior opt-in. On a first install it
-  // stays unchecked: opening the machine to the Internet (per-session UPnP
-  // mapping) requires an explicit opt-in click.
-  InternetPage := CreateInputOptionPage(wpSelectTasks,
-    ExpandConstant('{cm:InternetPageCaption}'), ExpandConstant('{cm:InternetPageDesc}'),
-    ExpandConstant('{cm:InternetPageBody}'),
-    False, False);
-  InternetPage.Add(ExpandConstant('{cm:InternetPageOption}'));
-  InternetPage.Values[0] := SettingsBoolEnabled('internet_access_enabled');
+  // Step: Internet link authorization. Two buttons, not a checkbox: the page
+  // cannot be walked past without answering it, and neither answer is
+  // pre-selected — a checkbox that is merely left alone reads as an answer
+  // nobody gave. There is nothing to remember from a previous install either:
+  // ShouldSkipPage hides the page entirely once settings.json holds the key.
+  InternetPage := CreateCustomPage(wpSelectTasks,
+    ExpandConstant('{cm:InternetPageCaption}'), ExpandConstant('{cm:InternetPageDesc}'));
+
+  InternetBodyLabel := TNewStaticText.Create(WizardForm);
+  InternetBodyLabel.Parent := InternetPage.Surface;
+  InternetBodyLabel.Left := 0;
+  InternetBodyLabel.Top := 0;
+  InternetBodyLabel.Width := InternetPage.SurfaceWidth;
+  // WordWrap + AutoSize, so the height follows the text instead of a number
+  // guessed here. The wording has already grown once (it now names the
+  // introduction and STUN servers) and a fixed height would have clipped the
+  // last sentence — which is the one saying what is NOT done.
+  InternetBodyLabel.WordWrap := True;
+  InternetBodyLabel.AutoSize := True;
+  InternetBodyLabel.Caption := ExpandConstant('{cm:InternetPageBody}');
+
+  // The sentence the Accept button agrees to, kept as its own line so the
+  // consent record below can still quote it verbatim.
   // TColor is $00BBGGRR: $43A02E = RGB(46,160,67), a discreet positive green.
-  InternetPage.CheckListBox.Font.Color := $43A02E;
+  InternetOptionLabel := TNewStaticText.Create(WizardForm);
+  InternetOptionLabel.Parent := InternetPage.Surface;
+  InternetOptionLabel.Left := 0;
+  InternetOptionLabel.Top := InternetBodyLabel.Top + InternetBodyLabel.Height + ScaleY(12);
+  InternetOptionLabel.Width := InternetPage.SurfaceWidth;
+  InternetOptionLabel.WordWrap := True;
+  InternetOptionLabel.Font.Style := [fsBold];
+  InternetOptionLabel.Font.Color := $43A02E;
+  InternetOptionLabel.Caption := ExpandConstant('{cm:InternetPageOption}');
+
+  // "Passer" in the slot the Back button gives up on this page, so the pair
+  // reads Passer / Accepter left to right — the order a Windows user expects,
+  // with the affirmative one on the right. Same construction as SkipButton on
+  // the Sunshine page.
+  InternetSkipButton := TNewButton.Create(WizardForm);
+  InternetSkipButton.Parent := WizardForm.BackButton.Parent;
+  InternetSkipButton.Left := WizardForm.BackButton.Left;
+  InternetSkipButton.Top := WizardForm.BackButton.Top;
+  InternetSkipButton.Width := WizardForm.BackButton.Width;
+  InternetSkipButton.Height := WizardForm.BackButton.Height;
+  InternetSkipButton.Caption := ExpandConstant('{cm:InternetBtnSkip}');
+  InternetSkipButton.OnClick := @InternetSkipClick;
+  InternetSkipButton.Visible := False;
 
   // Step: Sunshine.
   SunshinePage := CreateCustomPage(InternetPage.ID,
@@ -800,6 +858,22 @@ begin
     WizardForm.NextButton.Caption := ExpandConstant('{cm:ButtonUpdate}');
   end;
 
+  if (InternetPage <> nil) and (CurPageID = InternetPage.ID) then begin
+    // Defensive: nothing can currently re-enter this page, because the Sunshine
+    // page after it hides Back as well. If that ever changes, a second visit
+    // must not inherit the first visit's Passer.
+    InternetSkipped := False;
+    WizardForm.BackButton.Visible := False;
+    BackButtonHidden := True;
+    InternetSkipButton.Visible := True;
+    // Nothing restores this on the way out, and nothing needs to: Inno resets
+    // the Next caption on every page change before calling us — which is why
+    // the Update caption above is re-applied here rather than set once.
+    WizardForm.NextButton.Caption := ExpandConstant('{cm:InternetBtnAccept}');
+  end else begin
+    InternetSkipButton.Visible := False;
+  end;
+
   if (SunshinePage <> nil) and (CurPageID = SunshinePage.ID) then begin
     PrepareSunshinePage();
     // Re-entering the page (Back from the "ready to install" page) cancels an
@@ -820,8 +894,9 @@ begin
     SkipButton.Visible := SunshineCase <> scPaired;
   end else begin
     SkipButton.Visible := False;
-    // Only ever restore what we hid: other pages manage Back themselves.
-    if BackButtonHidden then begin
+    // Only ever restore what we hid, and never on a page that is itself hiding
+    // Back (the Internet page runs through this branch too).
+    if BackButtonHidden and not ((InternetPage <> nil) and (CurPageID = InternetPage.ID)) then begin
       WizardForm.BackButton.Visible := True;
       BackButtonHidden := False;
     end;
@@ -945,6 +1020,14 @@ var
   httpStatus: Integer;
 begin
   Result := True;
+
+  // The Internet page: "Accepter" is Next itself, "Passer" is Next reached
+  // through InternetSkipClick — so the flag, not the button, is the answer.
+  if (InternetPage <> nil) and (CurPageID = InternetPage.ID) then begin
+    InternetAuthorized := not InternetSkipped;
+    Exit;
+  end;
+
   if (SunshinePage = nil) or (CurPageID <> SunshinePage.ID) or SunshineSkipped then Exit;
 
   // Probed and written exactly as typed: trimming here would validate one pair
@@ -1416,7 +1499,7 @@ begin
   if (not UpdateMode) or (not SettingsHasKey('internet_access_enabled')) then begin
     // Written as UTF-8 (no BOM): the consent text is localized (accents) and the
     // server parses this file with a strict UTF-8 JSON parser.
-    if InternetPage.Values[0] then internet := 'true' else internet := 'false';
+    if InternetAuthorized then internet := 'true' else internet := 'false';
     // Exact agreement text the user read on the Internet page — recorded by the
     // server in its DNS registration audit log (legal traceability).
     consent := ExpandConstant('{cm:InternetPageBody}') + ' / '

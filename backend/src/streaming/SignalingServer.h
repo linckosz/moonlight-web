@@ -79,7 +79,7 @@ public:
     void setMoonlightShim(MoonlightShim* shim) { m_Shim = shim; }
 
     /// Set the STUN server URL to use for ICE configuration.
-    /// Default: "stun:stun.l.google.com:19302"
+    /// Default: "stun:stream.{MW_DOMAIN}:3478" (AppSettings::stunServer).
     void setStunServer(const QString& url) { m_StunServerUrl = url; }
 
     /// WebRTC/UPnP media UDP port for this stream slot. Each concurrent slot
@@ -135,7 +135,11 @@ private:
     /// Send the browser its ICE servers and the ICE deadline it must run.
     /// @param iceTimeoutMs the deadline both ends apply, so the browser does
     ///        not abandon an attempt the host is still nursing.
-    void sendIceConfig(int iceTimeoutMs);
+    /// Push the browser's ICE servers. `needStun` follows the same rule
+    /// buildIceConfig applies to our own side: a LAN peer is reached on host
+    /// candidates alone, so it is told to use no STUN server at all rather than
+    /// being handed one this side has already decided not to use.
+    void sendIceConfig(bool needStun, int iceTimeoutMs);
 
     /// Handle text messages received on the WS in fallback mode.
     /// These are input commands (keydown, mousemove, etc.) from the browser.
@@ -175,7 +179,11 @@ private:
     QString m_OverrideWsUrl;
 
     /// STUN server URL for ICE configuration. Default: Google public STUN.
-    QString m_StunServerUrl = QStringLiteral("stun:stun.l.google.com:19302");
+    // Always overwritten by setStunServer() from Session before a stream
+    // starts; the literal is only what a construction that forgot would get,
+    // and it names our own server for the same reason every other default
+    // does. An instance under its own MW_DOMAIN is covered by the caller.
+    QString m_StunServerUrl = QStringLiteral("stun:stream.moonlightweb.top:3478");
 
     /// Force ICE-TCP candidates (true = UDP + TCP, false = UDP only).
     bool m_ForceIceTcp = false;

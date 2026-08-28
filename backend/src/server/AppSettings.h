@@ -161,6 +161,14 @@ public:
     //
     // Whether the periodic update check goes through the project's relay
     // (https://updates.{MW_DOMAIN}) rather than straight to api.github.com.
+    /// Whether a session's city and country may be resolved for the admin
+    /// sessions list. DEFAULT false, and deliberately so: the address looked up
+    /// belongs to the *visitor*, not to the owner who would be switching this
+    /// on, and it goes to a third party neither of them has heard of. Stored as
+    /// JSON bool "session_location_enabled", file-only.
+    bool sessionLocationEnabled() const;
+    void setSessionLocationEnabled(bool enabled);
+
     // Stored as JSON bool "update_relay_enabled", DEFAULT true, file-only.
     //
     // The relay returns the same GitHub release payload from a shared cache, and
@@ -252,7 +260,8 @@ public:
     //
     // STUN server URL for WebRTC ICE connectivity. Used by both the backend's
     // libdatachannel PeerConnection and forwarded to the browser for its
-    // RTCPeerConnection. Default: "stun:stun.l.google.com:19302"
+    // RTCPeerConnection. Default when the key is absent: "stun:stream.{MW_DOMAIN}:3478"
+    // — our own server, the one the Internet-access consent names.
 
     QString stunServer() const;
     void setStunServer(const QString& url);

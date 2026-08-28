@@ -242,6 +242,19 @@ QString AppSettings::metricsConsentDecision() const
     return decision;
 }
 
+bool AppSettings::sessionLocationEnabled() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("session_location_enabled").toBool(false);
+}
+
+void AppSettings::setSessionLocationEnabled(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["session_location_enabled"] = enabled;
+    writeAll(obj);
+}
+
 bool AppSettings::updateRelayAllowed() const
 {
     return metricsConsentDecision() == QLatin1String("granted") && updateRelayEnabled();
@@ -272,6 +285,10 @@ void AppSettings::seedDocumentedDefaults()
     }
     if (!obj.contains("session_metrics_enabled")) {
         obj["session_metrics_enabled"] = true;
+        changed = true;
+    }
+    if (!obj.contains("session_location_enabled")) {
+        obj["session_location_enabled"] = false;
         changed = true;
     }
     if (changed) writeAll(obj);
@@ -413,7 +430,17 @@ void AppSettings::setShowPerformanceStats(bool enabled)
 QString AppSettings::stunServer() const
 {
     QJsonObject obj = readAll();
-    return obj.value("stun_server").toString(QStringLiteral("stun:stun.l.google.com:19302"));
+    const QString configured = obj.value("stun_server").toString();
+    if (!configured.isEmpty()) return configured;
+
+    // The introduction server answers STUN on 3478 as well, so the browser is
+    // told about the same operator the consent text already names instead of
+    // Google. StunClient::defaultServers() keeps the public servers behind it
+    // for the backend's own detection; a browser gets one server and a direct
+    // connection it can fall back to.
+    QString domain = QString::fromUtf8(qgetenv("MW_DOMAIN"));
+    if (domain.isEmpty()) domain = QStringLiteral("moonlightweb.top");
+    return QStringLiteral("stun:stream.") + domain + QStringLiteral(":3478");
 }
 
 void AppSettings::setStunServer(const QString& url)

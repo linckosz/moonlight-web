@@ -142,13 +142,15 @@ ask_internet() {
     say "  MoonlightWeb can allow streaming from outside this network. Your"
     say "  router is asked (UPnP) to open a streaming port during each session,"
     say "  and whoever connects reaches this machine directly — each side of a"
-    say "  peer-to-peer connection sees the other's public IP address. A future"
-    say "  update will add the remote entry link, an outgoing connection to the"
-    say "  MoonlightWeb introduction server, which then sees this machine's"
-    say "  public IP address and when it is online. No public DNS record is"
-    say "  created, no certificate is issued, and ports 80/443 stay closed."
+    say "  peer-to-peer connection sees the other's public IP address. This"
+    say "  machine holds one outgoing connection to the MoonlightWeb"
+    say "  introduction server, which sees its public IP address and when it is"
+    say "  online, and asks a MoonlightWeb STUN server what that public address"
+    say "  is; if that server cannot be reached, a public one (Google,"
+    say "  Cloudflare) is tried instead. No public DNS record is created, no"
+    say "  certificate is issued, and ports 80/443 stay closed."
     say ""
-    say "  ${dim}No decides nothing for good: Internet Access can be turned on —"
+    say "  ${dim}Skip decides nothing for good: Internet Access can be turned on —"
     say "  and off again — at any time from the admin page.${reset}"
     say ""
     say "  ${dim}up/down arrows to choose, Enter to confirm${reset}"
@@ -158,7 +160,7 @@ ask_internet() {
     # keypress arrives immediately and is not echoed into the drawing. Both are
     # undone on the way out, including on Ctrl-C — leaving a terminal with no
     # echo is a far worse outcome than an unanswered question.
-    _sel=1
+    _sel=0
     _stty="$(stty -g < /dev/tty 2>/dev/null)" || _stty=""
     # Ctrl-C has to leave, not merely tidy up: the handler returns into the read
     # loop otherwise, and the loop would carry on with a cooked terminal.
@@ -174,11 +176,11 @@ ask_internet() {
         [ -z "$_drawn" ] || printf '\033[2A'
         _drawn=1
         if [ "$_sel" = 0 ]; then
-            printf '    %s> Yes%s  allow the internet link\033[K\n' "$bold" "$reset"
-            printf '      No   %sstay on this network only%s\033[K\n' "$dim" "$reset"
+            printf '    %s> Skip%s   stay on this network only\033[K\n' "$bold" "$reset"
+            printf '      Accept %sallow the internet link%s\033[K\n' "$dim" "$reset"
         else
-            printf '      Yes  %sallow the internet link%s\033[K\n' "$dim" "$reset"
-            printf '    %s> No%s   stay on this network only\033[K\n' "$bold" "$reset"
+            printf '      Skip   %sstay on this network only%s\033[K\n' "$dim" "$reset"
+            printf '    %s> Accept%s allow the internet link\033[K\n' "$bold" "$reset"
         fi
 
         # One byte at a time, as a decimal value: `read` cannot see an escape
@@ -191,8 +193,8 @@ ask_internet() {
                     65|68) _sel=0 ;; # up, left
                     66|67) _sel=1 ;; # down, right
                 esac ;;
-            121|89) _sel=0 ;;                            # y, Y
-            110|78) _sel=1 ;;                            # n, N
+            121|89|97|65) _sel=1 ;;                      # y, Y, a, A
+            110|78|115|83) _sel=0 ;;                     # n, N, s, S
             32|9) [ "$_sel" = 0 ] && _sel=1 || _sel=0 ;; # space, tab
             10|13|"") break ;;                           # Enter — or EOF
         esac
@@ -201,7 +203,7 @@ ask_internet() {
     printf '\033[?25h'
     [ -z "$_stty" ] || stty "$_stty" < /dev/tty 2>/dev/null || true
     trap - INT TERM
-    [ "$_sel" = 0 ] && WANT_INTERNET=yes || WANT_INTERNET=no
+    [ "$_sel" = 1 ] && WANT_INTERNET=yes || WANT_INTERNET=no
     say ""
 }
 

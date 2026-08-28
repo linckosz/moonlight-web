@@ -13,7 +13,7 @@ Headline capabilities:
 - **Opus audio** decoded in the browser with an adaptive jitter buffer.
 - **Full input**: keyboard, mouse (pointer-lock), touch trackpad, Xbox/PS **gamepads** with rumble, bidirectional **clipboard**.
 - **Auto-discovery** of Sunshine hosts on the LAN (mDNS) + manual IP add.
-- **Internet access** (opt-in consent): per-session UPnP media mapping for remote streams. A new remote entry link is in development; installs that already hold a public subdomain keep it until February 2027.
+- **Internet access** (opt-in consent): per-session UPnP media mapping for remote streams, plus the **remote entry link** — one outgoing connection to an introduction server, which is how the instance is reached from outside without publishing anything. Installs that already hold a public subdomain keep it until February 2027.
 - **Video Enhancement**: GPU upscaling & sharpening (FSR1 / SGSRv1 via WebGPU) in the browser.
 
 ## 1.1 The User's journey
@@ -72,10 +72,12 @@ The admin page controls:
 
 **Internet Access** is an explicit, versioned, logged consent — the master switch for being reachable from the internet. While it is on, the server:
 
-1. **Detects the public IP** (STUN, HTTPS fallback via ipify/icanhazip), and reports CGNAT/double-NAT when it sees one.
+1. **Detects the public IP** (STUN — our own server at `stream.{MW_DOMAIN}:3478` first, public ones behind it; HTTPS fallback via ipify/icanhazip), and reports CGNAT/double-NAT when it sees one.
 2. **Asks the router (UPnP) to open the streaming port during each session**, and removes the mapping when the session — or the consent — ends. Peers connect directly, so each side of a WebRTC connection sees the other's public IP.
 
-Nothing else is opened or published: no DNS record, no certificate, ports 80/443 stay closed. A new **remote entry link** (an outgoing connection from the host to an introduction server) is in development and will carry remote access to the web UI itself.
+3. **Holds one outgoing connection to the introduction server** — the **remote entry link** — which makes the instance reachable at `https://stream.{MW_DOMAIN}/{id}` while the line is up. That server learns the host's public address and when it is online, and nothing else: the signalling it copies is signed with a key it has never seen.
+
+Nothing else is opened or published: no DNS record, no certificate, ports 80/443 stay closed.
 
 **Legacy instances** — those that registered a `{uniqueId}.{MW_DOMAIN}` subdomain before the mechanism was retired — keep the full historic behaviour (A record upkeep, ACME renewals, 80/443/47999 forwards, port parity) until the shared DNS service shuts down in **February 2027**; the admin page shows the notice.
 

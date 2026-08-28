@@ -24,12 +24,22 @@
 #include <QJsonObject>
 #include <functional>
 
+class AppSettings;
+
 /**
- * Asynchronous IP geolocation service using ip-api.com (free tier).
+ * Asynchronous IP geolocation service (ipwho.is), used to label a session in
+ * the admin list with a city and a country.
  *
- * Results are cached in-memory with a 24h TTL.
- * Free tier: 45 req/min, no API key required.
+ * Results are cached in-memory with a 24h TTL. No API key required.
  * Returns {"city":"Paris","country":"France"} or empty strings on failure.
+ *
+ * Off unless `session_location_enabled` is set. The address handed to the
+ * provider is the *visitor's*, not the owner's: an invited player's public IP
+ * would be sent to a company they have never heard of, so that the person who
+ * invited them can read a city name. Nobody in that exchange has agreed to it,
+ * which is why the answer here is no until someone says otherwise — and why the
+ * flag is read on every lookup rather than latched at startup, so revoking it
+ * takes effect without a restart.
  */
 class GeoIpService : public QObject
 {
@@ -38,7 +48,9 @@ class GeoIpService : public QObject
 public:
     using GeoCallback = std::function<void(const QString& city, const QString& country)>;
 
-    explicit GeoIpService(QObject* parent = nullptr);
+    /// @param settings consulted on every lookup; nullptr disables lookups
+    ///        entirely, which is what a caller with nothing to consult means.
+    explicit GeoIpService(AppSettings* settings, QObject* parent = nullptr);
     ~GeoIpService() override = default;
 
     /**
@@ -55,6 +67,7 @@ public:
     void clearCache();
 
 private:
+    AppSettings* m_settings;
     QNetworkAccessManager* m_nam;
     QHash<QString, QPair<QString, QString>> m_cache; // ip -> (city, country)
     QHash<QString, QList<GeoCallback>> m_pending;    // ip -> pending callbacks

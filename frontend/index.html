@@ -16,13 +16,12 @@
         <meta name="theme-color" content="#05080b" />
         <link rel="manifest" href="/manifest.webmanifest" />
         <link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png" />
-        <!-- Cyberpunk-style display + mono fonts (graceful fallback to system if offline) -->
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link
-            rel="stylesheet"
-            href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap"
-        />
+        <!-- Cyberpunk-style display + mono fonts, served from this machine.
+             They came from fonts.googleapis.com until the introduction server
+             existed: an invited player reaching their host through it would
+             have told Google their address before the page had drawn anything.
+             See css/fonts.css. Graceful fallback to the system stack as before. -->
+        <link rel="stylesheet" href="/css/fonts.css?v=__MW_VERSION__" />
         <!-- Design system: tokens → base → layout → components → views → stream.
              ?v=__MW_VERSION__ is replaced by the running app version server-side
              (StaticFileHandler), so every release busts the stylesheet cache with

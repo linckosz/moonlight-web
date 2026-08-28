@@ -7,6 +7,7 @@
 #            also metrics.{domain} → mw-proxy:8080 (session census)
 #            also stream.{domain} → bootstrap page + /v1/ → mw-rendezvous:8090
 #   mw-rendezvous  introduction server, internal only  (held host lines :8090)
+#   coturn   STUN only, host network :3478            (public address discovery)
 #   umami    web analytics (stats.{domain}), internal  → umami-db (Postgres)
 #   umami-db Postgres for Umami, internal only
 #
@@ -120,6 +121,49 @@ services:
     cap_drop: ["ALL"]                               # high port :8090, no caps
     pids_limit: 200
     mem_limit: 128m
+
+  # ── coturn: STUN, and only STUN ────────────────────────────────────────────
+  # Answers "what address did this packet come from?" on stream.${MW_DOMAIN}:3478
+  # — the name Caddy already serves, so this needs no DNS record of its own and
+  # the signed zone is left alone.
+  #
+  # It exists so that the hosts and the browsers stop asking Google. A STUN
+  # binding tells whoever answers the public address of whoever asked, which is
+  # precisely the disclosure the Internet-access consent describes; naming the
+  # operator the user already agreed to is the difference between a disclosure
+  # and a surprise. The clients keep the public servers as a fallback (see
+  # StunClient::defaultServers) — a machine that cannot learn its own address
+  # cannot be reached at all.
+  #
+  # --stun-only, so there is no relay: this never carries a byte of anybody's
+  # stream, and refusing to be a TURN server is also what keeps it from being
+  # used as an amplifier by someone else.
+  #
+  # network_mode host, and that is not incidental. Docker publishes UDP through
+  # the userland proxy by default, which rewrites the source address — a STUN
+  # server behind it would confidently answer every client with the bridge
+  # gateway's address. Host networking is the only way it sees the real one.
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    container_name: moonlight-coturn
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - --listening-port=3478
+      - --listening-ip=0.0.0.0
+      - --stun-only
+      - --no-tls
+      - --no-dtls
+      - --no-cli
+      - --no-multicast-peers
+      # Do not announce the coturn version to every client that asks.
+      - --no-software-attribute
+      - --log-file=stdout
+      - --simple-log
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]                               # binds :3478, no caps needed
+    pids_limit: 100
+    mem_limit: 64m
 
   # ── dnsdist: public DNS front (DoS / amplification protection) ─────────────
   dnsdist:

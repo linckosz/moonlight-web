@@ -261,6 +261,24 @@
     margin-top: 2px;
     flex-shrink: 0;
 }
+/* The Internet question is answered by pressing one of two buttons rather than
+   by leaving a box alone: Passer on the left, Accepter on the right. Neither
+   carries the chosen style until it is pressed, so an unanswered page looks
+   unanswered — and the Start button below stays disabled while it does. */
+.setup-choice {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+.setup-choice-btn {
+    flex: 1;
+}
+.setup-choice-btn.is-chosen {
+    background: var(--accent-1);
+    color: var(--on-accent);
+    box-shadow: var(--edge-accent);
+}
+
 .setup-creds {
     margin-top: var(--space-2);
 }

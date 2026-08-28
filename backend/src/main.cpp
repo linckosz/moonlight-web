@@ -1843,7 +1843,7 @@ int main(int argc, char* argv[])
         });
 
     InternetAccessManager internetAccess(&appSettings);
-    GeoIpService geoIpService;
+    GeoIpService geoIpService(&appSettings);
     UpdateChecker updateChecker(QCoreApplication::applicationVersion(),
                                 appSettings.updateRelayAllowed());
     SelfUpdater selfUpdater(&updateChecker);

@@ -50,7 +50,8 @@ public:
         quint16 port = 0; ///< Port (typically 3478, 19302, 443, 80)
     };
 
-    /// Default STUN server list (fallback chain).
+    /// Default STUN server list (fallback chain), ours first — see the
+    /// definition for why the public servers are still behind it.
     static QList<StunServer> defaultServers();
 
     /**

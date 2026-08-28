@@ -50,7 +50,7 @@ public:
                   quint16 wsPort = 48001, const QString& serverHost = "localhost",
                   VideoCodec videoCodec = VideoCodec::Auto, bool gamingMode = true,
                   bool upnpEnabled = true, const QString& transport = "webrtc",
-                  const QString& stunServer = "stun:stun.l.google.com:19302",
+                  const QString& stunServer = "stun:stream.moonlightweb.top:3478",
                   int streamHeight = 1080,
                   int streamWidth = 0, // 0 = derive from height (16:9); >0 = explicit (ultrawide)
                   int streamFps = 60, int streamBitrateKbps = 20000, bool yuv444 = false,
@@ -261,7 +261,7 @@ private:
     bool m_CodecOverridden = false;
     /// The original codec selected by the user, before override.
     VideoCodec m_OriginalCodec = VideoCodec::Auto;
-    QString m_StunServer = "stun:stun.l.google.com:19302";
+    QString m_StunServer = "stun:stream.moonlightweb.top:3478";
     /// Per-browser uniqueid for Sunshine launch/cancel; empty → shared id.
     QString m_ClientUniqueId;
     /// Resume directly instead of launching (see setPreferResume).
