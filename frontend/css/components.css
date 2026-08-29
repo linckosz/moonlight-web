@@ -806,6 +806,13 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 .backend-status-text {
     font-size: var(--fs-sm);
     line-height: 1.5;
+    /* Some backend failures answer with steps to follow, not a sentence — a
+       loopback-only MultiSeat API is the case that earns it. Keep their line
+       breaks, and cap the height so a long answer scrolls instead of pushing
+       the dialog's buttons off screen. */
+    white-space: pre-line;
+    max-height: 11em;
+    overflow-y: auto;
 }
 /* Spinner shown beside the status text while a save/pairing is in flight.
    Lives on the status line rather than the button so the label never shifts. */

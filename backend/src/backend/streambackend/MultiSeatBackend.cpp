@@ -237,14 +237,37 @@ void MultiSeatBackend::ensurePaired(BackendVoidCallback cb)
     // Nothing to pair: the control API authenticates with a key. Prove the key
     // is accepted, which is the only thing an admin can get wrong at setup —
     // and the one failure worth reporting differently from "host is down".
-    m_Api->listSeats(
-        [cb = std::move(cb)](bool ok, const MultiSeatApiError& err, const QVector<MultiSeatSeat>&) {
-            if (!ok) {
-                cb(false, toBackendError(err));
-                return;
+    const bool loopbackApi = m_Api->baseUrl().contains(QLatin1String("127.0.0.1"))
+                             || m_Api->baseUrl().contains(QLatin1String("localhost"))
+                             || m_Api->baseUrl().contains(QLatin1String("[::1]"));
+
+    m_Api->listSeats([cb = std::move(cb), loopbackApi](bool ok, const MultiSeatApiError& err,
+                                                       const QVector<MultiSeatSeat>&) {
+        if (!ok) {
+            BackendError mapped = toBackendError(err);
+            // "Nothing answered" on a remote MultiSeat almost always means the
+            // service is up but listening on loopback only — that is its
+            // shipped default, because the API is plain HTTP carrying a key.
+            // Saying so beats letting an admin hunt a service that is running.
+            if (mapped.kind == BackendError::Unreachable && !loopbackApi) {
+                mapped.message += QStringLiteral(
+                    "\n\nIf the MultiSeat service is running, this is probably its default "
+                    "rather than a fault: it listens on its own machine only, because its API "
+                    "carries a key over plain HTTP. To reach it from here, on that machine as "
+                    "administrator:\n"
+                    "1. In C:\\Program Files\\MultiSeat\\appsettings.json, set "
+                    "\"ApiBindLoopbackOnly\": false\n"
+                    "2. Restart-Service MultiSeatService\n"
+                    "3. Restrict port 9550 to this server's address with a New-NetFirewallRule "
+                    "-RemoteAddress rule — otherwise the key is reachable from every machine "
+                    "on the network.\n"
+                    "Installing MoonlightWeb on the MultiSeat machine avoids all of this.");
             }
-            cb(true, BackendError{});
-        });
+            cb(false, mapped);
+            return;
+        }
+        cb(true, BackendError{});
+    });
 }
 
 void MultiSeatBackend::listSeats(BackendSeatListCallback cb)
