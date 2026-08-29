@@ -161,9 +161,14 @@
         flex-wrap: wrap;
         align-items: flex-start;
     }
+    /* The floor is exactly two app tiles plus the card's own padding, so a
+       host with one app, none, or only a message is the same width as a host
+       with two. Above that floor the width is the app grid's and nothing
+       else's — the header and the body messages are kept out of the
+       intrinsic size below, or a long host name would set the width. */
     .host-card {
         flex: 0 1 auto;
-        min-width: 340px;
+        min-width: calc(2 * var(--app-card-w) + var(--app-card-gap) + 2 * var(--host-card-pad-x));
         max-width: 100%;
     }
     .hosts-empty,
@@ -241,9 +246,10 @@
 
 /* ── Host card ─────────────────────────────────────────────────────────── */
 .host-card {
+    --host-card-pad-x: var(--space-5);
     display: flex;
     flex-direction: column;
-    padding: var(--space-4) var(--space-5);
+    padding: var(--space-4) var(--host-card-pad-x);
     transition:
         border-color 0.2s,
         box-shadow 0.2s;
@@ -256,11 +262,17 @@
     opacity: 0.78;
 }
 
-/* Header row: status icon · name+badge+meta · kebab menu */
+/* Header row: status icon · name+meta · status badge · kebab menu.
+   width:0 + min-width:100% is the "don't size the box" idiom: percentages are
+   ignored while the card's intrinsic width is computed, so the header counts
+   for nothing there and then fills whatever width the app grid settled on.
+   Without it a host named eb5e4832-…​.home would stretch the card. */
 .host-card-head {
     display: flex;
     align-items: center;
     gap: var(--space-4);
+    width: 0;
+    min-width: 100%;
 }
 
 .host-card-icon {
@@ -297,27 +309,29 @@
     flex: 1;
     min-width: 0;
 }
-.host-name-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-    margin-bottom: 2px;
-}
+/* Name and GPU both ellipsise: the header has whatever room the app grid
+   leaves it, never the other way round. */
 .host-name {
     font-weight: 600;
     font-size: var(--fs-md);
+    margin-bottom: 2px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-.host-name-row .status-badge {
-    flex-shrink: 0;
 }
 .host-gpu {
     font-size: var(--fs-xs);
     color: var(--text-3);
     margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* State sits hard right, just left of the kebab. */
+.host-card-head > .status-badge {
+    flex: 0 0 auto;
+    margin-left: auto;
+    white-space: nowrap;
 }
 
 /* Kebab menu */
@@ -356,15 +370,26 @@
     color: var(--c-danger);
 }
 
-/* Body: app grid, or a centered Pair / Wake-on-LAN / offline message */
+/* Body: app grid, or a centered Pair / Wake-on-LAN / offline message.
+   Only the app grid may set the card's width. Everything else takes the same
+   width:0 + min-width:100% treatment as the header, so a sentence like "This
+   host is on the network but MoonlightWeb isn't running" wraps inside the
+   two-tile minimum instead of stretching the card into a ribbon. */
 .host-card-body {
     margin-top: var(--space-4);
+}
+.host-body-center,
+.host-apps-loading,
+.host-apps-msg {
+    width: 0;
+    min-width: 100%;
 }
 .host-body-center {
     display: flex;
     align-items: center;
     justify-content: center;
     padding: var(--space-5) var(--space-3);
+    text-align: center;
 }
 .host-offline-msg {
     color: var(--text-3);
@@ -384,7 +409,8 @@
 
 @media (max-width: 600px) {
     .host-card {
-        padding: var(--space-3) var(--space-4);
+        --host-card-pad-x: var(--space-4);
+        padding: var(--space-3) var(--host-card-pad-x);
     }
     .host-card-head {
         gap: var(--space-3);

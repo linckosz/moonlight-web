@@ -908,16 +908,14 @@ export class HostListView {
                         <span class="status-icon ${cls}">${host.statusIcon}</span>
                     </div>
                     <div class="host-card-info">
-                        <div class="host-name-row">
-                            <span class="host-name">${this.esc(host.displayName)}</span>
-                            <span class="status-badge ${cls}">${host.statusLabel}</span>
-                        </div>
+                        <div class="host-name" title="${this.esc(host.displayName)}">${this.esc(host.displayName)}</div>
                         ${
                             host.displayGpu
                                 ? `<div class="host-gpu">${this.esc(host.displayGpu)}</div>`
                                 : ''
                         }
                     </div>
+                    <span class="status-badge ${cls}">${host.statusLabel}</span>
                     <div class="host-card-menu">
                         <button class="btn-icon btn-host-menu" data-uuid="${host.uuid}"
                                 aria-haspopup="true" aria-expanded="false"

@@ -65,10 +65,10 @@
     .apps-grid {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--space-5);
+        gap: var(--app-card-gap);
     }
     .app-card {
-        width: 156px;
+        width: var(--app-card-w);
         padding-left: var(--space-5);
         padding-right: var(--space-5);
     }
