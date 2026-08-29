@@ -48,7 +48,8 @@ void run_rendezvous_id_tests()
     // instance would claim the same value, the first would win, and the rest
     // would be unreachable forever. Cheap to check, so check it.
     QSet<QString> seen;
-    for (int i = 0; i < 64; ++i) seen.insert(RendezvousId::generate());
+    for (int i = 0; i < 64; ++i)
+        seen.insert(RendezvousId::generate());
     CHECK_EQ(seen.size(), 64);
 
     SECTION("RendezvousId — folding matches the server");

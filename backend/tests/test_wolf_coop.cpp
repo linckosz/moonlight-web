@@ -78,8 +78,7 @@ void run_wolf_coop_tests()
     CHECK_EQ(sessions[0].aesKey, QStringLiteral("00112233445566778899aabbccddeeff"));
 
     // The launch key is bytes on our side and lowercase hex on the wire.
-    const QByteArray ourKey =
-        QByteArray::fromHex("ffeeddccbbaa99887766554433221100");
+    const QByteArray ourKey = QByteArray::fromHex("ffeeddccbbaa99887766554433221100");
     CHECK_EQ(WolfCoop::matchSessionByLaunchKey(sessions, ourKey),
              QStringLiteral("22222222222222222222"));
 
@@ -91,8 +90,7 @@ void run_wolf_coop_tests()
 
     // No match is a legitimate answer (the session already ended), and so is an
     // empty key — neither may be turned into "some session, probably ours".
-    CHECK(WolfCoop::matchSessionByLaunchKey(sessions, QByteArray::fromHex("0badc0de"))
-              .isEmpty());
+    CHECK(WolfCoop::matchSessionByLaunchKey(sessions, QByteArray::fromHex("0badc0de")).isEmpty());
     CHECK(WolfCoop::matchSessionByLaunchKey(sessions, QByteArray()).isEmpty());
     CHECK(WolfCoop::matchSessionByLaunchKey({}, ourKey).isEmpty());
 
@@ -121,9 +119,8 @@ void run_wolf_coop_tests()
 
     SECTION("Wolf co-op — request bodies in the shape Wolf can parse");
 
-    const QJsonObject join =
-        WolfApiClient::joinLobbyBody(QStringLiteral("coop-lobby"),
-                                     QStringLiteral("22222222222222222222"), {});
+    const QJsonObject join = WolfApiClient::joinLobbyBody(
+        QStringLiteral("coop-lobby"), QStringLiteral("22222222222222222222"), {});
     CHECK_EQ(join.value(QStringLiteral("lobby_id")).toString(), QStringLiteral("coop-lobby"));
     // A STRING, although the field is an integer type upstream.
     CHECK(join.value(QStringLiteral("moonlight_session_id")).isString());
@@ -152,7 +149,8 @@ void run_wolf_coop_tests()
 
     // The reaping call. Its field is `session_id` — a different name from the
     // `moonlight_session_id` the lobby calls use, for the same value.
-    const QJsonObject stopS = WolfApiClient::stopSessionBody(QStringLiteral("22222222222222222222"));
+    const QJsonObject stopS =
+        WolfApiClient::stopSessionBody(QStringLiteral("22222222222222222222"));
     CHECK_EQ(stopS.size(), 1);
     CHECK(stopS.value(QStringLiteral("session_id")).isString());
     CHECK_EQ(stopS.value(QStringLiteral("session_id")).toString(),

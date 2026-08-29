@@ -91,7 +91,8 @@ void run_app_manifest_tests()
     // The browser feeds these straight back as request paths, so a missing
     // leading slash would turn every one of them into a relative fetch against
     // whatever the current URL happens to be.
-    for (const QString& p : files) CHECK(p.startsWith(QLatin1Char('/')));
+    for (const QString& p : files)
+        CHECK(p.startsWith(QLatin1Char('/')));
 
     // Sorted, so two runs of the same build produce the same document — which is
     // what lets anything downstream compare or cache it.

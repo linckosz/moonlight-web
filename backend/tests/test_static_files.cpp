@@ -58,9 +58,9 @@ void run_static_files_tests()
     CHECK_EQ(h.serveFile("/sub/page.html").statusCode, 200);
 
     // Traversal attempts must be rejected (403), never leak the sibling secret.
-    for (const QString& evil : {QStringLiteral("/../secret.txt"),
-                                QStringLiteral("/sub/../../secret.txt"),
-                                QStringLiteral("/..%2fsecret.txt"), QStringLiteral("/../")}) {
+    for (const QString& evil :
+         {QStringLiteral("/../secret.txt"), QStringLiteral("/sub/../../secret.txt"),
+          QStringLiteral("/..%2fsecret.txt"), QStringLiteral("/../")}) {
         HttpResponse r = h.serveFile(evil);
         CHECK(r.statusCode == 403 || r.statusCode == 404);
         CHECK(!r.body.contains("TOP SECRET"));
