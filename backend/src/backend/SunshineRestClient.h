@@ -79,14 +79,21 @@ public:
     /// Authenticates with Basic, and falls back to Apollo's login when Basic is
     /// refused: the fork MultiSeat fronts its seats with answers 401 to every
     /// Basic request and issues a session cookie from /api/login instead.
+    ///
+    /// Retries while the host says nothing is waiting for a PIN. The pairing
+    /// chain announces the PIN when stage 1 goes out rather than when the host
+    /// has parked it, so across a network the PIN can arrive first.
     void sendPin(const QString& pin, const QString& user, const QString& pass,
                  const QString& deviceName = QStringLiteral("moonlightweb"), quint16 port = 47990,
                  const QString& host = QStringLiteral("127.0.0.1"));
 
 private:
+    void attemptPin(const QString& pin, const QString& user, const QString& pass,
+                    const QString& deviceName, quint16 port, const QString& host,
+                    const QByteArray& cookie, int attempt);
     void postPin(const QString& pin, const QString& deviceName, quint16 port, const QString& host,
                  const QByteArray& authHeader, const QByteArray& cookie,
-                 std::function<void(int status)> done);
+                 std::function<void(int status, const QByteArray& body)> done);
     void loginForCookie(const QString& user, const QString& pass, quint16 port, const QString& host,
                         std::function<void(const QByteArray& cookie)> done);
 
