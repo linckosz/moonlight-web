@@ -2738,6 +2738,12 @@ int main(int argc, char* argv[])
             cfg["backendType"] = host->backendType;
             cfg["backendApiUrl"] = host->backendApiUrl;
             cfg["backendApiToken"] = host->backendApiToken;
+            // A seat can still be unpaired when the stream starts — the browser
+            // may never have asked for an app list — and pairing it means
+            // pushing a PIN to its own web UI, which needs these. They ride on
+            // stdin with the rest of cfg, so no password reaches the argv list.
+            cfg["backendPairUser"] = host->backendPairUser;
+            cfg["backendPairPassword"] = host->backendPairPassword;
             // The worker rebuilds a bare NvComputer, and a backend refuses to
             // dial a host it believes unpaired. The pair state and the server
             // certificate have to travel with it.
@@ -3613,6 +3619,9 @@ int main(int argc, char* argv[])
         cfg["backendType"] = host->backendType;
         cfg["backendApiUrl"] = host->backendApiUrl;
         cfg["backendApiToken"] = host->backendApiToken;
+        // See the owner path: a seat may still need pairing at stream time.
+        cfg["backendPairUser"] = host->backendPairUser;
+        cfg["backendPairPassword"] = host->backendPairPassword;
         // The worker rebuilds a bare NvComputer, and a backend refuses to
         // dial a host it believes unpaired. The pair state and the server
         // certificate have to travel with it.

@@ -393,10 +393,38 @@ void MultiSeatBackend::getAppList(const QString& seatId, BackendAppListCallback 
     });
 }
 
+void MultiSeatBackend::withDeviceSeat(const QString& deviceId, DeviceSeatCallback cb)
+{
+    // A device that has streamed before keeps its seat, and with it the Windows
+    // account holding its saves.
+    const QString owned = ownedSeat(deviceId);
+    if (!owned.isEmpty()) {
+        withSeatBackend(owned, [owned, cb](GameStreamBackend* backend, const BackendError& err) {
+            cb(owned, backend, err);
+        });
+        return;
+    }
+
+    // First stream from this device: claim a seat the same way the app list
+    // does, so both end up answering for the same one.
+    allocateSeat(deviceId, [this, cb](bool ok, const BackendError& err, const SeatRef& seat) {
+        if (!ok) {
+            cb(QString(), nullptr, err);
+            return;
+        }
+        const QString id = seat.id;
+        withSeatBackend(id, [id, cb](GameStreamBackend* backend, const BackendError& seatErr) {
+            cb(id, backend, seatErr);
+        });
+    });
+}
+
 void MultiSeatBackend::launch(const QString& seatId, const LaunchRequest& req,
                               BackendMediaCallback cb)
 {
-    withSeatBackend(seatId, [seatId, req, cb](GameStreamBackend* backend, const BackendError& err) {
+    Q_UNUSED(seatId);
+    withDeviceSeat(req.clientUniqueId, [req, cb](const QString& seat, GameStreamBackend* backend,
+                                                 const BackendError& err) {
         if (!backend) {
             cb(false, err, MediaDescriptor{});
             return;
@@ -404,36 +432,49 @@ void MultiSeatBackend::launch(const QString& seatId, const LaunchRequest& req,
         // Present the seat certificate: each Apollo keeps its own client list,
         // so seats must not look like one another.
         LaunchRequest scoped = req;
-        scoped.clientIdentitySeat = seatId;
-        backend->launch(seatId, scoped, cb);
+        scoped.clientIdentitySeat = seat;
+        backend->launch(seat, scoped, cb);
     });
 }
 
 void MultiSeatBackend::resume(const QString& seatId, const LaunchRequest& req,
                               BackendMediaCallback cb)
 {
-    withSeatBackend(seatId, [seatId, req, cb](GameStreamBackend* backend, const BackendError& err) {
+    Q_UNUSED(seatId);
+    withDeviceSeat(req.clientUniqueId, [req, cb](const QString& seat, GameStreamBackend* backend,
+                                                 const BackendError& err) {
         if (!backend) {
             cb(false, err, MediaDescriptor{});
             return;
         }
         LaunchRequest scoped = req;
-        scoped.clientIdentitySeat = seatId;
-        backend->resume(seatId, scoped, cb);
+        scoped.clientIdentitySeat = seat;
+        backend->resume(seat, scoped, cb);
     });
 }
 
 void MultiSeatBackend::quit(const QString& seatId, const QString& clientUniqueId,
                             BackendVoidCallback cb)
 {
-    withSeatBackend(
-        seatId, [seatId, clientUniqueId, cb](GameStreamBackend* backend, const BackendError& err) {
-            if (!backend) {
-                cb(false, err);
-                return;
-            }
-            backend->quit(seatId, clientUniqueId, cb);
-        });
+    Q_UNUSED(seatId);
+
+    // Quitting never claims a seat: a device with none has nothing of ours
+    // running, and saying so is more useful than handing it an account.
+    const QString owned = ownedSeat(clientUniqueId);
+    if (owned.isEmpty()) {
+        cb(false, BackendError::make(BackendError::NotFound,
+                                     QStringLiteral("This device owns no seat on that host")));
+        return;
+    }
+
+    withSeatBackend(owned, [owned, clientUniqueId, cb](GameStreamBackend* backend,
+                                                       const BackendError& err) {
+        if (!backend) {
+            cb(false, err);
+            return;
+        }
+        backend->quit(owned, clientUniqueId, cb);
+    });
 }
 
 void MultiSeatBackend::provisionSeat(const QJsonObject& params, BackendSeatCallback cb)

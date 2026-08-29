@@ -226,6 +226,10 @@ int runStreamWorker(QCoreApplication& app)
     backendConfig[QStringLiteral("hostUuid")] = host->uuid;
     backendConfig[QStringLiteral("apiUrl")] = cfg["backendApiUrl"].toString();
     backendConfig[QStringLiteral("apiToken")] = cfg["backendApiToken"].toString();
+    // What a MultiSeat seat needs to pair itself: its Apollo web UI is the only
+    // way a PIN reaches it, and the control API cannot pair on our behalf.
+    backendConfig[QStringLiteral("pairUser")] = cfg["backendPairUser"].toString();
+    backendConfig[QStringLiteral("pairPassword")] = cfg["backendPairPassword"].toString();
 
     QString backendType = cfg["backendType"].toString();
     if (backendType.isEmpty()) backendType = QStringLiteral("gamestream");

@@ -31,6 +31,7 @@ void run_backend_probe_tests();
 void run_tunnel_frame_tests();
 void run_app_manifest_tests();
 void run_wolf_coop_tests();
+void run_multiseat_tests();
 void run_session_metrics_tests();
 
 int main(int argc, char** argv)
@@ -59,6 +60,7 @@ int main(int argc, char** argv)
     run_tunnel_frame_tests();
     run_app_manifest_tests();
     run_wolf_coop_tests();
+    run_multiseat_tests();
     run_session_metrics_tests();
 
     const int total = g_stats.passed + g_stats.failed;
