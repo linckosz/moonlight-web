@@ -277,12 +277,11 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
         // LAN only, by explicit design: the password is a convenience for the
         // machines in the same house, not a second front door on the internet.
-        // Two independent conditions, because either one alone is forgeable in
-        // a deployment we support — a TLS-terminating tunnel makes every
-        // visitor look like 127.0.0.1 (peer check alone would pass), and a
-        // hairpin-NAT LAN client arrives under the public domain (Host check
-        // alone would pass for internet visitors too).
-        if (!AuthManager::isLanAddress(req.clientAddress) || !req.hostTrusted) {
+        // What "on this LAN" is worth proving with differs by arrival — see
+        // AuthManager::canUnlockAdmin. Every device now reaches an instance
+        // through the rendezvous, LAN ones included, so the tunnel case is not
+        // an exception carved out of this door: it is the door.
+        if (!AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel)) {
             QJsonObject obj;
             obj["status"] = "error";
             obj["error"] = "lan_only";
@@ -436,8 +435,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         // button never appears where the unlock would be refused.
         obj["admin_unlock_available"] =
             !isLocal && obj["authenticated"].toBool() && authManager.remoteAdminEnabled() &&
-            authManager.adminPasswordSet() && AuthManager::isLanAddress(req.clientAddress) &&
-            req.hostTrusted;
+            authManager.adminPasswordSet() &&
+            AuthManager::canUnlockAdmin(req.clientAddress, req.hostTrusted, req.viaTunnel);
 
         // Whether this browser holds a session cookie at all — true even on
         // localhost, where authenticated is hardcoded. It is what tells the UI

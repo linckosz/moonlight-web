@@ -300,6 +300,28 @@ public:
      *  Unlike isPrivateIP this understands IPv6, which matters because it gates
      *  the admin password unlock. */
     static bool isLanAddress(const QString& ip);
+    /** True when a caller may spend the remote admin password: the door is LAN
+     *  only, by explicit design.
+     *
+     *  @p ip must be a LAN address in every case. What the second condition is
+     *  worth depends on how the request arrived, which is why @p viaTunnel is
+     *  part of the question:
+     *
+     *    socket  the peer address alone is not enough — a TLS-terminating
+     *            tunnel running on this machine forwards every visitor on earth
+     *            from 127.0.0.1 — so the Host header must also name us
+     *            (@p hostTrusted). Neither check alone survives a deployment we
+     *            support: a hairpin-NAT LAN client arrives under the public
+     *            domain, so the Host check alone would pass for the internet.
+     *    tunnel  @p hostTrusted can never be true: the browser is on the
+     *            rendezvous server's name, not ours. It is also not needed —
+     *            the address here is the one ICE actually settled on, where our
+     *            own stack is sending packets rather than anything the browser
+     *            claimed, and a peer that is not on this LAN cannot make a
+     *            connectivity check to a private address succeed. This is the
+     *            same statement /api/auth/host-key already trusts on this path.
+     */
+    static bool canUnlockAdmin(const QString& ip, bool hostTrusted, bool viaTunnel);
     /** Rate-limit bucket key for an address: the raw IPv4, or the /64 prefix for
      *  IPv6 (a single client trivially owns a whole /64, so per-/128 buckets are
      *  pointless against guessing). */
