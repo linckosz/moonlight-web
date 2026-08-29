@@ -165,8 +165,12 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
     quint16 httpsPort = host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT;
     const NvAddress addr = host->uniqueAddresses().first();
 
+    // Empty seat = the default identity, so a plain host is asked exactly as it
+    // always was. A MultiSeat seat was paired under its own certificate and
+    // knows no other, so it has to be the one presented here too.
+    const ClientIdentity identity = im->identityForSeat(m_IdentitySeat);
     QNetworkReply* reply =
-        m_Http->getAppListAsync(addr, httpsPort, im->getCertificate(), im->getPrivateKey());
+        m_Http->getAppListAsync(addr, httpsPort, identity.certPem, identity.keyPem);
 
     // One-shot guard: the timeout and finished() race each other.
     auto answered = std::make_shared<bool>(false);

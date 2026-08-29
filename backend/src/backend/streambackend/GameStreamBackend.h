@@ -72,6 +72,13 @@ public:
     // The single seat's id — the host uuid.
     QString seatId() const { return m_HostUuid; }
 
+    /// Which client identity to present on calls that carry no LaunchRequest —
+    /// the app list, today. Empty means the default one, which is what a plain
+    /// Sunshine host and Wolf both pair with, so leaving it alone changes
+    /// nothing for them. MultiSeat sets it: each seat's Apollo knows only the
+    /// certificate that seat was paired with, and answers 401 to any other.
+    void setIdentitySeat(const QString& seatId) { m_IdentitySeat = seatId; }
+
 private:
     // Shared prologue: resolve the host, check it's paired and reachable.
     // Returns nullptr and fills `err` when the caller should bail out.
@@ -82,6 +89,7 @@ private:
                            BackendMediaCallback cb);
 
     QString m_HostUuid;
+    QString m_IdentitySeat;
     HostResolver m_ResolveHost;
     NvHTTP* m_Http = nullptr;
     QNetworkAccessManager* m_Nam = nullptr;
