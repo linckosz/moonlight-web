@@ -103,6 +103,12 @@ public:
 
     void getAppList(const QString& seatId, BackendAppListCallback cb) override;
 
+    // ⚠️ These three ignore `seatId` and resolve the seat from the **device**.
+    // StreamSession has no seat to give — it hands the backend the host uuid —
+    // so taking the argument literally would look up a seat MultiSeat has never
+    // heard of, and every launch would fail. The device id is what tells one
+    // player from another all the way from the browser, and it is what owns a
+    // seat. WolfBackend resolves the same way, for the same reason.
     void launch(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb) override;
     void resume(const QString& seatId, const LaunchRequest& req, BackendMediaCallback cb) override;
     void quit(const QString& seatId, const QString& clientUniqueId,
@@ -120,6 +126,13 @@ private:
     using SeatBackendCallback =
         std::function<void(GameStreamBackend* backend, const BackendError& err)>;
     void withSeatBackend(const QString& seatId, SeatBackendCallback cb);
+
+    /// Same, for the seat a device owns — claiming one if this is its first
+    /// stream. The seat id comes back with the backend because the caller needs
+    /// it to present the right certificate.
+    using DeviceSeatCallback = std::function<void(const QString& seatId, GameStreamBackend* backend,
+                                                  const BackendError& err)>;
+    void withDeviceSeat(const QString& deviceId, DeviceSeatCallback cb);
 
     /// The synthetic host for a seat: the machine's address with the seat's own
     /// GFE ports, plus whatever pairing we have recorded for it.

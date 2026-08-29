@@ -70,6 +70,7 @@ add_executable(run_tests
     test_tunnel_frame.cpp
     test_app_manifest.cpp
     test_wolf_coop.cpp
+    test_multiseat.cpp
     test_session_metrics.cpp
     # In-scope production units (+ their real deps)
     ${_src}/src/streaming/InputEncoder.cpp
@@ -92,6 +93,9 @@ add_executable(run_tests
     # Wolf's control API: the wire shapes native co-op depends on. The selection
     # rules themselves are header-only (WolfCoop.h), so nothing else comes in.
     ${_src}/src/backend/WolfApiClient.cpp
+    # MultiSeat's control API: how a seat reads off the wire, and whether it can
+    # be streamed. Both are pure enough to test without the service.
+    ${_src}/src/backend/MultiSeatApiClient.cpp
     ${_src}/src/backend/IdentityManager.cpp
     # AppSettings and AuthManager both reach into MW-BIND-v1 now: the host
     # identity key, and the pairing key bound to a session.
