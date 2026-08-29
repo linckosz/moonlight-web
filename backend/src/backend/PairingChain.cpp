@@ -20,9 +20,17 @@
 #include "NvPairingManager.h"
 
 #include <QRandomGenerator>
+#include <QTimer>
 #include <memory>
 
 namespace PairingChain {
+
+namespace {
+// Long enough for stage 1 to reach a host on the far side of a LAN, short
+// enough that nobody waits on it — the host is going to sit on that request
+// for up to a minute anyway.
+constexpr int kPinAnnounceDelayMs = 3000;
+} // namespace
 
 QString generatePin()
 {
@@ -85,12 +93,20 @@ void run(NvPairingManager* pm, const QString& pin, PinAnnouncer announcer, Resul
                 });
         });
 
-    // Reaching here with nothing reported means stage 1 really went to the
-    // network and is now parked on the host waiting for a PIN. That is the only
-    // moment an out-of-band PIN push makes sense — and for Wolf it is the only
-    // thing that will ever unblock the response.
+    // Reaching here with nothing reported means stage 1 went to the network and
+    // will be parked on the host waiting for a PIN. That is the only moment an
+    // out-of-band PIN push makes sense — and for Wolf it is the only thing that
+    // will ever unblock the response.
+    //
+    // "Went to the network" is not "arrived": the request is dispatched
+    // asynchronously, so announcing here can beat it to the host. A host that
+    // has not parked it yet has nothing to give the PIN to. Let the dispatch
+    // finish first — harmless for Wolf, whose request blocks server-side, and
+    // for a loopback Sunshine, which is simply ready sooner.
     if (announcer && !*settledSynchronously) {
-        announcer(pin);
+        QTimer::singleShot(kPinAnnounceDelayMs, [announcer = std::move(announcer), pin]() {
+            announcer(pin);
+        });
     }
 }
 
