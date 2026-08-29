@@ -220,8 +220,8 @@ void run_auth_manager_tests()
         CHECK(!auth.isTunnelHostSession(onSocket));
 
         const QString onTunnel = auth.createSession("192.168.1.44", "Host machine (remote link)",
-                                                   /*isHost=*/true, /*ephemeral=*/false,
-                                                   /*viaTunnel=*/true);
+                                                    /*isHost=*/true, /*ephemeral=*/false,
+                                                    /*viaTunnel=*/true);
         CHECK(auth.isHostSession(onTunnel));
         CHECK(auth.isTunnelHostSession(onTunnel));
 

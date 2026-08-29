@@ -75,8 +75,8 @@ void run_pairing_binding_tests()
               .isEmpty());
 
     // A hash an attacker can collide is a hash they can bind to their own key.
-    CHECK(SdpFingerprint::extract(sdpWith({"a=fingerprint:sha-1 " + fingerprintOf(0x50)}))
-              .isEmpty());
+    CHECK(
+        SdpFingerprint::extract(sdpWith({"a=fingerprint:sha-1 " + fingerprintOf(0x50)})).isEmpty());
 
     CHECK(SdpFingerprint::extract(sdpWith({"a=fingerprint:sha-256 AB:CD"})).isEmpty());
     CHECK(SdpFingerprint::extract(sdpWith({"a=fingerprint:sha-256"})).isEmpty());

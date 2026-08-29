@@ -93,8 +93,8 @@ void run_connection_guard_tests()
     // ── Purge drops idle, unbanned entries but keeps active bans ─────────────
     {
         CG g;
-        g.allowConnection("203.0.113.50", t0);                 // idle, not banned
-        for (int i = 0; i <= CG::CONN_MAX_PER_WINDOW; ++i)     // banned
+        g.allowConnection("203.0.113.50", t0);             // idle, not banned
+        for (int i = 0; i <= CG::CONN_MAX_PER_WINDOW; ++i) // banned
             g.allowConnection("203.0.113.51", t0 + i);
         CHECK_EQ(g.trackedIpCount(), 2);
         g.purge(t0 + CG::IDLE_PURGE_MS + 1);

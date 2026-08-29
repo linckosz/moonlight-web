@@ -59,9 +59,8 @@ void run_tunnel_frame_tests()
 
     SECTION("TunnelFrame — the head is length-prefixed so the body starts where it says");
 
-    const QByteArray encoded =
-        TunnelFrame::encodeHead(QJsonObject{{QStringLiteral("m"), QStringLiteral("GET")}},
-                                QByteArray("BODY"));
+    const QByteArray encoded = TunnelFrame::encodeHead(
+        QJsonObject{{QStringLiteral("m"), QStringLiteral("GET")}}, QByteArray("BODY"));
     // 4-byte length, then {"m":"GET"} (11 bytes), then the body verbatim.
     CHECK_EQ(encoded.toHex(), QByteArray("0000000b7b226d223a22474554227d424f4459"));
 

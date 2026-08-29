@@ -22,15 +22,16 @@
 static int g_Passed = 0;
 static int g_Failed = 0;
 
-#define TEST(name, expr) do { \
-    if (!(expr)) { \
-        qCritical() << "[FAIL]" << name; \
-        g_Failed++; \
-    } else { \
-        qInfo() << "[PASS]" << name; \
-        g_Passed++; \
-    } \
-} while(0)
+#define TEST(name, expr)                                                                           \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            qCritical() << "[FAIL]" << name;                                                       \
+            g_Failed++;                                                                            \
+        } else {                                                                                   \
+            qInfo() << "[PASS]" << name;                                                           \
+            g_Passed++;                                                                            \
+        }                                                                                          \
+    } while (0)
 
 // ── Test 1: Construction / Destruction ──────────────────────────────────────────
 
@@ -42,7 +43,7 @@ void test_construction()
         UPNPClient client;
         TEST("Default: not available", !client.isAvailable());
         TEST("Default: gateway is null", client.gatewayAddress().isNull());
-    }  // destructor called here
+    } // destructor called here
 
     TEST("Destructor: no crash on cleanup", true);
 }
@@ -121,8 +122,7 @@ void test_signals()
 
     // In fallback mode, operations fail → error signals should be emitted
     client.discover(500);
-    TEST("error signal emitted on discover() failure in fallback mode",
-         errorEmitted);
+    TEST("error signal emitted on discover() failure in fallback mode", errorEmitted);
 
     // reset counters
     mappingAddedEmitted = false;
@@ -132,8 +132,7 @@ void test_signals()
     // addPortMapping should also emit error in fallback mode
     errorEmitted = false;
     client.addPortMapping(48010, 48010);
-    TEST("error signal emitted on addPortMapping() failure",
-         errorEmitted);
+    TEST("error signal emitted on addPortMapping() failure", errorEmitted);
 }
 
 // ── Test 7: Double cleanup safety ─────────────────────────────────────────────
@@ -144,8 +143,8 @@ void test_double_cleanup()
 
     {
         UPNPClient client;
-        client.discover(500);   // fails, but triggers cleanup path
-        client.discover(500);   // second discover calls cleanup() on m_Available=false
+        client.discover(500); // fails, but triggers cleanup path
+        client.discover(500); // second discover calls cleanup() on m_Available=false
         TEST("Double discover: no crash", true);
     }
 
@@ -174,7 +173,8 @@ void test_discover_with_upnp()
                 TEST("getExternalIPAddress() returns non-empty", true);
                 qInfo() << "  External IP:" << QString::fromStdString(extIP);
             } else {
-                qInfo() << "  getExternalIPAddress() failed (gateway may not be connected to internet)";
+                qInfo()
+                    << "  getExternalIPAddress() failed (gateway may not be connected to internet)";
             }
 
             // Test addPortMapping + removePortMapping
@@ -206,7 +206,8 @@ void test_discover_with_upnp()
 
     QTimer::singleShot(2000, QApplication::instance(), &QApplication::quit);
 #else
-    qInfo() << "\n=== Test: discover() with miniupnpc — SKIPPED (MW_HAVE_MINIUPNPC not defined) ===";
+    qInfo()
+        << "\n=== Test: discover() with miniupnpc — SKIPPED (MW_HAVE_MINIUPNPC not defined) ===";
 #endif
 }
 

@@ -95,10 +95,9 @@ void run_backend_probe_tests()
     // A reduced serverinfo — some forks answer one before pairing — still says
     // "speaks GameStream", because uniqueid plus appversion is a shape nothing
     // else produces.
-    CHECK(BackendProbe::classifyServerInfo(
-              QStringLiteral("<root status_code=\"200\"><uniqueid>x</uniqueid>"
-                             "<appversion>7.1.431.-1</appversion></root>")) ==
-          Detected::GameStream);
+    CHECK(BackendProbe::classifyServerInfo(QStringLiteral(
+              "<root status_code=\"200\"><uniqueid>x</uniqueid>"
+              "<appversion>7.1.431.-1</appversion></root>")) == Detected::GameStream);
 
     SECTION("BackendProbe — the MultiSeat control API answer");
 

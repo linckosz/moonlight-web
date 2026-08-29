@@ -7,8 +7,14 @@
 #include <QJsonObject>
 #include <QtEndian>
 
-static quint32 beU32(const QByteArray& b, int off) { return qFromBigEndian<quint32>(b.constData() + off); }
-static quint32 leU32(const QByteArray& b, int off) { return qFromLittleEndian<quint32>(b.constData() + off); }
+static quint32 beU32(const QByteArray& b, int off)
+{
+    return qFromBigEndian<quint32>(b.constData() + off);
+}
+static quint32 leU32(const QByteArray& b, int off)
+{
+    return qFromLittleEndian<quint32>(b.constData() + off);
+}
 
 void run_input_encoder_tests()
 {
@@ -40,8 +46,8 @@ void run_input_encoder_tests()
 
     // mousemove: 4-byte payload, magic 0x07.
     {
-        QByteArray p = InputEncoder::encodeFromJson(
-            QJsonObject{{"type", "mousemove"}, {"dx", 5}, {"dy", -3}});
+        QByteArray p =
+            InputEncoder::encodeFromJson(QJsonObject{{"type", "mousemove"}, {"dx", 5}, {"dy", -3}});
         CHECK_EQ(p.size(), 12);
         CHECK_EQ(beU32(p, 0), 8u);
         CHECK_EQ(leU32(p, 4), 0x07u);
@@ -51,19 +57,20 @@ void run_input_encoder_tests()
 
     // mousedown / mouseup: 1-byte payload, magic 0x08 / 0x09.
     {
-        QByteArray d = InputEncoder::encodeFromJson(
-            QJsonObject{{"type", "mousedown"}, {"button", 1}});
+        QByteArray d =
+            InputEncoder::encodeFromJson(QJsonObject{{"type", "mousedown"}, {"button", 1}});
         CHECK_EQ(d.size(), 9);
         CHECK_EQ(leU32(d, 4), 0x08u);
         CHECK_EQ(static_cast<int>(static_cast<unsigned char>(d[8])), 1);
-        QByteArray u = InputEncoder::encodeFromJson(QJsonObject{{"type", "mouseup"}, {"button", 2}});
+        QByteArray u =
+            InputEncoder::encodeFromJson(QJsonObject{{"type", "mouseup"}, {"button", 2}});
         CHECK_EQ(leU32(u, 4), 0x09u);
     }
 
     // mousewheel: 6-byte payload, magic 0x0A, scroll mirrored big-endian.
     {
-        QByteArray p = InputEncoder::encodeFromJson(
-            QJsonObject{{"type", "mousewheel"}, {"delta", 120}});
+        QByteArray p =
+            InputEncoder::encodeFromJson(QJsonObject{{"type", "mousewheel"}, {"delta", 120}});
         CHECK_EQ(p.size(), 14);
         CHECK_EQ(leU32(p, 4), 0x0Au);
         CHECK_EQ(qFromBigEndian<qint16>(p.constData() + 8), static_cast<qint16>(120));
@@ -72,8 +79,8 @@ void run_input_encoder_tests()
 
     // mousehwheel: 2-byte payload, magic 0x55000001 (Sunshine extension).
     {
-        QByteArray p = InputEncoder::encodeFromJson(
-            QJsonObject{{"type", "mousehwheel"}, {"delta", -120}});
+        QByteArray p =
+            InputEncoder::encodeFromJson(QJsonObject{{"type", "mousehwheel"}, {"delta", -120}});
         CHECK_EQ(p.size(), 10);
         CHECK_EQ(beU32(p, 0), 6u);
         CHECK_EQ(leU32(p, 4), 0x55000001u);

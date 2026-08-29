@@ -114,9 +114,21 @@ jobs:
       # Pin to the same major.minor as the bundled LLVM (VS2022) to avoid
       # formatting disagreements across clang-format versions.
       - run: pip install "clang-format==19.1.7"
+      # The suite is held to the same style as what it tests: a test file is
+      # read far more often than it is written, and letting it drift is how
+      # `backend/tests/` ended up 12 files out of line while `src/` stayed
+      # clean. Vendored code (backend/libs, backend/third_party) is never in
+      # scope.
+      #
+      # git pathspecs rather than a grep on the listing: git's fnmatch has no
+      # FNM_PATHNAME here, so `*` spans directories and matches the extension
+      # exactly. The old `grep -E '\.(cpp|h)$'` was right on GNU grep but also
+      # matched `build.sh` on Git Bash, which quietly fed shell scripts to
+      # clang-format on a maintainer's machine.
       - name: Check formatting (house style in backend/.clang-format)
         run: |
-          git ls-files -- 'backend/src/' | grep -E '\.(cpp|h)$' \
+          git ls-files -- 'backend/src/*.cpp' 'backend/src/*.h' \
+                          'backend/tests/*.cpp' 'backend/tests/*.h' \
             | xargs clang-format --dry-run --Werror
       - name: Report
         if: failure()
@@ -126,7 +138,7 @@ jobs:
             echo ""
             echo "Apply the house style (backend/.clang-format) and commit:"
             echo '```bash'
-            echo "git ls-files -- 'backend/src/' | grep -E '\\.(cpp|h)\$' | xargs clang-format -i"
+            echo "git ls-files -- 'backend/src/*.cpp' 'backend/src/*.h' 'backend/tests/*.cpp' 'backend/tests/*.h' | xargs clang-format -i"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
