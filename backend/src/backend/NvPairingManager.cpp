@@ -492,9 +492,21 @@ void NvPairingManager::completePairing(const QString& pin,
                                             return;
                                         }
 
-                                        // --- Stage 5: pair challenge (HTTPS, non-fatal) ---
-                                        // Confirms the client cert is recognized over mutual TLS;
-                                        // pairing is already complete after stage 4.
+                                        // --- Stage 5: pair challenge (HTTPS) ---
+                                        // The first request made over mutual TLS, and so the
+                                        // only proof the host will actually accept the
+                                        // certificate it just went through four stages to
+                                        // agree on. Sunshine and Wolf both answer it.
+                                        //
+                                        // A host that answers "not authorized" here has NOT
+                                        // paired us, whatever stages 1-4 returned — Apollo
+                                        // does exactly that, and treating it as complete used
+                                        // to store a server certificate and report success,
+                                        // after which every later call failed with an
+                                        // unexplained 401. Better to fail the pairing.
+                                        //
+                                        // A transport failure is different: the host said
+                                        // nothing, so the pairing it just completed stands.
                                         openConnection(
                                             "https", "pair",
                                             "devicename=roth&updateState=1&phrase=pairchallenge",
@@ -503,24 +515,43 @@ void NvPairingManager::completePairing(const QString& pin,
                                                        const QString& error) {
                                                 if (!error.isEmpty()) {
                                                     Logger::warning(
-                                                        QString("Pairing stage #5 failed "
-                                                                "(non-fatal): %1")
+                                                        QString("Pairing stage #5 unanswered "
+                                                                "(assuming paired): %1")
                                                             .arg(error));
-                                                } else {
-                                                    try {
-                                                        NvHTTP::verifyResponseStatus(
-                                                            pairChallengeXml);
-                                                        if (NvHTTP::getXmlString(pairChallengeXml,
-                                                                                 "paired") != "1")
-                                                            Logger::warning(
-                                                                "Pairing stage #5: paired != 1");
-                                                    } catch (const std::exception& e) {
-                                                        Logger::warning(
-                                                            QString("Pairing stage #5 failed "
-                                                                    "(non-fatal): %1")
-                                                                .arg(e.what()));
-                                                    }
+                                                    Logger::info("Pairing completed successfully");
+                                                    cb(PAIRED, m_ServerCertPem);
+                                                    return;
                                                 }
+
+                                                QString refusal;
+                                                try {
+                                                    NvHTTP::verifyResponseStatus(pairChallengeXml);
+                                                    if (NvHTTP::getXmlString(pairChallengeXml,
+                                                                             "paired") != "1")
+                                                        refusal =
+                                                            QStringLiteral("paired != 1");
+                                                } catch (const std::exception& e) {
+                                                    refusal = QString::fromUtf8(e.what());
+                                                }
+
+                                                if (!refusal.isEmpty()) {
+                                                    // Report the failure, but do not unpair.
+                                                    // Apollo's own source shows stage 4 taking
+                                                    // its success path here — it logs a warning
+                                                    // when it refuses, and there is none — so
+                                                    // something on that side may well be
+                                                    // registered. Tearing it down on a guess
+                                                    // would destroy state we do not understand;
+                                                    // refusing to claim success is enough.
+                                                    Logger::warning(
+                                                        QString("Pairing rejected at stage #5 — "
+                                                                "the host will not accept our "
+                                                                "certificate: %1")
+                                                            .arg(refusal));
+                                                    cb(FAILED, QByteArray());
+                                                    return;
+                                                }
+
                                                 Logger::info("Pairing completed successfully");
                                                 cb(PAIRED, m_ServerCertPem);
                                             });
