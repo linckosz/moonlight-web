@@ -29,6 +29,7 @@
 #include <QSslError>
 #include <QSslKey>
 #include <QSslSocket>
+#include <QElapsedTimer>
 #include <QUuid>
 #include <QCryptographicHash>
 #include <stdexcept>
@@ -132,26 +133,52 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
         req.setSslConfiguration(ssl);
     }
 
+    // Worth a line even when it works: stage 1 parks on the host until a PIN
+    // arrives, so "did our request get there, and when" is the first question
+    // any pairing problem asks. The query carries the client certificate, so
+    // only its size is logged.
+    const QString target = QStringLiteral("%1://%2:%3/%4")
+                               .arg(scheme, m_Host)
+                               .arg(url.port())
+                               .arg(command);
+    Logger::info(QStringLiteral("Pairing → %1 (query %2 bytes, timeout %3 ms)")
+                     .arg(target)
+                     .arg(query.size())
+                     .arg(timeoutMs > 0 ? timeoutMs : REQUEST_TIMEOUT_MS));
+
+    QElapsedTimer sent;
+    sent.start();
+
     QNetworkReply* reply = m_Nam->get(req);
 
     // Ignore SSL errors (self-signed cert) — scoped to this reply.
     QObject::connect(reply, &QNetworkReply::sslErrors, reply,
                      [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
 
-    QObject::connect(
-        reply, &QNetworkReply::finished, reply, [reply, scheme, command, cb = std::move(cb)]() {
-            QString body;
-            QString error;
-            if (reply->error() != QNetworkReply::NoError) {
-                error = reply->errorString();
-                Logger::warning(
-                    QString("Pairing request failed: %1 %2 → %3").arg(scheme, command, error));
-            } else {
-                body = QString::fromUtf8(reply->readAll());
-            }
-            reply->deleteLater();
-            cb(body, error);
-        });
+    QObject::connect(reply, &QNetworkReply::finished, reply,
+                     [reply, scheme, command, target, sent, cb = std::move(cb)]() {
+                         QString body;
+                         QString error;
+                         const int status =
+                             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                         if (reply->error() != QNetworkReply::NoError) {
+                             error = reply->errorString();
+                             Logger::warning(QString("Pairing request failed: %1 %2 → %3 (after "
+                                                     "%4 ms)")
+                                                 .arg(scheme, command, error)
+                                                 .arg(sent.elapsed()));
+                         } else {
+                             body = QString::fromUtf8(reply->readAll());
+                             Logger::info(QStringLiteral("Pairing ← %1 HTTP %2, %3 bytes after "
+                                                         "%4 ms")
+                                              .arg(target)
+                                              .arg(status)
+                                              .arg(body.size())
+                                              .arg(sent.elapsed()));
+                         }
+                         reply->deleteLater();
+                         cb(body, error);
+                     });
 }
 
 void NvPairingManager::unpair()
