@@ -276,6 +276,31 @@ void run_auth_manager_tests()
     CHECK(!AuthManager::isLanAddress("2001:db8::1"));
     CHECK(!AuthManager::isLanAddress(""));
 
+    // ── Who may spend the password ─────────────────────────────────────────
+    // On a socket both conditions are required, because either one alone is
+    // forgeable in a deployment we support.
+    CHECK(AuthManager::canUnlockAdmin("192.168.1.5", /*hostTrusted*/ true, /*viaTunnel*/ false));
+    // A TLS-terminating tunnel on this machine forwards the whole internet from
+    // loopback under our own name: local peer, trusted Host, still not a LAN
+    // machine — which is why the peer check is not the only one…
+    CHECK(!AuthManager::canUnlockAdmin("192.168.1.5", false, false));
+    // …and a hairpin-NAT LAN client arrives under the public domain, which is
+    // why the Host check is not the only one either.
+    CHECK(!AuthManager::canUnlockAdmin("8.8.8.8", true, false));
+
+    // Through the rendezvous the Host header names the introduction server, so
+    // hostTrusted is false for every arrival and cannot gate anything. The
+    // address is ICE's own conclusion instead: a LAN peer is admitted, the
+    // internet is not.
+    CHECK(AuthManager::canUnlockAdmin("192.168.1.5", false, /*viaTunnel*/ true));
+    CHECK(AuthManager::canUnlockAdmin("fd12:3456::1", false, true));
+    CHECK(!AuthManager::canUnlockAdmin("8.8.8.8", false, true));
+    CHECK(!AuthManager::canUnlockAdmin("8.8.8.8", true, true));
+    // A peer with no negotiated candidate pair is labelled, not addressed. It
+    // parses as nothing and is refused on both paths.
+    CHECK(!AuthManager::canUnlockAdmin("peer-4f2a", false, true));
+    CHECK(!AuthManager::canUnlockAdmin("", true, true));
+
     // ── Address helpers (static) ───────────────────────────────────────────
     CHECK_EQ(AuthManager::cleanClientAddress("::ffff:192.168.1.5"), QString("192.168.1.5"));
     CHECK_EQ(AuthManager::isPrivateIP("192.168.1.5"), QString("Local"));

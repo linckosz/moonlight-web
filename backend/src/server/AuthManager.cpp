@@ -344,6 +344,18 @@ bool AuthManager::isLanAddress(const QString& ip)
     return false;
 }
 
+bool AuthManager::canUnlockAdmin(const QString& ip, bool hostTrusted, bool viaTunnel)
+{
+    // The one condition that never bends: the password buys nothing from an
+    // address outside this LAN, whichever way the request came in.
+    if (!isLanAddress(ip)) return false;
+
+    // On the tunnel, that address is ICE's own conclusion and is the whole
+    // proof — see the header for why the Host header cannot stand in for it
+    // there, and why it does not have to.
+    return viaTunnel || hostTrusted;
+}
+
 QString AuthManager::rateLimitKey(const QString& ip)
 {
     QString clean = cleanClientAddress(ip);
