@@ -211,6 +211,9 @@ void MultiSeatBackend::withSeatBackend(const QString& seatId, SeatBackendCallbac
                         return it == m_SeatHosts.end() ? nullptr : &it.value();
                     },
                     m_SeatHttp, m_Nam, this);
+                // Every call this provider makes is to one seat's Apollo, which
+                // was paired under that seat's own certificate.
+                slot->setIdentitySeat(id);
             }
             cb(slot, BackendError{});
         };
