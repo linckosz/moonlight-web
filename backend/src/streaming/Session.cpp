@@ -458,6 +458,19 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
             errObj["local_os"] = QStringLiteral("Linux");
 #endif
             m_Respond(HttpResponse::json(errObj, 503));
+        } else if (err.httpStatus == 403
+                   || err.message.contains(QStringLiteral("Permission denied"))) {
+            // Apollo — and so every MultiSeat seat — grants full rights only to
+            // the first device that pairs with it; everyone after gets "view the
+            // list" and nothing else. The refusal is a 403 that says only
+            // "Permission denied", which reads like a MoonlightWeb bug unless we
+            // say whose decision it was and where to change it.
+            m_Respond(HttpResponse::error(
+                403, QString("\"%1\" has not given this device permission to launch apps. Open "
+                             "that host's own web interface and grant this device the rights it "
+                             "needs — a host that hands out limited permissions gives the first "
+                             "device that pairs everything, and later ones almost nothing.")
+                         .arg(m_Host->name)));
         } else if (err.kind == BackendError::Protocol) {
             m_Respond(HttpResponse::error(502, QString("Launch error: %1").arg(err.message)));
         } else {
