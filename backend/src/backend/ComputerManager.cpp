@@ -46,6 +46,7 @@
 #include <QCryptographicHash>
 #include <QEventLoop>
 #include <QTimer>
+#include <QScopeGuard>
 #include <QUuid>
 
 #include <QUdpSocket>
@@ -2026,6 +2027,14 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
     backend->allocateSeat(deviceSessionId, [this, uuid, respond,
                                             backend](bool seatOk, const BackendError& seatErr,
                                                      const SeatRef& seat) {
+        // Released a turn later, on every path out of here: see handleSetBackend.
+        // This call has many exits, so a guard covers them rather than one line
+        // per return. Dropping the last reference inside a backend's own
+        // callback destroys it — and the pairing manager it owns — while that
+        // callback is still running.
+        const auto releaseLater =
+            qScopeGuard([backend]() { QTimer::singleShot(0, [backend]() {}); });
+
         if (!seatOk) {
             respond(backendFailure(seatErr));
             return;
@@ -2035,6 +2044,9 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
         backend->getAppList(seat.id, [this, uuid, respond, backend](bool ok,
                                                                     const BackendError& err,
                                                                     const QVector<NvApp>& apps) {
+            const auto releaseLater =
+                qScopeGuard([backend]() { QTimer::singleShot(0, [backend]() {}); });
+
             if (!ok) {
                 // Pre-flight failure: the host was already gone when we looked.
                 if (err.kind == BackendError::NotFound) {
