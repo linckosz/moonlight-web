@@ -139,7 +139,14 @@ void StreamSession::start()
         return;
     }
 
-    if (m_Host->pairState != NvComputer::PS_PAIRED) {
+    // The pair state belongs to the host itself, which is the right question for
+    // a GameStream host and for Wolf — both pair the machine. A backend that
+    // provisions seats does not: its machine authenticates its control API with
+    // a key and is never a GameStream client of anything, while each seat is
+    // paired separately, under its own certificate. Asking the machine here
+    // would refuse every MultiSeat stream before the backend is even consulted.
+    const bool hostIsThePairingSubject = !m_Backend || !m_Backend->capabilities().provisioning;
+    if (hostIsThePairingSubject && m_Host->pairState != NvComputer::PS_PAIRED) {
         m_Respond(HttpResponse::error(403, "Host is not paired"));
         emit sessionFailed("Host is not paired");
         deleteLater();
