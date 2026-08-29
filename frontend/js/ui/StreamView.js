@@ -74,6 +74,14 @@ import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
 import { StreamViewFullscreen } from './StreamViewFullscreen.js';
 
+// Input that lands nowhere — see StreamView._sendToHost. Long enough that a
+// held key or a pause between two gestures never trips it, and demanding
+// enough movement that only real, sustained interaction counts. Two frames of
+// slack absorbs a picture that happens to refresh on its own.
+const INPUT_IGNORED_WINDOW_MS = 6000;
+const INPUT_IGNORED_MIN_EVENTS = 40;
+const INPUT_IGNORED_MAX_FRAMES = 2;
+
 /**
  * Workaround for Chrome GPU compositor bug on Windows: the first HEVC
  * VideoFrame drawn to a Canvas2D via drawImage(VideoFrame) reads the NV12
@@ -478,6 +486,12 @@ export class StreamView {
         // because `received` counts only what the pipeline actually got.
         this.stats = { received: 0, decoded: 0, rendered: 0, dropped: 0, networkLost: 0 };
         this._firstFrameId = -1;
+
+        // Watching for input the host is throwing away — see _sendToHost.
+        this._inputWatchSince = 0;
+        this._inputWatchFrames = 0;
+        this._inputWatchEvents = 0;
+        this._inputIgnoredWarned = false;
 
         // Overlay stats
         this._overlayEl = null;
@@ -5023,7 +5037,7 @@ export class StreamView {
         // relative movement via pointer lock deltas when focused.
         this._onGamingMouseMove = (e) => {
             if (this._mouseFocused) {
-                this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
+                this._sendToHost({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
             } else {
                 this._lastMouseClientX = e.clientX;
                 this._lastMouseClientY = e.clientY;
@@ -5044,7 +5058,7 @@ export class StreamView {
                 const y = Math.round(Math.max(0, Math.min(rawY, rect.height)));
                 const refW = Math.round(rect.width);
                 const refH = Math.round(rect.height);
-                this.webrtc.send({
+                this._sendToHost({
                     type: 'mousemove',
                     x,
                     y,
@@ -5066,7 +5080,7 @@ export class StreamView {
             const y = Math.round(Math.max(0, Math.min(e.clientY - rect.top, rect.height)));
             const refW = Math.round(rect.width);
             const refH = Math.round(rect.height);
-            this.webrtc.send({
+            this._sendToHost({
                 type: 'mousemove',
                 x,
                 y,
@@ -5161,7 +5175,7 @@ export class StreamView {
 
             // Send absolute position. LiSendMousePositionEvent() on the backend
             // will scale (x, y) from the (refW, refH) plane to host screen coords.
-            this.webrtc.send({
+            this._sendToHost({
                 type: 'mousemove',
                 x: x,
                 y: y,
@@ -6003,7 +6017,7 @@ export class StreamView {
         let buttons = 0;
         for (const button of buttonsHeld) buttons |= 1 << (button - 1);
 
-        this.webrtc.send({
+        this._sendToHost({
             type: 'inputstate',
             keys,
             buttons,
@@ -6011,6 +6025,46 @@ export class StreamView {
             // it the long grace period like the movement keys.
             buttonsHold: !!this._gamingMode,
         });
+    }
+
+    /**
+     * Send something the user did, and watch for it going nowhere.
+     *
+     * A host can pair a device and still refuse it the right to type or move
+     * the mouse — Apollo grants that only to the first device that pairs with
+     * it, and says nothing to the ones after. Nothing in the stream reports the
+     * refusal, so the only evidence is its shape: someone working the controls
+     * while the picture stays still. Moving a mouse redraws a cursor, so frames
+     * that never arrive while input keeps going is a fair sign it is being
+     * dropped at the other end.
+     *
+     * Deliberately a hint, not a verdict: it says where to look, once.
+     */
+    _sendToHost(msg) {
+        this.webrtc.send(msg);
+
+        if (this._inputIgnoredWarned || !this._firstFrameRendered) return;
+
+        const now = performance.now();
+        if (!this._inputWatchSince) {
+            this._inputWatchSince = now;
+            this._inputWatchFrames = this.frameCount;
+            this._inputWatchEvents = 0;
+        }
+        this._inputWatchEvents++;
+
+        if (now - this._inputWatchSince < INPUT_IGNORED_WINDOW_MS) return;
+
+        const framesMoved = this.frameCount - this._inputWatchFrames;
+        if (
+            this._inputWatchEvents >= INPUT_IGNORED_MIN_EVENTS &&
+            framesMoved <= INPUT_IGNORED_MAX_FRAMES
+        ) {
+            this._inputIgnoredWarned = true;
+            Toast.warning(t('stream.inputIgnored'));
+        }
+        // Either way, judge the next stretch on its own.
+        this._inputWatchSince = 0;
     }
 
     // =========================================================================
@@ -6136,7 +6190,7 @@ export class StreamView {
 
     handleMouseMove(e) {
         if (!this.pointerLocked) return;
-        this.webrtc.send({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
+        this._sendToHost({ type: 'mousemove', dx: e.movementX, dy: e.movementY });
     }
 
     handleMouseDown(e) {

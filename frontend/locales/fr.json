@@ -455,6 +455,7 @@
     },
     "stream": {
         "stop": "Arrêter",
+        "inputIgnored": "Le clavier et la souris atteignent bien cet hôte, mais il les ignore. Les hôtes qui accordent des droits par appareil donnent en général tout au premier appairé et seulement l'image aux suivants — vérifiez les permissions de cet appareil dans les réglages de l'hôte.",
         "stopStreaming": "Arrêter le streaming",
         "connecting": "Connexion...",
         "startingVideo": "Démarrage du flux vidéo...",

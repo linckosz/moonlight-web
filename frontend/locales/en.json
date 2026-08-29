@@ -455,6 +455,7 @@
     },
     "stream": {
         "stop": "Stop",
+        "inputIgnored": "Your keyboard and mouse are reaching this host, but it is ignoring them. Hosts that grant rights per device usually give the first one paired everything and later ones only the picture — check this device's permissions in the host's own settings.",
         "stopStreaming": "Stop Streaming",
         "connecting": "Connecting...",
         "startingVideo": "Starting video stream...",
