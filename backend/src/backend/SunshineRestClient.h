@@ -20,6 +20,8 @@
 #include <QObject>
 #include <QString>
 
+#include <functional>
+
 class QNetworkAccessManager;
 
 /**
@@ -65,18 +67,28 @@ public:
     CredentialCheck checkCredentials(const QString& user, const QString& pass, quint16 port = 47990,
                                      int timeoutMs = 8000);
 
-    /// POST /api/pin {"pin","name"} with Basic Auth. Fire-and-forget: result is
-    /// logged. Targets https://<host>:<port>/api/pin.
+    /// POST /api/pin {"pin","name"}. Fire-and-forget: result is logged. Targets
+    /// https://<host>:<port>/api/pin.
     ///
     /// `host` defaults to loopback, which is what the install-time provisioning
     /// uses. A MultiSeat seat needs a real address: its Apollo runs on the
     /// MultiSeat machine, one web UI per seat at PortBase + 1, and that is the
     /// only way to pair a seat at all — MultiSeat's own API can unpair clients
     /// but never pair one.
+    ///
+    /// Authenticates with Basic, and falls back to Apollo's login when Basic is
+    /// refused: the fork MultiSeat fronts its seats with answers 401 to every
+    /// Basic request and issues a session cookie from /api/login instead.
     void sendPin(const QString& pin, const QString& user, const QString& pass,
                  const QString& deviceName = QStringLiteral("moonlightweb"), quint16 port = 47990,
                  const QString& host = QStringLiteral("127.0.0.1"));
 
 private:
+    void postPin(const QString& pin, const QString& deviceName, quint16 port, const QString& host,
+                 const QByteArray& authHeader, const QByteArray& cookie,
+                 std::function<void(int status)> done);
+    void loginForCookie(const QString& user, const QString& pass, quint16 port, const QString& host,
+                        std::function<void(const QByteArray& cookie)> done);
+
     QNetworkAccessManager* m_Nam = nullptr;
 };
