@@ -240,9 +240,9 @@ void MultiSeatBackend::ensurePaired(BackendVoidCallback cb)
     // Nothing to pair: the control API authenticates with a key. Prove the key
     // is accepted, which is the only thing an admin can get wrong at setup —
     // and the one failure worth reporting differently from "host is down".
-    const bool loopbackApi = m_Api->baseUrl().contains(QLatin1String("127.0.0.1"))
-                             || m_Api->baseUrl().contains(QLatin1String("localhost"))
-                             || m_Api->baseUrl().contains(QLatin1String("[::1]"));
+    const bool loopbackApi = m_Api->baseUrl().contains(QLatin1String("127.0.0.1")) ||
+                             m_Api->baseUrl().contains(QLatin1String("localhost")) ||
+                             m_Api->baseUrl().contains(QLatin1String("[::1]"));
 
     m_Api->listSeats([cb = std::move(cb), loopbackApi](bool ok, const MultiSeatApiError& err,
                                                        const QVector<MultiSeatSeat>&) {
@@ -493,14 +493,14 @@ void MultiSeatBackend::quit(const QString& seatId, const QString& clientUniqueId
         return;
     }
 
-    withSeatBackend(owned, [owned, clientUniqueId, cb](GameStreamBackend* backend,
-                                                       const BackendError& err) {
-        if (!backend) {
-            cb(false, err);
-            return;
-        }
-        backend->quit(owned, clientUniqueId, cb);
-    });
+    withSeatBackend(
+        owned, [owned, clientUniqueId, cb](GameStreamBackend* backend, const BackendError& err) {
+            if (!backend) {
+                cb(false, err);
+                return;
+            }
+            backend->quit(owned, clientUniqueId, cb);
+        });
 }
 
 void MultiSeatBackend::provisionSeat(const QJsonObject& params, BackendSeatCallback cb)

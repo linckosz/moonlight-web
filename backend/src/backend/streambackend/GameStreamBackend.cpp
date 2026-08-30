@@ -229,10 +229,9 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
             const int inBody = NvHTTP::responseStatusCode(xml);
             const bool droppedPairing = inBody == 401;
             answer(false,
-                   BackendError::make(droppedPairing ? BackendError::NotPaired
-                                                     : BackendError::Protocol,
-                                      QString::fromUtf8(e.what()),
-                                      droppedPairing ? inBody : httpStatus),
+                   BackendError::make(
+                       droppedPairing ? BackendError::NotPaired : BackendError::Protocol,
+                       QString::fromUtf8(e.what()), droppedPairing ? inBody : httpStatus),
                    {});
             reply->deleteLater();
             return;
@@ -347,10 +346,9 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
             const int inBody = NvHTTP::responseStatusCode(xml);
             const bool droppedPairing = inBody == 401;
             answer(false,
-                   BackendError::make(droppedPairing ? BackendError::NotPaired
-                                                     : BackendError::Protocol,
-                                      QString::fromUtf8(e.what()),
-                                      droppedPairing ? inBody : httpStatus),
+                   BackendError::make(
+                       droppedPairing ? BackendError::NotPaired : BackendError::Protocol,
+                       QString::fromUtf8(e.what()), droppedPairing ? inBody : httpStatus),
                    MediaDescriptor{});
             reply->deleteLater();
             return;

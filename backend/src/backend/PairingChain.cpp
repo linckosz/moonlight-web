@@ -104,9 +104,8 @@ void run(NvPairingManager* pm, const QString& pin, PinAnnouncer announcer, Resul
     // finish first — harmless for Wolf, whose request blocks server-side, and
     // for a loopback Sunshine, which is simply ready sooner.
     if (announcer && !*settledSynchronously) {
-        QTimer::singleShot(kPinAnnounceDelayMs, [announcer = std::move(announcer), pin]() {
-            announcer(pin);
-        });
+        QTimer::singleShot(kPinAnnounceDelayMs,
+                           [announcer = std::move(announcer), pin]() { announcer(pin); });
     }
 }
 
