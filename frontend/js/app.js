@@ -249,12 +249,17 @@ const MoonlightApp = {
      * the backend broadcasts {"type":"focus-admin"} here, and this tab opens the
      * admin overlay + brings itself to the foreground — no duplicate tab.
      *
-     * Host-machine only: admin is host-local, and only the host's own tab should
-     * react to a local relaunch. Reconnects with capped exponential backoff so a
+     * The host's own tab and nothing else: a relaunch happens on that machine,
+     * and there is nothing to surface anywhere else — which is why the backend
+     * refuses this path to a tunnel arrival outright, host key or not. Asking
+     * _isHostMachine() rather than _isHostLocal() keeps a password-unlocked LAN
+     * admin out of a socket that would only ever be refused to it, and the
+     * tunnel test keeps the host's own tunnelled tab from reconnecting forever
+     * against that refusal. Reconnects with capped exponential backoff so a
      * backend restart (or transient drop) re-establishes the channel.
      */
     _initControlChannel() {
-        if (!this._isHostLocal()) return;
+        if (!this._isHostMachine() || pageCameThroughTunnel()) return;
         if (this._controlWs) return;
 
         const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -592,7 +597,7 @@ const MoonlightApp = {
      * Returns { url, remote, rendezvousUrl, rendezvousOnline, domain, localIp,
      * httpsPort, extPort, upnpAvailable, internetActive } or null on failure
      * (url may be '' when nothing is known).
-     * Host-machine only in practice — callers gate on _isHostLocal().
+     * Host-machine only in practice — callers gate on _isHostMachine().
      */
     async _computeRemoteAccessUrls() {
         let httpsPort = 443;
@@ -659,10 +664,13 @@ const MoonlightApp = {
      * When that address only reaches this LAN and a UPnP router answered, a
      * discreet "enable internet access" link opens the admin page scrolled to
      * the INTERNET section.
-     * Best-effort and host-machine-only; silently skipped otherwise.
+     * Best-effort and host-machine-only; silently skipped otherwise. "Other
+     * devices reach me here" is worth reading on the machine itself and nowhere
+     * else: a LAN admin holding the password is already one of those other
+     * devices, and would be told the address of the page it is reading.
      */
     async _maybeShowRemoteAccessBanner() {
-        if (!this._isHostLocal()) return;
+        if (!this._isHostMachine()) return;
 
         const info = await this._computeRemoteAccessUrls();
         if (!info || !info.url) return;
@@ -1231,12 +1239,18 @@ const MoonlightApp = {
         // ("Stream anyway") or back out. Skipped on codec/HDR fallback relaunches
         // and when already confirmed. The dialog re-invokes launchApp from its own
         // click so the iOS audio-unlock gesture below stays valid.
+        //
+        // The second half is _isHostMachine(), never _isHostLocal(): the question
+        // here is where this browser physically is, not what it is allowed to do.
+        // A phone that unlocked the remote admin password has every right of the
+        // host and none of its screen — telling it that it is about to stream the
+        // computer it is sitting at is simply false.
         if (
             !codecOverride &&
             !(opts && opts.skipSelfStreamWarn) &&
             host &&
             host.isLocalHost &&
-            this._isHostLocal()
+            this._isHostMachine()
         ) {
             this._showSelfStreamWarning(host, app);
             return;
