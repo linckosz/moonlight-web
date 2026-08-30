@@ -74,6 +74,11 @@ const TIME_SPAN_MS = 1200;
 const BAR_EASE_MS = 260;
 const HOLD_FULL_MS = 300;
 const MIN_VISIBLE_MS = 1600;
+/* How recently a handover reload has to have happened for another one to count
+   as a loop rather than as a person refreshing the page. One pass through this
+   file costs at least MIN_VISIBLE_MS plus a connection, so a loop trips this
+   comfortably while a deliberate second refresh does not. */
+const RELOAD_GUARD_MS = 10000;
 
 const startedAt = performance.now();
 let work = 0; // real progress, 0…1
@@ -375,11 +380,52 @@ async function main() {
     const key = hostKeyFromLocation();
     const share = shareTokenFromLocation();
     const landing = landingPathFromLocation() || '/';
-    location.replace(
+    const target =
         `${landing}#${hostId}` +
-            (key ? `&k=${encodeURIComponent(key)}` : '') +
-            (share ? `&t=${encodeURIComponent(share)}` : ''),
-    );
+        (key ? `&k=${encodeURIComponent(key)}` : '') +
+        (share ? `&t=${encodeURIComponent(share)}` : '');
+
+    // Handing over to an address that differs from this one only by its
+    // fragment — or not at all — is not a navigation. It is a jump within the
+    // page: nothing loads, and this one sits on a finished seal forever.
+    //
+    // That is the ordinary case after a hard refresh, and it is the whole
+    // reason this branch exists. The application's own address already IS
+    // `/#<id>`, and a hard refresh is precisely the reload that bypasses the
+    // service worker — so it lands here rather than on the application, and
+    // then the handover has nowhere left to go. Reload instead: the worker is
+    // registered and claiming by now, so an ordinary reload of this same
+    // address is answered from the cache with the application.
+    //
+    // Guarded, because a reload that landed back here would do it all again. If
+    // a handover reload happened moments ago in this tab, the worker is not
+    // answering and looping on it would only flash the seal forever; say so and
+    // stop. The window is short, so a refresh later on is still free to take
+    // this path.
+    if (new URL(target, location.href).href === location.href) {
+        let previous = 0;
+        try {
+            previous = Number(sessionStorage.getItem('mw-handover-reload') || 0);
+        } catch {
+            /* no session storage; only the guard is lost */
+        }
+        if (Date.now() - previous < RELOAD_GUARD_MS) {
+            fail(
+                'The application is installed but did not start.',
+                'Close this tab and open your machine’s link again.',
+            );
+            return;
+        }
+        try {
+            sessionStorage.setItem('mw-handover-reload', String(Date.now()));
+        } catch {
+            /* nothing kept; the reload below still happens */
+        }
+        location.reload();
+        return;
+    }
+
+    location.replace(target);
 }
 
 main().catch((e) => fail(e.message, ''));
