@@ -1183,11 +1183,10 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         // its own: a frontend edit under an unchanged build would leave every
         // bootstrapped browser pinned to the old files with no way to notice
         // (the service worker serves that shelf without revalidating).
-        HttpResponse manifest = HttpResponse::json(
-            QJsonObject{{QStringLiteral("version"), QCoreApplication::applicationVersion() +
-                                                        QLatin1Char('-') +
-                                                        m_StaticFiles->contentTag()},
-                        {QStringLiteral("files"), files}});
+        HttpResponse manifest = HttpResponse::json(QJsonObject{
+            {QStringLiteral("version"), QCoreApplication::applicationVersion() + QLatin1Char('-') +
+                                            m_StaticFiles->contentTag()},
+            {QStringLiteral("files"), files}});
         manifest.headers["Cache-Control"] = "no-store";
         respond(manifest);
         return;

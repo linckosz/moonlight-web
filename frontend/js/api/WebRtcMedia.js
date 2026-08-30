@@ -824,7 +824,6 @@ export class WebRtcMedia {
         }
     }
 
-
     /**
      * Add a remote ICE candidate, or hold it until there is a remote
      * description to add it to.
@@ -865,7 +864,9 @@ export class WebRtcMedia {
         const held = this._pendingRemoteCandidates;
         if (!held || held.length === 0) return;
         this._pendingRemoteCandidates = [];
-        console.log('[WebRtcMedia] Applying ' + held.length + ' ICE candidate(s) held before the offer');
+        console.log(
+            '[WebRtcMedia] Applying ' + held.length + ' ICE candidate(s) held before the offer',
+        );
         for (const c of held) await this._handleIceCandidate(c.candidate, c.mid);
     }
 
