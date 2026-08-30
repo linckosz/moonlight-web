@@ -220,10 +220,20 @@ void GameStreamBackend::getAppList(const QString& seatId, BackendAppListCallback
         try {
             NvHTTP::verifyResponseStatus(xml);
         } catch (const std::exception& e) {
-            answer(
-                false,
-                BackendError::make(BackendError::Protocol, QString::fromUtf8(e.what()), httpStatus),
-                {});
+            // A Sunshine-family host answers 200 and puts its own rejection in
+            // the body, so a dropped pairing lands here rather than in the
+            // transport branch above. It means the same thing and has to be
+            // classified the same way: left as a Protocol error, the caller
+            // reports a generic failure and the host stays marked paired
+            // although it no longer trusts our certificate.
+            const int inBody = NvHTTP::responseStatusCode(xml);
+            const bool droppedPairing = inBody == 401;
+            answer(false,
+                   BackendError::make(droppedPairing ? BackendError::NotPaired
+                                                     : BackendError::Protocol,
+                                      QString::fromUtf8(e.what()),
+                                      droppedPairing ? inBody : httpStatus),
+                   {});
             reply->deleteLater();
             return;
         }
@@ -331,10 +341,17 @@ void GameStreamBackend::finishLaunchReply(QNetworkReply* reply, const LaunchRequ
         try {
             NvHTTP::verifyResponseStatus(xml);
         } catch (const std::exception& e) {
-            answer(
-                false,
-                BackendError::make(BackendError::Protocol, QString::fromUtf8(e.what()), httpStatus),
-                MediaDescriptor{});
+            // Same as the app list: a rejection carried inside a 200 body. A
+            // 401 there is a dropped pairing, not a protocol problem, and the
+            // launch<->resume self-heal must not treat it as a stale session.
+            const int inBody = NvHTTP::responseStatusCode(xml);
+            const bool droppedPairing = inBody == 401;
+            answer(false,
+                   BackendError::make(droppedPairing ? BackendError::NotPaired
+                                                     : BackendError::Protocol,
+                                      QString::fromUtf8(e.what()),
+                                      droppedPairing ? inBody : httpStatus),
+                   MediaDescriptor{});
             reply->deleteLater();
             return;
         }

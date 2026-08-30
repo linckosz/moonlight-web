@@ -100,6 +100,10 @@ public:
 
     // Static XML helpers
     static void verifyResponseStatus(const QString& xml);
+    // The status GameStream reports *inside* an otherwise-200 body, which is
+    // where a Sunshine-family host puts its own rejections. 200 when the body
+    // reports no problem, 0 when it carries no status at all.
+    static int responseStatusCode(const QString& xml);
     static QString getXmlString(const QString& xml, const QString& tagName);
     static QByteArray getXmlStringFromHex(const QString& xml, const QString& tagName);
     static QVector<NvDisplayMode> getDisplayModeList(const QString& serverInfo);

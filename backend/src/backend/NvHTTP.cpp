@@ -117,6 +117,14 @@ void NvHTTP::verifyResponseStatus(const QString& xml)
     }
 }
 
+int NvHTTP::responseStatusCode(const QString& xml)
+{
+    QXmlStreamReader reader(xml);
+
+    if (!reader.readNextStartElement()) return 0;
+    return reader.attributes().value("status_code").toInt();
+}
+
 QString NvHTTP::getXmlString(const QString& xml, const QString& tagName)
 {
     QXmlStreamReader reader(xml);
