@@ -147,6 +147,17 @@ protected:
     /// @param logTag prefix for this relay's log lines, e.g. "[MediaTrackRelay]".
     void emitLocalCandidate(const rtc::Candidate& candidate, const char* logTag);
 
+    /// Log the candidate pair ICE actually nominated, once the PeerConnection
+    /// reaches Connected. Nothing else in the logs says which path the media
+    /// took: with the UPnP rewrite in emitLocalCandidate() above, a same-LAN
+    /// peer and a peer on the far side of the internet are both offered the
+    /// public address, so a session hairpinning through the router looks
+    /// exactly like a direct one until its throughput collapses (2026-08-30:
+    /// a 19s SCTP stall that could not be attributed either way).
+    ///
+    /// @param logTag prefix for this relay's log lines, e.g. "[MediaTrackRelay]".
+    void logSelectedCandidatePair(rtc::PeerConnection& pc, const char* logTag);
+
     /// Written once on the main thread before the relay moves to its own
     /// thread, read-only afterwards — same lifetime discipline as
     /// m_ClipboardEnabled.
@@ -161,6 +172,10 @@ protected:
     std::string m_PublicIP;    ///< Public IP discovered via UPnP (or empty)
     uint16_t m_PublicPort = 0; ///< Mapped port from UPnP (0 = not mapped)
     bool m_ForceHostPublic = false;
-    bool m_SuppressIPv6 = false;     ///< Suppress IPv6 candidates when UPnP active
+    ///< Withhold NON-GLOBAL IPv6 candidates (ULA, mesh VPN, link-local) when
+    ///< UPnP is active. A global IPv6 address goes out: it is public anyway, and
+    ///< it is the only candidate that lets a same-LAN peer avoid hairpinning
+    ///< through the router. See emitLocalCandidate().
+    bool m_SuppressIPv6 = false;
     bool m_EmitLanCandidate = false; ///< Also emit the internal host candidate
 };
