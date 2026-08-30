@@ -1026,7 +1026,6 @@ export class WebRtcDataChannel {
         }
     }
 
-
     /**
      * Add a remote ICE candidate, or hold it until there is a remote
      * description to add it to.
