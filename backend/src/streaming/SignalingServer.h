@@ -112,6 +112,9 @@ private slots:
     // DataChannelRelay signals
     void onLocalSdp(const std::string& sdp);
     void onLocalIceCandidate(const std::string& candidate, const std::string& mid);
+    /// Put one candidate on the wire. Split out of onLocalIceCandidate so the
+    /// flush after the offer takes the identical path.
+    void sendIceCandidate(const std::string& candidate, const std::string& mid);
     void onDataChannelsOpen();
 
     // ICE timeout → WS fallback
@@ -272,6 +275,10 @@ private:
     QByteArray m_NonceHost;     // ours; covered by the browser's signature
     QString m_LocalFingerprint; // fpH, extracted from our own offer
     std::string m_PendingOffer; // held back until the browser's nonce arrives
+    /// Candidates gathered while the offer is still held. They must not
+    /// overtake it: a browser that has not yet called setRemoteDescription
+    /// cannot accept a candidate, and the ones it rejects are gone for good.
+    std::vector<std::pair<std::string, std::string>> m_PendingCandidates; // (candidate, mid)
     bool m_HelloReceived = false;
 
     bool m_UseUPnP = true;

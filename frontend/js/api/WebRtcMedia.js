@@ -402,6 +402,27 @@ export class WebRtcMedia {
     // PeerConnection setup
     // =========================================================================
 
+    /**
+     * The one place the PeerConnection's configuration is described.
+     *
+     * setConfiguration() may only change what the spec allows to change, and
+     * every field left out reverts to ITS DEFAULT rather than staying as it is:
+     * passing `{iceServers}` alone silently asks for bundlePolicy 'balanced',
+     * which is not what the connection was built with, and Chrome rejects the
+     * whole call ("Attempted to modify the PeerConnection's configuration in an
+     * unsupported way"). The host's ICE servers were then never applied and the
+     * browser kept using the public fallback list the host had replaced.
+     */
+    _rtcConfiguration(iceServers) {
+        /** @type {RTCConfiguration} */
+        return {
+            iceServers: iceServers,
+            iceTransportPolicy: 'all',
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require',
+        };
+    }
+
     _createPeerConnection() {
         console.log('[WebRtcMedia] Creating RTCPeerConnection');
 
@@ -409,13 +430,7 @@ export class WebRtcMedia {
         // empty array from the host is an answer — "no STUN" — and survives the
         // `||` because an empty array is truthy.
         const iceServers = this._dynamicIceServers || this._defaultIceServers;
-        /** @type {RTCConfiguration} */
-        const config = {
-            iceServers: iceServers,
-            iceTransportPolicy: 'all',
-            bundlePolicy: 'max-bundle',
-            rtcpMuxPolicy: 'require',
-        };
+        const config = this._rtcConfiguration(iceServers);
         console.log('[WebRtcMedia] ICE servers:', JSON.stringify(iceServers));
 
         this.pc = new RTCPeerConnection(config);
@@ -643,7 +658,7 @@ export class WebRtcMedia {
             this._dynamicIceServers = msg.iceServers;
             if (this.pc) {
                 try {
-                    this.pc.setConfiguration({ iceServers: this._dynamicIceServers });
+                    this.pc.setConfiguration(this._rtcConfiguration(this._dynamicIceServers));
                     console.log('[WebRtcMedia] Updated PC ICE servers via setConfiguration');
                 } catch (e) {
                     console.warn('[WebRtcMedia] Failed to update PC ICE config:', e.message);
@@ -738,6 +753,7 @@ export class WebRtcMedia {
             });
             await this.pc.setRemoteDescription(remoteDesc);
             console.log('[WebRtcMedia] Remote description set (offer)');
+            await this._flushPendingCandidates();
 
             // Create answer with receive-only constraints (lowest latency)
             const answer = await this.pc.createAnswer({
@@ -808,8 +824,25 @@ export class WebRtcMedia {
         }
     }
 
+
+    /**
+     * Add a remote ICE candidate, or hold it until there is a remote
+     * description to add it to.
+     *
+     * Trickle ICE has no ordering guarantee, and addIceCandidate() on a
+     * PeerConnection with no remote description throws — after which the
+     * candidate is gone. That is not theoretical: the host holds its offer back
+     * until the MW-BIND hello while its candidates go out immediately, so every
+     * session lost the host's own candidates this way (five per stream on
+     * 2026-08-30) and had to rediscover the host's address peer-reflexively.
+     */
     async _handleIceCandidate(candidate, mid) {
         if (this._stopping) return;
+
+        if (!this.pc || !this.pc.remoteDescription) {
+            (this._pendingRemoteCandidates ||= []).push({ candidate, mid });
+            return;
+        }
 
         try {
             const iceCandidate = new RTCIceCandidate({
@@ -824,6 +857,16 @@ export class WebRtcMedia {
         } catch (e) {
             console.warn('[WebRtcMedia] Failed to add ICE candidate:', e.message);
         }
+    }
+
+    /** Flush the candidates held by _handleIceCandidate. Call right after
+     *  setRemoteDescription resolves. */
+    async _flushPendingCandidates() {
+        const held = this._pendingRemoteCandidates;
+        if (!held || held.length === 0) return;
+        this._pendingRemoteCandidates = [];
+        console.log('[WebRtcMedia] Applying ' + held.length + ' ICE candidate(s) held before the offer');
+        for (const c of held) await this._handleIceCandidate(c.candidate, c.mid);
     }
 
     _sendSignaling(obj) {

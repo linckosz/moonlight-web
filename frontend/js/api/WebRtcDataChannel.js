@@ -977,6 +977,7 @@ export class WebRtcDataChannel {
             });
             await this.pc.setRemoteDescription(remoteDesc);
             console.log('[WebRTC] Remote description set (offer)');
+            await this._flushPendingCandidates();
 
             // Create answer. Stereo Opus decode for the RTP audio track:
             // without stereo=1 in the answer fmtp the browser decodes MONO
@@ -1025,8 +1026,25 @@ export class WebRtcDataChannel {
         }
     }
 
+
+    /**
+     * Add a remote ICE candidate, or hold it until there is a remote
+     * description to add it to.
+     *
+     * Trickle ICE has no ordering guarantee, and addIceCandidate() on a
+     * PeerConnection with no remote description throws — after which the
+     * candidate is gone. That is not theoretical: the host holds its offer back
+     * until the MW-BIND hello while its candidates go out immediately, so every
+     * session lost the host's own candidates this way (five per stream on
+     * 2026-08-30) and had to rediscover the host's address peer-reflexively.
+     */
     async _handleIceCandidate(candidate, mid) {
         if (this._stopping) return;
+
+        if (!this.pc || !this.pc.remoteDescription) {
+            (this._pendingRemoteCandidates ||= []).push({ candidate, mid });
+            return;
+        }
 
         try {
             const iceCandidate = new RTCIceCandidate({
@@ -1041,6 +1059,16 @@ export class WebRtcDataChannel {
         } catch (e) {
             console.warn('[WebRTC] Failed to add ICE candidate:', e.message);
         }
+    }
+
+    /** Flush the candidates held by _handleIceCandidate. Call right after
+     *  setRemoteDescription resolves. */
+    async _flushPendingCandidates() {
+        const held = this._pendingRemoteCandidates;
+        if (!held || held.length === 0) return;
+        this._pendingRemoteCandidates = [];
+        console.log('[WebRTC] Applying ' + held.length + ' ICE candidate(s) held before the offer');
+        for (const c of held) await this._handleIceCandidate(c.candidate, c.mid);
     }
 
     _sendSignaling(obj) {
