@@ -455,7 +455,6 @@
     },
     "stream": {
         "stop": "Arrêter",
-        "inputIgnored": "Le clavier et la souris atteignent bien cet hôte, mais il les ignore. Les hôtes qui accordent des droits par appareil donnent en général tout au premier appairé et seulement l'image aux suivants — vérifiez les permissions de cet appareil dans les réglages de l'hôte.",
         "stopStreaming": "Arrêter le streaming",
         "connecting": "Connexion...",
         "startingVideo": "Démarrage du flux vidéo...",
@@ -511,6 +510,10 @@
         "periodicStallDismiss": "Ne plus afficher",
         "periodicStallTitle": "Saccades détectées",
         "periodicStallOk": "J'ai compris",
+        "multiSeatInputTitle": "Siège MultiSeat",
+        "multiSeatInputBody": "Si le clavier et la souris ne répondent pas, le siège n'envoie que l'image. Il distribue le contrôle appareil par appareil : celui-ci doit donc être autorisé à la main dans l'interface Apollo.",
+        "multiSeatInputWhere": "Ouvrez {{url}}, connectez-vous, retrouvez cet appareil dans la liste des clients appairés et activez ses permissions d'entrée.",
+        "multiSeatInputWhereUnknown": "Cette interface est à la même adresse que l'hôte, sur le port de stream du siège plus un, en https. Connectez-vous, retrouvez cet appareil dans la liste des clients appairés et activez ses permissions d'entrée.",
         "statLegRender": "Rendu",
         "enhancerOff": "Désactivé",
         "iosFullscreenHint": "Pour un vrai plein écran : Partager → Sur l'écran d'accueil, puis lancez Moonlight depuis l'icône.",

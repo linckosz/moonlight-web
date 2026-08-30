@@ -455,7 +455,6 @@
     },
     "stream": {
         "stop": "停止",
-        "inputIgnored": "键盘和鼠标已送达此主机，但它忽略了它们。按设备授权的主机通常把全部权限给第一个配对的设备，之后的只给画面——请在主机自身的设置中检查此设备的权限。",
         "stopStreaming": "停止串流",
         "connecting": "正在连接…",
         "startingVideo": "正在启动视频串流…",
@@ -511,6 +510,10 @@
         "periodicStallDismiss": "不再显示",
         "periodicStallTitle": "检测到卡顿",
         "periodicStallOk": "知道了",
+        "multiSeatInputTitle": "MultiSeat 席位",
+        "multiSeatInputBody": "如果键盘和鼠标没有反应，说明席位只发送画面。它按设备逐个分配控制权，因此本设备需要在 Apollo 界面中手动授权。",
+        "multiSeatInputWhere": "打开 {{url}}，登录后在已配对客户端列表中找到本设备，并开启它的输入权限。",
+        "multiSeatInputWhereUnknown": "该界面的地址与主机相同，端口为席位串流端口加一，使用 https。登录后在已配对客户端列表中找到本设备，并开启它的输入权限。",
         "statLegRender": "渲染",
         "enhancerOff": "关闭",
         "iosFullscreenHint": "要获得真正的全屏：分享 → 添加到主屏幕，然后从图标启动 Moonlight。",
