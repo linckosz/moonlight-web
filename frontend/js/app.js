@@ -1726,6 +1726,20 @@ const MoonlightApp = {
         this._transportIndex =
             typeof result.transport_index === 'number' ? result.transport_index : 0;
 
+        // The backend dropped a transport the admin setting asked for by name
+        // (wss cannot run through the rendezvous — it needs the TLS connection
+        // that serves the page). Say it once per user-initiated launch, on the
+        // same reasoning as the shortcuts slide below: a relaunch re-reports the
+        // same substitution, and repeating it on every degrade step is noise.
+        if (result.transport_dropped && !suppressShortcuts) {
+            Toast.warning(
+                t('transport.unavailableRemote', {
+                    mode: this._transportLabel(result.transport_dropped),
+                    used: this._transportLabel(this._transportChain[this._transportIndex] || ''),
+                }),
+            );
+        }
+
         this.streamView = this._createStreamView(result, host, streamingSettings, {
             sessionSlot: slot,
             slotUniqueId: BackendClient.clientUniqueIdForSlot(slot),

@@ -364,7 +364,8 @@
         "localAccessMulti": "The first address is the one on your shared network; the others belong to virtual adapters and only reach their own virtual machines.",
         "serverConfig": "Server Configuration",
         "transportMode": "Transport Mode",
-        "transportAuto": "Auto (prefer UDP)",
+        "transportLanIpOnly": "Via LAN IP only",
+                "transportAuto": "Auto (prefer UDP)",
         "transportModeHint": "When set to Auto, the system tries the best available protocol (UDP > TCP > WSS) based on network conditions and browser support.",
         "httpsPort": "HTTPS Port",
         "httpsPortDesc": "Configure the server HTTPS port. Changes require a brief service interruption while the port is rebound.",
@@ -560,6 +561,7 @@
         "webrtcMediaUdp": "WebRTC MediaTrack (UDP)",
         "webrtcMediaTcp": "WebRTC MediaTrack (TCP)",
         "wss": "WebSocket Secure",
+        "unavailableRemote": "\"{{mode}}\" is not available through the remote link — streaming over {{used}} instead",
         "connectFailed": "{{from}} connection failed — trying {{to}}…",
         "allFailed": "Connection failed — all transport modes failed",
         "launchFailed": "The host did not start the stream — try again in a moment"

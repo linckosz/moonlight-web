@@ -2498,7 +2498,21 @@ int main(int argc, char* argv[])
         // name: leaving it in would cost the user a relaunch to discover that a
         // transport requiring an open port cannot work without one. Blocked UDP
         // is covered here by ICE-TCP instead.
-        if (req.viaTunnel) transportChain.removeAll(QStringLiteral("wss"));
+        // Asked for by name and taken away: the session that runs is NOT the one
+        // the user selected. Silence here reads as "wss works, and it is slow" —
+        // 2026-08-30, a whole transport comparison was charged to wss when every
+        // run had actually been DataChannel/UDP. Name it, in the log and to the
+        // browser.
+        QString transportDropped;
+        if (req.viaTunnel && transportChain.contains(QStringLiteral("wss"))) {
+            transportChain.removeAll(QStringLiteral("wss"));
+            if (transportMode == QStringLiteral("wss")) {
+                transportDropped = QStringLiteral("wss");
+                qInfo() << "[Session] wss was requested but cannot run through the rendezvous"
+                        << "(it needs the TLS connection that serves the page) — falling back to"
+                        << transportChain;
+            }
+        }
 
         qInfo() << "[Session] Transport chain:" << transportChain
                 << "requested index=" << reqTransportIndex;
@@ -3039,6 +3053,7 @@ int main(int argc, char* argv[])
                 session->setCodecOverridden(true, originalCodec);
             }
             session->setTransportChain(transportChain, reqTransportIndex);
+            session->setTransportDropped(transportDropped);
             // Disable the in-session WS fallback: the browser drives the chain
             // (… → wss is a distinct relaunch, not an in-session reroute).
             session->setAutoMode(true);
