@@ -74,6 +74,29 @@ const STAGE_PROGRESS = {
 const HANDOVER_KEY = 'mw-seal';
 const HANDOVER_GRACE_MS = 10000;
 
+/**
+ * The entry page's other note, and the reason it can be trusted.
+ *
+ * After a hard refresh the browser bypasses the service worker, so the entry
+ * page loads instead of this application and has to reload the same address to
+ * get here. It records that reload so a second one in a row can be recognised
+ * as a loop rather than repeated forever — and this application starting is the
+ * proof that the reload worked. Removing the note here is what makes the entry
+ * page's guard mean something: nothing else can distinguish a loop from a
+ * person pressing refresh twice, since both cost a full pass through that page.
+ */
+const RELOAD_KEY = 'mw-handover-reload';
+
+// Cleared on load rather than inside show(), which returns early on a session
+// that never went through the tunnel and would leave the note standing. This
+// module is a static import of app.js, so reaching this line already means the
+// application started, which is the whole of what the note asks.
+try {
+    sessionStorage.removeItem(RELOAD_KEY);
+} catch {
+    /* no session storage; the entry page's guard falls back to its window */
+}
+
 function justHandedOver() {
     try {
         const at = sessionStorage.getItem(HANDOVER_KEY);
