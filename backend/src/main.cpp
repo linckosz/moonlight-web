@@ -83,7 +83,7 @@
 #include "backend/SunshineInstaller.h"
 #include "Autostart.h"
 #include "streaming/Session.h"
-#include "streaming/MoonlightShim.h"
+#include "streaming/IMediaEngine.h"
 #include "Limelight.h" // SCM_* codec-support masks
 #include "streaming/DataChannelRelay.h"
 #include "streaming/MediaTrackRelay.h"
@@ -1790,7 +1790,7 @@ int main(int argc, char* argv[])
                 DataChannelRelay* relay = g_ActiveRelay;
                 g_ActiveRelay = nullptr;
                 relay->notifyClientRevoked();
-                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                if (relay->mediaEngine()) relay->mediaEngine()->stopConnection();
                 relay->stop();
                 relay->deleteLater();
                 relayStopped = true;
@@ -1800,7 +1800,7 @@ int main(int argc, char* argv[])
                 MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
                 g_ActiveMediaTrackRelay = nullptr;
                 relay->notifyClientRevoked();
-                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                if (relay->mediaEngine()) relay->mediaEngine()->stopConnection();
                 relay->stop();
                 relay->deleteLater();
                 relayStopped = true;
@@ -2250,7 +2250,7 @@ int main(int argc, char* argv[])
             qInfo() << "[Session] Take-over: tearing down active DataChannelRelay" << old;
             if (old->isConnected()) old->notifyClientTakenOver();
             QObject::disconnect(old, &DataChannelRelay::sessionEnded, nullptr, nullptr);
-            if (old->moonlightShim()) old->moonlightShim()->stopConnection();
+            if (old->mediaEngine()) old->mediaEngine()->stopConnection();
             old->stop();
             old->deleteLater();
         }
@@ -2260,7 +2260,7 @@ int main(int argc, char* argv[])
             qInfo() << "[Session] Take-over: tearing down active MediaTrackRelay" << old;
             if (old->isConnected()) old->notifyClientTakenOver();
             QObject::disconnect(old, &MediaTrackRelay::sessionEnded, nullptr, nullptr);
-            if (old->moonlightShim()) old->moonlightShim()->stopConnection();
+            if (old->mediaEngine()) old->mediaEngine()->stopConnection();
             old->stop();
             old->deleteLater();
         }
@@ -2270,7 +2270,7 @@ int main(int argc, char* argv[])
             qInfo() << "[Session] Take-over: tearing down active StreamRelay" << old;
             if (old->isClientConnected()) old->notifyClientTakenOver();
             QObject::disconnect(old, &StreamRelay::sessionEnded, nullptr, nullptr);
-            if (old->moonlightShim()) old->moonlightShim()->stopConnection();
+            if (old->mediaEngine()) old->mediaEngine()->stopConnection();
             old->stop();
             old->deleteLater();
         }
@@ -2584,8 +2584,7 @@ int main(int argc, char* argv[])
                                          // moonlight stops calling back before destruction (no
                                          // UAF), then stop + deleteLater. destroyed() frees the
                                          // signaling port and lets a deferred start() proceed.
-                                         if (r->moonlightShim())
-                                             r->moonlightShim()->stopConnection();
+                                         if (r->mediaEngine()) r->mediaEngine()->stopConnection();
                                          r->stop();
                                          r->deleteLater();
                                          if (g_ActiveStreamRelay == r)
@@ -2626,8 +2625,7 @@ int main(int argc, char* argv[])
                                          // moonlight stops calling back before destruction (no
                                          // UAF), then stop + deleteLater. destroyed() frees the
                                          // signaling port and lets a deferred start() proceed.
-                                         if (r->moonlightShim())
-                                             r->moonlightShim()->stopConnection();
+                                         if (r->mediaEngine()) r->mediaEngine()->stopConnection();
                                          r->stop();
                                          r->deleteLater();
                                          if (g_ActiveRelay == r) {
@@ -2670,7 +2668,7 @@ int main(int argc, char* argv[])
                             // moonlight stops calling back before destruction (no
                             // UAF), then stop + deleteLater. destroyed() frees the
                             // signaling port and lets a deferred start() proceed.
-                            if (r->moonlightShim()) r->moonlightShim()->stopConnection();
+                            if (r->mediaEngine()) r->mediaEngine()->stopConnection();
                             r->stop();
                             r->deleteLater();
                             if (g_ActiveMediaTrackRelay == r) g_ActiveMediaTrackRelay = nullptr;
@@ -3218,9 +3216,9 @@ int main(int argc, char* argv[])
                 qInfo() << "[quit] WebRTC relay exists, stopping relay=" << g_ActiveRelay.data();
                 DataChannelRelay* relay = g_ActiveRelay;
                 g_ActiveRelay = nullptr;
-                // Explicitly stop MoonlightShim before relay cleanup so LiStopConnection
+                // Explicitly stop the media engine before relay cleanup so its shutdown
                 // runs on the main thread, not deferred to the relay destructor.
-                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                if (relay->mediaEngine()) relay->mediaEngine()->stopConnection();
                 relay->stop();
                 relay->deleteLater();
                 relayStopped = true;
@@ -3231,8 +3229,8 @@ int main(int argc, char* argv[])
                         << g_ActiveMediaTrackRelay.data();
                 MediaTrackRelay* relay = g_ActiveMediaTrackRelay;
                 g_ActiveMediaTrackRelay = nullptr;
-                // Explicitly stop MoonlightShim before relay cleanup.
-                if (relay->moonlightShim()) relay->moonlightShim()->stopConnection();
+                // Explicitly stop the media engine before relay cleanup.
+                if (relay->mediaEngine()) relay->mediaEngine()->stopConnection();
                 relay->stop();
                 relay->deleteLater();
                 relayStopped = true;

@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "IMediaEngine.h"
+
 #include <QObject>
 #include <QThread>
 #include <QPointer>
@@ -42,7 +44,10 @@ typedef struct _DECODE_UNIT DECODE_UNIT, *PDECODE_UNIT;
 typedef struct _OPUS_MULTISTREAM_CONFIGURATION OPUS_MULTISTREAM_CONFIGURATION,
     *POPUS_MULTISTREAM_CONFIGURATION;
 
-class MoonlightShim : public QObject
+/// The GameStream media engine: moonlight-common-c driven against a remote
+/// Sunshine / Apollo / Wolf host. See IMediaEngine for the contract it fulfils
+/// and for the other implementation (native capture on this machine).
+class MoonlightShim : public IMediaEngine
 {
     Q_OBJECT
 
@@ -73,15 +78,20 @@ public:
     explicit MoonlightShim(QObject* parent = nullptr);
     ~MoonlightShim() override;
 
+    /// Not part of IMediaEngine: its parameters are GameStream's own (an RTSP
+    /// session URL, an AES key). The branch that built this engine is the one
+    /// that knows them — see StreamSession::onLaunchResult().
     void startConnection(const InitParams& params);
-    void stopConnection();
-    void interruptConnection();
 
-    bool isConnected() const { return m_Connected; }
+    void stopConnection() override;
+    void interruptConnection() override;
+
+    bool isConnected() const override { return m_Connected; }
 
     // `hold` marks a press the client wants kept down through a brief link
     // stall (movement keys in gaming mode) — see the input watchdog below.
-    void sendKeyEvent(short keyCode, bool down, char modifiers, char flags, bool hold = false);
+    void sendKeyEvent(short keyCode, bool down, char modifiers, char flags,
+                      bool hold = false) override;
     // --- Toggle-lock sync (NumLock / CapsLock / ScrollLock) ---
     // Snapshot the host's real lock-key state, only possible when the
     // streamed host IS this machine (same gate as clipboard sync). Must run
@@ -89,24 +99,24 @@ public:
     // state); Session calls it before the connection starts. Without a
     // snapshot (remote host or non-Windows backend) syncLockKeys() falls back
     // to each lock's hardware default: NumLock on, Caps and Scroll off.
-    void captureHostLockState(bool hostIsSelf);
+    void captureHostLockState(bool hostIsSelf) override;
     // Align the host's toggle locks with the client's (browser 'locksync'
     // message): tap each lock whose captured host state differs from the
     // client's. Thread-safe, synchronous — the taps are enqueued before any
     // input event the caller sends next, so the keydown that triggered the
     // sync still lands after the locks are aligned.
-    void syncLockKeys(bool numLock, bool capsLock, bool scrollLock);
+    void syncLockKeys(bool numLock, bool capsLock, bool scrollLock) override;
     // Send UTF-8 text (virtual/soft keyboard input) to the host.
-    void sendUtf8Text(const QString& text);
-    void sendMouseMove(short deltaX, short deltaY);
-    void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
-    void sendMouseButton(bool down, int button, bool hold = false);
+    void sendUtf8Text(const QString& text) override;
+    void sendMouseMove(short deltaX, short deltaY) override;
+    void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) override;
+    void sendMouseButton(bool down, int button, bool hold = false) override;
     // Both scroll axes hold sub-notch amounts back and emit whole 120-unit
     // notches while quantization is on (see quantizeScroll); the carry lives
     // for the session.
-    void sendMouseScroll(short scrollAmount);
+    void sendMouseScroll(short scrollAmount) override;
     // Horizontal wheel — Sunshine protocol extension (no-op on GeForce Experience hosts).
-    void sendMouseHScroll(short scrollAmount);
+    void sendMouseHScroll(short scrollAmount) override;
     // Quantize scroll to whole notches, for a host that throws sub-notch
     // amounts away (Linux — see HostOsProbe.h). On by default because that is
     // the safe way to be wrong: a host that keeps the leftovers only scrolls
@@ -115,30 +125,30 @@ public:
     // Settable at any time, including mid-stream: the OS is sometimes only
     // established once the host's packets start arriving, and the carries below
     // make the switch lossless in both directions.
-    void setScrollQuantization(bool enabled)
+    void setScrollQuantization(bool enabled) override
     {
         m_QuantizeScroll.store(enabled, std::memory_order_relaxed);
     }
     // IP TTL of the first datagram this connection received from the host, 0
     // while none has been read. The one thing on the wire that says which OS
     // family the host belongs to — see HostOsProbe.h.
-    int hostIpTtl() const;
+    int hostIpTtl() const override;
 
     // --- Game controller (gamepad) ---
     // Announce a newly connected controller (preferred over an empty state event):
     // lets the host pick the best emulated controller type and capabilities.
     void sendControllerArrival(uint8_t controllerNumber, uint16_t activeGamepadMask, uint8_t type,
-                               bool hasRumble);
+                               bool hasRumble) override;
     // Send a full controller state snapshot (buttons + triggers + sticks).
     // Used for updates and, with an empty payload + cleared mask bit, for removal.
     void sendControllerState(short controllerNumber, short activeGamepadMask, int buttonFlags,
                              unsigned char leftTrigger, unsigned char rightTrigger,
                              short leftStickX, short leftStickY, short rightStickX,
-                             short rightStickY);
+                             short rightStickY) override;
     /// Shift this session's controller numbering (see applyControllerOffset).
     /// Zero — the owner's own sessions — keeps the browser's numbering. Set
     /// once before the connection starts.
-    void setControllerOffset(int offset) { m_ControllerOffset = offset; }
+    void setControllerOffset(int offset) override { m_ControllerOffset = offset; }
 
     // ── Input watchdog (dead-man switch) ────────────────────────────────────
     //
@@ -164,32 +174,27 @@ public:
     static constexpr int kInputStaleMs = 250;
     static constexpr int kInputStaleHoldMs = 3000;
 
-    /// A press currently applied to the host, kept so the watchdog can release
-    /// it and a heartbeat can restore it.
-    struct HeldKey
-    {
-        short keyCode = 0;
-        char modifiers = 0;
-        char flags = 0;
-        bool hold = false;
-    };
+    // HeldKey is inherited from IMediaEngine: a key stuck down through a link
+    // stall is session logic, not GameStream logic. MoonlightShim::HeldKey
+    // still resolves, so existing call sites are unaffected.
 
     /// Refresh the client-liveness timestamp. Call from every relay on every
     /// inbound client message, whatever its type.
-    void noteClientAlive();
+    void noteClientAlive() override;
 
     /// Release every held key/button (and neutralize every non-idle gamepad).
     /// `includeHold` also releases the inputs flagged `hold`.
-    void releaseHeldInputs(bool includeHold);
+    void releaseHeldInputs(bool includeHold) override;
 
     /// Reconcile the host with the client's authoritative held-input state
     /// (its heartbeat): press what the watchdog released but the user still
     /// holds, release what drifted. `buttonMask` is 1 << (button - 1).
-    void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask, bool buttonsHold);
+    void syncHeldInputs(const QVector<HeldKey>& keys, quint32 buttonMask,
+                        bool buttonsHold) override;
 
     // Request an IDR frame from the host (Sunshine).
     // Called when the browser needs a keyframe to configure its decoder.
-    void requestIdrFrame();
+    void requestIdrFrame() override;
 
     // ── Host encoder wake-up (still-screen deadlock) ────────────────────────
     //
@@ -213,7 +218,7 @@ public:
     /// Whether this session may nudge the host pointer (see above). Off for a
     /// share whose guest was not given keyboard/mouse: their stalled decoder
     /// must not move a pointer they are not allowed to touch.
-    void setWakeNudgeAllowed(bool allowed)
+    void setWakeNudgeAllowed(bool allowed) override
     {
         m_WakeNudgeAllowed.store(allowed, std::memory_order_release);
     }
@@ -222,21 +227,21 @@ public:
     // One-way backend↔Sunshine latency (ms): ENet control-stream RTT / 2 when
     // available (continuously updated, like moonlight-qt's "network latency"),
     // falling back to the IDR round-trip estimate for very old hosts.
-    double hostRttMs() const;
+    double hostRttMs() const override;
     // Average Sunshine host processing latency (capture→encode, ms) over the
     // frames received since the previous call — a rotating window like
     // moonlight-qt's per-second stats windows. Returns 0 when the host doesn't
     // report it. Read-and-reset: only one consumer (the active relay).
-    double takeHostProcessingLatencyMs();
+    double takeHostProcessingLatencyMs() override;
     int64_t lastDecodeLatencyUs() const
     {
         return m_LastDecodeLatencyUs.load(std::memory_order_acquire);
     }
-    int64_t frameSubmitTimeUs() const
+    int64_t frameSubmitTimeUs() const override
     {
         return m_FrameSubmitTimeUs.load(std::memory_order_acquire);
     }
-    int64_t framePresentationTimeUs() const
+    int64_t framePresentationTimeUs() const override
     {
         return m_FramePresentationTimeUs.load(std::memory_order_acquire);
     }
@@ -244,7 +249,7 @@ public:
     {
         return m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire);
     }
-    int64_t firstFrameArrivalSteadyMs() const
+    int64_t firstFrameArrivalSteadyMs() const override
     {
         return m_FirstFrameArrivalTimeUs.load(std::memory_order_acquire) / 1000;
     }
@@ -255,7 +260,7 @@ public:
 
     // Negotiated video format set by drSetup during LiStartConnection.
     // Returns the VIDEO_FORMAT_* mask chosen by Sunshine, or 0 before negotiation.
-    int negotiatedVideoFormat() const
+    int negotiatedVideoFormat() const override
     {
         return m_NegotiatedVideoFormat.load(std::memory_order_acquire);
     }
@@ -264,41 +269,39 @@ public:
     // to pace the RTP audio timestamp by a clean per-packet increment (a jittery
     // arrival-time clock makes the browser's NetEq time-stretch → robotic audio).
     // Default 240 (5 ms) until arInit runs.
-    int audioSamplesPerFrame() const
+    int audioSamplesPerFrame() const override
     {
         return m_AudioSamplesPerFrame.load(std::memory_order_acquire);
     }
 
     // Called by the relay at the head of onVideoFrame() to balance the
     // worker→main pending frame counter (incremented before each emit).
-    void videoFrameDelivered() { m_PendingVideoFrames.fetch_sub(1, std::memory_order_acq_rel); }
+    void videoFrameDelivered() override
+    {
+        m_PendingVideoFrames.fetch_sub(1, std::memory_order_acq_rel);
+    }
 
     // Consume the worker-side delta drop flag (true once per drop episode).
     // The relay uses it to arm awaiting-IDR recovery on the main thread.
-    bool takeWorkerDroppedDelta()
+    bool takeWorkerDroppedDelta() override
     {
         return m_WorkerDroppedDelta.exchange(false, std::memory_order_acq_rel);
     }
 
     // Diagnostics for the relay's periodic drop-counter log line.
-    int64_t workerDropCount() const { return m_WorkerDropCount.load(std::memory_order_relaxed); }
-    int pendingVideoFrames() const { return m_PendingVideoFrames.load(std::memory_order_acquire); }
+    int64_t workerDropCount() const override
+    {
+        return m_WorkerDropCount.load(std::memory_order_relaxed);
+    }
+    int pendingVideoFrames() const override
+    {
+        return m_PendingVideoFrames.load(std::memory_order_acquire);
+    }
 
-signals:
-    void stageChanged(int stage);
-    void connectionStarted();
-    void connectionFailed(const QString& error);
-    void connectionTerminated(int errorCode);
-    // presentationTimeUs travels WITH the frame through the queued connection:
-    // relays must not re-read the shim's "latest frame" atomics at drain time,
-    // or a drained burst gets stamped with one shared timestamp (defeats the
-    // frontend's out-of-order frame filter on reordering links).
-    void videoFrameReady(QByteArray data, int frameType, int frameNumber,
-                         qint64 presentationTimeUs);
-    void audioSampleReady(QByteArray data);
-    void connectionStopped();
-    // Host requested controller rumble (forwarded to the browser's vibration API).
-    void rumble(int controllerNumber, int lowFreqMotor, int highFreqMotor);
+    // Signals (videoFrameReady, audioSampleReady, connectionStarted/Failed/
+    // Terminated/Stopped, stageChanged, rumble) are declared once, in
+    // IMediaEngine, and emitted from here. Re-declaring them would hand moc two
+    // definitions of the same signal on one object.
 
 private:
     QPointer<QThread> m_WorkerThread;

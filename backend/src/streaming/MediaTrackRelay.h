@@ -37,7 +37,7 @@ class Track;
 struct Configuration;
 } // namespace rtc
 
-class MoonlightShim;
+class IMediaEngine;
 
 // WebRTC Media Track relay — alternative to DataChannelRelay using RTP media tracks.
 //
@@ -53,7 +53,7 @@ class MediaTrackRelay : public RelayBase
     Q_OBJECT
 
 public:
-    explicit MediaTrackRelay(MoonlightShim* shim, QObject* parent = nullptr);
+    explicit MediaTrackRelay(IMediaEngine* engine, QObject* parent = nullptr);
     ~MediaTrackRelay() override;
 
     // PeerConnection access (not part of RelayBase interface)
@@ -78,7 +78,7 @@ public:
 
     bool isConnected() const override { return m_Connected; }
 
-    MoonlightShim* moonlightShim() const override { return m_Shim; }
+    IMediaEngine* mediaEngine() const override { return m_Shim; }
 
     /// Enable bidirectional text clipboard sync. Only called with true when
     /// the streamed host is this machine (the backend clipboard IS the host
@@ -143,7 +143,7 @@ private:
     std::atomic<int64_t> m_LastIdrRequestMs{0}; // steady_clock ms of last effective request
     std::atomic<bool> m_IdrOutstanding{false};  // True until the next keyframe is sent
 
-    MoonlightShim* m_Shim;
+    IMediaEngine* m_Shim;
 
     std::shared_ptr<rtc::PeerConnection> m_Pc;
     std::shared_ptr<rtc::Track> m_VideoTrack;

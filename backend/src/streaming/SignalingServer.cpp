@@ -23,7 +23,7 @@
 extern "C" {
 #include "Limelight.h"
 }
-#include "MoonlightShim.h"
+#include "IMediaEngine.h"
 #include "SdpFingerprint.h"
 #include "common/PairingCrypto.h"
 #include "network/UPNPClient.h"
@@ -159,9 +159,9 @@ void SignalingServer::stop()
 
     // Disconnect WS fallback signal handlers (if any)
     if (m_ShimConnected && m_Shim) {
-        disconnect(m_Shim, &MoonlightShim::videoFrameReady, this,
+        disconnect(m_Shim, &IMediaEngine::videoFrameReady, this,
                    &SignalingServer::forwardVideoViaWs);
-        disconnect(m_Shim, &MoonlightShim::audioSampleReady, this,
+        disconnect(m_Shim, &IMediaEngine::audioSampleReady, this,
                    &SignalingServer::forwardAudioViaWs);
         m_ShimConnected = false;
     }
@@ -579,12 +579,11 @@ void SignalingServer::startWsFallback()
     // become no-ops but remain connected to avoid Qt disconnect issues).
     m_Relay->stop();
 
-    // Step 3: Connect MoonlightShim video/audio signals to WS forwarding slots.
+    // Step 3: Connect the media engine's video/audio signals to WS forwarding slots.
     // These fire in ADDITION to DataChannelRelay's slots (which are no-ops now).
     if (!m_ShimConnected) {
-        connect(m_Shim, &MoonlightShim::videoFrameReady, this, &SignalingServer::forwardVideoViaWs);
-        connect(m_Shim, &MoonlightShim::audioSampleReady, this,
-                &SignalingServer::forwardAudioViaWs);
+        connect(m_Shim, &IMediaEngine::videoFrameReady, this, &SignalingServer::forwardVideoViaWs);
+        connect(m_Shim, &IMediaEngine::audioSampleReady, this, &SignalingServer::forwardAudioViaWs);
         m_ShimConnected = true;
     }
 
