@@ -191,6 +191,12 @@ private:
 
     // Backpressure counters (diagnostic logging)
     int m_DeltaDroppedCount = 0;            // Delta frames dropped due to full SCTP buffer
+    // Deltas dropped by the awaiting-IDR gate. This is the BULK of a stall:
+    // one delta hits a full buffer, the gate closes, and every frame after it
+    // is discarded here — at 60 fps, ~60 per second — while m_DeltaDroppedCount
+    // barely moves (it only counts the deltas that reached the buffer check).
+    // Uncounted, a 19s outage read as "21 dropped deltas" in the logs.
+    int m_AwaitingIdrDropCount = 0;
     int m_KeyframeBackpressureWarnings = 0; // Keyframes sent while buffer was above watermark
     int m_BackpressureDropCount = 0;        // Frames dropped in current backpressure episode
     qint64 m_LastDropSnapshot = 0;          // Sum of all drop counters at last stats tick

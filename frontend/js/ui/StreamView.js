@@ -3661,6 +3661,22 @@ export class StreamView {
                 }
                 this._lastPliCount = pliCount;
 
+                // Report the receiver's counters to the host, which cannot see
+                // any of them: on this transport the backend can send every
+                // frame without a single drop while the picture is frozen, and
+                // until now the only trace of that lived in this tab's memory.
+                // The backend logs the line when a counter moves.
+                this.webrtc.send({
+                    type: 'clientstats',
+                    packetsLost: inbound.packetsLost || 0,
+                    nackCount: inbound.nackCount || 0,
+                    pliCount: pliCount,
+                    freezeCount: inbound.freezeCount || 0,
+                    totalFreezesDuration: inbound.totalFreezesDuration || 0,
+                    jitterMs: (typeof inbound.jitter === 'number' ? inbound.jitter : 0) * 1000,
+                    fps: Math.round(this._mediaFps || 0),
+                });
+
                 // Adaptive jitter buffer: drive receiver.jitterBufferTarget from
                 // measured jitter/loss/freezes (webrtc-media only, flag-gated).
                 if (this._jitterAuto) {

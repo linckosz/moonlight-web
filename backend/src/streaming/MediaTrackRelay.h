@@ -123,9 +123,22 @@ private:
     // the encoded bitrate exactly when the link is saturated. Thread-safe:
     // callers run on the libdatachannel PLI thread, the Qt main thread (input
     // messages) and the session thread.
-    void sendIdrRequestThrottled();
+    /// Ask Sunshine for a keyframe, rate-limited.
+    ///
+    /// @param receiverStalled the request came from the receiver saying its
+    ///        decoder cannot go on (an RTCP PLI, or the browser's own decode
+    ///        watchdog) rather than from one of our speculative retries. It
+    ///        changes nothing but the log line — see the NOTE below on why
+    ///        exempting these from the backoff does not work.
+    void sendIdrRequestThrottled(bool receiverStalled = false);
     static constexpr int64_t kIdrCooldownBaseMs = 300;
     static constexpr int64_t kIdrCooldownMaxMs = 5000;
+    // NOTE (2026-08-30): a shorter floor for receiver-driven requests (PLI /
+    // browser watchdog) was tried here and reverted the same day. Once the SSRC
+    // fix made PLIs actually arrive, a 250 ms floor turned every stall into an
+    // IDR storm — four keyframes a second, a bitrate spike, more loss, more
+    // PLIs — and the stream collapsed outright. Do not reintroduce it without
+    // a way to cap the keyframe cost.
     std::atomic<int64_t> m_IdrCooldownMs{kIdrCooldownBaseMs};
     std::atomic<int64_t> m_LastIdrRequestMs{0}; // steady_clock ms of last effective request
     std::atomic<bool> m_IdrOutstanding{false};  // True until the next keyframe is sent
@@ -177,6 +190,19 @@ private:
     // sent (session start, or after a worker-side delta drop broke the
     // reference chain). Guarded by m_VideoMutex.
     bool m_SentKeyframeOnTrack = false;
+    // Gate episode bookkeeping. A closed gate IS the freeze the viewer sees, so
+    // it needs a start, an end and a duration in the log. The old logging was a
+    // `static` counter capped at 5 lines per PROCESS and nothing at all on
+    // reopening, which is why an alternating fluid/frozen session (2026-08-30)
+    // could not be told from a permanently dead one.
+    std::chrono::steady_clock::time_point m_GateClosedAt;
+    int m_GatedFrameCount = 0;
+    const char* m_GateCloseReason = "session start";
+    /// Close the delta gate and start an episode (no-op if already closed).
+    /// Guarded by m_VideoMutex, like m_SentKeyframeOnTrack itself.
+    void closeDeltaGate(const char* reason);
+    /// Open the delta gate and log the episode that just ended.
+    void openDeltaGate();
 
     // ── ICE connection timeout ──────────────────────────────────────────────
     // Starts on setRemoteDescription(), cancelled on PC Connected or stop().
@@ -184,6 +210,17 @@ private:
 
     // ── Stats timer (2s interval) ────────────────────────────────────────────
     QTimer* m_StatsTimer = nullptr;
+    /// Sum of the drop counters at the last stats tick. The tick logs only when
+    /// it moves, so a healthy session stays silent — same discipline as
+    /// DataChannelRelay, which is where this log line was the only one of the
+    /// two relays to have it.
+    qint64 m_LastDropSnapshot = 0;
+    /// Same "log only when it moves" discipline for the receiver's counters,
+    /// which arrive as `clientstats` on the input DataChannel.
+    qint64 m_LastClientStatsSnapshot = -1;
+    /// Diagnostics for the IDR path — both were invisible before 2026-08-30.
+    std::atomic<int> m_PliCount{0};
+    std::atomic<int> m_IdrAbsorbedCount{0};
 
 private slots:
     void onStatsTimerTick();
