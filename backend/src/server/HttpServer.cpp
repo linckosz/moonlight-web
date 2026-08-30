@@ -1177,8 +1177,16 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         for (const QString& p : paths)
             files.append(p);
 
+        // App version + a fingerprint of the served bytes. The bootstrap uses
+        // this string alone to decide whether its cached copy of the whole
+        // application is still current, so the app version cannot carry it on
+        // its own: a frontend edit under an unchanged build would leave every
+        // bootstrapped browser pinned to the old files with no way to notice
+        // (the service worker serves that shelf without revalidating).
         HttpResponse manifest = HttpResponse::json(
-            QJsonObject{{QStringLiteral("version"), QCoreApplication::applicationVersion()},
+            QJsonObject{{QStringLiteral("version"), QCoreApplication::applicationVersion() +
+                                                        QLatin1Char('-') +
+                                                        m_StaticFiles->contentTag()},
                         {QStringLiteral("files"), files}});
         manifest.headers["Cache-Control"] = "no-store";
         respond(manifest);
