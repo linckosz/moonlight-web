@@ -358,6 +358,12 @@ var
   // GetAdminUrl when the [Run] entry fires.
   ResolvedAdminUrl: String;
 
+// Not a Pascal Script builtin — it has to be declared as an import, same as
+// any other Win32 API call, or the compiler stops with "Unknown identifier
+// 'GetTickCount'".
+function GetTickCount: Cardinal;
+  external 'GetTickCount@kernel32.dll stdcall';
+
 // --- Detection ------------------------------------------------------------
 
 // Version of the MoonlightWeb already installed, '' when this is a first install.
