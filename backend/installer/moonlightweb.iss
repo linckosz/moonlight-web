@@ -70,6 +70,12 @@ OutputBaseFilename=MoonlightWeb-installer-{#MyAppVersion}-win-{#MyArch}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Taller than the default, for one page: the Internet consent is four paragraphs
+; and its label is AutoSize, so at the default height the last one (the sentence
+; saying it can be turned off again) would be pushed off the surface in the
+; longer translations. Height only — the width is what makes the wizard look
+; like every other Windows installer, and nothing here needs more of it.
+WizardSizePercent=100,115
 ; NO SignTool= here, on purpose. Authenticode signing happens in release.yml,
 ; around this compile rather than inside it: SignPath signs remotely and the
 ; private key never reaches the build machine, so there is no local signtool for
@@ -119,15 +125,15 @@ Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 en.AutoStartTask=Start MoonlightWeb at logon
 en.InternetPageCaption=Internet Link
 en.InternetPageDesc=Allow access from the Internet?
-en.InternetPageBody=MoonlightWeb can allow streaming from outside your local network. Your router is asked (UPnP) to open a streaming port during each session, and whoever connects reaches this PC directly — each side of a peer-to-peer connection sees the other's public IP address. This PC holds one outgoing connection to the MoonlightWeb introduction server, which sees its public IP address and when it is online, and asks a MoonlightWeb STUN server what that public address is; if that server cannot be reached, a public one (Google, Cloudflare) is tried instead.%n%nNo public DNS record is created, no certificate is issued for this machine, and ports 80/443 stay closed. You can turn this off at any time from the Admin page.
+en.InternetPageBody=MoonlightWeb can allow streaming from outside your local network, in a highly secure way.%n%nStreaming is direct, from this PC to the browser you invited. While a session runs, your router is asked (UPnP) to open a single port for it: UDP, with TCP on the same number for networks that block UDP. It carries nothing but the encrypted stream, every connection on it has to authenticate first, and it closes again when the session ends.%n%nA rendezvous server introduces the two sides, so nothing about this PC is published. No public DNS record is created, no certificate is issued for this machine, and ports 80/443 stay closed. Your public IP address is listed nowhere: only that server and whoever holds the link you sent ever see it. To learn its own public address, this PC asks a MoonlightWeb STUN server, or a public one (Google, Cloudflare) if that one cannot be reached.%n%nYou can turn this off at any time from the Admin page.
 en.InternetPageOption=Allow the Internet link (recommended)
 en.SunshinePageCaption=Sunshine
 en.SunshinePageDesc=Sunshine streaming server
 en.SunshineInstallCheck=Install Sunshine automatically
 en.SunshineInstallCheckDone=Install Sunshine automatically (already installed)
 en.SunshineDetected=The installer detected that Sunshine is already installed on this machine.%nEnter its credentials to pair MoonlightWeb automatically, or click Skip to pair later from the admin page.
-en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically. The credentials below are the ones it will be created with — change them if you prefer.
-en.SunshineAlreadyPaired=Sunshine is already installed on this machine and already paired with MoonlightWeb.%n%nThere is nothing to set up here — click Next to continue.
+en.SunshineNotDetected=Sunshine was not detected. Check the box to install it automatically. The credentials below are the ones it will be created with; change them if you prefer.
+en.SunshineAlreadyPaired=Sunshine is already installed on this machine and already paired with MoonlightWeb.%n%nThere is nothing to set up here. Click Next to continue.
 en.ButtonSkip=&Skip
 en.InternetBtnSkip=&Skip
 en.InternetBtnAccept=&Accept
@@ -153,8 +159,8 @@ en.TaskArecord=Enable the Internet link
 en.ButtonUpdate=&Update
 en.UpdatePageCaption=Update MoonlightWeb
 en.UpdatePageDesc=A newer version will replace the installed one
-en.UpdateReadyMemo=MoonlightWeb %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are — there is nothing to configure.
-en.UpdateReadyMemoFresh=MoonlightWeb will be updated to %1.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are — there is nothing to configure.
+en.UpdateReadyMemo=MoonlightWeb %1 is installed and will be updated to %2.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are. There is nothing to configure.
+en.UpdateReadyMemoFresh=MoonlightWeb will be updated to %1.%n%nYour settings, the Internet link and the Sunshine pairing are kept as they are. There is nothing to configure.
 en.UninstConfigTitle=Uninstall MoonlightWeb
 en.UninstConfigBody=Your configuration is kept by default: if you install MoonlightWeb again, it starts up exactly as you left it.
 en.UninstConfigOption=Also delete my configuration
@@ -163,15 +169,15 @@ en.UninstConfigDetail=Settings, accounts, certificates and Sunshine pairings are
 fr.AutoStartTask=Démarrer MoonlightWeb à l'ouverture de session
 fr.InternetPageCaption=Lien Internet
 fr.InternetPageDesc=Autoriser l'accès depuis Internet ?
-fr.InternetPageBody=MoonlightWeb peut autoriser le streaming depuis l'extérieur de votre réseau local. Votre box se voit demander (UPnP) l'ouverture d'un port de streaming pendant chaque session, et celui qui se connecte joint ce PC directement — chaque côté d'une connexion pair-à-pair voit l'adresse IP publique de l'autre. Ce PC maintient une connexion sortante vers le serveur d'introduction MoonlightWeb, qui voit alors son adresse IP publique et ses périodes de présence en ligne, et demande à un serveur STUN MoonlightWeb quelle est cette adresse publique ; si ce serveur est injoignable, un serveur public (Google, Cloudflare) est essayé à la place.%n%nAucun enregistrement DNS public n'est créé, aucun certificat n'est émis pour cette machine, et les ports 80/443 restent fermés. Désactivable à tout moment depuis la page admin.
+fr.InternetPageBody=MoonlightWeb peut autoriser le streaming depuis l'extérieur de votre réseau local, de façon hautement sécurisée.%n%nLe streaming est direct, de ce PC vers le navigateur que vous avez invité. Pendant une session, votre box se voit demander (UPnP) l'ouverture d'un seul port : en UDP, avec le TCP sur le même numéro pour les réseaux qui bloquent l'UDP. Il ne transporte rien d'autre que le flux chiffré, toute connexion dessus doit d'abord s'authentifier, et il est refermé à la fin de la session.%n%nUn serveur de rendez-vous met les deux côtés en relation, si bien que rien de ce PC n'est publié. Aucun enregistrement DNS public n'est créé, aucun certificat n'est émis pour cette machine, et les ports 80/443 restent fermés. Votre adresse IP publique n'est listée nulle part : seuls ce serveur et la personne à qui vous avez donné le lien la voient. Pour connaître sa propre adresse publique, ce PC interroge un serveur STUN MoonlightWeb, ou un serveur public (Google, Cloudflare) si le premier est injoignable.%n%nDésactivable à tout moment depuis la page admin.
 fr.InternetPageOption=Autoriser le lien Internet (recommandé)
 fr.SunshinePageCaption=Sunshine
 fr.SunshinePageDesc=Serveur de streaming Sunshine
 fr.SunshineInstallCheck=Installer Sunshine automatiquement
 fr.SunshineInstallCheckDone=Installer Sunshine automatiquement (déjà installé)
 fr.SunshineDetected=L'installeur a détecté que Sunshine est déjà installé sur cette machine.%nSaisissez ses identifiants pour appairer MoonlightWeb automatiquement, ou cliquez sur Ignorer pour appairer plus tard depuis la page admin.
-fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement. Les identifiants ci-dessous sont ceux qui lui seront attribués — modifiez-les si vous le souhaitez.
-fr.SunshineAlreadyPaired=Sunshine est déjà installé sur cette machine et déjà appairé avec MoonlightWeb.%n%nIl n'y a rien à configurer ici — cliquez sur Suivant pour continuer.
+fr.SunshineNotDetected=Sunshine n'a pas été détecté. Cochez la case pour l'installer automatiquement. Les identifiants ci-dessous sont ceux qui lui seront attribués ; modifiez-les si vous le souhaitez.
+fr.SunshineAlreadyPaired=Sunshine est déjà installé sur cette machine et déjà appairé avec MoonlightWeb.%n%nIl n'y a rien à configurer ici. Cliquez sur Suivant pour continuer.
 fr.ButtonSkip=&Ignorer
 fr.InternetBtnSkip=&Passer
 fr.InternetBtnAccept=&Accepter
@@ -197,8 +203,8 @@ fr.TaskArecord=Activer le lien Internet
 fr.ButtonUpdate=&Mettre à jour
 fr.UpdatePageCaption=Mise à jour de MoonlightWeb
 fr.UpdatePageDesc=Une version plus récente va remplacer celle installée
-fr.UpdateReadyMemo=MoonlightWeb %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels — il n'y a rien à configurer.
-fr.UpdateReadyMemoFresh=MoonlightWeb va être mis à jour vers %1.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels — il n'y a rien à configurer.
+fr.UpdateReadyMemo=MoonlightWeb %1 est installé et va être mis à jour vers %2.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels. Il n'y a rien à configurer.
+fr.UpdateReadyMemoFresh=MoonlightWeb va être mis à jour vers %1.%n%nVos réglages, le lien Internet et l'appairage Sunshine sont conservés tels quels. Il n'y a rien à configurer.
 fr.UninstConfigTitle=Désinstallation de MoonlightWeb
 fr.UninstConfigBody=Votre configuration est conservée par défaut : si vous réinstallez MoonlightWeb, il redémarrera exactement dans l'état où vous l'avez laissé.
 fr.UninstConfigOption=Supprimer aussi ma configuration
@@ -207,15 +213,15 @@ fr.UninstConfigDetail=Les réglages, comptes, certificats et appairages Sunshine
 zh.AutoStartTask=登录时启动 MoonlightWeb
 zh.InternetPageCaption=互联网链接
 zh.InternetPageDesc=是否允许从互联网访问？
-zh.InternetPageBody=MoonlightWeb 可以允许从本地网络之外进行串流。每次串流会话期间会通过 UPnP 请求路由器开放一个串流端口，连接方将直接连到这台电脑——点对点连接的双方都能看到对方的公网 IP 地址。这台电脑会保持一条到 MoonlightWeb 介绍服务器的出站连接，该服务器因此能看到这台电脑的公网 IP 地址及其在线时间；同时会向 MoonlightWeb STUN 服务器查询该公网地址，若该服务器无法连接，则改用公共服务器（Google、Cloudflare）。%n%n不会创建任何公开 DNS 记录，不会为这台机器签发任何证书，端口 80/443 保持关闭。可随时在管理页面关闭。
+zh.InternetPageBody=MoonlightWeb 可以以高度安全的方式，允许从本地网络之外进行串流。%n%n串流是点对点直连的，从这台电脑直接到您邀请的浏览器。会话进行期间，会通过 UPnP 请求路由器只开放一个端口：UDP，并在同一端口号上以 TCP 作为备用（用于封锁 UDP 的网络）。该端口只承载加密后的串流，任何连接都必须先通过身份验证，才会发送第一帧画面，会话结束后端口即被关闭。%n%n由一台会合服务器为双方牵线，因此这台电脑无需公开任何信息。不会创建任何公开 DNS 记录，不会为这台机器签发任何证书，端口 80/443 保持关闭。您的公网 IP 地址不会被列在任何地方：只有该服务器以及持有您所发送链接的人才能看到。为了得知自己的公网地址，这台电脑会向 MoonlightWeb STUN 服务器查询，若无法连接则改用公共服务器（Google、Cloudflare）。%n%n可随时在管理页面关闭。
 zh.InternetPageOption=允许互联网链接（推荐）
 zh.SunshinePageCaption=Sunshine
 zh.SunshinePageDesc=Sunshine 串流服务器
 zh.SunshineInstallCheck=自动安装 Sunshine
 zh.SunshineInstallCheckDone=自动安装 Sunshine（已安装）
 zh.SunshineDetected=安装程序检测到此计算机上已安装 Sunshine。%n请输入其凭据以自动配对 MoonlightWeb，或点击“跳过”以稍后在管理页面配对。
-zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装。下方的凭据即为将要设置的凭据 — 如需更改请自行修改。
-zh.SunshineAlreadyPaired=此计算机上已安装 Sunshine，并且已与 MoonlightWeb 配对。%n%n此处无需任何设置 — 点击“下一步”继续。
+zh.SunshineNotDetected=未检测到 Sunshine。勾选此框以自动安装。下方的凭据即为将要设置的凭据，如需更改请自行修改。
+zh.SunshineAlreadyPaired=此计算机上已安装 Sunshine，并且已与 MoonlightWeb 配对。%n%n此处无需任何设置，点击“下一步”继续。
 zh.ButtonSkip=跳过(&S)
 zh.InternetBtnSkip=跳过(&S)
 zh.InternetBtnAccept=接受(&A)
@@ -241,8 +247,8 @@ zh.TaskArecord=启用互联网链接
 zh.ButtonUpdate=更新(&U)
 zh.UpdatePageCaption=更新 MoonlightWeb
 zh.UpdatePageDesc=较新的版本将替换已安装的版本
-zh.UpdateReadyMemo=已安装 MoonlightWeb %1，将更新到 %2。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变 — 无需任何配置。
-zh.UpdateReadyMemoFresh=MoonlightWeb 将更新到 %1。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变 — 无需任何配置。
+zh.UpdateReadyMemo=已安装 MoonlightWeb %1，将更新到 %2。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变，无需任何配置。
+zh.UpdateReadyMemoFresh=MoonlightWeb 将更新到 %1。%n%n您的设置、互联网链接和 Sunshine 配对将保持不变，无需任何配置。
 zh.UninstConfigTitle=卸载 MoonlightWeb
 zh.UninstConfigBody=默认保留您的配置：如果您再次安装 MoonlightWeb，它将完全按照您离开时的状态启动。
 zh.UninstConfigOption=同时删除我的配置
@@ -578,9 +584,10 @@ begin
   InternetBodyLabel.Top := 0;
   InternetBodyLabel.Width := InternetPage.SurfaceWidth;
   // WordWrap + AutoSize, so the height follows the text instead of a number
-  // guessed here. The wording has already grown once (it now names the
-  // introduction and STUN servers) and a fixed height would have clipped the
-  // last sentence — which is the one saying what is NOT done.
+  // guessed here. The wording has already grown twice, and a fixed height would
+  // have clipped the last paragraph: the one saying what is NOT done and that
+  // the whole thing can be turned off again. See WizardSizePercent in [Setup]
+  // for the vertical room the four paragraphs need.
   InternetBodyLabel.WordWrap := True;
   InternetBodyLabel.AutoSize := True;
   InternetBodyLabel.Caption := ExpandConstant('{cm:InternetPageBody}');

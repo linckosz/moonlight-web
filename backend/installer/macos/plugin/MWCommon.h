@@ -41,10 +41,12 @@ static inline NSString *MWSunshineDmgURL(void)
 // server, the STUN server — because what is recorded has to be what was read.
 static inline NSString *MWInternetConsentText(void)
 {
-    return @"Allow the Internet link (recommended) — the router is asked (UPnP) to open a "
-           @"streaming port per session; peers connect directly and see each other's public "
-           @"IP; the MoonlightWeb introduction and STUN servers see this Mac's public IP and "
-           @"when it is online. No DNS record, no certificate, ports 80/443 stay closed.";
+    return @"Allow the Internet link (recommended). The router is asked (UPnP) to open one "
+           @"UDP port per session; it carries nothing but the encrypted stream, and every "
+           @"connection on it authenticates first. A rendezvous server introduces the two "
+           @"sides, so this Mac's public IP is seen only by that server and by whoever holds "
+           @"the link; a MoonlightWeb STUN server is asked what that address is. No DNS "
+           @"record, no certificate, ports 80/443 stay closed.";
 }
 
 // True when a prior install already authorized the public Internet link: the
