@@ -364,7 +364,8 @@
         "localAccessMulti": "第一个地址属于您的共享网络；其余地址属于虚拟网卡，只能从对应的虚拟机访问。",
         "serverConfig": "服务器配置",
         "transportMode": "传输模式",
-        "transportAuto": "自动（优先 UDP）",
+        "transportLanIpOnly": "仅限通过局域网 IP",
+                "transportAuto": "自动（优先 UDP）",
         "transportModeHint": "设为“自动”时，系统会根据网络状况和浏览器支持情况尝试最佳可用协议（UDP > TCP > WSS）。",
         "httpsPort": "HTTPS 端口",
         "httpsPortDesc": "配置服务器 HTTPS 端口。更改需要在重新绑定端口期间短暂中断服务。",
@@ -560,6 +561,7 @@
         "webrtcMediaUdp": "WebRTC 媒体轨道（UDP）",
         "webrtcMediaTcp": "WebRTC 媒体轨道（TCP）",
         "wss": "WebSocket Secure",
+        "unavailableRemote": "通过远程链接无法使用「{{mode}}」——改用 {{used}} 传输",
         "connectFailed": "{{from}} 连接失败——正在尝试 {{to}}…",
         "allFailed": "连接失败——所有传输模式均失败",
         "launchFailed": "主机未启动串流——请稍后重试"

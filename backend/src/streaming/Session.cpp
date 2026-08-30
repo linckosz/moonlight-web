@@ -855,6 +855,9 @@ void StreamSession::onShimConnectionStarted()
     for (const QString& m : m_TransportChain)
         chainArr.append(m);
     result["transport_chain"] = chainArr;
+    // A transport the user forced by name that never made it into the chain.
+    // Present only in that case — its absence means the request was honoured.
+    if (!m_TransportDropped.isEmpty()) result["transport_dropped"] = m_TransportDropped;
 
     if (m_Transport == "wss") {
         // WSS mode: provide the StreamRelay WS URL directly

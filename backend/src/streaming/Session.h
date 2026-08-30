@@ -121,6 +121,12 @@ public:
         m_TransportIndex = index;
     }
 
+    /// A transport the user asked for by name that was removed from the chain
+    /// before it could ever run (today: "wss" for a browser on the rendezvous).
+    /// Echoed back so the frontend can say so instead of letting the user
+    /// benchmark a transport that silently became another one.
+    void setTransportDropped(const QString& mode) { m_TransportDropped = mode; }
+
     /// Per-browser Sunshine unique ID (from the browser's localStorage).
     /// Isolates session management on Sunshine so one browser doesn't take
     /// over / cancel another's session. Empty → shared IdentityManager id.
@@ -251,6 +257,9 @@ private:
     /// the frontend can relaunch with the next transport on connection failure).
     QStringList m_TransportChain;
     int m_TransportIndex = 0;
+    /// Explicitly requested transport that was stripped from the chain (see
+    /// setTransportDropped). Empty when the chain honoured the request.
+    QString m_TransportDropped;
     /// Enable ICE-TCP candidates (true for *-tcp modes, false for *-udp modes).
     bool m_EnableIceTcp = false;
     bool m_LowAudio = false;

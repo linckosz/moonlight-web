@@ -747,11 +747,28 @@ export class AdminView {
             'webrtc-dc-tcp': 'WebRTC DataChannel (TCP)',
             wss: 'WSS (WebSocket Secure)',
         };
+        // wss carries video over the very TLS connection that served the page,
+        // so it only runs for a browser opened on the host's LAN IP directly —
+        // through the rendezvous the backend takes it out of the chain even when
+        // it is selected here. The server omits it from available_transports
+        // outside debug builds; when it does appear, the label says what it
+        // needs rather than letting the choice look unconditional.
+        // A mode already in settings.json that the server no longer offers (wss
+        // outside a debug build, or a hand-written value) is listed anyway:
+        // dropping it would leave the select showing "auto" while the saved
+        // setting says otherwise, and the next save would silently change it.
+        const offered = this._availableTransports.slice();
+        if (this._transportMode !== 'auto' && !offered.includes(this._transportMode)) {
+            offered.push(this._transportMode);
+        }
         const transportOptions = [
             { value: 'auto', label: t('admin.transportAuto') },
-            ...this._availableTransports.map((t) => ({
-                value: t,
-                label: transportLabels[t] || t,
+            ...offered.map((mode) => ({
+                value: mode,
+                label:
+                    mode === 'wss'
+                        ? `${transportLabels[mode] || mode} — ${t('admin.transportLanIpOnly')}`
+                        : transportLabels[mode] || mode,
             })),
         ];
 

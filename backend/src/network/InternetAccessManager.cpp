@@ -641,8 +641,19 @@ QJsonObject InternetAccessManager::statusJson() const
     obj[QStringLiteral("upnp_enabled")] = m_Settings->upnpEnabled();
     obj[QStringLiteral("auto_ip_detection")] = m_Settings->autoIpDetection();
     obj[QStringLiteral("transport_mode")] = m_Settings->transportMode();
-    obj[QStringLiteral("available_transports")] =
-        QJsonArray::fromStringList(TransportPriorities::orderedTransports());
+    // The admin transport selector. `wss` is deliberately absent from release
+    // builds: it carries video over the TLS connection that served the page, so
+    // it can only run when the page was opened on the host's LAN IP directly —
+    // never through the rendezvous, which is how every user reaches the app.
+    // Offering it there is offering a choice that silently becomes another one.
+    // The capability itself is untouched: it stays the last rung of the `auto`
+    // fallback chain for a LAN-IP browser, and a settings.json written by hand
+    // is still honoured.
+    QStringList availableTransports = TransportPriorities::orderedTransports();
+#ifndef QT_DEBUG
+    availableTransports.removeAll(QStringLiteral("wss"));
+#endif
+    obj[QStringLiteral("available_transports")] = QJsonArray::fromStringList(availableTransports);
     obj[QStringLiteral("pending_registration")] = m_Settings->pendingRegistration();
     obj[QStringLiteral("cert_pem")] = m_Settings->certPem();
     obj[QStringLiteral("cert_key")] = m_Settings->certKey();

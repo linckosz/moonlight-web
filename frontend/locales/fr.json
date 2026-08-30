@@ -364,7 +364,8 @@
         "localAccessMulti": "La première adresse est celle de votre réseau partagé ; les suivantes appartiennent à des cartes virtuelles et ne sont joignables que depuis leurs machines virtuelles.",
         "serverConfig": "Configuration du serveur",
         "transportMode": "Mode de transport",
-        "transportAuto": "Auto (préférer UDP)",
+        "transportLanIpOnly": "via IP LAN uniquement",
+                "transportAuto": "Auto (préférer UDP)",
         "transportModeHint": "En mode Auto, le système essaie le meilleur protocole disponible (UDP > TCP > WSS) selon les conditions réseau et la prise en charge du navigateur.",
         "httpsPort": "Port HTTPS",
         "httpsPortDesc": "Configure le port HTTPS du serveur. Les changements nécessitent une brève interruption du service pendant la reconfiguration du port.",
@@ -560,6 +561,7 @@
         "webrtcMediaUdp": "WebRTC MediaTrack (UDP)",
         "webrtcMediaTcp": "WebRTC MediaTrack (TCP)",
         "wss": "WebSocket Secure",
+        "unavailableRemote": "« {{mode}} » n'est pas disponible via le lien distant — diffusion en {{used}} à la place",
         "connectFailed": "Connexion {{from}} échouée — tentative avec {{to}}…",
         "allFailed": "Échec de la connexion — tous les modes de transport ont échoué",
         "launchFailed": "L'hôte n'a pas démarré le stream — réessayez dans un instant"
