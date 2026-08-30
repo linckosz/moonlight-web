@@ -151,6 +151,7 @@ en.SunshineLaunchFail=Could not start the Sunshine installer.
 en.ProvisionPageCaption=Setting up MoonlightWeb
 en.ProvisionPageDesc=Finalizing the installation
 en.ProvisionWorking=Please wait while MoonlightWeb finishes setting up...
+en.ResolveLinkWait=Preparing the link to the admin page...
 en.TaskSunshine=Install the Sunshine streaming server
 en.TaskSunshineDone=Sunshine is already installed
 en.TaskPairing=Pair the local Sunshine
@@ -195,6 +196,7 @@ fr.SunshineLaunchFail=Impossible de lancer l'installeur Sunshine.
 fr.ProvisionPageCaption=Configuration de MoonlightWeb
 fr.ProvisionPageDesc=Finalisation de l'installation
 fr.ProvisionWorking=Veuillez patienter pendant la fin de la configuration de MoonlightWeb...
+fr.ResolveLinkWait=Préparation du lien vers la page admin...
 fr.TaskSunshine=Installer le serveur de streaming Sunshine
 fr.TaskSunshineDone=Sunshine est déjà installé
 fr.TaskPairing=Appairer le Sunshine local
@@ -239,6 +241,7 @@ zh.SunshineLaunchFail=无法启动 Sunshine 安装程序。
 zh.ProvisionPageCaption=正在设置 MoonlightWeb
 zh.ProvisionPageDesc=正在完成安装
 zh.ProvisionWorking=请稍候，MoonlightWeb 正在完成设置...
+zh.ResolveLinkWait=正在准备通往管理页面的链接...
 zh.TaskSunshine=安装 Sunshine 串流服务器
 zh.TaskSunshineDone=Sunshine 已安装
 zh.TaskPairing=配对本地 Sunshine
@@ -274,8 +277,9 @@ Name: "{group}\{cm:UninstallProgram,MoonlightWeb}"; Filename: "{uninstallexe}"
 [Run]
 ; The tray server is already launched during the provisioning checklist (see
 ; RunProvisionChecklist in [Code]); only offer to open the admin page here.
-; GetAdminUrl reads the URL the server published (real HTTPS port / public
-; domain) and falls back to the provisional one if the server did not start.
+; GetAdminUrl hands out what ResolveAdminUrl settled while the server was coming
+; up: the rendezvous address when the internet link is on and answering, the
+; published loopback URL (real HTTPS port) otherwise.
 Filename: "{code:GetAdminUrl}"; Description: "{cm:RunAdmin}"; Flags: shellexec postinstall skipifsilent
 
 [Code]
@@ -349,6 +353,10 @@ var
   // The server runs as an NSSM service (session 0): stop/start it around the file
   // copy instead of killing and relaunching a tray process.
   ServiceInstalled: Boolean;
+  // Where the Finish page's "open the admin page" leads, settled by
+  // ResolveAdminUrl at the end of the post-install step and read back by
+  // GetAdminUrl when the [Run] entry fires.
+  ResolvedAdminUrl: String;
 
 // --- Detection ------------------------------------------------------------
 
@@ -1330,10 +1338,10 @@ begin
   Result := Copy(content, p, q - p);
 end;
 
-// Admin URL for the post-install "open the admin page" action: prefer the URL
-// the server wrote into provisioning.status.json at startup (real HTTPS port,
-// public domain once ready) over the provisional compile-time default.
-function GetAdminUrl(Param: String): String;
+// The loopback admin URL: the one the server wrote into provisioning.status.json
+// at startup (it knows the real HTTPS port, which may be a fallback), falling
+// back to the provisional compile-time default if the server never started.
+function LoopbackAdminUrl(): String;
 var
   raw: AnsiString;
   url: String;
@@ -1345,6 +1353,131 @@ begin
     url := StatusValue(raw, 'admin_url');
     if url <> '' then Result := url;
   end;
+end;
+
+// Origin to talk to the local server on, derived from the URL it published:
+// same port, but 127.0.0.1 rather than the "localhost" that URL names. The
+// server only answers this route to a local caller, and 127.0.0.1 is the one
+// spelling of "local" that cannot come out as ::1 on the way.
+function LoopbackOrigin(const adminUrl: String): String;
+var
+  rest: String;
+  i: Integer;
+begin
+  Result := 'https://127.0.0.1';
+  rest := adminUrl;
+  i := Pos('://', rest);
+  if i > 0 then rest := Copy(rest, i + 3, Length(rest));
+  // Host[:port], without the path.
+  i := Pos('/', rest);
+  if i > 0 then rest := Copy(rest, 1, i - 1);
+  i := Pos(':', rest);
+  if i > 0 then Result := Result + Copy(rest, i, Length(rest));
+end;
+
+// Ask the running server for the internet way into its own admin page: the
+// rendezvous address, with a single-use host key in the fragment.
+//
+// The question can only be put to the server, because only the server knows
+// whether the line is up AND whether the introduction server answers when asked
+// — it probes that itself. An empty url is its considered answer, not a
+// failure: it means loopback is the honest address here.
+//
+// Same shape as the Sunshine probe above: loopback, self-signed certificate,
+// no proxy. Empty on anything unexpected, so the caller falls back.
+function AskRemoteAdminLink(const origin: String): String;
+var
+  req: Variant;
+  body: String;
+begin
+  Result := '';
+  try
+    req := CreateOleObject('MSXML2.ServerXMLHTTP.6.0');
+  except
+    Exit;
+  end;
+  try
+    req.open('GET', origin + '/api/server/remote-link?p=/admin', False);
+    // Loopback: an answer takes milliseconds. The server may still be probing
+    // the entry page though, so allow the receive a little room.
+    req.setTimeouts(2000, 2000, 2000, 6000);
+    // The loopback listener serves MoonlightWeb's own self-signed certificate.
+    req.setOption(2, 13056);
+    // SXH_PROXY_SET_DIRECT — a configured proxy must never see loopback.
+    req.setProxy(1);
+    req.send('');
+    if req.status <> 200 then Exit;
+    body := req.responseText;
+  except
+    Exit;
+  end;
+  // Compact JSON, one key: {"url":"https://.../xxxx#k=...&p=/admin"}.
+  Result := StatusValue(body, 'url');
+end;
+
+// Decide, once, where the Finish page's "open the admin page" leads.
+//
+// Loopback is always true from this machine, and it is what this handed out
+// unconditionally until now — including to the user who had just accepted the
+// internet link on the page before, which read as the installer not believing
+// its own question. Through the rendezvous the same page arrives under a
+// certificate the browser already trusts, so there is no interstitial to accept
+// first; loopback is served by the self-signed one. The server picks between
+// them, and answers with loopback whenever the internet way in is off, not up,
+// or not answering.
+//
+// Asked HERE rather than at the click on Finish, and this is the whole reason
+// the answer is cached in a variable: the line needs a few seconds to come up
+// after the server starts, and those are seconds this page is already spending.
+// A wizard that freezes on its last button is worse than one that waits where
+// it is already waiting. Six seconds is the same budget the app allows itself
+// when it opens a browser at launch; then loopback, silently.
+procedure ResolveAdminUrl();
+var
+  origin, link: String;
+  // Cardinal, like GetTickCount itself: the difference then stays correct
+  // across the 49-day wrap instead of going through a signed overflow.
+  started, elapsed: Cardinal;
+begin
+  ResolvedAdminUrl := LoopbackAdminUrl();
+  // Nothing to prefer, or nobody to show it to.
+  if WizardSilent then Exit;
+  if not (InternetAuthorized or SettingsBoolEnabled('internet_access_enabled')) then Exit;
+
+  origin := LoopbackOrigin(ResolvedAdminUrl);
+  ProgressPage.SetText(ExpandConstant('{cm:ResolveLinkWait}'), '');
+  ProgressPage.Show;
+  try
+    // Bounded on the CLOCK, not on a number of attempts: a server that has
+    // wedged answers each attempt with a timeout rather than a refusal, and
+    // fifteen of those would hold the wizard for a minute and a half.
+    started := GetTickCount;
+    repeat
+      link := AskRemoteAdminLink(origin);
+      if link <> '' then begin
+        ResolvedAdminUrl := link;
+        Break;
+      end;
+      elapsed := GetTickCount - started;
+      // SetProgress pumps the message queue, which is what keeps the page
+      // painted across the Sleep below.
+      if elapsed > 6000 then elapsed := 6000;
+      ProgressPage.SetProgress(elapsed, 6000);
+      if elapsed >= 6000 then Break;
+      Sleep(400);
+    until False;
+  finally
+    ProgressPage.Hide;
+  end;
+end;
+
+// Filename of the [Run] entry. ResolveAdminUrl has already settled this; the
+// fallback covers the paths that never call it (a silent install, an aborted
+// post-install), where loopback is the only answer anyway.
+function GetAdminUrl(Param: String): String;
+begin
+  if ResolvedAdminUrl <> '' then Result := ResolvedAdminUrl
+  else Result := LoopbackAdminUrl();
 end;
 
 // Launch the server (kicks off first-run provisioning) and poll its status file,
@@ -1555,6 +1688,10 @@ begin
   // Launch the server and show the live checklist (Sunshine / pairing / A-record)
   // while first-run provisioning completes.
   RunProvisionChecklist();
+
+  // With the server up, settle the address the Finish page will offer: the
+  // internet way in when there is one, loopback otherwise.
+  ResolveAdminUrl();
 end;
 
 // --- Uninstall: optional removal of the user's configuration ---------------
