@@ -458,8 +458,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
             errObj["local_os"] = QStringLiteral("Linux");
 #endif
             m_Respond(HttpResponse::json(errObj, 503));
-        } else if (err.httpStatus == 403
-                   || err.message.contains(QStringLiteral("Permission denied"))) {
+        } else if (err.httpStatus == 403 ||
+                   err.message.contains(QStringLiteral("Permission denied"))) {
             // Apollo — and so every MultiSeat seat — grants full rights only to
             // the first device that pairs with it; everyone after gets "view the
             // list" and nothing else. The refusal is a 403 that says only

@@ -156,9 +156,9 @@ void SunshineRestClient::attemptPin(const QString& pin, const QString& user, con
 {
     // Basic first: that is what Sunshine proper speaks, and the install-time
     // path against a local Sunshine must keep behaving exactly as it did.
-    const QByteArray basic =
-        cookie.isEmpty() ? QByteArray("Basic " + (user + ':' + pass).toUtf8().toBase64())
-                         : QByteArray();
+    const QByteArray basic = cookie.isEmpty()
+                                 ? QByteArray("Basic " + (user + ':' + pass).toUtf8().toBase64())
+                                 : QByteArray();
 
     postPin(pin, deviceName, port, host, basic, cookie,
             [this, pin, user, pass, deviceName, port, host, cookie,
@@ -172,18 +172,18 @@ void SunshineRestClient::attemptPin(const QString& pin, const QString& user, con
                     // so nothing changes for a real Sunshine.
                     Logger::info(QStringLiteral("Sunshine /api/pin refused Basic auth — trying "
                                                 "the Apollo login instead"));
-                    loginForCookie(
-                        user, pass, port, host,
-                        [this, pin, user, pass, deviceName, port, host, attempt](
-                            const QByteArray& fresh) {
-                            if (fresh.isEmpty()) {
-                                Logger::warning(
-                                    QStringLiteral("Apollo login gave no session — the PIN cannot "
-                                                   "be pushed, so this seat stays unpaired"));
-                                return;
-                            }
-                            attemptPin(pin, user, pass, deviceName, port, host, fresh, attempt);
-                        });
+                    loginForCookie(user, pass, port, host,
+                                   [this, pin, user, pass, deviceName, port, host,
+                                    attempt](const QByteArray& fresh) {
+                                       if (fresh.isEmpty()) {
+                                           Logger::warning(QStringLiteral(
+                                               "Apollo login gave no session — the PIN cannot "
+                                               "be pushed, so this seat stays unpaired"));
+                                           return;
+                                       }
+                                       attemptPin(pin, user, pass, deviceName, port, host, fresh,
+                                                  attempt);
+                                   });
                     return;
                 }
 
@@ -200,19 +200,19 @@ void SunshineRestClient::attemptPin(const QString& pin, const QString& user, con
                 // fine on loopback, but over a network the PIN can land first.
                 // Keep offering it while stage 1 is still in flight.
                 if (attempt + 1 >= kMaxPinAttempts) {
-                    Logger::warning(QStringLiteral(
-                        "Sunshine /api/pin still had no pairing waiting after %1 tries — the "
-                        "pairing request never reached the host, or it was answered elsewhere")
-                                        .arg(kMaxPinAttempts));
+                    Logger::warning(
+                        QStringLiteral(
+                            "Sunshine /api/pin still had no pairing waiting after %1 tries — the "
+                            "pairing request never reached the host, or it was answered elsewhere")
+                            .arg(kMaxPinAttempts));
                     return;
                 }
 
-                QTimer::singleShot(kPinRetryMs, this,
-                                   [this, pin, user, pass, deviceName, port, host, cookie,
-                                    attempt]() {
-                                       attemptPin(pin, user, pass, deviceName, port, host, cookie,
-                                                  attempt + 1);
-                                   });
+                QTimer::singleShot(
+                    kPinRetryMs, this,
+                    [this, pin, user, pass, deviceName, port, host, cookie, attempt]() {
+                        attemptPin(pin, user, pass, deviceName, port, host, cookie, attempt + 1);
+                    });
             });
 }
 

@@ -137,10 +137,8 @@ void NvPairingManager::openConnection(const QString& scheme, const QString& comm
     // arrives, so "did our request get there, and when" is the first question
     // any pairing problem asks. The query carries the client certificate, so
     // only its size is logged.
-    const QString target = QStringLiteral("%1://%2:%3/%4")
-                               .arg(scheme, m_Host)
-                               .arg(url.port())
-                               .arg(command);
+    const QString target =
+        QStringLiteral("%1://%2:%3/%4").arg(scheme, m_Host).arg(url.port()).arg(command);
     Logger::info(QStringLiteral("Pairing → %1 (query %2 bytes, timeout %3 ms)")
                      .arg(target)
                      .arg(query.size())
@@ -528,8 +526,7 @@ void NvPairingManager::completePairing(const QString& pin,
                                                     NvHTTP::verifyResponseStatus(pairChallengeXml);
                                                     if (NvHTTP::getXmlString(pairChallengeXml,
                                                                              "paired") != "1")
-                                                        refusal =
-                                                            QStringLiteral("paired != 1");
+                                                        refusal = QStringLiteral("paired != 1");
                                                 } catch (const std::exception& e) {
                                                     refusal = QString::fromUtf8(e.what());
                                                 }
