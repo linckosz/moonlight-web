@@ -906,8 +906,33 @@ void DataChannelRelay::sendBufferedKeyframe()
         return;
     }
 
-    qInfo() << "[DataChannelRelay] Sending buffered keyframe, size=" << m_BufferedKeyframe.size();
+    // Stale references — the same hazard MediaTrackRelay::sendBufferedKeyframe()
+    // already guards. Deltas were dropped while the channel was closed, so the
+    // live deltas that follow this keyframe ON THE WIRE are not its GOP
+    // continuation: they reference frames the browser will never receive.
+    // Nothing downstream can notice, because frameId is handed out at send time
+    // (sendFragmented) — the browser sees a contiguous sequence, feeds the
+    // orphan delta to a decoder that has no reference for it, and reports
+    // "VideoDecoder error: Decoding error." one frame after the first decoded
+    // one. It then tears the decoder down and recovers, once per session.
+    //
+    // Send the keyframe regardless: it is the freshest displayable image, and
+    // Sunshine only encodes on damage, so on a static host screen the fresh IDR
+    // we ask for below may be a long time coming — discarding this one would
+    // mean showing nothing until the screen changes. Only the delta gate stays
+    // closed, until a genuinely fresh keyframe lands.
+    const bool staleReferences = m_AwaitingIdr;
+
+    qInfo() << "[DataChannelRelay] Sending buffered keyframe, size=" << m_BufferedKeyframe.size()
+            << (staleReferences ? "(stale references — delta gate stays closed)" : "");
     sendFragmented(m_BufferedKeyframe, true, m_VideoDc, m_BufferedKeyframePresUs);
+    if (staleReferences) {
+        // sendFragmented() opens the gate on every keyframe it sends; this one
+        // has not earned it. Re-arm and keep asking — each gated delta
+        // re-requests, so recovery costs at most one cooldown window.
+        m_AwaitingIdr = true;
+        sendIdrRequestThrottled();
+    }
     m_BufferedKeyframe.clear();
     m_BufferedKeyframePresUs = -1;
     m_HaveBufferedKeyframe = false;
