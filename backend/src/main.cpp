@@ -2747,6 +2747,11 @@ int main(int argc, char* argv[])
             cfg["appVersion"] = host->appVersion;
             cfg["gfeVersion"] = host->gfeVersion;
             cfg["serverCodecModeSupport"] = host->serverCodecModeSupport;
+            // Which OS the host runs, decided here because only this process
+            // holds what it is decided from (probe results, our own address
+            // list). The worker needs it before the first scroll event and has
+            // no way to work it out for itself. "unknown" is a valid answer.
+            cfg["hostOs"] = HostOsProbe::toString(host->hostOs());
             // Which provider the worker should launch through. Empty means a
             // plain GameStream host, which is what the worker defaults to.
             cfg["backendType"] = host->backendType;
@@ -2846,6 +2851,15 @@ int main(int argc, char* argv[])
                                  *coopSessionId = id;
                                  SessionPool::Slot& sl = g_Pool.at(reqSlot);
                                  if (sl.worker == worker) sl.coopSessionId = id;
+                             });
+            // What the stream itself revealed about the host's OS. Kept on the
+            // live host so the NEXT session starts out knowing it, and NOT
+            // persisted: the UM790Pro dual-boots, and a TTL remembered across a
+            // reboot would name the wrong system (see NvComputer::observedIpTtl).
+            QObject::connect(worker, &StreamWorkerHost::hostIpTtlObserved, qApp,
+                             [&computerManager, hostUuidCopy](int ttl) {
+                                 NvComputer* h = computerManager.getHost(hostUuidCopy);
+                                 if (h) h->observedIpTtl = ttl;
                              });
             QObject::connect(
                 worker, &StreamWorkerHost::responseReady, qApp,
@@ -3629,6 +3643,8 @@ int main(int argc, char* argv[])
         cfg["appVersion"] = host->appVersion;
         cfg["gfeVersion"] = host->gfeVersion;
         cfg["serverCodecModeSupport"] = host->serverCodecModeSupport;
+        // See the owner path: worked out here, because only here can it be.
+        cfg["hostOs"] = HostOsProbe::toString(host->hostOs());
         // Which provider the worker should launch through. Empty means a
         // plain GameStream host, which is what the worker defaults to.
         cfg["backendType"] = host->backendType;
@@ -3706,6 +3722,14 @@ int main(int argc, char* argv[])
                              *coopSessionId = id;
                              SessionPool::Slot& sl = g_Pool.at(slot);
                              if (sl.worker == worker) sl.coopSessionId = id;
+                         });
+
+        // See the owner path: the observation outlives the stream, but not a
+        // reboot into the host's other operating system.
+        QObject::connect(worker, &StreamWorkerHost::hostIpTtlObserved, qApp,
+                         [&computerManager, hostUuid](int ttl) {
+                             NvComputer* h = computerManager.getHost(hostUuid);
+                             if (h) h->observedIpTtl = ttl;
                          });
 
         QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,

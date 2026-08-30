@@ -724,6 +724,11 @@ void MoonlightShim::sendUtf8Text(const QString& text)
     LiSendUtf8TextEvent(utf8.constData(), static_cast<unsigned int>(utf8.size()));
 }
 
+int MoonlightShim::hostIpTtl() const
+{
+    return LiGetHostIpTtl();
+}
+
 void MoonlightShim::sendMouseMove(short deltaX, short deltaY)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
@@ -757,17 +762,17 @@ void MoonlightShim::sendMouseButton(bool down, int button, bool hold)
 
 // Hold back everything that is not yet a whole notch, returning the amount to
 // send (0 = nothing yet). Mirrors what Sunshine itself does when its
-// `high_resolution_scrolling` option is off — done here so it holds for every
-// host regardless of that install's setting, and so it covers every client and
-// every input path (wheel, trackpad gesture, touch drag) at once.
+// `high_resolution_scrolling` option is off — done here so it holds whatever
+// that install's setting is, and so it covers every client and every input path
+// (wheel, trackpad gesture, touch drag) at once.
 //
-// Always on: Sunshine's Linux backend computes REL_WHEEL = amount / 120 with no
-// accumulator of its own, so every sub-notch delta a trackpad or a touch drag
-// produces floors to zero clicks and only survives if the session consumes the
-// REL_WHEEL_HI_RES companion event — which X11 sessions routinely do not. And
-// GameStream carries no OS field (see NvComputer(serverInfo)), so the host that
-// needs this cannot be told apart from one that doesn't. Windows hosts lose
-// nothing by it: the carry below keeps the leftovers instead of the host.
+// Only for a host that needs it. Linux throws sub-notch amounts away: inputtino
+// computes REL_WHEEL = amount / 120 with no accumulator, so every delta a
+// trackpad or a touch drag produces floors to zero clicks and survives only if
+// the session consumes the REL_WHEEL_HI_RES companion event, which X11 sessions
+// routinely do not. Windows and macOS both keep the leftovers, and quantizing
+// them is a real loss — it turns a trackpad or a high-res wheel into a ratchet.
+// Which host is which is HostOsProbe's job; this is only the mechanism.
 static short quantizeScroll(short amount, int& carry)
 {
     constexpr int kWheelDelta = 120;
@@ -783,10 +788,23 @@ static short quantizeScroll(short amount, int& carry)
     return static_cast<short>(notches * kWheelDelta);
 }
 
+// The exact amount, plus whatever a spell of quantization left behind. Without
+// draining the carry here, turning quantization off mid-stream — which is what
+// happens when the host's OS is only established once its packets arrive —
+// would strand up to a notch of travel for the rest of the session.
+static short exactScroll(short amount, int& carry)
+{
+    const int total = qBound(-32768, carry + amount, 32767);
+    carry = 0;
+    return static_cast<short>(total);
+}
+
 void MoonlightShim::sendMouseScroll(short scrollAmount)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    scrollAmount = quantizeScroll(scrollAmount, m_VScrollCarry);
+    scrollAmount = m_QuantizeScroll.load(std::memory_order_relaxed)
+                       ? quantizeScroll(scrollAmount, m_VScrollCarry)
+                       : exactScroll(scrollAmount, m_VScrollCarry);
     if (scrollAmount == 0) return;
     LiSendHighResScrollEvent(scrollAmount);
 }
@@ -794,7 +812,9 @@ void MoonlightShim::sendMouseScroll(short scrollAmount)
 void MoonlightShim::sendMouseHScroll(short scrollAmount)
 {
     if (!m_Connected.load(std::memory_order_acquire)) return;
-    scrollAmount = quantizeScroll(scrollAmount, m_HScrollCarry);
+    scrollAmount = m_QuantizeScroll.load(std::memory_order_relaxed)
+                       ? quantizeScroll(scrollAmount, m_HScrollCarry)
+                       : exactScroll(scrollAmount, m_HScrollCarry);
     if (scrollAmount == 0) return;
     // Sunshine-only extension: returns LI_ERR_UNSUPPORTED on other hosts, which
     // is fine — vertical scrolling keeps working either way.

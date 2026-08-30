@@ -28,6 +28,7 @@ void run_port_fallback_tests();
 void run_host_persistence_tests();
 void run_rendezvous_id_tests();
 void run_backend_probe_tests();
+void run_host_os_probe_tests();
 void run_tunnel_frame_tests();
 void run_app_manifest_tests();
 void run_wolf_coop_tests();
@@ -57,6 +58,7 @@ int main(int argc, char** argv)
     run_host_persistence_tests();
     run_rendezvous_id_tests();
     run_backend_probe_tests();
+    run_host_os_probe_tests();
     run_tunnel_frame_tests();
     run_app_manifest_tests();
     run_wolf_coop_tests();

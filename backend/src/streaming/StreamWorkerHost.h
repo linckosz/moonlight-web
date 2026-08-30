@@ -73,6 +73,9 @@ signals:
     /// the one where it died without a teardown. At most once, and only on a
     /// backend with native co-op.
     void coopSessionResolved(const QString& sessionId);
+    // The IP TTL a host's own packets arrived with — the only thing on the wire
+    // that names its OS family. See HostOsProbe.h for what it decides.
+    void hostIpTtlObserved(int ttl);
     /// The child process fully exited (ports are certainly free) — exactly
     /// once, always after ended(). Serialization barrier for slot reuse.
     void exited();

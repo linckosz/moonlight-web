@@ -67,6 +67,7 @@ add_executable(run_tests
     test_host_persistence.cpp
     test_rendezvous_id.cpp
     test_backend_probe.cpp
+    test_host_os_probe.cpp
     test_tunnel_frame.cpp
     test_app_manifest.cpp
     test_wolf_coop.cpp
@@ -90,6 +91,8 @@ add_executable(run_tests
     ${_src}/src/backend/NvHTTP.cpp
     # Backend detection: what a host runs, worked out rather than asked for.
     ${_src}/src/backend/streambackend/BackendProbe.cpp
+    # And which OS it runs, which decides whether scroll has to be quantized.
+    ${_src}/src/backend/streambackend/HostOsProbe.cpp
     # Wolf's control API: the wire shapes native co-op depends on. The selection
     # rules themselves are header-only (WolfCoop.h), so nothing else comes in.
     ${_src}/src/backend/WolfApiClient.cpp

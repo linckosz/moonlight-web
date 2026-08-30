@@ -27,6 +27,7 @@
 #include "NvAddress.h"
 #include "NvApp.h"
 #include "NvHTTP.h"
+#include "backend/streambackend/HostOsProbe.h"
 
 class NvComputer
 {
@@ -169,4 +170,25 @@ public:
     // false, or a Sunshine host behind a firewall would be offered a setup it
     // has no use for. Not saved, for the same reason as the flag above.
     bool mayHaveControlApi = false;
+
+    // IP TTL seen on a packet this host sent us, 0 until a stream has run. The
+    // media path is the only place its packets reach code of ours that can read
+    // one — nothing on the control plane answers over UDP (see HostOsProbe.h).
+    //
+    // Deliberately not saved, and this one really must not be: the UM790Pro
+    // dual-boots Ubuntu and Windows, so a TTL kept from last week would name
+    // the wrong OS half the time.
+    int observedIpTtl = 0;
+
+    // The OS a stream worker was TOLD this host runs. A worker rebuilds a bare
+    // NvComputer from a snapshot and has no ComputerManager, so none of the
+    // probe results above reach it; the parent, which has them all, hands its
+    // conclusion down with the rest of the snapshot. Unset in the parent, where
+    // the evidence itself is available.
+    HostOsProbe::HostOs declaredOs = HostOsProbe::HostOs::Unknown;
+
+    // Which OS this host runs, worked out from everything above. Derived on
+    // every call rather than cached so it cannot go stale behind a host that
+    // rebooted into its other system.
+    HostOsProbe::HostOs hostOs() const;
 };

@@ -322,6 +322,24 @@ bool NvComputer::isLocalMachine() const
     return false;
 }
 
+// --- Host operating system ---------------------------------------------------
+
+HostOsProbe::HostOs NvComputer::hostOs() const
+{
+    // A worker's answer was decided upstream, by the process that holds the
+    // evidence. Anything it observes for itself can only fill a gap the parent
+    // left, never overturn what the parent established.
+    if (declaredOs != HostOsProbe::HostOs::Unknown) return declaredOs;
+
+    HostOsProbe::OsEvidence ev;
+    ev.isLocalMachine = isLocalMachine();
+    ev.backendType = backendType;
+    ev.multiSeatApiPresent = multiSeatApiPresent;
+    ev.isNvidiaServerSoftware = isNvidiaServerSoftware;
+    ev.observedIpTtl = observedIpTtl;
+    return HostOsProbe::infer(ev);
+}
+
 // --- JSON serialization -----------------------------------------------------
 
 // Deliberately address-free: this is the API representation, and the browser
@@ -370,6 +388,12 @@ QJsonObject NvComputer::toJson() const
     // without anyone having to declare that it is one.
     obj["multiSeatDetected"] = multiSeatApiPresent;
     obj["mayHaveControlApi"] = mayHaveControlApi;
+
+    // Which OS we worked out this host runs, and "unknown" when we could not.
+    // Nothing in the UI branches on it — it is here because the one behaviour
+    // it drives (scroll quantization, see HostOsProbe.h) is invisible from the
+    // outside, and "why is scrolling chunky on this host" needs an answer.
+    obj["hostOs"] = HostOsProbe::toString(hostOs());
 
     // Wake-on-LAN is sent by the server (POST /api/hosts/:id/wol), so the MAC
     // itself never has to reach the browser — the UI only needs to know whether
