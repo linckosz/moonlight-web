@@ -16,7 +16,7 @@ The same Sunshine-side stream (RTSP/RTP/ENet handled by `moonlight-common-c`) ca
 | `webrtc-dc-tcp` | `DataChannelRelay` | same, ICE-TCP candidates | canvas | H.264/HEVC/AV1 | UDP-hostile networks |
 | `webrtc-media-udp` | `MediaTrackRelay` | RTP video+audio tracks, input DataChannel | `<video>` (browser decoder) | **H.264 only** | Browser-managed jitter/FEC/PLC; true-HDR-capable sink |
 | `webrtc-media-tcp` | `MediaTrackRelay` | same, ICE-TCP | `<video>` | H.264 only | |
-| `wss` | `StreamRelay` | one WebSocket (TLS), video+audio+input multiplexed | canvas | H.264/HEVC/AV1 | Always works (it rides the HTTPS port); worst latency profile |
+| `wss` | `StreamRelay` | one WebSocket (TLS), video+audio+input multiplexed | canvas | H.264/HEVC/AV1 | **LAN IP only, not user-selectable.** Rides the TLS connection that served the page, so it exists only for a browser opened directly on the host's LAN address; worst latency profile |
 
 The two WebRTC families differ only in the **video** path: `-dc` fragments access units over SCTP for WebCodecs, `-media` sends a real RTP video track. Audio is an RTP Opus track in both; input is always the `input` DataChannel. `-udp` vs `-tcp` changes nothing but the ICE candidate types (`enableIceTcp`).
 
@@ -26,6 +26,8 @@ The two WebRTC families differ only in the **video** path: `-dc` fragments acces
 
 - **Video Enhancement OFF**: `webrtc-dc-udp` → `webrtc-dc-tcp` → `webrtc-media-udp` → `webrtc-media-tcp` → `wss`
 - **Video Enhancement ON** (canvas required for WebGPU): `webrtc-dc-udp` → `webrtc-dc-tcp` → `wss` → `webrtc-media-udp` → `webrtc-media-tcp` (media kept only as a last resort, streaming *without* enhancement)
+
+`wss` is dropped from the chain for any browser that arrived through the rendezvous (`req.viaTunnel`) — there is no page-serving TLS connection to carry it. Since that is how every user reaches the app, the rung is effectively LAN-IP-only, and the admin selector omits it outside debug builds (`available_transports`). Selecting it by name is still honoured, and still reported: the `/start` response carries `transport_dropped` and the browser shows which transport actually runs. ICE-TCP covers the same UDP-blocked case that `wss` used to.
 
 Rules applied when building the chain (`main.cpp`):
 
