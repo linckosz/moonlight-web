@@ -206,6 +206,7 @@ add_executable(mw-server
     src/backend/WolfApiClient.cpp
     src/backend/MultiSeatApiClient.cpp
     src/backend/streambackend/BackendProbe.cpp
+    src/backend/streambackend/HostOsProbe.cpp
     src/backend/streambackend/StreamBackendRegistry.cpp
     src/backend/streambackend/GameStreamBackend.cpp
     src/backend/streambackend/WolfBackend.cpp

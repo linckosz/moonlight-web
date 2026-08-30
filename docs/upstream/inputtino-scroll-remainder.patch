@@ -1,0 +1,93 @@
+From 9b2664a7fb30c1bf82f332bbbde69560f6be2909 Mon Sep 17 00:00:00 2001
+From: Bruno Martin <brunoocto@gmail.com>
+Date: Sun, 30 Aug 2026 22:47:19 +0200
+Subject: [PATCH] Keep sub-detent scroll travel instead of discarding it
+
+REL_WHEEL counts detents, so converting the high-resolution amount to it
+truncates. Because nothing keeps the remainder, every amount below one
+detent floors to zero and is lost for good -- which silently discards ALL
+scrolling from any source finer than a detent: a trackpad, a free-spinning
+wheel, a Moonlight client's touch drag. REL_WHEEL_HI_RES carries the exact
+amount alongside, but only spares clients that read it, and X11 sessions
+routinely do not.
+
+Accumulate the leftover per axis and emit detents as they add up. The
+remainder truncates toward zero, so a reversal spends what is held rather
+than stranding it.
+
+This is the behaviour LizardByte's libvirtualhid already implements in its
+uinput backend (accumulated_legacy_scroll(), src/platform/linux/uhid_backend.cpp);
+inputtino is what Sunshine releases up to v2026.516.143833 and Wolf still
+use, so the same input is smooth on one and dead on the other.
+---
+ .../include/inputtino/protected_types.hpp     | 14 +++++++++++++
+ src/uinput/mouse.cpp                          | 20 +++++++++++++++++--
+ 2 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/src/uinput/include/inputtino/protected_types.hpp b/src/uinput/include/inputtino/protected_types.hpp
+index 47a065a..5dff4b4 100644
+--- a/src/uinput/include/inputtino/protected_types.hpp
++++ b/src/uinput/include/inputtino/protected_types.hpp
+@@ -62,6 +62,20 @@ struct MouseState {
+   libevdev_uinput_ptr mouse_rel = nullptr;
+   libevdev_uinput_ptr mouse_abs = nullptr;
+   bool absolute = false;
++
++  /**
++   * Scroll travel not yet worth a whole REL_WHEEL detent, kept between calls.
++   *
++   * REL_WHEEL counts detents, so converting a high-resolution amount to it
++   * necessarily discards a remainder. Dropping that remainder loses ALL travel
++   * from any source that reports finer than one detent -- a trackpad, a
++   * free-spinning wheel, a touch drag -- because each individual amount is
++   * below 120 and floors to zero, forever. The REL_WHEEL_HI_RES event emitted
++   * alongside carries the exact amount, but only clients that read it are
++   * spared, and X11 sessions routinely do not.
++   */
++  int vertical_scroll_remainder = 0;
++  int horizontal_scroll_remainder = 0;
+ };
+ 
+ struct TouchScreenState {
+diff --git a/src/uinput/mouse.cpp b/src/uinput/mouse.cpp
+index 92b3f08..32a26f3 100644
+--- a/src/uinput/mouse.cpp
++++ b/src/uinput/mouse.cpp
+@@ -204,8 +204,24 @@ void Mouse::release(Mouse::MOUSE_BUTTON button) {
+   }
+ }
+ 
++/**
++ * High-resolution scroll travel to whole REL_WHEEL detents, keeping what is
++ * left over for the next call.
++ *
++ * Without the accumulator every amount under one detent floors to zero and is
++ * gone, which silently drops all scrolling from any finer-grained source. The
++ * remainder truncates toward zero, so reversing direction spends what is held
++ * rather than stranding it.
++ */
++static int accumulate_scroll_detents(int high_res_distance, int &remainder) {
++  remainder += high_res_distance;
++  int detents = remainder / 120;
++  remainder -= detents * 120;
++  return detents;
++}
++
+ void Mouse::horizontal_scroll(int high_res_distance) {
+-  int distance = high_res_distance / 120;
++  int distance = accumulate_scroll_detents(high_res_distance, _state->horizontal_scroll_remainder);
+ 
+   if (auto mouse = active_mouse_device(_state.get())) {
+     libevdev_uinput_write_event(mouse, EV_REL, REL_HWHEEL, distance);
+@@ -215,7 +231,7 @@ void Mouse::horizontal_scroll(int high_res_distance) {
+ }
+ 
+ void Mouse::vertical_scroll(int high_res_distance) {
+-  int distance = high_res_distance / 120;
++  int distance = accumulate_scroll_detents(high_res_distance, _state->vertical_scroll_remainder);
+ 
+   if (auto mouse = active_mouse_device(_state.get())) {
+     libevdev_uinput_write_event(mouse, EV_REL, REL_WHEEL, distance);
+-- 
+2.55.0.windows.3
+

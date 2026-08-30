@@ -39,6 +39,7 @@ extern "C" {
 #include <QDebug>
 #include <QUrl>
 #include <QThread>
+#include <QTimer>
 #include <QMetaObject>
 
 QSet<QString> StreamSession::s_ActiveUniqueIds;
@@ -571,6 +572,21 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         HostAudioSink::ensureFullVolume();
     }
 
+    // Scroll: hold sub-notch amounts back only for a host that would throw them
+    // away. Linux does (inputtino floors REL_WHEEL to whole notches with no
+    // accumulator); Windows and macOS keep them, and quantizing those turns a
+    // trackpad or a high-res wheel into a ratchet. An OS we could not work out
+    // is quantized too — see HostOsProbe.h on why that is the safe way to be
+    // wrong. Not final: the media path can still identify the host mid-stream,
+    // and setScrollQuantization takes that at any time.
+    {
+        const HostOsProbe::HostOs os = m_Host->hostOs();
+        const bool quantize = !HostOsProbe::keepsSubNotchScroll(os);
+        m_Shim->setScrollQuantization(quantize);
+        qInfo() << "[Session] Host OS" << HostOsProbe::toString(os) << "- scroll"
+                << (quantize ? "quantized to whole notches" : "sent at full resolution");
+    }
+
     // Concurrent sessions each start their controller numbering at 0, which on
     // the host collapses every player's gamepad onto the same virtual pad.
     m_Shim->setControllerOffset(m_GamepadOffset);
@@ -815,9 +831,55 @@ void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)
             << "keyboard/mouse:" << policy.keyboardMouse;
 }
 
+// Read the TTL of the host's own packets and, if it settles an OS we could not
+// work out before the stream started, apply it. Runs every 250 ms for the first
+// few seconds: the first video datagram usually lands within one tick, but a
+// host that is slow to send anything must not cost us the answer for the whole
+// session. Giving up is normal — a platform that cannot report a TTL leaves it
+// at 0 forever, and the safe default already covers that.
+void StreamSession::sampleHostIpTtl()
+{
+    if (!m_Shim) return;
+
+    const int ttl = m_Shim->hostIpTtl();
+    if (ttl == 0) {
+        if (--m_TtlSamplesLeft > 0) QTimer::singleShot(250, this, &StreamSession::sampleHostIpTtl);
+        return;
+    }
+
+    emit hostIpTtlObserved(ttl);
+
+    // Never overturns a verdict that was reached from something stronger: the
+    // parent's answer, when it had one, was built on facts (our own address
+    // list, an API that identified itself) that a fingerprint cannot beat.
+    if (m_Host->hostOs() != HostOsProbe::HostOs::Unknown) return;
+
+    const HostOsProbe::HostOs os = HostOsProbe::fromInitialTtl(ttl);
+    if (os == HostOsProbe::HostOs::Unknown) {
+        // A TTL of 64 lands here: Linux and macOS are indistinguishable at that
+        // point and want opposite treatment, so nothing changes.
+        qInfo() << "[Session] Host IP TTL" << ttl << "- OS still undetermined, scroll stays"
+                << "quantized";
+        return;
+    }
+
+    const bool quantize = !HostOsProbe::keepsSubNotchScroll(os);
+    m_Host->observedIpTtl = ttl;
+    m_Shim->setScrollQuantization(quantize);
+    qInfo() << "[Session] Host IP TTL" << ttl << "- host is" << HostOsProbe::toString(os)
+            << "- scroll now" << (quantize ? "quantized to whole notches" : "at full resolution");
+}
+
 void StreamSession::onShimConnectionStarted()
 {
     qDebug() << "[Session] LiStartConnection succeeded — sending response to browser";
+
+    // The host's OS may still be unknown at this point — nothing on the control
+    // plane names it. Now that its packets are arriving, the TTL they carry can
+    // settle it. Start looking; sampleHostIpTtl() stops itself once it has an
+    // answer or once it is clear none is coming.
+    m_TtlSamplesLeft = 20;
+    sampleHostIpTtl();
 
     // Read the negotiated video format set by drSetup during LiStartConnection.
     // This is the codec Sunshine actually selected, NOT the user preference.

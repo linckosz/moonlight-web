@@ -101,12 +101,28 @@ public:
     void sendMouseMove(short deltaX, short deltaY);
     void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight);
     void sendMouseButton(bool down, int button, bool hold = false);
-    // Both scroll axes are quantized to whole 120-unit notches, for hosts that
-    // discard sub-notch amounts (see quantizeScroll); the carry lives for the
-    // session.
+    // Both scroll axes hold sub-notch amounts back and emit whole 120-unit
+    // notches while quantization is on (see quantizeScroll); the carry lives
+    // for the session.
     void sendMouseScroll(short scrollAmount);
     // Horizontal wheel — Sunshine protocol extension (no-op on GeForce Experience hosts).
     void sendMouseHScroll(short scrollAmount);
+    // Quantize scroll to whole notches, for a host that throws sub-notch
+    // amounts away (Linux — see HostOsProbe.h). On by default because that is
+    // the safe way to be wrong: a host that keeps the leftovers only scrolls
+    // less smoothly, while one that does not scrolls not at all.
+    //
+    // Settable at any time, including mid-stream: the OS is sometimes only
+    // established once the host's packets start arriving, and the carries below
+    // make the switch lossless in both directions.
+    void setScrollQuantization(bool enabled)
+    {
+        m_QuantizeScroll.store(enabled, std::memory_order_relaxed);
+    }
+    // IP TTL of the first datagram this connection received from the host, 0
+    // while none has been read. The one thing on the wire that says which OS
+    // family the host belongs to — see HostOsProbe.h.
+    int hostIpTtl() const;
 
     // --- Game controller (gamepad) ---
     // Announce a newly connected controller (preferred over an empty state event):
@@ -298,6 +314,9 @@ private:
     // Scroll quantization (see quantizeScroll). The carries hold the amount
     // not yet worth a notch; both are only touched from the relay thread that
     // decodes input messages, so they need no synchronization of their own.
+    // The flag is not: it is written from whichever thread learns the host's
+    // OS, which is not the one reading it.
+    std::atomic<bool> m_QuantizeScroll{true};
     int m_VScrollCarry = 0;
     int m_HScrollCarry = 0;
 

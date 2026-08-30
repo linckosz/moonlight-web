@@ -210,6 +210,10 @@ int runStreamWorker(QCoreApplication& app)
     host->appVersion = cfg["appVersion"].toString();
     host->gfeVersion = cfg["gfeVersion"].toString();
     host->serverCodecModeSupport = cfg["serverCodecModeSupport"].toInt();
+    // The parent's verdict on the host's OS: it holds the probe results and the
+    // address list this is worked out from, and we hold none of them. Absent or
+    // "unknown" leaves the scroll path on its safe default (see HostOsProbe.h).
+    host->declaredOs = HostOsProbe::fromString(cfg["hostOs"].toString());
     // Without these a backend's readiness check rejects the host as unpaired.
     host->pairState = NvComputer::pairStateFromString(cfg["hostPairState"].toString());
     host->serverCertPem = cfg["hostServerCert"].toString().toUtf8();
@@ -292,6 +296,15 @@ int runStreamWorker(QCoreApplication& app)
         qInfo() << "[StreamWorker] Input policy: gamepad=" << policy.gamepad
                 << "keyboardMouse=" << policy.keyboardMouse;
     }
+    // What the media path revealed about the host's OS. Only the parent keeps a
+    // host list, so this is the only way the observation outlives the stream —
+    // and outliving it is the point: without it every session would spend its
+    // first seconds quantizing scroll on a host already known not to need it.
+    QObject::connect(session, &StreamSession::hostIpTtlObserved, session, [](int ttl) {
+        emitEvent(
+            {{QStringLiteral("event"), QStringLiteral("hostIpTtl")}, {QStringLiteral("ttl"), ttl}});
+    });
+
     session->setGamepadOffset(cfg["gamepadOffset"].toInt(0));
     if (!cfg["explicitWsUrl"].toString().isEmpty())
         session->setExplicitWsUrl(cfg["explicitWsUrl"].toString());

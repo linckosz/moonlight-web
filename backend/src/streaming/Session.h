@@ -199,9 +199,16 @@ signals:
     void streamRelayCreated(StreamRelay* relay);
     void sessionStarted();
     void sessionFailed(const QString& error);
+    // The TTL a host's own packets arrived with, once one has been seen. The
+    // worker forwards it to the parent, which is the only process that keeps a
+    // host list — so the NEXT session on this host starts out knowing its OS
+    // instead of spending its first seconds quantizing scroll it need not.
+    void hostIpTtlObserved(int ttl);
 
 private slots:
     void onShimConnectionStarted();
+    // Poll the media path for the host's TTL until one shows up or we give up.
+    void sampleHostIpTtl();
     void onShimConnectionFailed(const QString& error);
 
 private:
@@ -229,6 +236,8 @@ private:
     static QSet<QString> s_ActiveUniqueIds;
 
     NvComputer* m_Host;
+    // Ticks left before sampleHostIpTtl() stops looking for a TTL.
+    int m_TtlSamplesLeft = 0;
     int m_AppId;
     NvHTTP* m_Http;
 
