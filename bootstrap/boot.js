@@ -74,11 +74,17 @@ const TIME_SPAN_MS = 1200;
 const BAR_EASE_MS = 260;
 const HOLD_FULL_MS = 300;
 const MIN_VISIBLE_MS = 1600;
-/* How recently a handover reload has to have happened for another one to count
-   as a loop rather than as a person refreshing the page. One pass through this
-   file costs at least MIN_VISIBLE_MS plus a connection, so a loop trips this
-   comfortably while a deliberate second refresh does not. */
-const RELOAD_GUARD_MS = 10000;
+/* How long a handover reload stays on the record, so that another one counts as
+   a loop rather than as a person refreshing the page.
+
+   Time alone cannot tell those apart — a loop here costs a whole pass through
+   this file, connection included, exactly like a deliberate refresh does. What
+   separates them is that the application DELETES this note when it starts (see
+   SecuringOverlay's HANDOVER_KEY, which is cleared the same way and for the same
+   reason). So a note that is still here means the reload did not reach the
+   application, and this window is only a backstop for a tab that never got
+   there and was left sitting. */
+const RELOAD_GUARD_MS = 60000;
 
 const startedAt = performance.now();
 let work = 0; // real progress, 0…1
@@ -387,29 +393,40 @@ async function main() {
 
     // Handing over to an address that differs from this one only by its
     // fragment — or not at all — is not a navigation. It is a jump within the
-    // page: nothing loads, and this one sits on a finished seal forever.
+    // page: nothing loads, and this one would sit on a finished seal forever.
     //
     // That is the ordinary case after a hard refresh, and it is the whole
-    // reason this branch exists. The application's own address already IS
-    // `/#<id>`, and a hard refresh is precisely the reload that bypasses the
-    // service worker — so it lands here rather than on the application, and
-    // then the handover has nowhere left to go. Reload instead: the worker is
-    // registered and claiming by now, so an ordinary reload of this same
-    // address is answered from the cache with the application.
+    // reason this branch exists. A hard refresh is precisely the reload that
+    // bypasses the service worker, so it lands here rather than on the
+    // application — and the address it lands on is the application's own, which
+    // this page is trying to hand over to.
     //
-    // Guarded, because a reload that landed back here would do it all again. If
-    // a handover reload happened moments ago in this tab, the worker is not
-    // answering and looping on it would only flash the seal forever; say so and
-    // stop. The window is short, so a refresh later on is still free to take
-    // this path.
-    if (new URL(target, location.href).href === location.href) {
+    // Note what is compared, because comparing the whole address is the trap:
+    // the application does not keep the identifier in the address bar. Its
+    // router rewrites the URL to a bare "/" whenever it returns to the host list
+    // (history.replaceState in app.js), fragment and all. So after any use of
+    // the application the address is "/" while the target is "/#<id>", which
+    // differ — and yet replace() still loads nothing, because a fragment is all
+    // that separates them. Everything up to the fragment is what decides
+    // whether a document is fetched.
+    const targetUrl = new URL(target, location.href);
+    const sameDocument =
+        targetUrl.origin === location.origin &&
+        targetUrl.pathname === location.pathname &&
+        targetUrl.search === location.search;
+
+    if (sameDocument) {
+        // Guarded, because a reload that landed back here would do it all
+        // again. The note is removed by the application the moment it starts,
+        // so finding one still here means the last reload never reached it —
+        // looping would only flash the seal forever. Say so and stop.
         let previous = 0;
         try {
             previous = Number(sessionStorage.getItem('mw-handover-reload') || 0);
         } catch {
             /* no session storage; only the guard is lost */
         }
-        if (Date.now() - previous < RELOAD_GUARD_MS) {
+        if (previous && Date.now() - previous < RELOAD_GUARD_MS) {
             fail(
                 'The application is installed but did not start.',
                 'Close this tab and open your machine’s link again.',
@@ -421,6 +438,21 @@ async function main() {
         } catch {
             /* nothing kept; the reload below still happens */
         }
+
+        // Put the fragment in place before reloading, since the reload is what
+        // actually loads and it has to load the right address. replaceState
+        // rather than replace(): it rewrites the URL without a history entry
+        // and without a fragment navigation on the way out.
+        if (targetUrl.hash !== location.hash) {
+            try {
+                history.replaceState(history.state, '', target);
+            } catch {
+                /* the fragment stays as it was; the identifier is in session
+                   storage either way, which is where the application looks
+                   when the address carries none */
+            }
+        }
+
         location.reload();
         return;
     }
